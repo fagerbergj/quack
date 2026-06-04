@@ -1,0 +1,6 @@
+node_modules
+frontend/dist
+server/web/dist
+pipeline
+*.db
+*.log
