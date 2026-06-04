@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"

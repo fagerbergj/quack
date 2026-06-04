@@ -4,9 +4,15 @@ A simple research agent with chat interface, MCP server, REST server, and ADK ag
 
 ## Structure
 
-- `frontend/` - React + Vite chat UI
-- `server/` - Go REST server with MCP endpoint
-- `adk/` - Google ADK agent integration
+```
+agent-researcher/
+├── frontend/         # React + Vite chat UI
+├── server/           # Go REST server with MCP endpoint
+│   ├── main.go       # Server entry point
+│   ├── mcp.go        # MCP endpoint
+│   └── research.go   # Research/LLM inference endpoint
+└── ...
+```
 
 ## Quick Start
 
@@ -24,3 +30,4 @@ npm run dev
 go mod download
 go run server/main.go
 ```
+
