@@ -1,6 +1,17 @@
+# Git ignore
 node_modules
 frontend/dist
 server/web/dist
-pipeline
 *.db
 *.log
+agent-researcher
+*.swp
+*~
+
+# IDE
+.idea
+.vscode
+
+# Generated files (optional - keep if you want to commit them)
+# server/api/schema/types.gen.go
+# frontend/src/generated/

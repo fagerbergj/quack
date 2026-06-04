@@ -1,33 +1,91 @@
 # Agent Researcher
 
-A simple research agent with chat interface, MCP server, REST server, and ADK agent framework.
+A research agent with chat interface, MCP server, REST API, and hexagonal architecture.
 
 ## Structure
 
 ```
 agent-researcher/
-├── frontend/         # React + Vite chat UI
-├── server/           # Go REST server with MCP endpoint
-│   ├── main.go       # Server entry point
-│   ├── mcp.go        # MCP endpoint
-│   └── research.go   # Research/LLM inference endpoint
-└── ...
+├── frontend/            # React + Vite frontend with chat UI
+│   ├── src/
+│   │   ├── components/  # Reusable components
+│   │   ├── pages/       # Page components
+│   │   ├── state/       # State management
+│   │   ├── api.ts       # API wrapper
+│   │   └── main.tsx     # Entry point
+│   └── package.json
+├── server/              # Go backend with hexagonal architecture
+│   ├── main.go          # Entry point
+│   ├── core/
+│   │   ├── service.go       # Service interfaces
+│   │   ├── service_impl.go  # Service implementations
+│   │   ├── port/            # Port interfaces
+│   │   └── service_test.go  # Service tests
+│   ├── api/
+│   │   ├── rest/        # REST API handlers
+│   │   ├── mcp/         # MCP API handlers
+│   │   └── schema/      # Generated types
+│   └── adapters/        # External service adapters
+├── openapi.yaml         # OpenAPI specification
+├── mcp.json             # MCP configuration
+├── scripts/
+│   └── generate.sh      # Code generation script
+├── .oapi-codegen.yaml   # OpenAPI Codegen config
+└── frontend/openapi-ts.config.ts  # TypeScript client config
 ```
 
-## Quick Start
+## Hexagonal Architecture
 
-### Frontend
+The server follows hexagonal architecture (ports and adapters):
+
+- **Core Layer**: Business logic and interfaces (ports)
+- **API Layer**: REST and MCP handlers that translate HTTP to core
+- **Adapters Layer**: External services (database, LLM, etc.)
+
+## Development
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- Go 1.23+
+- OpenAPI Codegen CLI
+
+### Setup
 
 ```bash
-cd frontend
-npm install
-npm run dev
+# Install dependencies
+cd frontend && npm install && cd ..
+
+# Generate code from OpenAPI spec
+./scripts/generate.sh
 ```
 
-### Backend
+### Running
 
 ```bash
-go mod download
+# Backend
 go run server/main.go
+
+# Frontend (in another terminal)
+cd frontend && npm run dev
 ```
 
+### Testing
+
+```bash
+# Run Go tests
+go test ./...
+
+# Run frontend tests
+cd frontend && npm test
+```
+
+### Linting
+
+```bash
+# Lint Go
+gofmt -w .
+
+# Lint TypeScript
+cd frontend && npx tsc --noEmit
+```

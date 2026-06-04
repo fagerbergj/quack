@@ -1,4 +1,11 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "mcp": {}
+  "mcp": {
+    "researcher": {
+      "type": "remote",
+      "url": "http://localhost:8080/api/v1/research/mcp",
+      "oauth": false,
+      "enabled": true
+    }
+  }
 }
