@@ -1,9 +1,6 @@
 package core
 
 import (
-	"context"
-	"time"
-
 	"github.com/jasonfagerberg/agent-researcher/server/core/port"
 )
 
@@ -20,12 +17,12 @@ func NewResearchService(llm port.LLMService) port.ResearcherService {
 }
 
 // Research performs research on a given prompt
-func (s *ResearchServiceImpl) Research(ctx context.Context, prompt string) (string, error) {
-	return s.llm.Generate(ctx, prompt)
+func (s *ResearchServiceImpl) Research(prompt string) (string, error) {
+	return s.llm.Generate(prompt)
 }
 
 // StreamResearch streams research responses
-func (s *ResearchServiceImpl) StreamResearch(ctx context.Context, prompt string) (<-chan string, <-chan error) {
+func (s *ResearchServiceImpl) StreamResearch(prompt string) (<-chan string, <-chan error) {
 	out := make(chan string)
 	errs := make(chan error, 1)
 
@@ -33,7 +30,7 @@ func (s *ResearchServiceImpl) StreamResearch(ctx context.Context, prompt string)
 		defer close(out)
 		defer close(errs)
 
-		result, err := s.llm.Generate(ctx, prompt)
+		result, err := s.llm.Generate(prompt)
 		if err != nil {
 			errs <- err
 			return
@@ -60,15 +57,15 @@ func NewChatService(chatRepo port.ChatRepository, messageRepo port.MessageReposi
 }
 
 // CreateChat creates a new chat session
-func (s *ChatServiceImpl) CreateChat(ctx context.Context, systemPrompt string) (*port.ChatSession, error) {
+func (s *ChatServiceImpl) CreateChat(systemPrompt string) (*port.ChatSession, error) {
 	session := &port.ChatSession{
 		ID:           generateID(),
 		SystemPrompt: systemPrompt,
-		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
-		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:    "2024-01-01T00:00:00Z",
+		UpdatedAt:    "2024-01-01T00:00:00Z",
 	}
 
-	if err := s.chatRepo.Create(ctx, session); err != nil {
+	if err := s.chatRepo.Create(session); err != nil {
 		return nil, err
 	}
 
@@ -76,41 +73,41 @@ func (s *ChatServiceImpl) CreateChat(ctx context.Context, systemPrompt string) (
 }
 
 // GetChat retrieves a chat session by ID
-func (s *ChatServiceImpl) GetChat(ctx context.Context, id string) (*port.ChatSession, error) {
-	return s.chatRepo.Get(ctx, id)
+func (s *ChatServiceImpl) GetChat(id string) (*port.ChatSession, error) {
+	return s.chatRepo.Get(id)
 }
 
 // ListChats retrieves all chat sessions
-func (s *ChatServiceImpl) ListChats(ctx context.Context) ([]port.ChatSession, error) {
-	return s.chatRepo.List(ctx)
+func (s *ChatServiceImpl) ListChats() ([]port.ChatSession, error) {
+	return s.chatRepo.List()
 }
 
 // DeleteChat deletes a chat session
-func (s *ChatServiceImpl) DeleteChat(ctx context.Context, id string) error {
-	return s.chatRepo.Delete(ctx, id)
+func (s *ChatServiceImpl) DeleteChat(id string) error {
+	return s.chatRepo.Delete(id)
 }
 
 // AddMessage adds a message to a chat
-func (s *ChatServiceImpl) AddMessage(ctx context.Context, chatID string, role string, content string) (*port.Message, error) {
+func (s *ChatServiceImpl) AddMessage(chatID string, role string, content string) (*port.Message, error) {
 	message := &port.Message{
 		ID:        generateID(),
 		ChatID:    chatID,
 		Role:      role,
 		Content:   content,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		CreatedAt: "2024-01-01T00:00:00Z",
 	}
 
-	if err := s.messageRepo.Create(ctx, message); err != nil {
+	if err := s.messageRepo.Create(message); err != nil {
 		return nil, err
 	}
 
 	// Update chat timestamp
-	session, err := s.chatRepo.Get(ctx, chatID)
+	session, err := s.chatRepo.Get(chatID)
 	if err != nil {
 		return nil, err
 	}
-	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := s.chatRepo.Create(ctx, session); err != nil {
+	session.UpdatedAt = "2024-01-01T00:00:00Z"
+	if err := s.chatRepo.Create(session); err != nil {
 		return nil, err
 	}
 
@@ -118,8 +115,8 @@ func (s *ChatServiceImpl) AddMessage(ctx context.Context, chatID string, role st
 }
 
 // GetMessages retrieves messages for a chat
-func (s *ChatServiceImpl) GetMessages(ctx context.Context, chatID string) ([]port.Message, error) {
-	return s.messageRepo.ListByChat(ctx, chatID)
+func (s *ChatServiceImpl) GetMessages(chatID string) ([]port.Message, error) {
+	return s.messageRepo.ListByChat(chatID)
 }
 
 // generateID generates a UUID-like identifier

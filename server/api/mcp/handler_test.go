@@ -63,7 +63,7 @@ func TestMCPHandler(t *testing.T) {
 // Mock implementations
 type mockChatService struct{}
 
-func (m *mockChatService) CreateChat(ctx context.Context, systemPrompt string) (*core.ChatSession, error) {
+func (m *mockChatService) CreateChat(systemPrompt string) (*core.ChatSession, error) {
 	return &core.ChatSession{
 		ID:           "test-id",
 		SystemPrompt: systemPrompt,
@@ -72,7 +72,7 @@ func (m *mockChatService) CreateChat(ctx context.Context, systemPrompt string) (
 	}, nil
 }
 
-func (m *mockChatService) GetChat(ctx context.Context, id string) (*core.ChatSession, error) {
+func (m *mockChatService) GetChat(id string) (*core.ChatSession, error) {
 	return &core.ChatSession{
 		ID:           id,
 		SystemPrompt: "",
@@ -81,15 +81,15 @@ func (m *mockChatService) GetChat(ctx context.Context, id string) (*core.ChatSes
 	}, nil
 }
 
-func (m *mockChatService) ListChats(ctx context.Context) ([]core.ChatSession, error) {
+func (m *mockChatService) ListChats() ([]core.ChatSession, error) {
 	return []core.ChatSession{}, nil
 }
 
-func (m *mockChatService) DeleteChat(ctx context.Context, id string) error {
+func (m *mockChatService) DeleteChat(id string) error {
 	return nil
 }
 
-func (m *mockChatService) AddMessage(ctx context.Context, chatID string, role string, content string) (*core.Message, error) {
+func (m *mockChatService) AddMessage(chatID string, role string, content string) (*core.Message, error) {
 	return &core.Message{
 		ID:        "msg-id",
 		ChatID:    chatID,
@@ -99,6 +99,6 @@ func (m *mockChatService) AddMessage(ctx context.Context, chatID string, role st
 	}, nil
 }
 
-func (m *mockChatService) GetMessages(ctx context.Context, chatID string) ([]core.Message, error) {
+func (m *mockChatService) GetMessages(chatID string) ([]core.Message, error) {
 	return []core.Message{}, nil
 }

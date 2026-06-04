@@ -71,11 +71,11 @@ func main() {
 // Mock implementations for now
 type mockChatRepository struct{}
 
-func (r *mockChatRepository) Create(ctx context.Context, session *core.ChatSession) error {
+func (r *mockChatRepository) Create(session *core.ChatSession) error {
 	return nil
 }
 
-func (r *mockChatRepository) Get(ctx context.Context, id string) (*core.ChatSession, error) {
+func (r *mockChatRepository) Get(id string) (*core.ChatSession, error) {
 	return &core.ChatSession{
 		ID:           id,
 		SystemPrompt: "",
@@ -84,26 +84,26 @@ func (r *mockChatRepository) Get(ctx context.Context, id string) (*core.ChatSess
 	}, nil
 }
 
-func (r *mockChatRepository) List(ctx context.Context) ([]core.ChatSession, error) {
+func (r *mockChatRepository) List() ([]core.ChatSession, error) {
 	return []core.ChatSession{}, nil
 }
 
-func (r *mockChatRepository) Delete(ctx context.Context, id string) error {
+func (r *mockChatRepository) Delete(id string) error {
 	return nil
 }
 
 type mockMessageRepository struct{}
 
-func (r *mockMessageRepository) Create(ctx context.Context, message *core.Message) error {
+func (r *mockMessageRepository) Create(message *core.Message) error {
 	return nil
 }
 
-func (r *mockMessageRepository) ListByChat(ctx context.Context, chatID string) ([]core.Message, error) {
+func (r *mockMessageRepository) ListByChat(chatID string) ([]core.Message, error) {
 	return []core.Message{}, nil
 }
 
 type mockLLMService struct{}
 
-func (s *mockLLMService) Generate(ctx context.Context, prompt string) (string, error) {
+func (s *mockLLMService) Generate(prompt string) (string, error) {
 	return "This is a mock response. Replace with actual LLM integration.", nil
 }
