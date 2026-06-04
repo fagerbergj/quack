@@ -1,9 +1,18 @@
 # Agent Researcher
 
-A research agent with chat interface, MCP server, REST API, and hexagonal architecture.
+## Build and Run
 
-## Structure
+```bash
+go build -o agent-researcher ./server
+./agent-researcher
+```
 
+## Test
+
+```bash
+go test ./...
+go vet ./...
+gofmt -w .
 ```
 agent-researcher/
 ├── frontend/            # React + Vite frontend with chat UI
