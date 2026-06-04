@@ -1,30 +1,24 @@
 package rest
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jasonfagerberg/agent-researcher/server/api/schema"
-	"github.com/jasonfagerberg/agent-researcher/server/core"
 )
 
-// Handler represents the REST API handler
 type Handler struct {
-	researcherService core.ResearcherService
-	chatService       core.ChatService
+	researcherService ResearcherService
+	chatService       ChatService
 }
 
-// NewHandler creates a new REST handler
-func NewHandler(researcherService core.ResearcherService, chatService core.ChatService) *Handler {
+func NewHandler(researcherService ResearcherService, chatService ChatService) *Handler {
 	return &Handler{
 		researcherService: researcherService,
 		chatService:       chatService,
 	}
 }
 
-// RegisterRoutes registers all REST routes
 func (h *Handler) RegisterRoutes(r *chi.Mux) {
 	r.Get("/health", h.healthCheck)
 	r.Post("/api/v1/research", h.research)
@@ -35,13 +29,11 @@ func (h *Handler) RegisterRoutes(r *chi.Mux) {
 	r.Post("/api/v1/chats/{chat_id}/messages", h.sendMessage)
 }
 
-// healthCheck handles GET /health
 func (h *Handler) healthCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok"))
 }
 
-// research handles POST /api/v1/research
 func (h *Handler) research(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string `json:"prompt"`
@@ -63,7 +55,6 @@ func (h *Handler) research(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(result))
 }
 
-// listChats handles GET /api/v1/chats
 func (h *Handler) listChats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	chats, err := h.chatService.ListChats(ctx)
@@ -73,14 +64,29 @@ func (h *Handler) listChats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := struct {
-		Data []schema.ChatSummary `json:"data"`
+		Data []struct {
+			ID           string `json:"id"`
+			SystemPrompt string `json:"system_prompt,omitempty"`
+			CreatedAt    string `json:"created_at"`
+			UpdatedAt    string `json:"updated_at"`
+		} `json:"data"`
 	}{
-		Data: make([]schema.ChatSummary, len(chats)),
+		Data: make([]struct {
+			ID           string `json:"id"`
+			SystemPrompt string `json:"system_prompt,omitempty"`
+			CreatedAt    string `json:"created_at"`
+			UpdatedAt    string `json:"updated_at"`
+		}, len(chats)),
 	}
 	for i, chat := range chats {
-		response.Data[i] = schema.ChatSummary{
+		response.Data[i] = struct {
+			ID           string `json:"id"`
+			SystemPrompt string `json:"system_prompt,omitempty"`
+			CreatedAt    string `json:"created_at"`
+			UpdatedAt    string `json:"updated_at"`
+		}{
 			ID:           chat.ID,
-			SystemPrompt: &chat.SystemPrompt,
+			SystemPrompt: chat.SystemPrompt,
 			CreatedAt:    chat.CreatedAt,
 			UpdatedAt:    chat.UpdatedAt,
 		}
@@ -90,7 +96,6 @@ func (h *Handler) listChats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// createChat handles POST /api/v1/chats
 func (h *Handler) createChat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SystemPrompt *string `json:"system_prompt,omitempty"`
@@ -108,9 +113,14 @@ func (h *Handler) createChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := schema.ChatSummary{
+	response := struct {
+		ID           string `json:"id"`
+		SystemPrompt string `json:"system_prompt,omitempty"`
+		CreatedAt    string `json:"created_at"`
+		UpdatedAt    string `json:"updated_at"`
+	}{
 		ID:           session.ID,
-		SystemPrompt: &session.SystemPrompt,
+		SystemPrompt: session.SystemPrompt,
 		CreatedAt:    session.CreatedAt,
 		UpdatedAt:    session.UpdatedAt,
 	}
@@ -120,7 +130,6 @@ func (h *Handler) createChat(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// getChat handles GET /api/v1/chats/{chat_id}
 func (h *Handler) getChat(w http.ResponseWriter, r *http.Request) {
 	chatID := chi.URLParam(r, "chat_id")
 	ctx := r.Context()
@@ -137,9 +146,19 @@ func (h *Handler) getChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messageSchemas := make([]schema.ChatMessage, len(messages))
+	messageSchemas := make([]struct {
+		ID        string `json:"id"`
+		Role      string `json:"role"`
+		Content   string `json:"content"`
+		CreatedAt string `json:"created_at"`
+	}, len(messages))
 	for i, msg := range messages {
-		messageSchemas[i] = schema.ChatMessage{
+		messageSchemas[i] = struct {
+			ID        string `json:"id"`
+			Role      string `json:"role"`
+			Content   string `json:"content"`
+			CreatedAt string `json:"created_at"`
+		}{
 			ID:        msg.ID,
 			Role:      msg.Role,
 			Content:   msg.Content,
@@ -147,9 +166,20 @@ func (h *Handler) getChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := schema.ChatDetail{
+	response := struct {
+		ID           string `json:"id"`
+		SystemPrompt string `json:"system_prompt,omitempty"`
+		CreatedAt    string `json:"created_at"`
+		UpdatedAt    string `json:"updated_at"`
+		Messages     []struct {
+			ID        string `json:"id"`
+			Role      string `json:"role"`
+			Content   string `json:"content"`
+			CreatedAt string `json:"created_at"`
+		} `json:"messages"`
+	}{
 		ID:           session.ID,
-		SystemPrompt: &session.SystemPrompt,
+		SystemPrompt: session.SystemPrompt,
 		CreatedAt:    session.CreatedAt,
 		UpdatedAt:    session.UpdatedAt,
 		Messages:     messageSchemas,
@@ -159,7 +189,6 @@ func (h *Handler) getChat(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// deleteChat handles DELETE /api/v1/chats/{chat_id}
 func (h *Handler) deleteChat(w http.ResponseWriter, r *http.Request) {
 	chatID := chi.URLParam(r, "chat_id")
 	ctx := r.Context()
@@ -172,7 +201,6 @@ func (h *Handler) deleteChat(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// sendMessage handles POST /api/v1/chats/{chat_id}/messages
 func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	chatID := chi.URLParam(r, "chat_id")
 
@@ -185,26 +213,23 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add user message
 	ctx := r.Context()
+
 	if _, err := h.chatService.AddMessage(ctx, chatID, "user", req.Content); err != nil {
 		http.Error(w, "Failed to add message: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Stream research response
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// TODO: Implement actual streaming
 	result, err := h.researcherService.Research(ctx, req.Content)
 	if err != nil {
 		http.Error(w, "Research failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Add assistant message
 	if _, err := h.chatService.AddMessage(ctx, chatID, "assistant", result); err != nil {
 		http.Error(w, "Failed to add message: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -213,4 +238,10 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("event: token\ndata: " + result + "\n\n"))
 	w.Write([]byte("event: done\ndata: {}\n\n"))
 	w.(http.Flusher).Flush()
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
 }

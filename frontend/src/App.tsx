@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar'
 import Chat from './pages/Chat'
 
 export default function App() {
-  const [systemPrompt, setSystemPrompt] = useState('')
+  const [systemPrompt] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (

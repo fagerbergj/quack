@@ -1,18 +1,29 @@
-# Agent Researcher
+.PHONY: build test fmt vet generate generate-server generate-client frontend-build clean
 
-This is the main Go module.
+build: frontend-build
+	go build -o agent-researcher ./server
 
-## Build and Run
+frontend-build:
+	cd frontend && npm ci && npm run build
+	rm -rf server/web/dist
+	cp -R frontend/dist server/web/dist
 
-```bash
-go build -o agent-researcher ./server
-./agent-researcher
-```
+test:
+	go test ./...
 
-## Test
+vet:
+	go vet ./...
 
-```bash
-go test ./...
-go vet ./...
-gofmt -w .
-```
+fmt:
+	gofmt -w .
+
+generate: generate-server generate-client
+
+generate-server:
+	go generate ./server/api/schema/...
+
+generate-client:
+	cd frontend && npx openapi-ts
+
+clean:
+	rm -rf server/web/dist frontend/dist agent-researcher

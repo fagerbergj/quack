@@ -1,5 +1,3 @@
-import { useState, useEffect } from 'react'
-
 export default function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <div className={`fixed inset-y-0 left-0 z-30 w-64 flex-shrink-0 bg-gray-800 text-gray-100 transition-transform duration-200 md:relative md:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>

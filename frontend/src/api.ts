@@ -1,59 +1,7 @@
-/**
- * Thin wrapper around the generated SDK. Pages import from here for clean names.
- * All API calls use the generated functions so URLs/types stay in sync with openapi.yaml.
- * SSE streaming endpoints use raw fetch since they need manual stream handling.
- */
-import {
-  listChats as listChatsApiV1ChatsGet,
-  createChat as createChatApiV1ChatsPost,
-  getChat as getChatApiV1ChatsChatIdGet,
-  patchChat as patchChatApiV1ChatsChatIdPatch,
-  deleteChat as deleteChatApiV1ChatsChatIdDelete,
-} from './generated'
-
-export type {
-  DocumentDetail,
-  DocumentSummary,
-  JobDetail,
-  JobSummary,
-  JobStatus,
-  JobOptions,
-  PaginatedJobs,
-  PaginatedContexts,
-  ContextEntry,
-  PatchDocumentBody,
-  CreateContextBody,
-  UpdateContextBody,
-  Artifact,
-  Run,
-  RunIoField,
-  RunQuestion,
-  RunSuggestions,
-  PipelineDetail,
-  StageSummary,
-  StageDetail,
-} from './generated'
-
-// Chat types (generator returns unknown for these responses)
-export interface ChatMessage {
-  id: string
-  external_id?: string | null
-  role: 'user' | 'assistant'
-  content: string
-  created_at: string
-}
-
-export interface RagRetrieval {
-  enabled?: boolean | null
-  max_sources?: number | null
-  minimum_score?: number | null
-}
-
 export interface ChatSummary {
   id: string
   title: string | null
   system_prompt: string | null
-  rag_retrieval: RagRetrieval | null
   created_at: string
   updated_at: string
 }
@@ -62,37 +10,68 @@ export interface ChatDetail extends ChatSummary {
   messages: ChatMessage[]
 }
 
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+  external_id?: string | null
+}
+
 export interface PaginatedChats {
   data: ChatSummary[]
   next_page_token?: string | null
 }
 
-async function unwrap<T>(call: Promise<{ data?: T; error?: unknown }>): Promise<T> {
-  const { data, error } = await call
-  if (error) throw error
-  return data as T
-}
-
 export const api = {
-  // ── Chats ─────────────────────────────────────────────────────────────────
-  listChats: (params?: { page_size?: number; before_id?: string }) =>
-    unwrap(listChatsApiV1ChatsGet({ query: { page_size: params?.page_size, before_id: params?.before_id } })) as Promise<PaginatedChats>,
+  listChats: async (params?: { page_size?: number; before_id?: string }): Promise<PaginatedChats> => {
+    const qs = new URLSearchParams()
+    if (params?.page_size) qs.set('page_size', String(params.page_size))
+    if (params?.before_id) qs.set('before_id', params.before_id)
+    const res = await fetch(`/api/v1/chats?${qs}`)
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error ?? 'Failed')
+    return json
+  },
 
-  createChat: (opts?: { system_prompt?: string; rag_retrieval?: RagRetrieval }) =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    unwrap(createChatApiV1ChatsPost({ body: { system_prompt: opts?.system_prompt, rag_retrieval: opts?.rag_retrieval } as any })) as Promise<ChatSummary>,
+  createChat: async (opts?: { system_prompt?: string }): Promise<ChatSummary> => {
+    const res = await fetch('/api/v1/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system_prompt: opts?.system_prompt }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error ?? 'Failed')
+    return json
+  },
 
-  getChat: (chatId: string) =>
-    unwrap(getChatApiV1ChatsChatIdGet({ path: { chat_id: chatId } })) as Promise<ChatDetail>,
+  getChat: async (chatId: string): Promise<ChatDetail> => {
+    const res = await fetch(`/api/v1/chats/${chatId}`)
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error ?? 'Failed')
+    return json
+  },
 
-  patchChat: (chatId: string, patch: { title?: string | null; system_prompt?: string | null; rag_retrieval?: RagRetrieval | null }) =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    unwrap(patchChatApiV1ChatsChatIdPatch({ path: { chat_id: chatId }, body: patch as any })) as Promise<ChatSummary>,
+  patchChat: async (chatId: string, patch: { title?: string | null; system_prompt?: string | null }) => {
+    const res = await fetch(`/api/v1/chats/${chatId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    if (!res.ok) {
+      const json = await res.json()
+      throw new Error(json.error ?? 'Failed')
+    }
+  },
 
-  deleteChat: (chatId: string) =>
-    unwrap(deleteChatApiV1ChatsChatIdDelete({ path: { chat_id: chatId } })),
+  deleteChat: async (chatId: string) => {
+    const res = await fetch(`/api/v1/chats/${chatId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const json = await res.json()
+      throw new Error(json.error ?? 'Failed')
+    }
+  },
 
-  // ── Chat message streaming (SSE — manual fetch needed) ────────────────────
   sendMessage: (chatId: string, content: string, signal?: AbortSignal): Promise<Response> =>
     fetch(`/api/v1/chats/${chatId}/messages`, {
       method: 'POST',
@@ -101,9 +80,6 @@ export const api = {
       signal,
     }),
 
-  // decideConfirmation submits the user's approve/reject decision for a
-  // pending tool-call confirmation. The response body is an SSE stream
-  // (continuation on approve, single `done` event on reject).
   decideConfirmation: (
     chatId: string,
     callId: string,

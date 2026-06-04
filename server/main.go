@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -12,42 +13,113 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/jasonfagerberg/agent-researcher/server/api/mcp"
 	"github.com/jasonfagerberg/agent-researcher/server/api/rest"
-	"github.com/jasonfagerberg/agent-researcher/server/core"
 )
+
+type mockChatRepository struct{}
+
+func (r *mockChatRepository) Create(ctx context.Context, session *rest.ChatSession) error {
+	return nil
+}
+
+func (r *mockChatRepository) Get(ctx context.Context, id string) (*rest.ChatSession, error) {
+	return &rest.ChatSession{
+		ID:           id,
+		SystemPrompt: "",
+		CreatedAt:    "2024-01-01T00:00:00Z",
+		UpdatedAt:    "2024-01-01T00:00:00Z",
+	}, nil
+}
+
+func (r *mockChatRepository) List(ctx context.Context) ([]rest.ChatSession, error) {
+	return []rest.ChatSession{}, nil
+}
+
+func (r *mockChatRepository) Delete(ctx context.Context, id string) error {
+	return nil
+}
+
+type mockMessageRepository struct{}
+
+func (r *mockMessageRepository) Create(ctx context.Context, message *rest.Message) error {
+	return nil
+}
+
+func (r *mockMessageRepository) ListByChat(ctx context.Context, chatID string) ([]rest.Message, error) {
+	return []rest.Message{}, nil
+}
+
+type mockLLMService struct{}
+
+func (s *mockLLMService) Generate(ctx context.Context, prompt string) (string, error) {
+	return "Mock response for: " + prompt, nil
+}
+
+func (s *mockLLMService) StreamGenerate(ctx context.Context, prompt string) (<-chan string, <-chan error) {
+	out := make(chan string)
+	errs := make(chan error, 1)
+	go func() {
+		out <- "Mock response for: " + prompt
+		close(out)
+		close(errs)
+	}()
+	return out, errs
+}
 
 func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// TODO: Initialize repositories (SQLite for now)
 	chatRepo := &mockChatRepository{}
 	messageRepo := &mockMessageRepository{}
-
-	// TODO: Initialize LLM service
 	llmService := &mockLLMService{}
 
-	// Initialize services with hexagonal architecture
-	researcherService := core.NewResearchService(llmService)
-	chatService := core.NewChatService(chatRepo, messageRepo)
+	researcherService := rest.NewResearchService(llmService)
+	chatService := rest.NewChatService(chatRepo, messageRepo)
 
-	// Initialize API handlers
 	restHandler := rest.NewHandler(researcherService, chatService)
-	mcpHandler := mcp.NewHandler(chatService)
 
-	// Register REST routes
 	restHandler.RegisterRoutes(r)
 
-	// Register MCP routes
-	mux := http.NewServeMux()
-	mux.Handle("/", r)
-	mcpHandler.RegisterRoutes(mux)
+	r.HandleFunc("/api/v1/research/mcp", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			mcpConfig := map[string]interface{}{
+				"name":        "agent-researcher",
+				"version":     "0.1.0",
+				"instructions": "Research agent for deep web research using LLMs and search tools",
+				"tools": []map[string]interface{}{
+					{
+						"name":        "web_search",
+						"description": "Search the web for information on a topic",
+						"inputSchema": map[string]interface{}{
+							"type":       "object",
+							"properties": map[string]interface{}{
+								"query": map[string]interface{}{
+									"type":        "string",
+									"description": "Search query",
+								},
+								"k": map[string]interface{}{
+									"type":        "integer",
+									"default":     5,
+									"description": "Number of results to return",
+								},
+							},
+							"required": []string{"query"},
+						},
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(mcpConfig)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	})
 
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: mux,
+		Handler: r,
 	}
 
 	go func() {
@@ -66,44 +138,4 @@ func main() {
 	defer cancel()
 	srv.Shutdown(ctx)
 	log.Println("Server stopped")
-}
-
-// Mock implementations for now
-type mockChatRepository struct{}
-
-func (r *mockChatRepository) Create(session *core.ChatSession) error {
-	return nil
-}
-
-func (r *mockChatRepository) Get(id string) (*core.ChatSession, error) {
-	return &core.ChatSession{
-		ID:           id,
-		SystemPrompt: "",
-		CreatedAt:    "2024-01-01T00:00:00Z",
-		UpdatedAt:    "2024-01-01T00:00:00Z",
-	}, nil
-}
-
-func (r *mockChatRepository) List() ([]core.ChatSession, error) {
-	return []core.ChatSession{}, nil
-}
-
-func (r *mockChatRepository) Delete(id string) error {
-	return nil
-}
-
-type mockMessageRepository struct{}
-
-func (r *mockMessageRepository) Create(message *core.Message) error {
-	return nil
-}
-
-func (r *mockMessageRepository) ListByChat(chatID string) ([]core.Message, error) {
-	return []core.Message{}, nil
-}
-
-type mockLLMService struct{}
-
-func (s *mockLLMService) Generate(prompt string) (string, error) {
-	return "This is a mock response. Replace with actual LLM integration.", nil
 }

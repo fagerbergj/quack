@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
 import { api, type ChatSummary } from '../api'
 import { AssistantParts } from '../components/AgentParts'
 import { useChatStore, useChatTurn } from '../state/ChatStoreProvider'
@@ -34,12 +33,6 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
-
-  const { data: contextsPage } = useQuery({
-    queryKey: ['contexts'],
-    queryFn: () => api.contexts(),
-  })
-  const contextLibrary = contextsPage?.data ?? []
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -140,10 +133,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     if (activeChatId) store.stop(activeChatId)
   }
 
-  async function decideConfirmation(callId: string, confirmed: boolean, content?: string) {
-    if (!activeChatId) return
-    await store.decide(activeChatId, callId, confirmed, content)
-  }
+ 
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -294,8 +284,14 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                 ) : (
                   <div>
                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-                      {msg.parts && msg.parts.length > 0 && (
-                        <AssistantParts parts={msg.parts} showCursor={streaming && idx === messages.length - 1} onDecideConfirmation={decideConfirmation} />
+                              {streaming && idx === messages.length - 1 ? (
+                        <span className="flex items-center gap-1 h-5 mt-2">
+                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
+                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
+                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
+                        </span>
+                      ) : (
+                        <AssistantParts text={msg.content} />
                       )}
                       {streaming && idx === messages.length - 1 && (
                         <span className="flex items-center gap-1 h-5 mt-2">
