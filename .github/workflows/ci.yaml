@@ -1,0 +1,100 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Go dependencies
+        run: |
+          cd /home/jason/workspace/agent-researcher
+          go mod download
+
+      - name: Run Go tests
+        run: |
+          cd /home/jason/workspace/agent-researcher
+          go test ./...
+
+      - name: Run Go vet
+        run: |
+          cd /home/jason/workspace/agent-researcher
+          go vet ./...
+
+      - name: Format check
+        run: |
+          cd /home/jason/workspace/agent-researcher
+          gofmt -d server/
+
+      - name: Install frontend dependencies
+        run: |
+          cd /home/jason/workspace/agent-researcher/frontend
+          npm ci
+
+      - name: Type check
+        run: |
+          cd /home/jason/workspace/agent-researcher/frontend
+          npx tsc --noEmit
+
+      - name: Build frontend
+        run: |
+          cd /home/jason/workspace/agent-researcher/frontend
+          npm run build
+
+      - name: Run frontend tests
+        run: |
+          cd /home/jason/workspace/agent-researcher/frontend
+          npm test -- --run
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: false
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: /home/jason/workspace/agent-researcher
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run ESLint
+        run: |
+          cd /home/jason/workspace/agent-researcher/frontend
+          npm install --save-dev eslint
+          npx eslint src/

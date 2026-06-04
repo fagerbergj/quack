@@ -1,18 +1,9 @@
 # Agent Researcher
 
-## Build and Run
+A research agent with chat interface, MCP server, REST API, and hexagonal architecture.
 
-```bash
-go build -o agent-researcher ./server
-./agent-researcher
-```
+## Structure
 
-## Test
-
-```bash
-go test ./...
-go vet ./...
-gofmt -w .
 ```
 agent-researcher/
 ├── frontend/            # React + Vite frontend with chat UI
@@ -40,7 +31,9 @@ agent-researcher/
 ├── scripts/
 │   └── generate.sh      # Code generation script
 ├── .oapi-codegen.yaml   # OpenAPI Codegen config
-└── frontend/openapi-ts.config.ts  # TypeScript client config
+├── frontend/openapi-ts.config.ts  # TypeScript client config
+├── Makefile             # Build and test commands
+└── .github/workflows/ci.yaml  # CI/CD pipeline
 ```
 
 ## Hexagonal Architecture
@@ -57,7 +50,7 @@ The server follows hexagonal architecture (ports and adapters):
 
 - Node.js 18+ and npm
 - Go 1.23+
-- OpenAPI Codegen CLI
+- OpenAPI Codegen CLI (optional, for code generation)
 
 ### Setup
 
@@ -65,7 +58,7 @@ The server follows hexagonal architecture (ports and adapters):
 # Install dependencies
 cd frontend && npm install && cd ..
 
-# Generate code from OpenAPI spec
+# Generate code from OpenAPI spec (optional)
 ./scripts/generate.sh
 ```
 
@@ -94,7 +87,42 @@ cd frontend && npm test
 ```bash
 # Lint Go
 gofmt -w .
+go vet ./...
 
 # Lint TypeScript
 cd frontend && npx tsc --noEmit
 ```
+
+### Build
+
+```bash
+# Build backend
+go build -o agent-researcher ./server
+
+# Build frontend
+cd frontend && npm run build
+```
+
+## API Endpoints
+
+### Health Check
+- `GET /health` - Returns "ok" if service is healthy
+
+### Research
+- `POST /api/v1/research` - Perform research using LLM
+
+### Chats
+- `GET /api/v1/chats` - List all chats
+- `POST /api/v1/chats` - Create a new chat
+- `GET /api/v1/chats/{chat_id}` - Get chat with messages
+- `DELETE /api/v1/chats/{chat_id}` - Delete a chat
+- `POST /api/v1/chats/{chat_id}/messages` - Send a message
+
+### MCP
+- `GET /api/v1/research/mcp` - Get MCP server configuration
+
+## MCP Tools
+
+- `web_search` - Search the web for information
+- `rag_search` - Semantic search across research knowledge base
+- `summarize` - Generate a summary of content
