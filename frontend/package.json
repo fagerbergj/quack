@@ -13,12 +13,16 @@
     "@tanstack/react-query": "^5.100.14",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "react-router-dom": "^7.16.0"
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.16.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/react-markdown": "^1.1.0",
     "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.10",

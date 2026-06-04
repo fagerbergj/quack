@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Chat from './pages/Chat'
 
@@ -9,7 +9,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-gray-950 text-gray-100">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {sidebarOpen && <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />}
+      {sidebarOpen && <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} />}
       <div className="flex-1 md:ml-64 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen">
         <button
           onClick={() => setSidebarOpen(true)}
