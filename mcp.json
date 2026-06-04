@@ -1,0 +1,74 @@
+{
+  "mcpServers": {
+    "researcher": {
+      "name": "agent-researcher",
+      "version": "0.1.0",
+      "instructions": "Research agent for deep web research using LLMs and search tools",
+      "url": "http://localhost:8080/api/v1/research/mcp"
+    }
+  },
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web for information on a topic. Use for questions that require current or broad information.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "k": {
+            "type": "integer",
+            "default": 5,
+            "description": "Number of results to return"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "rag_search",
+      "description": "Semantic search across your research knowledge base.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query (plain words)"
+          },
+          "k": {
+            "type": "integer",
+            "default": 5,
+            "description": "Number of results to return"
+          },
+          "min_score": {
+            "type": "number",
+            "default": 0.5,
+            "description": "Minimum similarity score"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "summarize",
+      "description": "Generate a summary of a document or text content.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Content to summarize"
+          },
+          "max_length": {
+            "type": "integer",
+            "default": 1000,
+            "description": "Maximum length of summary"
+          }
+        },
+        "required": ["content"]
+      }
+    }
+  ]
+}

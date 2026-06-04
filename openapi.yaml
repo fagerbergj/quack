@@ -1,0 +1,320 @@
+openapi: 3.1.0
+
+info:
+  title: Agent Researcher
+  version: 0.1.0
+  description: Research agent with chat interface, MCP server, and REST API
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Chat
+    description: Chat conversations and message streaming
+  - name: MCP
+    description: Model Context Protocol endpoints
+
+paths:
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /api/v1/chats:
+    get:
+      tags: [Chat]
+      summary: List chats
+      description: Returns a paginated list of chat summaries ordered by most recently updated.
+      operationId: listChats
+      parameters:
+        - $ref: '#/components/parameters/page_size'
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of chats.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedChats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags: [Chat]
+      summary: Create a new chat
+      description: Creates a new chat with optional system prompt.
+      operationId: createChat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChatBody'
+      responses:
+        '200':
+          description: Newly created chat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/chats/{chat_id}:
+    parameters:
+      - name: chat_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Chat]
+      summary: Get chat with messages
+      operationId: getChat
+      responses:
+        '200':
+          description: Chat detail including full message history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Chat]
+      summary: Delete a chat
+      operationId: deleteChat
+      responses:
+        '204':
+          description: Chat deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/chats/{chat_id}/messages:
+    post:
+      tags: [Chat]
+      summary: Send a message and stream the reply
+      operationId: sendChatMessage
+      parameters:
+        - $ref: '#/components/parameters/chat_id'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageBody'
+      responses:
+        '200':
+          description: SSE stream of token events followed by done event
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/research/mcp:
+    get:
+      tags: [MCP]
+      summary: Get MCP configuration
+      operationId: getMCPConfig
+      responses:
+        '200':
+          description: MCP server configuration
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/research:
+    post:
+      tags: [Research]
+      summary: Perform research using LLM
+      operationId: research
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - prompt
+              properties:
+                prompt:
+                  type: string
+                  description: Research prompt
+      responses:
+        '200':
+          description: Research response
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    page_size:
+      name: page_size
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+    chat_id:
+      name: chat_id
+      in: path
+      required: true
+      description: UUID of the chat
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    CreateChatBody:
+      type: object
+      properties:
+        system_prompt:
+          type: string
+          nullable: true
+          description: Optional system prompt to guide the assistant
+
+    ChatSummary:
+      type: object
+      required:
+        - id
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        system_prompt:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChatDetail:
+      allOf:
+        - $ref: '#/components/schemas/ChatSummary'
+        - type: object
+          required:
+            - messages
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/ChatMessage'
+
+    ChatMessage:
+      type: object
+      required:
+        - id
+        - role
+        - content
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        external_id:
+          type: string
+          nullable: true
+
+    PaginatedChats:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatSummary'
+        next_page_token:
+          type: string
+          nullable: true
+
+    SendMessageBody:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: Message content
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+    ServerError:
+      description: Server error
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string

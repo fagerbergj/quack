@@ -24,7 +24,7 @@ func main() {
 	})
 
 	r.Post("/api/v1/research", handleResearch)
-	r.HandleFunc("/api/v1/mcp", handleMCP)
+	r.HandleFunc("/api/v1/research/mcp", handleMCP)
 
 	srv := &http.Server{
 		Addr:    ":8080",
