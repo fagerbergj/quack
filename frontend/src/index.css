@@ -1,6 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Class-based dark mode (the app toggles `dark` on <html>); Tailwind v4
+   defaults `dark:` to prefers-color-scheme, so override it to the class. */
+@custom-variant dark (&:where(.dark, .dark *));
 
 body {
   margin: 0;
