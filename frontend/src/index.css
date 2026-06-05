@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Class-based dark mode (the app toggles `dark` on <html>); Tailwind v4
    defaults `dark:` to prefers-color-scheme, so override it to the class. */

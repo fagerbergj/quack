@@ -13,7 +13,24 @@ stores:
 
 orchestrator:
   provider: default
-  model: ${ORCH_MODEL}
+  model: ${ORCH_MODEL}          # the thin dispatcher: routes requests to agents
+
+# Declarative agents. Each is an agent-card.json + prompt.md bundle on disk,
+# bound here to a model and a selection of built-in tools. Add an agent by
+# dropping a bundle directory and adding an entry — no recompile.
+agents:
+  web-researcher:
+    bundle: agents/web-researcher
+    provider: default
+    model: ${RESEARCHER_MODEL}
+    tools: [web_search, web_fetch, summarize]
+
+# Backend bindings for the built-in tools (keyless, internal services in M1).
+tools:
+  web_search:
+    backend: ${SEARXNG_URL}        # SearXNG JSON API, e.g. http://searxng:8080
+  web_fetch:
+    render_backend: ${CRAWL4AI_URL}  # crawl4ai /md backend, e.g. http://crawl4ai:11235
 
 server:
   addr: ":8080"

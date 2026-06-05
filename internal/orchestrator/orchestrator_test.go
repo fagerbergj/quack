@@ -33,7 +33,7 @@ func (fakeModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool)
 }
 
 func TestOrchestratorRunStreamsLabeledEvents(t *testing.T) {
-	o, err := New(fakeModel{}, session.InMemoryService(), "be helpful")
+	o, err := New(fakeModel{}, session.InMemoryService(), "be helpful", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

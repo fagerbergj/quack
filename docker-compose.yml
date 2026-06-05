@@ -1,4 +1,6 @@
-# Local full stack: the Quack app + a self-contained Postgres. One command:
+# Local full stack: the Quack app + a self-contained Postgres, plus the keyless
+# search (SearXNG) and render (crawl4ai) backends the web-researcher
+# agent's tools use. One command:
 #   cp .env.example .env   # set LLM_ENDPOINT to something reachable from the container
 #   docker compose up --build
 services:
@@ -20,11 +22,36 @@ services:
     ports:
       - "5432:5432"
 
+  # Keyless metasearch backend for the web_search tool. The mounted settings.yml
+  # enables the JSON API that the tool calls.
+  searxng:
+    image: searxng/searxng:latest
+    volumes:
+      - ./deploy/searxng:/etc/searxng:ro
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+    ports:
+      - "8080:8080"
+
+  # Keyless crawl4ai render backend for the web_fetch tool's fallback on
+  # JavaScript-heavy / thin pages. POST /md fetches + renders (Playwright) and
+  # returns clean Markdown; auth (JWT) is off by default. Needs shared memory for
+  # the browser pool.
+  crawl4ai:
+    image: unclecode/crawl4ai:latest
+    shm_size: "1g"
+    ports:
+      - "11235:11235"
+
   app:
     build: .
     depends_on:
       db:
         condition: service_healthy
+      searxng:
+        condition: service_started
+      crawl4ai:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
       # Reachable from inside the container. Override in .env for your setup;
@@ -32,8 +59,14 @@ services:
       LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11436/v1}
       LLM_API_KEY: ${LLM_API_KEY:-unused}
       ORCH_MODEL: ${ORCH_MODEL:-qwen3.6-35b}
+      RESEARCHER_MODEL: ${RESEARCHER_MODEL:-qwen3.6-35b}
+      # The agent's tool backends. Default to the compose services above;
+      # override to point at existing instances (e.g. on a home server).
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      CRAWL4AI_URL: ${CRAWL4AI_URL:-http://crawl4ai:11235}
+    # Host 8080 is taken by SearXNG above, so the app is published on 8081.
     ports:
-      - "8080:8080"
+      - "8081:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

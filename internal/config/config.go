@@ -16,7 +16,32 @@ type Config struct {
 	Providers    map[string]ProviderConfig `yaml:"providers"`
 	Stores       StoresConfig              `yaml:"stores"`
 	Orchestrator OrchestratorConfig        `yaml:"orchestrator"`
+	Agents       map[string]AgentConfig    `yaml:"agents"`
+	Tools        ToolsConfig               `yaml:"tools"`
 	Server       ServerConfig              `yaml:"server"`
+}
+
+// AgentConfig binds a declarative agent bundle (a directory holding an
+// agent-card.json + prompt.md) to a provider/model and a selection of built-in
+// tools. Defining a new agent is adding a bundle directory plus one of these.
+type AgentConfig struct {
+	Bundle   string   `yaml:"bundle"`   // path to the agent bundle directory
+	Provider string   `yaml:"provider"` // inference provider name
+	Model    string   `yaml:"model"`    // model served to this agent
+	Tools    []string `yaml:"tools"`    // built-in tool names (kind: builtin)
+}
+
+// ToolsConfig holds backend bindings for the built-in tools that need them.
+type ToolsConfig struct {
+	WebSearch ToolBackend `yaml:"web_search"`
+	Fetch     ToolBackend `yaml:"web_fetch"`
+}
+
+// ToolBackend is the backend endpoints a built-in tool talks to. Both are
+// keyless, internal services in M1.
+type ToolBackend struct {
+	Backend       string `yaml:"backend"`        // web_search: SearXNG base URL
+	RenderBackend string `yaml:"render_backend"` // web_fetch: crawl4ai base URL
 }
 
 // ProviderConfig is one named inference provider. `kind` selects the adapter
@@ -90,6 +115,19 @@ func (c *Config) validate() error {
 	}
 	if c.Stores.Relational.URL == "" {
 		return fmt.Errorf("config: stores.relational.url is empty")
+	}
+	for name, a := range c.Agents {
+		if _, ok := c.Providers[a.Provider]; !ok {
+			return fmt.Errorf("config: agent %q provider %q is not defined under providers", name, a.Provider)
+		}
+		if a.Bundle == "" {
+			return fmt.Errorf("config: agent %q has empty bundle path", name)
+		}
+		if a.Model == "" {
+			return fmt.Errorf("config: agent %q has empty model", name)
+		}
+		// Tool names are resolved (and unknown ones rejected) when the agent's
+		// tools are built at startup; see internal/tools.Build.
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

@@ -15,14 +15,17 @@ export interface AgentStreamHandlers {
   onThinking?: (text: string) => void
   onToolCall?: (name: string, args: Record<string, unknown>) => void
   onToolResult?: (name: string, result: unknown) => void
+  onAgentStart?: (agent: string) => void
+  onAgentEnd?: (agent: string) => void
   onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
   onError?: (msg: string) => void
   onDone?: () => void
 }
 
-// Wire-level event names. Mirrors server/core/port/stream.go.
+// Wire-level event names. Mirrors internal/stream/event.go.
 export const AGENT_EVENT_NAMES = [
   'token', 'thinking', 'tool_call', 'tool_result',
+  'agent_start', 'agent_end',
   'confirmation_request', 'error', 'done',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
@@ -53,6 +56,12 @@ export function dispatchAgentEvent(
         const result = (parsed as unknown as { result: unknown }).result
         handlers.onToolResult?.(parsed.name, result)
       }
+      return true
+    case 'agent_start':
+      if (hasStringField(parsed, 'agent')) handlers.onAgentStart?.(parsed.agent)
+      return true
+    case 'agent_end':
+      if (hasStringField(parsed, 'agent')) handlers.onAgentEnd?.(parsed.agent)
       return true
     case 'confirmation_request':
       if (hasStringField(parsed, 'call_id')) {
