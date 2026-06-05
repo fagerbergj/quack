@@ -8,7 +8,12 @@ Format per milestone: **Goal · Scope · Done when · Out of scope**.
 
 ---
 
-## M0 — End-to-end skeleton
+## M0 — End-to-end skeleton ✅
+
+<details>
+<summary><strong>✅ Complete.</strong> The whole pipe runs via <code>docker compose up</code>: chat streams
+<code>thinking → tool_call → tool_result → token → done</code> from a real model and persists across an
+app restart; the MCP <code>ask</code> tool works; CI is green and <code>main</code> is protected.</summary>
 
 **Goal.** Prove the whole pipe end to end — frontend → API → orchestrator → real LLM → streamed,
 persisted response — with the orchestrator **stubbed** (no agent dispatch yet), and everything green
@@ -27,7 +32,8 @@ in CI.
 - **Inference**: provider / model factory wired (the `openai` provider).
 - **Stores**: connected — the **relational store** persists sessions/messages.
 - **Frontend**: simple chat that renders streamed tokens, with **collapsible thinking + tool-call
-  blocks** (components ready even though the stub only emits `token`/`done` for now).
+  blocks** — live: a thinking model + a trivial `current_time` tool make the stub emit real
+  `thinking` / `tool_call` / `tool_result` / `token` events.
 - **Local dev/test**: a `Dockerfile` and a `docker-compose` that stand up the app plus a
   **self-contained Postgres**, so the whole stack runs locally with one command for manual testing
   (no external DB needed).
@@ -41,6 +47,8 @@ through the MCP endpoint; CI is green and branch protection blocks un-tested mer
 
 **Out of scope (later).** Agent dispatch / DAG, adversarial vetting, memory, A2A, inbound-auth
 verification, deployment.
+
+</details>
 
 ---
 
