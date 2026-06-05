@@ -13,14 +13,14 @@ export type { ChatSummary, ChatDetail, ChatMessage, ChatList } from './generated
 
 import type { ChatSummary, ChatDetail, ChatList } from './generated'
 
-type Result<T> = { data?: T; error?: unknown; response: Response }
+type Result<T> = { data?: T; error?: unknown; response?: Response }
 
 function unwrap<T>(r: Result<T>): T {
-  if (!r.response.ok || r.error !== undefined) {
+  if (!r.response || !r.response.ok || r.error !== undefined) {
     const msg =
       r.error && typeof r.error === 'object' && 'error' in r.error
         ? String((r.error as { error: unknown }).error)
-        : `Request failed (${r.response.status})`
+        : `Request failed (${r.response ? r.response.status : 'no response'})`
     throw new Error(msg)
   }
   return r.data as T
@@ -37,6 +37,8 @@ export const api = {
 
   deleteChat: async (chatId: string): Promise<void> => {
     const r = await sdkDeleteChat({ path: { chat_id: chatId } })
-    if (!r.response.ok) throw new Error(`Delete failed (${r.response.status})`)
+    if (!r.response || !r.response.ok) {
+      throw new Error(`Delete failed (${r.response ? r.response.status : 'no response'})`)
+    }
   },
 }
