@@ -4,6 +4,8 @@ import {
   appendThinkingPart,
   appendToolCall,
   fillToolResult,
+  openAgent,
+  closeAgent,
   type MessagePart,
 } from '../components/AgentParts'
 
@@ -128,6 +130,8 @@ export class ChatStore {
         onThinking: t => updateParts(p => appendThinkingPart(p, t)),
         onToolCall: (name, args) => updateParts(p => appendToolCall(p, name, args)),
         onToolResult: (name, result) => updateParts(p => fillToolResult(p, name, result)),
+        onAgentStart: agent => updateParts(p => openAgent(p, agent)),
+        onAgentEnd: agent => updateParts(p => closeAgent(p, agent)),
         onError: msg => { streamError = msg },
       })
       if (streamError) throw new Error(streamError)

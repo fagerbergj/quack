@@ -1,0 +1,24 @@
+{
+  "name": "web-researcher",
+  "description": "Researches questions using live web search and page retrieval, then synthesizes a cited answer.",
+  "skills": [
+    {
+      "id": "web_search",
+      "name": "Web search",
+      "description": "Find relevant pages for a query using a keyless web search backend.",
+      "tags": ["search", "web", "research"]
+    },
+    {
+      "id": "web_fetch",
+      "name": "Fetch page",
+      "description": "Retrieve and read the readable text of a web page, rendering JavaScript-heavy pages when needed.",
+      "tags": ["fetch", "http", "render"]
+    },
+    {
+      "id": "summarize",
+      "name": "Summarize",
+      "description": "Condense long page text into a faithful, compact summary.",
+      "tags": ["summarize"]
+    }
+  ]
+}

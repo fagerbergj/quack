@@ -107,3 +107,55 @@ orchestrator: { provider: default, model: m }
 		t.Fatal("expected error for unknown store kind")
 	}
 }
+
+func TestLoadParsesAgentsAndTools(t *testing.T) {
+	t.Setenv("SEARXNG_URL", "http://searxng:8080")
+	t.Setenv("CRAWL4AI_URL", "http://crawl4ai:11235")
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  relational: { kind: postgres, url: u }
+orchestrator: { provider: default, model: m }
+agents:
+  web-researcher:
+    bundle: agents/web-researcher
+    provider: default
+    model: r-model
+    tools: [web_search, web_fetch, summarize]
+tools:
+  web_search: { backend: ${SEARXNG_URL} }
+  web_fetch: { render_backend: ${CRAWL4AI_URL} }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := c.Agents["web-researcher"]
+	if !ok {
+		t.Fatal("web-researcher agent not parsed")
+	}
+	if a.Model != "r-model" || a.Provider != "default" || len(a.Tools) != 3 {
+		t.Errorf("agent = %+v, want model/provider/3 tools", a)
+	}
+	if c.Tools.WebSearch.Backend != "http://searxng:8080" {
+		t.Errorf("web_search backend = %q, want interpolated", c.Tools.WebSearch.Backend)
+	}
+	if c.Tools.Fetch.RenderBackend != "http://crawl4ai:11235" {
+		t.Errorf("fetch render_backend = %q, want interpolated", c.Tools.Fetch.RenderBackend)
+	}
+}
+
+func TestLoadRejectsAgentWithUnknownProvider(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  relational: { kind: postgres, url: u }
+orchestrator: { provider: default, model: m }
+agents:
+  bad: { bundle: agents/bad, provider: nope, model: m, tools: [web_fetch] }
+`))
+	if err == nil {
+		t.Fatal("expected error for agent with unknown provider")
+	}
+}

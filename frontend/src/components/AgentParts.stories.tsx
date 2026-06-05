@@ -48,6 +48,56 @@ export const Streaming: Story = {
   },
 }
 
+// A dispatch tree: the orchestrator reasons, then dispatches web-researcher, whose
+// activity nests inside it; the answer renders at the top level.
+const dispatchTree: MessagePart[] = [
+  {
+    kind: 'agent',
+    agent: 'orchestrator',
+    done: true,
+    items: [
+      { kind: 'thinking', text: 'This needs live web research — dispatch the web-researcher.' },
+      {
+        kind: 'agent',
+        agent: 'web-researcher',
+        done: true,
+        items: [
+          { kind: 'thinking', text: 'Search for current events in Dublin, then read the top sources.' },
+          { kind: 'tool_call', name: 'web_search', args: { query: 'things to do in Dublin summer' }, result: { results: [{ title: 'Dublin events', url: 'https://example.com' }] } },
+          { kind: 'tool_call', name: 'web_fetch', args: { url: 'https://example.com' }, result: 'Dublin in summer offers…' },
+        ],
+      },
+    ],
+  },
+  { kind: 'text', text: 'Visit the [Guinness Storehouse](https://example.com) and stroll [Phoenix Park](https://example.com).' },
+]
+
+export const DispatchTree: Story = {
+  args: { parts: dispatchTree },
+}
+
+// A long-running agent: with more than 3 activity items, older ones fold behind a
+// "⋯ N earlier" toggle.
+export const WindowedActivity: Story = {
+  args: {
+    parts: [
+      {
+        kind: 'agent',
+        agent: 'web-researcher',
+        done: false,
+        items: [
+          { kind: 'thinking', text: 'first plan' },
+          { kind: 'tool_call', name: 'web_search', args: { query: 'a' }, result: { results: [] } },
+          { kind: 'tool_call', name: 'web_fetch', args: { url: 'https://1' }, result: '…' },
+          { kind: 'thinking', text: 'refining' },
+          { kind: 'tool_call', name: 'web_search', args: { query: 'b' }, result: { results: [] } },
+          { kind: 'tool_call', name: 'web_fetch', args: { url: 'https://2' } },
+        ],
+      },
+    ],
+  },
+}
+
 export const Markdown: Story = {
   args: {
     parts: [

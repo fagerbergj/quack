@@ -117,18 +117,25 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		return
 	}
 	ctx := r.Context()
+	// The whole run is the orchestrator's turn; specialist dispatches nest inside.
+	// AgentEnd must balance this AgentStart on every path (including errors) or the
+	// frontend's orchestrator group spins forever; it precedes Done so the group
+	// closes before the stream terminates.
+	_ = sse.send(stream.AgentStart(stream.OrchestratorAuthor))
 	for ev, err := range h.orch.Run(ctx, userID, chatID, body.Content) {
 		if err != nil {
 			_ = sse.send(stream.Errorf(err.Error()))
+			_ = sse.send(stream.AgentEnd(stream.OrchestratorAuthor))
 			_ = sse.send(stream.Done())
 			return
 		}
 		for _, se := range stream.Translate(ev) {
 			if sendErr := sse.send(se); sendErr != nil {
-				return // client disconnected
+				return // client disconnected; nothing left to flush
 			}
 		}
 	}
+	_ = sse.send(stream.AgentEnd(stream.OrchestratorAuthor))
 	_ = sse.send(stream.Done())
 	_ = h.store.Touch(ctx, chatID)
 }

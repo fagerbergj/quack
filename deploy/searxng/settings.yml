@@ -1,0 +1,16 @@
+# SearXNG config for Quack's local stack. Inherits SearXNG's defaults and only
+# overrides what the web_search tool needs: the JSON output format (off by
+# default) and a relaxed limiter so the agent's API calls aren't bot-blocked.
+# This is a dev/local secret — set a real one for any non-local deployment.
+use_default_settings: true
+
+server:
+  secret_key: "quack-local-dev-change-me"
+  limiter: false
+  image_proxy: true
+
+search:
+  # web_search calls /search?format=json; both formats must be enabled.
+  formats:
+    - html
+    - json

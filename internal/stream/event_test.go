@@ -38,6 +38,52 @@ func TestTranslateLabelsPartsByKind(t *testing.T) {
 	}
 }
 
+func TestTranslateAgentLifecycleAndTagging(t *testing.T) {
+	// Orchestrator dispatches: the transfer tool is suppressed and becomes
+	// agent_start; activity is tagged with the author.
+	disp := eventWith(&genai.Part{FunctionCall: &genai.FunctionCall{Name: "transfer_to_agent", Args: map[string]any{"agent_name": "web-researcher"}}})
+	disp.Author = OrchestratorAuthor
+	disp.Actions.TransferToAgent = "web-researcher"
+	got := Translate(disp)
+	if len(got) != 1 || got[0].Name != EventAgentStart {
+		t.Fatalf("dispatch translate = %+v, want one agent_start (transfer suppressed)", got)
+	}
+	if ad, ok := got[0].Data.(AgentData); !ok || ad.Agent != "web-researcher" {
+		t.Errorf("agent_start data = %+v, want web-researcher", got[0].Data)
+	}
+
+	// The specialist's tool call is tagged with its author; no agent_end yet.
+	work := eventWith(&genai.Part{FunctionCall: &genai.FunctionCall{Name: "web_search", Args: map[string]any{}}})
+	work.Author = "web-researcher"
+	got = Translate(work)
+	if len(got) != 1 {
+		t.Fatalf("work translate = %+v, want one tool_call", got)
+	}
+	if tc, ok := got[0].Data.(ToolCallData); !ok || tc.Agent != "web-researcher" || tc.Name != "web_search" {
+		t.Errorf("tool_call data = %+v, want web-researcher/web_search", got[0].Data)
+	}
+
+	// The specialist completing its turn emits agent_end.
+	fin := eventWith(&genai.Part{Text: "the answer"})
+	fin.Author = "web-researcher"
+	fin.TurnComplete = true
+	got = Translate(fin)
+	if len(got) != 2 || got[0].Name != EventToken || got[1].Name != EventAgentEnd {
+		t.Fatalf("final translate = %+v, want token then agent_end", got)
+	}
+
+	// The orchestrator's own turn-completion does NOT emit agent_end.
+	orchFin := eventWith(&genai.Part{Text: "x"})
+	orchFin.Author = OrchestratorAuthor
+	orchFin.TurnComplete = true
+	got = Translate(orchFin)
+	for _, e := range got {
+		if e.Name == EventAgentEnd {
+			t.Errorf("orchestrator turn-complete should not emit agent_end: %+v", got)
+		}
+	}
+}
+
 func TestTranslateNilSafe(t *testing.T) {
 	if got := Translate(nil); got != nil {
 		t.Errorf("Translate(nil) = %+v, want nil", got)

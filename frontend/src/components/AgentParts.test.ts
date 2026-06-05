@@ -4,39 +4,105 @@ import {
   appendThinkingPart,
   appendToolCall,
   fillToolResult,
+  openAgent,
+  closeAgent,
   partsToText,
   type MessagePart,
+  type AgentPart,
 } from './AgentParts'
 
-describe('AgentParts helpers', () => {
-  it('coalesces consecutive streamed text', () => {
+// Helper: assert a part is an agent group and return it (narrows the type).
+function agent(part: MessagePart): AgentPart {
+  if (part.kind !== 'agent') throw new Error(`expected agent, got ${part.kind}`)
+  return part
+}
+
+describe('messageParts tree reducers', () => {
+  it('nests activity under the open actor group', () => {
     let parts: MessagePart[] = []
-    parts = appendTextPart(parts, 'Hello ')
-    parts = appendTextPart(parts, 'world')
-    expect(parts).toEqual([{ kind: 'text', text: 'Hello world' }])
+    parts = openAgent(parts, 'orchestrator')
+    parts = appendThinkingPart(parts, 'deciding')
+    parts = appendToolCall(parts, 'noop', {})
+
+    expect(parts).toHaveLength(1)
+    const orch = agent(parts[0])
+    expect(orch.agent).toBe('orchestrator')
+    expect(orch.done).toBe(false)
+    expect(orch.items.map(i => i.kind)).toEqual(['thinking', 'tool_call'])
   })
 
-  it('opens a new part when the kind changes', () => {
+  it('nests a dispatched agent inside its dispatcher', () => {
     let parts: MessagePart[] = []
-    parts = appendThinkingPart(parts, 'reasoning')
-    parts = appendTextPart(parts, 'answer')
-    expect(parts.map(p => p.kind)).toEqual(['thinking', 'text'])
+    parts = openAgent(parts, 'orchestrator')
+    parts = appendThinkingPart(parts, 'plan')
+    parts = openAgent(parts, 'web-researcher')   // dispatch
+    parts = appendToolCall(parts, 'web_search', { query: 'x' })
+    parts = fillToolResult(parts, 'web_search', { results: [] })
+
+    const orch = agent(parts[0])
+    expect(orch.items.map(i => i.kind)).toEqual(['thinking', 'agent'])
+    const wr = agent(orch.items[1])
+    expect(wr.agent).toBe('web-researcher')
+    expect(wr.items.map(i => i.kind)).toEqual(['tool_call'])
+    const call = wr.items[0]
+    if (call.kind === 'tool_call') expect(call.result).toEqual({ results: [] })
   })
 
-  it('fills a tool result onto the matching pending call', () => {
+  it('closeAgent closes the innermost open group, resuming the parent', () => {
     let parts: MessagePart[] = []
-    parts = appendToolCall(parts, 'current_time', {})
-    parts = fillToolResult(parts, 'current_time', { result: 'now' })
-    const tool = parts[0]
-    expect(tool.kind).toBe('tool_call')
-    if (tool.kind === 'tool_call') expect(tool.result).toEqual({ result: 'now' })
+    parts = openAgent(parts, 'orchestrator')
+    parts = openAgent(parts, 'web-researcher')
+    parts = appendToolCall(parts, 'web_search', { query: 'x' })
+    parts = closeAgent(parts, 'web-researcher')
+    parts = appendToolCall(parts, 'after', {})   // back in the orchestrator
+
+    const orch = agent(parts[0])
+    const wr = agent(orch.items[0])
+    expect(wr.done).toBe(true)
+    // The post-dispatch tool lands in the orchestrator, not the closed researcher.
+    expect(orch.items.map(i => i.kind)).toEqual(['agent', 'tool_call'])
   })
 
-  it('partsToText includes only text parts', () => {
+  it('closeAgent by name closes orphaned descendants when a nested agent_end is dropped', () => {
     let parts: MessagePart[] = []
-    parts = appendThinkingPart(parts, 'reasoning')
-    parts = appendTextPart(parts, 'the answer')
-    parts = appendToolCall(parts, 't', {})
-    expect(partsToText(parts)).toBe('the answer')
+    parts = openAgent(parts, 'orchestrator')
+    parts = openAgent(parts, 'web-researcher')
+    parts = appendToolCall(parts, 'web_search', { query: 'x' })
+    // The researcher's agent_end never arrives; only the orchestrator's does.
+    parts = closeAgent(parts, 'orchestrator')
+
+    const orch = agent(parts[0])
+    expect(orch.done).toBe(true)
+    // Closing the named parent also closes the still-open child, so nothing spins.
+    expect(agent(orch.items[0]).done).toBe(true)
+  })
+
+  it('closeAgent for an unknown/already-closed agent is a no-op', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'orchestrator')
+    const before = parts
+    parts = closeAgent(parts, 'web-researcher') // never opened
+    expect(parts).toBe(before)
+    expect(agent(parts[0]).done).toBe(false)
+  })
+
+  it('keeps answer/narrative text at the top level', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'orchestrator')
+    parts = openAgent(parts, 'web-researcher')
+    parts = appendThinkingPart(parts, 'researching')
+    parts = appendTextPart(parts, 'Here is the answer.')
+
+    expect(parts.map(p => p.kind)).toEqual(['agent', 'text'])
+    expect(partsToText(parts)).toBe('Here is the answer.')
+  })
+
+  it('coalesces streamed thinking within a group', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'orchestrator')
+    parts = appendThinkingPart(parts, 'Hello ')
+    parts = appendThinkingPart(parts, 'world')
+    const orch = agent(parts[0])
+    expect(orch.items).toEqual([{ kind: 'thinking', text: 'Hello world' }])
   })
 })

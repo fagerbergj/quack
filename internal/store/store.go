@@ -7,6 +7,8 @@ package store
 import (
 	"context"
 	"errors"
+	"log"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/adk/session/database"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
@@ -39,14 +42,25 @@ type Store struct {
 // Open connects to Postgres, runs migrations for both the app table and the ADK
 // session/event tables, and returns the store.
 func Open(dsn string) (*Store, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// Keep real errors and slow-query warnings, but drop the "record not found"
+	// spam: ADK probes app_states/user_states (which Quack never writes) and looks
+	// up sessions before creating them, so those misses are normal, not problems.
+	gormCfg := &gorm.Config{Logger: logger.New(
+		log.New(os.Stdout, "", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+		},
+	)}
+	db, err := gorm.Open(postgres.Open(dsn), gormCfg)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.AutoMigrate(&Chat{}); err != nil {
 		return nil, err
 	}
-	sessions, err := database.NewSessionService(postgres.Open(dsn))
+	sessions, err := database.NewSessionService(postgres.Open(dsn), gormCfg)
 	if err != nil {
 		return nil, err
 	}

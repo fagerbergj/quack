@@ -52,7 +52,15 @@ verification, deployment.
 
 ---
 
-## M1 — Config-defined agents + single-agent dispatch
+## M1 — Config-defined agents + single-agent dispatch ✅
+
+<details>
+<summary><strong>✅ Complete.</strong> The orchestrator is now a thin LLM dispatcher that delegates
+<strong>over A2A</strong> to a config-defined <code>web-researcher</code> agent (card + prompt +
+built-in <code>web_search</code> / <code>fetch</code> / <code>summarize</code> tools, with an
+SSRF-guarded fetch); the agent's <code>thinking</code> / <code>tool_call</code> /
+<code>tool_result</code> activity streams back to the chat. Defining a new agent is a card + prompt +
+config entry. Builds green; unit tests for the agent bundle, A2A wiring, and tool/SSRF layers pass.</summary>
 
 **Goal.** Turn the stub orchestrator into one that **dispatches to a real, config-defined specialist
 agent**. Establish the agent-definition mechanism and stand up the **web researcher**. Still
@@ -85,6 +93,8 @@ chat. Defining a new agent is adding a card + prompt + a config entry.
 
 **Out of scope (later).** DAG decomposition / multi-agent planning, adversarial vetting, memory,
 auth, deployment.
+
+</details>
 
 ---
 

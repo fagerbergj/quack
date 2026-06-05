@@ -19,8 +19,13 @@ RUN CGO_ENABLED=0 go build -o /quack ./cmd/server
 
 # 3) Minimal runtime.
 FROM gcr.io/distroless/static-debian12
+WORKDIR /
 COPY --from=backend /quack /quack
 COPY config/quack.yaml /config/quack.yaml
+# Declarative agent bundles (agent-card.json + prompt.md), read at startup. The
+# config references them by the relative path `agents/...` (CWD is /), so keep
+# that layout.
+COPY agents/ /agents/
 ENV QUACK_CONFIG=/config/quack.yaml
 EXPOSE 8080
 ENTRYPOINT ["/quack"]
