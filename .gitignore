@@ -1,17 +1,22 @@
-# Git ignore
+# Build artifacts
 node_modules
 frontend/dist
-server/web/dist
+/quack
+cmd/server/web/dist/assets
 *.db
 *.log
-agent-researcher
 *.swp
 *~
+
+# Local env (secrets)
+.env
 
 # IDE
 .idea
 .vscode
 
-# Generated files (optional - keep if you want to commit them)
-# server/api/schema/types.gen.go
-# frontend/src/generated/
+# Note: generated code (internal/schema/*.gen.go, frontend/src/generated/) is
+# committed on purpose so the codegen-drift CI check can diff against it.
+
+# Storybook build output
+storybook-static

@@ -1,7 +1,0 @@
-# OpenAPI Codegen config
-output: server/api/schema/types.gen.go
-package: schema
-generate:
-  - models
-  - server
-  - client

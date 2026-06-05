@@ -1,0 +1,7 @@
+.git
+**/node_modules
+frontend/dist
+cmd/server/web/dist/assets
+/quack
+.env
+*.log

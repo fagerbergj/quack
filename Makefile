@@ -1,29 +1,46 @@
-.PHONY: build test fmt vet generate generate-server generate-client frontend-build clean
+.PHONY: build run test vet fmt generate frontend-build docker-up docker-down clean
 
+BINARY := quack
+
+## build: build the frontend, embed it, and compile the server
 build: frontend-build
-	go build -o agent-researcher ./server
+	go build -o $(BINARY) ./cmd/server
 
+## frontend-build: build the SPA into the server's embed dir
 frontend-build:
 	cd frontend && npm ci && npm run build
-	rm -rf server/web/dist
-	cp -R frontend/dist server/web/dist
+	rm -rf cmd/server/web/dist
+	cp -R frontend/dist cmd/server/web/dist
 
+## run: build and run locally (expects env: DATABASE_URL, LLM_ENDPOINT, ORCH_MODEL)
+run: build
+	./$(BINARY)
+
+## test: run Go tests
 test:
 	go test ./...
 
+## vet: go vet
 vet:
 	go vet ./...
 
+## fmt: gofmt the source
 fmt:
-	gofmt -w .
+	gofmt -w internal cmd
 
-generate: generate-server generate-client
+## generate: regenerate Go + TS code from openapi.yaml
+generate:
+	./scripts/generate.sh
 
-generate-server:
-	go generate ./server/api/schema/...
+## docker-up: start the full stack (app + self-contained Postgres)
+docker-up:
+	docker compose up --build
 
-generate-client:
-	cd frontend && npx openapi-ts
+## docker-down: stop the stack
+docker-down:
+	docker compose down
 
+## clean: remove build artifacts
 clean:
-	rm -rf server/web/dist frontend/dist agent-researcher
+	rm -rf frontend/dist $(BINARY)
+	git checkout -- cmd/server/web/dist 2>/dev/null || true

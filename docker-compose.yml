@@ -1,0 +1,41 @@
+# Local full stack: the Quack app + a self-contained Postgres. One command:
+#   cp .env.example .env   # set LLM_ENDPOINT to something reachable from the container
+#   docker compose up --build
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: quack
+      POSTGRES_PASSWORD: quack
+      POSTGRES_DB: quack
+    volumes:
+      # Postgres 18+ wants the mount at /var/lib/postgresql (data lives in a
+      # version subdir), not /var/lib/postgresql/data.
+      - quack-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quack"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
+      # Reachable from inside the container. Override in .env for your setup;
+      # host.docker.internal points at an LLM server running on the host.
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11436/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-unused}
+      ORCH_MODEL: ${ORCH_MODEL:-qwen3.6-35b}
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  quack-pgdata:

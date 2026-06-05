@@ -1,4 +1,4 @@
-name: CI/CD
+name: CI
 
 on:
   push:
@@ -7,94 +7,91 @@ on:
     branches: [main, master]
 
 jobs:
-  test:
-    name: Test
+  backend:
+    name: Backend
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
-          cache: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+      - name: Build
+        run: go build ./...
 
-      - name: Install Go dependencies
-        run: |
-          cd /home/jason/workspace/agent-researcher
-          go mod download
-
-      - name: Run Go tests
-        run: |
-          cd /home/jason/workspace/agent-researcher
-          go test ./...
-
-      - name: Run Go vet
-        run: |
-          cd /home/jason/workspace/agent-researcher
-          go vet ./...
+      - name: Vet
+        run: go vet ./...
 
       - name: Format check
         run: |
-          cd /home/jason/workspace/agent-researcher
-          gofmt -d server/
+          out=$(gofmt -l internal cmd)
+          if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
 
-      - name: Install frontend dependencies
-        run: |
-          cd /home/jason/workspace/agent-researcher/frontend
-          npm ci
+      - name: Test
+        run: go test ./...
 
-      - name: Type check
-        run: |
-          cd /home/jason/workspace/agent-researcher/frontend
-          npx tsc --noEmit
-
-      - name: Build frontend
-        run: |
-          cd /home/jason/workspace/agent-researcher/frontend
-          npm run build
-
-      - name: Run frontend tests
-        run: |
-          cd /home/jason/workspace/agent-researcher/frontend
-          npm test -- --run
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.0'
-          cache: false
-
-      - name: Run golangci-lint
+      - name: Lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          working-directory: /home/jason/workspace/agent-researcher
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Run ESLint
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint src/
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test -- --run
+
+  codegen-drift:
+    name: Codegen drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: frontend
+
+      - name: Regenerate from openapi.yaml
+        run: ./scripts/generate.sh
+
+      - name: Fail if generated code is stale
         run: |
-          cd /home/jason/workspace/agent-researcher/frontend
-          npm install --save-dev eslint
-          npx eslint src/
+          if ! git diff --exit-code -- internal/schema frontend/src/generated; then
+            echo "Generated code is out of date. Run ./scripts/generate.sh and commit."
+            exit 1
+          fi

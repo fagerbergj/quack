@@ -1,0 +1,19 @@
+# Quack configuration. Structure is declarative; ${VAR} are interpolated from
+# the environment (secrets never live in this file). See docs/configuration.md.
+providers:
+  default:
+    kind: openai            # API protocol; the endpoint picks the actual server
+    endpoint: ${LLM_ENDPOINT}
+    api_key: ${LLM_API_KEY}
+
+stores:
+  relational:
+    kind: postgres
+    url: ${DATABASE_URL}
+
+orchestrator:
+  provider: default
+  model: ${ORCH_MODEL}
+
+server:
+  addr: ":8080"

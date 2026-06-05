@@ -1,6 +1,18 @@
+import { readAgentStream } from './agentStream'
+import {
+  appendTextPart,
+  appendThinkingPart,
+  appendToolCall,
+  fillToolResult,
+  type MessagePart,
+} from '../components/AgentParts'
+
 export interface Message {
   role: 'user' | 'assistant'
-  content: string
+  // User messages and seeded history carry plain content; live assistant
+  // messages accumulate ordered parts (text / thinking / tool_call).
+  content?: string
+  parts?: MessagePart[]
 }
 
 export interface ChatTurnState {
@@ -57,7 +69,7 @@ export class ChatStore {
     if (cur.streaming) return
 
     const userMessage: Message = { role: 'user', content: trimmed }
-    const assistantMessage: Message = { role: 'assistant', content: '' }
+    const assistantMessage: Message = { role: 'assistant', parts: [] }
     const assistantIdx = cur.messages.length + 1
     this.write(chatId, {
       messages: [...cur.messages, userMessage, assistantMessage],
@@ -77,14 +89,12 @@ export class ChatStore {
     )
   }
 
-  decide(): Promise<void> {
-    return Promise.resolve()
-  }
-
   stop(chatId: string): void {
     this.controllers.get(chatId)?.abort()
   }
 
+  // runStream reads the Streamable-HTTP response (a streamed, SSE-framed body)
+  // and folds each labeled event into the assistant message's parts.
   private async runStream(
     chatId: string,
     fetchFn: (signal: AbortSignal) => Promise<Response>,
@@ -99,27 +109,28 @@ export class ChatStore {
         const data = await res.json().catch(() => ({}))
         throw new Error((data as { error?: string }).error || `${res.status} ${res.statusText}`)
       }
+      if (!res.body) throw new Error('No response body')
 
-      const reader = res.body?.getReader()
-      if (!reader) throw new Error('No response body')
-
-      let fullResponse = ''
-      const decoder = new TextDecoder()
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        const chunk = decoder.decode(value, { stream: true })
-        fullResponse += chunk
-
+      const updateParts = (fn: (parts: MessagePart[]) => MessagePart[]) => {
+        const s = this.states.get(chatId)
+        if (!s) return
         this.write(chatId, {
-          ...this.states.get(chatId)!,
-          messages: this.states.get(chatId)!.messages.map((m, i) =>
-            i === foldIdx ? { ...m, content: fullResponse } : m
+          ...s,
+          messages: s.messages.map((m, i) =>
+            i === foldIdx ? { ...m, parts: fn(m.parts ?? []) } : m,
           ),
         })
       }
+
+      let streamError = ''
+      await readAgentStream(res.body, {
+        onToken: t => updateParts(p => appendTextPart(p, t)),
+        onThinking: t => updateParts(p => appendThinkingPart(p, t)),
+        onToolCall: (name, args) => updateParts(p => appendToolCall(p, name, args)),
+        onToolResult: (name, result) => updateParts(p => fillToolResult(p, name, result)),
+        onError: msg => { streamError = msg },
+      })
+      if (streamError) throw new Error(streamError)
     } catch (err: unknown) {
       this.handleStreamError(chatId, err, foldIdx)
     } finally {
@@ -137,7 +148,8 @@ export class ChatStore {
     if (!s) return
     let messages = s.messages
     const last = messages[assistantIdx]
-    if (last?.role === 'assistant' && !last.content) {
+    const empty = last?.role === 'assistant' && !(last.parts?.length) && !last.content
+    if (empty) {
       messages = messages.slice(0, assistantIdx)
     }
     this.write(chatId, { ...s, messages, error: msg })

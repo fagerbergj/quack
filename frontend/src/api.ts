@@ -1,95 +1,42 @@
-export interface ChatSummary {
-  id: string
-  title: string | null
-  system_prompt: string | null
-  created_at: string
-  updated_at: string
-}
+// Quack REST client. Types and the request SDK are generated from the single
+// source of truth, ../../openapi.yaml (see `npm run generate`); this module is a
+// thin ergonomic wrapper that unwraps the generated result objects and throws on
+// error. The streaming messages endpoint is handled directly by the chat store.
+import {
+  listChats as sdkListChats,
+  createChat as sdkCreateChat,
+  getChat as sdkGetChat,
+  deleteChat as sdkDeleteChat,
+} from './generated'
 
-export interface ChatDetail extends ChatSummary {
-  messages: ChatMessage[]
-}
+export type { ChatSummary, ChatDetail, ChatMessage, ChatList } from './generated'
 
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  created_at: string
-  external_id?: string | null
-}
+import type { ChatSummary, ChatDetail, ChatList } from './generated'
 
-export interface PaginatedChats {
-  data: ChatSummary[]
-  next_page_token?: string | null
+type Result<T> = { data?: T; error?: unknown; response: Response }
+
+function unwrap<T>(r: Result<T>): T {
+  if (!r.response.ok || r.error !== undefined) {
+    const msg =
+      r.error && typeof r.error === 'object' && 'error' in r.error
+        ? String((r.error as { error: unknown }).error)
+        : `Request failed (${r.response.status})`
+    throw new Error(msg)
+  }
+  return r.data as T
 }
 
 export const api = {
-  listChats: async (params?: { page_size?: number; before_id?: string }): Promise<PaginatedChats> => {
-    const qs = new URLSearchParams()
-    if (params?.page_size) qs.set('page_size', String(params.page_size))
-    if (params?.before_id) qs.set('before_id', params.before_id)
-    const res = await fetch(`/api/v1/chats?${qs}`)
-    const json = await res.json()
-    if (!res.ok) throw new Error(json.error ?? 'Failed')
-    return json
+  listChats: async (): Promise<ChatList> => unwrap(await sdkListChats()),
+
+  createChat: async (opts?: { system_prompt?: string }): Promise<ChatSummary> =>
+    unwrap(await sdkCreateChat({ body: { system_prompt: opts?.system_prompt } })),
+
+  getChat: async (chatId: string): Promise<ChatDetail> =>
+    unwrap(await sdkGetChat({ path: { chat_id: chatId } })),
+
+  deleteChat: async (chatId: string): Promise<void> => {
+    const r = await sdkDeleteChat({ path: { chat_id: chatId } })
+    if (!r.response.ok) throw new Error(`Delete failed (${r.response.status})`)
   },
-
-  createChat: async (opts?: { system_prompt?: string }): Promise<ChatSummary> => {
-    const res = await fetch('/api/v1/chats', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ system_prompt: opts?.system_prompt }),
-    })
-    const json = await res.json()
-    if (!res.ok) throw new Error(json.error ?? 'Failed')
-    return json
-  },
-
-  getChat: async (chatId: string): Promise<ChatDetail> => {
-    const res = await fetch(`/api/v1/chats/${chatId}`)
-    const json = await res.json()
-    if (!res.ok) throw new Error(json.error ?? 'Failed')
-    return json
-  },
-
-  patchChat: async (chatId: string, patch: { title?: string | null; system_prompt?: string | null }) => {
-    const res = await fetch(`/api/v1/chats/${chatId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-    if (!res.ok) {
-      const json = await res.json()
-      throw new Error(json.error ?? 'Failed')
-    }
-  },
-
-  deleteChat: async (chatId: string) => {
-    const res = await fetch(`/api/v1/chats/${chatId}`, { method: 'DELETE' })
-    if (!res.ok) {
-      const json = await res.json()
-      throw new Error(json.error ?? 'Failed')
-    }
-  },
-
-  sendMessage: (chatId: string, content: string, signal?: AbortSignal): Promise<Response> =>
-    fetch(`/api/v1/chats/${chatId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-      signal,
-    }),
-
-  decideConfirmation: (
-    chatId: string,
-    callId: string,
-    body: { confirmed: boolean; content?: string },
-    signal?: AbortSignal,
-  ): Promise<Response> =>
-    fetch(`/api/v1/chats/${chatId}/confirmations/${callId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    }),
 }

@@ -1,11 +1,14 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Regenerate all code from the OpenAPI spec (single source of truth):
+#   - the Go chi-server + models (oapi-codegen)
+#   - the TypeScript client (openapi-ts)
+set -euo pipefail
+cd "$(dirname "$0")/.."
 
-echo "Generating Go types from OpenAPI spec..."
-oapi-codegen -package schema -generate types,server openapi.yaml > server/api/schema/types.go
+echo "==> Go server types (oapi-codegen)"
+go generate ./internal/schema/...
 
-echo "Generating TypeScript client from OpenAPI spec..."
-cd frontend
-npx openapi-ts
+echo "==> TypeScript client (openapi-ts)"
+( cd frontend && npm run generate )
 
-echo "Code generation complete!"
+echo "Done."

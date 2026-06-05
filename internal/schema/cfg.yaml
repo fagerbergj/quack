@@ -1,0 +1,10 @@
+# oapi-codegen config: non-strict chi-server + models, generated from ../../openapi.yaml.
+# Non-strict (handlers get http.ResponseWriter/*http.Request) so the SSE
+# messages endpoint can stream directly.
+package: schema
+output: quack.gen.go
+generate:
+  chi-server: true
+  models: true
+output-options:
+  skip-prune: true

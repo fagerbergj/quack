@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
-import { AssistantParts } from '../components/AgentParts'
+import { AssistantParts, partsToText } from '../components/AgentParts'
 import { useChatStore, useChatTurn } from '../state/ChatStoreProvider'
 import type { Message } from '../state/chatStore'
 
@@ -29,6 +29,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const streaming = turn.streaming
   const error = turn.error
   const [input, setInput] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState(globalSystemPrompt)
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<number | null>(null)
@@ -73,7 +74,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
         return [detail, ...prev]
       })
       const seeded: Message[] = detail.messages.map(m => ({
-        role: m.role as 'user' | 'assistant',
+        role: m.role,
         content: m.content,
         parts: m.role === 'assistant' ? [{ kind: 'text', text: m.content }] : undefined,
       }))
@@ -89,7 +90,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
 
   async function handleNewChat() {
     const chat = await api.createChat({
-      system_prompt: globalSystemPrompt.trim() || undefined,
+      system_prompt: systemPrompt.trim() || undefined,
     })
     setChats(prev => [chat, ...prev])
     setActiveChatId(chat.id)
@@ -133,8 +134,6 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     if (activeChatId) store.stop(activeChatId)
   }
 
- 
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const trimmed = input.trim()
@@ -154,7 +153,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   }
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
       {chatListOpen && (
         <div
           className="md:hidden fixed inset-0 z-30 bg-black/50"
@@ -198,7 +197,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
               className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
             >
               <span className={`text-sm truncate pr-6 ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-                {s.title || 'New chat'}
+                New chat
               </span>
               <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
               <button
@@ -223,9 +222,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
               ☰
             </button>
             <h1 className="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {activeChatId
-                ? (chats.find(s => s.id === activeChatId)?.title || 'New chat')
-                : 'Chat'}
+              {activeChatId ? 'New chat' : 'Chat'}
             </h1>
           </div>
           <button
@@ -241,21 +238,14 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             <div className="flex items-start gap-6">
               <div className="flex-1">
                 <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
-                  System prompt
+                  System prompt (applied to new chats)
                 </label>
                 <textarea
                   className="w-full rounded border border-gray-300 dark:border-gray-600 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
                   rows={3}
                   placeholder="Add context to guide answers…"
-                  value={globalSystemPrompt}
-                  onChange={e => {
-                    setChats(prev => prev.map(chat => {
-                      if (chat.id === activeChatId) {
-                        api.patchChat(chat.id, { system_prompt: e.target.value })
-                      }
-                      return chat
-                    }))
-                  }}
+                  value={systemPrompt}
+                  onChange={e => setSystemPrompt(e.target.value)}
                 />
               </div>
             </div>
@@ -274,55 +264,54 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             </div>
           )}
 
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-2xl w-full ${msg.role === 'user' ? 'ml-12' : 'mr-12'}`}>
-                {msg.role === 'user' ? (
-                  <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                    {msg.content}
-                  </div>
-                ) : (
-                  <div>
-                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-                              {streaming && idx === messages.length - 1 ? (
-                        <span className="flex items-center gap-1 h-5 mt-2">
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
-                        </span>
-                      ) : (
-                        <AssistantParts text={msg.content} />
-                      )}
-                      {streaming && idx === messages.length - 1 && (
-                        <span className="flex items-center gap-1 h-5 mt-2">
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
-                        </span>
+          {messages.map((msg, idx) => {
+            const isLast = idx === messages.length - 1
+            const parts = msg.parts ?? []
+            const text = partsToText(parts) || (msg.content ?? '')
+            const showSpinner = streaming && isLast && parts.length === 0
+            return (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-2xl w-full ${msg.role === 'user' ? 'ml-12' : 'mr-12'}`}>
+                  {msg.role === 'user' ? (
+                    <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+                        {showSpinner ? (
+                          <span className="flex items-center gap-1 h-5">
+                            <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
+                            <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
+                            <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
+                          </span>
+                        ) : (
+                          <AssistantParts parts={parts} showCursor={streaming && isLast} />
+                        )}
+                      </div>
+
+                      {text && (!streaming || !isLast) && (
+                        <div className="flex items-center gap-3 mt-1.5 px-1">
+                          <button
+                            onClick={() => handleCopy(idx, text)}
+                            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                          >
+                            {copied === idx ? 'Copied!' : 'Copy'}
+                          </button>
+                          <button
+                            onClick={() => handleDownload(text, idx)}
+                            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                          >
+                            Download
+                          </button>
+                        </div>
                       )}
                     </div>
-
-                    {msg.content && (!streaming || idx < messages.length - 1) && (
-                      <div className="flex items-center gap-3 mt-1.5 px-1">
-                        <button
-                          onClick={() => handleCopy(idx, msg.content)}
-                          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                        >
-                          {copied === idx ? 'Copied!' : 'Copy'}
-                        </button>
-                        <button
-                          onClick={() => handleDownload(msg.content, idx)}
-                          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                        >
-                          Download
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
 
           {error && (
             <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">

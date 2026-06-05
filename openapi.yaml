@@ -1,225 +1,122 @@
-openapi: 3.0.0
-
+openapi: 3.0.3
 info:
-  title: Agent Researcher
+  title: Quack
   version: 0.1.0
-  description: Research agent with chat interface, MCP server, and REST API
-
+  description: |
+    Quack's HTTP API. The chat-message endpoint streams over Server-Sent Events
+    (Streamable HTTP); the SSE body is not fully expressible in OpenAPI, so its
+    event vocabulary is documented in prose and via the `x-sse-events` extension.
 servers:
-  - url: http://localhost:8080
-    description: Local development server
-
-security:
-  - BearerAuth: []
-
-tags:
-  - name: Chat
-    description: Chat conversations and message streaming
-  - name: MCP
-    description: Model Context Protocol endpoints
+  - url: /
 
 paths:
-
   /health:
     get:
-      tags: [Health]
-      summary: Health check
       operationId: healthCheck
+      summary: Liveness check
       responses:
-        '200':
-          description: Service is healthy
+        "200":
+          description: OK
           content:
             text/plain:
               schema:
                 type: string
-                example: ok
 
   /api/v1/chats:
     get:
-      tags: [Chat]
-      summary: List chats
-      description: Returns a paginated list of chat summaries ordered by most recently updated.
       operationId: listChats
-      parameters:
-        - $ref: '#/components/parameters/page_size'
-        - name: before_id
-          in: query
-          required: false
-          schema:
-            type: string
+      summary: List chats
       responses:
-        '200':
-          description: Paginated list of chats.
+        "200":
+          description: The chats
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedChats'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: "#/components/schemas/ChatList"
     post:
-      tags: [Chat]
-      summary: Create a new chat
-      description: Creates a new chat with optional system prompt.
       operationId: createChat
+      summary: Create a chat
       requestBody:
+        required: false
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateChatBody'
+              $ref: "#/components/schemas/CreateChatBody"
       responses:
-        '200':
-          description: Newly created chat.
+        "200":
+          description: The created chat
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChatSummary'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: "#/components/schemas/ChatSummary"
 
   /api/v1/chats/{chat_id}:
-    parameters:
-      - name: chat_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
     get:
-      tags: [Chat]
-      summary: Get chat with messages
       operationId: getChat
+      summary: Get a chat with its messages
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
       responses:
-        '200':
-          description: Chat detail including full message history.
+        "200":
+          description: The chat
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChatDetail'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/ChatDetail"
+        "404":
+          description: Not found
     delete:
-      tags: [Chat]
-      summary: Delete a chat
       operationId: deleteChat
+      summary: Delete a chat
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
       responses:
-        '204':
-          description: Chat deleted.
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "204":
+          description: Deleted
 
   /api/v1/chats/{chat_id}/messages:
     post:
-      tags: [Chat]
-      summary: Send a message and stream the reply
       operationId: sendChatMessage
+      summary: Send a message and stream the response
+      description: |
+        Streams the orchestrator's response as Server-Sent Events. Each event is
+        `event: <name>` followed by `data: <json>`. M0 emits `token` ({"text": "..."})
+        and `done` ({}); errors are sent as `error` ({"error": "..."}).
       parameters:
-        - $ref: '#/components/parameters/chat_id'
+        - $ref: "#/components/parameters/ChatID"
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SendMessageBody'
+              $ref: "#/components/schemas/SendMessageBody"
+      x-sse-events: [token, done, error]
       responses:
-        '200':
-          description: SSE stream of token events followed by done event
+        "200":
+          description: SSE event stream
           content:
             text/event-stream:
               schema:
                 type: string
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/research/mcp:
-    get:
-      tags: [MCP]
-      summary: Get MCP configuration
-      operationId: getMCPConfig
-      responses:
-        '200':
-          description: MCP server configuration
-          content:
-            application/json:
-              schema:
-                type: object
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/research:
-    post:
-      tags: [Research]
-      summary: Perform research using LLM
-      operationId: research
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - prompt
-              properties:
-                prompt:
-                  type: string
-                  description: Research prompt
-      responses:
-        '200':
-          description: Research response
-          content:
-            text/plain:
-              schema:
-                type: string
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/ServerError'
 
 components:
-
-  securitySchemes:
-    BearerAuth:
-      type: http
-      scheme: bearer
-
   parameters:
-    page_size:
-      name: page_size
-      in: query
-      required: false
-      schema:
-        type: integer
-        default: 20
-        minimum: 1
-        maximum: 100
-    chat_id:
+    ChatID:
       name: chat_id
       in: path
       required: true
-      description: UUID of the chat
       schema:
         type: string
-        format: uuid
 
   schemas:
-    CreateChatBody:
-      type: object
-      properties:
-        system_prompt:
-          type: string
-          nullable: true
-          description: Optional system prompt to guide the assistant
-
     ChatSummary:
       type: object
-      required:
-        - id
-        - created_at
-        - updated_at
+      required: [id, system_prompt, created_at, updated_at]
       properties:
         id:
           type: string
-          format: uuid
         system_prompt:
           type: string
-          nullable: true
         created_at:
           type: string
           format: date-time
@@ -227,94 +124,45 @@ components:
           type: string
           format: date-time
 
-    ChatDetail:
-      allOf:
-        - $ref: '#/components/schemas/ChatSummary'
-        - type: object
-          required:
-            - messages
-          properties:
-            messages:
-              type: array
-              items:
-                $ref: '#/components/schemas/ChatMessage'
-
     ChatMessage:
       type: object
-      required:
-        - id
-        - role
-        - content
-        - created_at
+      required: [role, content]
       properties:
-        id:
-          type: string
-          format: uuid
         role:
           type: string
           enum: [user, assistant]
         content:
           type: string
-        created_at:
-          type: string
-          format: date-time
-        external_id:
-          type: string
-          nullable: true
 
-    PaginatedChats:
+    ChatDetail:
+      allOf:
+        - $ref: "#/components/schemas/ChatSummary"
+        - type: object
+          required: [messages]
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChatMessage"
+
+    ChatList:
       type: object
-      required:
-        - data
+      required: [data]
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ChatSummary'
-        next_page_token:
+            $ref: "#/components/schemas/ChatSummary"
+
+    CreateChatBody:
+      type: object
+      properties:
+        system_prompt:
           type: string
-          nullable: true
 
     SendMessageBody:
       type: object
-      required:
-        - content
+      required: [content]
       properties:
         content:
           type: string
-          description: Message content
-
-  responses:
-    BadRequest:
-      description: Bad request
-      content:
-        application/json:
-          schema:
-            type: object
-            required:
-              - error
-            properties:
-              error:
-                type: string
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            type: object
-            required:
-              - error
-            properties:
-              error:
-                type: string
-    ServerError:
-      description: Server error
-      content:
-        application/json:
-          schema:
-            type: object
-            required:
-              - error
-            properties:
-              error:
-                type: string
