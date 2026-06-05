@@ -1,0 +1,19 @@
+extends:
+  - recommended
+
+rules:
+  # M0 has no auth (inbound auth lands in M4), so there are no security schemes
+  # to declare yet.
+  security-defined: off
+
+  # Private spec, not distributed — a license field would be noise.
+  info-license: off
+
+  # The frontend is served same-origin and uses relative paths; a documented
+  # `servers:` URL would get inlined into the generated client as a hardcoded
+  # baseUrl, breaking non-local envs.
+  no-empty-servers: off
+
+  # The streaming messages endpoint is documented as 200 text/event-stream; a
+  # 4xx body shape isn't meaningful for the SSE stream.
+  operation-4xx-response: off

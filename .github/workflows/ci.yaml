@@ -1,97 +1,87 @@
-name: CI
+name: ci
 
 on:
   push:
-    branches: [main, master]
+    branches: ["main"]
   pull_request:
-    branches: [main, master]
+    branches: ["main"]
 
 jobs:
-  backend:
-    name: Backend
+  go-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  go-fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.0'
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l internal cmd)"
 
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Format check
-        run: |
-          out=$(gofmt -l internal cmd)
-          if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
-
-      - name: Test
-        run: go test ./...
-
-      - name: Lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-
-  frontend:
-    name: Frontend
+  frontend-build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: "24"
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npx tsc --noEmit
+        working-directory: frontend
+      - run: npx eslint src/
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
 
-      - name: Install
-        run: npm ci
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
 
-      - name: Type check
-        run: npx tsc --noEmit
-
-      - name: Lint
-        run: npx eslint src/
-
-      - name: Build
-        run: npm run build
-
-      - name: Test
-        run: npm test -- --run
+  openapi-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npx --yes @redocly/cli@latest lint openapi.yaml --config redocly.yaml
 
   codegen-drift:
-    name: Codegen drift
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.0'
-
-      - uses: actions/setup-node@v4
+          go-version-file: go.mod
+      - uses: actions/setup-node@v6
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: "24"
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend deps
-        run: npm ci
+      - run: npm ci
         working-directory: frontend
-
-      - name: Regenerate from openapi.yaml
-        run: ./scripts/generate.sh
-
-      - name: Fail if generated code is stale
-        run: |
-          if ! git diff --exit-code -- internal/schema frontend/src/generated; then
-            echo "Generated code is out of date. Run ./scripts/generate.sh and commit."
-            exit 1
-          fi
+      - run: ./scripts/generate.sh
+      - name: fail on uncommitted codegen drift
+        run: git diff --exit-code -- internal/schema frontend/src/generated
