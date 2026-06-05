@@ -17,6 +17,7 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/agent"
+	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 
 	"github.com/fagerbergj/quack/internal/agent"
@@ -28,6 +29,7 @@ import (
 	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/tools"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 //go:embed all:web/dist
@@ -120,6 +122,26 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 	}
 	sort.Strings(names) // deterministic startup order
 
+	// The trust gate is global policy: build the judge model and resolve the
+	// rubric once, then wrap every worker with it before serving.
+	var judge model.LLM
+	var gateCfg vetting.Config
+	if cfg.Adversarial.Enabled() {
+		jprov, ok := cfg.Provider(cfg.Adversarial.Provider)
+		if !ok {
+			return nil, nil, fmt.Errorf("adversarial: provider %q not found", cfg.Adversarial.Provider)
+		}
+		var err error
+		if judge, err = inference.NewModel(jprov, cfg.Adversarial.Model); err != nil {
+			return nil, nil, fmt.Errorf("adversarial: judge model: %w", err)
+		}
+		if gateCfg, err = vetting.FromConfig(cfg.Adversarial); err != nil {
+			return nil, nil, err
+		}
+		log.Printf("trust gate enabled: judge=%q max_rounds=%d threshold=%.2f self_refine=%t",
+			cfg.Adversarial.Model, gateCfg.MaxRounds, gateCfg.Threshold, gateCfg.SelfRefine)
+	}
+
 	var clients []adkagent.Agent
 	var servers []*agent.A2AServer
 	for _, name := range names {
@@ -152,7 +174,16 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 			return nil, servers, fmtErr(name, "build: %v", err)
 		}
 
-		srv, err := agent.Serve(ag, sessions)
+		// Wrap the worker in the trust gate (self-refine + judge loop) before
+		// serving it, so the orchestrator dispatches to the gated agent unchanged.
+		served := ag
+		if cfg.Adversarial.Enabled() {
+			if served, err = vetting.NewGatedAgent(ag, m, judge, gateCfg); err != nil {
+				return nil, servers, fmtErr(name, "gate: %v", err)
+			}
+		}
+
+		srv, err := agent.Serve(served, sessions)
 		if err != nil {
 			return nil, servers, fmtErr(name, "a2a serve: %v", err)
 		}

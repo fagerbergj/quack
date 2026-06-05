@@ -10,6 +10,14 @@ export interface ConfirmationRequestPayload {
   payload: Record<string, unknown>
 }
 
+// JudgeVerdictPayload is one round of the independent judge's score.
+export interface JudgeVerdictPayload {
+  round: number
+  score: number
+  passed: boolean
+  feedback: string
+}
+
 export interface AgentStreamHandlers {
   onToken?: (text: string) => void
   onThinking?: (text: string) => void
@@ -17,6 +25,8 @@ export interface AgentStreamHandlers {
   onToolResult?: (name: string, result: unknown) => void
   onAgentStart?: (agent: string) => void
   onAgentEnd?: (agent: string) => void
+  onSelfRefine?: (changed: boolean) => void
+  onJudgeVerdict?: (v: JudgeVerdictPayload) => void
   onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
   onError?: (msg: string) => void
   onDone?: () => void
@@ -26,6 +36,7 @@ export interface AgentStreamHandlers {
 export const AGENT_EVENT_NAMES = [
   'token', 'thinking', 'tool_call', 'tool_result',
   'agent_start', 'agent_end',
+  'self_refine', 'judge_verdict',
   'confirmation_request', 'error', 'done',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
@@ -63,6 +74,21 @@ export function dispatchAgentEvent(
     case 'agent_end':
       if (hasStringField(parsed, 'agent')) handlers.onAgentEnd?.(parsed.agent)
       return true
+    case 'self_refine': {
+      const changed = (parsed as { changed?: boolean }).changed === true
+      handlers.onSelfRefine?.(changed)
+      return true
+    }
+    case 'judge_verdict': {
+      const p = parsed as { round?: number; score?: number; passed?: boolean; feedback?: string }
+      handlers.onJudgeVerdict?.({
+        round: typeof p.round === 'number' ? p.round : 0,
+        score: typeof p.score === 'number' ? p.score : 0,
+        passed: p.passed === true,
+        feedback: typeof p.feedback === 'string' ? p.feedback : '',
+      })
+      return true
+    }
     case 'confirmation_request':
       if (hasStringField(parsed, 'call_id')) {
         const p = parsed as { call_id: string; tool_name?: string; hint?: string; payload?: Record<string, unknown> }

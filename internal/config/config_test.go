@@ -159,3 +159,58 @@ agents:
 		t.Fatal("expected error for agent with unknown provider")
 	}
 }
+
+// baseConfig is a minimal valid config that adversarial tests append to.
+const baseConfig = `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  relational: { kind: postgres, url: u }
+orchestrator: { provider: default, model: m }
+`
+
+func TestLoadAdversarialDefaultsAndDisabled(t *testing.T) {
+	// No adversarial block ⇒ vetting disabled, config still valid.
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Adversarial.Enabled() {
+		t.Error("adversarial should be disabled when no model is set")
+	}
+
+	// Enabled with zero rounds/threshold ⇒ defaults applied.
+	c, err = Load(writeTemp(t, baseConfig+`
+adversarial:
+  provider: default
+  model: judge-m
+  rubric: "be good"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Adversarial.Enabled() {
+		t.Fatal("adversarial should be enabled")
+	}
+	if c.Adversarial.MaxRounds != 2 || c.Adversarial.Threshold != 0.7 {
+		t.Errorf("defaults not applied: rounds=%d threshold=%v", c.Adversarial.MaxRounds, c.Adversarial.Threshold)
+	}
+}
+
+func TestLoadAdversarialRejectsBadConfig(t *testing.T) {
+	cases := map[string]string{
+		"unknown provider": `
+adversarial: { provider: nope, model: j, rubric: r }`,
+		"no rubric": `
+adversarial: { provider: default, model: j }`,
+		"both rubrics": `
+adversarial: { provider: default, model: j, rubric: r, rubric_path: p }`,
+		"bad threshold": `
+adversarial: { provider: default, model: j, rubric: r, threshold: 1.5 }`,
+	}
+	for name, block := range cases {
+		if _, err := Load(writeTemp(t, baseConfig+block)); err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+}

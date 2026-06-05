@@ -6,6 +6,8 @@ import {
   fillToolResult,
   openAgent,
   closeAgent,
+  appendSelfRefine,
+  appendJudgeVerdict,
   partsToText,
   type MessagePart,
   type AgentPart,
@@ -75,6 +77,23 @@ describe('messageParts tree reducers', () => {
     expect(orch.done).toBe(true)
     // Closing the named parent also closes the still-open child, so nothing spins.
     expect(agent(orch.items[0]).done).toBe(true)
+  })
+
+  it('nests self_refine and judge_verdict under the active agent and keeps them out of text', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'orchestrator')
+    parts = openAgent(parts, 'web-researcher')
+    parts = appendSelfRefine(parts, true)
+    parts = appendJudgeVerdict(parts, { round: 1, score: 0.4, passed: false, feedback: 'add sources' })
+    parts = appendJudgeVerdict(parts, { round: 2, score: 0.8, passed: true, feedback: '' })
+    parts = appendTextPart(parts, 'The vetted answer.')
+
+    const wr = agent(agent(parts[0]).items[0])
+    expect(wr.items.map(i => i.kind)).toEqual(['self_refine', 'judge_verdict', 'judge_verdict'])
+    const last = wr.items[2]
+    if (last.kind === 'judge_verdict') expect(last.passed).toBe(true)
+    // Verdicts/refine never leak into the copyable answer text.
+    expect(partsToText(parts)).toBe('The vetted answer.')
   })
 
   it('closeAgent for an unknown/already-closed agent is a no-op', () => {

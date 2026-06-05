@@ -6,6 +6,8 @@ import {
   fillToolResult,
   openAgent,
   closeAgent,
+  appendSelfRefine,
+  appendJudgeVerdict,
   type MessagePart,
 } from '../components/AgentParts'
 
@@ -132,6 +134,8 @@ export class ChatStore {
         onToolResult: (name, result) => updateParts(p => fillToolResult(p, name, result)),
         onAgentStart: agent => updateParts(p => openAgent(p, agent)),
         onAgentEnd: agent => updateParts(p => closeAgent(p, agent)),
+        onSelfRefine: changed => updateParts(p => appendSelfRefine(p, changed)),
+        onJudgeVerdict: v => updateParts(p => appendJudgeVerdict(p, v)),
         onError: msg => { streamError = msg },
       })
       if (streamError) throw new Error(streamError)

@@ -9,7 +9,10 @@
 // instead of inferring boundaries from message content.
 package stream
 
-import "google.golang.org/adk/session"
+import (
+	"google.golang.org/adk/session"
+	"google.golang.org/genai"
+)
 
 // OrchestratorAuthor is the ADK author of the root dispatcher's events (mirrors
 // the agent name in internal/orchestrator). Its turn-completion is its own, not a
@@ -20,6 +23,17 @@ const OrchestratorAuthor = "orchestrator"
 // agent_start lifecycle event rather than as a normal tool call.
 const transferTool = "transfer_to_agent"
 
+// The trust gate (internal/vetting) emits its self-refine and judge activity as
+// session events carrying a single marker function-response part with one of
+// these reserved names. Encoding them this way means they ride the same A2A
+// artifact path as real tool results, are skipped by the chat-history projection,
+// and — as orphan responses with no matching call — are dropped from the worker's
+// future LLM context by ADK. Translate decodes them into dedicated wire events.
+const (
+	judgeTool      = "record_judge_verdict"
+	selfRefineTool = "record_self_refine"
+)
+
 // Event names. M0 emitted only token / done / error; the rest fill in as later
 // milestones emit them.
 const (
@@ -29,6 +43,8 @@ const (
 	EventToolResult          = "tool_result"
 	EventAgentStart          = "agent_start"
 	EventAgentEnd            = "agent_end"
+	EventSelfRefine          = "self_refine"
+	EventJudgeVerdict        = "judge_verdict"
 	EventConfirmationRequest = "confirmation_request"
 	EventError               = "error"
 	EventDone                = "done"
@@ -76,6 +92,23 @@ type AgentData struct {
 	Agent string `json:"agent"`
 }
 
+// SelfRefineData is the `self_refine` event payload: the gate ran the worker's
+// own self-critique pre-pass, and whether it changed the answer.
+type SelfRefineData struct {
+	Agent   string `json:"agent,omitempty"`
+	Changed bool   `json:"changed"`
+}
+
+// JudgeVerdictData is the `judge_verdict` event payload: the independent judge's
+// score for one round, whether it passed the threshold, and revision feedback.
+type JudgeVerdictData struct {
+	Agent    string  `json:"agent,omitempty"`
+	Round    int     `json:"round"`
+	Score    float64 `json:"score"`
+	Passed   bool    `json:"passed"`
+	Feedback string  `json:"feedback,omitempty"`
+}
+
 // Token builds a token event.
 func Token(agent, text string) SSEEvent {
 	return SSEEvent{Name: EventToken, Data: TokenData{Agent: agent, Text: text}}
@@ -104,6 +137,38 @@ func AgentStart(agent string) SSEEvent {
 // AgentEnd marks a specialist agent's turn completing.
 func AgentEnd(agent string) SSEEvent {
 	return SSEEvent{Name: EventAgentEnd, Data: AgentData{Agent: agent}}
+}
+
+// SelfRefine builds a self_refine event.
+func SelfRefine(agent string, changed bool) SSEEvent {
+	return SSEEvent{Name: EventSelfRefine, Data: SelfRefineData{Agent: agent, Changed: changed}}
+}
+
+// JudgeVerdict builds a judge_verdict event.
+func JudgeVerdict(agent string, round int, score float64, passed bool, feedback string) SSEEvent {
+	return SSEEvent{Name: EventJudgeVerdict, Data: JudgeVerdictData{
+		Agent: agent, Round: round, Score: score, Passed: passed, Feedback: feedback,
+	}}
+}
+
+// SelfRefinePart encodes a self-refine pass as the marker function-response part
+// the trust gate yields (see the judgeTool/selfRefineTool comment).
+func SelfRefinePart(changed bool) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     selfRefineTool,
+		Response: map[string]any{"changed": changed},
+	}}
+}
+
+// JudgeVerdictPart encodes one judge verdict as the marker function-response part
+// the trust gate yields.
+func JudgeVerdictPart(round int, score float64, passed bool, feedback string) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name: judgeTool,
+		Response: map[string]any{
+			"round": round, "score": score, "passed": passed, "feedback": feedback,
+		},
+	}}
 }
 
 // Errorf builds an error event.
@@ -145,8 +210,17 @@ func Translate(ev *session.Event) []SSEEvent {
 				}
 				out = append(out, ToolCall(agent, p.FunctionCall.Name, p.FunctionCall.Args))
 			case p.FunctionResponse != nil:
-				if p.FunctionResponse.Name == transferTool {
+				switch p.FunctionResponse.Name {
+				case transferTool:
 					continue // surfaced as agent_start
+				case selfRefineTool:
+					r := p.FunctionResponse.Response
+					out = append(out, SelfRefine(agent, asBool(r["changed"])))
+					continue
+				case judgeTool:
+					r := p.FunctionResponse.Response
+					out = append(out, JudgeVerdict(agent, asInt(r["round"]), asFloat(r["score"]), asBool(r["passed"]), asString(r["feedback"])))
+					continue
 				}
 				out = append(out, ToolResult(agent, p.FunctionResponse.Name, p.FunctionResponse.Response))
 			case p.Text != "":
@@ -162,3 +236,32 @@ func Translate(ev *session.Event) []SSEEvent {
 	}
 	return out
 }
+
+// Marker-payload values survive the A2A round-trip as JSON, so numbers may arrive
+// as float64; these extractors read a value tolerantly with a zero fallback.
+func asInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+func asFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	}
+	return 0
+}
+
+func asBool(v any) bool     { b, _ := v.(bool); return b }
+func asString(v any) string { s, _ := v.(string); return s }

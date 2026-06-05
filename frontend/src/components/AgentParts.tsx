@@ -2,7 +2,7 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ReactNode } from 'react'
-import type { MessagePart, ToolCallPart, AgentPart } from './messageParts'
+import type { MessagePart, ToolCallPart, AgentPart, SelfRefinePart, JudgeVerdictPart } from './messageParts'
 import { summarizeArgs, prettyJSON } from './toolFormat'
 
 // Re-export the data layer so existing import sites (`from '.../AgentParts'`)
@@ -38,6 +38,8 @@ function PartView({ part }: { part: MessagePart }) {
     case 'thinking': return <ThinkBlock text={part.text} />
     case 'tool_call': return <ToolBlock part={part} />
     case 'agent': return <AgentGroup part={part} />
+    case 'self_refine': return <SelfRefineBlock part={part} />
+    case 'judge_verdict': return <JudgeBlock part={part} />
   }
 }
 
@@ -93,6 +95,37 @@ function WindowedItems({ items }: { items: MessagePart[] }) {
       )}
       {items.slice(start).map((it, i) => <PartView key={start + i} part={it} />)}
     </>
+  )
+}
+
+// SelfRefineBlock is a one-line note that the worker self-refined its draft.
+function SelfRefineBlock({ part }: { part: SelfRefinePart }) {
+  return (
+    <div className="my-1.5 px-1 text-xs text-gray-500 dark:text-gray-400 not-prose">
+      ✎ self-refined {part.changed ? '— revised the draft' : '— no changes needed'}
+    </div>
+  )
+}
+
+// JudgeBlock renders one judge verdict: a pass/fail badge with the score, plus
+// the feedback (shown when present, e.g. on a fail).
+function JudgeBlock({ part }: { part: JudgeVerdictPart }) {
+  const pct = Math.round(part.score * 100)
+  const badge = part.passed
+    ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+  return (
+    <div className="my-1.5 px-1 text-xs not-prose">
+      <div className="flex items-center gap-2">
+        <span className="text-gray-500 dark:text-gray-400">⚖ judge · round {part.round}</span>
+        <span className={`rounded px-1.5 py-0.5 font-medium ${badge}`}>
+          {part.passed ? 'pass' : 'revise'} · {pct}%
+        </span>
+      </div>
+      {part.feedback && (
+        <div className="mt-1 text-gray-500 dark:text-gray-400">{part.feedback}</div>
+      )}
+    </div>
   )
 }
 

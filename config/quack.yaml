@@ -32,5 +32,16 @@ tools:
   web_fetch:
     render_backend: ${CRAWL4AI_URL}  # crawl4ai /md backend, e.g. http://crawl4ai:11235
 
+# The trust gate wraps every agent: a self-refine pre-pass, then an independent
+# judge (a dedicated model) scores the answer against the rubric below, looping
+# up to max_rounds or until threshold is met. Leave model empty to disable.
+adversarial:
+  provider: default
+  model: ${JUDGE_MODEL}
+  max_rounds: 2
+  threshold: 0.7
+  self_refine: true
+  rubric_path: config/constitution.md
+
 server:
   addr: ":8080"

@@ -84,6 +84,42 @@ func TestTranslateAgentLifecycleAndTagging(t *testing.T) {
 	}
 }
 
+func TestTranslateDecodesVettingMarkers(t *testing.T) {
+	// Self-refine and judge markers ride as function-response parts; Translate
+	// decodes them into dedicated wire events rather than tool_result.
+	ev := eventWith(
+		SelfRefinePart(true),
+		JudgeVerdictPart(2, 0.85, true, "looks grounded"),
+	)
+	ev.Author = "web-researcher"
+	got := Translate(ev)
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want 2: %+v", len(got), got)
+	}
+	sr, ok := got[0].Data.(SelfRefineData)
+	if !ok || sr.Agent != "web-researcher" || !sr.Changed {
+		t.Errorf("self_refine = %+v", got[0])
+	}
+	jv, ok := got[1].Data.(JudgeVerdictData)
+	if !ok || jv.Round != 2 || jv.Score != 0.85 || !jv.Passed || jv.Feedback != "looks grounded" {
+		t.Errorf("judge_verdict = %+v", got[1])
+	}
+}
+
+func TestTranslateDecodesJudgeMarkerFromJSONNumbers(t *testing.T) {
+	// After the A2A round-trip, Response numbers arrive as float64; decoding must
+	// still yield the right int round / float score.
+	ev := eventWith(&genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     "record_judge_verdict",
+		Response: map[string]any{"round": float64(1), "score": float64(0.5), "passed": false, "feedback": "thin"},
+	}})
+	got := Translate(ev)
+	jv, ok := got[0].Data.(JudgeVerdictData)
+	if !ok || jv.Round != 1 || jv.Score != 0.5 || jv.Passed {
+		t.Errorf("judge_verdict from float64 = %+v", got[0])
+	}
+}
+
 func TestTranslateNilSafe(t *testing.T) {
 	if got := Translate(nil); got != nil {
 		t.Errorf("Translate(nil) = %+v, want nil", got)

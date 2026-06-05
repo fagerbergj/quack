@@ -54,8 +54,14 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * Send a message and stream the response
  *
  * Streams the orchestrator's response as Server-Sent Events. Each event is
- * `event: <name>` followed by `data: <json>`. M0 emits `token` ({"text": "..."})
- * and `done` ({}); errors are sent as `error` ({"error": "..."}).
+ * `event: <name>` followed by `data: <json>`. Activity events carry the
+ * `agent` that produced them. The vocabulary: `token` ({"text"}) is answer
+ * text; `thinking` ({"text"}) is reasoning; `tool_call` ({"name","args"}) and
+ * `tool_result` ({"name","result"}) are tool activity; `agent_start` /
+ * `agent_end` ({"agent"}) bracket a dispatched agent's turn; `self_refine`
+ * ({"changed"}) and `judge_verdict` ({"round","score","passed","feedback"})
+ * are the trust gate's self-refine and independent-judge activity; `done` ({})
+ * terminates the stream; errors are sent as `error` ({"error"}).
  *
  */
 export const sendChatMessage = <ThrowOnError extends boolean = false>(options: Options<SendChatMessageData, ThrowOnError, SendChatMessageResponse>): Promise<ServerSentEventsResult<SendChatMessageResponses, unknown | void, ThrowOnError>> => (options.client ?? client).sse.post<SendChatMessageResponses, unknown, ThrowOnError>({

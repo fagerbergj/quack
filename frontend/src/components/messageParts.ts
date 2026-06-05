@@ -10,11 +10,28 @@
 // inside their actor's group.
 
 // MessagePart is one node of the message tree.
-export type MessagePart = TextPart | ThinkingPart | ToolCallPart | AgentPart
+export type MessagePart = TextPart | ThinkingPart | ToolCallPart | AgentPart | SelfRefinePart | JudgeVerdictPart
 
 export interface TextPart {
   kind: 'text'
   text: string
+}
+
+// SelfRefinePart records that the trust gate ran the worker's self-refine pass,
+// and whether it changed the answer. Nests inside its actor group.
+export interface SelfRefinePart {
+  kind: 'self_refine'
+  changed: boolean
+}
+
+// JudgeVerdictPart records one round of the independent judge's verdict. Nests
+// inside its actor group.
+export interface JudgeVerdictPart {
+  kind: 'judge_verdict'
+  round: number
+  score: number
+  passed: boolean
+  feedback: string
 }
 
 export interface ThinkingPart {
@@ -72,6 +89,18 @@ export function appendToolCall(parts: MessagePart[], name: string, args: Record<
 // the active actor group.
 export function fillToolResult(parts: MessagePart[], name: string, result: unknown): MessagePart[] {
   return fillPending(parts, name, result) ?? parts
+}
+
+// appendSelfRefine nests a self-refine marker under the active actor group.
+export function appendSelfRefine(parts: MessagePart[], changed: boolean): MessagePart[] {
+  const node: SelfRefinePart = { kind: 'self_refine', changed }
+  return intoOpenAgent(parts, items => [...items, node]) ?? [...parts, node]
+}
+
+// appendJudgeVerdict nests a judge verdict under the active actor group.
+export function appendJudgeVerdict(parts: MessagePart[], v: Omit<JudgeVerdictPart, 'kind'>): MessagePart[] {
+  const node: JudgeVerdictPart = { kind: 'judge_verdict', ...v }
+  return intoOpenAgent(parts, items => [...items, node]) ?? [...parts, node]
 }
 
 // appendTextPart appends answer/narrative text at the top level, coalescing with a
