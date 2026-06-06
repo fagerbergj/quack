@@ -9,6 +9,8 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/inference"
 )
 
 const (
@@ -50,29 +52,15 @@ func summarizeText(ctx context.Context, m model.LLM, text, focus string) (string
 	if f := strings.TrimSpace(focus); f != "" {
 		prompt = "Focus on: " + f + "\n\nText:\n" + text
 	}
-
-	req := &model.LLMRequest{
+	result, err := inference.Generate(ctx, m, &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: prompt}}}},
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: summarizeInstruction}}},
 			MaxOutputTokens:   summarizeMaxTokens,
 		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("summarize: %w", err)
 	}
-
-	var out strings.Builder
-	for resp, err := range m.GenerateContent(ctx, req, false) {
-		if err != nil {
-			return "", fmt.Errorf("summarize: %w", err)
-		}
-		if resp.Content == nil {
-			continue
-		}
-		for _, p := range resp.Content.Parts {
-			if p.Thought || p.Text == "" {
-				continue
-			}
-			out.WriteString(p.Text)
-		}
-	}
-	return strings.TrimSpace(out.String()), nil
+	return result, nil
 }

@@ -30,6 +30,13 @@ import (
 // invokePath is where each agent's A2A JSON-RPC endpoint is mounted.
 const invokePath = "/invoke"
 
+// agentWithWorker is satisfied by wrapper agents (e.g. the trust gate) that
+// want their inner worker's tool-derived skills reflected in the published
+// AgentCard rather than the wrapper's own (usually empty) skill set.
+type agentWithWorker interface {
+	Worker() adkagent.Agent
+}
+
 // A2AServer is a co-located A2A server exposing one ADK agent over an ephemeral
 // loopback port. It owns the listener; Close stops it.
 type A2AServer struct {
@@ -64,7 +71,7 @@ func Serve(ag adkagent.Agent, sessions session.Service) (*A2AServer, error) {
 		Version:            "1.0.0",
 		DefaultInputModes:  []string{"text/plain"},
 		DefaultOutputModes: []string{"text/plain"},
-		Skills:             adka2a.BuildAgentSkills(ag),
+		Skills:             buildSkills(ag),
 		Capabilities:       a2a.AgentCapabilities{Streaming: true},
 	}
 
@@ -92,6 +99,16 @@ func Serve(ag adkagent.Agent, sessions session.Service) (*A2AServer, error) {
 
 // Close stops the A2A server's listener.
 func (s *A2AServer) Close() error { return s.listener.Close() }
+
+// buildSkills returns the A2A skills for ag. If ag wraps a worker (agentWithWorker),
+// the worker's tool-derived skills are used so the published card reflects the
+// actual capabilities rather than the wrapper's empty skill set.
+func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
+	if w, ok := ag.(agentWithWorker); ok {
+		return adka2a.BuildAgentSkills(w.Worker())
+	}
+	return adka2a.BuildAgentSkills(ag)
+}
 
 // Client returns an ADK agent that dispatches to this server over A2A. Use it as
 // a sub-agent of the orchestrator; its Name matches the served agent's, so

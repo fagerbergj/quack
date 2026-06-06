@@ -18,7 +18,9 @@ package vetting
 
 import (
 	"iter"
+	"log"
 	"strings"
+	"time"
 
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/model"
@@ -45,35 +47,59 @@ type gate struct {
 	name        string
 }
 
+// GatedAgent is the public handle for a trust-gated worker. It embeds the ADK
+// agent (Name/Description/Run pass through) so it satisfies adkagent.Agent, and
+// exposes the inner worker so a2a.Serve can pull its tool-derived skills for the
+// published AgentCard.
+type GatedAgent struct {
+	adkagent.Agent
+	worker adkagent.Agent
+}
+
+// Worker returns the wrapped worker (consumed by agent.Serve via the
+// agentWithWorker interface to propagate skill metadata to the AgentCard).
+func (g *GatedAgent) Worker() adkagent.Agent { return g.worker }
+
 // NewGatedAgent wraps worker in the trust gate. workerModel is the worker's own
 // model (used for the free self-refine + revision passes); judge is the
 // independent judge model.
-func NewGatedAgent(worker adkagent.Agent, workerModel, judge model.LLM, cfg Config) (adkagent.Agent, error) {
+func NewGatedAgent(worker adkagent.Agent, workerModel, judge model.LLM, cfg Config) (*GatedAgent, error) {
 	g := &gate{worker: worker, workerModel: workerModel, judge: judge, cfg: cfg, name: worker.Name()}
 	// The worker is invoked directly (g.worker.Run), not registered as a SubAgent:
 	// the gate echoes the worker's name so A2A dispatch resolves it, and a SubAgent
 	// of the same name would collide in the runner's agent-tree uniqueness check.
-	return adkagent.New(adkagent.Config{
+	ag, err := adkagent.New(adkagent.Config{
 		Name:        worker.Name(),
 		Description: worker.Description(),
 		Run:         g.run,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &GatedAgent{Agent: ag, worker: worker}, nil
 }
 
 func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
 	return func(yield func(*session.Event, error) bool) {
+		t0 := time.Now()
+		log.Printf("vetting[%s]: worker start", g.name)
+
 		// Round 0: run the worker. Its thinking/tool events stream through; its
 		// answer text is buffered so only the vetted answer is surfaced.
 		answer, ok := g.runWorker(ctx, yield)
 		if !ok {
 			return
 		}
+		log.Printf("vetting[%s]: worker done in %s answer_len=%d", g.name, time.Since(t0).Round(time.Second), len(answer))
 
 		// Self-refine pre-pass: the worker critiques and revises its own draft
 		// (a free same-model round-trip) before the judge sees it.
 		if g.cfg.SelfRefine && strings.TrimSpace(answer) != "" {
+			tsr := time.Now()
+			log.Printf("vetting[%s]: self-refine start", g.name)
 			refined, err := selfRefine(ctx, g.workerModel, ctx.UserContent(), answer)
 			if err != nil {
+				log.Printf("vetting[%s]: self-refine error after %s: %v", g.name, time.Since(tsr).Round(time.Millisecond), err)
 				if !yield(nil, err) {
 					return
 				}
@@ -84,6 +110,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				if changed {
 					answer = refined
 				}
+				log.Printf("vetting[%s]: self-refine done in %s changed=%v", g.name, time.Since(tsr).Round(time.Millisecond), changed)
 				if !g.emit(ctx, yield, stream.SelfRefinePart(changed)) {
 					return
 				}
@@ -96,23 +123,31 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// emitting the answer, so an un-vetted draft is never returned or persisted
 		// when the judge can't run.
 		for round := 1; round <= g.cfg.MaxRounds; round++ {
+			tj := time.Now()
+			log.Printf("vetting[%s]: judge round %d/%d start", g.name, round, g.cfg.MaxRounds)
 			v, err := runJudge(ctx, g.judge, g.cfg.Rubric, ctx.UserContent(), answer)
 			if err != nil {
+				log.Printf("vetting[%s]: judge round %d error after %s: %v", g.name, round, time.Since(tj).Round(time.Millisecond), err)
 				yield(nil, err)
 				return
 			}
 			passed := v.Score >= g.cfg.Threshold
+			log.Printf("vetting[%s]: judge round %d done in %s score=%.2f passed=%v", g.name, round, time.Since(tj).Round(time.Millisecond), v.Score, passed)
 			if !g.emit(ctx, yield, stream.JudgeVerdictPart(round, v.Score, passed, v.Feedback)) {
 				return
 			}
 			if passed || round == g.cfg.MaxRounds {
 				break
 			}
+			tr := time.Now()
+			log.Printf("vetting[%s]: revise round %d start", g.name, round)
 			revised, err := revise(ctx, g.workerModel, ctx.UserContent(), answer, v.Feedback)
 			if err != nil {
+				log.Printf("vetting[%s]: revise round %d error after %s: %v", g.name, round, time.Since(tr).Round(time.Millisecond), err)
 				yield(nil, err)
 				return
 			}
+			log.Printf("vetting[%s]: revise round %d done in %s", g.name, round, time.Since(tr).Round(time.Millisecond))
 			if strings.TrimSpace(revised) != "" {
 				answer = revised
 			}
@@ -120,6 +155,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 
 		// Surface the trusted answer as the agent's final output. (PR2 commits it
 		// to memory here, only after a passing verdict.)
+		log.Printf("vetting[%s]: vetted answer ready total=%s len=%d", g.name, time.Since(t0).Round(time.Second), len(answer))
 		g.emitAnswer(ctx, yield, answer)
 	}
 }

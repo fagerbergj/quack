@@ -10,6 +10,7 @@ import (
 	"google.golang.org/genai"
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/inference"
 )
 
 const (
@@ -72,26 +73,10 @@ func generate(ctx context.Context, m model.LLM, system, user string, jsonMode bo
 		cfg.ResponseMIMEType = "application/json"
 		cfg.MaxOutputTokens = judgeMaxTokens
 	}
-	req := &model.LLMRequest{
+	return inference.Generate(ctx, m, &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: user}}}},
 		Config:   cfg,
-	}
-	var out strings.Builder
-	for resp, err := range m.GenerateContent(ctx, req, false) {
-		if err != nil {
-			return "", err
-		}
-		if resp.Content == nil {
-			continue
-		}
-		for _, p := range resp.Content.Parts {
-			if p.Thought || p.Text == "" {
-				continue
-			}
-			out.WriteString(p.Text)
-		}
-	}
-	return strings.TrimSpace(out.String()), nil
+	})
 }
 
 // parseVerdict reads the judge's JSON, tolerating a ```json fenced block, and
