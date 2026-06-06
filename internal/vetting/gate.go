@@ -97,7 +97,10 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		if g.cfg.SelfRefine && strings.TrimSpace(answer) != "" {
 			tsr := time.Now()
 			log.Printf("vetting[%s]: self-refine start", g.name)
-			refined, err := selfRefine(ctx, g.workerModel, ctx.UserContent(), answer)
+			ka := func() bool { return g.emit(ctx, yield, stream.KeepAlivePart()) }
+			refined, err := withKeepalive(ctx, ka, func() (string, error) {
+				return selfRefine(ctx, g.workerModel, ctx.UserContent(), answer)
+			})
 			if err != nil {
 				log.Printf("vetting[%s]: self-refine error after %s: %v", g.name, time.Since(tsr).Round(time.Millisecond), err)
 				if !yield(nil, err) {
@@ -122,10 +125,13 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// A judge or revise error fails CLOSED: surface the error and abort without
 		// emitting the answer, so an un-vetted draft is never returned or persisted
 		// when the judge can't run.
+		ka := func() bool { return g.emit(ctx, yield, stream.KeepAlivePart()) }
 		for round := 1; round <= g.cfg.MaxRounds; round++ {
 			tj := time.Now()
 			log.Printf("vetting[%s]: judge round %d/%d start", g.name, round, g.cfg.MaxRounds)
-			v, err := g.runJudgeWithKeepalive(ctx, yield, answer)
+			v, err := withKeepalive(ctx, ka, func() (verdict, error) {
+				return runJudge(ctx, g.judge, g.cfg.Rubric, ctx.UserContent(), answer)
+			})
 			if err != nil {
 				log.Printf("vetting[%s]: judge round %d error after %s: %v", g.name, round, time.Since(tj).Round(time.Millisecond), err)
 				yield(nil, err)
@@ -141,7 +147,9 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			}
 			tr := time.Now()
 			log.Printf("vetting[%s]: revise round %d start", g.name, round)
-			revised, err := revise(ctx, g.workerModel, ctx.UserContent(), answer, v.Feedback)
+			revised, err := withKeepalive(ctx, ka, func() (string, error) {
+				return revise(ctx, g.workerModel, ctx.UserContent(), answer, v.Feedback)
+			})
 			if err != nil {
 				log.Printf("vetting[%s]: revise round %d error after %s: %v", g.name, round, time.Since(tr).Round(time.Millisecond), err)
 				yield(nil, err)
@@ -241,27 +249,25 @@ func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Ev
 }
 
 // keepaliveInterval is how often the gate heartbeats the A2A connection during
-// slow judge calls. Must be shorter than the A2A client's idle read timeout
+// slow model calls. Must be shorter than the A2A client's idle read timeout
 // (~60 s in the ADK remoteagent HTTP client).
 const keepaliveInterval = 30 * time.Second
 
-// runJudgeWithKeepalive runs the judge in a goroutine while emitting keepalive
-// marker events via yield every keepaliveInterval. This prevents the A2A SSE
-// connection from timing out during long model-load + generation cycles.
-// The keepalive events are silently dropped by stream.Translate (no wire event).
-func (g *gate) runJudgeWithKeepalive(
-	ctx adkagent.InvocationContext,
-	yield func(*session.Event, error) bool,
-	answer string,
-) (verdict, error) {
-	type result struct {
-		v   verdict
+// withKeepalive runs fn in a goroutine while calling keepalive() every
+// keepaliveInterval. keepalive emits a no-op SSE event that prevents the A2A
+// connection from idling (self-refine, judge, revise can each take >60s on
+// first cold load). Returns false from keepalive to abort early.
+func withKeepalive[T any](ctx adkagent.InvocationContext, keepalive func() bool, fn func() (T, error)) (T, error) {
+	ch := make(chan struct {
+		v   T
 		err error
-	}
-	ch := make(chan result, 1) // buffered: goroutine never blocks on send
+	}, 1) // buffered: goroutine never blocks on send
 	go func() {
-		v, err := runJudge(ctx, g.judge, g.cfg.Rubric, ctx.UserContent(), answer)
-		ch <- result{v, err}
+		v, err := fn()
+		ch <- struct {
+			v   T
+			err error
+		}{v, err}
 	}()
 	ticker := time.NewTicker(keepaliveInterval)
 	defer ticker.Stop()
@@ -270,13 +276,13 @@ func (g *gate) runJudgeWithKeepalive(
 		case r := <-ch:
 			return r.v, r.err
 		case <-ticker.C:
-			if !g.emit(ctx, yield, stream.KeepAlivePart()) {
+			if !keepalive() {
 				<-ch // drain so goroutine can exit cleanly
-				return verdict{}, ctx.Err()
+				return *new(T), ctx.Err()
 			}
 		case <-ctx.Done():
 			<-ch // drain so goroutine can exit cleanly
-			return verdict{}, ctx.Err()
+			return *new(T), ctx.Err()
 		}
 	}
 }
