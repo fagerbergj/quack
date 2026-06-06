@@ -78,7 +78,9 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					return
 				}
 			} else {
-				changed := strings.TrimSpace(refined) != "" && refined != answer
+				// refined is already trimmed by generate(); compare against the
+				// trimmed answer so trailing whitespace alone doesn't read as a change.
+				changed := refined != "" && refined != strings.TrimSpace(answer)
 				if changed {
 					answer = refined
 				}
@@ -90,13 +92,14 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 
 		// Judge loop: score against the rubric, revise on a fail until the score
 		// clears the threshold or we run out of rounds.
+		// A judge or revise error fails CLOSED: surface the error and abort without
+		// emitting the answer, so an un-vetted draft is never returned or persisted
+		// when the judge can't run.
 		for round := 1; round <= g.cfg.MaxRounds; round++ {
 			v, err := runJudge(ctx, g.judge, g.cfg.Rubric, ctx.UserContent(), answer)
 			if err != nil {
-				if !yield(nil, err) {
-					return
-				}
-				break
+				yield(nil, err)
+				return
 			}
 			passed := v.Score >= g.cfg.Threshold
 			if !g.emit(ctx, yield, stream.JudgeVerdictPart(round, v.Score, passed, v.Feedback)) {
@@ -107,10 +110,8 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			}
 			revised, err := revise(ctx, g.workerModel, ctx.UserContent(), answer, v.Feedback)
 			if err != nil {
-				if !yield(nil, err) {
-					return
-				}
-				break
+				yield(nil, err)
+				return
 			}
 			if strings.TrimSpace(revised) != "" {
 				answer = revised

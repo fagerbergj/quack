@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"testing"
 
@@ -38,6 +39,17 @@ func (m *scriptedModel) GenerateContent(_ context.Context, _ *model.LLMRequest, 
 			Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: text}}},
 			TurnComplete: true,
 		}, nil)
+	}
+}
+
+// erroringModel always fails — stands in for a judge model that is down.
+type erroringModel struct{ name string }
+
+func (m erroringModel) Name() string { return m.name }
+
+func (m erroringModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(nil, errors.New("judge unavailable"))
 	}
 }
 
@@ -166,6 +178,44 @@ func TestGateSelfRefineEmitsAndRevises(t *testing.T) {
 	}
 	if res.answer != "self-refined answer" {
 		t.Errorf("answer = %q, want self-refined", res.answer)
+	}
+}
+
+func TestGateFailsClosedOnJudgeError(t *testing.T) {
+	// When the judge model errors, the gate must surface the error and NOT emit
+	// the un-vetted answer (which the runner would otherwise persist).
+	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Description: "d", Model: &scriptedModel{name: "w", resps: []string{"un-vetted draft"}}, Instruction: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated, err := NewGatedAgent(worker, &scriptedModel{name: "w", resps: []string{"x"}}, erroringModel{name: "j"}, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: gated, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "q"}}}
+
+	var sawError bool
+	var answer string
+	for ev, err := range r.Run(context.Background(), "u", "s1", content, agent.RunConfig{}) {
+		if err != nil {
+			sawError = true
+			continue
+		}
+		for _, se := range stream.Translate(ev) {
+			if d, ok := se.Data.(stream.TokenData); ok {
+				answer += d.Text
+			}
+		}
+	}
+	if !sawError {
+		t.Error("expected a judge error to surface")
+	}
+	if answer != "" {
+		t.Errorf("un-vetted answer leaked on judge error: %q", answer)
 	}
 }
 

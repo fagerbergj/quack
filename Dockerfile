@@ -21,7 +21,9 @@ RUN CGO_ENABLED=0 go build -o /quack ./cmd/server
 FROM gcr.io/distroless/static-debian12
 WORKDIR /
 COPY --from=backend /quack /quack
-COPY config/quack.yaml /config/quack.yaml
+# The config directory: quack.yaml plus files it references by relative path
+# (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
+COPY config/ /config/
 # Declarative agent bundles (agent-card.json + prompt.md), read at startup. The
 # config references them by the relative path `agents/...` (CWD is /), so keep
 # that layout.
