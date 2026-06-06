@@ -32,6 +32,10 @@ const transferTool = "transfer_to_agent"
 const (
 	judgeTool      = "record_judge_verdict"
 	selfRefineTool = "record_self_refine"
+	// keepaliveTool is a heartbeat the gate emits every ~30 s during slow
+	// operations (judge model load + generation) to keep the A2A SSE connection
+	// alive. Translate drops it — it produces no wire event.
+	keepaliveTool = "_quack_keepalive"
 )
 
 // Event names. M0 emitted only token / done / error; the rest fill in as later
@@ -160,6 +164,15 @@ func SelfRefinePart(changed bool) *genai.Part {
 	}}
 }
 
+// KeepAlivePart builds the marker part the gate emits during long-running judge
+// or revise calls to prevent A2A SSE connection idle timeouts. Translate drops it.
+func KeepAlivePart() *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     keepaliveTool,
+		Response: map[string]any{},
+	}}
+}
+
 // JudgeVerdictPart encodes one judge verdict as the marker function-response part
 // the trust gate yields.
 func JudgeVerdictPart(round int, score float64, passed bool, feedback string) *genai.Part {
@@ -213,6 +226,8 @@ func Translate(ev *session.Event) []SSEEvent {
 				switch p.FunctionResponse.Name {
 				case transferTool:
 					continue // surfaced as agent_start
+				case keepaliveTool:
+					continue // heartbeat only; no wire event
 				case selfRefineTool:
 					r := p.FunctionResponse.Response
 					out = append(out, SelfRefine(agent, asBool(r["changed"])))

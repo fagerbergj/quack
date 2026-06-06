@@ -125,7 +125,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		for round := 1; round <= g.cfg.MaxRounds; round++ {
 			tj := time.Now()
 			log.Printf("vetting[%s]: judge round %d/%d start", g.name, round, g.cfg.MaxRounds)
-			v, err := runJudge(ctx, g.judge, g.cfg.Rubric, ctx.UserContent(), answer)
+			v, err := g.runJudgeWithKeepalive(ctx, yield, answer)
 			if err != nil {
 				log.Printf("vetting[%s]: judge round %d error after %s: %v", g.name, round, time.Since(tj).Round(time.Millisecond), err)
 				yield(nil, err)
@@ -238,4 +238,45 @@ func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Ev
 	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
 	ev.TurnComplete = true
 	return yield(ev, nil)
+}
+
+// keepaliveInterval is how often the gate heartbeats the A2A connection during
+// slow judge calls. Must be shorter than the A2A client's idle read timeout
+// (~60 s in the ADK remoteagent HTTP client).
+const keepaliveInterval = 30 * time.Second
+
+// runJudgeWithKeepalive runs the judge in a goroutine while emitting keepalive
+// marker events via yield every keepaliveInterval. This prevents the A2A SSE
+// connection from timing out during long model-load + generation cycles.
+// The keepalive events are silently dropped by stream.Translate (no wire event).
+func (g *gate) runJudgeWithKeepalive(
+	ctx adkagent.InvocationContext,
+	yield func(*session.Event, error) bool,
+	answer string,
+) (verdict, error) {
+	type result struct {
+		v   verdict
+		err error
+	}
+	ch := make(chan result, 1) // buffered: goroutine never blocks on send
+	go func() {
+		v, err := runJudge(ctx, g.judge, g.cfg.Rubric, ctx.UserContent(), answer)
+		ch <- result{v, err}
+	}()
+	ticker := time.NewTicker(keepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case r := <-ch:
+			return r.v, r.err
+		case <-ticker.C:
+			if !g.emit(ctx, yield, stream.KeepAlivePart()) {
+				<-ch // drain so goroutine can exit cleanly
+				return verdict{}, ctx.Err()
+			}
+		case <-ctx.Done():
+			<-ch // drain so goroutine can exit cleanly
+			return verdict{}, ctx.Err()
+		}
+	}
 }
