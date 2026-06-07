@@ -58,6 +58,7 @@ const (
 	EventJudgeVerdict        = "judge_verdict"
 	EventJudgeUnavailable    = "judge_unavailable"
 	EventConfirmationRequest = "confirmation_request"
+	EventChatTitle           = "chat_title"
 	EventError               = "error"
 	EventDone                = "done"
 )
@@ -280,6 +281,17 @@ func JudgeUnavailablePart(round int, reason string) *genai.Part {
 		Name:     judgeUnavailableTool,
 		Response: map[string]any{"round": round, "reason": reason},
 	}}
+}
+
+// ChatTitleData is the `chat_title` event payload.
+type ChatTitleData struct {
+	Title string `json:"title"`
+}
+
+// ChatTitle builds a chat_title event: sent as soon as the title LLM call
+// completes so the client can update the sidebar without waiting for done.
+func ChatTitle(title string) SSEEvent {
+	return SSEEvent{Name: EventChatTitle, Data: ChatTitleData{Title: title}}
 }
 
 // Errorf builds an error event.

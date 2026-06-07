@@ -6,6 +6,8 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
 // MaxOutputTokens bounds generation so a reasoning model can't run away. Shared
@@ -21,7 +23,7 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool) (adkagent.Agent, error) {
 		Name:        b.Card.Name,
 		Description: b.Card.Description,
 		Model:       m,
-		Instruction: b.Prompt,
+		Instruction: promptbuilder.Agent(b.Card.Name, b.Card.Description, tools, b.Prompt),
 		Tools:       tools,
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			MaxOutputTokens: MaxOutputTokens,

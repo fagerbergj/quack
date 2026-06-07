@@ -57,6 +57,7 @@ type ChatMessageRole string
 type ChatSummary struct {
 	CreatedAt    time.Time `json:"created_at"`
 	Id           string    `json:"id"`
+	Title        string    `json:"title,omitempty"`
 	SystemPrompt string    `json:"system_prompt"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

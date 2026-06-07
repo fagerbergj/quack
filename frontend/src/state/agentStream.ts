@@ -32,6 +32,7 @@ export interface AgentStreamHandlers {
   onJudgeVerdict?: (v: JudgeVerdictPayload) => void
   onJudgeUnavailable?: (round: number, reason: string) => void
   onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
+  onChatTitle?: (title: string) => void
   onError?: (msg: string) => void
   onDone?: () => void
 }
@@ -41,7 +42,7 @@ export const AGENT_EVENT_NAMES = [
   'token', 'thinking', 'tool_call', 'tool_result',
   'agent_start', 'agent_end',
   'self_refine_start', 'self_refine', 'judge_start', 'revise', 'judge_verdict', 'judge_unavailable',
-  'confirmation_request', 'error', 'done',
+  'confirmation_request', 'chat_title', 'error', 'done',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
 
@@ -124,6 +125,9 @@ export function dispatchAgentEvent(
           payload: p.payload ?? {},
         })
       }
+      return true
+    case 'chat_title':
+      if (hasStringField(parsed, 'title')) handlers.onChatTitle?.(parsed.title)
       return true
     case 'error':
       if (hasStringField(parsed, 'error')) handlers.onError?.(parsed.error)

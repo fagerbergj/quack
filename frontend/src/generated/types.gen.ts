@@ -6,6 +6,7 @@ export type ClientOptions = {
 
 export type ChatSummary = {
     id: string;
+    title?: string;
     system_prompt: string;
     created_at: string;
     updated_at: string;

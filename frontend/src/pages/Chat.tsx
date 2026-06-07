@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
 import { AssistantParts, partsToText } from '../components/AgentParts'
@@ -33,32 +33,6 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<number | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const prevStreamingRef = useRef(false)
-
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    const streamingJustStarted = streaming && !prevStreamingRef.current
-    prevStreamingRef.current = streaming ?? false
-
-    // Always scroll when streaming begins (new response started).
-    // During streaming, only scroll if the user is already near the bottom —
-    // so that open self-critique / judge containers don't forcibly yank them away.
-    if (streamingJustStarted) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-      return
-    }
-    if (!container) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-      return
-    }
-    const { scrollTop, scrollHeight, clientHeight } = container
-    if (scrollHeight - scrollTop - clientHeight < 120) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [messages, streaming])
-
   useEffect(() => {
     const stored = localStorage.getItem('theme')
     if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -161,7 +135,9 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     if (!activeChatId) return
     setInput('')
 
-    await store.submit(activeChatId, trimmed)
+    await store.submit(activeChatId, trimmed, title => {
+      setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
+    })
     await loadChats().then(data => setChats(data))
   }
 
@@ -217,7 +193,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
               className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
             >
               <span className={`text-sm truncate pr-6 ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-                New chat
+                {s.title || 'New chat'}
               </span>
               <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
               <button
@@ -242,7 +218,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
               ☰
             </button>
             <h1 className="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {activeChatId ? 'New chat' : 'Chat'}
+              {chats.find(s => s.id === activeChatId)?.title || (activeChatId ? 'New chat' : 'Chat')}
             </h1>
           </div>
           <button
@@ -272,7 +248,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
           </div>
         )}
 
-        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {!activeChatId && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Select or start a chat
@@ -338,8 +314,6 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
               {error}
             </div>
           )}
-
-          <div ref={bottomRef} />
         </div>
 
         <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">

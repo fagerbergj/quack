@@ -121,6 +121,8 @@ components:
       properties:
         id:
           type: string
+        title:
+          type: string
         system_prompt:
           type: string
         created_at:
