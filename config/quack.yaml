@@ -23,7 +23,7 @@ agents:
     bundle: agents/web-researcher
     provider: default
     model: ${RESEARCHER_MODEL}
-    tools: [web_search, web_fetch, summarize]
+    tools: [current_date, web_search, web_fetch, summarize]
 
 # Backend bindings for the built-in tools (keyless, internal services in M1).
 tools:
@@ -41,7 +41,8 @@ adversarial:
   max_rounds: 2
   threshold: 0.7
   self_refine: true
-  rubric_path: config/constitution.md
+  constitution_path: config/constitution.md   # global principles, used for self-refine + judge
+  rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.md in their bundle)
 
 server:
   addr: ":8080"

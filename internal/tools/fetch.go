@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
@@ -58,50 +59,69 @@ func newFetch(d Deps) (tool.Tool, error) {
 			}
 			target := u.String()
 
-			text, derr := fetchReadable(tc, d.Guarded, target)
-			if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
-				return text, nil
-			}
-
-			// The direct GET was thin (likely JS-rendered), failed, or hit an
-			// anti-bot wall; try the crawl4ai render backend, which renders with a
-			// real browser and returns clean Markdown. crawl4ai fetches the URL
-			// itself with no SSRF guard, so re-check that the host doesn't resolve
-			// into a blocked range before handing it over — ValidateURL above only
-			// catches literal IPs, not hostnames pointing at private/metadata IPs.
-			var rendered string
-			var rerr error
-			if d.Crawl4AI != "" {
-				if rerr = validateResolvedHost(tc, u.Hostname()); rerr == nil {
-					rendered, rerr = crawl4aiMarkdown(tc, d.Client, d.Crawl4AI, target)
-					if rerr == nil && strings.TrimSpace(rendered) != "" && !looksLikeBotWall(rendered) {
-						return rendered, nil
-					}
+			if d.Cache != nil {
+				if cached, ok := d.Cache.Get(tc, target); ok {
+					return cached, nil
 				}
 			}
 
-			// If either attempt clearly landed on a bot wall, say so rather than
-			// handing the agent CAPTCHA boilerplate as if it were the page.
-			if looksLikeBotWall(text) || looksLikeBotWall(rendered) || errors.Is(derr, errCloudflareChallenge) {
-				return "", fmt.Errorf("web_fetch: %s is behind an anti-bot wall (CAPTCHA / JS challenge); its content can't be read — try a different source", target)
+			result, ferr := fetchBest(tc, d, u, target)
+			if ferr != nil {
+				return "", ferr
 			}
-
-			// Never return an empty string silently — the agent needs to know the
-			// fetch yielded nothing so it can try another source. Prefer a thin but
-			// non-empty direct result; otherwise surface why we got nothing.
-			if strings.TrimSpace(text) != "" {
-				return text, nil
+			if d.Cache != nil {
+				d.Cache.Set(tc, target, result, tc.SessionID(), tc.AppName())
 			}
-			switch {
-			case derr != nil && rerr != nil:
-				return "", fmt.Errorf("web_fetch: %s unreadable: direct GET failed (%v); render failed (%v)", target, derr, rerr)
-			case derr != nil:
-				return "", fmt.Errorf("web_fetch: %s: %w", target, derr)
-			default:
-				return "", fmt.Errorf("web_fetch: %s returned no readable text (it may require login, block automated access, or have no textual content)", target)
-			}
+			return result, nil
 		},
 	)
+}
+
+// fetchBest tries to get the best readable text for target. It first tries a
+// direct GET; if that is thin, failed, or bot-walled, it falls back to crawl4ai.
+func fetchBest(tc tool.Context, d Deps, u *url.URL, target string) (string, error) {
+	text, derr := fetchReadable(tc, d.Guarded, target)
+	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
+		return text, nil
+	}
+
+	// The direct GET was thin (likely JS-rendered), failed, or hit an
+	// anti-bot wall; try the crawl4ai render backend, which renders with a
+	// real browser and returns clean Markdown. crawl4ai fetches the URL
+	// itself with no SSRF guard, so re-check that the host doesn't resolve
+	// into a blocked range before handing it over — ValidateURL above only
+	// catches literal IPs, not hostnames pointing at private/metadata IPs.
+	var rendered string
+	var rerr error
+	if d.Crawl4AI != "" {
+		if rerr = validateResolvedHost(tc, u.Hostname()); rerr == nil {
+			rendered, rerr = crawl4aiMarkdown(tc, d.Client, d.Crawl4AI, target)
+			if rerr == nil && strings.TrimSpace(rendered) != "" && !looksLikeBotWall(rendered) {
+				return rendered, nil
+			}
+		}
+	}
+
+	// If either attempt clearly landed on a bot wall, say so rather than
+	// handing the agent CAPTCHA boilerplate as if it were the page.
+	if looksLikeBotWall(text) || looksLikeBotWall(rendered) || errors.Is(derr, errCloudflareChallenge) {
+		return "", fmt.Errorf("web_fetch: %s is behind an anti-bot wall (CAPTCHA / JS challenge); its content can't be read — try a different source", target)
+	}
+
+	// Never return an empty string silently — the agent needs to know the
+	// fetch yielded nothing so it can try another source. Prefer a thin but
+	// non-empty direct result; otherwise surface why we got nothing.
+	if strings.TrimSpace(text) != "" {
+		return text, nil
+	}
+	switch {
+	case derr != nil && rerr != nil:
+		return "", fmt.Errorf("web_fetch: %s unreadable: direct GET failed (%v); render failed (%v)", target, derr, rerr)
+	case derr != nil:
+		return "", fmt.Errorf("web_fetch: %s: %w", target, derr)
+	default:
+		return "", fmt.Errorf("web_fetch: %s returned no readable text (it may require login, block automated access, or have no textual content)", target)
+	}
 }
 
 // fetchReadable does a guarded GET and returns the page's readable text.

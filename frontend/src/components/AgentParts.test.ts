@@ -6,11 +6,14 @@ import {
   fillToolResult,
   openAgent,
   closeAgent,
-  appendSelfRefine,
-  appendJudgeVerdict,
+  openSelfRefine,
+  closeSelfRefine,
+  openJudgeVerdict,
+  closeJudgeVerdict,
   partsToText,
   type MessagePart,
   type AgentPart,
+  type JudgeVerdictPart,
 } from './AgentParts'
 
 // Helper: assert a part is an agent group and return it (narrows the type).
@@ -79,21 +82,76 @@ describe('messageParts tree reducers', () => {
     expect(agent(orch.items[0]).done).toBe(true)
   })
 
-  it('nests self_refine and judge_verdict under the active agent and keeps them out of text', () => {
+  it('nests self_refine and judge_verdict as containers under the active agent', () => {
     let parts: MessagePart[] = []
     parts = openAgent(parts, 'orchestrator')
     parts = openAgent(parts, 'web-researcher')
-    parts = appendSelfRefine(parts, true)
-    parts = appendJudgeVerdict(parts, { round: 1, score: 0.4, passed: false, feedback: 'add sources' })
-    parts = appendJudgeVerdict(parts, { round: 2, score: 0.8, passed: true, feedback: '' })
+    parts = openSelfRefine(parts)
+    parts = appendThinkingPart(parts, 'reviewing my draft')
+    parts = closeSelfRefine(parts, true)
+    parts = openJudgeVerdict(parts, 1)
+    parts = appendThinkingPart(parts, 'judging round 1')
+    parts = closeJudgeVerdict(parts, 1, 0.4, false, 'add sources')
+    parts = openJudgeVerdict(parts, 2)
+    parts = closeJudgeVerdict(parts, 2, 0.8, true, '')
     parts = appendTextPart(parts, 'The vetted answer.')
 
     const wr = agent(agent(parts[0]).items[0])
     expect(wr.items.map(i => i.kind)).toEqual(['self_refine', 'judge_verdict', 'judge_verdict'])
-    const last = wr.items[2]
-    if (last.kind === 'judge_verdict') expect(last.passed).toBe(true)
+
+    // Self-refine has thinking nested inside it.
+    const sr = wr.items[0]
+    if (sr.kind === 'self_refine') {
+      expect(sr.done).toBe(true)
+      expect(sr.changed).toBe(true)
+      expect(sr.items.map(i => i.kind)).toEqual(['thinking'])
+    }
+
+    // Judge round 1 has thinking nested inside it and is a fail.
+    const j1 = wr.items[1]
+    if (j1.kind === 'judge_verdict') {
+      expect(j1.done).toBe(true)
+      expect(j1.passed).toBe(false)
+      expect(j1.items.map(i => i.kind)).toEqual(['thinking'])
+    }
+
+    // Judge round 2 is a pass.
+    const j2 = wr.items[2] as JudgeVerdictPart
+    expect(j2.passed).toBe(true)
+    expect(j2.done).toBe(true)
+
     // Verdicts/refine never leak into the copyable answer text.
     expect(partsToText(parts)).toBe('The vetted answer.')
+  })
+
+  it('thinking routes into an open self_refine container', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'web-researcher')
+    parts = openSelfRefine(parts)
+    parts = appendThinkingPart(parts, 'chunk 1 ')
+    parts = appendThinkingPart(parts, 'chunk 2')
+
+    const wr = agent(parts[0])
+    expect(wr.items).toHaveLength(1)
+    const sr = wr.items[0]
+    if (sr.kind === 'self_refine') {
+      // Thinking coalesces inside the self_refine container.
+      expect(sr.items).toEqual([{ kind: 'thinking', text: 'chunk 1 chunk 2' }])
+    }
+  })
+
+  it('thinking routes into an open judge_verdict container', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'web-researcher')
+    parts = openJudgeVerdict(parts, 1)
+    parts = appendThinkingPart(parts, 'evaluating')
+
+    const wr = agent(parts[0])
+    const jv = wr.items[0]
+    if (jv.kind === 'judge_verdict') {
+      expect(jv.done).toBe(false)
+      expect(jv.items).toEqual([{ kind: 'thinking', text: 'evaluating' }])
+    }
   })
 
   it('closeAgent for an unknown/already-closed agent is a no-op', () => {

@@ -7,22 +7,29 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 )
 
 func TestRegistryBuild(t *testing.T) {
-	if !Known("web_search") || !Known("web_fetch") || !Known("summarize") {
-		t.Fatal("expected web_search/fetch/summarize to be known")
+	for _, name := range []string{"web_search", "web_fetch", "summarize", "current_date"} {
+		if !Known(name) {
+			t.Fatalf("expected %q to be known", name)
+		}
 	}
 	if Known("nope") {
 		t.Fatal("unknown tool reported as known")
 	}
 	if _, err := Build([]string{"web_fetch"}, Deps{Crawl4AI: "http://x"}); err != nil {
 		t.Fatalf("Build(fetch) error: %v", err)
+	}
+	if _, err := Build([]string{"current_date"}, Deps{}); err != nil {
+		t.Fatalf("Build(current_date) error: %v", err)
 	}
 	if _, err := Build([]string{"bogus"}, Deps{}); err == nil {
 		t.Fatal("Build(bogus) should error")
@@ -32,6 +39,51 @@ func TestRegistryBuild(t *testing.T) {
 	}
 	if _, err := Build([]string{"summarize"}, Deps{}); err == nil {
 		t.Fatal("summarize without a model should error")
+	}
+}
+
+func TestCurrentDate(t *testing.T) {
+	result, err := newCurrentDate(Deps{})
+	if err != nil {
+		t.Fatalf("newCurrentDate: %v", err)
+	}
+	_ = result // tool.Tool; we test the underlying function directly below
+
+	// Capture local date strings before and after the call to tolerate midnight
+	// rollover. time.Parse returns UTC midnight, which diverges from local-time
+	// Truncate on machines offset from UTC — compare strings, not time.Time.
+	beforeDate := time.Now().Format("2006-01-02")
+	got, err := currentDate()
+	if err != nil {
+		t.Fatalf("currentDate: %v", err)
+	}
+	afterDate := time.Now().Format("2006-01-02")
+
+	// Date must be YYYY-MM-DD.
+	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(got.Date) {
+		t.Errorf("Date = %q, want YYYY-MM-DD", got.Date)
+	}
+	// Date must be today (or tomorrow if midnight rolled over during the test).
+	if got.Date != beforeDate && got.Date != afterDate {
+		t.Errorf("Date %q not in today's window [%s, %s]", got.Date, beforeDate, afterDate)
+	}
+	// Weekday must be a recognised day name.
+	validDays := map[string]bool{
+		"Sunday": true, "Monday": true, "Tuesday": true, "Wednesday": true,
+		"Thursday": true, "Friday": true, "Saturday": true,
+	}
+	if !validDays[got.Weekday] {
+		t.Errorf("Weekday = %q, want a valid day name", got.Weekday)
+	}
+	// Weekday must agree with the date. Parse in local timezone so midnight is
+	// local midnight — not UTC midnight (which rolls to a different weekday for
+	// machines offset from UTC).
+	d, err := time.ParseInLocation("2006-01-02", got.Date, time.Local)
+	if err != nil {
+		t.Fatalf("parse Date %q: %v", got.Date, err)
+	}
+	if want := d.Weekday().String(); got.Weekday != want {
+		t.Errorf("Weekday = %q, want %q (matches Date)", got.Weekday, want)
 	}
 }
 

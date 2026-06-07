@@ -181,10 +181,10 @@ func TestGateSelfRefineEmitsAndRevises(t *testing.T) {
 	}
 }
 
-func TestGateFailsClosedOnJudgeError(t *testing.T) {
-	// When the judge model errors, the gate must surface the error and NOT emit
-	// the un-vetted answer (which the runner would otherwise persist).
-	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Description: "d", Model: &scriptedModel{name: "w", resps: []string{"un-vetted draft"}}, Instruction: "x"})
+func TestGateJudgeUnavailableSurfacesAnswer(t *testing.T) {
+	// When the judge model errors, the gate must emit a judge_unavailable event
+	// and surface the answer anyway (quality-cannot-be-guaranteed degradation).
+	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Description: "d", Model: &scriptedModel{name: "w", resps: []string{"best effort answer"}}, Instruction: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,24 +198,32 @@ func TestGateFailsClosedOnJudgeError(t *testing.T) {
 	}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "q"}}}
 
-	var sawError bool
 	var answer string
+	var unavailable []stream.JudgeUnavailableData
 	for ev, err := range r.Run(context.Background(), "u", "s1", content, agent.RunConfig{}) {
 		if err != nil {
-			sawError = true
-			continue
+			t.Fatalf("unexpected run error: %v", err)
 		}
 		for _, se := range stream.Translate(ev) {
-			if d, ok := se.Data.(stream.TokenData); ok {
+			switch d := se.Data.(type) {
+			case stream.TokenData:
 				answer += d.Text
+			case stream.JudgeUnavailableData:
+				unavailable = append(unavailable, d)
 			}
 		}
 	}
-	if !sawError {
-		t.Error("expected a judge error to surface")
+	if len(unavailable) == 0 {
+		t.Error("expected a judge_unavailable event")
 	}
-	if answer != "" {
-		t.Errorf("un-vetted answer leaked on judge error: %q", answer)
+	if unavailable[0].Round != 1 {
+		t.Errorf("judge_unavailable round = %d, want 1", unavailable[0].Round)
+	}
+	if unavailable[0].Reason == "" {
+		t.Error("judge_unavailable reason should be non-empty")
+	}
+	if answer != "best effort answer" {
+		t.Errorf("answer = %q, want surfaced despite judge error", answer)
 	}
 }
 
@@ -226,5 +234,59 @@ func TestParseVerdictToleratesFencedJSON(t *testing.T) {
 	}
 	if v.Score != 1 { // clamped to [0,1]
 		t.Errorf("score = %v, want clamped to 1", v.Score)
+	}
+}
+
+func TestParseVerdictMisplacedTopLevel(t *testing.T) {
+	// Reproduces the exact failure seen in prod: the model nested score/passed/feedback
+	// inside criteria and omitted the outer closing brace.
+	malformed := `{"criteria":{"grounded":{"reason":"good","score":0.9},"no_fabrication":{"reason":"ok","score":1.0},"answers_question":{"reason":"yes","score":1.0},"internally_consistent":{"reason":"fine","score":0.9},"cites_sources":{"reason":"none","score":0.0},"score":0.76,"passed":true,"feedback":"add citations"}`
+
+	v, err := parseVerdict(malformed)
+	if err != nil {
+		t.Fatalf("parseVerdict(misplaced): %v", err)
+	}
+	// cites_sources=0 → hard cap at 0.40
+	if v.Score > 0.40 {
+		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
+	}
+	// Feedback recovered from misplaced entry
+	if v.Feedback != "add citations" {
+		t.Errorf("feedback = %q, want recovered from criteria", v.Feedback)
+	}
+	// The 5 real criteria should be present; score/passed/feedback should not
+	for _, want := range []string{"grounded", "no_fabrication", "answers_question", "internally_consistent", "cites_sources"} {
+		if _, ok := v.Criteria[want]; !ok {
+			t.Errorf("criteria missing %q", want)
+		}
+	}
+	for _, bad := range []string{"score", "passed", "feedback"} {
+		if _, ok := v.Criteria[bad]; ok {
+			t.Errorf("criteria should not contain %q", bad)
+		}
+	}
+}
+
+func TestParseVerdictDuplicatedBlob(t *testing.T) {
+	// Model emitted the JSON object twice (back-to-back); only the first should be parsed.
+	blob := `{"score":0.8,"passed":true,"feedback":"ok"}`
+	v, err := parseVerdict(blob + blob)
+	if err != nil {
+		t.Fatalf("parseVerdict(duplicated): %v", err)
+	}
+	if !v.Passed || v.Score != 0.8 {
+		t.Errorf("unexpected verdict: %+v", v)
+	}
+}
+
+func TestParseVerdictCitesCap(t *testing.T) {
+	// Well-formed G-Eval verdict; cites_sources=0 should cap the mean.
+	input := `{"criteria":{"grounded":{"score":0.9},"no_fabrication":{"score":1.0},"answers_question":{"score":1.0},"internally_consistent":{"score":0.9},"cites_sources":{"score":0.0}},"score":0.96,"passed":true,"feedback":"no sources"}`
+	v, err := parseVerdict(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Score > 0.40 {
+		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
 	}
 }

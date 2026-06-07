@@ -29,13 +29,15 @@ type Config struct {
 // unwrapped. The judge is platform-invoked (a dedicated model), so agent bundles
 // stay simple.
 type AdversarialConfig struct {
-	Provider   string  `yaml:"provider"`    // inference provider for the judge model
-	Model      string  `yaml:"model"`       // judge model (empty ⇒ vetting disabled)
-	MaxRounds  int     `yaml:"max_rounds"`  // judge/revise rounds before giving up (default 2)
-	Threshold  float64 `yaml:"threshold"`   // pass score in (0,1] (default 0.7)
-	SelfRefine bool    `yaml:"self_refine"` // run the same-model self-refine pre-pass
-	RubricPath string  `yaml:"rubric_path"` // path to the rubric/constitution file
-	Rubric     string  `yaml:"rubric"`      // inline rubric (alternative to rubric_path)
+	Provider         string  `yaml:"provider"`          // inference provider for the judge model
+	Model            string  `yaml:"model"`             // judge model (empty ⇒ vetting disabled)
+	MaxRounds        int     `yaml:"max_rounds"`        // judge/revise rounds before giving up (default 2)
+	Threshold        float64 `yaml:"threshold"`         // pass score in (0,1] (default 0.7)
+	SelfRefine       bool    `yaml:"self_refine"`       // run the same-model self-refine pre-pass
+	ConstitutionPath string  `yaml:"constitution_path"` // path to global principles file (optional)
+	Constitution     string  `yaml:"constitution"`      // inline constitution (alternative to constitution_path)
+	RubricPath       string  `yaml:"rubric_path"`       // path to the default scoring guide
+	Rubric           string  `yaml:"rubric"`            // inline rubric (alternative to rubric_path)
 }
 
 // Enabled reports whether the trust gate should wrap agents.
@@ -152,6 +154,9 @@ func (c *Config) validate() error {
 	if c.Adversarial.Enabled() {
 		if _, ok := c.Providers[c.Adversarial.Provider]; !ok {
 			return fmt.Errorf("config: adversarial.provider %q is not defined under providers", c.Adversarial.Provider)
+		}
+		if c.Adversarial.ConstitutionPath != "" && c.Adversarial.Constitution != "" {
+			return fmt.Errorf("config: adversarial sets both constitution_path and constitution; use one")
 		}
 		if c.Adversarial.RubricPath == "" && c.Adversarial.Rubric == "" {
 			return fmt.Errorf("config: adversarial needs one of rubric_path or rubric")

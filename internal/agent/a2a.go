@@ -18,6 +18,7 @@ import (
 	"net/url"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	adkagent "google.golang.org/adk/agent"
@@ -113,10 +114,19 @@ func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 // Client returns an ADK agent that dispatches to this server over A2A. Use it as
 // a sub-agent of the orchestrator; its Name matches the served agent's, so
 // transfer-to-agent targets it correctly.
+//
+// The HTTP client has no hard timeout — context cancellation is the deadline.
+// The default a2aclient factory applies a 3-minute total-request timeout which
+// fires mid-judge on long vetting runs (worker + self-refine already consume
+// most of those 3 minutes before the judge even starts).
 func (s *A2AServer) Client() (adkagent.Agent, error) {
+	factory := a2aclient.NewFactory(
+		a2aclient.WithJSONRPCTransport(&http.Client{}),
+	)
 	return remoteagent.NewA2A(remoteagent.A2AConfig{
-		Name:        s.Card.Name,
-		Description: s.Card.Description,
-		AgentCard:   s.Card,
+		Name:           s.Card.Name,
+		Description:    s.Card.Description,
+		AgentCard:      s.Card,
+		ClientProvider: remoteagent.NewA2AClientProvider(factory),
 	})
 }

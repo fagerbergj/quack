@@ -17,10 +17,13 @@
 package vetting
 
 import (
+	"context"
+	"errors"
 	"iter"
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/model"
@@ -31,12 +34,13 @@ import (
 )
 
 // Config is the resolved vetting policy: the parsed adversarial settings plus the
-// loaded rubric text. Build it with FromConfig.
+// loaded constitution and rubric text. Build it with FromConfig.
 type Config struct {
-	MaxRounds  int
-	Threshold  float64
-	SelfRefine bool
-	Rubric     string
+	MaxRounds    int
+	Threshold    float64
+	SelfRefine   bool
+	Constitution string // global principles; used for self-refine critique + prefixed in judge prompt
+	Rubric       string // scoring guide; global default or per-agent override
 }
 
 type gate struct {
@@ -86,7 +90,9 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 
 		// Round 0: run the worker. Its thinking/tool events stream through; its
 		// answer text is buffered so only the vetted answer is surfaced.
-		answer, ok := g.runWorker(ctx, yield)
+		// fetchedURLs records every URL the worker called web_fetch on, used by
+		// the judge to verify that cited links were actually retrieved.
+		answer, act, ok := g.runWorker(ctx, yield, false)
 		if !ok {
 			return
 		}
@@ -97,44 +103,55 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		if g.cfg.SelfRefine && strings.TrimSpace(answer) != "" {
 			tsr := time.Now()
 			log.Printf("vetting[%s]: self-refine start", g.name)
-			ka := func() bool { return g.emit(ctx, yield, stream.KeepAlivePart()) }
-			refined, err := withKeepalive(ctx, ka, func() (string, error) {
-				return selfRefine(ctx, g.workerModel, ctx.UserContent(), answer)
-			})
-			if err != nil {
-				log.Printf("vetting[%s]: self-refine error after %s: %v", g.name, time.Since(tsr).Round(time.Millisecond), err)
-				if !yield(nil, err) {
-					return
-				}
-			} else {
-				// refined is already trimmed by generate(); compare against the
-				// trimmed answer so trailing whitespace alone doesn't read as a change.
-				changed := refined != "" && refined != strings.TrimSpace(answer)
-				if changed {
-					answer = refined
-				}
-				log.Printf("vetting[%s]: self-refine done in %s changed=%v", g.name, time.Since(tsr).Round(time.Millisecond), changed)
-				if !g.emit(ctx, yield, stream.SelfRefinePart(changed)) {
-					return
-				}
+			if !g.emit(ctx, yield, stream.SelfRefineStartPart()) {
+				return
+			}
+			refined, mergedAct, ok := g.runAgenticSelfRefine(ctx, yield, answer, act)
+			if !ok {
+				return
+			}
+			act = mergedAct
+			changed := refined != "" && strings.TrimSpace(refined) != strings.TrimSpace(answer)
+			if changed {
+				answer = refined
+			}
+			log.Printf("vetting[%s]: self-refine done in %s changed=%v", g.name, time.Since(tsr).Round(time.Millisecond), changed)
+			if !g.emit(ctx, yield, stream.SelfRefinePart(changed)) {
+				return
 			}
 		}
 
 		// Judge loop: score against the rubric, revise on a fail until the score
 		// clears the threshold or we run out of rounds.
-		// A judge or revise error fails CLOSED: surface the error and abort without
-		// emitting the answer, so an un-vetted draft is never returned or persisted
-		// when the judge can't run.
-		ka := func() bool { return g.emit(ctx, yield, stream.KeepAlivePart()) }
+		// A judge error degrades gracefully: emit a judge_unavailable event then
+		// surface the answer with a quality-cannot-be-guaranteed flag rather than
+		// withholding it from the user entirely.
 		for round := 1; round <= g.cfg.MaxRounds; round++ {
 			tj := time.Now()
 			log.Printf("vetting[%s]: judge round %d/%d start", g.name, round, g.cfg.MaxRounds)
-			v, err := withKeepalive(ctx, ka, func() (verdict, error) {
-				return runJudge(ctx, g.judge, g.cfg.Rubric, ctx.UserContent(), answer)
-			})
+			if !g.emit(ctx, yield, stream.JudgeStartPart(round)) {
+				return
+			}
+			// judgeCtx is cancelled when the consumer stops mid-thinking so
+			// generateStream aborts promptly rather than running to completion for a
+			// disconnected client.
+			judgeCtx, cancelJudge := context.WithCancel(ctx)
+			onThinking := func(text string) {
+				if !g.emit(ctx, yield, stream.ThinkingPart(text)) {
+					cancelJudge()
+				}
+			}
+			v, err := runJudge(judgeCtx, g.judge, g.cfg.Constitution, g.cfg.Rubric, ctx.UserContent(), answer, act.fetched, onThinking)
+			cancelJudge()
 			if err != nil {
-				log.Printf("vetting[%s]: judge round %d error after %s: %v", g.name, round, time.Since(tj).Round(time.Millisecond), err)
-				yield(nil, err)
+				if errors.Is(err, context.Canceled) {
+					return // consumer stopped mid-judge; exit cleanly
+				}
+				log.Printf("vetting[%s]: judge round %d error after %s: %v (surfacing answer unvetted)", g.name, round, time.Since(tj).Round(time.Millisecond), err)
+				if !g.emit(ctx, yield, stream.JudgeUnavailablePart(round, err.Error())) {
+					return
+				}
+				g.emitAnswer(ctx, yield, answer)
 				return
 			}
 			passed := v.Score >= g.cfg.Threshold
@@ -147,17 +164,31 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			}
 			tr := time.Now()
 			log.Printf("vetting[%s]: revise round %d start", g.name, round)
-			revised, err := withKeepalive(ctx, ka, func() (string, error) {
-				return revise(ctx, g.workerModel, ctx.UserContent(), answer, v.Feedback)
-			})
+			reviseCtx, cancelRevise := context.WithCancel(ctx)
+			onThinkingRevise := func(text string) {
+				if !g.emit(ctx, yield, stream.ThinkingPart(text)) {
+					cancelRevise()
+				}
+			}
+			revised, err := revise(reviseCtx, g.workerModel, ctx.UserContent(), answer, v.Feedback, onThinkingRevise)
+			cancelRevise()
 			if err != nil {
-				log.Printf("vetting[%s]: revise round %d error after %s: %v", g.name, round, time.Since(tr).Round(time.Millisecond), err)
-				yield(nil, err)
+				if errors.Is(err, context.Canceled) {
+					return // consumer stopped mid-revision
+				}
+				log.Printf("vetting[%s]: revise round %d error after %s: %v (surfacing pre-revision answer)", g.name, round, time.Since(tr).Round(time.Millisecond), err)
+				if !g.emit(ctx, yield, stream.JudgeUnavailablePart(round, "revision failed: "+err.Error())) {
+					return
+				}
+				g.emitAnswer(ctx, yield, answer)
 				return
 			}
 			log.Printf("vetting[%s]: revise round %d done in %s", g.name, round, time.Since(tr).Round(time.Millisecond))
 			if strings.TrimSpace(revised) != "" {
 				answer = revised
+			}
+			if !g.emit(ctx, yield, stream.RevisePart(round)) {
+				return
 			}
 		}
 
@@ -168,30 +199,227 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 	}
 }
 
+// critiqueContext wraps an InvocationContext, substituting a new UserContent
+// and a gate-marker-filtered Session so the worker can be re-invoked for
+// agentic self-refine without ADK erroring on orphan FunctionResponse events.
+//
+// ADK v1.4.0 errors if the last session event is a FunctionResponse with no
+// matching FunctionCall. Gate marker events are exactly that — they have no
+// FunctionCall counterpart — so we hide them from the session view the worker
+// sees during its re-invocation.
+type critiqueContext struct {
+	adkagent.InvocationContext
+	content *genai.Content
+	sess    session.Session
+}
+
+func newCritiqueContext(ctx adkagent.InvocationContext, content *genai.Content) *critiqueContext {
+	return &critiqueContext{
+		InvocationContext: ctx,
+		content:           content,
+		sess:              &filteredSession{Session: ctx.Session()},
+	}
+}
+
+func (c *critiqueContext) UserContent() *genai.Content { return c.content }
+func (c *critiqueContext) Session() session.Session     { return c.sess }
+
+func (c *critiqueContext) WithContext(goCtx context.Context) adkagent.InvocationContext {
+	return &critiqueContext{
+		InvocationContext: c.InvocationContext.WithContext(goCtx),
+		content:           c.content,
+		sess:              c.sess,
+	}
+}
+
+// filteredSession wraps session.Session, presenting a live-filtered Events()
+// that hides gate marker events so the worker agent sees no orphan
+// FunctionResponses in its session history during agentic self-refine.
+type filteredSession struct {
+	session.Session
+}
+
+func (f *filteredSession) Events() session.Events {
+	// Materialise the filtered list once per call so Len/At are O(1). Each
+	// call to Events() re-reads from the underlying session, so events added
+	// by the worker's tool loop are visible to the next LLM call.
+	var events []*session.Event
+	for ev := range f.Session.Events().All() {
+		if !isGateMarkerEvent(ev) {
+			events = append(events, ev)
+		}
+	}
+	return &materializedEvents{events: events}
+}
+
+// materializedEvents is a snapshot of the filtered session used within one
+// LLM context-build step. Len/At are O(1); All iterates the pre-built slice.
+type materializedEvents struct {
+	events []*session.Event
+}
+
+func (m *materializedEvents) All() iter.Seq[*session.Event] {
+	return func(yield func(*session.Event) bool) {
+		for _, ev := range m.events {
+			if !yield(ev) {
+				return
+			}
+		}
+	}
+}
+
+func (m *materializedEvents) Len() int { return len(m.events) }
+
+func (m *materializedEvents) At(i int) *session.Event {
+	if i < 0 || i >= len(m.events) {
+		return nil
+	}
+	return m.events[i]
+}
+
+// isGateMarkerEvent reports whether ev consists entirely of gate-internal
+// marker FunctionResponse parts that must be hidden from the worker.
+func isGateMarkerEvent(ev *session.Event) bool {
+	if ev == nil || ev.Content == nil || len(ev.Content.Parts) == 0 {
+		return false
+	}
+	hasMarker := false
+	for _, p := range ev.Content.Parts {
+		if p == nil {
+			continue
+		}
+		if p.FunctionResponse == nil || !stream.IsGateMarkerName(p.FunctionResponse.Name) {
+			return false
+		}
+		hasMarker = true
+	}
+	return hasMarker
+}
+
+// runAgenticSelfRefine re-invokes the worker agent with a critique prompt so
+// it can use its tools to fix what the draft got wrong — fetching missing
+// sources, verifying claims, retrieving URLs cited but not read. This is
+// genuinely agentic: the worker runs its full tool loop, not a single model
+// call. Returns the refined answer, merged activity (original + new fetches),
+// and false on early stop.
+func (g *gate) runAgenticSelfRefine(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer string, act workerActivity) (string, workerActivity, bool) {
+	content := buildCritiqueContent(g.cfg.Constitution, g.cfg.Rubric, ctx.UserContent(), answer, act)
+	cctx := newCritiqueContext(ctx, content)
+	// textAsThinking=true: plain text from the model streams as thinking events so
+	// the user sees activity inside the self-refine container. The local model
+	// outputs reasoning as plain text (not Thought parts), so without this the
+	// self-refine phase is a silent blank for the user.
+	refined, refinedAct, ok := g.runWorker(cctx, yield, true)
+	if !ok {
+		return "", workerActivity{}, false
+	}
+	return refined, mergeActivity(act, refinedAct), true
+}
+
+// mergeActivity unions two workerActivity records. Entries in b (the
+// self-refine pass) override same-URL entries in a so fresh content wins.
+func mergeActivity(a, b workerActivity) workerActivity {
+	merged := workerActivity{
+		searches: append(append([]string(nil), a.searches...), b.searches...),
+		fetched:  make(map[string]fetchRecord, len(a.fetched)+len(b.fetched)),
+	}
+	for u, r := range a.fetched {
+		merged.fetched[u] = r
+	}
+	for u, r := range b.fetched {
+		merged.fetched[u] = r
+	}
+	return merged
+}
+
+// fetchRecord holds a successfully fetched URL and a short content sample.
+type fetchRecord struct {
+	// sample is the first fetchSampleBytes of the page's readable text,
+	// passed to the judge for spot-checking cited claims.
+	sample string
+}
+
+// fetchSampleBytes is how many bytes of fetched content we keep per URL.
+// Enough for the judge to spot-check a claim; small enough not to flood the
+// judge's context when an answer cites many sources.
+const fetchSampleBytes = 300
+
 // runWorker runs the worker, streaming its non-answer events (thinking, tool
-// calls/results) and accumulating its answer text. Returns the buffered answer
-// and false if the consumer stopped early.
-func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool) (string, bool) {
+// calls/results) and accumulating its answer text. It also tracks successful
+// web_fetch calls — pairing FunctionCall (URL arg) with FunctionResponse
+// (page content) by call ID — so the judge can verify cited links against
+// the pages the worker actually read.
+// workerActivity summarises what retrieval the worker performed. It is passed
+// to self-refine and the judge so neither can falsely claim no retrieval happened.
+type workerActivity struct {
+	// searches holds every query the worker passed to web_search.
+	searches []string
+	// fetched maps URL → fetchRecord for web_fetch calls that returned content.
+	fetched map[string]fetchRecord
+}
+
+// Returns the buffered answer, retrieval activity, and false on early stop.
+// When textAsThinking is true, plain text parts are converted to thought parts
+// so they stream as thinking events — used during agentic self-refine so the
+// user sees the model working instead of a silent blank.
+func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, textAsThinking bool) (string, workerActivity, bool) {
 	var answer strings.Builder
+	var act workerActivity
+	act.fetched = make(map[string]fetchRecord)
+	// pendingCalls maps call-ID → URL for in-flight web_fetch calls.
+	pendingCalls := make(map[string]string)
+
 	for ev, err := range g.worker.Run(ctx) {
 		if err != nil {
 			if !yield(nil, err) {
-				return "", false
+				return "", workerActivity{}, false
 			}
 			continue
 		}
 		if ev == nil {
 			continue
 		}
-		passthrough, ans := splitAnswer(ev)
+		if ev.Content != nil {
+			for _, p := range ev.Content.Parts {
+				if p == nil {
+					continue
+				}
+				if p.FunctionCall != nil {
+					switch p.FunctionCall.Name {
+					case "web_search":
+						// Record the query so self-refine knows searches happened.
+						if q, ok := p.FunctionCall.Args["query"].(string); ok && q != "" {
+							act.searches = append(act.searches, strings.TrimSpace(q))
+						}
+					case "web_fetch":
+						// Record the URL when the call is made so we can look it up when
+						// the response arrives (different event, matched by call ID).
+						if u, ok := p.FunctionCall.Args["url"].(string); ok && u != "" {
+							pendingCalls[p.FunctionCall.ID] = strings.TrimSpace(u)
+						}
+					}
+				}
+				// When the web_fetch response arrives, pair it with its call's URL and
+				// check whether it returned real content (non-error "result" key).
+				if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_fetch" {
+					if url, known := pendingCalls[p.FunctionResponse.ID]; known {
+						delete(pendingCalls, p.FunctionResponse.ID)
+						if result, ok := p.FunctionResponse.Response["result"].(string); ok && strings.TrimSpace(result) != "" {
+							act.fetched[url] = fetchRecord{sample: strings.TrimSpace(trimToSample(result))}
+						}
+					}
+				}
+			}
+		}
+		passthrough, ans := splitAnswer(ev, textAsThinking)
 		answer.WriteString(ans)
 		if passthrough != nil {
 			if !yield(passthrough, nil) {
-				return "", false
+				return "", workerActivity{}, false
 			}
 		}
 	}
-	return answer.String(), true
+	return answer.String(), act, true
 }
 
 // splitAnswer separates a worker event's answer text (plain non-thought text)
@@ -199,7 +427,11 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 // the non-answer parts to stream through (nil if there are none). The worker's
 // turn-completion is stripped so it doesn't close the agent's group before the
 // gate has vetted and emitted the final answer.
-func splitAnswer(ev *session.Event) (*session.Event, string) {
+//
+// When asThinking is true (agentic self-refine pass), plain text parts are
+// converted to Thought=true so they stream as thinking events — the local model
+// outputs reasoning as plain text, so without this the self-refine is silent.
+func splitAnswer(ev *session.Event, asThinking bool) (*session.Event, string) {
 	if ev.Content == nil {
 		if ev.TurnComplete {
 			clone := *ev
@@ -216,6 +448,9 @@ func splitAnswer(ev *session.Event) (*session.Event, string) {
 		}
 		if !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil && p.Text != "" {
 			answer.WriteString(p.Text)
+			if asThinking {
+				keep = append(keep, &genai.Part{Thought: true, Text: p.Text})
+			}
 			continue
 		}
 		keep = append(keep, p)
@@ -227,6 +462,20 @@ func splitAnswer(ev *session.Event) (*session.Event, string) {
 	clone.TurnComplete = false
 	clone.Content = &genai.Content{Role: ev.Content.Role, Parts: keep}
 	return &clone, answer.String()
+}
+
+// trimToSample returns the first fetchSampleBytes of s, trimmed back to a valid
+// UTF-8 rune boundary so the judge never receives a string ending mid-codepoint.
+func trimToSample(s string) string {
+	if len(s) <= fetchSampleBytes {
+		return s
+	}
+	s = s[:fetchSampleBytes]
+	// Back up at most utf8.UTFMax-1 bytes to reach a valid boundary.
+	for i := 0; i < utf8.UTFMax && len(s) > 0 && !utf8.ValidString(s); i++ {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // emit yields a gate-authored event carrying a single marker part (self-refine or
@@ -248,41 +497,3 @@ func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Ev
 	return yield(ev, nil)
 }
 
-// keepaliveInterval is how often the gate heartbeats the A2A connection during
-// slow model calls. Must be shorter than the A2A client's idle read timeout
-// (~60 s in the ADK remoteagent HTTP client).
-const keepaliveInterval = 30 * time.Second
-
-// withKeepalive runs fn in a goroutine while calling keepalive() every
-// keepaliveInterval. keepalive emits a no-op SSE event that prevents the A2A
-// connection from idling (self-refine, judge, revise can each take >60s on
-// first cold load). Returns false from keepalive to abort early.
-func withKeepalive[T any](ctx adkagent.InvocationContext, keepalive func() bool, fn func() (T, error)) (T, error) {
-	ch := make(chan struct {
-		v   T
-		err error
-	}, 1) // buffered: goroutine never blocks on send
-	go func() {
-		v, err := fn()
-		ch <- struct {
-			v   T
-			err error
-		}{v, err}
-	}()
-	ticker := time.NewTicker(keepaliveInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case r := <-ch:
-			return r.v, r.err
-		case <-ticker.C:
-			if !keepalive() {
-				<-ch // drain so goroutine can exit cleanly
-				return *new(T), ctx.Err()
-			}
-		case <-ctx.Done():
-			<-ch // drain so goroutine can exit cleanly
-			return *new(T), ctx.Err()
-		}
-	}
-}

@@ -30,8 +30,12 @@ const transferTool = "transfer_to_agent"
 // and — as orphan responses with no matching call — are dropped from the worker's
 // future LLM context by ADK. Translate decodes them into dedicated wire events.
 const (
-	judgeTool      = "record_judge_verdict"
-	selfRefineTool = "record_self_refine"
+	judgeTool            = "record_judge_verdict"
+	judgeStartTool       = "record_judge_start"
+	selfRefineTool       = "record_self_refine"
+	selfRefineStartTool  = "record_self_refine_start"
+	judgeUnavailableTool = "record_judge_unavailable"
+	reviseTool           = "record_revise"
 	// keepaliveTool is a heartbeat the gate emits every ~30 s during slow
 	// operations (judge model load + generation) to keep the A2A SSE connection
 	// alive. Translate drops it — it produces no wire event.
@@ -47,8 +51,12 @@ const (
 	EventToolResult          = "tool_result"
 	EventAgentStart          = "agent_start"
 	EventAgentEnd            = "agent_end"
+	EventSelfRefineStart     = "self_refine_start"
 	EventSelfRefine          = "self_refine"
+	EventJudgeStart          = "judge_start"
+	EventRevise              = "revise"
 	EventJudgeVerdict        = "judge_verdict"
+	EventJudgeUnavailable    = "judge_unavailable"
 	EventConfirmationRequest = "confirmation_request"
 	EventError               = "error"
 	EventDone                = "done"
@@ -103,6 +111,13 @@ type SelfRefineData struct {
 	Changed bool   `json:"changed"`
 }
 
+// ReviseData is the `revise` event payload: the gate revised the answer in
+// response to the judge's feedback before starting the next round.
+type ReviseData struct {
+	Agent string `json:"agent,omitempty"`
+	Round int    `json:"round"`
+}
+
 // JudgeVerdictData is the `judge_verdict` event payload: the independent judge's
 // score for one round, whether it passed the threshold, and revision feedback.
 type JudgeVerdictData struct {
@@ -111,6 +126,21 @@ type JudgeVerdictData struct {
 	Score    float64 `json:"score"`
 	Passed   bool    `json:"passed"`
 	Feedback string  `json:"feedback,omitempty"`
+}
+
+// JudgeUnavailableData is the `judge_unavailable` event payload: the judge
+// failed and the answer is surfaced unvetted, with a quality warning.
+type JudgeUnavailableData struct {
+	Agent  string `json:"agent,omitempty"`
+	Round  int    `json:"round"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// JudgeStartData is the `judge_start` event payload: the gate is beginning
+// an independent judge round. Pairs with a later judge_verdict to close it.
+type JudgeStartData struct {
+	Agent string `json:"agent,omitempty"`
+	Round int    `json:"round"`
 }
 
 // Token builds a token event.
@@ -148,11 +178,37 @@ func SelfRefine(agent string, changed bool) SSEEvent {
 	return SSEEvent{Name: EventSelfRefine, Data: SelfRefineData{Agent: agent, Changed: changed}}
 }
 
+// Revise builds a revise event: the gate revised the worker's answer in
+// response to judge feedback before running the next judge round.
+func Revise(agent string, round int) SSEEvent {
+	return SSEEvent{Name: EventRevise, Data: ReviseData{Agent: agent, Round: round}}
+}
+
 // JudgeVerdict builds a judge_verdict event.
 func JudgeVerdict(agent string, round int, score float64, passed bool, feedback string) SSEEvent {
 	return SSEEvent{Name: EventJudgeVerdict, Data: JudgeVerdictData{
 		Agent: agent, Round: round, Score: score, Passed: passed, Feedback: feedback,
 	}}
+}
+
+// JudgeUnavailable builds a judge_unavailable event: the judge failed and the
+// answer is being surfaced anyway with a quality-cannot-be-guaranteed flag.
+func JudgeUnavailable(agent string, round int, reason string) SSEEvent {
+	return SSEEvent{Name: EventJudgeUnavailable, Data: JudgeUnavailableData{
+		Agent: agent, Round: round, Reason: reason,
+	}}
+}
+
+// SelfRefineStart signals that the gate is beginning a self-refine pass.
+// Thinking events that follow belong inside this container until SelfRefine closes it.
+func SelfRefineStart(agent string) SSEEvent {
+	return SSEEvent{Name: EventSelfRefineStart, Data: AgentData{Agent: agent}}
+}
+
+// JudgeStart signals that the gate is beginning an independent judge round.
+// Thinking events that follow belong inside this container until JudgeVerdict closes it.
+func JudgeStart(agent string, round int) SSEEvent {
+	return SSEEvent{Name: EventJudgeStart, Data: JudgeStartData{Agent: agent, Round: round}}
 }
 
 // SelfRefinePart encodes a self-refine pass as the marker function-response part
@@ -173,6 +229,30 @@ func KeepAlivePart() *genai.Part {
 	}}
 }
 
+// SelfRefineStartPart encodes the start of a self-refine pass as a marker
+// function-response part the trust gate yields.
+func SelfRefineStartPart() *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     selfRefineStartTool,
+		Response: map[string]any{},
+	}}
+}
+
+// JudgeStartPart encodes the start of a judge round as a marker
+// function-response part the trust gate yields.
+func JudgeStartPart(round int) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     judgeStartTool,
+		Response: map[string]any{"round": round},
+	}}
+}
+
+// ThinkingPart creates a reasoning part for direct emission by the gate during
+// self-refine and judge model calls, surfacing as a `thinking` wire event.
+func ThinkingPart(text string) *genai.Part {
+	return &genai.Part{Thought: true, Text: text}
+}
+
 // JudgeVerdictPart encodes one judge verdict as the marker function-response part
 // the trust gate yields.
 func JudgeVerdictPart(round int, score float64, passed bool, feedback string) *genai.Part {
@@ -181,6 +261,24 @@ func JudgeVerdictPart(round int, score float64, passed bool, feedback string) *g
 		Response: map[string]any{
 			"round": round, "score": score, "passed": passed, "feedback": feedback,
 		},
+	}}
+}
+
+// RevisePart encodes a revision pass as the marker function-response part the
+// trust gate yields after the judge requests a revision.
+func RevisePart(round int) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     reviseTool,
+		Response: map[string]any{"round": round},
+	}}
+}
+
+// JudgeUnavailablePart encodes a judge-unavailable notice as the marker
+// function-response part the trust gate yields before surfacing the answer.
+func JudgeUnavailablePart(round int, reason string) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     judgeUnavailableTool,
+		Response: map[string]any{"round": round, "reason": reason},
 	}}
 }
 
@@ -228,13 +326,28 @@ func Translate(ev *session.Event) []SSEEvent {
 					continue // surfaced as agent_start
 				case keepaliveTool:
 					continue // heartbeat only; no wire event
+				case selfRefineStartTool:
+					out = append(out, SelfRefineStart(agent))
+					continue
 				case selfRefineTool:
 					r := p.FunctionResponse.Response
 					out = append(out, SelfRefine(agent, asBool(r["changed"])))
 					continue
+				case judgeStartTool:
+					r := p.FunctionResponse.Response
+					out = append(out, JudgeStart(agent, asInt(r["round"])))
+					continue
 				case judgeTool:
 					r := p.FunctionResponse.Response
 					out = append(out, JudgeVerdict(agent, asInt(r["round"]), asFloat(r["score"]), asBool(r["passed"]), asString(r["feedback"])))
+					continue
+				case judgeUnavailableTool:
+					r := p.FunctionResponse.Response
+					out = append(out, JudgeUnavailable(agent, asInt(r["round"]), asString(r["reason"])))
+					continue
+				case reviseTool:
+					r := p.FunctionResponse.Response
+					out = append(out, Revise(agent, asInt(r["round"])))
 					continue
 				}
 				out = append(out, ToolResult(agent, p.FunctionResponse.Name, p.FunctionResponse.Response))
@@ -250,6 +363,19 @@ func Translate(ev *session.Event) []SSEEvent {
 		out = append(out, AgentEnd(agent))
 	}
 	return out
+}
+
+// IsGateMarkerName reports whether name is a reserved gate-internal tool name.
+// These events must be hidden from the worker's session view during agentic
+// self-refine — they are orphan FunctionResponses (no matching FunctionCall)
+// and ADK v1.4.0+ errors if it sees one as the last session event.
+func IsGateMarkerName(name string) bool {
+	switch name {
+	case judgeTool, judgeStartTool, selfRefineTool, selfRefineStartTool,
+		judgeUnavailableTool, reviseTool, keepaliveTool:
+		return true
+	}
+	return false
 }
 
 // Marker-payload values survive the A2A round-trip as JSON, so numbers may arrive

@@ -142,6 +142,11 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 			cfg.Adversarial.Model, gateCfg.MaxRounds, gateCfg.Threshold, gateCfg.SelfRefine)
 	}
 
+	// One shared fetch cache for all agents — a URL fetched by any agent in any
+	// session is available to all subsequent fetches without a network round-trip.
+	// Swap NewInMemoryURLCache() for a persistent implementation here when ready.
+	urlCache := tools.NewInMemoryURLCache()
+
 	var clients []adkagent.Agent
 	var servers []*agent.A2AServer
 	for _, name := range names {
@@ -160,6 +165,7 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 			SearXNG:    cfg.Tools.WebSearch.Backend,
 			Crawl4AI:   cfg.Tools.Fetch.RenderBackend,
 			Summarizer: m,
+			Cache:      urlCache,
 		})
 		if err != nil {
 			return nil, servers, fmtErr(name, "tools: %v", err)
@@ -178,7 +184,14 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 		// serving it, so the orchestrator dispatches to the gated agent unchanged.
 		served := ag
 		if cfg.Adversarial.Enabled() {
-			if served, err = vetting.NewGatedAgent(ag, m, judge, gateCfg); err != nil {
+			agentGateCfg := gateCfg // per-agent copy; may have its own rubric
+			if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
+				return nil, servers, fmtErr(name, "rubric: %v", err)
+			} else if override != "" {
+				agentGateCfg.Rubric = override
+				log.Printf("agent %q: using per-agent rubric from bundle", name)
+			}
+			if served, err = vetting.NewGatedAgent(ag, m, judge, agentGateCfg); err != nil {
 				return nil, servers, fmtErr(name, "gate: %v", err)
 			}
 		}

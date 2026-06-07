@@ -25,8 +25,12 @@ export interface AgentStreamHandlers {
   onToolResult?: (name: string, result: unknown) => void
   onAgentStart?: (agent: string) => void
   onAgentEnd?: (agent: string) => void
+  onSelfRefineStart?: () => void
   onSelfRefine?: (changed: boolean) => void
+  onJudgeStart?: (round: number) => void
+  onRevise?: (round: number) => void
   onJudgeVerdict?: (v: JudgeVerdictPayload) => void
+  onJudgeUnavailable?: (round: number, reason: string) => void
   onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
   onError?: (msg: string) => void
   onDone?: () => void
@@ -36,7 +40,7 @@ export interface AgentStreamHandlers {
 export const AGENT_EVENT_NAMES = [
   'token', 'thinking', 'tool_call', 'tool_result',
   'agent_start', 'agent_end',
-  'self_refine', 'judge_verdict',
+  'self_refine_start', 'self_refine', 'judge_start', 'revise', 'judge_verdict', 'judge_unavailable',
   'confirmation_request', 'error', 'done',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
@@ -74,9 +78,22 @@ export function dispatchAgentEvent(
     case 'agent_end':
       if (hasStringField(parsed, 'agent')) handlers.onAgentEnd?.(parsed.agent)
       return true
+    case 'self_refine_start':
+      handlers.onSelfRefineStart?.()
+      return true
     case 'self_refine': {
       const changed = (parsed as { changed?: boolean }).changed === true
       handlers.onSelfRefine?.(changed)
+      return true
+    }
+    case 'judge_start': {
+      const p = parsed as { round?: number }
+      handlers.onJudgeStart?.(typeof p.round === 'number' ? p.round : 0)
+      return true
+    }
+    case 'revise': {
+      const p = parsed as { round?: number }
+      handlers.onRevise?.(typeof p.round === 'number' ? p.round : 0)
       return true
     }
     case 'judge_verdict': {
@@ -87,6 +104,14 @@ export function dispatchAgentEvent(
         passed: p.passed === true,
         feedback: typeof p.feedback === 'string' ? p.feedback : '',
       })
+      return true
+    }
+    case 'judge_unavailable': {
+      const p = parsed as { round?: number; reason?: string }
+      handlers.onJudgeUnavailable?.(
+        typeof p.round === 'number' ? p.round : 0,
+        typeof p.reason === 'string' ? p.reason : '',
+      )
       return true
     }
     case 'confirmation_request':

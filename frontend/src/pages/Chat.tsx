@@ -34,9 +34,29 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const prevStreamingRef = useRef(false)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = scrollContainerRef.current
+    const streamingJustStarted = streaming && !prevStreamingRef.current
+    prevStreamingRef.current = streaming ?? false
+
+    // Always scroll when streaming begins (new response started).
+    // During streaming, only scroll if the user is already near the bottom —
+    // so that open self-critique / judge containers don't forcibly yank them away.
+    if (streamingJustStarted) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      return
+    }
+    if (!container) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      return
+    }
+    const { scrollTop, scrollHeight, clientHeight } = container
+    if (scrollHeight - scrollTop - clientHeight < 120) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages, streaming])
 
   useEffect(() => {
@@ -252,7 +272,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {!activeChatId && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Select or start a chat
