@@ -155,7 +155,7 @@ export function appendRevise(parts: MessagePart[], round: number): MessagePart[]
 // before producing a verdict), then appends a judge-unavailable warning.
 export function appendJudgeUnavailable(parts: MessagePart[], round: number, reason: string): MessagePart[] {
   // Close the open judge container (if any) so it doesn't spin forever.
-  let next = closeOpenJudgeVerdictHelper(parts, 0, false, '') ?? parts
+  const next = closeOpenJudgeVerdictHelper(parts, 0, false, '') ?? parts
   const node: JudgeUnavailablePart = { kind: 'judge_unavailable', round, reason }
   return intoOpenAgent(next, items => [...items, node]) ?? [...next, node]
 }
