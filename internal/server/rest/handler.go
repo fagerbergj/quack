@@ -34,8 +34,8 @@ const runTimeout = 10 * time.Minute
 type Handler struct {
 	store         *store.Store
 	orch          *orchestrator.Orchestrator
-	titler        model.LLM  // used to generate chat titles; nil disables auto-titling
-	activeCancels sync.Map   // chatID → context.CancelFunc for in-progress runs
+	titler        model.LLM // used to generate chat titles; nil disables auto-titling
+	activeCancels sync.Map  // chatID → context.CancelFunc for in-progress runs
 }
 
 // NewHandler builds a REST handler. titler is the model used to generate short
