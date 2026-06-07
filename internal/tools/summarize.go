@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/adk/model"
 	"google.golang.org/adk/agent"
+	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
