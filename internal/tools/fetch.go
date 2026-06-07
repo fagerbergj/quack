@@ -15,6 +15,7 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
 
+	"google.golang.org/adk/agent"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )
@@ -52,7 +53,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 			Name:        "web_fetch",
 			Description: "Fetch a web page by URL and return its readable text. Falls back to a headless browser for JavaScript-rendered pages.",
 		},
-		func(tc tool.Context, a fetchArgs) (string, error) {
+		func(tc agent.ToolContext, a fetchArgs) (string, error) {
 			u, err := ValidateURL(strings.TrimSpace(a.URL))
 			if err != nil {
 				return "", err
@@ -79,7 +80,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 
 // fetchBest tries to get the best readable text for target. It first tries a
 // direct GET; if that is thin, failed, or bot-walled, it falls back to crawl4ai.
-func fetchBest(tc tool.Context, d Deps, u *url.URL, target string) (string, error) {
+func fetchBest(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error) {
 	text, derr := fetchReadable(tc, d.Guarded, target)
 	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
 		return text, nil

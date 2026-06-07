@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"google.golang.org/adk/agent"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )
@@ -57,7 +58,7 @@ func newWebSearch(d Deps) (tool.Tool, error) {
 			Name:        "web_search",
 			Description: "Search the web for a query. Returns {results: [{title, url, snippet}]}. Use the urls with the fetch tool to read a page.",
 		},
-		func(tc tool.Context, a searchArgs) (searchResponse, error) {
+		func(tc agent.ToolContext, a searchArgs) (searchResponse, error) {
 			results, err := searchWeb(tc, client, base, a.Query)
 			return searchResponse{Results: results}, err
 		},

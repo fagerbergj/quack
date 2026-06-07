@@ -61,7 +61,7 @@ func echoTool(t *testing.T) tool.Tool {
 	t.Helper()
 	tl, err := functiontool.New[echoArgs, string](
 		functiontool.Config{Name: "echo", Description: "Echo the message back."},
-		func(_ tool.Context, a echoArgs) (string, error) { return "pong:" + a.Msg, nil },
+		func(_ adkagent.ToolContext, a echoArgs) (string, error) { return "pong:" + a.Msg, nil },
 	)
 	if err != nil {
 		t.Fatal(err)
