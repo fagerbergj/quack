@@ -222,7 +222,7 @@ func newCritiqueContext(ctx adkagent.InvocationContext, content *genai.Content) 
 }
 
 func (c *critiqueContext) UserContent() *genai.Content { return c.content }
-func (c *critiqueContext) Session() session.Session     { return c.sess }
+func (c *critiqueContext) Session() session.Session    { return c.sess }
 
 func (c *critiqueContext) WithContext(goCtx context.Context) adkagent.InvocationContext {
 	return &critiqueContext{
@@ -496,4 +496,3 @@ func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Ev
 	ev.TurnComplete = true
 	return yield(ev, nil)
 }
-
