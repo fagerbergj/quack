@@ -37,7 +37,6 @@ func TestRegistryBuild(t *testing.T) {
 	}
 }
 
-
 func TestHTMLToMarkdown(t *testing.T) {
 	in := `<html><head><title>t</title><style>.x{}</style></head>
 	<body><h1>Hello</h1><script>var x=1;</script>
