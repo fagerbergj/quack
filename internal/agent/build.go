@@ -6,6 +6,8 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
 // MaxOutputTokens bounds generation so a reasoning model can't run away. Shared
@@ -17,12 +19,15 @@ const MaxOutputTokens = 8192
 // its selected built-in tools. The resulting agent is what Serve exposes over
 // A2A.
 func Build(b *Bundle, m model.LLM, tools []tool.Tool) (adkagent.Agent, error) {
+	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
 	return llmagent.New(llmagent.Config{
-		Name:        b.Card.Name,
-		Description: b.Card.Description,
+		Name:        name,
+		Description: desc,
 		Model:       m,
-		Instruction: b.Prompt,
-		Tools:       tools,
+		InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
+			return promptbuilder.Agent(name, desc, tools, behaviour), nil
+		},
+		Tools: tools,
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			MaxOutputTokens: MaxOutputTokens,
 		},

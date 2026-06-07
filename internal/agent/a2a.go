@@ -12,6 +12,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -119,14 +120,22 @@ func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 // The default a2aclient factory applies a 3-minute total-request timeout which
 // fires mid-judge on long vetting runs (worker + self-refine already consume
 // most of those 3 minutes before the judge even starts).
+//
+// RemoteTaskCleanupCallback is a no-op: co-located agents share the same
+// process context, so cancellation propagates naturally through the goroutine
+// tree without an explicit HTTP cancel request. The default cleanup sends a
+// CancelTask HTTP call that reliably times out (the A2A executor holds a
+// per-session lock while running), producing a spurious WARN on every client
+// disconnect.
 func (s *A2AServer) Client() (adkagent.Agent, error) {
 	factory := a2aclient.NewFactory(
 		a2aclient.WithJSONRPCTransport(&http.Client{}),
 	)
 	return remoteagent.NewA2A(remoteagent.A2AConfig{
-		Name:           s.Card.Name,
-		Description:    s.Card.Description,
-		AgentCard:      s.Card,
-		ClientProvider: remoteagent.NewA2AClientProvider(factory),
+		Name:                      s.Card.Name,
+		Description:               s.Card.Description,
+		AgentCard:                 s.Card,
+		ClientProvider:            remoteagent.NewA2AClientProvider(factory),
+		RemoteTaskCleanupCallback: func(context.Context, *a2a.AgentCard, remoteagent.A2AClient, a2a.TaskInfo, error) {},
 	})
 }

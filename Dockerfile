@@ -28,6 +28,8 @@ COPY config/ /config/
 # config references them by the relative path `agents/...` (CWD is /), so keep
 # that layout.
 COPY agents/ /agents/
+# Orchestrator skill bundles (SKILL.md directories), read at startup.
+COPY skills/ /skills/
 ENV QUACK_CONFIG=/config/quack.yaml
 EXPOSE 8080
 ENTRYPOINT ["/quack"]

@@ -19,11 +19,15 @@ import (
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
+	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/skilltoolset"
+	"google.golang.org/adk/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/server"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
 	"github.com/fagerbergj/quack/internal/server/rest"
@@ -35,12 +39,9 @@ import (
 //go:embed all:web/dist
 var webDist embed.FS
 
-// systemPrompt steers the thin dispatcher: it should delegate to specialist
-// agents rather than answer research questions itself.
-const systemPrompt = "You are Quack's orchestrator. You coordinate specialist agents. " +
-	"When a request needs information from the web — news, facts, current events, looking something up, or research — " +
-	"transfer to the web-researcher agent to handle it. " +
-	"Handle a message yourself only when it is purely conversational, such as a greeting or a question about Quack itself."
+// orchestratorPromptPath is the file that drives the orchestrator's behaviour.
+// It lives alongside the agent bundles so it can be edited without rebuilding.
+const orchestratorPromptPath = "agents/orchestrator/prompt.md"
 
 func main() {
 	cfgPath := os.Getenv("QUACK_CONFIG")
@@ -77,7 +78,30 @@ func main() {
 		}
 	}()
 
-	orch, err := orchestrator.New(llm, st.Sessions, systemPrompt, clients)
+	promptBytes, err := os.ReadFile(orchestratorPromptPath)
+	if err != nil {
+		log.Fatalf("orchestrator prompt: %v", err)
+	}
+
+	ctx := context.Background()
+	skillSource := skill.NewFileSystemSource(os.DirFS("skills"))
+	skillSource, _, err = skill.WithCompletePreloadSource(ctx, skillSource)
+	if err != nil {
+		log.Fatalf("skills: %v", err)
+	}
+	skillTS, err := skilltoolset.New(ctx, skilltoolset.Config{Source: skillSource})
+	if err != nil {
+		log.Fatalf("skills: %v", err)
+	}
+	skillFrontmatters, err := skillSource.ListFrontmatters(ctx)
+	if err != nil {
+		log.Fatalf("skills: list frontmatters: %v", err)
+	}
+
+	behaviour := string(promptBytes)
+	orch, err := orchestrator.New(llm, st.Sessions, func() string {
+		return promptbuilder.Orchestrator(skillFrontmatters, behaviour)
+	}, clients, []tool.Toolset{skillTS})
 	if err != nil {
 		log.Fatalf("orchestrator: %v", err)
 	}
@@ -88,7 +112,7 @@ func main() {
 	}
 
 	handler := server.New(server.Options{
-		REST: rest.NewHandler(st, orch),
+		REST: rest.NewHandler(st, orch, llm),
 		MCP:  mcpserver.Handler(orch),
 		SPA:  spa,
 	})

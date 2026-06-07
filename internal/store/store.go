@@ -22,6 +22,7 @@ import (
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
 type Chat struct {
 	ID           string    `gorm:"primaryKey" json:"id"`
+	Title        string    `json:"title"`
 	SystemPrompt string    `json:"system_prompt"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -110,6 +111,11 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 // Touch bumps a chat's updated_at to now.
 func (s *Store) Touch(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("updated_at", time.Now().UTC()).Error
+}
+
+// UpdateTitle sets the human-readable title for a chat.
+func (s *Store) UpdateTitle(ctx context.Context, id, title string) error {
+	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("title", title).Error
 }
 
 // Messages projects a chat's history from its ADK session events. Role is

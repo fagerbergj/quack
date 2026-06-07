@@ -70,7 +70,7 @@ export class ChatStore {
     this.notify(chatId)
   }
 
-  async submit(chatId: string, content: string): Promise<void> {
+  async submit(chatId: string, content: string, onTitle?: (title: string) => void): Promise<void> {
     const trimmed = content.trim()
     if (!trimmed) return
     const cur = this.get(chatId)
@@ -94,10 +94,13 @@ export class ChatStore {
         signal,
       }),
       assistantIdx,
+      onTitle,
     )
   }
 
   stop(chatId: string): void {
+    // Cancel the server-side run first so inference stops, then drop the connection.
+    fetch(`/api/v1/chats/${chatId}/stream`, { method: 'DELETE' }).catch(() => {})
     this.controllers.get(chatId)?.abort()
   }
 
@@ -107,6 +110,7 @@ export class ChatStore {
     chatId: string,
     fetchFn: (signal: AbortSignal) => Promise<Response>,
     foldIdx: number,
+    onTitle?: (title: string) => void,
   ): Promise<void> {
     const controller = new AbortController()
     this.controllers.set(chatId, controller)
@@ -144,6 +148,7 @@ export class ChatStore {
         onRevise: round => updateParts(p => appendRevise(p, round)),
         onJudgeVerdict: v => updateParts(p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback)),
         onJudgeUnavailable: (round, reason) => updateParts(p => appendJudgeUnavailable(p, round, reason)),
+        onChatTitle: title => onTitle?.(title),
         onError: msg => { streamError = msg },
       })
       if (streamError) throw new Error(streamError)

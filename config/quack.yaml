@@ -23,7 +23,7 @@ agents:
     bundle: agents/web-researcher
     provider: default
     model: ${RESEARCHER_MODEL}
-    tools: [current_date, web_search, web_fetch, summarize]
+    tools: [web_search, web_fetch, summarize]
 
 # Backend bindings for the built-in tools (keyless, internal services in M1).
 tools:
