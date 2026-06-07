@@ -1,7 +1,7 @@
 // Package tools is Quack's registry of built-in agent tools (config `kind:
 // builtin`). An agent's config selects tools by name; Build resolves those names
 // to ADK tools, injecting shared dependencies (HTTP clients, backend URLs, a
-// summarizer model). M1 ships web_search, web_fetch, and summarize.
+// summarizer model).
 package tools
 
 import (
@@ -39,10 +39,9 @@ type Deps struct {
 type constructor func(Deps) (tool.Tool, error)
 
 var registry = map[string]constructor{
-	"web_search":   newWebSearch,
-	"web_fetch":    newFetch,
-	"summarize":    newSummarize,
-	"current_date": newCurrentDate,
+	"web_search": newWebSearch,
+	"web_fetch":  newFetch,
+	"summarize":  newSummarize,
 }
 
 // Known reports whether name is a registered built-in tool. Used by config
