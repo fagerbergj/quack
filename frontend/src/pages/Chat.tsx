@@ -93,6 +93,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
 
   async function handleDeleteChat(id: string, e: React.MouseEvent) {
     e.stopPropagation()
+    store.stop(id)
     await api.deleteChat(id)
     store.clear(id)
     setChats(prev => prev.filter(s => s.id !== id))

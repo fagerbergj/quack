@@ -98,11 +98,13 @@ auth, deployment.
 
 ---
 
-## M2 — Adversarial vetting + memory
+## M2 — Adversarial vetting ✅
+
+<details>
+<summary><strong>✅ Complete.</strong> A single agent's output is self-refined and independently judged against a standing rubric; the vetting loop streams to the UI and APIs.</summary>
 
 **Goal.** Make a single agent's output **trustworthy**: wrap it in the **trust gate** (self-refine
-then an independent judge) and wire **memory** (recall, and commit only *vetted* findings). Still
-single-agent; **no DAG** (that is M3).
+then an independent judge). Still single-agent; **no DAG** (that is M3); **no memory** (that is M3).
 
 **Scope.**
 
@@ -115,18 +117,15 @@ single-agent; **no DAG** (that is M3).
   so agents themselves stay simple.
 - **Rubric**: a **standing constitution** of criteria applied to the output. (Per-node,
   planner-written rubrics arrive with the DAG in M3.)
-- **Memory**: the `MemoryService` is wired (the **vector store**, which the local `docker-compose`
-  gains here); the agent **recalls** via the memory tools and **commits only vetted findings**.
-  Goal 5 becomes enforceable now that the judge exists, which is why memory lands here alongside
-  adversarial.
-- **Surfacing**: the self-refine, judge, and commit activity streams to the UI and over the APIs.
-- Single agent; no DAG; no auth; no deploy.
+- **Surfacing**: the self-refine and judge activity streams to the UI and over the APIs.
+- Single agent; no DAG; no memory; no auth; no deploy.
 
-**Done when.** A single agent's answer is self-refined, judged, and only returned and committed to
-memory once it passes (or hits `max_rounds`); a later request **recalls** prior vetted findings. The
-vetting loop and the memory write/recall are visible in the stream.
+**Done when.** A single agent's answer is self-refined, judged, and only returned once it passes (or
+hits `max_rounds`). The vetting loop is visible in the stream.
 
-**Out of scope (later).** DAG / multi-agent planning, per-node planner rubrics, auth, deployment.
+**Out of scope (later).** Memory (M3), DAG / multi-agent planning, per-node planner rubrics, auth, deployment.
+
+</details>
 
 ---
 
@@ -157,18 +156,39 @@ into two research nodes and a synthesis.
   per-node status); clients can fetch the DAG for a task and stream node-scoped activity + lifecycle.
 - **Frontend**: a **DAG view** for a task — the graph of nodes + edges, live-updating status, with
   drill-down into a node's activity (thinking / tool calls).
-- No auth, no deploy.
+- No memory, no auth, no deploy.
 
 **Done when.** The trip-planning request ("best time to go to Dublin, and what to do there")
 decomposes into a DAG (two web-researcher nodes → a synthesizer node), each node runs vetted, and the
 synthesizer produces a cited itinerary. You can watch the DAG build and execute live in the UI and
 fetch its structure + node states via REST and MCP.
 
+**Out of scope (later).** Memory (M4), auth, deployment.
+
+---
+
+## M4 — Memory
+
+**Goal.** Wire **memory** so agents recall prior vetted findings and commit new ones. Builds directly
+on M2's trust gate (the judge is the gatekeeper for writes) and benefits most from M3's multi-node
+DAG queries where recall across nodes matters.
+
+**Scope.**
+
+- **MemoryService**: the `MemoryService` is wired (the **vector store**, added to `docker-compose`);
+  agents **recall** prior vetted findings via memory tools and **commit only vetted findings**. The
+  trust gate enforces the write: only judge-passed output reaches the store.
+- **Surfacing**: memory recall and commit activity streams to the UI and over the APIs.
+- No auth, no deploy.
+
+**Done when.** A request recalls prior vetted findings from the vector store; a new vetted finding
+is committed and visible on a later request's recall. The recall and commit are visible in the stream.
+
 **Out of scope (later).** Auth, deployment.
 
 ---
 
-## M4 — Auth + deploy
+## M5 — Auth + deploy
 
 **Goal.** Take the locally-tested system and make it a **deployed, authenticated service** behind the
 gateway. Inbound auth is wired (pluggable OIDC IdP); Quack runs in production on the real stores.
@@ -197,7 +217,7 @@ agents/tools, RAG / `rag-researcher`).
 
 ## Future work (beyond M4)
 
-Everything below is intentionally outside the M0–M4 plan, captured so it is not lost. Most are
+Everything below is intentionally outside the M0–M5 plan, captured so it is not lost. Most are
 "extensible in theory" seams we shaped but did not build.
 
 | Theme | Item | Notes |

@@ -5,6 +5,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,7 +14,6 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
-	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -50,17 +50,35 @@ func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string
 	if h.titler == nil {
 		return ""
 	}
-	result, err := inference.Generate(ctx, h.titler, &model.LLMRequest{
-		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: firstMessage}}}},
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + firstMessage}}}},
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: titleInstruction}}},
-			MaxOutputTokens:   20,
 		},
-	})
-	if err != nil {
-		return ""
 	}
-	return strings.TrimSpace(result)
+	var out strings.Builder
+	var candidates, total int32
+	for resp, err := range h.titler.GenerateContent(ctx, req, false) {
+		if err != nil {
+			log.Printf("title: generation failed: %v", err)
+			return ""
+		}
+		if resp.UsageMetadata != nil {
+			candidates = resp.UsageMetadata.CandidatesTokenCount
+			total = resp.UsageMetadata.TotalTokenCount
+		}
+		if resp.Content == nil {
+			continue
+		}
+		for _, p := range resp.Content.Parts {
+			if !p.Thought && p.Text != "" {
+				out.WriteString(p.Text)
+			}
+		}
+	}
+	title := strings.TrimSpace(out.String())
+	log.Printf("title: %q (candidates=%d total=%d)", title, candidates, total)
+	return title
 }
 
 // HealthCheck returns 200 "ok".
