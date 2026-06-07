@@ -76,6 +76,49 @@ export const DispatchTree: Story = {
   args: { parts: dispatchTree },
 }
 
+// The trust gate: the researcher works, self-refines, the judge fails round 1
+// then passes round 2, and the vetted answer renders at the top level.
+const vettedTree: MessagePart[] = [
+  {
+    kind: 'agent',
+    agent: 'web-researcher',
+    done: true,
+    items: [
+      { kind: 'tool_call', name: 'web_search', args: { query: 'best time to visit Dublin' }, result: { results: [] } },
+      {
+        kind: 'self_refine',
+        changed: true,
+        done: true,
+        items: [{ kind: 'thinking', text: 'I should add a citation for the weather claim.' }],
+      },
+      {
+        kind: 'judge_verdict',
+        round: 1,
+        score: 0.45,
+        passed: false,
+        feedback: 'Claims about weather lack a cited source; add one.',
+        done: true,
+        items: [{ kind: 'thinking', text: 'The answer is mostly well-structured but the weather claim on line 2 lacks a source URL.' }],
+      },
+      { kind: 'revise', round: 1 },
+      {
+        kind: 'judge_verdict',
+        round: 2,
+        score: 0.86,
+        passed: true,
+        feedback: '',
+        done: true,
+        items: [{ kind: 'thinking', text: 'All claims now have sources. Score: 0.86.' }],
+      },
+    ],
+  },
+  { kind: 'text', text: 'The best time to visit Dublin is **May–September**, per [Failte Ireland](https://example.com).' },
+]
+
+export const VettedAnswer: Story = {
+  args: { parts: vettedTree },
+}
+
 // A long-running agent: with more than 3 activity items, older ones fold behind a
 // "⋯ N earlier" toggle.
 export const WindowedActivity: Story = {

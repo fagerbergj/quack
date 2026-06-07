@@ -23,7 +23,7 @@ agents:
     bundle: agents/web-researcher
     provider: default
     model: ${RESEARCHER_MODEL}
-    tools: [web_search, web_fetch, summarize]
+    tools: [current_date, web_search, web_fetch, summarize]
 
 # Backend bindings for the built-in tools (keyless, internal services in M1).
 tools:
@@ -31,6 +31,18 @@ tools:
     backend: ${SEARXNG_URL}        # SearXNG JSON API, e.g. http://searxng:8080
   web_fetch:
     render_backend: ${CRAWL4AI_URL}  # crawl4ai /md backend, e.g. http://crawl4ai:11235
+
+# The trust gate wraps every agent: a self-refine pre-pass, then an independent
+# judge (a dedicated model) scores the answer against the rubric below, looping
+# up to max_rounds or until threshold is met. Leave model empty to disable.
+adversarial:
+  provider: default
+  model: ${JUDGE_MODEL}
+  max_rounds: 2
+  threshold: 0.7
+  self_refine: true
+  constitution_path: config/constitution.md   # global principles, used for self-refine + judge
+  rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.md in their bundle)
 
 server:
   addr: ":8080"

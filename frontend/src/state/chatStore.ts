@@ -6,6 +6,12 @@ import {
   fillToolResult,
   openAgent,
   closeAgent,
+  openSelfRefine,
+  closeSelfRefine,
+  openJudgeVerdict,
+  closeJudgeVerdict,
+  appendRevise,
+  appendJudgeUnavailable,
   type MessagePart,
 } from '../components/AgentParts'
 
@@ -132,6 +138,12 @@ export class ChatStore {
         onToolResult: (name, result) => updateParts(p => fillToolResult(p, name, result)),
         onAgentStart: agent => updateParts(p => openAgent(p, agent)),
         onAgentEnd: agent => updateParts(p => closeAgent(p, agent)),
+        onSelfRefineStart: () => updateParts(p => openSelfRefine(p)),
+        onSelfRefine: changed => updateParts(p => closeSelfRefine(p, changed)),
+        onJudgeStart: round => updateParts(p => openJudgeVerdict(p, round)),
+        onRevise: round => updateParts(p => appendRevise(p, round)),
+        onJudgeVerdict: v => updateParts(p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback)),
+        onJudgeUnavailable: (round, reason) => updateParts(p => appendJudgeUnavailable(p, round, reason)),
         onError: msg => { streamError = msg },
       })
       if (streamError) throw new Error(streamError)

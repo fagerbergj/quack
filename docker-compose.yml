@@ -60,6 +60,8 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-unused}
       ORCH_MODEL: ${ORCH_MODEL:-qwen3.6-35b}
       RESEARCHER_MODEL: ${RESEARCHER_MODEL:-qwen3.6-35b}
+      # Independent judge model for the trust gate (empty disables vetting).
+      JUDGE_MODEL: ${JUDGE_MODEL:-qwen3.6-35b}
       # The agent's tool backends. Default to the compose services above;
       # override to point at existing instances (e.g. on a home server).
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}

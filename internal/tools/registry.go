@@ -29,15 +29,20 @@ type Deps struct {
 	Crawl4AI string
 	// Summarizer is the model the summarize tool uses to condense text.
 	Summarizer model.LLM
+	// Cache is a shared response cache used by web_fetch and web_search to avoid
+	// redundant network requests. Optional; when nil, caching is disabled.
+	// Swap for a persistent implementation without changing callers.
+	Cache URLCache
 }
 
 // constructor builds one tool from the shared dependencies.
 type constructor func(Deps) (tool.Tool, error)
 
 var registry = map[string]constructor{
-	"web_search": newWebSearch,
-	"web_fetch":  newFetch,
-	"summarize":  newSummarize,
+	"web_search":   newWebSearch,
+	"web_fetch":    newFetch,
+	"summarize":    newSummarize,
+	"current_date": newCurrentDate,
 }
 
 // Known reports whether name is a registered built-in tool. Used by config
