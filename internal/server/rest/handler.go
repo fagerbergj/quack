@@ -116,6 +116,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	}
 	detail := schema.ChatDetail{
 		Id:           c.ID,
+		Title:        nonEmpty(c.Title),
 		SystemPrompt: c.SystemPrompt,
 		CreatedAt:    c.CreatedAt,
 		UpdatedAt:    c.UpdatedAt,
@@ -238,11 +239,18 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 func toSummary(c store.Chat) schema.ChatSummary {
 	return schema.ChatSummary{
 		Id:           c.ID,
-		Title:        c.Title,
+		Title:        nonEmpty(c.Title),
 		SystemPrompt: c.SystemPrompt,
 		CreatedAt:    c.CreatedAt,
 		UpdatedAt:    c.UpdatedAt,
 	}
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

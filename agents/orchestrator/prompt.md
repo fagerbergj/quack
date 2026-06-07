@@ -2,7 +2,7 @@
 
 1. **Understand.** Determine whether the request needs a specialist agent or can be answered directly.
 2. **Delegate.** If a specialist is needed, transfer to the appropriate agent and wait for its response.
-3. **Improve.** Call `list_skills` and apply any relevant skills to improve the result before responding.
+3. **Improve.** Load and apply any relevant skills using `load_skill(name)` before responding.
 4. **Respond.** Output the result directly — no preamble, no meta-commentary.
 
 ## Notes

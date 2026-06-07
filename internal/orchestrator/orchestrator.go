@@ -35,17 +35,20 @@ type Orchestrator struct {
 }
 
 // New builds the orchestrator from its own dispatcher model, a session service,
-// a system instruction, the specialist sub-agents it can delegate to (A2A
-// clients), and optional toolsets (e.g. a SkillToolset). With no sub-agents the
-// dispatcher simply answers directly.
-func New(m model.LLM, sessions session.Service, instruction string, subAgents []agent.Agent, toolsets []tool.Toolset) (*Orchestrator, error) {
+// an instruction provider (called per-session so time-sensitive content stays
+// current), the specialist sub-agents it can delegate to (A2A clients), and
+// optional toolsets (e.g. a SkillToolset). With no sub-agents the dispatcher
+// simply answers directly.
+func New(m model.LLM, sessions session.Service, instruction func() string, subAgents []agent.Agent, toolsets []tool.Toolset) (*Orchestrator, error) {
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "orchestrator",
 		Description: "Quack orchestrator: routes requests to specialist agents.",
 		Model:       m,
-		Instruction: instruction,
-		SubAgents:   subAgents,
-		Toolsets:    toolsets,
+		InstructionProvider: func(_ agent.ReadonlyContext) (string, error) {
+			return instruction(), nil
+		},
+		SubAgents: subAgents,
+		Toolsets:  toolsets,
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			MaxOutputTokens: quackagent.MaxOutputTokens,
 		},

@@ -2,12 +2,11 @@ Base your answer on pages you retrieve in this session, not on prior memory. Rea
 
 ## Steps
 
-1. **Date.** Call `current_date()` so your queries use the correct year.
-2. **Plan.** Restate the question to yourself and identify what evidence would answer it.
-3. **Search.** Run one or more focused `web_search` queries.
-4. **Read.** `web_fetch` the 2–4 most relevant URLs, preferring primary and authoritative sources. `summarize` any page longer than a few paragraphs, focused on the question.
-5. **Cross-check.** Confirm each load-bearing claim against at least two independent sources, and note where sources disagree.
-6. **Conclude.** Only after reading, write the answer, grounding each key fact in a source you fetched.
+1. **Plan.** Restate the question to yourself and identify what evidence would answer it.
+2. **Search.** Run one or more focused `web_search` queries.
+3. **Read.** `web_fetch` the 2–4 most relevant URLs, preferring primary and authoritative sources. `summarize` any page longer than a few paragraphs, focused on the question.
+4. **Cross-check.** Confirm each load-bearing claim against at least two independent sources, and note where sources disagree.
+5. **Conclude.** Only after reading, write the answer, grounding each key fact in a source you fetched.
 
 ## Source Quality
 

@@ -98,8 +98,10 @@ func main() {
 		log.Fatalf("skills: list frontmatters: %v", err)
 	}
 
-	systemPrompt := promptbuilder.Orchestrator(skillFrontmatters, string(promptBytes))
-	orch, err := orchestrator.New(llm, st.Sessions, systemPrompt, clients, []tool.Toolset{skillTS})
+	behaviour := string(promptBytes)
+	orch, err := orchestrator.New(llm, st.Sessions, func() string {
+		return promptbuilder.Orchestrator(skillFrontmatters, behaviour)
+	}, clients, []tool.Toolset{skillTS})
 	if err != nil {
 		log.Fatalf("orchestrator: %v", err)
 	}

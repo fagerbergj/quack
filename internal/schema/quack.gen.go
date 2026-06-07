@@ -36,6 +36,7 @@ type ChatDetail struct {
 	Id           string        `json:"id"`
 	Messages     []ChatMessage `json:"messages"`
 	SystemPrompt string        `json:"system_prompt"`
+	Title        *string       `json:"title,omitempty"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 }
 
@@ -57,8 +58,8 @@ type ChatMessageRole string
 type ChatSummary struct {
 	CreatedAt    time.Time `json:"created_at"`
 	Id           string    `json:"id"`
-	Title        string    `json:"title,omitempty"`
 	SystemPrompt string    `json:"system_prompt"`
+	Title        *string   `json:"title,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
