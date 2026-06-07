@@ -105,6 +105,19 @@ paths:
               schema:
                 type: string
 
+  /api/v1/chats/{chat_id}/stream:
+    delete:
+      operationId: cancelChatStream
+      summary: Cancel an in-progress stream
+      description: |
+        Cancels the active orchestrator run for this chat. No-op if no run is in
+        progress. The SSE client should also abort its connection after calling this.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+      responses:
+        "204":
+          description: Cancelled (or no active run)
+
 components:
   parameters:
     ChatID:

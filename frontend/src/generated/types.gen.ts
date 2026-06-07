@@ -143,3 +143,21 @@ export type SendChatMessageResponses = {
 };
 
 export type SendChatMessageResponse = SendChatMessageResponses[keyof SendChatMessageResponses];
+
+export type CancelChatStreamData = {
+    body?: never;
+    path: {
+        chat_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/stream';
+};
+
+export type CancelChatStreamResponses = {
+    /**
+     * Cancelled (or no active run)
+     */
+    204: void;
+};
+
+export type CancelChatStreamResponse = CancelChatStreamResponses[keyof CancelChatStreamResponses];

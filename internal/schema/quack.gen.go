@@ -99,6 +99,9 @@ type ServerInterface interface {
 	// Send a message and stream the response
 	// (POST /api/v1/chats/{chat_id}/messages)
 	SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Cancel an in-progress stream
+	// (DELETE /api/v1/chats/{chat_id}/stream)
+	CancelChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
 	// Liveness check
 	// (GET /health)
 	HealthCheck(w http.ResponseWriter, r *http.Request)
@@ -135,6 +138,12 @@ func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId Ch
 // Send a message and stream the response
 // (POST /api/v1/chats/{chat_id}/messages)
 func (_ Unimplemented) SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Cancel an in-progress stream
+// (DELETE /api/v1/chats/{chat_id}/stream)
+func (_ Unimplemented) CancelChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -250,6 +259,32 @@ func (siw *ServerInterfaceWrapper) SendChatMessage(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SendChatMessage(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelChatStream operation middleware
+func (siw *ServerInterfaceWrapper) CancelChatStream(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelChatStream(w, r, chatId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -400,6 +435,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/messages", wrapper.SendChatMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.CancelChatStream)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/health", wrapper.HealthCheck)

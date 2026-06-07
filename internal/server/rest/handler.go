@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/adk/model"
@@ -31,9 +32,10 @@ const runTimeout = 10 * time.Minute
 
 // Handler implements schema.ServerInterface backed by the store + orchestrator.
 type Handler struct {
-	store  *store.Store
-	orch   *orchestrator.Orchestrator
-	titler model.LLM // used to generate chat titles; nil disables auto-titling
+	store         *store.Store
+	orch          *orchestrator.Orchestrator
+	titler        model.LLM  // used to generate chat titles; nil disables auto-titling
+	activeCancels sync.Map   // chatID → context.CancelFunc for in-progress runs
 }
 
 // NewHandler builds a REST handler. titler is the model used to generate short
@@ -163,9 +165,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	}
 
 	// Detach from the HTTP request context so the orchestrator run survives a
-	// client disconnect. A hard deadline prevents goroutine leaks.
+	// client disconnect (tab close, network drop). The run is still cancellable
+	// via CancelChatStream so the Stop button works. A hard deadline prevents
+	// goroutine leaks regardless of client state.
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
-	defer cancelRun()
+	h.activeCancels.Store(chatID, cancelRun)
+	defer func() {
+		cancelRun()
+		h.activeCancels.Delete(chatID)
+	}()
 
 	// Start title generation concurrently. The goroutine writes the title to DB
 	// and sends exactly one value on titleCh, then closes it.
@@ -234,6 +242,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		_ = sse.send(stream.Done())
 	}
 	_ = h.store.Touch(runCtx, chatID)
+}
+
+// CancelChatStream cancels an in-progress orchestrator run for the given chat.
+// No-op if no run is active. The SSE client should abort its connection too.
+func (h *Handler) CancelChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	if cancel, ok := h.activeCancels.Load(chatID); ok {
+		cancel.(context.CancelFunc)()
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func toSummary(c store.Chat) schema.ChatSummary {

@@ -99,6 +99,8 @@ export class ChatStore {
   }
 
   stop(chatId: string): void {
+    // Cancel the server-side run first so inference stops, then drop the connection.
+    fetch(`/api/v1/chats/${chatId}/stream`, { method: 'DELETE' }).catch(() => {})
     this.controllers.get(chatId)?.abort()
   }
 

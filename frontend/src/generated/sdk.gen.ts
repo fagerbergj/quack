@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses } from './types.gen';
+import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -72,3 +72,12 @@ export const sendChatMessage = <ThrowOnError extends boolean = false>(options: O
         ...options.headers
     }
 });
+
+/**
+ * Cancel an in-progress stream
+ *
+ * Cancels the active orchestrator run for this chat. No-op if no run is in
+ * progress. The SSE client should also abort its connection after calling this.
+ *
+ */
+export const cancelChatStream = <ThrowOnError extends boolean = false>(options: Options<CancelChatStreamData, ThrowOnError>): RequestResult<CancelChatStreamResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
