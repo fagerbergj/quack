@@ -18,23 +18,50 @@ export interface JudgeVerdictPayload {
   feedback: string
 }
 
+// DagNodeDef is one node in a DAG plan, as received from the server.
+export interface DagNodeDef {
+  id: string
+  agent: string
+  task: string
+  depends_on: string[]
+}
+
+// DagEdgeDef is one edge in a DAG plan.
+export interface DagEdgeDef {
+  from: string
+  to: string
+}
+
+// DagPlanPayload is the dag_plan event payload.
+export interface DagPlanPayload {
+  plan_id: string
+  nodes: DagNodeDef[]
+  edges: DagEdgeDef[]
+}
+
 export interface AgentStreamHandlers {
-  onToken?: (text: string) => void
-  onThinking?: (text: string) => void
-  onToolCall?: (name: string, args: Record<string, unknown>) => void
-  onToolResult?: (name: string, result: unknown) => void
-  onAgentStart?: (agent: string) => void
-  onAgentEnd?: (agent: string) => void
-  onSelfRefineStart?: () => void
-  onSelfRefine?: (changed: boolean) => void
-  onJudgeStart?: (round: number) => void
-  onRevise?: (round: number) => void
-  onJudgeVerdict?: (v: JudgeVerdictPayload) => void
-  onJudgeUnavailable?: (round: number, reason: string) => void
+  onToken?: (text: string, nodeId?: string) => void
+  onThinking?: (text: string, nodeId?: string) => void
+  onToolCall?: (name: string, args: Record<string, unknown>, nodeId?: string) => void
+  onToolResult?: (name: string, result: unknown, nodeId?: string) => void
+  onAgentStart?: (agent: string, nodeId?: string) => void
+  onAgentEnd?: (agent: string, nodeId?: string) => void
+  onSelfRefineStart?: (nodeId?: string) => void
+  onSelfRefine?: (changed: boolean, nodeId?: string) => void
+  onJudgeStart?: (round: number, nodeId?: string) => void
+  onRevise?: (round: number, nodeId?: string) => void
+  onJudgeVerdict?: (v: JudgeVerdictPayload, nodeId?: string) => void
+  onJudgeUnavailable?: (round: number, reason: string, nodeId?: string) => void
   onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
   onChatTitle?: (title: string) => void
   onError?: (msg: string) => void
   onDone?: () => void
+  // DAG lifecycle events (M3)
+  onDagPlan?: (plan: DagPlanPayload) => void
+  onNodeQueued?: (nodeId: string) => void
+  onNodeStart?: (nodeId: string, agent: string) => void
+  onNodeDone?: (nodeId: string, preview: string) => void
+  onNodeFailed?: (nodeId: string, error: string) => void
 }
 
 // Wire-level event names. Mirrors internal/stream/event.go.
@@ -43,8 +70,16 @@ export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_end',
   'self_refine_start', 'self_refine', 'judge_start', 'revise', 'judge_verdict', 'judge_unavailable',
   'confirmation_request', 'chat_title', 'error', 'done',
+  // DAG events (M3)
+  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
+
+// nodeIdOf extracts the optional node_id field from a parsed payload.
+function nodeIdOf(parsed: unknown): string | undefined {
+  const p = parsed as { node_id?: string }
+  return typeof p?.node_id === 'string' && p.node_id ? p.node_id : undefined
+}
 
 // dispatchAgentEvent routes one already-parsed SSE payload to the matching
 // handler. Returns true if the event was recognized (whether or not a
@@ -56,45 +91,45 @@ export function dispatchAgentEvent(
 ): boolean {
   switch (event) {
     case 'token':
-      if (hasStringField(parsed, 'text')) handlers.onToken?.(parsed.text)
+      if (hasStringField(parsed, 'text')) handlers.onToken?.(parsed.text, nodeIdOf(parsed))
       return true
     case 'thinking':
-      if (hasStringField(parsed, 'text')) handlers.onThinking?.(parsed.text)
+      if (hasStringField(parsed, 'text')) handlers.onThinking?.(parsed.text, nodeIdOf(parsed))
       return true
     case 'tool_call':
       if (hasStringField(parsed, 'name')) {
         const args = (parsed as { args?: Record<string, unknown> }).args ?? {}
-        handlers.onToolCall?.(parsed.name, args)
+        handlers.onToolCall?.(parsed.name, args, nodeIdOf(parsed))
       }
       return true
     case 'tool_result':
       if (hasStringField(parsed, 'name')) {
         const result = (parsed as unknown as { result: unknown }).result
-        handlers.onToolResult?.(parsed.name, result)
+        handlers.onToolResult?.(parsed.name, result, nodeIdOf(parsed))
       }
       return true
     case 'agent_start':
-      if (hasStringField(parsed, 'agent')) handlers.onAgentStart?.(parsed.agent)
+      if (hasStringField(parsed, 'agent')) handlers.onAgentStart?.(parsed.agent, nodeIdOf(parsed))
       return true
     case 'agent_end':
-      if (hasStringField(parsed, 'agent')) handlers.onAgentEnd?.(parsed.agent)
+      if (hasStringField(parsed, 'agent')) handlers.onAgentEnd?.(parsed.agent, nodeIdOf(parsed))
       return true
     case 'self_refine_start':
-      handlers.onSelfRefineStart?.()
+      handlers.onSelfRefineStart?.(nodeIdOf(parsed))
       return true
     case 'self_refine': {
       const changed = (parsed as { changed?: boolean }).changed === true
-      handlers.onSelfRefine?.(changed)
+      handlers.onSelfRefine?.(changed, nodeIdOf(parsed))
       return true
     }
     case 'judge_start': {
       const p = parsed as { round?: number }
-      handlers.onJudgeStart?.(typeof p.round === 'number' ? p.round : 0)
+      handlers.onJudgeStart?.(typeof p.round === 'number' ? p.round : 0, nodeIdOf(parsed))
       return true
     }
     case 'revise': {
       const p = parsed as { round?: number }
-      handlers.onRevise?.(typeof p.round === 'number' ? p.round : 0)
+      handlers.onRevise?.(typeof p.round === 'number' ? p.round : 0, nodeIdOf(parsed))
       return true
     }
     case 'judge_verdict': {
@@ -104,7 +139,7 @@ export function dispatchAgentEvent(
         score: typeof p.score === 'number' ? p.score : 0,
         passed: p.passed === true,
         feedback: typeof p.feedback === 'string' ? p.feedback : '',
-      })
+      }, nodeIdOf(parsed))
       return true
     }
     case 'judge_unavailable': {
@@ -112,6 +147,7 @@ export function dispatchAgentEvent(
       handlers.onJudgeUnavailable?.(
         typeof p.round === 'number' ? p.round : 0,
         typeof p.reason === 'string' ? p.reason : '',
+        nodeIdOf(parsed),
       )
       return true
     }
@@ -135,6 +171,40 @@ export function dispatchAgentEvent(
     case 'done':
       handlers.onDone?.()
       return true
+    // DAG lifecycle events (M3)
+    case 'dag_plan': {
+      const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[] }
+      handlers.onDagPlan?.({
+        plan_id: typeof p.plan_id === 'string' ? p.plan_id : '',
+        nodes: (p.nodes ?? []) as DagNodeDef[],
+        edges: (p.edges ?? []) as DagEdgeDef[],
+      })
+      return true
+    }
+    case 'node_queued':
+      if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
+      return true
+    case 'node_start': {
+      const p = parsed as { node_id?: string; agent?: string }
+      if (typeof p.node_id === 'string') {
+        handlers.onNodeStart?.(p.node_id, typeof p.agent === 'string' ? p.agent : '')
+      }
+      return true
+    }
+    case 'node_done': {
+      const p = parsed as { node_id?: string; output_preview?: string }
+      if (typeof p.node_id === 'string') {
+        handlers.onNodeDone?.(p.node_id, typeof p.output_preview === 'string' ? p.output_preview : '')
+      }
+      return true
+    }
+    case 'node_failed': {
+      const p = parsed as { node_id?: string; error?: string }
+      if (typeof p.node_id === 'string') {
+        handlers.onNodeFailed?.(p.node_id, typeof p.error === 'string' ? p.error : '')
+      }
+      return true
+    }
   }
   return false
 }

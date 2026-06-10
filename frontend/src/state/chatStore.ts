@@ -1,4 +1,4 @@
-import { readAgentStream } from './agentStream'
+import { readAgentStream, type DagNodeDef, type DagEdgeDef } from './agentStream'
 import {
   appendTextPart,
   appendThinkingPart,
@@ -23,10 +23,27 @@ export interface Message {
   parts?: MessagePart[]
 }
 
+export type NodeStatus = 'queued' | 'running' | 'done' | 'failed'
+
+export interface NodeState {
+  status: NodeStatus
+  outputPreview?: string
+  error?: string
+}
+
+export interface DagTurnState {
+  planId: string
+  nodes: DagNodeDef[]
+  edges: DagEdgeDef[]
+  nodeStates: Record<string, NodeState>
+  nodeParts: Record<string, MessagePart[]>
+}
+
 export interface ChatTurnState {
   messages: Message[]
   streaming: boolean
   error: string
+  dag?: DagTurnState
 }
 
 type Listener = () => void
@@ -134,22 +151,66 @@ export class ChatStore {
         })
       }
 
+      const updateNodeParts = (nodeId: string, fn: (parts: MessagePart[]) => MessagePart[]) => {
+        const s = this.states.get(chatId)
+        if (!s?.dag) return
+        const prev = s.dag.nodeParts[nodeId] ?? []
+        this.write(chatId, {
+          ...s,
+          dag: { ...s.dag, nodeParts: { ...s.dag.nodeParts, [nodeId]: fn(prev) } },
+        })
+      }
+
+      const updateNodeState = (nodeId: string, patch: Partial<NodeState>) => {
+        const s = this.states.get(chatId)
+        if (!s?.dag) return
+        const prev = s.dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
+        this.write(chatId, {
+          ...s,
+          dag: { ...s.dag, nodeStates: { ...s.dag.nodeStates, [nodeId]: { ...prev, ...patch } } },
+        })
+      }
+
+      // Route activity event to a node's parts list (if nodeId) or top-level parts.
+      const route = (nodeId: string | undefined, fn: (parts: MessagePart[]) => MessagePart[]) => {
+        if (nodeId) {
+          updateNodeParts(nodeId, fn)
+        } else {
+          updateParts(fn)
+        }
+      }
+
       let streamError = ''
       await readAgentStream(res.body, {
-        onToken: t => updateParts(p => appendTextPart(p, t)),
-        onThinking: t => updateParts(p => appendThinkingPart(p, t)),
-        onToolCall: (name, args) => updateParts(p => appendToolCall(p, name, args)),
-        onToolResult: (name, result) => updateParts(p => fillToolResult(p, name, result)),
-        onAgentStart: agent => updateParts(p => openAgent(p, agent)),
-        onAgentEnd: agent => updateParts(p => closeAgent(p, agent)),
-        onSelfRefineStart: () => updateParts(p => openSelfRefine(p)),
-        onSelfRefine: changed => updateParts(p => closeSelfRefine(p, changed)),
-        onJudgeStart: round => updateParts(p => openJudgeVerdict(p, round)),
-        onRevise: round => updateParts(p => appendRevise(p, round)),
-        onJudgeVerdict: v => updateParts(p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback)),
-        onJudgeUnavailable: (round, reason) => updateParts(p => appendJudgeUnavailable(p, round, reason)),
+        onToken: (t, nid) => route(nid, p => appendTextPart(p, t)),
+        onThinking: (t, nid) => route(nid, p => appendThinkingPart(p, t)),
+        onToolCall: (name, args, nid) => route(nid, p => appendToolCall(p, name, args)),
+        onToolResult: (name, result, nid) => route(nid, p => fillToolResult(p, name, result)),
+        onAgentStart: (agent, nid) => route(nid, p => openAgent(p, agent)),
+        onAgentEnd: (agent, nid) => route(nid, p => closeAgent(p, agent)),
+        onSelfRefineStart: nid => route(nid, p => openSelfRefine(p)),
+        onSelfRefine: (changed, nid) => route(nid, p => closeSelfRefine(p, changed)),
+        onJudgeStart: (round, nid) => route(nid, p => openJudgeVerdict(p, round)),
+        onRevise: (round, nid) => route(nid, p => appendRevise(p, round)),
+        onJudgeVerdict: (v, nid) => route(nid, p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback)),
+        onJudgeUnavailable: (round, reason, nid) => route(nid, p => appendJudgeUnavailable(p, round, reason)),
         onChatTitle: title => onTitle?.(title),
         onError: msg => { streamError = msg },
+        // DAG lifecycle handlers
+        onDagPlan: plan => {
+          const s = this.states.get(chatId)
+          if (!s) return
+          const nodeStates: Record<string, NodeState> = {}
+          for (const n of plan.nodes) nodeStates[n.id] = { status: 'queued' }
+          this.write(chatId, {
+            ...s,
+            dag: { planId: plan.plan_id, nodes: plan.nodes, edges: plan.edges, nodeStates, nodeParts: {} },
+          })
+        },
+        onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
+        onNodeStart: (nodeId) => updateNodeState(nodeId, { status: 'running' }),
+        onNodeDone: (nodeId, preview) => updateNodeState(nodeId, { status: 'done', outputPreview: preview }),
+        onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', error }),
       })
       if (streamError) throw new Error(streamError)
     } catch (err: unknown) {
