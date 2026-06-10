@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { AssistantParts, WindowedItems } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { MessagePart, SelfRefinePart, JudgeVerdictPart } from './messageParts'
@@ -8,8 +9,15 @@ function fmtMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
-function elapsed(startedAt: number, finishedAt?: number): string {
-  return fmtMs((finishedAt ?? Date.now()) - startedAt)
+// LiveTimer ticks every 100ms while running, then freezes on the final value.
+function LiveTimer({ startedAt, finishedAt }: { startedAt: number; finishedAt?: number }) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (finishedAt != null) return
+    const id = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(id)
+  }, [finishedAt])
+  return <>{fmtMs((finishedAt ?? now) - startedAt)}</>
 }
 
 // ── gate types ──────────────────────────────────────────────────────────────
@@ -236,7 +244,7 @@ export function DagNode({ node, state, parts, isFinal }: Props) {
           }
           {state.startedAt != null && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-              {elapsed(state.startedAt, state.finishedAt)}
+              <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
             </span>
           )}
         </div>
