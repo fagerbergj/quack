@@ -5,8 +5,13 @@ import type { MessagePart, SelfRefinePart, JudgeVerdictPart } from './messagePar
 import type { DagNodeDef } from '../state/agentStream'
 
 function fmtMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(1)}s`
+  const m = Math.floor(s / 60)
+  const rem = Math.floor(s % 60)
+  if (m < 60) return `${m}m ${rem}s`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m ${rem}s`
 }
 
 // LiveTimer ticks every 100ms while running, then freezes on the final value.
