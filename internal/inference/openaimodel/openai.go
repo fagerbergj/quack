@@ -88,6 +88,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			return
 		}
 		openaiReq.Stream = true
+		openaiReq.StreamOptions = &openai.StreamOptions{IncludeUsage: true}
 
 		stream, err := o.Client.CreateChatCompletionStream(ctx, openaiReq)
 		if err != nil {
@@ -107,6 +108,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		// Track tool calls by index to properly aggregate them across chunks
 		toolCallsMap := make(map[int]*toolCallBuilder)
 
+		var modelVersion string
 		lastPartIsText := false
 		for {
 			chunk, err := stream.Recv()
@@ -118,6 +120,9 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 				return
 			}
 
+			if chunk.Model != "" {
+				modelVersion = chunk.Model
+			}
 			if len(chunk.Choices) == 0 {
 				continue
 			}
@@ -243,6 +248,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			Content:       aggregatedContent,
 			UsageMetadata: usageMetadata,
 			FinishReason:  finishReason,
+			ModelVersion:  modelVersion,
 			Partial:       false,
 			TurnComplete:  true,
 		}
@@ -516,6 +522,7 @@ func convertChatCompletionResponse(resp *openai.ChatCompletionResponse) (*model.
 		Content:       content,
 		UsageMetadata: usageMetadata,
 		FinishReason:  convertFinishReason(string(choice.FinishReason)),
+		ModelVersion:  resp.Model,
 		TurnComplete:  true,
 	}, nil
 }

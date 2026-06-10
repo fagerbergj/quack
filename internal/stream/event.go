@@ -61,6 +61,12 @@ const (
 	EventChatTitle           = "chat_title"
 	EventError               = "error"
 	EventDone                = "done"
+	// DAG events (M3).
+	EventDagPlan    = "dag_plan"
+	EventNodeQueued = "node_queued"
+	EventNodeStart  = "node_start"
+	EventNodeDone   = "node_done"
+	EventNodeFailed = "node_failed"
 )
 
 // SSEEvent is one server-sent event: a name plus a JSON-serializable payload.
@@ -71,8 +77,9 @@ type SSEEvent struct {
 
 // TokenData is the `token` event payload.
 type TokenData struct {
-	Agent string `json:"agent,omitempty"`
-	Text  string `json:"text"`
+	NodeID string `json:"node_id,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	Text   string `json:"text"`
 }
 
 // ErrorData is the `error` event payload.
@@ -82,32 +89,45 @@ type ErrorData struct {
 
 // ThinkingData is the `thinking` event payload.
 type ThinkingData struct {
-	Agent string `json:"agent,omitempty"`
-	Text  string `json:"text"`
+	NodeID string `json:"node_id,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	Text   string `json:"text"`
 }
 
 // ToolCallData is the `tool_call` event payload.
 type ToolCallData struct {
-	Agent string         `json:"agent,omitempty"`
-	Name  string         `json:"name"`
-	Args  map[string]any `json:"args"`
+	NodeID string         `json:"node_id,omitempty"`
+	Agent  string         `json:"agent,omitempty"`
+	Name   string         `json:"name"`
+	Args   map[string]any `json:"args"`
 }
 
 // ToolResultData is the `tool_result` event payload.
 type ToolResultData struct {
+	NodeID string `json:"node_id,omitempty"`
 	Agent  string `json:"agent,omitempty"`
 	Name   string `json:"name"`
 	Result any    `json:"result"`
 }
 
 // AgentData is the payload for the agent_start / agent_end lifecycle events.
+// Completion stats are populated only on agent_end when the model reported them;
+// all stat fields are omitted when zero.
 type AgentData struct {
-	Agent string `json:"agent"`
+	NodeID           string `json:"node_id,omitempty"`
+	Agent            string `json:"agent"`
+	Model            string `json:"model,omitempty"`
+	PromptTokens     int32  `json:"prompt_tokens,omitempty"`
+	CompletionTokens int32  `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
+	TotalTokens      int32  `json:"total_tokens,omitempty"`
+	FinishReason     string `json:"finish_reason,omitempty"`
 }
 
 // SelfRefineData is the `self_refine` event payload: the gate ran the worker's
 // own self-critique pre-pass, and whether it changed the answer.
 type SelfRefineData struct {
+	NodeID  string `json:"node_id,omitempty"`
 	Agent   string `json:"agent,omitempty"`
 	Changed bool   `json:"changed"`
 }
@@ -115,13 +135,15 @@ type SelfRefineData struct {
 // ReviseData is the `revise` event payload: the gate revised the answer in
 // response to the judge's feedback before starting the next round.
 type ReviseData struct {
-	Agent string `json:"agent,omitempty"`
-	Round int    `json:"round"`
+	NodeID string `json:"node_id,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	Round  int    `json:"round"`
 }
 
 // JudgeVerdictData is the `judge_verdict` event payload: the independent judge's
 // score for one round, whether it passed the threshold, and revision feedback.
 type JudgeVerdictData struct {
+	NodeID   string  `json:"node_id,omitempty"`
 	Agent    string  `json:"agent,omitempty"`
 	Round    int     `json:"round"`
 	Score    float64 `json:"score"`
@@ -132,6 +154,7 @@ type JudgeVerdictData struct {
 // JudgeUnavailableData is the `judge_unavailable` event payload: the judge
 // failed and the answer is surfaced unvetted, with a quality warning.
 type JudgeUnavailableData struct {
+	NodeID string `json:"node_id,omitempty"`
 	Agent  string `json:"agent,omitempty"`
 	Round  int    `json:"round"`
 	Reason string `json:"reason,omitempty"`
@@ -140,8 +163,61 @@ type JudgeUnavailableData struct {
 // JudgeStartData is the `judge_start` event payload: the gate is beginning
 // an independent judge round. Pairs with a later judge_verdict to close it.
 type JudgeStartData struct {
-	Agent string `json:"agent,omitempty"`
-	Round int    `json:"round"`
+	NodeID string `json:"node_id,omitempty"`
+	Agent  string `json:"agent,omitempty"`
+	Round  int    `json:"round"`
+}
+
+// DagNodeDef is the wire representation of one node in a DAG plan.
+type DagNodeDef struct {
+	ID        string   `json:"id"`
+	Agent     string   `json:"agent"`
+	Task      string   `json:"task"`
+	DependsOn []string `json:"depends_on"`
+}
+
+// DagEdgeDef is the wire representation of one edge in a DAG plan.
+type DagEdgeDef struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// DagPlanData is the `dag_plan` event payload.
+type DagPlanData struct {
+	PlanID string       `json:"plan_id"`
+	Nodes  []DagNodeDef `json:"nodes"`
+	Edges  []DagEdgeDef `json:"edges"`
+}
+
+// NodeQueuedData is the `node_queued` event payload.
+type NodeQueuedData struct {
+	NodeID string `json:"node_id"`
+}
+
+// NodeStartData is the `node_start` event payload.
+type NodeStartData struct {
+	NodeID string `json:"node_id"`
+	Agent  string `json:"agent"`
+}
+
+// NodeDoneData is the `node_done` event payload. Completion stats are the
+// sum across all LLM calls made during the node's run; omitted when zero.
+type NodeDoneData struct {
+	NodeID           string `json:"node_id"`
+	OutputPreview    string `json:"output_preview,omitempty"`
+	Model            string `json:"model,omitempty"`
+	PromptTokens     int32  `json:"prompt_tokens,omitempty"`
+	CompletionTokens int32  `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
+	TotalTokens      int32  `json:"total_tokens,omitempty"`
+	FinishReason     string `json:"finish_reason,omitempty"`
+	DurationMs       int64  `json:"duration_ms,omitempty"`
+}
+
+// NodeFailedData is the `node_failed` event payload.
+type NodeFailedData struct {
+	NodeID string `json:"node_id"`
+	Error  string `json:"error"`
 }
 
 // Token builds a token event.
@@ -169,9 +245,10 @@ func AgentStart(agent string) SSEEvent {
 	return SSEEvent{Name: EventAgentStart, Data: AgentData{Agent: agent}}
 }
 
-// AgentEnd marks a specialist agent's turn completing.
-func AgentEnd(agent string) SSEEvent {
-	return SSEEvent{Name: EventAgentEnd, Data: AgentData{Agent: agent}}
+// AgentEnd marks a specialist agent's turn completing, optionally carrying
+// completion metadata extracted from the underlying LLM response.
+func AgentEnd(data AgentData) SSEEvent {
+	return SSEEvent{Name: EventAgentEnd, Data: data}
 }
 
 // SelfRefine builds a self_refine event.
@@ -283,6 +360,71 @@ func JudgeUnavailablePart(round int, reason string) *genai.Part {
 	}}
 }
 
+// DagPlan builds a dag_plan event carrying the full plan structure.
+func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
+	return SSEEvent{Name: EventDagPlan, Data: DagPlanData{PlanID: planID, Nodes: nodes, Edges: edges}}
+}
+
+// NodeQueued builds a node_queued event.
+func NodeQueued(nodeID string) SSEEvent {
+	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
+}
+
+// NodeStart builds a node_start event.
+func NodeStart(nodeID, agent string) SSEEvent {
+	return SSEEvent{Name: EventNodeStart, Data: NodeStartData{NodeID: nodeID, Agent: agent}}
+}
+
+// NodeDone builds a node_done event.
+func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
+	data.NodeID = nodeID
+	return SSEEvent{Name: EventNodeDone, Data: data}
+}
+
+// NodeFailed builds a node_failed event.
+func NodeFailed(nodeID, errMsg string) SSEEvent {
+	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
+}
+
+// ScopeToNode sets the NodeID field on an activity SSEEvent's data payload,
+// routing it to the correct DAG node in the frontend. Events that don't carry
+// a NodeID field (dag lifecycle events, done, error) are returned unchanged.
+func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
+	switch d := ev.Data.(type) {
+	case TokenData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case ThinkingData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case ToolCallData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case ToolResultData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case AgentData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case SelfRefineData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case ReviseData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case JudgeVerdictData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case JudgeUnavailableData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case JudgeStartData:
+		d.NodeID = nodeID
+		ev.Data = d
+	}
+	return ev
+}
+
 // ChatTitleData is the `chat_title` event payload.
 type ChatTitleData struct {
 	Title string `json:"title"`
@@ -371,8 +513,19 @@ func Translate(ev *session.Event) []SSEEvent {
 
 	// A specialist completing its turn closes its group. The orchestrator's own
 	// turn-completion is the run itself, closed by the caller, not a dispatch.
+	// Attach completion metadata from the underlying LLM response when available.
 	if ev.TurnComplete && agent != "" && agent != OrchestratorAuthor {
-		out = append(out, AgentEnd(agent))
+		end := AgentData{Agent: agent, Model: ev.ModelVersion}
+		if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
+			end.FinishReason = string(ev.FinishReason)
+		}
+		if ev.UsageMetadata != nil {
+			end.PromptTokens = ev.UsageMetadata.PromptTokenCount
+			end.CompletionTokens = ev.UsageMetadata.CandidatesTokenCount
+			end.ReasoningTokens = ev.UsageMetadata.ThoughtsTokenCount
+			end.TotalTokens = ev.UsageMetadata.TotalTokenCount
+		}
+		out = append(out, AgentEnd(end))
 	}
 	return out
 }

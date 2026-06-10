@@ -1,4 +1,4 @@
-import { readAgentStream, type DagNodeDef, type DagEdgeDef } from './agentStream'
+import { readAgentStream, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta } from './agentStream'
 import {
   appendTextPart,
   appendThinkingPart,
@@ -29,9 +29,17 @@ export interface NodeState {
   status: NodeStatus
   outputPreview?: string
   error?: string
-  startedAt?: number  // Date.now() when node_start received
-  finishedAt?: number // Date.now() when node_done/node_failed received
-  outputChars?: number // accumulated output character count (proxy for tokens)
+  startedAt?: number       // Date.now() when node_start received
+  finishedAt?: number      // Date.now() when node_done/node_failed received
+  outputChars?: number     // accumulated output char count (live estimate while streaming)
+  // completion metadata from node_done (real values, override estimates when available)
+  model?: string
+  promptTokens?: number
+  completionTokens?: number
+  reasoningTokens?: number
+  totalTokens?: number
+  finishReason?: string
+  serverDurationMs?: number // wall-clock measured on the server
 }
 
 export interface DagTurnState {
@@ -223,7 +231,16 @@ export class ChatStore {
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         onNodeStart: (nodeId) => updateNodeState(nodeId, { status: 'running', startedAt: Date.now() }),
-        onNodeDone: (nodeId, preview) => updateNodeState(nodeId, { status: 'done', finishedAt: Date.now(), outputPreview: preview }),
+        onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => updateNodeState(nodeId, {
+          status: 'done', finishedAt: Date.now(), outputPreview: preview,
+          model: meta.model,
+          promptTokens: meta.promptTokens,
+          completionTokens: meta.completionTokens,
+          reasoningTokens: meta.reasoningTokens,
+          totalTokens: meta.totalTokens,
+          finishReason: meta.finishReason,
+          serverDurationMs: meta.durationMs,
+        }),
         onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error }),
       })
       if (streamError) throw new Error(streamError)

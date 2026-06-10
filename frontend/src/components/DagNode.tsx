@@ -214,11 +214,26 @@ export function DagNode({ node, state, parts, isFinal }: Props) {
           <Spinner />
         )}
         <div className="ml-auto flex items-center gap-2">
-          {state.outputChars != null && state.outputChars > 0 && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-              ~{Math.round(state.outputChars / 4).toLocaleString()} tok
+          {state.model && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[120px]" title={state.model}>
+              {state.model}
             </span>
           )}
+          {state.finishReason === 'MAX_TOKENS' && (
+            <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400" title="Response was truncated at the token limit">
+              truncated
+            </span>
+          )}
+          {(state.totalTokens != null && state.totalTokens > 0)
+            ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                {state.totalTokens.toLocaleString()} tok
+              </span>
+            : state.outputChars != null && state.outputChars > 0
+              ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                  ~{Math.round(state.outputChars / 4).toLocaleString()} tok
+                </span>
+              : null
+          }
           {state.startedAt != null && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
               {elapsed(state.startedAt, state.finishedAt)}
