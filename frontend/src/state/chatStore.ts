@@ -29,6 +29,9 @@ export interface NodeState {
   status: NodeStatus
   outputPreview?: string
   error?: string
+  startedAt?: number  // Date.now() when node_start received
+  finishedAt?: number // Date.now() when node_done/node_failed received
+  outputChars?: number // accumulated output character count (proxy for tokens)
 }
 
 export interface DagTurnState {
@@ -37,6 +40,8 @@ export interface DagTurnState {
   edges: DagEdgeDef[]
   nodeStates: Record<string, NodeState>
   nodeParts: Record<string, MessagePart[]>
+  startedAt?: number  // Date.now() when dag_plan received
+  finishedAt?: number // Date.now() when last node finishes
 }
 
 export interface ChatTurnState {
@@ -151,24 +156,30 @@ export class ChatStore {
         })
       }
 
-      const updateNodeParts = (nodeId: string, fn: (parts: MessagePart[]) => MessagePart[]) => {
+      const updateNodeParts = (nodeId: string, fn: (parts: MessagePart[]) => MessagePart[], extraChars?: number) => {
         const s = this.states.get(chatId)
         if (!s?.dag) return
         const prev = s.dag.nodeParts[nodeId] ?? []
-        this.write(chatId, {
-          ...s,
-          dag: { ...s.dag, nodeParts: { ...s.dag.nodeParts, [nodeId]: fn(prev) } },
-        })
+        const dag = { ...s.dag, nodeParts: { ...s.dag.nodeParts, [nodeId]: fn(prev) } }
+        if (extraChars) {
+          const ns = dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
+          dag.nodeStates = { ...dag.nodeStates, [nodeId]: { ...ns, outputChars: (ns.outputChars ?? 0) + extraChars } }
+        }
+        this.write(chatId, { ...s, dag })
       }
 
       const updateNodeState = (nodeId: string, patch: Partial<NodeState>) => {
         const s = this.states.get(chatId)
         if (!s?.dag) return
         const prev = s.dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
-        this.write(chatId, {
-          ...s,
-          dag: { ...s.dag, nodeStates: { ...s.dag.nodeStates, [nodeId]: { ...prev, ...patch } } },
+        const dag = { ...s.dag, nodeStates: { ...s.dag.nodeStates, [nodeId]: { ...prev, ...patch } } }
+        // Track DAG finishedAt when all nodes are done/failed
+        const allDone = dag.nodes.every(n => {
+          const st = dag.nodeStates[n.id]?.status
+          return st === 'done' || st === 'failed'
         })
+        if (allDone && !dag.finishedAt) dag.finishedAt = Date.now()
+        this.write(chatId, { ...s, dag })
       }
 
       // Route activity event to a node's parts list (if nodeId) or top-level parts.
@@ -182,17 +193,20 @@ export class ChatStore {
 
       let streamError = ''
       await readAgentStream(res.body, {
-        onToken: (t, nid) => route(nid, p => appendTextPart(p, t)),
+        onToken: (t, nid) => {
+          if (nid) updateNodeParts(nid, p => appendTextPart(p, t), t.length)
+          else updateParts(p => appendTextPart(p, t))
+        },
         onThinking: (t, nid) => route(nid, p => appendThinkingPart(p, t)),
         onToolCall: (name, args, nid) => route(nid, p => appendToolCall(p, name, args)),
         onToolResult: (name, result, nid) => route(nid, p => fillToolResult(p, name, result)),
         onAgentStart: (agent, nid) => route(nid, p => openAgent(p, agent)),
         onAgentEnd: (agent, nid) => route(nid, p => closeAgent(p, agent)),
-        onSelfRefineStart: nid => route(nid, p => openSelfRefine(p)),
-        onSelfRefine: (changed, nid) => route(nid, p => closeSelfRefine(p, changed)),
-        onJudgeStart: (round, nid) => route(nid, p => openJudgeVerdict(p, round)),
+        onSelfRefineStart: nid => route(nid, p => openSelfRefine(p, Date.now())),
+        onSelfRefine: (changed, nid) => route(nid, p => closeSelfRefine(p, changed, Date.now())),
+        onJudgeStart: (round, nid) => route(nid, p => openJudgeVerdict(p, round, Date.now())),
         onRevise: (round, nid) => route(nid, p => appendRevise(p, round)),
-        onJudgeVerdict: (v, nid) => route(nid, p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback)),
+        onJudgeVerdict: (v, nid) => route(nid, p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback, Date.now())),
         onJudgeUnavailable: (round, reason, nid) => route(nid, p => appendJudgeUnavailable(p, round, reason)),
         onChatTitle: title => onTitle?.(title),
         onError: msg => { streamError = msg },
@@ -204,13 +218,13 @@ export class ChatStore {
           for (const n of plan.nodes) nodeStates[n.id] = { status: 'queued' }
           this.write(chatId, {
             ...s,
-            dag: { planId: plan.plan_id, nodes: plan.nodes, edges: plan.edges, nodeStates, nodeParts: {} },
+            dag: { planId: plan.plan_id, nodes: plan.nodes, edges: plan.edges, nodeStates, nodeParts: {}, startedAt: Date.now() },
           })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
-        onNodeStart: (nodeId) => updateNodeState(nodeId, { status: 'running' }),
-        onNodeDone: (nodeId, preview) => updateNodeState(nodeId, { status: 'done', outputPreview: preview }),
-        onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', error }),
+        onNodeStart: (nodeId) => updateNodeState(nodeId, { status: 'running', startedAt: Date.now() }),
+        onNodeDone: (nodeId, preview) => updateNodeState(nodeId, { status: 'done', finishedAt: Date.now(), outputPreview: preview }),
+        onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error }),
       })
       if (streamError) throw new Error(streamError)
     } catch (err: unknown) {

@@ -3,6 +3,15 @@ import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { MessagePart, SelfRefinePart, JudgeVerdictPart } from './messageParts'
 import type { DagNodeDef } from '../state/agentStream'
 
+function fmtMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function elapsed(startedAt: number, finishedAt?: number): string {
+  return fmtMs((finishedAt ?? Date.now()) - startedAt)
+}
+
 // ── gate types ──────────────────────────────────────────────────────────────
 
 type ResearchGate  = { kind: 'research';    parts: MessagePart[] }
@@ -124,6 +133,9 @@ function SelfCritiqueCard({ gate, running }: { gate: SelfCritGate; running: bool
               {changed ? 'revised' : 'no changes'}
             </span>
           )}
+          {gate.part.done && gate.part.durationMs != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">{fmtMs(gate.part.durationMs)}</span>
+          )}
         </summary>
         {gate.part.items.length > 0 && (
           <div className="px-4 pb-3">
@@ -155,6 +167,9 @@ function JudgeCard({ gate, running }: { gate: JudgeGate; running: boolean }) {
             <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate max-w-[200px]">
               — {feedback}
             </span>
+          )}
+          {gate.part.done && gate.part.durationMs != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">{fmtMs(gate.part.durationMs)}</span>
           )}
         </summary>
         {items.length > 0 && (
@@ -198,6 +213,18 @@ export function DagNode({ node, state, parts, isFinal }: Props) {
         {running && gates.every(g => g.kind === 'research' && g.parts.length === 0) && (
           <Spinner />
         )}
+        <div className="ml-auto flex items-center gap-2">
+          {state.outputChars != null && state.outputChars > 0 && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+              ~{Math.round(state.outputChars / 4).toLocaleString()} tok
+            </span>
+          )}
+          {state.startedAt != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+              {elapsed(state.startedAt, state.finishedAt)}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Task description */}

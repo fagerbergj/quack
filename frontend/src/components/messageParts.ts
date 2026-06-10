@@ -29,6 +29,8 @@ export interface SelfRefinePart {
   changed?: boolean  // set when done
   items: MessagePart[]
   done: boolean
+  startedAt?: number  // ms timestamp when self_refine_start was received
+  durationMs?: number // set when done
 }
 
 // JudgeVerdictPart is a collapsible container for one judge round.
@@ -42,6 +44,8 @@ export interface JudgeVerdictPart {
   feedback?: string // set when done
   items: MessagePart[]
   done: boolean
+  startedAt?: number  // ms timestamp when judge_start was received
+  durationMs?: number // set when done
 }
 
 // RevisePart records that the gate revised the worker's answer in response to
@@ -120,29 +124,29 @@ export function fillToolResult(parts: MessagePart[], name: string, result: unkno
 
 // openSelfRefine pushes a new open self-refine container under the active agent.
 // Called on self_refine_start; closed by closeSelfRefine.
-export function openSelfRefine(parts: MessagePart[]): MessagePart[] {
-  const node: SelfRefinePart = { kind: 'self_refine', items: [], done: false }
+export function openSelfRefine(parts: MessagePart[], nowMs?: number): MessagePart[] {
+  const node: SelfRefinePart = { kind: 'self_refine', items: [], done: false, startedAt: nowMs }
   return intoOpenAgent(parts, items => [...items, node]) ?? [...parts, node]
 }
 
 // closeSelfRefine marks the innermost open self_refine container done.
 // Called on self_refine.
-export function closeSelfRefine(parts: MessagePart[], changed: boolean): MessagePart[] {
-  return closeOpenSelfRefineHelper(parts, changed) ?? parts
+export function closeSelfRefine(parts: MessagePart[], changed: boolean, nowMs?: number): MessagePart[] {
+  return closeOpenSelfRefineHelper(parts, changed, nowMs) ?? parts
 }
 
 // openJudgeVerdict pushes a new open judge_verdict container under the active agent.
 // Called on judge_start; closed by closeJudgeVerdict.
-export function openJudgeVerdict(parts: MessagePart[], round: number): MessagePart[] {
-  const node: JudgeVerdictPart = { kind: 'judge_verdict', round, items: [], done: false }
+export function openJudgeVerdict(parts: MessagePart[], round: number, nowMs?: number): MessagePart[] {
+  const node: JudgeVerdictPart = { kind: 'judge_verdict', round, items: [], done: false, startedAt: nowMs }
   return intoOpenAgent(parts, items => [...items, node]) ?? [...parts, node]
 }
 
 // closeJudgeVerdict fills in the verdict on the innermost open judge_verdict container.
 // Called on judge_verdict. _round is accepted for API symmetry with openJudgeVerdict;
 // the implementation closes the deepest open container regardless of round number.
-export function closeJudgeVerdict(parts: MessagePart[], _round: number, score: number, passed: boolean, feedback: string): MessagePart[] {
-  return closeOpenJudgeVerdictHelper(parts, score, passed, feedback) ?? parts
+export function closeJudgeVerdict(parts: MessagePart[], _round: number, score: number, passed: boolean, feedback: string, nowMs?: number): MessagePart[] {
+  return closeOpenJudgeVerdictHelper(parts, score, passed, feedback, nowMs) ?? parts
 }
 
 // appendRevise nests a revise marker under the active actor group.
@@ -256,12 +260,12 @@ function closeWithDescendants(node: AgentPart): AgentPart {
 
 // closeOpenSelfRefineHelper finds the innermost open self_refine container in the
 // active agent spine and marks it done with the given changed flag.
-function closeOpenSelfRefineHelper(items: MessagePart[], changed: boolean): MessagePart[] | null {
+function closeOpenSelfRefineHelper(items: MessagePart[], changed: boolean, nowMs?: number): MessagePart[] | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
     if (it.kind !== 'agent' || it.done) continue
     // Try deeper first.
-    const deeper = closeOpenSelfRefineHelper(it.items, changed)
+    const deeper = closeOpenSelfRefineHelper(it.items, changed, nowMs)
     if (deeper) {
       const next = [...items]
       next[i] = { ...it, items: deeper }
@@ -271,8 +275,9 @@ function closeOpenSelfRefineHelper(items: MessagePart[], changed: boolean): Mess
     for (let j = it.items.length - 1; j >= 0; j--) {
       const child = it.items[j]
       if (child.kind === 'self_refine' && !child.done) {
+        const durationMs = nowMs != null && child.startedAt != null ? nowMs - child.startedAt : undefined
         const nextItems = [...it.items]
-        nextItems[j] = { ...child, changed, done: true }
+        nextItems[j] = { ...child, changed, done: true, durationMs }
         const next = [...items]
         next[i] = { ...it, items: nextItems }
         return next
@@ -285,12 +290,12 @@ function closeOpenSelfRefineHelper(items: MessagePart[], changed: boolean): Mess
 
 // closeOpenJudgeVerdictHelper finds the innermost open judge_verdict container in
 // the active agent spine and closes it with verdict data.
-function closeOpenJudgeVerdictHelper(items: MessagePart[], score: number, passed: boolean, feedback: string): MessagePart[] | null {
+function closeOpenJudgeVerdictHelper(items: MessagePart[], score: number, passed: boolean, feedback: string, nowMs?: number): MessagePart[] | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
     if (it.kind !== 'agent' || it.done) continue
     // Try deeper first.
-    const deeper = closeOpenJudgeVerdictHelper(it.items, score, passed, feedback)
+    const deeper = closeOpenJudgeVerdictHelper(it.items, score, passed, feedback, nowMs)
     if (deeper) {
       const next = [...items]
       next[i] = { ...it, items: deeper }
@@ -300,8 +305,9 @@ function closeOpenJudgeVerdictHelper(items: MessagePart[], score: number, passed
     for (let j = it.items.length - 1; j >= 0; j--) {
       const child = it.items[j]
       if (child.kind === 'judge_verdict' && !child.done) {
+        const durationMs = nowMs != null && child.startedAt != null ? nowMs - child.startedAt : undefined
         const nextItems = [...it.items]
-        nextItems[j] = { ...child, score, passed, feedback, done: true }
+        nextItems[j] = { ...child, score, passed, feedback, done: true, durationMs }
         const next = [...items]
         next[i] = { ...it, items: nextItems }
         return next

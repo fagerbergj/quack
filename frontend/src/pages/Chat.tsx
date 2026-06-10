@@ -283,7 +283,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             const showSpinner = streaming && isLast && parts.length === 0 && !showDag
             return (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-2xl w-full ${msg.role === 'user' ? 'ml-12' : 'mr-12'}`}>
+                <div className={`w-full ${msg.role === 'user' ? 'max-w-2xl ml-auto' : ''}`}>
                   {msg.role === 'user' ? (
                     <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
                       {msg.content}

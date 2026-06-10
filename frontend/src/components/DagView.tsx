@@ -2,6 +2,11 @@ import { DagNode } from './DagNode'
 import type { DagTurnState, NodeState } from '../state/chatStore'
 import type { MessagePart } from './messageParts'
 
+function fmtMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
 // topoLayers groups node IDs into layers (layer 0 = no deps, etc.)
 function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): string[][] {
   const inDegree: Record<string, number> = {}
@@ -57,11 +62,15 @@ export function DagView({ dag }: Props) {
   const getParts = (id: string): MessagePart[] =>
     dag.nodeParts[id] ?? []
 
+  const overallMs = dag.startedAt != null
+    ? (dag.finishedAt ?? Date.now()) - dag.startedAt
+    : null
+
   return (
     <div className="space-y-4 not-prose">
       {layers.map((layer, li) => (
         <div key={li}>
-          <div className={`flex gap-3 ${layer.length > 1 ? 'flex-row' : 'flex-col'}`}>
+          <div className={`flex gap-3 items-stretch ${layer.length > 1 ? 'flex-row' : 'flex-col'}`}>
             {layer.map(id => (
               <div key={id} className={layer.length > 1 ? 'flex-1 min-w-0' : ''}>
                 <DagNode
@@ -80,6 +89,13 @@ export function DagView({ dag }: Props) {
           )}
         </div>
       ))}
+      {overallMs != null && (
+        <div className="flex justify-end">
+          <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+            total {fmtMs(overallMs)}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
