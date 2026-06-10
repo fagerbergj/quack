@@ -419,7 +419,17 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 			}
 		}
 	}
-	return answer.String(), act, true
+	// Strip leaked thinking: --jinja primes Qwen3 with <think> in the prompt,
+	// so the model outputs thinking text ending with </think> directly in
+	// content (not reasoning_content) — llama-server's --reasoning-format auto
+	// never sees the opening tag and can't route it. Discard everything up to
+	// and including the first </think> so only the post-thinking answer reaches
+	// the gate.
+	ans := answer.String()
+	if idx := strings.Index(ans, "</think>"); idx >= 0 {
+		ans = strings.TrimLeft(ans[idx+len("</think>"):], "\n")
+	}
+	return ans, act, true
 }
 
 // splitAnswer separates a worker event's answer text (plain non-thought text)

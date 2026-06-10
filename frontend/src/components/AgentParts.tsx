@@ -165,7 +165,7 @@ function JudgeUnavailableBlock({ part }: { part: JudgeUnavailablePart }) {
 // WindowedItems shows the most recent RECENT items; older ones collapse behind a
 // "⋯ N earlier" toggle. Keys index into the full list (which only ever appends),
 // so streaming reconciliation stays stable.
-function WindowedItems({ items }: { items: MessagePart[] }) {
+export function WindowedItems({ items }: { items: MessagePart[] }) {
   const [showAll, setShowAll] = useState(false)
   const hidden = Math.max(0, items.length - RECENT)
   const start = showAll ? 0 : hidden

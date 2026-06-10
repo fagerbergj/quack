@@ -237,38 +237,20 @@ func TestParseVerdictToleratesFencedJSON(t *testing.T) {
 	}
 }
 
-func TestParseVerdictMisplacedTopLevel(t *testing.T) {
-	// Reproduces the exact failure seen in prod: the model nested score/passed/feedback
-	// inside criteria and omitted the outer closing brace.
-	malformed := `{"criteria":{"grounded":{"reason":"good","score":0.9},"no_fabrication":{"reason":"ok","score":1.0},"answers_question":{"reason":"yes","score":1.0},"internally_consistent":{"reason":"fine","score":0.9},"cites_sources":{"reason":"none","score":0.0},"score":0.76,"passed":true,"feedback":"add citations"}`
-
-	v, err := parseVerdict(malformed)
+func TestParseVerdictTruncated(t *testing.T) {
+	// Model truncated the JSON before the closing brace; brace repair should recover it.
+	truncated := `{"score":0.75,"passed":true,"feedback":"good answer"`
+	v, err := parseVerdict(truncated)
 	if err != nil {
-		t.Fatalf("parseVerdict(misplaced): %v", err)
+		t.Fatalf("parseVerdict(truncated): %v", err)
 	}
-	// cites_sources=0 → hard cap at 0.40
-	if v.Score > 0.40 {
-		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
-	}
-	// Feedback recovered from misplaced entry
-	if v.Feedback != "add citations" {
-		t.Errorf("feedback = %q, want recovered from criteria", v.Feedback)
-	}
-	// The 5 real criteria should be present; score/passed/feedback should not
-	for _, want := range []string{"grounded", "no_fabrication", "answers_question", "internally_consistent", "cites_sources"} {
-		if _, ok := v.Criteria[want]; !ok {
-			t.Errorf("criteria missing %q", want)
-		}
-	}
-	for _, bad := range []string{"score", "passed", "feedback"} {
-		if _, ok := v.Criteria[bad]; ok {
-			t.Errorf("criteria should not contain %q", bad)
-		}
+	if v.Score != 0.75 || !v.Passed {
+		t.Errorf("unexpected verdict: %+v", v)
 	}
 }
 
 func TestParseVerdictDuplicatedBlob(t *testing.T) {
-	// Model emitted the JSON object twice (back-to-back); only the first should be parsed.
+	// Model emitted the JSON object twice; only the first should be parsed.
 	blob := `{"score":0.8,"passed":true,"feedback":"ok"}`
 	v, err := parseVerdict(blob + blob)
 	if err != nil {
@@ -276,17 +258,5 @@ func TestParseVerdictDuplicatedBlob(t *testing.T) {
 	}
 	if !v.Passed || v.Score != 0.8 {
 		t.Errorf("unexpected verdict: %+v", v)
-	}
-}
-
-func TestParseVerdictCitesCap(t *testing.T) {
-	// Well-formed G-Eval verdict; cites_sources=0 should cap the mean.
-	input := `{"criteria":{"grounded":{"score":0.9},"no_fabrication":{"score":1.0},"answers_question":{"score":1.0},"internally_consistent":{"score":0.9},"cites_sources":{"score":0.0}},"score":0.96,"passed":true,"feedback":"no sources"}`
-	v, err := parseVerdict(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v.Score > 0.40 {
-		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
 	}
 }

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
-import { AssistantParts, partsToText } from '../components/AgentParts'
+import { AssistantParts, AssistantText, partsToText } from '../components/AgentParts'
+import { DagView } from '../components/DagView'
 import { useChatStore, useChatTurn } from '../state/ChatStoreProvider'
-import type { Message } from '../state/chatStore'
+import type { Message, DagTurnState } from '../state/chatStore'
 
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -17,6 +18,15 @@ function relativeDate(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
+function dagFinalText(dag: DagTurnState): string {
+  if (!dag.nodes.length) return ''
+  const hasSucessor = new Set<string>()
+  for (const n of dag.nodes) for (const dep of n.depends_on ?? []) hasSucessor.add(dep)
+  const finalNode = dag.nodes.find(n => !hasSucessor.has(n.id))
+  if (!finalNode) return ''
+  return partsToText(dag.nodeParts[finalNode.id] ?? [])
+}
+
 export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPrompt: string }) {
   const { chatId: urlChatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
@@ -28,6 +38,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const messages = turn.messages
   const streaming = turn.streaming
   const error = turn.error
+  const dag = turn.dag
   const [input, setInput] = useState('')
   const [systemPrompt, setSystemPrompt] = useState(globalSystemPrompt)
   const [showSettings, setShowSettings] = useState(false)
@@ -265,7 +276,11 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             const isLast = idx === messages.length - 1
             const parts = msg.parts ?? []
             const text = partsToText(parts) || (msg.content ?? '')
-            const showSpinner = streaming && isLast && parts.length === 0
+            const showDag = msg.role === 'assistant' && isLast && dag != null
+            // dagDone: DAG finished — collapse the tree and surface the final answer
+            const dagDone = showDag && !streaming
+            const finalText = dagDone ? dagFinalText(dag!) : text
+            const showSpinner = streaming && isLast && parts.length === 0 && !showDag
             return (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-2xl w-full ${msg.role === 'user' ? 'ml-12' : 'mr-12'}`}>
@@ -282,21 +297,35 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                             <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
                             <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
                           </span>
+                        ) : showDag && !dagDone ? (
+                          <DagView dag={dag} />
+                        ) : dagDone ? (
+                          <>
+                            <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                              <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                ▸ Research steps
+                              </summary>
+                              <div className="p-2">
+                                <DagView dag={dag!} />
+                              </div>
+                            </details>
+                            {finalText && <AssistantText text={finalText} />}
+                          </>
                         ) : (
                           <AssistantParts parts={parts} showCursor={streaming && isLast} />
                         )}
                       </div>
 
-                      {text && (!streaming || !isLast) && (
+                      {finalText && (!streaming || !isLast) && (
                         <div className="flex items-center gap-3 mt-1.5 px-1">
                           <button
-                            onClick={() => handleCopy(idx, text)}
+                            onClick={() => handleCopy(idx, finalText)}
                             className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                           >
                             {copied === idx ? 'Copied!' : 'Copy'}
                           </button>
                           <button
-                            onClick={() => handleDownload(text, idx)}
+                            onClick={() => handleDownload(finalText, idx)}
                             className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                           >
                             Download
