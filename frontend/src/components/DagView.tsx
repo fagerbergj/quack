@@ -13,7 +13,7 @@ function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): 
   }
 
   const layers: string[][] = []
-  let remaining = new Set(nodeIds)
+  const remaining = new Set(nodeIds)
   while (remaining.size > 0) {
     const layer = [...remaining].filter(id => inDegree[id] === 0)
     if (layer.length === 0) break // cycle guard
