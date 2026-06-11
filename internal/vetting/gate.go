@@ -450,6 +450,17 @@ func splitAnswer(ev *session.Event, asThinking bool) (*session.Event, string) {
 		}
 		return ev, ""
 	}
+	// Text that appears in the same event as a function call is planning
+	// narration ("let me call tool X…"), not the final answer. Treat it as
+	// thinking so it streams through as activity but never leaks into the
+	// buffered answer the gate surfaces to the user.
+	hasFuncCall := false
+	for _, p := range ev.Content.Parts {
+		if p != nil && p.FunctionCall != nil {
+			hasFuncCall = true
+			break
+		}
+	}
 	var answer strings.Builder
 	var keep []*genai.Part
 	for _, p := range ev.Content.Parts {
@@ -457,8 +468,10 @@ func splitAnswer(ev *session.Event, asThinking bool) (*session.Event, string) {
 			continue
 		}
 		if !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil && p.Text != "" {
-			answer.WriteString(p.Text)
-			if asThinking {
+			if !hasFuncCall {
+				answer.WriteString(p.Text)
+			}
+			if asThinking || hasFuncCall {
 				keep = append(keep, &genai.Part{Thought: true, Text: p.Text})
 			}
 			continue
