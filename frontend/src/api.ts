@@ -1,17 +1,34 @@
 // Quack REST client. Types and the request SDK are generated from the single
 // source of truth, ../../openapi.yaml (see `npm run generate`); this module is a
 // thin ergonomic wrapper that unwraps the generated result objects and throws on
-// error. The streaming messages endpoint is handled directly by the chat store.
+// error. The streaming responses endpoint is handled directly by the chat store.
 import {
   listChats as sdkListChats,
   createChat as sdkCreateChat,
   getChat as sdkGetChat,
   deleteChat as sdkDeleteChat,
+  getResponse as sdkGetResponse,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatMessage, ChatList } from './generated'
+export type {
+  ChatSummary,
+  ChatDetail,
+  ChatList,
+  Turn,
+  TurnInput,
+  OutputItem,
+  MessageOutputItem,
+  DagOutputItem,
+  ContentPart,
+  OutputTextPart,
+  ReasoningPart,
+  DagNodeDef,
+  DagEdge,
+  DagNodeState,
+  ItemStatus,
+} from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn } from './generated'
 
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
@@ -40,5 +57,11 @@ export const api = {
     if (!r.response || !r.response.ok) {
       throw new Error(`Delete failed (${r.response ? r.response.status : 'no response'})`)
     }
+  },
+
+  getResponse: async (chatId: string, responseId: string): Promise<Turn | null> => {
+    const r = await sdkGetResponse({ path: { chat_id: chatId, response_id: responseId } })
+    if (r.response?.status === 404) return null
+    return unwrap(r)
   },
 }

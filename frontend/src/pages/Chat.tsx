@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
 import { AssistantParts, AssistantText, partsToText } from '../components/AgentParts'
 import { DagView } from '../components/DagView'
-import { useChatStore, useChatTurn } from '../state/ChatStoreProvider'
-import type { Message, DagTurnState } from '../state/chatStore'
+import { useChatStore, useChatState } from '../state/ChatStoreProvider'
+import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
+import type { Turn, DagOutputItem } from '../generated'
 
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -18,11 +19,50 @@ function relativeDate(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-function dagFinalText(dag: DagTurnState): string {
+// dagTurnStateFromItem converts a persisted DagOutputItem into a DagTurnState
+// suitable for DagView. nodeParts is empty (streaming content not persisted).
+function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
+  const nodeStates: DagTurnState['nodeStates'] = {}
+  let startedAt: number | undefined
+  let finishedAt: number | undefined
+  for (const [id, ns] of Object.entries(item.node_states)) {
+    nodeStates[id] = {
+      status: ns.status as DagTurnState['nodeStates'][string]['status'],
+      outputPreview: ns.output_preview,
+      error: ns.error,
+      startedAt: ns.started_at_ms,
+      finishedAt: ns.finished_at_ms,
+      model: ns.model,
+      promptTokens: ns.prompt_tokens,
+      completionTokens: ns.completion_tokens,
+      totalTokens: ns.total_tokens,
+      finishReason: ns.finish_reason,
+      serverDurationMs: ns.server_duration_ms,
+    }
+    if (ns.started_at_ms != null)
+      startedAt = startedAt == null ? ns.started_at_ms : Math.min(startedAt, ns.started_at_ms)
+    if (ns.finished_at_ms != null)
+      finishedAt = finishedAt == null ? ns.finished_at_ms : Math.max(finishedAt, ns.finished_at_ms)
+  }
+  return {
+    planId: item.plan_id,
+    nodes: item.nodes,
+    edges: item.edges,
+    nodeStates,
+    nodeParts: {},
+    startedAt,
+    finishedAt,
+  }
+}
+
+// liveDagFinalText extracts the answer from the terminal node's accumulated parts.
+// The orchestrator never emits top-level token events — the final answer lives in
+// the last DAG node's nodeParts.
+function liveDagFinalText(dag: DagTurnState): string {
   if (!dag.nodes.length) return ''
-  const hasSucessor = new Set<string>()
-  for (const n of dag.nodes) for (const dep of n.depends_on ?? []) hasSucessor.add(dep)
-  const finalNode = dag.nodes.find(n => !hasSucessor.has(n.id))
+  const hasSuccessor = new Set<string>()
+  for (const n of dag.nodes) for (const dep of n.depends_on ?? []) hasSuccessor.add(dep)
+  const finalNode = dag.nodes.find(n => !hasSuccessor.has(n.id))
   if (!finalNode) return ''
   return partsToText(dag.nodeParts[finalNode.id] ?? [])
 }
@@ -34,16 +74,16 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const store = useChatStore()
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
-  const turn = useChatTurn(activeChatId)
-  const messages = turn.messages
-  const streaming = turn.streaming
-  const error = turn.error
-  const dag = turn.dag
+  const state = useChatState(activeChatId)
+  const streaming = state.live?.streaming ?? false
+  const error = state.error
+  const live = state.live
   const [input, setInput] = useState('')
   const [systemPrompt, setSystemPrompt] = useState(globalSystemPrompt)
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
-  const [copied, setCopied] = useState<number | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+
   useEffect(() => {
     const stored = localStorage.getItem('theme')
     if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -78,12 +118,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
         if (exists) return prev
         return [detail, ...prev]
       })
-      const seeded: Message[] = detail.messages.map(m => ({
-        role: m.role,
-        content: m.content,
-        parts: m.role === 'assistant' ? [{ kind: 'text', text: m.content }] : undefined,
-      }))
-      store.seed(activeChatId, seeded)
+      store.seed(activeChatId, detail.turns)
     }).catch(() => {})
     return () => { cancelled = true }
   }, [activeChatId])
@@ -94,9 +129,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   }
 
   async function handleNewChat() {
-    const chat = await api.createChat({
-      system_prompt: systemPrompt.trim() || undefined,
-    })
+    const chat = await api.createChat({ system_prompt: systemPrompt.trim() || undefined })
     setChats(prev => [chat, ...prev])
     setActiveChatId(chat.id)
     navigate(`/chat/${chat.id}`)
@@ -120,9 +153,9 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     }
   }
 
-  function handleCopy(idx: number, content: string) {
+  function handleCopy(key: string, content: string) {
     navigator.clipboard.writeText(content)
-    setCopied(idx)
+    setCopied(key)
     setTimeout(() => setCopied(null), 2000)
   }
 
@@ -146,7 +179,6 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     if (!trimmed || streaming) return
     if (!activeChatId) return
     setInput('')
-
     await store.submit(activeChatId, trimmed, title => {
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
     })
@@ -159,6 +191,14 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
       handleSubmit(e as unknown as React.FormEvent)
     }
   }
+
+  // Build the display list: completed turns + the live turn if active.
+  type DisplayItem =
+    | { kind: 'turn'; turn: Turn; idx: number }
+    | { kind: 'live' }
+
+  const displayItems: DisplayItem[] = state.turns.map((turn, idx) => ({ kind: 'turn', turn, idx }))
+  if (live) displayItems.push({ kind: 'live' })
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
@@ -266,66 +306,59 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
               Select or start a chat
             </div>
           )}
-          {activeChatId && messages.length === 0 && !streaming && (
+          {activeChatId && displayItems.length === 0 && !streaming && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Ask a question
             </div>
           )}
 
-          {messages.map((msg, idx) => {
-            const isLast = idx === messages.length - 1
-            const parts = msg.parts ?? []
-            const text = partsToText(parts) || (msg.content ?? '')
-            const showDag = msg.role === 'assistant' && isLast && dag != null
-            // dagDone: DAG finished — collapse the tree and surface the final answer
-            const dagDone = showDag && !streaming
-            const finalText = dagDone ? dagFinalText(dag!) : text
-            const showSpinner = streaming && isLast && parts.length === 0 && !showDag
-            return (
-              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={msg.role === 'user' ? 'max-w-2xl ml-auto w-full' : showSpinner ? 'w-auto' : 'w-full'}>
-                  {msg.role === 'user' ? (
-                    <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                      {msg.content}
+          {displayItems.map((item, idx) => {
+            if (item.kind === 'turn') {
+              const { turn } = item
+              const dagItem = dagFromTurn(turn)
+              const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
+              const text = textFromTurn(turn)
+              const copyKey = `turn-${turn.id}`
+              return (
+                <div key={turn.id}>
+                  {/* User message */}
+                  <div className="flex justify-end mb-3">
+                    <div className="max-w-2xl ml-auto">
+                      <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                        {turn.input.content}
+                      </div>
                     </div>
-                  ) : (
-                    <div>
+                  </div>
+                  {/* Assistant response */}
+                  <div className="flex justify-start">
+                    <div className="w-full">
                       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-                        {showSpinner ? (
-                          <span className="flex items-center gap-1 h-5">
-                            <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
-                            <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
-                            <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
-                          </span>
-                        ) : showDag && !dagDone ? (
-                          <DagView dag={dag} />
-                        ) : dagDone ? (
+                        {dagState ? (
                           <>
                             <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
                               <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                                 ▸ Research steps
                               </summary>
                               <div className="p-2">
-                                <DagView dag={dag!} />
+                                <DagView dag={dagState} />
                               </div>
                             </details>
-                            {finalText && <AssistantText text={finalText} />}
+                            {text && <AssistantText text={text} />}
                           </>
                         ) : (
-                          <AssistantParts parts={parts} showCursor={streaming && isLast} />
+                          <AssistantText text={text} />
                         )}
                       </div>
-
-                      {finalText && (!streaming || !isLast) && (
+                      {text && (
                         <div className="flex items-center gap-3 mt-1.5 px-1">
                           <button
-                            onClick={() => handleCopy(idx, finalText)}
+                            onClick={() => handleCopy(copyKey, text)}
                             className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                           >
-                            {copied === idx ? 'Copied!' : 'Copy'}
+                            {copied === copyKey ? 'Copied!' : 'Copy'}
                           </button>
                           <button
-                            onClick={() => handleDownload(finalText, idx)}
+                            onClick={() => handleDownload(text, idx)}
                             className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                           >
                             Download
@@ -333,7 +366,73 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                         </div>
                       )}
                     </div>
-                  )}
+                  </div>
+                </div>
+              )
+            }
+
+            // Live turn
+            const liveParts = live!.parts
+            const liveDag = live!.dag
+            const liveText = liveDag ? liveDagFinalText(liveDag) : partsToText(liveParts)
+            const showSpinner = streaming && liveParts.length === 0 && !liveDag
+            const liveDone = !streaming
+            const copyKey = `live-${live!.userText.slice(0, 20)}`
+            return (
+              <div key="live">
+                {/* User message */}
+                <div className="flex justify-end mb-3">
+                  <div className="max-w-2xl ml-auto">
+                    <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                      {live!.userText}
+                    </div>
+                  </div>
+                </div>
+                {/* Assistant response */}
+                <div className="flex justify-start">
+                  <div className={liveDag || liveParts.length > 0 ? 'w-full' : 'w-auto'}>
+                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+                      {showSpinner ? (
+                        <span className="flex items-center gap-1 h-5">
+                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
+                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
+                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
+                        </span>
+                      ) : liveDag && !liveDone ? (
+                        <DagView dag={liveDag} />
+                      ) : liveDag && liveDone ? (
+                        <>
+                          <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                              ▸ Research steps
+                            </summary>
+                            <div className="p-2">
+                              <DagView dag={liveDag} />
+                            </div>
+                          </details>
+                          {liveText && <AssistantText text={liveText} />}
+                        </>
+                      ) : (
+                        <AssistantParts parts={liveParts} showCursor={streaming} />
+                      )}
+                    </div>
+                    {liveText && (!streaming) && (
+                      <div className="flex items-center gap-3 mt-1.5 px-1">
+                        <button
+                          onClick={() => handleCopy(copyKey, liveText)}
+                          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                        >
+                          {copied === copyKey ? 'Copied!' : 'Copy'}
+                        </button>
+                        <button
+                          onClick={() => handleDownload(liveText, displayItems.length)}
+                          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                        >
+                          Download
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )

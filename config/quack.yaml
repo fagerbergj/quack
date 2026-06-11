@@ -24,6 +24,11 @@ agents:
     provider: default
     model: ${RESEARCHER_MODEL}
     tools: [web_search, web_fetch, summarize]
+  synthesizer:
+    bundle: agents/synthesizer
+    provider: default
+    model: ${RESEARCHER_MODEL}
+    tools: []
 
 # Backend bindings for the built-in tools (keyless, internal services in M1).
 tools:

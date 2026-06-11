@@ -244,6 +244,9 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		}
 
 		// Send final complete response
+		if modelVersion == "" {
+			modelVersion = openaiReq.Model
+		}
 		finalResp := &model.LLMResponse{
 			Content:       aggregatedContent,
 			UsageMetadata: usageMetadata,

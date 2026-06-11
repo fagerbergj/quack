@@ -1,5 +1,5 @@
 // Package rest implements the generated OpenAPI ServerInterface for Quack's
-// REST surface: chat CRUD plus the streaming messages endpoint.
+// REST surface: chat CRUD plus the streaming responses endpoint.
 package rest
 
 import (
@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
@@ -20,32 +21,25 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// userID is the fixed M0 user (no auth yet).
 const userID = "local"
 
-// titleInstruction drives concise chat title generation.
 const titleInstruction = "Generate a concise chat title (3–6 words, no punctuation, no quotes). Return only the title."
 
-// runTimeout is the maximum time the orchestrator is allowed to run per turn,
-// independent of whether the SSE client is still connected.
-const runTimeout = 10 * time.Minute
+const runTimeout = 2 * time.Hour
 
 // Handler implements schema.ServerInterface backed by the store + orchestrator.
 type Handler struct {
 	store         *store.Store
 	orch          *orchestrator.Orchestrator
-	titler        model.LLM // used to generate chat titles; nil disables auto-titling
-	activeCancels sync.Map  // chatID → context.CancelFunc for in-progress runs
+	titler        model.LLM
+	activeCancels sync.Map // chatID → context.CancelFunc
 }
 
-// NewHandler builds a REST handler. titler is the model used to generate short
-// chat titles; pass nil to disable auto-titling.
+// NewHandler builds a REST handler.
 func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM) *Handler {
 	return &Handler{store: s, orch: o, titler: titler}
 }
 
-// generateTitle calls the titler model to produce a short chat title from the
-// first user message. Returns "" on any error so callers can skip gracefully.
 func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
 	if h.titler == nil {
 		return ""
@@ -81,14 +75,12 @@ func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string
 	return title
 }
 
-// HealthCheck returns 200 "ok".
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }
 
-// ListChats returns all chats.
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 	chats, err := h.store.ListChats(r.Context())
 	if err != nil {
@@ -102,10 +94,9 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// CreateChat creates a chat (optional system prompt).
 func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	var body schema.CreateChatBody
-	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional
+	_ = json.NewDecoder(r.Body).Decode(&body)
 	sp := ""
 	if body.SystemPrompt != nil {
 		sp = *body.SystemPrompt
@@ -118,7 +109,6 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toSummary(*c))
 }
 
-// GetChat returns a chat with its messages projected from the ADK session.
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	c, err := h.store.GetChat(r.Context(), chatID)
 	if err != nil {
@@ -129,7 +119,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	msgs, err := h.store.Messages(r.Context(), orchestrator.AppName, userID, chatID)
+	turns, err := h.store.GetTurnsWithContent(r.Context(), orchestrator.AppName, userID, chatID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -140,18 +130,27 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		SystemPrompt: c.SystemPrompt,
 		CreatedAt:    c.CreatedAt,
 		UpdatedAt:    c.UpdatedAt,
-		Messages:     make([]schema.ChatMessage, 0, len(msgs)),
+		Turns:        make([]schema.Turn, 0, len(turns)),
 	}
-	for _, m := range msgs {
-		detail.Messages = append(detail.Messages, schema.ChatMessage{
-			Role:    schema.ChatMessageRole(m.Role),
-			Content: m.Content,
-		})
+	for _, tc := range turns {
+		detail.Turns = append(detail.Turns, buildTurn(tc))
 	}
 	writeJSON(w, http.StatusOK, detail)
 }
 
-// DeleteChat removes a chat.
+func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, responseID schema.ResponseID) {
+	tc, err := h.store.GetTurnWithContent(r.Context(), orchestrator.AppName, userID, chatID, responseID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if tc == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, buildTurn(*tc))
+}
+
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if err := h.store.DeleteChat(r.Context(), chatID); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -161,15 +160,6 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 }
 
 // SendChatMessage runs the orchestrator and streams the response as SSE.
-//
-// The orchestrator runs under a detached context so it completes even if the
-// SSE client disconnects mid-stream (tab close, network drop). Events continue
-// to be written to the ADK session store; the user sees the full response on
-// their next visit.
-//
-// Title generation runs in a goroutine alongside the orchestrator run. As soon
-// as the short title LLM call completes a chat_title event is injected into the
-// SSE stream so the sidebar updates immediately — without waiting for done.
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	var body schema.SendMessageBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
@@ -182,10 +172,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		return
 	}
 
-	// Detach from the HTTP request context so the orchestrator run survives a
-	// client disconnect (tab close, network drop). The run is still cancellable
-	// via CancelChatStream so the Stop button works. A hard deadline prevents
-	// goroutine leaks regardless of client state.
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
 	h.activeCancels.Store(chatID, cancelRun)
 	defer func() {
@@ -193,8 +179,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		h.activeCancels.Delete(chatID)
 	}()
 
-	// Start title generation concurrently. The goroutine writes the title to DB
-	// and sends exactly one value on titleCh, then closes it.
+	// Generate a stable turn ID before the run so the DAG plan can reference it.
+	turnID := uuid.NewString()
+	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
+
 	titleCh := make(chan string, 1)
 	go func() {
 		defer close(titleCh)
@@ -210,8 +198,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		titleCh <- title
 	}()
 
-	// trySendTitle drains the title channel without blocking. Called on each SSE
-	// loop iteration so the chat_title event reaches the client as soon as ready.
 	clientGone := false
 	trySendTitle := func() {
 		select {
@@ -223,52 +209,199 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		}
 	}
 
-	// The whole run is the orchestrator's turn; specialist dispatches nest inside.
-	// AgentEnd must balance this AgentStart on every path (including errors) or the
-	// frontend's orchestrator group spins forever; it precedes Done so the group
-	// closes before the stream terminates.
-	_ = sse.send(stream.AgentStart(stream.OrchestratorAuthor))
+	var activePlanID string
+	now := func() *time.Time { t := time.Now().UTC(); return &t }
+
 	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content) {
 		trySendTitle()
 		if err != nil {
 			if !clientGone {
 				_ = sse.send(stream.Errorf(err.Error()))
-				_ = sse.send(stream.AgentEnd(stream.OrchestratorAuthor))
 				_ = sse.send(stream.Done())
 			}
 			return
 		}
-		if clientGone {
-			continue // drain silently so ADK stores the full response
-		}
-		for _, se := range stream.Translate(ev) {
-			if sendErr := sse.send(se); sendErr != nil {
-				clientGone = true
-				break
+		switch ev.Name {
+		case stream.EventDagPlan:
+			if d, ok := ev.Data.(stream.DagPlanData); ok {
+				activePlanID = d.PlanID
+				planJSON, _ := json.Marshal(d)
+				go func() {
+					_ = h.store.SaveDagPlan(context.Background(), chatID, d.PlanID, turnID, string(planJSON))
+				}()
+			}
+		case stream.EventNodeStart:
+			if d, ok := ev.Data.(stream.NodeStartData); ok && activePlanID != "" {
+				pid := activePlanID
+				go func() {
+					_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
+						NodeID: d.NodeID, PlanID: pid, Status: "running", StartedAt: now(),
+					})
+				}()
+			}
+		case stream.EventNodeDone:
+			if d, ok := ev.Data.(stream.NodeDoneData); ok && activePlanID != "" {
+				pid := activePlanID
+				go func() {
+					_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
+						NodeID:           d.NodeID,
+						PlanID:           pid,
+						Status:           "done",
+						OutputPreview:    d.OutputPreview,
+						FinishedAt:       now(),
+						Model:            d.Model,
+						PromptTokens:     d.PromptTokens,
+						CompletionTokens: d.CompletionTokens,
+						TotalTokens:      d.TotalTokens,
+						FinishReason:     d.FinishReason,
+						DurationMs:       d.DurationMs,
+					})
+				}()
+			}
+		case stream.EventNodeFailed:
+			if d, ok := ev.Data.(stream.NodeFailedData); ok && activePlanID != "" {
+				pid := activePlanID
+				go func() {
+					_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
+						NodeID: d.NodeID, PlanID: pid, Status: "failed", Error: d.Error, FinishedAt: now(),
+					})
+				}()
 			}
 		}
+		if clientGone {
+			continue
+		}
+		if sendErr := sse.send(ev); sendErr != nil {
+			clientGone = true
+		}
 	}
-	// Drain: wait for the title goroutine to finish and send the event if it
-	// hasn't been sent yet (e.g. orchestrator finished before title LLM returned).
 	for title := range titleCh {
 		if !clientGone {
 			_ = sse.send(stream.ChatTitle(title))
 		}
 	}
 	if !clientGone {
-		_ = sse.send(stream.AgentEnd(stream.OrchestratorAuthor))
 		_ = sse.send(stream.Done())
 	}
 	_ = h.store.Touch(runCtx, chatID)
 }
 
-// CancelChatStream cancels an in-progress orchestrator run for the given chat.
-// No-op if no run is active. The SSE client should abort its connection too.
 func (h *Handler) CancelChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if cancel, ok := h.activeCancels.Load(chatID); ok {
 		cancel.(context.CancelFunc)()
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// buildTurn converts a TurnContent (store layer) into a schema.Turn (API layer).
+func buildTurn(tc store.TurnContent) schema.Turn {
+	// Message output item — always present when there is assistant text.
+	var msgItem schema.OutputItem
+	if tc.AsstText != "" || tc.AsstThink != "" {
+		content := make([]schema.ContentPart, 0, 2)
+		if tc.AsstThink != "" {
+			var cp schema.ContentPart
+			_ = cp.FromReasoningPart(schema.ReasoningPart{Text: tc.AsstThink})
+			content = append(content, cp)
+		}
+		if tc.AsstText != "" {
+			var cp schema.ContentPart
+			_ = cp.FromOutputTextPart(schema.OutputTextPart{Text: tc.AsstText})
+			content = append(content, cp)
+		}
+		_ = msgItem.FromMessageOutputItem(schema.MessageOutputItem{
+			Id:      tc.ID + ":msg",
+			Status:  schema.Completed,
+			Content: content,
+		})
+	}
+
+	// DAG output item — present when a plan was executed this turn.
+	var dagItem *schema.OutputItem
+	if tc.Plan != nil {
+		var planData stream.DagPlanData
+		if err := json.Unmarshal([]byte(tc.Plan.PlanJSON), &planData); err == nil {
+			nodes := make([]schema.DagNodeDef, len(planData.Nodes))
+			for i, n := range planData.Nodes {
+				nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn}
+			}
+			edges := make([]schema.DagEdge, len(planData.Edges))
+			for i, e := range planData.Edges {
+				edges[i] = schema.DagEdge{From: e.From, To: e.To}
+			}
+			nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
+			for _, n := range tc.Nodes {
+				ns := schema.DagNodeState{
+					Status:           n.Status,
+					Model:            strPtr(n.Model),
+					FinishReason:     strPtr(n.FinishReason),
+					OutputPreview:    strPtr(n.OutputPreview),
+					Error:            strPtr(n.Error),
+					PromptTokens:     intPtr(int(n.PromptTokens)),
+					CompletionTokens: intPtr(int(n.CompletionTokens)),
+					TotalTokens:      intPtr(int(n.TotalTokens)),
+					ServerDurationMs: intPtr(int(n.DurationMs)),
+				}
+				if n.StartedAt != nil {
+					ms := int(n.StartedAt.UnixMilli())
+					ns.StartedAtMs = &ms
+				}
+				if n.FinishedAt != nil {
+					ms := int(n.FinishedAt.UnixMilli())
+					ns.FinishedAtMs = &ms
+				}
+				nodeStates[n.NodeID] = ns
+			}
+			// DAG is completed if all nodes are done/failed, in_progress otherwise.
+			dagStatus := schema.Completed
+			for _, ns := range nodeStates {
+				if ns.Status == "running" || ns.Status == "queued" {
+					dagStatus = schema.InProgress
+					break
+				}
+			}
+			item := new(schema.OutputItem)
+			_ = item.FromDagOutputItem(schema.DagOutputItem{
+				Id:         tc.Plan.ID,
+				Status:     dagStatus,
+				PlanId:     tc.Plan.ID,
+				Nodes:      nodes,
+				Edges:      edges,
+				NodeStates: nodeStates,
+			})
+			dagItem = item
+		}
+	}
+
+	output := make([]schema.OutputItem, 0, 2)
+	if dagItem != nil {
+		output = append(output, *dagItem)
+	}
+	// Only append message item if it has content.
+	if tc.AsstText != "" || tc.AsstThink != "" {
+		output = append(output, msgItem)
+	}
+
+	return schema.Turn{
+		Id:        tc.ID,
+		CreatedAt: tc.CreatedAt,
+		Input:     schema.TurnInput{Role: schema.User, Content: tc.UserText},
+		Output:    output,
+	}
+}
+
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func intPtr(n int) *int {
+	if n == 0 {
+		return nil
+	}
+	return &n
 }
 
 func toSummary(c store.Chat) schema.ChatSummary {

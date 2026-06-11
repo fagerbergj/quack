@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses } from './types.gen';
+import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -46,7 +46,7 @@ export const createChat = <ThrowOnError extends boolean = false>(options?: Optio
 export const deleteChat = <ThrowOnError extends boolean = false>(options: Options<DeleteChatData, ThrowOnError>): RequestResult<DeleteChatResponses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteChatResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}', ...options });
 
 /**
- * Get a chat with its messages
+ * Get a chat with its turns
  */
 export const getChat = <ThrowOnError extends boolean = false>(options: Options<GetChatData, ThrowOnError>): RequestResult<GetChatResponses, GetChatErrors, ThrowOnError> => (options.client ?? client).get<GetChatResponses, GetChatErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}', ...options });
 
@@ -54,18 +54,26 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * Send a message and stream the response
  *
  * Streams the orchestrator's response as Server-Sent Events. Each event is
- * `event: <name>` followed by `data: <json>`. Activity events carry the
- * `agent` that produced them. The vocabulary: `token` ({"text"}) is answer
- * text; `thinking` ({"text"}) is reasoning; `tool_call` ({"name","args"}) and
- * `tool_result` ({"name","result"}) are tool activity; `agent_start` /
- * `agent_end` ({"agent"}) bracket a dispatched agent's turn; `self_refine`
- * ({"changed"}) and `judge_verdict` ({"round","score","passed","feedback"})
- * are the trust gate's self-refine and independent-judge activity; `done` ({})
- * terminates the stream; errors are sent as `error` ({"error"}).
+ * `event: <name>` followed by `data: <json>`.
+ *
+ * Standard events: `token` ({"text"}) is answer text; `thinking` ({"text"})
+ * is reasoning; `tool_call` ({"name","args"}) and `tool_result`
+ * ({"name","result"}) are tool activity; `agent_start` / `agent_end`
+ * ({"agent"}) bracket a dispatched sub-agent; `self_refine` ({"changed"})
+ * and `judge_verdict` ({"round","score","passed","feedback"}) are trust-gate
+ * activity; `chat_title` ({"title"}) is sent once the title is generated;
+ * `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
+ *
+ * DAG events (quack extension): `dag_plan` ({"plan_id","nodes","edges"})
+ * signals a quack:dag output item has been added; `node_queued`
+ * ({"node_id"}), `node_start` ({"node_id","agent"}), `node_done`
+ * ({"node_id",...metadata}), and `node_failed` ({"node_id","error"}) track
+ * individual node lifecycle. Activity events within a node carry a
+ * `node_id` field routing them to the correct node card.
  *
  */
 export const sendChatMessage = <ThrowOnError extends boolean = false>(options: Options<SendChatMessageData, ThrowOnError, SendChatMessageResponse>): Promise<ServerSentEventsResult<SendChatMessageResponses, unknown | void, ThrowOnError>> => (options.client ?? client).sse.post<SendChatMessageResponses, unknown, ThrowOnError>({
-    url: '/api/v1/chats/{chat_id}/messages',
+    url: '/api/v1/chats/{chat_id}/responses',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -74,10 +82,20 @@ export const sendChatMessage = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
+ * Get a specific response (turn) with its output items
+ *
+ * Returns the full Turn for a response ID. Useful for fetching or
+ * refreshing a specific turn's output items (e.g. a quack:dag item)
+ * without reloading the full chat.
+ *
+ */
+export const getResponse = <ThrowOnError extends boolean = false>(options: Options<GetResponseData, ThrowOnError>): RequestResult<GetResponseResponses, GetResponseErrors, ThrowOnError> => (options.client ?? client).get<GetResponseResponses, GetResponseErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/responses/{response_id}', ...options });
+
+/**
  * Cancel an in-progress stream
  *
- * Cancels the active orchestrator run for this chat. No-op if no run is in
- * progress. The SSE client should also abort its connection after calling this.
+ * Cancels the active orchestrator run for this chat. No-op if no run is
+ * in progress. The SSE client should also abort its connection.
  *
  */
 export const cancelChatStream = <ThrowOnError extends boolean = false>(options: Options<CancelChatStreamData, ThrowOnError>): RequestResult<CancelChatStreamResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });

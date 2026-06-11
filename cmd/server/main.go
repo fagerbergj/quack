@@ -20,14 +20,12 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/skilltoolset"
-	"google.golang.org/adk/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
-	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/server"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
 	"github.com/fagerbergj/quack/internal/server/rest"
@@ -38,10 +36,6 @@ import (
 
 //go:embed all:web/dist
 var webDist embed.FS
-
-// orchestratorPromptPath is the file that drives the orchestrator's behaviour.
-// It lives alongside the agent bundles so it can be edited without rebuilding.
-const orchestratorPromptPath = "agents/orchestrator/prompt.md"
 
 func main() {
 	cfgPath := os.Getenv("QUACK_CONFIG")
@@ -65,10 +59,8 @@ func main() {
 	}
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
-	// orchestrator can delegate to. Servers run for the process lifetime. Agents
-	// share the durable session store (namespaced by their own app_id) so their
-	// A2A sessions survive restarts.
-	clients, servers, err := buildAgents(cfg, st.Sessions)
+	// DAG executor can dispatch to. Servers run for the process lifetime.
+	clientMap, servers, err := buildAgents(cfg, st.Sessions)
 	if err != nil {
 		log.Fatalf("agents: %v", err)
 	}
@@ -78,33 +70,15 @@ func main() {
 		}
 	}()
 
-	promptBytes, err := os.ReadFile(orchestratorPromptPath)
-	if err != nil {
-		log.Fatalf("orchestrator prompt: %v", err)
+	// Build agent info list for the planner (name + description).
+	agentInfos := make([]dag.AgentInfo, 0, len(clientMap))
+	for name, c := range clientMap {
+		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description()})
 	}
 
-	ctx := context.Background()
-	skillSource := skill.NewFileSystemSource(os.DirFS("skills"))
-	skillSource, _, err = skill.WithCompletePreloadSource(ctx, skillSource)
-	if err != nil {
-		log.Fatalf("skills: %v", err)
-	}
-	skillTS, err := skilltoolset.New(ctx, skilltoolset.Config{Source: skillSource})
-	if err != nil {
-		log.Fatalf("skills: %v", err)
-	}
-	skillFrontmatters, err := skillSource.ListFrontmatters(ctx)
-	if err != nil {
-		log.Fatalf("skills: list frontmatters: %v", err)
-	}
-
-	behaviour := string(promptBytes)
-	orch, err := orchestrator.New(llm, st.Sessions, func() string {
-		return promptbuilder.Orchestrator(skillFrontmatters, behaviour)
-	}, clients, []tool.Toolset{skillTS})
-	if err != nil {
-		log.Fatalf("orchestrator: %v", err)
-	}
+	planner := dag.NewPlanner(llm, agentInfos)
+	executor := dag.NewExecutor(st.Sessions, clientMap)
+	orch := orchestrator.New(st.Sessions, planner, executor)
 
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
@@ -136,18 +110,16 @@ func main() {
 }
 
 // buildAgents loads each configured agent bundle, builds its model and built-in
-// tools, exposes it over a co-located A2A server, and returns the A2A clients
-// (for the orchestrator to delegate to) alongside the servers (to close on
-// shutdown).
-func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent, []*agent.A2AServer, error) {
+// tools, exposes it over a co-located A2A server, and returns:
+//   - clientMap: agent name → A2A client (for the DAG executor)
+//   - servers: A2A server handles (to close on shutdown)
+func buildAgents(cfg *config.Config, sessions session.Service) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)
 	}
-	sort.Strings(names) // deterministic startup order
+	sort.Strings(names)
 
-	// The trust gate is global policy: build the judge model and resolve the
-	// rubric once, then wrap every worker with it before serving.
 	var judge model.LLM
 	var gateCfg vetting.Config
 	if cfg.Adversarial.Enabled() {
@@ -166,13 +138,10 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 			cfg.Adversarial.Model, gateCfg.MaxRounds, gateCfg.Threshold, gateCfg.SelfRefine)
 	}
 
-	// One shared fetch cache for all agents — a URL fetched by any agent in any
-	// session is available to all subsequent fetches without a network round-trip.
-	// Swap NewInMemoryURLCache() for a persistent implementation here when ready.
 	urlCache := tools.NewInMemoryURLCache()
-
-	var clients []adkagent.Agent
+	clientMap := make(map[string]adkagent.Agent, len(cfg.Agents))
 	var servers []*agent.A2AServer
+
 	for _, name := range names {
 		ac := cfg.Agents[name]
 
@@ -185,14 +154,17 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 			return nil, servers, fmtErr(name, "model: %v", err)
 		}
 
-		builtins, err := tools.Build(ac.Tools, tools.Deps{
-			SearXNG:    cfg.Tools.WebSearch.Backend,
-			Crawl4AI:   cfg.Tools.Fetch.RenderBackend,
-			Summarizer: m,
-			Cache:      urlCache,
-		})
-		if err != nil {
-			return nil, servers, fmtErr(name, "tools: %v", err)
+		var builtins []tool.Tool
+		if len(ac.Tools) > 0 {
+			builtins, err = tools.Build(ac.Tools, tools.Deps{
+				SearXNG:    cfg.Tools.WebSearch.Backend,
+				Crawl4AI:   cfg.Tools.Fetch.RenderBackend,
+				Summarizer: m,
+				Cache:      urlCache,
+			})
+			if err != nil {
+				return nil, servers, fmtErr(name, "tools: %v", err)
+			}
 		}
 
 		bundle, err := agent.LoadBundle(ac.Bundle)
@@ -204,11 +176,9 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 			return nil, servers, fmtErr(name, "build: %v", err)
 		}
 
-		// Wrap the worker in the trust gate (self-refine + judge loop) before
-		// serving it, so the orchestrator dispatches to the gated agent unchanged.
 		served := ag
 		if cfg.Adversarial.Enabled() {
-			agentGateCfg := gateCfg // per-agent copy; may have its own rubric
+			agentGateCfg := gateCfg
 			if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
 				return nil, servers, fmtErr(name, "rubric: %v", err)
 			} else if override != "" {
@@ -230,10 +200,10 @@ func buildAgents(cfg *config.Config, sessions session.Service) ([]adkagent.Agent
 		if err != nil {
 			return nil, servers, fmtErr(name, "a2a client: %v", err)
 		}
-		clients = append(clients, client)
+		clientMap[name] = client
 		log.Printf("agent %q serving over A2A at %s", name, srv.Card.SupportedInterfaces[0].URL)
 	}
-	return clients, servers, nil
+	return clientMap, servers, nil
 }
 
 func fmtErr(agentName, format string, args ...any) error {

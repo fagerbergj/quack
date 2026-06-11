@@ -146,8 +146,12 @@ function SelfCritiqueCard({ gate, running }: { gate: SelfCritGate; running: bool
               {changed ? 'revised' : 'no changes'}
             </span>
           )}
-          {gate.part.done && gate.part.durationMs != null && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">{fmtMs(gate.part.durationMs)}</span>
+          {gate.part.startedAt != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">
+              {gate.part.done && gate.part.durationMs != null
+                ? fmtMs(gate.part.durationMs)
+                : <LiveTimer startedAt={gate.part.startedAt} />}
+            </span>
           )}
         </summary>
         {gate.part.items.length > 0 && (
@@ -181,8 +185,12 @@ function JudgeCard({ gate, running }: { gate: JudgeGate; running: boolean }) {
               — {feedback}
             </span>
           )}
-          {gate.part.done && gate.part.durationMs != null && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">{fmtMs(gate.part.durationMs)}</span>
+          {gate.part.startedAt != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">
+              {gate.part.done && gate.part.durationMs != null
+                ? fmtMs(gate.part.durationMs)
+                : <LiveTimer startedAt={gate.part.startedAt} />}
+            </span>
           )}
         </summary>
         {items.length > 0 && (

@@ -259,7 +259,8 @@ function closeWithDescendants(node: AgentPart): AgentPart {
 }
 
 // closeOpenSelfRefineHelper finds the innermost open self_refine container in the
-// active agent spine and marks it done with the given changed flag.
+// active agent spine and marks it done with the given changed flag. Falls back to
+// top-level search for the DAG flow where agent_start/end events are suppressed.
 function closeOpenSelfRefineHelper(items: MessagePart[], changed: boolean, nowMs?: number): MessagePart[] | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
@@ -285,11 +286,22 @@ function closeOpenSelfRefineHelper(items: MessagePart[], changed: boolean, nowMs
     }
     break // only follow the active agent spine
   }
+  // DAG flow: agent_start/end are suppressed so self_refine may sit at top level.
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it.kind === 'self_refine' && !it.done) {
+      const durationMs = nowMs != null && it.startedAt != null ? nowMs - it.startedAt : undefined
+      const next = [...items]
+      next[i] = { ...it, changed, done: true, durationMs }
+      return next
+    }
+  }
   return null
 }
 
 // closeOpenJudgeVerdictHelper finds the innermost open judge_verdict container in
-// the active agent spine and closes it with verdict data.
+// the active agent spine and closes it with verdict data. Falls back to top-level
+// search for the DAG flow where agent_start/end events are suppressed.
 function closeOpenJudgeVerdictHelper(items: MessagePart[], score: number, passed: boolean, feedback: string, nowMs?: number): MessagePart[] | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
@@ -314,6 +326,16 @@ function closeOpenJudgeVerdictHelper(items: MessagePart[], score: number, passed
       }
     }
     break // only follow the active agent spine
+  }
+  // DAG flow: agent_start/end are suppressed so judge_verdict may sit at top level.
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it.kind === 'judge_verdict' && !it.done) {
+      const durationMs = nowMs != null && it.startedAt != null ? nowMs - it.startedAt : undefined
+      const next = [...items]
+      next[i] = { ...it, score, passed, feedback, done: true, durationMs }
+      return next
+    }
   }
   return null
 }

@@ -198,7 +198,11 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 		}
 	}
 	stats.DurationMs = time.Since(startedAt).Milliseconds()
-	send(nodeMsg{nodeID: node.ID, done: true, output: answer.String(), stats: stats})
+	out := answer.String()
+	if idx := strings.Index(out, "</think>"); idx >= 0 {
+		out = strings.TrimLeft(out[idx+len("</think>"):], "\n")
+	}
+	send(nodeMsg{nodeID: node.ID, done: true, output: out, stats: stats})
 }
 
 // buildTask constructs the message for a node, prepending upstream outputs

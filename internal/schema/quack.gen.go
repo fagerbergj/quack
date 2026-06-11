@@ -4,6 +4,8 @@
 package schema
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -12,17 +14,95 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for ChatMessageRole.
+// Defines values for DagOutputItemType.
 const (
-	Assistant ChatMessageRole = "assistant"
-	User      ChatMessageRole = "user"
+	QuackDag DagOutputItemType = "quack:dag"
 )
 
-// Valid indicates whether the value is a known member of the ChatMessageRole enum.
-func (e ChatMessageRole) Valid() bool {
+// Valid indicates whether the value is a known member of the DagOutputItemType enum.
+func (e DagOutputItemType) Valid() bool {
 	switch e {
-	case Assistant:
+	case QuackDag:
 		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ItemStatus.
+const (
+	Completed  ItemStatus = "completed"
+	InProgress ItemStatus = "in_progress"
+	Incomplete ItemStatus = "incomplete"
+)
+
+// Valid indicates whether the value is a known member of the ItemStatus enum.
+func (e ItemStatus) Valid() bool {
+	switch e {
+	case Completed:
+		return true
+	case InProgress:
+		return true
+	case Incomplete:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MessageOutputItemType.
+const (
+	Message MessageOutputItemType = "message"
+)
+
+// Valid indicates whether the value is a known member of the MessageOutputItemType enum.
+func (e MessageOutputItemType) Valid() bool {
+	switch e {
+	case Message:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OutputTextPartType.
+const (
+	OutputText OutputTextPartType = "output_text"
+)
+
+// Valid indicates whether the value is a known member of the OutputTextPartType enum.
+func (e OutputTextPartType) Valid() bool {
+	switch e {
+	case OutputText:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReasoningPartType.
+const (
+	Reasoning ReasoningPartType = "reasoning"
+)
+
+// Valid indicates whether the value is a known member of the ReasoningPartType enum.
+func (e ReasoningPartType) Valid() bool {
+	switch e {
+	case Reasoning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TurnInputRole.
+const (
+	User TurnInputRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the TurnInputRole enum.
+func (e TurnInputRole) Valid() bool {
+	switch e {
 	case User:
 		return true
 	default:
@@ -32,27 +112,18 @@ func (e ChatMessageRole) Valid() bool {
 
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
-	CreatedAt    time.Time     `json:"created_at"`
-	Id           string        `json:"id"`
-	Messages     []ChatMessage `json:"messages"`
-	SystemPrompt string        `json:"system_prompt"`
-	Title        *string       `json:"title,omitempty"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	CreatedAt    time.Time `json:"created_at"`
+	Id           string    `json:"id"`
+	SystemPrompt string    `json:"system_prompt"`
+	Title        *string   `json:"title,omitempty"`
+	Turns        []Turn    `json:"turns"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // ChatList defines model for ChatList.
 type ChatList struct {
 	Data []ChatSummary `json:"data"`
 }
-
-// ChatMessage defines model for ChatMessage.
-type ChatMessage struct {
-	Content string          `json:"content"`
-	Role    ChatMessageRole `json:"role"`
-}
-
-// ChatMessageRole defines model for ChatMessage.Role.
-type ChatMessageRole string
 
 // ChatSummary defines model for ChatSummary.
 type ChatSummary struct {
@@ -63,24 +134,314 @@ type ChatSummary struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// ContentPart defines model for ContentPart.
+type ContentPart struct {
+	union json.RawMessage
+}
+
 // CreateChatBody defines model for CreateChatBody.
 type CreateChatBody struct {
 	SystemPrompt *string `json:"system_prompt,omitempty"`
 }
+
+// DagEdge defines model for DagEdge.
+type DagEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// DagNodeDef defines model for DagNodeDef.
+type DagNodeDef struct {
+	Agent     string   `json:"agent"`
+	DependsOn []string `json:"depends_on"`
+	Id        string   `json:"id"`
+	Task      string   `json:"task"`
+}
+
+// DagNodeState defines model for DagNodeState.
+type DagNodeState struct {
+	CompletionTokens *int    `json:"completion_tokens,omitempty"`
+	Error            *string `json:"error,omitempty"`
+	FinishReason     *string `json:"finish_reason,omitempty"`
+	FinishedAtMs     *int    `json:"finished_at_ms,omitempty"`
+	Model            *string `json:"model,omitempty"`
+	OutputPreview    *string `json:"output_preview,omitempty"`
+	PromptTokens     *int    `json:"prompt_tokens,omitempty"`
+	ServerDurationMs *int    `json:"server_duration_ms,omitempty"`
+	StartedAtMs      *int    `json:"started_at_ms,omitempty"`
+	Status           string  `json:"status"`
+	TotalTokens      *int    `json:"total_tokens,omitempty"`
+}
+
+// DagOutputItem defines model for DagOutputItem.
+type DagOutputItem struct {
+	Edges      []DagEdge               `json:"edges"`
+	Id         string                  `json:"id"`
+	NodeStates map[string]DagNodeState `json:"node_states"`
+	Nodes      []DagNodeDef            `json:"nodes"`
+	PlanId     string                  `json:"plan_id"`
+	Status     ItemStatus              `json:"status"`
+	Type       DagOutputItemType       `json:"type"`
+}
+
+// DagOutputItemType defines model for DagOutputItem.Type.
+type DagOutputItemType string
+
+// ItemStatus defines model for ItemStatus.
+type ItemStatus string
+
+// MessageOutputItem defines model for MessageOutputItem.
+type MessageOutputItem struct {
+	Content []ContentPart         `json:"content"`
+	Id      string                `json:"id"`
+	Status  ItemStatus            `json:"status"`
+	Type    MessageOutputItemType `json:"type"`
+}
+
+// MessageOutputItemType defines model for MessageOutputItem.Type.
+type MessageOutputItemType string
+
+// OutputItem defines model for OutputItem.
+type OutputItem struct {
+	union json.RawMessage
+}
+
+// OutputTextPart defines model for OutputTextPart.
+type OutputTextPart struct {
+	Text string             `json:"text"`
+	Type OutputTextPartType `json:"type"`
+}
+
+// OutputTextPartType defines model for OutputTextPart.Type.
+type OutputTextPartType string
+
+// ReasoningPart defines model for ReasoningPart.
+type ReasoningPart struct {
+	Text string            `json:"text"`
+	Type ReasoningPartType `json:"type"`
+}
+
+// ReasoningPartType defines model for ReasoningPart.Type.
+type ReasoningPartType string
 
 // SendMessageBody defines model for SendMessageBody.
 type SendMessageBody struct {
 	Content string `json:"content"`
 }
 
+// Turn defines model for Turn.
+type Turn struct {
+	CreatedAt time.Time    `json:"created_at"`
+	Id        string       `json:"id"`
+	Input     TurnInput    `json:"input"`
+	Output    []OutputItem `json:"output"`
+	Usage     *Usage       `json:"usage,omitempty"`
+}
+
+// TurnInput defines model for TurnInput.
+type TurnInput struct {
+	Content string        `json:"content"`
+	Role    TurnInputRole `json:"role"`
+}
+
+// TurnInputRole defines model for TurnInput.Role.
+type TurnInputRole string
+
+// Usage defines model for Usage.
+type Usage struct {
+	InputTokens  *int `json:"input_tokens,omitempty"`
+	OutputTokens *int `json:"output_tokens,omitempty"`
+}
+
 // ChatID defines model for ChatID.
 type ChatID = string
+
+// ResponseID defines model for ResponseID.
+type ResponseID = string
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
 
 // SendChatMessageJSONRequestBody defines body for SendChatMessage for application/json ContentType.
 type SendChatMessageJSONRequestBody = SendMessageBody
+
+// AsOutputTextPart returns the union data inside the ContentPart as a OutputTextPart
+func (t ContentPart) AsOutputTextPart() (OutputTextPart, error) {
+	var body OutputTextPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromOutputTextPart overwrites any union data inside the ContentPart as the provided OutputTextPart
+func (t *ContentPart) FromOutputTextPart(v OutputTextPart) error {
+	v.Type = "output_text"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeOutputTextPart performs a merge with any union data inside the ContentPart, using the provided OutputTextPart
+func (t *ContentPart) MergeOutputTextPart(v OutputTextPart) error {
+	v.Type = "output_text"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsReasoningPart returns the union data inside the ContentPart as a ReasoningPart
+func (t ContentPart) AsReasoningPart() (ReasoningPart, error) {
+	var body ReasoningPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReasoningPart overwrites any union data inside the ContentPart as the provided ReasoningPart
+func (t *ContentPart) FromReasoningPart(v ReasoningPart) error {
+	v.Type = "reasoning"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeReasoningPart performs a merge with any union data inside the ContentPart, using the provided ReasoningPart
+func (t *ContentPart) MergeReasoningPart(v ReasoningPart) error {
+	v.Type = "reasoning"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ContentPart) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"type"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t ContentPart) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "output_text":
+		return t.AsOutputTextPart()
+	case "reasoning":
+		return t.AsReasoningPart()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t ContentPart) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ContentPart) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsMessageOutputItem returns the union data inside the OutputItem as a MessageOutputItem
+func (t OutputItem) AsMessageOutputItem() (MessageOutputItem, error) {
+	var body MessageOutputItem
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessageOutputItem overwrites any union data inside the OutputItem as the provided MessageOutputItem
+func (t *OutputItem) FromMessageOutputItem(v MessageOutputItem) error {
+	v.Type = "message"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMessageOutputItem performs a merge with any union data inside the OutputItem, using the provided MessageOutputItem
+func (t *OutputItem) MergeMessageOutputItem(v MessageOutputItem) error {
+	v.Type = "message"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDagOutputItem returns the union data inside the OutputItem as a DagOutputItem
+func (t OutputItem) AsDagOutputItem() (DagOutputItem, error) {
+	var body DagOutputItem
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDagOutputItem overwrites any union data inside the OutputItem as the provided DagOutputItem
+func (t *OutputItem) FromDagOutputItem(v DagOutputItem) error {
+	v.Type = "quack:dag"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDagOutputItem performs a merge with any union data inside the OutputItem, using the provided DagOutputItem
+func (t *OutputItem) MergeDagOutputItem(v DagOutputItem) error {
+	v.Type = "quack:dag"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t OutputItem) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"type"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t OutputItem) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "message":
+		return t.AsMessageOutputItem()
+	case "quack:dag":
+		return t.AsDagOutputItem()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t OutputItem) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *OutputItem) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -93,12 +454,15 @@ type ServerInterface interface {
 	// Delete a chat
 	// (DELETE /api/v1/chats/{chat_id})
 	DeleteChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
-	// Get a chat with its messages
+	// Get a chat with its turns
 	// (GET /api/v1/chats/{chat_id})
 	GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
 	// Send a message and stream the response
-	// (POST /api/v1/chats/{chat_id}/messages)
+	// (POST /api/v1/chats/{chat_id}/responses)
 	SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Get a specific response (turn) with its output items
+	// (GET /api/v1/chats/{chat_id}/responses/{response_id})
+	GetResponse(w http.ResponseWriter, r *http.Request, chatId ChatID, responseId ResponseID)
 	// Cancel an in-progress stream
 	// (DELETE /api/v1/chats/{chat_id}/stream)
 	CancelChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
@@ -129,15 +493,21 @@ func (_ Unimplemented) DeleteChat(w http.ResponseWriter, r *http.Request, chatId
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Get a chat with its messages
+// Get a chat with its turns
 // (GET /api/v1/chats/{chat_id})
 func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Send a message and stream the response
-// (POST /api/v1/chats/{chat_id}/messages)
+// (POST /api/v1/chats/{chat_id}/responses)
 func (_ Unimplemented) SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get a specific response (turn) with its output items
+// (GET /api/v1/chats/{chat_id}/responses/{response_id})
+func (_ Unimplemented) GetResponse(w http.ResponseWriter, r *http.Request, chatId ChatID, responseId ResponseID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -259,6 +629,41 @@ func (siw *ServerInterfaceWrapper) SendChatMessage(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SendChatMessage(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetResponse operation middleware
+func (siw *ServerInterfaceWrapper) GetResponse(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "response_id" -------------
+	var responseId ResponseID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "response_id", chi.URLParam(r, "response_id"), &responseId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "response_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetResponse(w, r, chatId, responseId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -434,7 +839,10 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.GetChat)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/messages", wrapper.SendChatMessage)
+		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/responses", wrapper.SendChatMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/responses/{response_id}", wrapper.GetResponse)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.CancelChatStream)
