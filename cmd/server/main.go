@@ -20,6 +20,8 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/skilltoolset"
+	"google.golang.org/adk/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/config"
@@ -58,9 +60,17 @@ func main() {
 		log.Fatalf("inference: %v", err)
 	}
 
+	// Load skills once at startup; pass the toolset to every specialist agent so
+	// all agents can call load_skill / list_skills / load_skill_resource.
+	skillSrc := skill.NewFileSystemSource(os.DirFS("skills/"))
+	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
+	if err != nil {
+		log.Fatalf("skills: %v", err)
+	}
+
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, servers, err := buildAgents(cfg, st.Sessions)
+	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS)
 	if err != nil {
 		log.Fatalf("agents: %v", err)
 	}
@@ -113,7 +123,7 @@ func main() {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)
@@ -171,7 +181,7 @@ func buildAgents(cfg *config.Config, sessions session.Service) (map[string]adkag
 		if err != nil {
 			return nil, servers, fmtErr(name, "bundle: %v", err)
 		}
-		ag, err := agent.Build(bundle, m, builtins)
+		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS})
 		if err != nil {
 			return nil, servers, fmtErr(name, "build: %v", err)
 		}

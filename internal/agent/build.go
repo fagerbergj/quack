@@ -15,10 +15,9 @@ import (
 // agent) so their caps can't silently drift.
 const MaxOutputTokens = 8192
 
-// Build turns a loaded bundle into a runnable ADK llmagent, given its model and
-// its selected built-in tools. The resulting agent is what Serve exposes over
-// A2A.
-func Build(b *Bundle, m model.LLM, tools []tool.Tool) (adkagent.Agent, error) {
+// Build turns a loaded bundle into a runnable ADK llmagent, given its model,
+// its selected built-in tools, and optional ADK toolsets (e.g. SkillToolset).
+func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset) (adkagent.Agent, error) {
 	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
 	return llmagent.New(llmagent.Config{
 		Name:        name,
@@ -27,7 +26,8 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool) (adkagent.Agent, error) {
 		InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
 			return promptbuilder.Agent(name, desc, tools, behaviour), nil
 		},
-		Tools: tools,
+		Tools:    tools,
+		Toolsets: toolsets,
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			MaxOutputTokens: MaxOutputTokens,
 		},
