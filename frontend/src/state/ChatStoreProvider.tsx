@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react'
-import { ChatStore, EMPTY_TURN, type ChatTurnState } from './chatStore'
+import { ChatStore, EMPTY_STATE, type ChatState } from './chatStore'
 
 const ChatStoreContext = createContext<ChatStore | null>(null)
 
@@ -15,16 +15,16 @@ export function useChatStore(): ChatStore {
 }
 
 const noopSubscribe = () => () => {}
-const getEmptyTurn = () => EMPTY_TURN
+const getEmptyState = () => EMPTY_STATE
 
-export function useChatTurn(chatId: string | null): ChatTurnState {
+export function useChatState(chatId: string | null): ChatState {
   const store = useChatStore()
   const subscribe = useMemo(
     () => (chatId ? (listener: () => void) => store.subscribe(chatId, listener) : noopSubscribe),
     [store, chatId],
   )
   const getSnapshot = useMemo(
-    () => (chatId ? () => store.get(chatId) : getEmptyTurn),
+    () => (chatId ? () => store.get(chatId) : getEmptyState),
     [store, chatId],
   )
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)

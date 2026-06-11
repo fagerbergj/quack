@@ -12,13 +12,8 @@ export type ChatSummary = {
     updated_at: string;
 };
 
-export type ChatMessage = {
-    role: 'user' | 'assistant';
-    content: string;
-};
-
 export type ChatDetail = ChatSummary & {
-    messages: Array<ChatMessage>;
+    turns: Array<Turn>;
 };
 
 export type ChatList = {
@@ -33,7 +28,96 @@ export type SendMessageBody = {
     content: string;
 };
 
+export type Turn = {
+    id: string;
+    created_at: string;
+    input: TurnInput;
+    output: Array<OutputItem>;
+    usage?: Usage;
+};
+
+export type TurnInput = {
+    role: 'user';
+    content: string;
+};
+
+export type Usage = {
+    input_tokens?: number;
+    output_tokens?: number;
+};
+
+export type OutputItem = ({
+    type: 'message';
+} & MessageOutputItem) | ({
+    type: 'quack:dag';
+} & DagOutputItem);
+
+export type ItemStatus = 'in_progress' | 'completed' | 'incomplete';
+
+export type MessageOutputItem = {
+    id: string;
+    type: 'message';
+    status: ItemStatus;
+    content: Array<ContentPart>;
+};
+
+export type ContentPart = ({
+    type: 'output_text';
+} & OutputTextPart) | ({
+    type: 'reasoning';
+} & ReasoningPart);
+
+export type OutputTextPart = {
+    type: 'output_text';
+    text: string;
+};
+
+export type ReasoningPart = {
+    type: 'reasoning';
+    text: string;
+};
+
+export type DagOutputItem = {
+    id: string;
+    type: 'quack:dag';
+    status: ItemStatus;
+    plan_id: string;
+    nodes: Array<DagNodeDef>;
+    edges: Array<DagEdge>;
+    node_states: {
+        [key: string]: DagNodeState;
+    };
+};
+
+export type DagNodeDef = {
+    id: string;
+    agent: string;
+    task: string;
+    depends_on: Array<string>;
+};
+
+export type DagEdge = {
+    from: string;
+    to: string;
+};
+
+export type DagNodeState = {
+    status: string;
+    output_preview?: string;
+    error?: string;
+    started_at_ms?: number;
+    finished_at_ms?: number;
+    model?: string;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    finish_reason?: string;
+    server_duration_ms?: number;
+};
+
 export type ChatId = string;
+
+export type ResponseId = string;
 
 export type HealthCheckData = {
     body?: never;
@@ -132,7 +216,7 @@ export type SendChatMessageData = {
         chat_id: string;
     };
     query?: never;
-    url: '/api/v1/chats/{chat_id}/messages';
+    url: '/api/v1/chats/{chat_id}/responses';
 };
 
 export type SendChatMessageResponses = {
@@ -143,6 +227,32 @@ export type SendChatMessageResponses = {
 };
 
 export type SendChatMessageResponse = SendChatMessageResponses[keyof SendChatMessageResponses];
+
+export type GetResponseData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        response_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/responses/{response_id}';
+};
+
+export type GetResponseErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+};
+
+export type GetResponseResponses = {
+    /**
+     * The response
+     */
+    200: Turn;
+};
+
+export type GetResponseResponse = GetResponseResponses[keyof GetResponseResponses];
 
 export type CancelChatStreamData = {
     body?: never;

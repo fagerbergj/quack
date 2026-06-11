@@ -1,4 +1,4 @@
-import { readAgentStream, type DagNodeDef, type DagEdgeDef } from './agentStream'
+import { readAgentStream, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta } from './agentStream'
 import {
   appendTextPart,
   appendThinkingPart,
@@ -14,14 +14,7 @@ import {
   appendJudgeUnavailable,
   type MessagePart,
 } from '../components/AgentParts'
-
-export interface Message {
-  role: 'user' | 'assistant'
-  // User messages and seeded history carry plain content; live assistant
-  // messages accumulate ordered parts (text / thinking / tool_call).
-  content?: string
-  parts?: MessagePart[]
-}
+import type { Turn, DagOutputItem } from '../generated'
 
 export type NodeStatus = 'queued' | 'running' | 'done' | 'failed'
 
@@ -29,6 +22,16 @@ export interface NodeState {
   status: NodeStatus
   outputPreview?: string
   error?: string
+  startedAt?: number
+  finishedAt?: number
+  outputChars?: number
+  model?: string
+  promptTokens?: number
+  completionTokens?: number
+  reasoningTokens?: number
+  totalTokens?: number
+  finishReason?: string
+  serverDurationMs?: number
 }
 
 export interface DagTurnState {
@@ -37,27 +40,40 @@ export interface DagTurnState {
   edges: DagEdgeDef[]
   nodeStates: Record<string, NodeState>
   nodeParts: Record<string, MessagePart[]>
+  startedAt?: number
+  finishedAt?: number
 }
 
-export interface ChatTurnState {
-  messages: Message[]
+// LiveTurn is the in-progress / seeded state for one chat turn.
+export interface LiveTurn {
+  id: string             // turn ID (response_id) — empty string while streaming before first event
+  userText: string
+  parts: MessagePart[]   // accumulates assistant content live
+  dag?: DagTurnState
   streaming: boolean
   error: string
-  dag?: DagTurnState
+}
+
+export interface ChatState {
+  // Completed turns from history (seeded from GET /chats/{id})
+  turns: Turn[]
+  // The turn currently streaming (or most recently completed, until next submit)
+  live?: LiveTurn
+  error: string
 }
 
 type Listener = () => void
 
-export const EMPTY_TURN: ChatTurnState = { messages: [], streaming: false, error: '' }
+export const EMPTY_STATE: ChatState = { turns: [], error: '' }
 
 export class ChatStore {
-  private states = new Map<string, ChatTurnState>()
+  private states = new Map<string, ChatState>()
   private listeners = new Map<string, Set<Listener>>()
   private controllers = new Map<string, AbortController>()
   private generations = new Map<string, number>()
 
-  get(chatId: string): ChatTurnState {
-    return this.states.get(chatId) ?? EMPTY_TURN
+  get(chatId: string): ChatState {
+    return this.states.get(chatId) ?? EMPTY_STATE
   }
 
   subscribe(chatId: string, listener: Listener): () => void {
@@ -73,10 +89,10 @@ export class ChatStore {
     }
   }
 
-  seed(chatId: string, messages: Message[]): void {
+  seed(chatId: string, turns: Turn[]): void {
     const cur = this.states.get(chatId)
-    if (cur && (cur.streaming || cur.messages.length > 0)) return
-    this.write(chatId, { ...EMPTY_TURN, messages })
+    if (cur && (cur.live?.streaming || cur.turns.length > 0)) return
+    this.write(chatId, { ...EMPTY_STATE, turns })
   }
 
   clear(chatId: string): void {
@@ -91,42 +107,35 @@ export class ChatStore {
     const trimmed = content.trim()
     if (!trimmed) return
     const cur = this.get(chatId)
-    if (cur.streaming) return
+    if (cur.live?.streaming) return
 
-    const userMessage: Message = { role: 'user', content: trimmed }
-    const assistantMessage: Message = { role: 'assistant', parts: [] }
-    const assistantIdx = cur.messages.length + 1
-    this.write(chatId, {
-      messages: [...cur.messages, userMessage, assistantMessage],
-      streaming: true,
-      error: '',
-    })
+    const live: LiveTurn = { id: '', userText: trimmed, parts: [], streaming: true, error: '' }
+    this.write(chatId, { ...cur, live, error: '' })
 
     await this.runStream(
       chatId,
-      signal => fetch(`/api/v1/chats/${chatId}/messages`, {
+      signal => fetch(`/api/v1/chats/${chatId}/responses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: trimmed }),
         signal,
       }),
-      assistantIdx,
       onTitle,
     )
   }
 
   stop(chatId: string): void {
-    // Cancel the server-side run first so inference stops, then drop the connection.
     fetch(`/api/v1/chats/${chatId}/stream`, { method: 'DELETE' }).catch(() => {})
     this.controllers.get(chatId)?.abort()
   }
 
-  // runStream reads the Streamable-HTTP response (a streamed, SSE-framed body)
-  // and folds each labeled event into the assistant message's parts.
+  isStreaming(chatId: string): boolean {
+    return this.states.get(chatId)?.live?.streaming ?? false
+  }
+
   private async runStream(
     chatId: string,
     fetchFn: (signal: AbortSignal) => Promise<Response>,
-    foldIdx: number,
     onTitle?: (title: string) => void,
   ): Promise<void> {
     const controller = new AbortController()
@@ -142,79 +151,95 @@ export class ChatStore {
 
       const updateParts = (fn: (parts: MessagePart[]) => MessagePart[]) => {
         const s = this.states.get(chatId)
-        if (!s) return
-        this.write(chatId, {
-          ...s,
-          messages: s.messages.map((m, i) =>
-            i === foldIdx ? { ...m, parts: fn(m.parts ?? []) } : m,
-          ),
-        })
+        if (!s?.live) return
+        this.write(chatId, { ...s, live: { ...s.live, parts: fn(s.live.parts) } })
       }
 
-      const updateNodeParts = (nodeId: string, fn: (parts: MessagePart[]) => MessagePart[]) => {
+      const updateNodeParts = (nodeId: string, fn: (parts: MessagePart[]) => MessagePart[], extraChars?: number) => {
         const s = this.states.get(chatId)
-        if (!s?.dag) return
-        const prev = s.dag.nodeParts[nodeId] ?? []
-        this.write(chatId, {
-          ...s,
-          dag: { ...s.dag, nodeParts: { ...s.dag.nodeParts, [nodeId]: fn(prev) } },
-        })
+        if (!s?.live?.dag) return
+        const prev = s.live.dag.nodeParts[nodeId] ?? []
+        const dag = { ...s.live.dag, nodeParts: { ...s.live.dag.nodeParts, [nodeId]: fn(prev) } }
+        if (extraChars) {
+          const ns = dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
+          dag.nodeStates = { ...dag.nodeStates, [nodeId]: { ...ns, outputChars: (ns.outputChars ?? 0) + extraChars } }
+        }
+        this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
       const updateNodeState = (nodeId: string, patch: Partial<NodeState>) => {
         const s = this.states.get(chatId)
-        if (!s?.dag) return
-        const prev = s.dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
-        this.write(chatId, {
-          ...s,
-          dag: { ...s.dag, nodeStates: { ...s.dag.nodeStates, [nodeId]: { ...prev, ...patch } } },
+        if (!s?.live?.dag) return
+        const prev = s.live.dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
+        const dag = { ...s.live.dag, nodeStates: { ...s.live.dag.nodeStates, [nodeId]: { ...prev, ...patch } } }
+        const allDone = dag.nodes.every(n => {
+          const st = dag.nodeStates[n.id]?.status
+          return st === 'done' || st === 'failed'
         })
+        if (allDone && !dag.finishedAt) dag.finishedAt = Date.now()
+        this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
-      // Route activity event to a node's parts list (if nodeId) or top-level parts.
       const route = (nodeId: string | undefined, fn: (parts: MessagePart[]) => MessagePart[]) => {
-        if (nodeId) {
-          updateNodeParts(nodeId, fn)
-        } else {
-          updateParts(fn)
-        }
+        if (nodeId) updateNodeParts(nodeId, fn)
+        else updateParts(fn)
       }
 
       let streamError = ''
       await readAgentStream(res.body, {
-        onToken: (t, nid) => route(nid, p => appendTextPart(p, t)),
+        onToken: (t, nid) => {
+          if (nid) updateNodeParts(nid, p => appendTextPart(p, t), t.length)
+          else updateParts(p => appendTextPart(p, t))
+        },
         onThinking: (t, nid) => route(nid, p => appendThinkingPart(p, t)),
         onToolCall: (name, args, nid) => route(nid, p => appendToolCall(p, name, args)),
         onToolResult: (name, result, nid) => route(nid, p => fillToolResult(p, name, result)),
         onAgentStart: (agent, nid) => route(nid, p => openAgent(p, agent)),
         onAgentEnd: (agent, nid) => route(nid, p => closeAgent(p, agent)),
-        onSelfRefineStart: nid => route(nid, p => openSelfRefine(p)),
-        onSelfRefine: (changed, nid) => route(nid, p => closeSelfRefine(p, changed)),
-        onJudgeStart: (round, nid) => route(nid, p => openJudgeVerdict(p, round)),
+        onSelfRefineStart: nid => route(nid, p => openSelfRefine(p, Date.now())),
+        onSelfRefine: (changed, nid) => route(nid, p => closeSelfRefine(p, changed, Date.now())),
+        onJudgeStart: (round, nid) => route(nid, p => openJudgeVerdict(p, round, Date.now())),
         onRevise: (round, nid) => route(nid, p => appendRevise(p, round)),
-        onJudgeVerdict: (v, nid) => route(nid, p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback)),
+        onJudgeVerdict: (v, nid) => route(nid, p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback, Date.now())),
         onJudgeUnavailable: (round, reason, nid) => route(nid, p => appendJudgeUnavailable(p, round, reason)),
         onChatTitle: title => onTitle?.(title),
         onError: msg => { streamError = msg },
-        // DAG lifecycle handlers
         onDagPlan: plan => {
           const s = this.states.get(chatId)
-          if (!s) return
+          if (!s?.live) return
           const nodeStates: Record<string, NodeState> = {}
           for (const n of plan.nodes) nodeStates[n.id] = { status: 'queued' }
-          this.write(chatId, {
-            ...s,
-            dag: { planId: plan.plan_id, nodes: plan.nodes, edges: plan.edges, nodeStates, nodeParts: {} },
-          })
+          const dag: DagTurnState = {
+            planId: plan.plan_id,
+            nodes: plan.nodes,
+            edges: plan.edges,
+            nodeStates,
+            nodeParts: {},
+            startedAt: Date.now(),
+          }
+          this.write(chatId, { ...s, live: { ...s.live, dag } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
-        onNodeStart: (nodeId) => updateNodeState(nodeId, { status: 'running' }),
-        onNodeDone: (nodeId, preview) => updateNodeState(nodeId, { status: 'done', outputPreview: preview }),
-        onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', error }),
+        onNodeStart: nodeId => updateNodeState(nodeId, { status: 'running', startedAt: Date.now() }),
+        onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => updateNodeState(nodeId, {
+          status: 'done', finishedAt: Date.now(), outputPreview: preview,
+          model: meta.model,
+          promptTokens: meta.promptTokens,
+          completionTokens: meta.completionTokens,
+          reasoningTokens: meta.reasoningTokens,
+          totalTokens: meta.totalTokens,
+          finishReason: meta.finishReason,
+          serverDurationMs: meta.durationMs,
+        }),
+        onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error }),
       })
       if (streamError) throw new Error(streamError)
     } catch (err: unknown) {
-      this.handleStreamError(chatId, err, foldIdx)
+      if ((err as Error)?.name !== 'AbortError') {
+        const msg = (err as Error)?.message || 'Request failed'
+        const s = this.states.get(chatId)
+        if (s) this.write(chatId, { ...s, error: msg })
+      }
     } finally {
       if (this.controllers.get(chatId) === controller) {
         this.controllers.delete(chatId)
@@ -223,25 +248,11 @@ export class ChatStore {
     }
   }
 
-  private handleStreamError(chatId: string, err: unknown, assistantIdx: number): void {
-    if ((err as Error)?.name === 'AbortError') return
-    const msg = (err as Error)?.message || 'Request failed'
-    const s = this.states.get(chatId)
-    if (!s) return
-    let messages = s.messages
-    const last = messages[assistantIdx]
-    const empty = last?.role === 'assistant' && !(last.parts?.length) && !last.content
-    if (empty) {
-      messages = messages.slice(0, assistantIdx)
-    }
-    this.write(chatId, { ...s, messages, error: msg })
-  }
-
   private finishStream(chatId: string, generation: number): void {
     if (this.generations.get(chatId) !== generation) return
     const s = this.states.get(chatId)
-    if (!s) return
-    this.write(chatId, { ...s, streaming: false })
+    if (!s?.live) return
+    this.write(chatId, { ...s, live: { ...s.live, streaming: false } })
   }
 
   private bumpGeneration(chatId: string): number {
@@ -250,7 +261,7 @@ export class ChatStore {
     return next
   }
 
-  private write(chatId: string, next: ChatTurnState): void {
+  private write(chatId: string, next: ChatState): void {
     this.states.set(chatId, next)
     this.notify(chatId)
   }
@@ -260,4 +271,26 @@ export class ChatStore {
     if (!set) return
     for (const l of set) l()
   }
+}
+
+// dagFromOutputItem extracts DagOutputItem from a Turn's output array.
+export function dagFromTurn(turn: Turn): DagOutputItem | undefined {
+  for (const item of turn.output) {
+    if (item.type === 'quack:dag') return item as DagOutputItem
+  }
+  return undefined
+}
+
+// textFromTurn extracts the final answer text from a completed Turn.
+export function textFromTurn(turn: Turn): string {
+  for (const item of turn.output) {
+    if (item.type === 'message') {
+      const msg = item as import('../generated').MessageOutputItem
+      return msg.content
+        .filter(p => p.type === 'output_text')
+        .map(p => (p as import('../generated').OutputTextPart).text)
+        .join('')
+    }
+  }
+  return ''
 }

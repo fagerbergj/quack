@@ -1,80 +1,176 @@
-// Package orchestrator is Quack's request entrypoint. In M1 it is a thin LLM
-// dispatcher: an ADK llmagent that delegates to config-defined specialist agents
-// over A2A (each agent is a sub-agent backed by a remote A2A client). It does no
-// research itself — it routes the request to the right agent and streams that
-// agent's activity back. There is still no DAG (single dispatch); planning and
-// decomposition arrive in M3.
-//
-// The orchestrator owns the runner, and therefore the SessionService, so
-// conversation turns — including the delegated agent's events, which arrive over
-// A2A already converted back to session events — persist.
+// Package orchestrator is Quack's request entrypoint. In M3 it decomposes each
+// request into a DAG via the planner, runs the DAG with the executor (specialist
+// nodes in topological order, parallel within a layer), and persists the turn to
+// the ADK session store so chat history survives the change in architecture.
 package orchestrator
 
 import (
 	"context"
 	"iter"
+	"log"
+	"strings"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/runner"
+	"github.com/google/uuid"
+	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/session"
-	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
-	quackagent "github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// AppName is the ADK application name used for all sessions.
+// AppName is the ADK application name used for the chat-history session
+// (the quack namespace, separate from each specialist's own A2A namespace).
 const AppName = "quack"
 
-// Orchestrator runs the dispatcher agent and streams its (and its delegates')
-// events.
+// Orchestrator plans and executes a DAG of specialist-agent tasks for each
+// user turn, then persists the user message and final answer to the ADK
+// session so store.Messages() continues to work unchanged.
 type Orchestrator struct {
-	runner *runner.Runner
+	sessions session.Service
+	planner  *dag.Planner
+	executor *dag.Executor
 }
 
-// New builds the orchestrator from its own dispatcher model, a session service,
-// an instruction provider (called per-session so time-sensitive content stays
-// current), the specialist sub-agents it can delegate to (A2A clients), and
-// optional toolsets (e.g. a SkillToolset). With no sub-agents the dispatcher
-// simply answers directly.
-func New(m model.LLM, sessions session.Service, instruction func() string, subAgents []agent.Agent, toolsets []tool.Toolset) (*Orchestrator, error) {
-	ag, err := llmagent.New(llmagent.Config{
-		Name:        "orchestrator",
-		Description: "Quack orchestrator: routes requests to specialist agents.",
-		Model:       m,
-		InstructionProvider: func(_ agent.ReadonlyContext) (string, error) {
-			return instruction(), nil
-		},
-		SubAgents: subAgents,
-		Toolsets:  toolsets,
-		GenerateContentConfig: &genai.GenerateContentConfig{
-			MaxOutputTokens: quackagent.MaxOutputTokens,
-		},
+// New builds the orchestrator. model is used for both planning and the
+// orchestrator's own title generation (passed separately); clients is the
+// full map of A2A agent clients keyed by their agent name.
+func New(sessions session.Service, planner *dag.Planner, executor *dag.Executor) *Orchestrator {
+	return &Orchestrator{sessions: sessions, planner: planner, executor: executor}
+}
+
+// Run decomposes message into a DAG, executes it, and yields SSE events.
+// The final answer from the last DAG node is persisted as the assistant turn.
+func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
+	return func(yield func(stream.SSEEvent, error) bool) {
+		// Plan the DAG.
+		plan, err := o.planner.Plan(ctx, message)
+		if err != nil {
+			yield(stream.Errorf("planner: "+err.Error()), nil)
+			return
+		}
+		log.Printf("dag: plan %s nodes=%d", plan.ID, len(plan.Nodes))
+
+		// Emit the dag_plan event so the frontend can render the DAG skeleton.
+		nodes := make([]stream.DagNodeDef, len(plan.Nodes))
+		for i, n := range plan.Nodes {
+			nodes[i] = stream.DagNodeDef{
+				ID:        n.ID,
+				Agent:     n.AgentName,
+				Task:      n.Task,
+				DependsOn: n.DependsOn,
+			}
+		}
+		edges := make([]stream.DagEdgeDef, len(plan.Edges))
+		for i, e := range plan.Edges {
+			edges[i] = stream.DagEdgeDef{From: e.From, To: e.To}
+		}
+		if !yield(stream.DagPlan(plan.ID, nodes, edges), nil) {
+			return
+		}
+
+		// Execute the DAG, collecting each node's final output text.
+		nodeOutputs := make(map[string]string)
+		for ev, err := range o.executor.Execute(ctx, *plan, userID, nodeOutputs) {
+			if err != nil {
+				yield(stream.Errorf(err.Error()), nil)
+				return
+			}
+			if !yield(ev, nil) {
+				return
+			}
+		}
+
+		// The last node in topological order is the final answer.
+		finalAnswer := lastOutput(plan, nodeOutputs)
+
+		// Persist the user message + final answer to the quack session so
+		// store.Messages() sees a proper chat history for this turn.
+		o.persistTurn(ctx, userID, sessionID, message, plan.Nodes, finalAnswer)
+	}
+}
+
+// lastOutput returns the output of the terminal node (the node with no
+// successors in the plan). Falls back to the last node's output if ambiguous.
+func lastOutput(plan *dag.Plan, outputs map[string]string) string {
+	hasSuccessor := make(map[string]bool)
+	for _, n := range plan.Nodes {
+		for _, dep := range n.DependsOn {
+			hasSuccessor[dep] = true
+		}
+	}
+	for _, n := range plan.Nodes {
+		if !hasSuccessor[n.ID] {
+			if out, ok := outputs[n.ID]; ok {
+				return out
+			}
+		}
+	}
+	// Fallback: last node in the slice.
+	for i := len(plan.Nodes) - 1; i >= 0; i-- {
+		if out, ok := outputs[plan.Nodes[i].ID]; ok {
+			return out
+		}
+	}
+	return ""
+}
+
+// persistTurn writes the user message and final assistant answer to the
+// "quack" ADK session, creating the session if it does not exist yet.
+func (o *Orchestrator) persistTurn(ctx context.Context, userID, sessionID, message string, nodes []dag.Node, finalAnswer string) {
+	sess, err := o.getOrCreateSession(ctx, userID, sessionID)
+	if err != nil {
+		log.Printf("orchestrator: persist turn: get/create session: %v", err)
+		return
+	}
+
+	invID := uuid.NewString()
+
+	userEv := session.NewEvent(invID)
+	userEv.Author = "user"
+	userEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: message}}}
+	if err := o.sessions.AppendEvent(ctx, sess, userEv); err != nil {
+		log.Printf("orchestrator: persist turn: append user event: %v", err)
+		return
+	}
+
+	if strings.TrimSpace(finalAnswer) == "" {
+		return
+	}
+
+	// Author as the last node's agent name so store.Messages() maps it to "assistant".
+	author := "synthesizer"
+	for i := len(nodes) - 1; i >= 0; i-- {
+		if strings.TrimSpace(nodes[i].AgentName) != "" {
+			author = nodes[i].AgentName
+			break
+		}
+	}
+
+	answerEv := session.NewEvent(invID)
+	answerEv.Author = author
+	answerEv.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: finalAnswer}}}
+	answerEv.TurnComplete = true
+	if err := o.sessions.AppendEvent(ctx, sess, answerEv); err != nil {
+		log.Printf("orchestrator: persist turn: append answer event: %v", err)
+	}
+}
+
+func (o *Orchestrator) getOrCreateSession(ctx context.Context, userID, sessionID string) (session.Session, error) {
+	resp, err := o.sessions.Get(ctx, &session.GetRequest{
+		AppName: AppName, UserID: userID, SessionID: sessionID,
+	})
+	if err == nil && resp != nil {
+		return resp.Session, nil
+	}
+	cr, err := o.sessions.Create(ctx, &session.CreateRequest{
+		AppName: AppName, UserID: userID, SessionID: sessionID,
 	})
 	if err != nil {
 		return nil, err
 	}
-	r, err := runner.New(runner.Config{
-		AppName:           AppName,
-		Agent:             ag,
-		SessionService:    sessions,
-		AutoCreateSession: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &Orchestrator{runner: r}, nil
+	return cr.Session, nil
 }
 
-// Run executes one conversation turn: it sends the user message under the given
-// session and yields the ADK session events as the orchestrator and any
-// delegated agent produce them.
-func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string) iter.Seq2[*session.Event, error] {
-	content := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{{Text: message}},
-	}
-	return o.runner.Run(ctx, userID, sessionID, content, agent.RunConfig{})
-}
+// AgentClients is a convenience alias used by callers to pass the client map.
+type AgentClients = map[string]adkagent.Agent

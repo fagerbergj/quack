@@ -21,7 +21,7 @@ Match the source to the type of question.
 
 **Background, context, orientation, or subjective recommendations** (best restaurant in a city, popular opinion on a product, general sentiment) — blogs, reviews, aggregators, and community sites are appropriate; no need to trace to a primary source.
 
-**Use lower-quality sources as a stepping stone.** Aggregators, Wikipedia, and secondary summaries often cite the primary source you actually need. Fetch the original — the study, the official report, the primary document — and cite that instead. This is almost always worth the extra step for factual claims.
+**Follow references to their primary source.** When a source you're reading attributes a specific claim to another paper, study, or document — and you intend to use that claim in your answer — fetch the original and cite it directly rather than the intermediary. Keep following at any depth until you reach the source that actually produced the finding.
 
 **When you can't find an appropriate source,** do the best you can with what's available, cite it honestly, and tell the user what you found and why it falls short (e.g. "the only sources I found for this statistic are secondary summaries — I couldn't locate the underlying study").
 

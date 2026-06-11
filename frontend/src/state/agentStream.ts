@@ -32,6 +32,17 @@ export interface DagEdgeDef {
   to: string
 }
 
+// NodeDoneMeta carries optional completion metadata from node_done.
+export interface NodeDoneMeta {
+  model?: string
+  promptTokens?: number
+  completionTokens?: number
+  reasoningTokens?: number
+  totalTokens?: number
+  finishReason?: string
+  durationMs?: number
+}
+
 // DagPlanPayload is the dag_plan event payload.
 export interface DagPlanPayload {
   plan_id: string
@@ -60,7 +71,7 @@ export interface AgentStreamHandlers {
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
   onNodeStart?: (nodeId: string, agent: string) => void
-  onNodeDone?: (nodeId: string, preview: string) => void
+  onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
 }
 
@@ -192,9 +203,22 @@ export function dispatchAgentEvent(
       return true
     }
     case 'node_done': {
-      const p = parsed as { node_id?: string; output_preview?: string }
+      const p = parsed as {
+        node_id?: string; output_preview?: string
+        model?: string; prompt_tokens?: number; completion_tokens?: number
+        reasoning_tokens?: number; total_tokens?: number; finish_reason?: string; duration_ms?: number
+      }
       if (typeof p.node_id === 'string') {
-        handlers.onNodeDone?.(p.node_id, typeof p.output_preview === 'string' ? p.output_preview : '')
+        const meta: NodeDoneMeta = {
+          model: p.model,
+          promptTokens: p.prompt_tokens,
+          completionTokens: p.completion_tokens,
+          reasoningTokens: p.reasoning_tokens,
+          totalTokens: p.total_tokens,
+          finishReason: p.finish_reason,
+          durationMs: p.duration_ms,
+        }
+        handlers.onNodeDone?.(p.node_id, typeof p.output_preview === 'string' ? p.output_preview : '', meta)
       }
       return true
     }

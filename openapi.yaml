@@ -1,11 +1,13 @@
 openapi: 3.0.3
 info:
   title: Quack
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    Quack's HTTP API. The chat-message endpoint streams over Server-Sent Events
-    (Streamable HTTP); the SSE body is not fully expressible in OpenAPI, so its
-    event vocabulary is documented in prose and via the `x-sse-events` extension.
+    Quack's HTTP API, modelled after the OpenResponses specification.
+    Each chat turn is a Response containing typed OutputItems. The DAG is a
+    first-class output item type (quack:dag) — a custom extension alongside
+    the standard message item. The send endpoint streams over Server-Sent Events;
+    its vocabulary is documented in prose and via the x-sse-events extension.
 servers:
   - url: /
 
@@ -53,7 +55,7 @@ paths:
   /api/v1/chats/{chat_id}:
     get:
       operationId: getChat
-      summary: Get a chat with its messages
+      summary: Get a chat with its turns
       parameters:
         - $ref: "#/components/parameters/ChatID"
       responses:
@@ -74,20 +76,28 @@ paths:
         "204":
           description: Deleted
 
-  /api/v1/chats/{chat_id}/messages:
+  /api/v1/chats/{chat_id}/responses:
     post:
       operationId: sendChatMessage
       summary: Send a message and stream the response
       description: |
         Streams the orchestrator's response as Server-Sent Events. Each event is
-        `event: <name>` followed by `data: <json>`. Activity events carry the
-        `agent` that produced them. The vocabulary: `token` ({"text"}) is answer
-        text; `thinking` ({"text"}) is reasoning; `tool_call` ({"name","args"}) and
-        `tool_result` ({"name","result"}) are tool activity; `agent_start` /
-        `agent_end` ({"agent"}) bracket a dispatched agent's turn; `self_refine`
-        ({"changed"}) and `judge_verdict` ({"round","score","passed","feedback"})
-        are the trust gate's self-refine and independent-judge activity; `done` ({})
-        terminates the stream; errors are sent as `error` ({"error"}).
+        `event: <name>` followed by `data: <json>`.
+
+        Standard events: `token` ({"text"}) is answer text; `thinking` ({"text"})
+        is reasoning; `tool_call` ({"name","args"}) and `tool_result`
+        ({"name","result"}) are tool activity; `agent_start` / `agent_end`
+        ({"agent"}) bracket a dispatched sub-agent; `self_refine` ({"changed"})
+        and `judge_verdict` ({"round","score","passed","feedback"}) are trust-gate
+        activity; `chat_title` ({"title"}) is sent once the title is generated;
+        `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
+
+        DAG events (quack extension): `dag_plan` ({"plan_id","nodes","edges"})
+        signals a quack:dag output item has been added; `node_queued`
+        ({"node_id"}), `node_start` ({"node_id","agent"}), `node_done`
+        ({"node_id",...metadata}), and `node_failed` ({"node_id","error"}) track
+        individual node lifecycle. Activity events within a node carry a
+        `node_id` field routing them to the correct node card.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       requestBody:
@@ -96,7 +106,23 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SendMessageBody"
-      x-sse-events: [token, thinking, tool_call, tool_result, agent_start, agent_end, self_refine, judge_verdict, done, error]
+      x-sse-events:
+        - token
+        - thinking
+        - tool_call
+        - tool_result
+        - agent_start
+        - agent_end
+        - self_refine
+        - judge_verdict
+        - dag_plan
+        - node_queued
+        - node_start
+        - node_done
+        - node_failed
+        - chat_title
+        - done
+        - error
       responses:
         "200":
           description: SSE event stream
@@ -105,13 +131,34 @@ paths:
               schema:
                 type: string
 
+  /api/v1/chats/{chat_id}/responses/{response_id}:
+    get:
+      operationId: getResponse
+      summary: Get a specific response (turn) with its output items
+      description: |
+        Returns the full Turn for a response ID. Useful for fetching or
+        refreshing a specific turn's output items (e.g. a quack:dag item)
+        without reloading the full chat.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/ResponseID"
+      responses:
+        "200":
+          description: The response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Turn"
+        "404":
+          description: Not found
+
   /api/v1/chats/{chat_id}/stream:
     delete:
       operationId: cancelChatStream
       summary: Cancel an in-progress stream
       description: |
-        Cancels the active orchestrator run for this chat. No-op if no run is in
-        progress. The SSE client should also abort its connection after calling this.
+        Cancels the active orchestrator run for this chat. No-op if no run is
+        in progress. The SSE client should also abort its connection.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       responses:
@@ -127,7 +174,19 @@ components:
       schema:
         type: string
 
+    ResponseID:
+      name: response_id
+      in: path
+      required: true
+      schema:
+        type: string
+
   schemas:
+
+    # -------------------------------------------------------------------------
+    # Chat
+    # -------------------------------------------------------------------------
+
     ChatSummary:
       type: object
       required: [id, system_prompt, created_at, updated_at]
@@ -145,26 +204,16 @@ components:
           type: string
           format: date-time
 
-    ChatMessage:
-      type: object
-      required: [role, content]
-      properties:
-        role:
-          type: string
-          enum: [user, assistant]
-        content:
-          type: string
-
     ChatDetail:
       allOf:
         - $ref: "#/components/schemas/ChatSummary"
         - type: object
-          required: [messages]
+          required: [turns]
           properties:
-            messages:
+            turns:
               type: array
               items:
-                $ref: "#/components/schemas/ChatMessage"
+                $ref: "#/components/schemas/Turn"
 
     ChatList:
       type: object
@@ -187,3 +236,189 @@ components:
       properties:
         content:
           type: string
+
+    # -------------------------------------------------------------------------
+    # Turn (one user→assistant exchange, modelled after OpenResponses Response)
+    # -------------------------------------------------------------------------
+
+    Turn:
+      type: object
+      required: [id, created_at, input, output]
+      properties:
+        id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        input:
+          $ref: "#/components/schemas/TurnInput"
+        output:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutputItem"
+        usage:
+          $ref: "#/components/schemas/Usage"
+
+    TurnInput:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user]
+        content:
+          type: string
+
+    Usage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+
+    # -------------------------------------------------------------------------
+    # Output items — discriminated by `type`
+    # Standard: "message". Quack extension: "quack:dag".
+    # -------------------------------------------------------------------------
+
+    OutputItem:
+      oneOf:
+        - $ref: "#/components/schemas/MessageOutputItem"
+        - $ref: "#/components/schemas/DagOutputItem"
+      discriminator:
+        propertyName: type
+        mapping:
+          message: "#/components/schemas/MessageOutputItem"
+          "quack:dag": "#/components/schemas/DagOutputItem"
+
+    ItemStatus:
+      type: string
+      enum: [in_progress, completed, incomplete]
+
+    MessageOutputItem:
+      type: object
+      required: [id, type, status, content]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [message]
+        status:
+          $ref: "#/components/schemas/ItemStatus"
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentPart"
+
+    ContentPart:
+      oneOf:
+        - $ref: "#/components/schemas/OutputTextPart"
+        - $ref: "#/components/schemas/ReasoningPart"
+      discriminator:
+        propertyName: type
+        mapping:
+          output_text: "#/components/schemas/OutputTextPart"
+          reasoning: "#/components/schemas/ReasoningPart"
+
+    OutputTextPart:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [output_text]
+        text:
+          type: string
+
+    ReasoningPart:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [reasoning]
+        text:
+          type: string
+
+    # -------------------------------------------------------------------------
+    # quack:dag output item — DAG execution as a first-class output type
+    # -------------------------------------------------------------------------
+
+    DagOutputItem:
+      type: object
+      required: [id, type, status, plan_id, nodes, edges, node_states]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: ["quack:dag"]
+        status:
+          $ref: "#/components/schemas/ItemStatus"
+        plan_id:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DagNodeDef"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/DagEdge"
+        node_states:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/DagNodeState"
+
+    DagNodeDef:
+      type: object
+      required: [id, agent, task, depends_on]
+      properties:
+        id:
+          type: string
+        agent:
+          type: string
+        task:
+          type: string
+        depends_on:
+          type: array
+          items:
+            type: string
+
+    DagEdge:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+
+    DagNodeState:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        output_preview:
+          type: string
+        error:
+          type: string
+        started_at_ms:
+          type: integer
+        finished_at_ms:
+          type: integer
+        model:
+          type: string
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        finish_reason:
+          type: string
+        server_duration_ms:
+          type: integer

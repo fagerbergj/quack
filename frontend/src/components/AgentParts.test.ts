@@ -14,6 +14,7 @@ import {
   type MessagePart,
   type AgentPart,
   type JudgeVerdictPart,
+  type SelfRefinePart,
 } from './AgentParts'
 
 // Helper: assert a part is an agent group and return it (narrows the type).
@@ -181,5 +182,107 @@ describe('messageParts tree reducers', () => {
     parts = appendThinkingPart(parts, 'world')
     const orch = agent(parts[0])
     expect(orch.items).toEqual([{ kind: 'thinking', text: 'Hello world' }])
+  })
+})
+
+// Helper: narrow to SelfRefinePart.
+function selfRefine(part: MessagePart): SelfRefinePart {
+  if (part.kind !== 'self_refine') throw new Error(`expected self_refine, got ${part.kind}`)
+  return part
+}
+
+// Helper: narrow to JudgeVerdictPart.
+function judgeVerdict(part: MessagePart): JudgeVerdictPart {
+  if (part.kind !== 'judge_verdict') throw new Error(`expected judge_verdict, got ${part.kind}`)
+  return part
+}
+
+describe('timing fields on self_refine and judge_verdict', () => {
+  it('openSelfRefine records startedAt at the top level (no open agent)', () => {
+    let parts: MessagePart[] = []
+    parts = openSelfRefine(parts, 1_000)
+    expect(parts).toHaveLength(1)
+    const sr = selfRefine(parts[0])
+    expect(sr.startedAt).toBe(1_000)
+    expect(sr.done).toBe(false)
+    expect(sr.durationMs).toBeUndefined()
+  })
+
+  it('closeSelfRefine sets done=true, changed, and computes durationMs', () => {
+    let parts: MessagePart[] = []
+    parts = openSelfRefine(parts, 1_000)
+    parts = closeSelfRefine(parts, true, 2_500)
+    const sr = selfRefine(parts[0])
+    expect(sr.done).toBe(true)
+    expect(sr.changed).toBe(true)
+    expect(sr.durationMs).toBe(1_500)
+  })
+
+  it('openJudgeVerdict records startedAt and round', () => {
+    let parts: MessagePart[] = []
+    parts = openJudgeVerdict(parts, 1, 3_000)
+    const jv = judgeVerdict(parts[0])
+    expect(jv.startedAt).toBe(3_000)
+    expect(jv.round).toBe(1)
+    expect(jv.done).toBe(false)
+    expect(jv.durationMs).toBeUndefined()
+  })
+
+  it('closeJudgeVerdict sets done, verdict fields, and durationMs', () => {
+    let parts: MessagePart[] = []
+    parts = openJudgeVerdict(parts, 1, 3_000)
+    parts = closeJudgeVerdict(parts, 1, 0.85, true, '', 5_000)
+    const jv = judgeVerdict(parts[0])
+    expect(jv.done).toBe(true)
+    expect(jv.score).toBe(0.85)
+    expect(jv.passed).toBe(true)
+    expect(jv.durationMs).toBe(2_000)
+  })
+
+  it('durationMs is undefined when timestamps are omitted', () => {
+    let parts: MessagePart[] = []
+    parts = openSelfRefine(parts)        // no timestamp → startedAt undefined
+    parts = closeSelfRefine(parts, false) // no timestamp → durationMs undefined
+    const sr = selfRefine(parts[0])
+    expect(sr.startedAt).toBeUndefined()
+    expect(sr.durationMs).toBeUndefined()
+  })
+
+  it('timing fields work when self_refine is nested inside an open agent', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'web-researcher')
+    parts = openSelfRefine(parts, 1_000)
+    parts = closeSelfRefine(parts, true, 2_000)
+    const wr = agent(parts[0])
+    expect(wr.items).toHaveLength(1)
+    const sr = selfRefine(wr.items[0])
+    expect(sr.startedAt).toBe(1_000)
+    expect(sr.durationMs).toBe(1_000)
+  })
+
+  it('timing fields work when judge_verdict is nested inside an open agent', () => {
+    let parts: MessagePart[] = []
+    parts = openAgent(parts, 'web-researcher')
+    parts = openJudgeVerdict(parts, 2, 5_000)
+    parts = closeJudgeVerdict(parts, 2, 0.9, true, '', 8_000)
+    const wr = agent(parts[0])
+    const jv = judgeVerdict(wr.items[0])
+    expect(jv.startedAt).toBe(5_000)
+    expect(jv.durationMs).toBe(3_000)
+  })
+
+  it('two consecutive judge rounds each get independent timing', () => {
+    let parts: MessagePart[] = []
+    parts = openJudgeVerdict(parts, 1, 0)
+    parts = closeJudgeVerdict(parts, 1, 0.4, false, 'needs sources', 6_000)
+    parts = openJudgeVerdict(parts, 2, 7_000)
+    parts = closeJudgeVerdict(parts, 2, 0.9, true, '', 10_000)
+    expect(parts).toHaveLength(2)
+    const j1 = judgeVerdict(parts[0])
+    const j2 = judgeVerdict(parts[1])
+    expect(j1.durationMs).toBe(6_000)
+    expect(j2.durationMs).toBe(3_000)
+    expect(j1.passed).toBe(false)
+    expect(j2.passed).toBe(true)
   })
 })

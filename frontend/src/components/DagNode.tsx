@@ -1,7 +1,29 @@
+import { useState, useEffect } from 'react'
 import { AssistantParts, WindowedItems } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { MessagePart, SelfRefinePart, JudgeVerdictPart } from './messageParts'
 import type { DagNodeDef } from '../state/agentStream'
+
+function fmtMs(ms: number): string {
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(1)}s`
+  const m = Math.floor(s / 60)
+  const rem = Math.floor(s % 60)
+  if (m < 60) return `${m}m ${rem}s`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m ${rem}s`
+}
+
+// LiveTimer ticks every 100ms while running, then freezes on the final value.
+function LiveTimer({ startedAt, finishedAt }: { startedAt: number; finishedAt?: number }) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (finishedAt != null) return
+    const id = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(id)
+  }, [finishedAt])
+  return <>{fmtMs((finishedAt ?? now) - startedAt)}</>
+}
 
 // ── gate types ──────────────────────────────────────────────────────────────
 
@@ -124,6 +146,13 @@ function SelfCritiqueCard({ gate, running }: { gate: SelfCritGate; running: bool
               {changed ? 'revised' : 'no changes'}
             </span>
           )}
+          {gate.part.startedAt != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">
+              {gate.part.done && gate.part.durationMs != null
+                ? fmtMs(gate.part.durationMs)
+                : <LiveTimer startedAt={gate.part.startedAt} />}
+            </span>
+          )}
         </summary>
         {gate.part.items.length > 0 && (
           <div className="px-4 pb-3">
@@ -154,6 +183,13 @@ function JudgeCard({ gate, running }: { gate: JudgeGate; running: boolean }) {
           {gate.part.done && feedback && !passed && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate max-w-[200px]">
               — {feedback}
+            </span>
+          )}
+          {gate.part.startedAt != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">
+              {gate.part.done && gate.part.durationMs != null
+                ? fmtMs(gate.part.durationMs)
+                : <LiveTimer startedAt={gate.part.startedAt} />}
             </span>
           )}
         </summary>
@@ -198,6 +234,33 @@ export function DagNode({ node, state, parts, isFinal }: Props) {
         {running && gates.every(g => g.kind === 'research' && g.parts.length === 0) && (
           <Spinner />
         )}
+        <div className="ml-auto flex items-center gap-2">
+          {state.model && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[120px]" title={state.model}>
+              {state.model}
+            </span>
+          )}
+          {state.finishReason === 'MAX_TOKENS' && (
+            <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400" title="Response was truncated at the token limit">
+              truncated
+            </span>
+          )}
+          {(state.totalTokens != null && state.totalTokens > 0)
+            ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                {state.totalTokens.toLocaleString()} tok
+              </span>
+            : state.outputChars != null && state.outputChars > 0
+              ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                  ~{Math.round(state.outputChars / 4).toLocaleString()} tok
+                </span>
+              : null
+          }
+          {state.startedAt != null && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+              <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Task description */}

@@ -43,10 +43,8 @@ func Handler(orch *orchestrator.Orchestrator) http.Handler {
 					Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
 				}, nil, nil
 			}
-			for _, se := range stream.Translate(ev) {
-				if td, ok := se.Data.(stream.TokenData); ok {
-					answer += td.Text
-				}
+			if td, ok := ev.Data.(stream.TokenData); ok {
+				answer += td.Text
 			}
 		}
 		return &mcp.CallToolResult{
