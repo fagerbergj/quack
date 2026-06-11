@@ -59,9 +59,14 @@ type DagNode struct {
 	Model            string     `json:"model"`
 	PromptTokens     int32      `json:"prompt_tokens"`
 	CompletionTokens int32      `json:"completion_tokens"`
+	ReasoningTokens  int32      `json:"reasoning_tokens"`
 	TotalTokens      int32      `json:"total_tokens"`
 	FinishReason     string     `json:"finish_reason"`
 	DurationMs       int64      `json:"duration_ms"`
+	SelfRefined      bool       `json:"self_refined"`
+	JudgeRounds      int32      `json:"judge_rounds"`
+	JudgeFinalScore  float64    `json:"judge_final_score"`
+	JudgePassed      bool       `json:"judge_passed"`
 }
 
 // TurnContent is the fully-joined view of one turn used to build API responses.

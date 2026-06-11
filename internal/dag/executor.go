@@ -190,6 +190,18 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 				}
 				continue
 			}
+			// Accumulate gate metadata; these are forwarded to the frontend but
+			// also summarised into NodeDoneData so the store can persist them.
+			if se.Name == stream.EventSelfRefine {
+				stats.SelfRefined = true
+			}
+			if se.Name == stream.EventJudgeVerdict {
+				if d, ok := se.Data.(stream.JudgeVerdictData); ok {
+					stats.JudgeRounds++
+					stats.JudgeFinalScore = d.Score
+					stats.JudgePassed = d.Passed
+				}
+			}
 			scoped := stream.ScopeToNode(se, node.ID)
 			send(nodeMsg{nodeID: node.ID, ev: scoped})
 			if td, ok := scoped.Data.(stream.TokenData); ok {

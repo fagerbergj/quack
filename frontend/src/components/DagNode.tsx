@@ -180,11 +180,6 @@ function JudgeCard({ gate, running }: { gate: JudgeGate; running: boolean }) {
               {passed ? '✓' : '✗'} {(score * 100).toFixed(0)}%
             </span>
           )}
-          {gate.part.done && feedback && !passed && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate max-w-[200px]">
-              — {feedback}
-            </span>
-          )}
           {gate.part.startedAt != null && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">
               {gate.part.done && gate.part.durationMs != null
@@ -193,6 +188,11 @@ function JudgeCard({ gate, running }: { gate: JudgeGate; running: boolean }) {
             </span>
           )}
         </summary>
+        {gate.part.done && feedback && (
+          <div className="px-4 pt-1 pb-2 text-[11px] text-gray-500 dark:text-gray-400 italic">
+            {feedback}
+          </div>
+        )}
         {items.length > 0 && (
           <div className="px-4 pb-3">
             <WindowedItems items={items} />

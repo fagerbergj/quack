@@ -110,9 +110,14 @@ export type DagNodeState = {
     model?: string;
     prompt_tokens?: number;
     completion_tokens?: number;
+    reasoning_tokens?: number;
     total_tokens?: number;
     finish_reason?: string;
     server_duration_ms?: number;
+    self_refined?: boolean;
+    judge_rounds?: number;
+    judge_final_score?: number;
+    judge_passed?: boolean;
 };
 
 export type ChatId = string;
