@@ -59,9 +59,14 @@ type DagNode struct {
 	Model            string     `json:"model"`
 	PromptTokens     int32      `json:"prompt_tokens"`
 	CompletionTokens int32      `json:"completion_tokens"`
+	ReasoningTokens  int32      `json:"reasoning_tokens"`
 	TotalTokens      int32      `json:"total_tokens"`
 	FinishReason     string     `json:"finish_reason"`
 	DurationMs       int64      `json:"duration_ms"`
+	SelfRefined      bool       `json:"self_refined"`
+	JudgeRounds      int32      `json:"judge_rounds"`
+	JudgeFinalScore  float64    `json:"judge_final_score"`
+	JudgePassed      bool       `json:"judge_passed"`
 }
 
 // TurnContent is the fully-joined view of one turn used to build API responses.
@@ -193,6 +198,17 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 // UpsertDagNode creates or updates a DAG node's execution state.
 func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	return s.db.WithContext(ctx).Save(&node).Error
+}
+
+// FailStaleDagNodes marks any node still queued/running as failed. Called at
+// server startup: a fresh process has no in-flight runs, so such rows are
+// orphans from a previous process killed mid-run — without this they show as
+// running forever in the UI.
+func (s *Store) FailStaleDagNodes(ctx context.Context) (int64, error) {
+	res := s.db.WithContext(ctx).Model(&DagNode{}).
+		Where("status IN ?", []string{"queued", "running"}).
+		Updates(map[string]any{"status": "failed", "error": "server restarted mid-run"})
+	return res.RowsAffected, res.Error
 }
 
 // GetDagNodes returns all nodes for a plan.

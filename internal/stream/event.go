@@ -203,15 +203,19 @@ type NodeStartData struct {
 // NodeDoneData is the `node_done` event payload. Completion stats are the
 // sum across all LLM calls made during the node's run; omitted when zero.
 type NodeDoneData struct {
-	NodeID           string `json:"node_id"`
-	OutputPreview    string `json:"output_preview,omitempty"`
-	Model            string `json:"model,omitempty"`
-	PromptTokens     int32  `json:"prompt_tokens,omitempty"`
-	CompletionTokens int32  `json:"completion_tokens,omitempty"`
-	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
-	TotalTokens      int32  `json:"total_tokens,omitempty"`
-	FinishReason     string `json:"finish_reason,omitempty"`
-	DurationMs       int64  `json:"duration_ms,omitempty"`
+	NodeID           string  `json:"node_id"`
+	OutputPreview    string  `json:"output_preview,omitempty"`
+	Model            string  `json:"model,omitempty"`
+	PromptTokens     int32   `json:"prompt_tokens,omitempty"`
+	CompletionTokens int32   `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int32   `json:"reasoning_tokens,omitempty"`
+	TotalTokens      int32   `json:"total_tokens,omitempty"`
+	FinishReason     string  `json:"finish_reason,omitempty"`
+	DurationMs       int64   `json:"duration_ms,omitempty"`
+	SelfRefined      bool    `json:"self_refined,omitempty"`
+	JudgeRounds      int32   `json:"judge_rounds,omitempty"`
+	JudgeFinalScore  float64 `json:"judge_final_score,omitempty"`
+	JudgePassed      bool    `json:"judge_passed,omitempty"`
 }
 
 // NodeFailedData is the `node_failed` event payload.

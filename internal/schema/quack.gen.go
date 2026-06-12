@@ -160,17 +160,22 @@ type DagNodeDef struct {
 
 // DagNodeState defines model for DagNodeState.
 type DagNodeState struct {
-	CompletionTokens *int    `json:"completion_tokens,omitempty"`
-	Error            *string `json:"error,omitempty"`
-	FinishReason     *string `json:"finish_reason,omitempty"`
-	FinishedAtMs     *int    `json:"finished_at_ms,omitempty"`
-	Model            *string `json:"model,omitempty"`
-	OutputPreview    *string `json:"output_preview,omitempty"`
-	PromptTokens     *int    `json:"prompt_tokens,omitempty"`
-	ServerDurationMs *int    `json:"server_duration_ms,omitempty"`
-	StartedAtMs      *int    `json:"started_at_ms,omitempty"`
-	Status           string  `json:"status"`
-	TotalTokens      *int    `json:"total_tokens,omitempty"`
+	CompletionTokens *int     `json:"completion_tokens,omitempty"`
+	Error            *string  `json:"error,omitempty"`
+	FinishReason     *string  `json:"finish_reason,omitempty"`
+	FinishedAtMs     *int     `json:"finished_at_ms,omitempty"`
+	JudgeFinalScore  *float64 `json:"judge_final_score,omitempty"`
+	JudgePassed      *bool    `json:"judge_passed,omitempty"`
+	JudgeRounds      *int     `json:"judge_rounds,omitempty"`
+	Model            *string  `json:"model,omitempty"`
+	OutputPreview    *string  `json:"output_preview,omitempty"`
+	PromptTokens     *int     `json:"prompt_tokens,omitempty"`
+	ReasoningTokens  *int     `json:"reasoning_tokens,omitempty"`
+	SelfRefined      *bool    `json:"self_refined,omitempty"`
+	ServerDurationMs *int     `json:"server_duration_ms,omitempty"`
+	StartedAtMs      *int     `json:"started_at_ms,omitempty"`
+	Status           string   `json:"status"`
+	TotalTokens      *int     `json:"total_tokens,omitempty"`
 }
 
 // DagOutputItem defines model for DagOutputItem.

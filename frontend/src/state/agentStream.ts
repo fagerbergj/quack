@@ -41,6 +41,10 @@ export interface NodeDoneMeta {
   totalTokens?: number
   finishReason?: string
   durationMs?: number
+  selfRefined?: boolean
+  judgeRounds?: number
+  judgeFinalScore?: number
+  judgePassed?: boolean
 }
 
 // DagPlanPayload is the dag_plan event payload.
@@ -207,6 +211,7 @@ export function dispatchAgentEvent(
         node_id?: string; output_preview?: string
         model?: string; prompt_tokens?: number; completion_tokens?: number
         reasoning_tokens?: number; total_tokens?: number; finish_reason?: string; duration_ms?: number
+        self_refined?: boolean; judge_rounds?: number; judge_final_score?: number; judge_passed?: boolean
       }
       if (typeof p.node_id === 'string') {
         const meta: NodeDoneMeta = {
@@ -217,6 +222,10 @@ export function dispatchAgentEvent(
           totalTokens: p.total_tokens,
           finishReason: p.finish_reason,
           durationMs: p.duration_ms,
+          selfRefined: p.self_refined,
+          judgeRounds: p.judge_rounds,
+          judgeFinalScore: p.judge_final_score,
+          judgePassed: p.judge_passed,
         }
         handlers.onNodeDone?.(p.node_id, typeof p.output_preview === 'string' ? p.output_preview : '', meta)
       }
