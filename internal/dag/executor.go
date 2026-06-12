@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time" //nolint:godot
 
+	"github.com/google/uuid"
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -54,6 +55,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			return
 		}
 
+		// Nodes whose judge gate exhausted all rounds without passing. The DAG
+		// continues (policy: continue-but-warn), but downstream nodes are told
+		// their input failed vetting so they treat it skeptically.
+		gateFailed := make(map[string]bool)
+
 		for _, layer := range layers {
 			// Announce all nodes in this layer as queued, then running, before
 			// starting the goroutines so the frontend shows them simultaneously.
@@ -73,17 +79,22 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			layerCtx, cancelLayer := context.WithCancel(ctx)
 			defer cancelLayer()
 
-			// Snapshot upstream outputs for the goroutines (immutable read).
+			// Snapshot upstream outputs and gate failures for the goroutines
+			// (immutable read).
 			upstream := make(map[string]string, len(nodeOutputs))
 			for k, v := range nodeOutputs {
 				upstream[k] = v
+			}
+			failedSnap := make(map[string]bool, len(gateFailed))
+			for k, v := range gateFailed {
+				failedSnap[k] = v
 			}
 
 			// Buffered enough to absorb a burst so goroutines rarely block.
 			ch := make(chan nodeMsg, 256)
 			for _, node := range layer {
 				go func(n Node) {
-					e.streamNode(layerCtx, n, userID, plan.ID, upstream, ch)
+					e.streamNode(layerCtx, plan, n, userID, upstream, failedSnap, ch)
 				}(node)
 			}
 
@@ -106,6 +117,9 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 							return
 						}
 						nodeOutputs[msg.nodeID] = msg.output
+						if msg.stats.JudgeRounds > 0 && !msg.stats.JudgePassed {
+							gateFailed[msg.nodeID] = true
+						}
 						nd := msg.stats
 						nd.OutputPreview = msg.output
 						if len(nd.OutputPreview) > 250 {
@@ -132,7 +146,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 
 // streamNode runs one node against its A2A client and sends all activity events
 // to ch as they arrive, followed by a done message.
-func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID string, upstream map[string]string, ch chan<- nodeMsg) {
+func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
 	send := func(m nodeMsg) {
 		select {
 		case ch <- m:
@@ -146,7 +160,7 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 		return
 	}
 
-	task := buildTask(node.Task, node.DependsOn, upstream)
+	task := buildTask(plan, node, upstream, gateFailed)
 
 	r, err := runner.New(runner.Config{
 		AppName:           "quack-nodes",
@@ -159,7 +173,18 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 		return
 	}
 
-	nodeSessionID := planID + ":" + node.ID
+	nodeSessionID := plan.ID + ":" + node.ID
+
+	// Seed the node's fresh session with the prior conversation as native ADK
+	// events — the runner assembles them into structured user/model turns in
+	// the LLM request, which models follow better than a flattened transcript.
+	if len(plan.History) > 0 {
+		if err := e.seedHistory(ctx, userID, nodeSessionID, plan.History); err != nil {
+			send(nodeMsg{nodeID: node.ID, done: true, err: fmt.Errorf("node %q: seed history: %w", node.ID, err)})
+			return
+		}
+	}
+
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: task}}}
 	var answer strings.Builder
 	var stats stream.NodeDoneData
@@ -190,6 +215,18 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 				}
 				continue
 			}
+			// Accumulate gate metadata; these are forwarded to the frontend but
+			// also summarised into NodeDoneData so the store can persist them.
+			if se.Name == stream.EventSelfRefine {
+				stats.SelfRefined = true
+			}
+			if se.Name == stream.EventJudgeVerdict {
+				if d, ok := se.Data.(stream.JudgeVerdictData); ok {
+					stats.JudgeRounds++
+					stats.JudgeFinalScore = d.Score
+					stats.JudgePassed = d.Passed
+				}
+			}
 			scoped := stream.ScopeToNode(se, node.ID)
 			send(nodeMsg{nodeID: node.ID, ev: scoped})
 			if td, ok := scoped.Data.(stream.TokenData); ok {
@@ -205,26 +242,57 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 	send(nodeMsg{nodeID: node.ID, done: true, output: out, stats: stats})
 }
 
-// buildTask constructs the message for a node, prepending upstream outputs
-// when the node has dependencies.
-func buildTask(task string, dependsOn []string, upstream map[string]string) string {
-	var parts []string
-	for _, dep := range dependsOn {
-		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
-			parts = append(parts, out)
+// seedHistory creates the node's session pre-populated with the prior
+// conversation as user/model events, so the runner presents them to the model
+// as real turns. The session ID is unique per plan+node, so Create never races
+// a prior run.
+func (e *Executor) seedHistory(ctx context.Context, userID, sessionID string, history []HistoryTurn) error {
+	cr, err := e.sessions.Create(ctx, &session.CreateRequest{
+		AppName: "quack-nodes", UserID: userID, SessionID: sessionID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, t := range history {
+		ev := session.NewEvent(uuid.NewString())
+		if t.Role == "user" {
+			ev.Author = "user"
+		} else {
+			ev.Author = "history"
+		}
+		ev.Content = &genai.Content{Role: t.Role, Parts: []*genai.Part{{Text: t.Text}}}
+		if err := e.sessions.AppendEvent(ctx, cr.Session, ev); err != nil {
+			return err
 		}
 	}
-	if len(parts) == 0 {
-		return task
-	}
+	return nil
+}
+
+// buildTask constructs the message for a node: the user's verbatim request
+// first (the planner's task description is a lossy summary — details like
+// names, dates, and constraints must reach the specialist directly), then
+// upstream outputs, then the focused task. Conversation history is NOT inlined
+// here — it is seeded into the node's session as native events (seedHistory).
+func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
 	var sb strings.Builder
-	for i, p := range parts {
-		if i > 0 {
+	if plan.UserMessage != "" {
+		sb.WriteString("User's request (verbatim):\n")
+		sb.WriteString(plan.UserMessage)
+		sb.WriteString("\n\n---\n\n")
+	}
+	for _, dep := range node.DependsOn {
+		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
+			if gateFailed[dep] {
+				sb.WriteString("⚠ WARNING: the following input FAILED independent quality vetting (unverified claims or missing citations). Treat its claims skeptically and do not present them as verified:\n\n")
+			}
+			sb.WriteString(out)
 			sb.WriteString("\n\n---\n\n")
 		}
-		sb.WriteString(p)
 	}
-	sb.WriteString("\n\n---\n\nTask: ")
-	sb.WriteString(task)
+	if sb.Len() == 0 {
+		return node.Task
+	}
+	sb.WriteString("Your task: ")
+	sb.WriteString(node.Task)
 	return sb.String()
 }

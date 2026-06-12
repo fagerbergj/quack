@@ -53,6 +53,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
+	if n, err := st.FailStaleDagNodes(context.Background()); err != nil {
+		log.Printf("store: fail stale dag nodes: %v", err)
+	} else if n > 0 {
+		log.Printf("store: marked %d orphaned dag node(s) failed (previous process killed mid-run)", n)
+	}
 
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
 	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model)
