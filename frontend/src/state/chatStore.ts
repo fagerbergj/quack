@@ -32,6 +32,10 @@ export interface NodeState {
   totalTokens?: number
   finishReason?: string
   serverDurationMs?: number
+  selfRefined?: boolean
+  judgeRounds?: number
+  judgeFinalScore?: number
+  judgePassed?: boolean
 }
 
 export interface DagTurnState {
@@ -246,6 +250,10 @@ export class ChatStore {
           totalTokens: meta.totalTokens,
           finishReason: meta.finishReason,
           serverDurationMs: meta.durationMs,
+          selfRefined: meta.selfRefined,
+          judgeRounds: meta.judgeRounds,
+          judgeFinalScore: meta.judgeFinalScore,
+          judgePassed: meta.judgePassed,
         }),
         onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error }),
       })

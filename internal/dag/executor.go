@@ -55,6 +55,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			return
 		}
 
+		// Nodes whose judge gate exhausted all rounds without passing. The DAG
+		// continues (policy: continue-but-warn), but downstream nodes are told
+		// their input failed vetting so they treat it skeptically.
+		gateFailed := make(map[string]bool)
+
 		for _, layer := range layers {
 			// Announce all nodes in this layer as queued, then running, before
 			// starting the goroutines so the frontend shows them simultaneously.
@@ -74,17 +79,22 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			layerCtx, cancelLayer := context.WithCancel(ctx)
 			defer cancelLayer()
 
-			// Snapshot upstream outputs for the goroutines (immutable read).
+			// Snapshot upstream outputs and gate failures for the goroutines
+			// (immutable read).
 			upstream := make(map[string]string, len(nodeOutputs))
 			for k, v := range nodeOutputs {
 				upstream[k] = v
+			}
+			failedSnap := make(map[string]bool, len(gateFailed))
+			for k, v := range gateFailed {
+				failedSnap[k] = v
 			}
 
 			// Buffered enough to absorb a burst so goroutines rarely block.
 			ch := make(chan nodeMsg, 256)
 			for _, node := range layer {
 				go func(n Node) {
-					e.streamNode(layerCtx, plan, n, userID, upstream, ch)
+					e.streamNode(layerCtx, plan, n, userID, upstream, failedSnap, ch)
 				}(node)
 			}
 
@@ -107,6 +117,9 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 							return
 						}
 						nodeOutputs[msg.nodeID] = msg.output
+						if msg.stats.JudgeRounds > 0 && !msg.stats.JudgePassed {
+							gateFailed[msg.nodeID] = true
+						}
 						nd := msg.stats
 						nd.OutputPreview = msg.output
 						if len(nd.OutputPreview) > 250 {
@@ -133,7 +146,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 
 // streamNode runs one node against its A2A client and sends all activity events
 // to ch as they arrive, followed by a done message.
-func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, ch chan<- nodeMsg) {
+func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
 	send := func(m nodeMsg) {
 		select {
 		case ch <- m:
@@ -147,7 +160,7 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 		return
 	}
 
-	task := buildTask(plan, node, upstream)
+	task := buildTask(plan, node, upstream, gateFailed)
 
 	r, err := runner.New(runner.Config{
 		AppName:           "quack-nodes",
@@ -260,7 +273,7 @@ func (e *Executor) seedHistory(ctx context.Context, userID, sessionID string, hi
 // names, dates, and constraints must reach the specialist directly), then
 // upstream outputs, then the focused task. Conversation history is NOT inlined
 // here — it is seeded into the node's session as native events (seedHistory).
-func buildTask(plan Plan, node Node, upstream map[string]string) string {
+func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
 	var sb strings.Builder
 	if plan.UserMessage != "" {
 		sb.WriteString("User's request (verbatim):\n")
@@ -269,6 +282,9 @@ func buildTask(plan Plan, node Node, upstream map[string]string) string {
 	}
 	for _, dep := range node.DependsOn {
 		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
+			if gateFailed[dep] {
+				sb.WriteString("⚠ WARNING: the following input FAILED independent quality vetting (unverified claims or missing citations). Treat its claims skeptically and do not present them as verified:\n\n")
+			}
 			sb.WriteString(out)
 			sb.WriteString("\n\n---\n\n")
 		}
