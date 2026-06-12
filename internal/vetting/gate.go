@@ -379,10 +379,14 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 		if ev == nil {
 			continue
 		}
+		evHasTool := false
 		if ev.Content != nil {
 			for _, p := range ev.Content.Parts {
 				if p == nil {
 					continue
+				}
+				if p.FunctionCall != nil || p.FunctionResponse != nil {
+					evHasTool = true
 				}
 				if p.FunctionCall != nil {
 					switch p.FunctionCall.Name {
@@ -410,6 +414,13 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 					}
 				}
 			}
+		}
+		// The answer is the text that follows the worker's LAST tool activity.
+		// Text-only narration events between tool calls ("Now I have everything
+		// I need, let me compile…") would otherwise accumulate into the answer
+		// buffer and leak ahead of the real answer.
+		if evHasTool {
+			answer.Reset()
 		}
 		passthrough, ans := splitAnswer(ev, textAsThinking)
 		answer.WriteString(ans)
