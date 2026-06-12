@@ -6,6 +6,14 @@ package dag
 
 import "fmt"
 
+// HistoryTurn is one prior conversation turn, passed to nodes as native ADK
+// session events so the model sees real user/model turns rather than a
+// flattened transcript.
+type HistoryTurn struct {
+	Role string // genai role: "user" or "model"
+	Text string
+}
+
 // Plan is a DAG of agent tasks for one user request. UserMessage is the user's
 // request verbatim and History the prior conversation — both flow to every
 // node so specialists see the full context, not just the planner's compressed
@@ -15,7 +23,7 @@ type Plan struct {
 	Nodes       []Node
 	Edges       []Edge
 	UserMessage string
-	History     string
+	History     []HistoryTurn
 }
 
 // Node is one task in the plan: the agent to run, what to do, an acceptance

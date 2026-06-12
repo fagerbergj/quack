@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time" //nolint:godot
 
+	"github.com/google/uuid"
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -160,6 +161,17 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	}
 
 	nodeSessionID := plan.ID + ":" + node.ID
+
+	// Seed the node's fresh session with the prior conversation as native ADK
+	// events — the runner assembles them into structured user/model turns in
+	// the LLM request, which models follow better than a flattened transcript.
+	if len(plan.History) > 0 {
+		if err := e.seedHistory(ctx, userID, nodeSessionID, plan.History); err != nil {
+			send(nodeMsg{nodeID: node.ID, done: true, err: fmt.Errorf("node %q: seed history: %w", node.ID, err)})
+			return
+		}
+	}
+
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: task}}}
 	var answer strings.Builder
 	var stats stream.NodeDoneData
@@ -217,17 +229,39 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	send(nodeMsg{nodeID: node.ID, done: true, output: out, stats: stats})
 }
 
-// buildTask constructs the message for a node: conversation history and the
-// user's verbatim request first (the planner's task description is a lossy
-// summary — details like names, dates, and constraints must reach the
-// specialist directly), then upstream outputs, then the focused task.
+// seedHistory creates the node's session pre-populated with the prior
+// conversation as user/model events, so the runner presents them to the model
+// as real turns. The session ID is unique per plan+node, so Create never races
+// a prior run.
+func (e *Executor) seedHistory(ctx context.Context, userID, sessionID string, history []HistoryTurn) error {
+	cr, err := e.sessions.Create(ctx, &session.CreateRequest{
+		AppName: "quack-nodes", UserID: userID, SessionID: sessionID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, t := range history {
+		ev := session.NewEvent(uuid.NewString())
+		if t.Role == "user" {
+			ev.Author = "user"
+		} else {
+			ev.Author = "history"
+		}
+		ev.Content = &genai.Content{Role: t.Role, Parts: []*genai.Part{{Text: t.Text}}}
+		if err := e.sessions.AppendEvent(ctx, cr.Session, ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// buildTask constructs the message for a node: the user's verbatim request
+// first (the planner's task description is a lossy summary — details like
+// names, dates, and constraints must reach the specialist directly), then
+// upstream outputs, then the focused task. Conversation history is NOT inlined
+// here — it is seeded into the node's session as native events (seedHistory).
 func buildTask(plan Plan, node Node, upstream map[string]string) string {
 	var sb strings.Builder
-	if plan.History != "" {
-		sb.WriteString("Conversation so far:\n")
-		sb.WriteString(plan.History)
-		sb.WriteString("\n\n---\n\n")
-	}
 	if plan.UserMessage != "" {
 		sb.WriteString("User's request (verbatim):\n")
 		sb.WriteString(plan.UserMessage)

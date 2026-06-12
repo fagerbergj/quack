@@ -32,11 +32,11 @@ func NewPlanner(m model.LLM, agents []AgentInfo) *Planner {
 // the prior conversation (empty for a fresh chat); it is shown to the planner
 // so follow-up requests resolve correctly, and stamped on the plan so every
 // node receives it. On any failure it falls back to a single web-researcher node.
-func (p *Planner) Plan(ctx context.Context, history, message string) (*Plan, error) {
+func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message string) (*Plan, error) {
 	sysPrompt := p.buildSystemPrompt()
 	userText := message
-	if history != "" {
-		userText = "Conversation so far:\n" + history + "\n\nNew user request:\n" + message
+	if len(history) > 0 {
+		userText = "Conversation so far:\n" + flattenHistory(history) + "\n\nNew user request:\n" + message
 	}
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{
@@ -71,10 +71,28 @@ func (p *Planner) Plan(ctx context.Context, history, message string) (*Plan, err
 
 // stamp records the verbatim user message and conversation history on the plan
 // so the executor can pass them to every node.
-func (p *Planner) stamp(plan *Plan, history, message string) *Plan {
+func (p *Planner) stamp(plan *Plan, history []HistoryTurn, message string) *Plan {
 	plan.History = history
 	plan.UserMessage = message
 	return plan
+}
+
+// flattenHistory renders history as a User:/Assistant: transcript for the
+// planner prompt. The planner is a raw LLM call (not an ADK agent), so it
+// takes history as text; nodes receive the same turns as native session events.
+func flattenHistory(history []HistoryTurn) string {
+	var sb strings.Builder
+	for i, t := range history {
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		role := "Assistant"
+		if t.Role == "user" {
+			role = "User"
+		}
+		sb.WriteString(role + ": " + t.Text)
+	}
+	return sb.String()
 }
 
 // fallback returns a single-node plan using the first available web-researcher.

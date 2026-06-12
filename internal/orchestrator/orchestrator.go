@@ -128,19 +128,19 @@ func lastOutput(plan *dag.Plan, outputs map[string]string) string {
 // nodes. Oldest turns are dropped first when the transcript exceeds it.
 const maxHistoryChars = 24000
 
-// buildHistory renders the prior conversation as alternating "User:"/
-// "Assistant:" blocks from the quack session events. Returns "" for a fresh
-// chat. Thinking parts and tool traffic are excluded — only the visible
-// transcript matters for follow-up context.
-func (o *Orchestrator) buildHistory(ctx context.Context, userID, sessionID string) string {
+// buildHistory extracts the prior conversation from the quack session events
+// as structured turns. Returns nil for a fresh chat. Thinking parts and tool
+// traffic are excluded — only the visible transcript matters for follow-up
+// context.
+func (o *Orchestrator) buildHistory(ctx context.Context, userID, sessionID string) []dag.HistoryTurn {
 	resp, err := o.sessions.Get(ctx, &session.GetRequest{
 		AppName: AppName, UserID: userID, SessionID: sessionID,
 	})
 	if err != nil || resp == nil {
-		return ""
+		return nil
 	}
 
-	var blocks []string
+	var turns []dag.HistoryTurn
 	for ev := range resp.Session.Events().All() {
 		if ev == nil || ev.Content == nil {
 			continue
@@ -154,27 +154,24 @@ func (o *Orchestrator) buildHistory(ctx context.Context, userID, sessionID strin
 		if text.Len() == 0 {
 			continue
 		}
-		role := "Assistant"
+		role := "model"
 		if ev.Author == "user" {
-			role = "User"
+			role = "user"
 		}
-		blocks = append(blocks, role+": "+text.String())
-	}
-	if len(blocks) == 0 {
-		return ""
+		turns = append(turns, dag.HistoryTurn{Role: role, Text: text.String()})
 	}
 
 	// Keep the most recent turns within budget; drop oldest first.
 	total := 0
-	start := len(blocks)
-	for i := len(blocks) - 1; i >= 0; i-- {
-		total += len(blocks[i]) + 2
+	start := len(turns)
+	for i := len(turns) - 1; i >= 0; i-- {
+		total += len(turns[i].Text)
 		if total > maxHistoryChars {
 			break
 		}
 		start = i
 	}
-	return strings.Join(blocks[start:], "\n\n")
+	return turns[start:]
 }
 
 // persistUserMessage writes the user message to the "quack" ADK session at the
