@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { AssistantParts, WindowedItems } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
-import type { MessagePart, SelfRefinePart, JudgeVerdictPart } from './messageParts'
+import type { MessagePart, SelfRefinePart, JudgeVerdictPart, JudgeUnavailablePart } from './messageParts'
 import type { DagNodeDef } from '../state/agentStream'
 
 function fmtMs(ms: number): string {
@@ -27,10 +27,11 @@ function LiveTimer({ startedAt, finishedAt }: { startedAt: number; finishedAt?: 
 
 // ── gate types ──────────────────────────────────────────────────────────────
 
-type ResearchGate  = { kind: 'research';    parts: MessagePart[] }
-type SelfCritGate  = { kind: 'self-refine'; part: SelfRefinePart }
-type JudgeGate     = { kind: 'judge';       part: JudgeVerdictPart }
-type Gate = ResearchGate | SelfCritGate | JudgeGate
+type ResearchGate    = { kind: 'research';          parts: MessagePart[] }
+type SelfCritGate    = { kind: 'self-refine';       part: SelfRefinePart }
+type JudgeGate       = { kind: 'judge';             part: JudgeVerdictPart }
+type JudgeUnavailGate = { kind: 'judge-unavailable'; part: JudgeUnavailablePart }
+type Gate = ResearchGate | SelfCritGate | JudgeGate | JudgeUnavailGate
 
 // splitGates groups flat top-level parts into sequential phase cards.
 // revise / judge_unavailable parts are implicit connectors; they don't get
@@ -54,7 +55,10 @@ function splitGates(parts: MessagePart[]): Gate[] {
     } else if (p.kind === 'judge_verdict') {
       flushBuf()
       gates.push({ kind: 'judge', part: p })
-    } else if (p.kind === 'revise' || p.kind === 'judge_unavailable') {
+    } else if (p.kind === 'judge_unavailable') {
+      flushBuf()
+      gates.push({ kind: 'judge-unavailable', part: p })
+    } else if (p.kind === 'revise') {
       // Implicit — no gate, just flush so subsequent content starts fresh
       flushBuf()
     } else {
@@ -180,11 +184,6 @@ function JudgeCard({ gate, running }: { gate: JudgeGate; running: boolean }) {
               {passed ? '✓' : '✗'} {(score * 100).toFixed(0)}%
             </span>
           )}
-          {gate.part.done && feedback && !passed && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate max-w-[200px]">
-              — {feedback}
-            </span>
-          )}
           {gate.part.startedAt != null && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">
               {gate.part.done && gate.part.durationMs != null
@@ -193,12 +192,32 @@ function JudgeCard({ gate, running }: { gate: JudgeGate; running: boolean }) {
             </span>
           )}
         </summary>
+        {gate.part.done && feedback && (
+          <div className="px-4 pt-1 pb-2 text-[11px] text-gray-500 dark:text-gray-400 italic">
+            {feedback}
+          </div>
+        )}
         {items.length > 0 && (
           <div className="px-4 pb-3">
             <WindowedItems items={items} />
           </div>
         )}
       </details>
+    </div>
+  )
+}
+
+// JudgeUnavailableCard surfaces a judge infrastructure failure (the answer was
+// passed through UNVETTED) — distinct from a judge fail verdict.
+function JudgeUnavailableCard({ gate }: { gate: JudgeUnavailGate }) {
+  return (
+    <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
+      <span className="text-[10px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
+        ⚠ Judge unavailable · round {gate.part.round}
+      </span>
+      <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
+        Answer surfaced without quality vetting — {gate.part.reason}
+      </div>
     </div>
   )
 }
@@ -245,6 +264,14 @@ export function DagNode({ node, state, parts, isFinal }: Props) {
               truncated
             </span>
           )}
+          {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
+            <span
+              className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
+              title={`Judge rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} — surfaced unvetted`}
+            >
+              ⚠ unvetted
+            </span>
+          )}
           {(state.totalTokens != null && state.totalTokens > 0)
             ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
                 {state.totalTokens.toLocaleString()} tok
@@ -276,6 +303,9 @@ export function DagNode({ node, state, parts, isFinal }: Props) {
         }
         if (gate.kind === 'self-refine') {
           return <SelfCritiqueCard key={i} gate={gate} running={gateRunning} />
+        }
+        if (gate.kind === 'judge-unavailable') {
+          return <JudgeUnavailableCard key={i} gate={gate} />
         }
         return <JudgeCard key={i} gate={gate} running={gateRunning} />
       })}
