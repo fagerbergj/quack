@@ -25,7 +25,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@hey-api/openapi-ts": "^0.98.2",
-    "@storybook/react-vite": "^10.4.2",
+    "@storybook/react-vite": "^10.4.4",
     "@tailwindcss/postcss": "^4.3.0",
     "@tailwindcss/typography": "^0.5.19",
     "@types/react": "^19.2.17",
@@ -42,7 +42,7 @@
     "msw-storybook-addon": "^2.0.7",
     "playwright": "^1.60.0",
     "postcss": "^8.5.10",
-    "storybook": "^10.4.1",
+    "storybook": "^10.4.4",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.0",
