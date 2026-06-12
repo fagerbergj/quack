@@ -103,8 +103,11 @@ export function closeAgent(parts: MessagePart[], agent: string): MessagePart[] {
 
 // appendThinkingPart folds reasoning into the deepest open container (agent,
 // self_refine, or judge_verdict), coalescing with a trailing thinking node.
+// Falls back to top-level append when no container is open — this happens in
+// the DAG node flow (agent_start/end suppressed) during the gate's revision
+// pass between judge rounds, where thinking would otherwise be silently dropped.
 export function appendThinkingPart(parts: MessagePart[], text: string): MessagePart[] {
-  return intoOpenContainer(parts, items => pushThinking(items, text)) ?? parts
+  return intoOpenContainer(parts, items => pushThinking(items, text)) ?? pushThinking(parts, text)
 }
 
 // appendToolCall nests a tool call under the deepest open container. Using

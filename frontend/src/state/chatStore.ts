@@ -32,6 +32,10 @@ export interface NodeState {
   totalTokens?: number
   finishReason?: string
   serverDurationMs?: number
+  selfRefined?: boolean
+  judgeRounds?: number
+  judgeFinalScore?: number
+  judgePassed?: boolean
 }
 
 export interface DagTurnState {
@@ -106,8 +110,24 @@ export class ChatStore {
   async submit(chatId: string, content: string, onTitle?: (title: string) => void): Promise<void> {
     const trimmed = content.trim()
     if (!trimmed) return
-    const cur = this.get(chatId)
+    let cur = this.get(chatId)
     if (cur.live?.streaming) return
+
+    // A finished previous turn still lives in `live` (finishStream only flips
+    // the streaming flag). Replacing `live` would drop it from the UI, so first
+    // archive it into `turns` by re-fetching from the server, where it is fully
+    // persisted. Fetch BEFORE posting so the new turn's row isn't included yet.
+    if (cur.live) {
+      try {
+        const res = await fetch(`/api/v1/chats/${chatId}`)
+        if (res.ok) {
+          const detail = (await res.json()) as { turns?: Turn[] }
+          const s = this.get(chatId)
+          if (!s.live?.streaming) this.write(chatId, { ...s, turns: detail.turns ?? s.turns })
+        }
+      } catch { /* keep local state; worst case the previous turn drops until refresh */ }
+      cur = this.get(chatId)
+    }
 
     const live: LiveTurn = { id: '', userText: trimmed, parts: [], streaming: true, error: '' }
     this.write(chatId, { ...cur, live, error: '' })
@@ -230,6 +250,10 @@ export class ChatStore {
           totalTokens: meta.totalTokens,
           finishReason: meta.finishReason,
           serverDurationMs: meta.durationMs,
+          selfRefined: meta.selfRefined,
+          judgeRounds: meta.judgeRounds,
+          judgeFinalScore: meta.judgeFinalScore,
+          judgePassed: meta.judgePassed,
         }),
         onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error }),
       })
