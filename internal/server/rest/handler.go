@@ -252,9 +252,14 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 						Model:            d.Model,
 						PromptTokens:     d.PromptTokens,
 						CompletionTokens: d.CompletionTokens,
+						ReasoningTokens:  d.ReasoningTokens,
 						TotalTokens:      d.TotalTokens,
 						FinishReason:     d.FinishReason,
 						DurationMs:       d.DurationMs,
+						SelfRefined:      d.SelfRefined,
+						JudgeRounds:      d.JudgeRounds,
+						JudgeFinalScore:  d.JudgeFinalScore,
+						JudgePassed:      d.JudgePassed,
 					})
 				}()
 			}
@@ -339,8 +344,13 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 					Error:            strPtr(n.Error),
 					PromptTokens:     intPtr(int(n.PromptTokens)),
 					CompletionTokens: intPtr(int(n.CompletionTokens)),
+					ReasoningTokens:  intPtr(int(n.ReasoningTokens)),
 					TotalTokens:      intPtr(int(n.TotalTokens)),
 					ServerDurationMs: intPtr(int(n.DurationMs)),
+					SelfRefined:      boolPtr(n.SelfRefined),
+					JudgeRounds:      intPtr(int(n.JudgeRounds)),
+					JudgeFinalScore:  float64Ptr(n.JudgeFinalScore),
+					JudgePassed:      boolPtr(n.JudgePassed),
 				}
 				if n.StartedAt != nil {
 					ms := int(n.StartedAt.UnixMilli())
@@ -402,6 +412,20 @@ func intPtr(n int) *int {
 		return nil
 	}
 	return &n
+}
+
+func boolPtr(b bool) *bool {
+	if !b {
+		return nil
+	}
+	return &b
+}
+
+func float64Ptr(f float64) *float64 {
+	if f == 0 {
+		return nil
+	}
+	return &f
 }
 
 func toSummary(c store.Chat) schema.ChatSummary {

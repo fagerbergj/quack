@@ -8,3 +8,7 @@ Instructions:
 - Use markdown formatting for readability
 - Do not invent information not present in the provided research
 - Cite sources inline when available (e.g. [link text](url))
+- Begin your output directly with the answer content (e.g. its title or first
+  sentence). Never narrate your process — no openers like "Great! I now have
+  everything I need", "Let me compile…", or restating formatting rules you
+  loaded. Process narration in the output is a defect.
