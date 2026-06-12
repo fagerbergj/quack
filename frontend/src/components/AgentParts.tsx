@@ -35,7 +35,7 @@ export function AssistantParts({ parts, showCursor }: {
 function PartView({ part }: { part: MessagePart }) {
   switch (part.kind) {
     case 'text': return <AssistantText text={part.text} />
-    case 'thinking': return <ThinkingIndicator />
+    case 'thinking': return <ThinkBlock text={part.text} />
     case 'tool_call': return <ToolBlock part={part} />
     case 'agent': return <AgentGroup part={part} />
     case 'self_refine': return <SelfRefineGroup part={part} />
@@ -184,13 +184,17 @@ export function WindowedItems({ items }: { items: MessagePart[] }) {
   )
 }
 
-// ThinkingIndicator shows a compact badge while the model is reasoning,
-// without rendering the full thinking text.
-function ThinkingIndicator() {
+// ThinkBlock renders reasoning (the `thinking` event) as a collapsed block.
+function ThinkBlock({ text }: { text: string }) {
   return (
-    <div className="my-1 inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-gray-400 dark:text-gray-500 italic">
-      reasoning…
-    </div>
+    <details className="my-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 not-prose">
+      <summary className="cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+        thinking
+      </summary>
+      <div className="px-3 pb-3 pt-1 text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap font-mono">
+        {text}
+      </div>
+    </details>
   )
 }
 
