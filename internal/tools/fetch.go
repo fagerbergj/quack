@@ -70,6 +70,9 @@ func newFetch(d Deps) (tool.Tool, error) {
 			if ferr != nil {
 				return "", ferr
 			}
+			if result, ferr = sanitizeFetched(target, result); ferr != nil {
+				return "", ferr
+			}
 			if d.Cache != nil {
 				d.Cache.Set(tc, target, result, tc.SessionID(), tc.AppName())
 			}
@@ -123,6 +126,20 @@ func fetchBest(tc agent.ToolContext, d Deps, u *url.URL, target string) (string,
 	default:
 		return "", fmt.Errorf("web_fetch: %s returned no readable text (it may require login, block automated access, or have no textual content)", target)
 	}
+}
+
+// sanitizeFetched makes fetched content safe to embed in session events.
+// Binary payloads (e.g. an image body served where text was expected) must
+// never reach the session store: invalid UTF-8 / NUL bytes make Postgres
+// reject the event append (SQLSTATE 22P05), which kills the worker run
+// mid-loop and surfaces as a silently-empty node. Mostly-binary content is
+// rejected with a useful error; isolated bad bytes are stripped.
+func sanitizeFetched(target, s string) (string, error) {
+	clean := strings.ReplaceAll(strings.ToValidUTF8(s, ""), "\x00", "")
+	if len(s) > 512 && len(clean) < len(s)*9/10 {
+		return "", fmt.Errorf("web_fetch: %s returned binary (non-text) content — it cannot be read as a page; try a different source", target)
+	}
+	return clean, nil
 }
 
 // fetchReadable does a guarded GET and returns the page's readable text.
