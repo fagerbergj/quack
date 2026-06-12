@@ -420,5 +420,16 @@ components:
           type: integer
         finish_reason:
           type: string
+        reasoning_tokens:
+          type: integer
         server_duration_ms:
           type: integer
+        self_refined:
+          type: boolean
+        judge_rounds:
+          type: integer
+        judge_final_score:
+          type: number
+          format: double
+        judge_passed:
+          type: boolean

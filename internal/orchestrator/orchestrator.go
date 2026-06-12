@@ -43,8 +43,17 @@ func New(sessions session.Service, planner *dag.Planner, executor *dag.Executor)
 // The final answer from the last DAG node is persisted as the assistant turn.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// Build the prior-conversation context BEFORE persisting the current
+		// message, so the new message isn't duplicated into its own history.
+		history := o.buildHistory(ctx, userID, sessionID)
+
+		// Persist the user message immediately — not at the end of the run —
+		// so a refresh mid-run or a failed run still shows the user's side of
+		// the turn, and turn-row/session-event index pairing never skews.
+		invID := o.persistUserMessage(ctx, userID, sessionID, message)
+
 		// Plan the DAG.
-		plan, err := o.planner.Plan(ctx, message)
+		plan, err := o.planner.Plan(ctx, history, message)
 		if err != nil {
 			yield(stream.Errorf("planner: "+err.Error()), nil)
 			return
@@ -84,9 +93,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// The last node in topological order is the final answer.
 		finalAnswer := lastOutput(plan, nodeOutputs)
 
-		// Persist the user message + final answer to the quack session so
-		// store.Messages() sees a proper chat history for this turn.
-		o.persistTurn(ctx, userID, sessionID, message, plan.Nodes, finalAnswer)
+		// Persist the final answer to the quack session so store.Messages()
+		// sees a proper chat history for this turn.
+		o.persistAnswer(ctx, userID, sessionID, invID, plan.Nodes, finalAnswer)
 	}
 }
 
@@ -115,26 +124,84 @@ func lastOutput(plan *dag.Plan, outputs map[string]string) string {
 	return ""
 }
 
-// persistTurn writes the user message and final assistant answer to the
-// "quack" ADK session, creating the session if it does not exist yet.
-func (o *Orchestrator) persistTurn(ctx context.Context, userID, sessionID, message string, nodes []dag.Node, finalAnswer string) {
-	sess, err := o.getOrCreateSession(ctx, userID, sessionID)
-	if err != nil {
-		log.Printf("orchestrator: persist turn: get/create session: %v", err)
-		return
+// maxHistoryChars caps the conversation context passed to the planner and
+// nodes. Oldest turns are dropped first when the transcript exceeds it.
+const maxHistoryChars = 24000
+
+// buildHistory extracts the prior conversation from the quack session events
+// as structured turns. Returns nil for a fresh chat. Thinking parts and tool
+// traffic are excluded — only the visible transcript matters for follow-up
+// context.
+func (o *Orchestrator) buildHistory(ctx context.Context, userID, sessionID string) []dag.HistoryTurn {
+	resp, err := o.sessions.Get(ctx, &session.GetRequest{
+		AppName: AppName, UserID: userID, SessionID: sessionID,
+	})
+	if err != nil || resp == nil {
+		return nil
 	}
 
-	invID := uuid.NewString()
+	var turns []dag.HistoryTurn
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		var text strings.Builder
+		for _, p := range ev.Content.Parts {
+			if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil && p.Text != "" {
+				text.WriteString(p.Text)
+			}
+		}
+		if text.Len() == 0 {
+			continue
+		}
+		role := "model"
+		if ev.Author == "user" {
+			role = "user"
+		}
+		turns = append(turns, dag.HistoryTurn{Role: role, Text: text.String()})
+	}
 
+	// Keep the most recent turns within budget; drop oldest first.
+	total := 0
+	start := len(turns)
+	for i := len(turns) - 1; i >= 0; i-- {
+		total += len(turns[i].Text)
+		if total > maxHistoryChars {
+			break
+		}
+		start = i
+	}
+	return turns[start:]
+}
+
+// persistUserMessage writes the user message to the "quack" ADK session at the
+// start of the run, creating the session if needed. Returns the invocation ID
+// the answer event should share.
+func (o *Orchestrator) persistUserMessage(ctx context.Context, userID, sessionID, message string) string {
+	invID := uuid.NewString()
+	sess, err := o.getOrCreateSession(ctx, userID, sessionID)
+	if err != nil {
+		log.Printf("orchestrator: persist user message: get/create session: %v", err)
+		return invID
+	}
 	userEv := session.NewEvent(invID)
 	userEv.Author = "user"
 	userEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: message}}}
 	if err := o.sessions.AppendEvent(ctx, sess, userEv); err != nil {
-		log.Printf("orchestrator: persist turn: append user event: %v", err)
+		log.Printf("orchestrator: persist user message: append event: %v", err)
+	}
+	return invID
+}
+
+// persistAnswer writes the final assistant answer to the "quack" ADK session,
+// paired with the user event via the shared invocation ID.
+func (o *Orchestrator) persistAnswer(ctx context.Context, userID, sessionID, invID string, nodes []dag.Node, finalAnswer string) {
+	if strings.TrimSpace(finalAnswer) == "" {
 		return
 	}
-
-	if strings.TrimSpace(finalAnswer) == "" {
+	sess, err := o.getOrCreateSession(ctx, userID, sessionID)
+	if err != nil {
+		log.Printf("orchestrator: persist answer: get/create session: %v", err)
 		return
 	}
 
@@ -152,7 +219,7 @@ func (o *Orchestrator) persistTurn(ctx context.Context, userID, sessionID, messa
 	answerEv.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: finalAnswer}}}
 	answerEv.TurnComplete = true
 	if err := o.sessions.AppendEvent(ctx, sess, answerEv); err != nil {
-		log.Printf("orchestrator: persist turn: append answer event: %v", err)
+		log.Printf("orchestrator: persist answer: append event: %v", err)
 	}
 }
 
