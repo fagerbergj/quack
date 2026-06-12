@@ -43,13 +43,17 @@ func New(sessions session.Service, planner *dag.Planner, executor *dag.Executor)
 // The final answer from the last DAG node is persisted as the assistant turn.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// Build the prior-conversation context BEFORE persisting the current
+		// message, so the new message isn't duplicated into its own history.
+		history := o.buildHistory(ctx, userID, sessionID)
+
 		// Persist the user message immediately — not at the end of the run —
 		// so a refresh mid-run or a failed run still shows the user's side of
 		// the turn, and turn-row/session-event index pairing never skews.
 		invID := o.persistUserMessage(ctx, userID, sessionID, message)
 
 		// Plan the DAG.
-		plan, err := o.planner.Plan(ctx, message)
+		plan, err := o.planner.Plan(ctx, history, message)
 		if err != nil {
 			yield(stream.Errorf("planner: "+err.Error()), nil)
 			return
@@ -118,6 +122,59 @@ func lastOutput(plan *dag.Plan, outputs map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// maxHistoryChars caps the conversation context passed to the planner and
+// nodes. Oldest turns are dropped first when the transcript exceeds it.
+const maxHistoryChars = 24000
+
+// buildHistory renders the prior conversation as alternating "User:"/
+// "Assistant:" blocks from the quack session events. Returns "" for a fresh
+// chat. Thinking parts and tool traffic are excluded — only the visible
+// transcript matters for follow-up context.
+func (o *Orchestrator) buildHistory(ctx context.Context, userID, sessionID string) string {
+	resp, err := o.sessions.Get(ctx, &session.GetRequest{
+		AppName: AppName, UserID: userID, SessionID: sessionID,
+	})
+	if err != nil || resp == nil {
+		return ""
+	}
+
+	var blocks []string
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		var text strings.Builder
+		for _, p := range ev.Content.Parts {
+			if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil && p.Text != "" {
+				text.WriteString(p.Text)
+			}
+		}
+		if text.Len() == 0 {
+			continue
+		}
+		role := "Assistant"
+		if ev.Author == "user" {
+			role = "User"
+		}
+		blocks = append(blocks, role+": "+text.String())
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+
+	// Keep the most recent turns within budget; drop oldest first.
+	total := 0
+	start := len(blocks)
+	for i := len(blocks) - 1; i >= 0; i-- {
+		total += len(blocks[i]) + 2
+		if total > maxHistoryChars {
+			break
+		}
+		start = i
+	}
+	return strings.Join(blocks[start:], "\n\n")
 }
 
 // persistUserMessage writes the user message to the "quack" ADK session at the

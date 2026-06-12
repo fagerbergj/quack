@@ -83,7 +83,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			ch := make(chan nodeMsg, 256)
 			for _, node := range layer {
 				go func(n Node) {
-					e.streamNode(layerCtx, n, userID, plan.ID, upstream, ch)
+					e.streamNode(layerCtx, plan, n, userID, upstream, ch)
 				}(node)
 			}
 
@@ -132,7 +132,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 
 // streamNode runs one node against its A2A client and sends all activity events
 // to ch as they arrive, followed by a done message.
-func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID string, upstream map[string]string, ch chan<- nodeMsg) {
+func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, ch chan<- nodeMsg) {
 	send := func(m nodeMsg) {
 		select {
 		case ch <- m:
@@ -146,7 +146,7 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 		return
 	}
 
-	task := buildTask(node.Task, node.DependsOn, upstream)
+	task := buildTask(plan, node, upstream)
 
 	r, err := runner.New(runner.Config{
 		AppName:           "quack-nodes",
@@ -159,7 +159,7 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 		return
 	}
 
-	nodeSessionID := planID + ":" + node.ID
+	nodeSessionID := plan.ID + ":" + node.ID
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: task}}}
 	var answer strings.Builder
 	var stats stream.NodeDoneData
@@ -217,26 +217,32 @@ func (e *Executor) streamNode(ctx context.Context, node Node, userID, planID str
 	send(nodeMsg{nodeID: node.ID, done: true, output: out, stats: stats})
 }
 
-// buildTask constructs the message for a node, prepending upstream outputs
-// when the node has dependencies.
-func buildTask(task string, dependsOn []string, upstream map[string]string) string {
-	var parts []string
-	for _, dep := range dependsOn {
-		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
-			parts = append(parts, out)
-		}
-	}
-	if len(parts) == 0 {
-		return task
-	}
+// buildTask constructs the message for a node: conversation history and the
+// user's verbatim request first (the planner's task description is a lossy
+// summary — details like names, dates, and constraints must reach the
+// specialist directly), then upstream outputs, then the focused task.
+func buildTask(plan Plan, node Node, upstream map[string]string) string {
 	var sb strings.Builder
-	for i, p := range parts {
-		if i > 0 {
+	if plan.History != "" {
+		sb.WriteString("Conversation so far:\n")
+		sb.WriteString(plan.History)
+		sb.WriteString("\n\n---\n\n")
+	}
+	if plan.UserMessage != "" {
+		sb.WriteString("User's request (verbatim):\n")
+		sb.WriteString(plan.UserMessage)
+		sb.WriteString("\n\n---\n\n")
+	}
+	for _, dep := range node.DependsOn {
+		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
+			sb.WriteString(out)
 			sb.WriteString("\n\n---\n\n")
 		}
-		sb.WriteString(p)
 	}
-	sb.WriteString("\n\n---\n\nTask: ")
-	sb.WriteString(task)
+	if sb.Len() == 0 {
+		return node.Task
+	}
+	sb.WriteString("Your task: ")
+	sb.WriteString(node.Task)
 	return sb.String()
 }

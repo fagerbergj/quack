@@ -28,14 +28,20 @@ func NewPlanner(m model.LLM, agents []AgentInfo) *Planner {
 	return &Planner{model: m, agents: agents}
 }
 
-// Plan calls the model to produce a DAG for the given user message.
-// On any failure it falls back to a single web-researcher node.
-func (p *Planner) Plan(ctx context.Context, message string) (*Plan, error) {
+// Plan calls the model to produce a DAG for the given user message. history is
+// the prior conversation (empty for a fresh chat); it is shown to the planner
+// so follow-up requests resolve correctly, and stamped on the plan so every
+// node receives it. On any failure it falls back to a single web-researcher node.
+func (p *Planner) Plan(ctx context.Context, history, message string) (*Plan, error) {
 	sysPrompt := p.buildSystemPrompt()
+	userText := message
+	if history != "" {
+		userText = "Conversation so far:\n" + history + "\n\nNew user request:\n" + message
+	}
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{
 			Role:  "user",
-			Parts: []*genai.Part{{Text: "/no_think " + message}},
+			Parts: []*genai.Part{{Text: "/no_think " + userText}},
 		}},
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}},
@@ -45,7 +51,7 @@ func (p *Planner) Plan(ctx context.Context, message string) (*Plan, error) {
 	var sb strings.Builder
 	for resp, err := range p.model.GenerateContent(ctx, req, false) {
 		if err != nil {
-			return p.fallback(message), nil // degrade gracefully
+			return p.stamp(p.fallback(message), history, message), nil // degrade gracefully
 		}
 		if resp.Content != nil {
 			for _, part := range resp.Content.Parts {
@@ -58,9 +64,17 @@ func (p *Planner) Plan(ctx context.Context, message string) (*Plan, error) {
 
 	plan, err := parsePlan(sb.String(), p.agents)
 	if err != nil {
-		return p.fallback(message), nil // degrade gracefully
+		return p.stamp(p.fallback(message), history, message), nil // degrade gracefully
 	}
-	return plan, nil
+	return p.stamp(plan, history, message), nil
+}
+
+// stamp records the verbatim user message and conversation history on the plan
+// so the executor can pass them to every node.
+func (p *Planner) stamp(plan *Plan, history, message string) *Plan {
+	plan.History = history
+	plan.UserMessage = message
+	return plan
 }
 
 // fallback returns a single-node plan using the first available web-researcher.

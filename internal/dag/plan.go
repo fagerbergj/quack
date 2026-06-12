@@ -6,11 +6,16 @@ package dag
 
 import "fmt"
 
-// Plan is a DAG of agent tasks for one user request.
+// Plan is a DAG of agent tasks for one user request. UserMessage is the user's
+// request verbatim and History the prior conversation — both flow to every
+// node so specialists see the full context, not just the planner's compressed
+// task description.
 type Plan struct {
-	ID    string
-	Nodes []Node
-	Edges []Edge
+	ID          string
+	Nodes       []Node
+	Edges       []Edge
+	UserMessage string
+	History     string
 }
 
 // Node is one task in the plan: the agent to run, what to do, an acceptance
