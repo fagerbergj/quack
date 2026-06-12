@@ -15,26 +15,57 @@ import (
 )
 
 const (
-	// judgeMaxTokens bounds the judge's JSON verdict.
-	judgeMaxTokens = 256
+	// judgeMaxTokens bounds the judge's JSON verdict. Larger than before to
+	// accommodate per-criterion reasons in the G-Eval response structure.
+	judgeMaxTokens = 2048
 
-	// judgeInstruction drives a single-pass verdict: score + pass/fail + one
-	// line of feedback. No per-criterion breakdown — faster and sufficient for
-	// a binary gate.
+	// judgeInstruction drives G-Eval-style scoring: the judge reasons through
+	// each named criterion (reason first, then score) before computing the
+	// overall. Reason-before-score eliminates round-number clustering and
+	// holistic averaging bias; per-criterion scores let the caller enforce
+	// hard caps in code regardless of what the judge computes.
+	//
+	// The example explicitly names all five keys inside criteria AND shows
+	// score/passed/feedback at the top level — the most common model mistake
+	// is nesting those three inside criteria instead of at the outer level.
 	judgeInstruction = "You are an independent, skeptical judge. You did not write the answer. " +
-		"Score the answer against the rubric on a scale of 0.0–1.0. " +
-		"Respond with ONLY a valid JSON object — no other text.\n" +
-		"{\"score\": 0.0, \"passed\": false, \"feedback\": \"one sentence on the biggest gap, or empty string if none\"}"
+		"Work through each named criterion in the rubric. " +
+		"For each criterion write a one-sentence reason, then assign a score 0.0–1.0 using the rubric's scoring anchors. " +
+		"Apply any hard caps stated in the rubric, then report the capped mean as the top-level score. " +
+		"Respond with ONLY a valid JSON object. " +
+		"IMPORTANT: score, passed, and feedback are TOP-LEVEL keys — do NOT place them inside criteria.\n" +
+		"{\n" +
+		"  \"criteria\": {\n" +
+		"    \"grounded\":             {\"reason\": \"...\", \"score\": 0.0},\n" +
+		"    \"no_fabrication\":       {\"reason\": \"...\", \"score\": 0.0},\n" +
+		"    \"answers_question\":     {\"reason\": \"...\", \"score\": 0.0},\n" +
+		"    \"internally_consistent\":{\"reason\": \"...\", \"score\": 0.0},\n" +
+		"    \"cites_sources\":        {\"reason\": \"...\", \"score\": 0.0}\n" +
+		"  },\n" +
+		"  \"score\": 0.0,\n" +
+		"  \"passed\": false,\n" +
+		"  \"feedback\": \"what to fix\"\n" +
+		"}"
 
 	reviseInstruction = "You are revising your answer to address a reviewer's feedback. " +
 		"Output ONLY the improved answer text — no preamble, no commentary."
 )
 
-// verdict is the judge's structured score for one round.
+// criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
+type criterionScore struct {
+	Reason string  `json:"reason,omitempty"`
+	Score  float64 `json:"score"`
+}
+
+// verdict is the judge's structured score for one round. When Criteria is
+// populated (G-Eval mode), parseVerdict recomputes Score from the criterion
+// averages and enforces hard caps in code rather than trusting the judge's
+// holistic value.
 type verdict struct {
-	Score    float64 `json:"score"`
-	Passed   bool    `json:"passed"`
-	Feedback string  `json:"feedback"`
+	Criteria map[string]criterionScore `json:"criteria,omitempty"`
+	Score    float64                   `json:"score"`
+	Passed   bool                      `json:"passed"`
+	Feedback string                    `json:"feedback"`
 }
 
 // runJudge scores answer against the constitution + rubric using the judge model.
@@ -212,32 +243,96 @@ func generateStream(ctx context.Context, m model.LLM, system, user string, jsonM
 	}, onThinking)
 }
 
-// parseVerdict reads the judge's JSON, tolerating a ```json fenced block and
-// truncated output (tries appending one or two closing braces before giving up).
+// parseVerdict reads the judge's JSON, tolerating a ```json fenced block.
+//
+// It handles two known model failure modes:
+//   - Truncated JSON: the model emits score/passed/feedback inside the criteria
+//     object, leaving the outer object unclosed. We try appending one or two
+//     closing braces before giving up.
+//   - Misplaced top-level fields: after brace repair, score/passed/feedback
+//     appear as keys inside criteria (not valid criterionScore objects). We
+//     skip non-object entries and recover feedback/passed from them directly.
+//
+// When per-criterion scores are present (G-Eval mode) the overall score is
+// recomputed from the criterion average with hard caps applied in code,
+// overriding the judge's holistic value. The final score is clamped [0,1].
 func parseVerdict(raw string) (verdict, error) {
 	s := strings.TrimSpace(raw)
+	// Strip any prefix before the first '{' (e.g. ```json fences).
 	if i := strings.Index(s, "{"); i >= 0 {
 		s = s[i:]
 	}
 
-	var v verdict
+	// Intermediate type: criteria values are kept as raw JSON so we can
+	// tolerate non-object entries (misplaced score/passed/feedback).
+	type rawVerdict struct {
+		Criteria map[string]json.RawMessage `json:"criteria,omitempty"`
+		Score    float64                    `json:"score"`
+		Passed   bool                       `json:"passed"`
+		Feedback string                     `json:"feedback"`
+	}
+
+	// Use a Decoder (not Unmarshal) so it stops after the first complete JSON
+	// object and ignores any trailing content — including a duplicated blob.
+	var rv rawVerdict
+	var parsed bool
 	var lastErr error
 	for _, suffix := range []string{"", "}", "}}"} {
 		dec := json.NewDecoder(strings.NewReader(s + suffix))
-		if err := dec.Decode(&v); err == nil {
+		if err := dec.Decode(&rv); err == nil {
+			parsed = true
 			break
 		} else {
 			lastErr = err
-			v = verdict{}
 		}
 	}
-	if lastErr != nil && v.Score == 0 && !v.Passed && v.Feedback == "" {
+	if !parsed {
 		return verdict{}, fmt.Errorf("vetting: parse judge verdict %q: %w", raw, lastErr)
 	}
 
-	if v.Feedback == "None" || v.Feedback == "null" || v.Feedback == "N/A" {
-		v.Feedback = ""
+	feedback := rv.Feedback
+	if feedback == "None" || feedback == "null" || feedback == "N/A" {
+		feedback = ""
 	}
+	v := verdict{Score: rv.Score, Passed: rv.Passed, Feedback: feedback}
+
+	// Decode per-criterion entries, skipping non-object values. When score,
+	// passed, or feedback ended up inside criteria, recover them explicitly.
+	for name, entry := range rv.Criteria {
+		var cs criterionScore
+		if err := json.Unmarshal(entry, &cs); err != nil {
+			switch name {
+			case "feedback":
+				json.Unmarshal(entry, &v.Feedback) //nolint:errcheck
+			case "passed":
+				json.Unmarshal(entry, &v.Passed) //nolint:errcheck
+			}
+			continue
+		}
+		if v.Criteria == nil {
+			v.Criteria = make(map[string]criterionScore)
+		}
+		v.Criteria[name] = cs
+	}
+
+	// G-Eval aggregation: recompute score from per-criterion values when present.
+	if len(v.Criteria) > 0 {
+		var sum float64
+		for _, c := range v.Criteria {
+			sum += c.Score
+		}
+		avg := sum / float64(len(v.Criteria))
+
+		// Hard cap: zero citations → score ≤ 0.40 regardless of other criteria.
+		// Using < 0.05 rather than == 0 to tolerate floating-point imprecision.
+		if cs, ok := v.Criteria["cites_sources"]; ok && cs.Score < 0.05 {
+			if avg > 0.40 {
+				avg = 0.40
+			}
+		}
+		v.Score = avg
+	}
+
 	if v.Score < 0 {
 		v.Score = 0
 	}
