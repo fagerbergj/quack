@@ -10,7 +10,7 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `providers.local.api_key` (env `LLM_API_KEY`) | `unused` | llama-swap needs no auth. |
 | `orchestrator.planner.inference` | provider `local`, model `gpt-oss-120b` | Strongest reasoner; plans the DAG once per request, so quality beats speed. |
 | `adversarial.self_refine` | `true` | Free same-model pre-pass before the judge; polish, not the trust decision. |
-| `adversarial.judge.inference` | provider `local`, model `selene-mini` | Atla Selene-1 Mini 8B, purpose-trained rubric scorer; independent of the worker, cheap to keep resident (see Inference backend). |
+| `adversarial.judge.inference` | provider `local`, model `gemma4-26b-a4b` | Atla Selene-1 Mini 8B, purpose-trained rubric scorer; independent of the worker, cheap to keep resident (see Inference backend). |
 | `adversarial.judge.threshold` | `0.7` | Score bar to pass the gate. |
 | `adversarial.max_rounds` | `2` | Revise-loop cap; bounds cost and keeps the node loop acyclic. |
 | `agents[web-researcher].inference` | provider `local`, model `qwen3.6-35b` | Fast, capable general worker for web research. |
@@ -41,7 +41,7 @@ Models are served by a local [llama-swap](https://github.com/fagerbergj/home-ser
 instance, OpenAI-compatible at `http://jason-server:11436/v1` (key `unused`). It holds **one chat
 model in memory at a time** (the `main` group), and swapping a model is expensive (multi-minute for
 the large ones), which is why Quack's executor runs nodes sequentially. The embedding model and the
-CPU judge (`selene-mini`) are loaded **separately and stay resident**, so they never swap the GPU
+CPU judge (`gemma4-26b-a4b`) are loaded **separately and stay resident**, so they never swap the GPU
 chat model. See the home-server `llm/llm-swap.yaml` for how each model is loaded.
 
 ## Gateway / deployment

@@ -105,7 +105,7 @@ output passes a **trust gate** before it counts:
    ([Self-Refine][self-refine]). Cheap, but it shares the worker's blind spots, so it's a polish
    pass, not the trust decision.
 2. **Independent judge.** A separate, independently-configured judge model (e.g.
-   [`selene-mini`][selenemini]) scores the output. Because it is genuinely different weights from
+   [`gemma4-26b-a4b`][selenemini]) scores the output. Because it is genuinely different weights from
    the worker, it catches blind spots the worker cannot see in its own output. This is the real
    trust decision ([the case for adversarial agents][adv]).
 
@@ -277,7 +277,7 @@ adversarial:
   judge:
     inference:
       provider: local
-      model: selene-mini         # independent judge
+      model: gemma4-26b-a4b         # independent judge
     threshold: 0.7
   max_rounds: 2
 
