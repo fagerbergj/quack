@@ -7,48 +7,43 @@ import (
 	"regexp"
 	"strings"
 
+	adkagent "google.golang.org/adk/agent"
+	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
+	"google.golang.org/adk/runner"
+	"google.golang.org/adk/session"
+	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
-	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/promptbuilder"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 const (
-	// judgeMaxTokens bounds the judge's JSON verdict. Larger than before to
-	// accommodate per-criterion reasons in the G-Eval response structure.
-	judgeMaxTokens = 2048
+	// submitVerdictTool is the name of the structured-termination tool the
+	// agentic judge calls to record its verdict and end its run.
+	submitVerdictTool = "submit_verdict"
 
-	// judgeInstruction drives G-Eval-style scoring: the judge reasons through
-	// each named criterion (reason first, then score) before computing the
-	// overall. Reason-before-score eliminates round-number clustering and
-	// holistic averaging bias; per-criterion scores let the caller enforce
-	// hard caps in code regardless of what the judge computes.
-	//
-	// The example explicitly names all five keys inside criteria AND shows
-	// score/passed/feedback at the top level — the most common model mistake
-	// is nesting those three inside criteria instead of at the outer level.
-	judgeInstruction = "You are an independent, skeptical judge. You did not write the answer. " +
-		"Work through each named criterion in the rubric. " +
-		"For each criterion write a one-sentence reason, then assign a score 0.0–1.0 using the rubric's scoring anchors. " +
-		"Apply any hard caps stated in the rubric, then report the capped mean as the top-level score. " +
-		"Respond with ONLY a valid JSON object. " +
-		"IMPORTANT: score, passed, and feedback are TOP-LEVEL keys — do NOT place them inside criteria.\n" +
-		"{\n" +
-		"  \"criteria\": {\n" +
-		"    \"grounded\":             {\"reason\": \"...\", \"score\": 0.0},\n" +
-		"    \"no_fabrication\":       {\"reason\": \"...\", \"score\": 0.0},\n" +
-		"    \"answers_question\":     {\"reason\": \"...\", \"score\": 0.0},\n" +
-		"    \"internally_consistent\":{\"reason\": \"...\", \"score\": 0.0},\n" +
-		"    \"cites_sources\":        {\"reason\": \"...\", \"score\": 0.0}\n" +
-		"  },\n" +
-		"  \"score\": 0.0,\n" +
-		"  \"passed\": false,\n" +
-		"  \"feedback\": \"what to fix\"\n" +
-		"}"
+	// defaultJudgeMaxIterations bounds the judge's agentic tool loop (model
+	// turns per round) when Config.JudgeMaxIterations is unset.
+	defaultJudgeMaxIterations = 6
 
-	reviseInstruction = "You are revising your answer to address a reviewer's feedback. " +
-		"Output ONLY the improved answer text — no preamble, no commentary."
+	// judgeAgentBehaviour is the behaviour layer of the agentic judge's system
+	// prompt (promptbuilder.Judge wraps it with identity, tools, and environment
+	// layers, exactly like a specialist agent's prompt.md). Unlike the old
+	// one-shot scorer it tells the judge to verify the answer with its own tools
+	// (re-fetching cited URLs, checking claims) before scoring, then to terminate
+	// by calling submit_verdict — never by emitting JSON text. Per-criterion
+	// reason-before-score (G-Eval) keeps the scoring disciplined; the caller
+	// re-derives the overall score with hard caps in aggregateVerdict.
+	judgeAgentBehaviour = "You did NOT write the answer being evaluated, and you must not trust its assertions. " +
+		"Verify it agentically: use web_search and web_fetch to independently re-fetch the URLs the answer cites and confirm that each material claim is actually supported by its source. A cited URL that does not load, or does not support the claim it is attached to, is a fabrication. " +
+		"Then work through each named criterion in the rubric. For each, reason in one or two sentences, then assign a score 0.0–1.0 using the rubric's scoring anchors. " +
+		"When — and only when — you have evaluated every criterion, call the submit_verdict tool exactly once with: `score` (the rubric mean after applying any hard caps stated in the rubric), `criteria` (an object mapping each criterion name to {reason, score}), and `feedback` (concrete, actionable notes on what to fix; empty when the answer passes). " +
+		"Do NOT write the verdict as prose or JSON in your reply — calling submit_verdict is the only way to finish. " +
+		"The five criteria are: grounded, no_fabrication, answers_question, internally_consistent, cites_sources."
 )
 
 // criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
@@ -68,12 +63,68 @@ type verdict struct {
 	Feedback string                    `json:"feedback"`
 }
 
-// runJudge scores answer against the constitution + rubric using the judge model.
-// constitution provides the global principles; rubric provides the per-agent
-// scoring criteria; fetchedURLs is the set of URLs the worker called web_fetch
-// on — used to pre-verify cited links before the judge sees the answer.
-// onThinking receives streaming thinking tokens as they arrive (nil to discard).
-func runJudge(ctx context.Context, m model.LLM, constitution, rubric string, question *genai.Content, answer string, fetchedURLs map[string]fetchRecord, onThinking func(string)) (verdict, error) {
+// JudgeFactory builds a fresh agentic judge bound to sink: when the judge calls
+// the submit_verdict tool, its arguments are written into sink. A new judge is
+// built per round so each round's submit_verdict binds a clean sink. The factory
+// closes over the judge model and the judge's verification tools (web_search,
+// web_fetch); see NewJudgeFactory.
+type JudgeFactory func(sink *verdict) (adkagent.Agent, error)
+
+// NewJudgeFactory returns a JudgeFactory that builds the agentic judge as an ADK
+// llmagent with judgeModel, the supplied verification webTools (web_search,
+// web_fetch), and a per-round submit_verdict tool bound to the caller's sink.
+func NewJudgeFactory(judgeModel model.LLM, webTools []tool.Tool) JudgeFactory {
+	return func(sink *verdict) (adkagent.Agent, error) {
+		submit, err := newSubmitVerdictTool(sink)
+		if err != nil {
+			return nil, err
+		}
+		judgeTools := make([]tool.Tool, 0, len(webTools)+1)
+		judgeTools = append(judgeTools, webTools...)
+		judgeTools = append(judgeTools, submit)
+		return llmagent.New(llmagent.Config{
+			Name:        "judge",
+			Description: "independent skeptical verifier",
+			Model:       judgeModel,
+			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
+				return promptbuilder.Judge(judgeTools, judgeAgentBehaviour), nil
+			},
+			Tools: judgeTools,
+			GenerateContentConfig: &genai.GenerateContentConfig{
+				MaxOutputTokens: quackagent.MaxOutputTokens,
+			},
+		})
+	}
+}
+
+// verdictArgs is the schema the judge fills when calling submit_verdict. Only
+// score is required; criteria and feedback are optional so a terse judge call
+// still validates (aggregateVerdict tolerates absent criteria).
+type verdictArgs struct {
+	Score    float64                   `json:"score"`
+	Criteria map[string]criterionScore `json:"criteria,omitempty"`
+	Feedback string                    `json:"feedback,omitempty"`
+}
+
+// newSubmitVerdictTool builds the structured-termination tool. Its handler
+// records the verdict into sink and escalates so the judge's run ends
+// immediately (no further model turn), mirroring ADK's exitlooptool pattern.
+func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        submitVerdictTool,
+		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion.",
+	}, func(ctx tool.Context, args verdictArgs) (map[string]any, error) {
+		*sink = verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback}
+		ctx.Actions().Escalate = true
+		ctx.Actions().SkipSummarization = true
+		return map[string]any{"recorded": true}, nil
+	})
+}
+
+// buildJudgePrompt is the user message handed to the agentic judge: the
+// constitution + rubric, the system-checked source verification hint (which URLs
+// the worker actually fetched), the question, and the answer to judge.
+func buildJudgePrompt(constitution, rubric string, question *genai.Content, answer string, fetchedURLs map[string]fetchRecord) string {
 	var sb strings.Builder
 	if constitution != "" {
 		sb.WriteString("Principles:\n")
@@ -85,16 +136,110 @@ func runJudge(ctx context.Context, m model.LLM, constitution, rubric string, que
 	if section := buildSourceVerification(answer, fetchedURLs); section != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(section)
+		sb.WriteString("\nThis is a hint from the worker's session — verify it yourself with your tools; do not take it on faith.")
 	}
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(questionText(question))
 	sb.WriteString("\n\nAnswer to judge:\n")
 	sb.WriteString(answer)
-	raw, err := generateStream(ctx, m, judgeInstruction, sb.String(), true, onThinking)
+	return sb.String()
+}
+
+// runJudgeAgent runs one agentic judge round in its own isolated runner +
+// in-memory session, so the judge's tool calls never touch the worker's session.
+// emit receives display copies of the judge's thinking and tool activity (the
+// caller authors them so the worker's revision context can filter them out); it
+// returns false when the consumer has disconnected, which aborts the round.
+//
+// The verdict is captured structurally via submit_verdict (sink). If the judge
+// ends without calling it, runJudgeAgent falls back to parsing any text it
+// emitted, and failing that returns an error so the gate degrades gracefully.
+func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, fetchedURLs map[string]fetchRecord, emit func(*genai.Part) bool) (verdict, error) {
+	var sink verdict
+	judgeAgent, err := factory(&sink)
 	if err != nil {
-		return verdict{}, err
+		return verdict{}, fmt.Errorf("vetting: build judge agent: %w", err)
 	}
-	return parseVerdict(raw)
+	jr, err := runner.New(runner.Config{
+		AppName:           "quack-judge",
+		Agent:             judgeAgent,
+		SessionService:    session.InMemoryService(),
+		AutoCreateSession: true,
+	})
+	if err != nil {
+		return verdict{}, fmt.Errorf("vetting: judge runner: %w", err)
+	}
+
+	maxIters := cfg.JudgeMaxIterations
+	if maxIters <= 0 {
+		maxIters = defaultJudgeMaxIterations
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer, fetchedURLs)}}}
+
+	var (
+		submitted bool
+		turns     int
+		accum     strings.Builder
+	)
+	for ev, err := range jr.Run(runCtx, "judge", "verdict", content, adkagent.RunConfig{}) {
+		if err != nil {
+			return verdict{}, err
+		}
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p == nil {
+				continue
+			}
+			switch {
+			case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
+				submitted = true // handler runs as part of this call; sink is populated
+			case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
+				// suppress from display
+			case p.Thought && p.Text != "":
+				if !emit(stream.ThinkingPart(p.Text)) {
+					return verdict{}, context.Canceled
+				}
+			case p.FunctionCall != nil:
+				if !emit(&genai.Part{FunctionCall: p.FunctionCall}) {
+					return verdict{}, context.Canceled
+				}
+			case p.FunctionResponse != nil:
+				if !emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
+					return verdict{}, context.Canceled
+				}
+			case p.Text != "":
+				// The local model emits reasoning as plain text rather than Thought
+				// parts; surface it as thinking and keep it for the text fallback.
+				accum.WriteString(p.Text)
+				if !emit(stream.ThinkingPart(p.Text)) {
+					return verdict{}, context.Canceled
+				}
+			}
+		}
+		if ev.TurnComplete {
+			turns++
+		}
+		// Safety cap: a judge that never calls submit_verdict can't loop forever.
+		if turns > maxIters {
+			cancel()
+			break
+		}
+	}
+
+	if submitted {
+		return aggregateVerdict(sink), nil
+	}
+	// Fallback: judge ended without a structured verdict. Try its text, else fail.
+	if v, perr := parseVerdict(accum.String()); perr == nil {
+		return v, nil
+	}
+	return verdict{}, fmt.Errorf("vetting: judge ended without a verdict")
 }
 
 // markdownLinkRe extracts inline Markdown link targets: [text](https://…)
@@ -215,35 +360,68 @@ func buildActivitySection(act workerActivity) string {
 	return sb.String()
 }
 
-// revise asks the worker's own model to improve the answer given judge feedback.
-// onThinking receives streaming thinking tokens as they arrive (nil to discard).
-func revise(ctx context.Context, m model.LLM, question *genai.Content, answer, feedback string, onThinking func(string)) (string, error) {
-	prompt := "Question:\n" + questionText(question) +
-		"\n\nYour previous answer:\n" + answer +
-		"\n\nReviewer feedback to address:\n" + feedback
-	return generateStream(ctx, m, reviseInstruction, prompt, false, onThinking)
+// buildRevisionContent constructs the user message for the agentic, session-
+// continuing revision: the worker is re-invoked (continuing its own session and
+// tools) to address the judge's feedback, then output only the corrected answer.
+// It mirrors buildCritiqueContent but is driven by the reviewer's feedback rather
+// than a generic self-critique.
+func buildRevisionContent(constitution string, question *genai.Content, answer, feedback string, act workerActivity) *genai.Content {
+	var sb strings.Builder
+	sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
+		"Address the reviewer's feedback below: use your tools to fix the gaps — re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
+		"Then output only the corrected answer with no preamble or commentary.\n\n")
+	if constitution != "" {
+		sb.WriteString("Principles:\n")
+		sb.WriteString(constitution)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("Reviewer feedback to address:\n")
+	sb.WriteString(feedback)
+	sb.WriteString("\n\n")
+	if section := buildActivitySection(act); section != "" {
+		sb.WriteString(section)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Original question:\n")
+	sb.WriteString(questionText(question))
+	sb.WriteString("\n\nYour previous answer:\n")
+	sb.WriteString(answer)
+	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
-// generateStream runs one model round-trip in streaming mode and returns the
-// concatenated non-thought text. Thinking chunks are passed to onThinking as
-// they arrive (nil disables the callback). jsonMode requests a JSON object
-// response (honored by the openai adapter).
-func generateStream(ctx context.Context, m model.LLM, system, user string, jsonMode bool, onThinking func(string)) (string, error) {
-	cfg := &genai.GenerateContentConfig{MaxOutputTokens: quackagent.MaxOutputTokens}
-	if system != "" {
-		cfg.SystemInstruction = &genai.Content{Parts: []*genai.Part{{Text: system}}}
+// aggregateVerdict re-derives the overall score from per-criterion values when
+// present (G-Eval mode), applies hard caps in code (overriding the judge's
+// holistic value), and clamps the final score to [0,1]. Used for both the
+// structured submit_verdict path and the parseVerdict text fallback.
+func aggregateVerdict(v verdict) verdict {
+	if len(v.Criteria) > 0 {
+		var sum float64
+		for _, c := range v.Criteria {
+			sum += c.Score
+		}
+		avg := sum / float64(len(v.Criteria))
+
+		// Hard cap: zero citations → score ≤ 0.40 regardless of other criteria.
+		// Using < 0.05 rather than == 0 to tolerate floating-point imprecision.
+		if cs, ok := v.Criteria["cites_sources"]; ok && cs.Score < 0.05 {
+			if avg > 0.40 {
+				avg = 0.40
+			}
+		}
+		v.Score = avg
 	}
-	if jsonMode {
-		cfg.ResponseMIMEType = "application/json"
-		cfg.MaxOutputTokens = judgeMaxTokens
+	if v.Score < 0 {
+		v.Score = 0
 	}
-	return inference.StreamGenerate(ctx, m, &model.LLMRequest{
-		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: user}}}},
-		Config:   cfg,
-	}, onThinking)
+	if v.Score > 1 {
+		v.Score = 1
+	}
+	return v
 }
 
-// parseVerdict reads the judge's JSON, tolerating a ```json fenced block.
+// parseVerdict reads the judge's JSON, tolerating a ```json fenced block. It is
+// the fallback path for when the agentic judge ends without calling the
+// submit_verdict tool but leaves a parseable verdict in its text.
 //
 // It handles two known model failure modes:
 //   - Truncated JSON: the model emits score/passed/feedback inside the criteria
@@ -315,31 +493,7 @@ func parseVerdict(raw string) (verdict, error) {
 		v.Criteria[name] = cs
 	}
 
-	// G-Eval aggregation: recompute score from per-criterion values when present.
-	if len(v.Criteria) > 0 {
-		var sum float64
-		for _, c := range v.Criteria {
-			sum += c.Score
-		}
-		avg := sum / float64(len(v.Criteria))
-
-		// Hard cap: zero citations → score ≤ 0.40 regardless of other criteria.
-		// Using < 0.05 rather than == 0 to tolerate floating-point imprecision.
-		if cs, ok := v.Criteria["cites_sources"]; ok && cs.Score < 0.05 {
-			if avg > 0.40 {
-				avg = 0.40
-			}
-		}
-		v.Score = avg
-	}
-
-	if v.Score < 0 {
-		v.Score = 0
-	}
-	if v.Score > 1 {
-		v.Score = 1
-	}
-	return v, nil
+	return aggregateVerdict(v), nil
 }
 
 // questionText extracts the user's question text from the invocation's content.

@@ -23,11 +23,12 @@ func FromConfig(c config.AdversarialConfig) (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		MaxRounds:    c.MaxRounds,
-		Threshold:    c.Threshold,
-		SelfRefine:   c.SelfRefine,
-		Constitution: constitution,
-		Rubric:       rubric,
+		MaxRounds:          c.MaxRounds,
+		Threshold:          c.Threshold,
+		SelfRefine:         c.SelfRefine,
+		JudgeMaxIterations: c.JudgeMaxIterations,
+		Constitution:       constitution,
+		Rubric:             rubric,
 	}, nil
 }
 

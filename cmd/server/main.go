@@ -17,7 +17,6 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/skilltoolset"
@@ -135,25 +134,39 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	}
 	sort.Strings(names)
 
-	var judge model.LLM
+	urlCache := tools.NewInMemoryURLCache()
+
+	var judgeFactory vetting.JudgeFactory
 	var gateCfg vetting.Config
 	if cfg.Adversarial.Enabled() {
 		jprov, ok := cfg.Provider(cfg.Adversarial.Provider)
 		if !ok {
 			return nil, nil, fmt.Errorf("adversarial: provider %q not found", cfg.Adversarial.Provider)
 		}
-		var err error
-		if judge, err = inference.NewModel(jprov, cfg.Adversarial.Model); err != nil {
+		judge, err := inference.NewModel(jprov, cfg.Adversarial.Model)
+		if err != nil {
 			return nil, nil, fmt.Errorf("adversarial: judge model: %w", err)
 		}
+		// The judge verifies agentically: give it the same web tools (and shared
+		// SSRF-guarded clients + URL cache) the workers use so its re-fetches of
+		// cited URLs are guarded and cache-hit what the worker already read.
+		judgeTools, err := tools.Build([]string{"web_search", "web_fetch"}, tools.Deps{
+			SearXNG:    cfg.Tools.WebSearch.Backend,
+			Crawl4AI:   cfg.Tools.Fetch.RenderBackend,
+			Summarizer: judge,
+			Cache:      urlCache,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("adversarial: judge tools: %w", err)
+		}
+		judgeFactory = vetting.NewJudgeFactory(judge, judgeTools)
 		if gateCfg, err = vetting.FromConfig(cfg.Adversarial); err != nil {
 			return nil, nil, err
 		}
-		log.Printf("trust gate enabled: judge=%q max_rounds=%d threshold=%.2f self_refine=%t",
-			cfg.Adversarial.Model, gateCfg.MaxRounds, gateCfg.Threshold, gateCfg.SelfRefine)
+		log.Printf("trust gate enabled: judge=%q max_rounds=%d threshold=%.2f self_refine=%t judge_max_iterations=%d",
+			cfg.Adversarial.Model, gateCfg.MaxRounds, gateCfg.Threshold, gateCfg.SelfRefine, gateCfg.JudgeMaxIterations)
 	}
 
-	urlCache := tools.NewInMemoryURLCache()
 	clientMap := make(map[string]adkagent.Agent, len(cfg.Agents))
 	var servers []*agent.A2AServer
 
@@ -200,7 +213,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				agentGateCfg.Rubric = override
 				log.Printf("agent %q: using per-agent rubric from bundle", name)
 			}
-			if served, err = vetting.NewGatedAgent(ag, m, judge, agentGateCfg); err != nil {
+			if served, err = vetting.NewGatedAgent(ag, judgeFactory, agentGateCfg); err != nil {
 				return nil, servers, fmtErr(name, "gate: %v", err)
 			}
 		}

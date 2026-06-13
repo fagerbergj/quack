@@ -29,15 +29,16 @@ type Config struct {
 // unwrapped. The judge is platform-invoked (a dedicated model), so agent bundles
 // stay simple.
 type AdversarialConfig struct {
-	Provider         string  `yaml:"provider"`          // inference provider for the judge model
-	Model            string  `yaml:"model"`             // judge model (empty ⇒ vetting disabled)
-	MaxRounds        int     `yaml:"max_rounds"`        // judge/revise rounds before giving up (default 2)
-	Threshold        float64 `yaml:"threshold"`         // pass score in (0,1] (default 0.7)
-	SelfRefine       bool    `yaml:"self_refine"`       // run the same-model self-refine pre-pass
-	ConstitutionPath string  `yaml:"constitution_path"` // path to global principles file (optional)
-	Constitution     string  `yaml:"constitution"`      // inline constitution (alternative to constitution_path)
-	RubricPath       string  `yaml:"rubric_path"`       // path to the default scoring guide
-	Rubric           string  `yaml:"rubric"`            // inline rubric (alternative to rubric_path)
+	Provider           string  `yaml:"provider"`             // inference provider for the judge model
+	Model              string  `yaml:"model"`                // judge model (empty ⇒ vetting disabled)
+	MaxRounds          int     `yaml:"max_rounds"`           // judge/revise rounds before giving up (default 2)
+	Threshold          float64 `yaml:"threshold"`            // pass score in (0,1] (default 0.7)
+	SelfRefine         bool    `yaml:"self_refine"`          // run the same-model self-refine pre-pass
+	JudgeMaxIterations int     `yaml:"judge_max_iterations"` // cap on the agentic judge's model turns per round (default 6)
+	ConstitutionPath   string  `yaml:"constitution_path"`    // path to global principles file (optional)
+	Constitution       string  `yaml:"constitution"`         // inline constitution (alternative to constitution_path)
+	RubricPath         string  `yaml:"rubric_path"`          // path to the default scoring guide
+	Rubric             string  `yaml:"rubric"`               // inline rubric (alternative to rubric_path)
 }
 
 // Enabled reports whether the trust gate should wrap agents.
@@ -175,6 +176,12 @@ func (c *Config) validate() error {
 		}
 		if c.Adversarial.Threshold <= 0 || c.Adversarial.Threshold > 1 {
 			return fmt.Errorf("config: adversarial.threshold must be in (0,1]")
+		}
+		if c.Adversarial.JudgeMaxIterations == 0 {
+			c.Adversarial.JudgeMaxIterations = 6
+		}
+		if c.Adversarial.JudgeMaxIterations < 1 {
+			return fmt.Errorf("config: adversarial.judge_max_iterations must be >= 1")
 		}
 	}
 	if c.Server.Addr == "" {

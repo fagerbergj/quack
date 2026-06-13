@@ -38,14 +38,17 @@ tools:
     render_backend: ${CRAWL4AI_URL}  # crawl4ai /md backend, e.g. http://crawl4ai:11235
 
 # The trust gate wraps every agent: a self-refine pre-pass, then an independent
-# judge (a dedicated model) scores the answer against the rubric below, looping
-# up to max_rounds or until threshold is met. Leave model empty to disable.
+# judge (a dedicated model) that verifies the answer agentically — re-fetching
+# cited URLs with its own web tools — before scoring it against the rubric below.
+# On a failing verdict the worker continues its own session to revise. The loop
+# runs up to max_rounds or until threshold is met. Leave model empty to disable.
 adversarial:
   provider: default
   model: ${JUDGE_MODEL}
   max_rounds: 2
   threshold: 0.7
   self_refine: true
+  judge_max_iterations: 6                      # cap on the agentic judge's tool/model turns per round
   constitution_path: config/constitution.md   # global principles, used for self-refine + judge
   rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.md in their bundle)
 

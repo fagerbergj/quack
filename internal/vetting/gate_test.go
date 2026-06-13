@@ -11,6 +11,8 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
+	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -53,16 +55,68 @@ func (m erroringModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _
 	}
 }
 
+// scriptedPartsModel yields a scripted set of parts per GenerateContent call,
+// each as a turn-complete response. It drives the agentic judge in tests by
+// emitting tool calls (web verification, then submit_verdict).
+type scriptedPartsModel struct {
+	name  string
+	turns [][]*genai.Part
+	calls int
+}
+
+func (m *scriptedPartsModel) Name() string { return m.name }
+
+func (m *scriptedPartsModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		i := m.calls
+		if i >= len(m.turns) {
+			i = len(m.turns) - 1
+		}
+		m.calls++
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: "model", Parts: m.turns[i]},
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// judgeTurn is one scripted submit_verdict call from the test judge.
+type judgeTurn struct {
+	score    float64
+	feedback string
+	criteria map[string]any
+}
+
+// submitPart builds a submit_verdict tool call carrying t's verdict.
+func submitPart(t judgeTurn) *genai.Part {
+	args := map[string]any{"score": t.score, "feedback": t.feedback}
+	if t.criteria != nil {
+		args["criteria"] = t.criteria
+	}
+	return &genai.Part{FunctionCall: &genai.FunctionCall{ID: "v", Name: "submit_verdict", Args: args}}
+}
+
+// scriptedJudge returns a JudgeFactory whose judge calls submit_verdict once per
+// round with the given verdicts (no web tools needed — the verdict is scripted).
+func scriptedJudge(turns ...judgeTurn) JudgeFactory {
+	parts := make([][]*genai.Part, len(turns))
+	for i, t := range turns {
+		parts[i] = []*genai.Part{submitPart(t)}
+	}
+	return NewJudgeFactory(&scriptedPartsModel{name: "j", turns: parts}, nil)
+}
+
 // gateResult collects what the trust gate streamed for one run.
 type gateResult struct {
-	verdicts []stream.JudgeVerdictData
-	refines  []stream.SelfRefineData
-	answer   string
+	verdicts  []stream.JudgeVerdictData
+	refines   []stream.SelfRefineData
+	toolCalls []stream.ToolCallData
+	answer    string
 }
 
 // runGate wires the worker llmagent → gate → runner and runs one turn, returning
 // the translated stream.
-func runGate(t *testing.T, workerModel, judge model.LLM, cfg Config) gateResult {
+func runGate(t *testing.T, workerModel model.LLM, judge JudgeFactory, cfg Config) gateResult {
 	t.Helper()
 	worker, err := llmagent.New(llmagent.Config{
 		Name:        "web-researcher",
@@ -73,7 +127,7 @@ func runGate(t *testing.T, workerModel, judge model.LLM, cfg Config) gateResult 
 	if err != nil {
 		t.Fatal(err)
 	}
-	gated, err := NewGatedAgent(worker, workerModel, judge, cfg)
+	gated, err := NewGatedAgent(worker, judge, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +153,8 @@ func runGate(t *testing.T, workerModel, judge model.LLM, cfg Config) gateResult 
 				res.verdicts = append(res.verdicts, d)
 			case stream.SelfRefineData:
 				res.refines = append(res.refines, d)
+			case stream.ToolCallData:
+				res.toolCalls = append(res.toolCalls, d)
 			case stream.TokenData:
 				res.answer += d.Text
 			}
@@ -109,7 +165,7 @@ func runGate(t *testing.T, workerModel, judge model.LLM, cfg Config) gateResult 
 
 func TestGatePassesOnFirstVerdict(t *testing.T) {
 	worker := &scriptedModel{name: "w", resps: []string{"draft answer"}}
-	judge := &scriptedModel{name: "j", resps: []string{`{"score":0.9,"passed":true,"feedback":"good"}`}}
+	judge := scriptedJudge(judgeTurn{score: 0.9, feedback: "good"})
 	res := runGate(t, worker, judge, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
 
 	if len(res.verdicts) != 1 {
@@ -130,10 +186,10 @@ func TestGateRevisesThenPasses(t *testing.T) {
 	// Worker draft (call 1), then a revision (call 2). Judge fails round 1, passes
 	// round 2.
 	worker := &scriptedModel{name: "w", resps: []string{"draft answer", "revised answer"}}
-	judge := &scriptedModel{name: "j", resps: []string{
-		`{"score":0.4,"passed":false,"feedback":"add sources"}`,
-		`{"score":0.8,"passed":true,"feedback":"better"}`,
-	}}
+	judge := scriptedJudge(
+		judgeTurn{score: 0.4, feedback: "add sources"},
+		judgeTurn{score: 0.8, feedback: "better"},
+	)
 	res := runGate(t, worker, judge, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
 
 	if len(res.verdicts) != 2 {
@@ -152,7 +208,7 @@ func TestGateRevisesThenPasses(t *testing.T) {
 
 func TestGateStopsAtMaxRoundsStillAnswers(t *testing.T) {
 	worker := &scriptedModel{name: "w", resps: []string{"a", "b", "c"}}
-	judge := &scriptedModel{name: "j", resps: []string{`{"score":0.1,"passed":false,"feedback":"no"}`}}
+	judge := scriptedJudge(judgeTurn{score: 0.1, feedback: "no"})
 	res := runGate(t, worker, judge, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
 
 	if len(res.verdicts) != 2 {
@@ -170,7 +226,7 @@ func TestGateStopsAtMaxRoundsStillAnswers(t *testing.T) {
 func TestGateSelfRefineEmitsAndRevises(t *testing.T) {
 	// Worker draft (call 1), self-refine revision (call 2). Then judge passes.
 	worker := &scriptedModel{name: "w", resps: []string{"draft answer", "self-refined answer"}}
-	judge := &scriptedModel{name: "j", resps: []string{`{"score":0.9,"passed":true,"feedback":"ok"}`}}
+	judge := scriptedJudge(judgeTurn{score: 0.9, feedback: "ok"})
 	res := runGate(t, worker, judge, Config{MaxRounds: 2, Threshold: 0.7, SelfRefine: true, Rubric: "r"})
 
 	if len(res.refines) != 1 || !res.refines[0].Changed {
@@ -188,7 +244,7 @@ func TestGateJudgeUnavailableSurfacesAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gated, err := NewGatedAgent(worker, &scriptedModel{name: "w", resps: []string{"x"}}, erroringModel{name: "j"}, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
+	gated, err := NewGatedAgent(worker, NewJudgeFactory(erroringModel{name: "j"}, nil), Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,5 +344,68 @@ func TestParseVerdictCitesCap(t *testing.T) {
 	}
 	if v.Score > 0.40 {
 		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
+	}
+}
+
+func TestAggregateVerdictCitesCapAndClamp(t *testing.T) {
+	// Structured (submit_verdict) path: cites_sources=0 caps the criterion mean.
+	v := aggregateVerdict(verdict{Criteria: map[string]criterionScore{
+		"grounded":              {Score: 0.9},
+		"no_fabrication":        {Score: 1.0},
+		"answers_question":      {Score: 1.0},
+		"internally_consistent": {Score: 0.9},
+		"cites_sources":         {Score: 0.0},
+	}, Score: 0.96})
+	if v.Score > 0.40 {
+		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
+	}
+	// No criteria: the submitted score is kept but clamped to [0,1].
+	if got := aggregateVerdict(verdict{Score: 1.5}).Score; got != 1 {
+		t.Errorf("clamp high: score = %v, want 1", got)
+	}
+	if got := aggregateVerdict(verdict{Score: -0.2}).Score; got != 0 {
+		t.Errorf("clamp low: score = %v, want 0", got)
+	}
+}
+
+// TestGateJudgeVerifiesAgentically proves the judge runs a tool loop before
+// scoring (requirement: agentic, not one-shot) and that its tool activity
+// streams to the consumer. The judge calls a verification tool, then submits.
+func TestGateJudgeVerifiesAgentically(t *testing.T) {
+	lookup, err := functiontool.New(functiontool.Config{
+		Name:        "lookup",
+		Description: "verify a claim",
+	}, func(_ tool.Context, _ struct{}) (map[string]any, error) {
+		return map[string]any{"ok": true}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	judgeModel := &scriptedPartsModel{name: "j", turns: [][]*genai.Part{
+		{{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup", Args: map[string]any{}}}},
+		{submitPart(judgeTurn{score: 0.9, feedback: "verified"})},
+	}}
+	judge := NewJudgeFactory(judgeModel, []tool.Tool{lookup})
+
+	worker := &scriptedModel{name: "w", resps: []string{"draft answer"}}
+	res := runGate(t, worker, judge, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
+
+	if len(res.verdicts) != 1 || !res.verdicts[0].Passed {
+		t.Fatalf("verdicts = %+v, want one passing", res.verdicts)
+	}
+	var sawLookup bool
+	for _, tc := range res.toolCalls {
+		if tc.Name == "lookup" {
+			sawLookup = true
+			if tc.Agent != "judge" {
+				t.Errorf("lookup tool_call agent = %q, want %q", tc.Agent, "judge")
+			}
+		}
+	}
+	if !sawLookup {
+		t.Errorf("expected the judge's lookup tool_call to stream; toolCalls = %+v", res.toolCalls)
+	}
+	if res.answer != "draft answer" {
+		t.Errorf("answer = %q, want %q", res.answer, "draft answer")
 	}
 }

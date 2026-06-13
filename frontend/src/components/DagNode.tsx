@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import type { ReactNode } from 'react'
 import { AssistantParts, WindowedItems } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { MessagePart, SelfRefinePart, JudgeVerdictPart, JudgeUnavailablePart } from './messageParts'
@@ -27,24 +28,28 @@ function LiveTimer({ startedAt, finishedAt }: { startedAt: number; finishedAt?: 
 
 // ── gate types ──────────────────────────────────────────────────────────────
 
-type ResearchGate    = { kind: 'research';          parts: MessagePart[] }
+type ResearchGate    = { kind: 'research';          parts: MessagePart[]; revisedRound?: number }
 type SelfCritGate    = { kind: 'self-refine';       part: SelfRefinePart }
 type JudgeGate       = { kind: 'judge';             part: JudgeVerdictPart }
 type JudgeUnavailGate = { kind: 'judge-unavailable'; part: JudgeUnavailablePart }
 type Gate = ResearchGate | SelfCritGate | JudgeGate | JudgeUnavailGate
 
 // splitGates groups flat top-level parts into sequential phase cards.
-// revise / judge_unavailable parts are implicit connectors; they don't get
-// their own gate but the content that follows them (revised answer, next judge
-// round) naturally appears in the next research / judge gate.
+// judge_unavailable is an implicit connector. A revise marker arrives right
+// after its round's agentic revision activity, so it closes the buffered
+// activity as a research gate tagged with the round — labeling the revision
+// explicitly instead of letting it look like another draft.
 function splitGates(parts: MessagePart[]): Gate[] {
   const gates: Gate[] = []
   let buf: MessagePart[] = []
 
-  const flushBuf = () => {
+  const flushBuf = (revisedRound?: number) => {
     if (buf.length > 0) {
-      gates.push({ kind: 'research', parts: buf })
+      gates.push({ kind: 'research', parts: buf, revisedRound })
       buf = []
+    } else if (revisedRound != null) {
+      // Revision produced no streamed steps; still surface the label.
+      gates.push({ kind: 'research', parts: [], revisedRound })
     }
   }
 
@@ -59,8 +64,8 @@ function splitGates(parts: MessagePart[]): Gate[] {
       flushBuf()
       gates.push({ kind: 'judge-unavailable', part: p })
     } else if (p.kind === 'revise') {
-      // Implicit — no gate, just flush so subsequent content starts fresh
-      flushBuf()
+      // The buffer holds this round's revision activity; tag it with the round.
+      flushBuf(p.round)
     } else {
       buf.push(p)
     }
@@ -110,27 +115,42 @@ function agentLabel(name: string): string {
 // ── gate card renderers ─────────────────────────────────────────────────────
 
 function ResearchCard({ gate, running, expand }: { gate: ResearchGate; running: boolean; expand: boolean }) {
+  let body: ReactNode
   if (gate.parts.length === 0) {
-    return running ? (
+    body = running ? (
       <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div>
     ) : null
-  }
-  if (expand) {
-    return (
+  } else if (expand) {
+    body = (
       <div className="px-4 py-3">
         <AssistantParts parts={gate.parts} showCursor={running} />
       </div>
     )
+  } else {
+    body = (
+      <details open={running} className="not-prose">
+        <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+          {running ? 'activity…' : `${gate.parts.length} step${gate.parts.length === 1 ? '' : 's'}`}
+        </summary>
+        <div className="px-4 pb-3">
+          <WindowedItems items={gate.parts} />
+        </div>
+      </details>
+    )
   }
+
+  // Plain draft research: render the body as-is.
+  if (gate.revisedRound == null) return body
+
+  // Revision phase: label it and separate it from the preceding judge card so a
+  // revision reads explicitly instead of looking like another draft.
   return (
-    <details open={running} className="not-prose">
-      <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-        {running ? 'activity…' : `${gate.parts.length} step${gate.parts.length === 1 ? '' : 's'}`}
-      </summary>
-      <div className="px-4 pb-3">
-        <WindowedItems items={gate.parts} />
+    <div className="border-t border-gray-100 dark:border-gray-700">
+      <div className="px-4 pt-2 flex items-center gap-1 text-[10px] font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide">
+        ↺ Revised · round {gate.revisedRound}
       </div>
-    </details>
+      {body}
+    </div>
   )
 }
 

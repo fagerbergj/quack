@@ -26,7 +26,6 @@ import (
 	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
@@ -36,19 +35,26 @@ import (
 // Config is the resolved vetting policy: the parsed adversarial settings plus the
 // loaded constitution and rubric text. Build it with FromConfig.
 type Config struct {
-	MaxRounds    int
-	Threshold    float64
-	SelfRefine   bool
-	Constitution string // global principles; used for self-refine critique + prefixed in judge prompt
-	Rubric       string // scoring guide; global default or per-agent override
+	MaxRounds          int
+	Threshold          float64
+	SelfRefine         bool
+	JudgeMaxIterations int    // cap on the agentic judge's model turns per round (0 ⇒ default)
+	Constitution       string // global principles; used for self-refine critique + prefixed in judge prompt
+	Rubric             string // scoring guide; global default or per-agent override
 }
 
+// judgeAuthor is the ADK author the gate stamps on the judge's streamed display
+// events (thinking + tool activity). A distinct author keeps them out of the
+// worker's session view during agentic revision — filteredSession drops them,
+// and ADK's contents processor would otherwise convert/replay foreign events —
+// so the worker is driven only by the judge's feedback, not its raw transcript.
+const judgeAuthor = "judge"
+
 type gate struct {
-	worker      adkagent.Agent
-	workerModel model.LLM
-	judge       model.LLM
-	cfg         Config
-	name        string
+	worker   adkagent.Agent
+	newJudge JudgeFactory
+	cfg      Config
+	name     string
 }
 
 // GatedAgent is the public handle for a trust-gated worker. It embeds the ADK
@@ -64,11 +70,12 @@ type GatedAgent struct {
 // agentWithWorker interface to propagate skill metadata to the AgentCard).
 func (g *GatedAgent) Worker() adkagent.Agent { return g.worker }
 
-// NewGatedAgent wraps worker in the trust gate. workerModel is the worker's own
-// model (used for the free self-refine + revision passes); judge is the
-// independent judge model.
-func NewGatedAgent(worker adkagent.Agent, workerModel, judge model.LLM, cfg Config) (*GatedAgent, error) {
-	g := &gate{worker: worker, workerModel: workerModel, judge: judge, cfg: cfg, name: worker.Name()}
+// NewGatedAgent wraps worker in the trust gate. judge is a factory for the
+// independent agentic judge (built per round so each round's submit_verdict
+// binds a clean sink). The worker continues its own session for the agentic
+// self-refine and revision passes, so no separate worker model is needed.
+func NewGatedAgent(worker adkagent.Agent, judge JudgeFactory, cfg Config) (*GatedAgent, error) {
+	g := &gate{worker: worker, newJudge: judge, cfg: cfg, name: worker.Name()}
 	// The worker is invoked directly (g.worker.Run), not registered as a SubAgent:
 	// the gate echoes the worker's name so A2A dispatch resolves it, and a SubAgent
 	// of the same name would collide in the runner's agent-tree uniqueness check.
@@ -132,17 +139,15 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			if !g.emit(ctx, yield, stream.JudgeStartPart(round)) {
 				return
 			}
-			// judgeCtx is cancelled when the consumer stops mid-thinking so
-			// generateStream aborts promptly rather than running to completion for a
-			// disconnected client.
-			judgeCtx, cancelJudge := context.WithCancel(ctx)
-			onThinking := func(text string) {
-				if !g.emit(ctx, yield, stream.ThinkingPart(text)) {
-					cancelJudge()
-				}
+			// The agentic judge runs in its own isolated runner+session; its
+			// thinking and tool activity stream back here as display copies authored
+			// as judgeAuthor (so the worker's revision context can filter them out).
+			// emitJudge returning false means the consumer disconnected — runJudgeAgent
+			// turns that into context.Canceled and aborts the round.
+			emitJudge := func(part *genai.Part) bool {
+				return g.emitAuthored(ctx, yield, judgeAuthor, part)
 			}
-			v, err := runJudge(judgeCtx, g.judge, g.cfg.Constitution, g.cfg.Rubric, ctx.UserContent(), answer, act.fetched, onThinking)
-			cancelJudge()
+			v, err := runJudgeAgent(ctx, g.newJudge, g.cfg, ctx.UserContent(), answer, act.fetched, emitJudge)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return // consumer stopped mid-judge; exit cleanly
@@ -162,31 +167,21 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			if passed || round == g.cfg.MaxRounds {
 				break
 			}
+			// Agentic revision: re-invoke the worker so it continues its own session
+			// with full tool access to address the judge's feedback. Its activity
+			// streams through live; the new retrieval merges into act so the next
+			// judge round sees it.
 			tr := time.Now()
 			log.Printf("vetting[%s]: revise round %d start", g.name, round)
-			reviseCtx, cancelRevise := context.WithCancel(ctx)
-			onThinkingRevise := func(text string) {
-				if !g.emit(ctx, yield, stream.ThinkingPart(text)) {
-					cancelRevise()
-				}
+			revised, mergedAct, ok := g.runAgenticRevision(ctx, yield, answer, v.Feedback, act)
+			if !ok {
+				return // consumer stopped mid-revision
 			}
-			revised, err := revise(reviseCtx, g.workerModel, ctx.UserContent(), answer, v.Feedback, onThinkingRevise)
-			cancelRevise()
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					return // consumer stopped mid-revision
-				}
-				log.Printf("vetting[%s]: revise round %d error after %s: %v (surfacing pre-revision answer)", g.name, round, time.Since(tr).Round(time.Millisecond), err)
-				if !g.emit(ctx, yield, stream.JudgeUnavailablePart(round, "revision failed: "+err.Error())) {
-					return
-				}
-				g.emitAnswer(ctx, yield, answer)
-				return
-			}
-			log.Printf("vetting[%s]: revise round %d done in %s", g.name, round, time.Since(tr).Round(time.Millisecond))
+			act = mergedAct
 			if strings.TrimSpace(revised) != "" {
 				answer = revised
 			}
+			log.Printf("vetting[%s]: revise round %d done in %s", g.name, round, time.Since(tr).Round(time.Millisecond))
 			if !g.emit(ctx, yield, stream.RevisePart(round)) {
 				return
 			}
@@ -245,9 +240,12 @@ func (f *filteredSession) Events() session.Events {
 	// by the worker's tool loop are visible to the next LLM call.
 	var events []*session.Event
 	for ev := range f.Session.Events().All() {
-		if !isGateMarkerEvent(ev) {
-			events = append(events, ev)
+		// Drop gate markers (orphan FunctionResponses) and the judge's streamed
+		// display events so neither pollutes the worker's re-invocation context.
+		if isGateMarkerEvent(ev) || (ev != nil && ev.Author == judgeAuthor) {
+			continue
 		}
+		events = append(events, ev)
 	}
 	return &materializedEvents{events: events}
 }
@@ -314,6 +312,21 @@ func (g *gate) runAgenticSelfRefine(ctx adkagent.InvocationContext, yield func(*
 		return "", workerActivity{}, false
 	}
 	return refined, mergeActivity(act, refinedAct), true
+}
+
+// runAgenticRevision re-invokes the worker so it continues its own session and
+// tools to address the judge's feedback. Like self-refine it is genuinely
+// agentic — the worker runs its full tool loop (re-fetching sources, verifying
+// claims), not a single model call. Returns the revised answer, merged activity
+// (prior + new fetches), and false on early stop.
+func (g *gate) runAgenticRevision(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer, feedback string, act workerActivity) (string, workerActivity, bool) {
+	content := buildRevisionContent(g.cfg.Constitution, ctx.UserContent(), answer, feedback, act)
+	cctx := newCritiqueContext(ctx, content)
+	revised, revisedAct, ok := g.runWorker(cctx, yield, true)
+	if !ok {
+		return "", workerActivity{}, false
+	}
+	return revised, mergeActivity(act, revisedAct), true
 }
 
 // mergeActivity unions two workerActivity records. Entries in b (the
@@ -513,10 +526,17 @@ func trimToSample(s string) string {
 }
 
 // emit yields a gate-authored event carrying a single marker part (self-refine or
-// judge verdict).
+// judge verdict), authored as the worker so it nests under the worker's group.
 func (g *gate) emit(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, part *genai.Part) bool {
+	return g.emitAuthored(ctx, yield, g.name, part)
+}
+
+// emitAuthored yields a gate-authored event carrying a single part, stamped with
+// the given author. Judge display events use judgeAuthor so they can be filtered
+// from the worker's session view; everything else uses the worker's name.
+func (g *gate) emitAuthored(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, author string, part *genai.Part) bool {
 	ev := session.NewEvent(ctx.InvocationID())
-	ev.Author = g.name
+	ev.Author = author
 	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{part}}
 	return yield(ev, nil)
 }
