@@ -46,9 +46,6 @@ const (
 		"  \"passed\": false,\n" +
 		"  \"feedback\": \"what to fix\"\n" +
 		"}"
-
-	reviseInstruction = "You are revising your answer to address a reviewer's feedback. " +
-		"Output ONLY the improved answer text — no preamble, no commentary."
 )
 
 // criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
@@ -166,8 +163,9 @@ func buildSourceVerification(answer string, fetched map[string]fetchRecord) stri
 // pass. The worker receives its own draft alongside the rubric and a directive
 // to use its tools to fix any gaps — fetching missing sources, verifying
 // claims, retrieving URLs it cited but did not read — then output only the
-// corrected answer.
-func buildCritiqueContent(constitution, rubric string, question *genai.Content, draft string, act workerActivity) *genai.Content {
+// corrected answer. feedback is the judge's verdict for a post-judge revision
+// pass; when empty (the pre-judge self-refine) no reviewer section is added.
+func buildCritiqueContent(constitution, rubric string, question *genai.Content, draft string, act workerActivity, feedback string) *genai.Content {
 	var sb strings.Builder
 	sb.WriteString("You previously drafted an answer to the question below. " +
 		"Review it critically against the scoring criteria. " +
@@ -182,6 +180,11 @@ func buildCritiqueContent(constitution, rubric string, question *genai.Content, 
 	sb.WriteString("Scoring criteria:\n")
 	sb.WriteString(rubric)
 	sb.WriteString("\n\n")
+	if strings.TrimSpace(feedback) != "" {
+		sb.WriteString("An independent reviewer judged your draft below the bar and asked you to address this feedback specifically:\n")
+		sb.WriteString(feedback)
+		sb.WriteString("\n\n")
+	}
 	if section := buildActivitySection(act); section != "" {
 		sb.WriteString(section)
 		sb.WriteString("\n\n")
@@ -213,15 +216,6 @@ func buildActivitySection(act workerActivity) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
-}
-
-// revise asks the worker's own model to improve the answer given judge feedback.
-// onThinking receives streaming thinking tokens as they arrive (nil to discard).
-func revise(ctx context.Context, m model.LLM, question *genai.Content, answer, feedback string, onThinking func(string)) (string, error) {
-	prompt := "Question:\n" + questionText(question) +
-		"\n\nYour previous answer:\n" + answer +
-		"\n\nReviewer feedback to address:\n" + feedback
-	return generateStream(ctx, m, reviseInstruction, prompt, false, onThinking)
 }
 
 // generateStream runs one model round-trip in streaming mode and returns the

@@ -10,6 +10,21 @@ stores:
   relational:
     kind: postgres
     url: ${DATABASE_URL}
+  # Vector store for long-term memory (M4). Leave kind empty to disable memory;
+  # when set it must pair with an embeddings block below.
+  vector:
+    kind: qdrant
+    url: ${QDRANT_URL}
+    api_key: ${QDRANT_API_KEY}
+    collection: quack_memory
+
+# Embedding model used to vectorise findings on commit and queries on recall.
+# Empty model disables memory. Routed through the same llama-swap endpoint as the
+# chat models (provider: default), selected by model name — qwen3-embed is a
+# resident model there, so it never swaps the GPU chat model.
+embeddings:
+  provider: default
+  model: ${EMBEDDING_MODEL}
 
 orchestrator:
   provider: default
@@ -23,7 +38,10 @@ agents:
     bundle: agents/web-researcher
     provider: default
     model: ${RESEARCHER_MODEL}
-    tools: [web_search, web_fetch, summarize]
+    # load_memory (LLM-invoked, visible recall) + preload_memory (auto-injects
+    # prior vetted findings). Both no-op gracefully and are stripped when memory
+    # is disabled.
+    tools: [web_search, web_fetch, summarize, load_memory, preload_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

@@ -24,6 +24,7 @@ import (
 
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/remoteagent/v2"
+	adkmemory "google.golang.org/adk/memory"
 	"google.golang.org/adk/runner"
 	adka2a "google.golang.org/adk/server/adka2a/v2"
 	"google.golang.org/adk/session"
@@ -55,7 +56,11 @@ type A2AServer struct {
 // stays separate from the orchestrator's "quack" sessions. This is what lets an
 // agent's A2A session — keyed by the contextID the orchestrator round-trips —
 // survive a process restart, so multi-turn dispatch keeps its context.
-func Serve(ag adkagent.Agent, sessions session.Service) (*A2AServer, error) {
+//
+// mem is the long-term memory service (M4) the agent's recall tools search; the
+// runner scopes it to the agent's own app_id + the session's user. Pass a nil
+// interface when memory is disabled.
+func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: a2a listen: %w", ag.Name(), err)
@@ -82,6 +87,7 @@ func Serve(ag adkagent.Agent, sessions session.Service) (*A2AServer, error) {
 			AppName:           ag.Name(),
 			Agent:             ag,
 			SessionService:    sessions,
+			MemoryService:     mem,
 			AutoCreateSession: true,
 		},
 		// Stream each ADK event as its own artifact so the agent's thinking /

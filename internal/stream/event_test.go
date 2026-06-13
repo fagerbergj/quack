@@ -106,6 +106,31 @@ func TestTranslateDecodesVettingMarkers(t *testing.T) {
 	}
 }
 
+func TestTranslateDecodesMemoryCommitMarker(t *testing.T) {
+	// The memory-commit marker rides as a function-response part (it must be a
+	// gate marker so it's hidden from the worker's session view) and Translate
+	// decodes it into a memory_commit wire event. JSON numbers arrive as float64
+	// after the A2A round-trip.
+	if !IsGateMarkerName(memoryCommitTool) {
+		t.Fatal("memory_commit marker not recognized as a gate marker")
+	}
+	ev := eventWith(MemoryCommitPart(0.91, 3))
+	ev.Author = "web-researcher"
+	got := Translate(ev)
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1: %+v", len(got), got)
+	}
+	mc, ok := got[0].Data.(MemoryCommitData)
+	if !ok || mc.Agent != "web-researcher" || mc.Score != 0.91 || mc.Sources != 3 {
+		t.Errorf("memory_commit = %+v", got[0])
+	}
+	// ScopeToNode must route it to the right DAG node.
+	scoped := ScopeToNode(got[0], "n1")
+	if scoped.Data.(MemoryCommitData).NodeID != "n1" {
+		t.Errorf("ScopeToNode did not set node_id: %+v", scoped)
+	}
+}
+
 func TestTranslateDecodesJudgeMarkerFromJSONNumbers(t *testing.T) {
 	// After the A2A round-trip, Response numbers arrive as float64; decoding must
 	// still yield the right int round / float score.

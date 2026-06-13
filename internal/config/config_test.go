@@ -214,3 +214,61 @@ adversarial: { provider: default, model: j, rubric: r, threshold: 1.5 }`,
 		}
 	}
 }
+
+// memConfig renders a full valid config with optional stores.vector (nested
+// under the stores map) and embeddings fragments, so memory tests don't collide
+// with baseConfig's single stores key.
+func memConfig(vector, embeddings string) string {
+	return `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  relational: { kind: postgres, url: u }` + vector + `
+orchestrator: { provider: default, model: m }` + embeddings + "\n"
+}
+
+// vectorEntry is a stores.vector entry, indented to sit under the stores map.
+func vectorEntry(kind, url, collection string) string {
+	return "\n  vector: { kind: " + kind + ", url: " + url + ", collection: " + collection + " }"
+}
+
+const embeddingsOK = "\nembeddings: { provider: default, model: embed-m }"
+
+func TestLoadMemoryDisabledByDefault(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MemoryEnabled() {
+		t.Error("memory should be disabled when no vector store / embeddings are set")
+	}
+}
+
+func TestLoadMemoryEnabledAndDefaults(t *testing.T) {
+	c, err := Load(writeTemp(t, memConfig(vectorEntry("qdrant", "http://q", ""), embeddingsOK)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.MemoryEnabled() {
+		t.Fatal("memory should be enabled")
+	}
+	if c.Stores.Vector.Collection != "quack_memory" {
+		t.Errorf("collection default not applied: %q", c.Stores.Vector.Collection)
+	}
+}
+
+func TestLoadMemoryRejectsBadConfig(t *testing.T) {
+	cases := map[string]string{
+		// Vector set but no embeddings (and vice versa): half-configured memory.
+		"vector without embeddings":   memConfig(vectorEntry("qdrant", "http://q", ""), ""),
+		"embeddings without vector":   memConfig("", embeddingsOK),
+		"unknown vector kind":         memConfig(vectorEntry("pgvector", "http://q", ""), embeddingsOK),
+		"empty vector url":            memConfig(vectorEntry("qdrant", "", ""), embeddingsOK),
+		"unknown embeddings provider": memConfig(vectorEntry("qdrant", "http://q", ""), "\nembeddings: { provider: nope, model: embed-m }"),
+	}
+	for name, cfg := range cases {
+		if _, err := Load(writeTemp(t, cfg)); err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+}

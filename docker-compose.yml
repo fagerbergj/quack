@@ -43,6 +43,15 @@ services:
     ports:
       - "11235:11235"
 
+  # Vector store for long-term memory (M4). Keyless by default; the app reads
+  # QDRANT_URL. Disable memory by leaving QDRANT_URL / EMBEDDING_MODEL unset.
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - quack-qdrant:/qdrant/storage
+    ports:
+      - "6333:6333"
+
   app:
     build: .
     depends_on:
@@ -51,6 +60,8 @@ services:
       searxng:
         condition: service_started
       crawl4ai:
+        condition: service_started
+      qdrant:
         condition: service_started
     environment:
       DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
@@ -66,6 +77,13 @@ services:
       # override to point at existing instances (e.g. on a home server).
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       CRAWL4AI_URL: ${CRAWL4AI_URL:-http://crawl4ai:11235}
+      # Long-term memory (M4). QDRANT_URL defaults to the compose service. The
+      # embedding model is served by the same llama-swap as the chat models
+      # (LLM_ENDPOINT above), selected by name. Leave EMBEDDING_MODEL empty to
+      # disable memory.
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embed}
     # Host 8080 is taken by SearXNG above, so the app is published on 8081.
     ports:
       - "8081:8080"
@@ -74,3 +92,4 @@ services:
 
 volumes:
   quack-pgdata:
+  quack-qdrant:

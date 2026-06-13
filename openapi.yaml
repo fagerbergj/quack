@@ -89,8 +89,11 @@ paths:
         ({"name","result"}) are tool activity; `agent_start` / `agent_end`
         ({"agent"}) bracket a dispatched sub-agent; `self_refine` ({"changed"})
         and `judge_verdict` ({"round","score","passed","feedback"}) are trust-gate
-        activity; `chat_title` ({"title"}) is sent once the title is generated;
-        `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
+        activity; `memory_commit` ({"score","sources"}) signals the vetted answer
+        was stored to long-term memory after a passing verdict (recall surfaces as
+        ordinary `load_memory` `tool_call`/`tool_result` events); `chat_title`
+        ({"title"}) is sent once the title is generated; `done` ({}) terminates
+        the stream; `error` ({"error"}) signals failure.
 
         DAG events (quack extension): `dag_plan` ({"plan_id","nodes","edges"})
         signals a quack:dag output item has been added; `node_queued`
@@ -115,6 +118,7 @@ paths:
         - agent_end
         - self_refine
         - judge_verdict
+        - memory_commit
         - dag_plan
         - node_queued
         - node_start
