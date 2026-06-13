@@ -557,11 +557,21 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.Tool, error) {
 					Parameters:  funcDecl.ParametersJsonSchema,
 				},
 			}
+			// Fall back to the genai.Schema form, converting it to a
+			// lowercase-typed JSON Schema. ADK's load_memory / preload_memory
+			// tools (and any genai.Schema-based tool) populate Parameters rather
+			// than ParametersJsonSchema; shipping the raw genai.Schema sends
+			// uppercase JSON-Schema types (e.g. "OBJECT"/"STRING") that
+			// llama.cpp's tool grammar rejects, failing the whole request.
 			if openaiTool.Function.Parameters == nil {
-				openaiTool.Function.Parameters = funcDecl.Parameters
-			}
-			if openaiTool.Function.Parameters == nil {
-				return nil, fmt.Errorf("funcDecl.Parameters is nil for tool %s", funcDecl.Name)
+				if funcDecl.Parameters == nil {
+					return nil, fmt.Errorf("funcDecl.Parameters is nil for tool %s", funcDecl.Name)
+				}
+				converted, err := convertSchema(funcDecl.Parameters)
+				if err != nil {
+					return nil, fmt.Errorf("convert parameters for tool %s: %w", funcDecl.Name, err)
+				}
+				openaiTool.Function.Parameters = converted
 			}
 
 			openaiTools = append(openaiTools, openaiTool)

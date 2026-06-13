@@ -73,7 +73,7 @@ func runGate(t *testing.T, workerModel, judge model.LLM, cfg Config) gateResult 
 	if err != nil {
 		t.Fatal(err)
 	}
-	gated, err := NewGatedAgent(worker, workerModel, judge, cfg)
+	gated, err := NewGatedAgent(worker, judge, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestGateJudgeUnavailableSurfacesAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gated, err := NewGatedAgent(worker, &scriptedModel{name: "w", resps: []string{"x"}}, erroringModel{name: "j"}, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"})
+	gated, err := NewGatedAgent(worker, erroringModel{name: "j"}, Config{MaxRounds: 2, Threshold: 0.7, Rubric: "r"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/agent"
+	adkmemory "google.golang.org/adk/memory"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -27,6 +28,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/server"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
@@ -65,6 +67,12 @@ func main() {
 		log.Fatalf("inference: %v", err)
 	}
 
+	// Long-term memory (M4). Optional: when no vector store + embeddings are
+	// configured, mem stays nil and agents are served without recall tools and
+	// the trust gate commits nothing. Built once and shared by every agent's
+	// runner (recall) and gate (commit).
+	mem := buildMemory(cfg)
+
 	// Load skills once at startup; pass the toolset to every specialist agent so
 	// all agents can call load_skill / list_skills / load_skill_resource.
 	skillSrc := skill.NewFileSystemSource(os.DirFS("skills/"))
@@ -75,7 +83,7 @@ func main() {
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS)
+	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, mem)
 	if err != nil {
 		log.Fatalf("agents: %v", err)
 	}
@@ -124,16 +132,55 @@ func main() {
 	log.Println("stopped")
 }
 
+// buildMemory constructs the long-term memory service from config, or returns
+// nil when memory is disabled. A misconfigured memory (unreachable embedder or
+// vector store, or a vector-dimension mismatch against an existing collection)
+// is fatal: memory is opt-in, so if it is turned on it must work.
+func buildMemory(cfg *config.Config) *memory.Service {
+	if !cfg.MemoryEnabled() {
+		return nil
+	}
+	// Bounded so an unreachable embeddings/vector endpoint fails startup instead
+	// of hanging it — generous enough to let a resident embed model cold-load.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	eprov, _ := cfg.Provider(cfg.Embeddings.Provider)
+	embedder, err := memory.NewOpenAIEmbedder(ctx, eprov.Endpoint, eprov.APIKey, cfg.Embeddings.Model)
+	if err != nil {
+		log.Fatalf("memory: embedder: %v", err)
+	}
+	mem, err := memory.New(ctx, embedder, cfg.Stores.Vector.URL, cfg.Stores.Vector.APIKey, cfg.Stores.Vector.Collection)
+	if err != nil {
+		log.Fatalf("memory: %v", err)
+	}
+	log.Printf("memory enabled: qdrant=%s collection=%q embed_model=%q dim=%d",
+		cfg.Stores.Vector.URL, cfg.Stores.Vector.Collection, cfg.Embeddings.Model, embedder.Dim())
+	return mem
+}
+
 // buildAgents loads each configured agent bundle, builds its model and built-in
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
+//
+// mem (nil when memory is disabled) is wired into every agent's runner for
+// recall and into the trust gate for commit-on-pass.
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, mem *memory.Service) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+
+	// Derive true-nil interfaces when memory is disabled: a nil *memory.Service
+	// boxed into a non-nil interface would defeat the runner's nil check and
+	// panic on first recall.
+	var memSvc adkmemory.Service
+	var committer memory.Committer
+	if mem != nil {
+		memSvc = mem
+		committer = mem
+	}
 
 	var judge model.LLM
 	var gateCfg vetting.Config
@@ -169,9 +216,16 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, servers, fmtErr(name, "model: %v", err)
 		}
 
+		// Strip the recall tools when memory is disabled: without a MemoryService
+		// their ProcessRequest hooks error the LLM request.
+		toolNames := ac.Tools
+		if mem == nil {
+			toolNames = withoutMemoryTools(toolNames, name)
+		}
+
 		var builtins []tool.Tool
-		if len(ac.Tools) > 0 {
-			builtins, err = tools.Build(ac.Tools, tools.Deps{
+		if len(toolNames) > 0 {
+			builtins, err = tools.Build(toolNames, tools.Deps{
 				SearXNG:    cfg.Tools.WebSearch.Backend,
 				Crawl4AI:   cfg.Tools.Fetch.RenderBackend,
 				Summarizer: m,
@@ -200,12 +254,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				agentGateCfg.Rubric = override
 				log.Printf("agent %q: using per-agent rubric from bundle", name)
 			}
-			if served, err = vetting.NewGatedAgent(ag, m, judge, agentGateCfg); err != nil {
+			if served, err = vetting.NewGatedAgent(ag, judge, agentGateCfg, committer); err != nil {
 				return nil, servers, fmtErr(name, "gate: %v", err)
 			}
 		}
 
-		srv, err := agent.Serve(served, sessions)
+		srv, err := agent.Serve(served, sessions, memSvc)
 		if err != nil {
 			return nil, servers, fmtErr(name, "a2a serve: %v", err)
 		}
@@ -223,4 +277,23 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 
 func fmtErr(agentName, format string, args ...any) error {
 	return fmt.Errorf("agent %q: "+format, append([]any{agentName}, args...)...)
+}
+
+// withoutMemoryTools drops the recall tools from an agent's tool list when
+// memory is disabled, logging which were stripped so the config/runtime mismatch
+// is visible rather than silent.
+func withoutMemoryTools(names []string, agentName string) []string {
+	out := make([]string, 0, len(names))
+	var stripped []string
+	for _, n := range names {
+		if tools.MemoryToolNames[n] {
+			stripped = append(stripped, n)
+			continue
+		}
+		out = append(out, n)
+	}
+	if len(stripped) > 0 {
+		log.Printf("agent %q: memory disabled, skipping tools %v", agentName, stripped)
+	}
+	return out
 }

@@ -24,8 +24,12 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `budget.max_wall_clock` | `10m` | Per-request time ceiling. |
 | `stores.relational.kind` | `postgres` | Relational backend. `sqlite` etc. possible in theory; only Postgres implemented. |
 | `stores.relational.url` (env `DATABASE_URL`) | _secret_ | DSN for the dedicated `quack` database. |
-| `stores.vector.kind` | `qdrant` | Vector backend. `pgvector` etc. possible in theory; only qdrant implemented. |
-| `stores.vector.url` (env `QDRANT_URL`) | _secret_ | Vector store endpoint for semantic memory / RAG. |
+| `stores.vector.kind` | `qdrant` | Vector backend for long-term memory (M4). `pgvector` etc. possible in theory; only qdrant implemented. Empty disables memory. |
+| `stores.vector.url` (env `QDRANT_URL`) | _secret_ | Qdrant endpoint. |
+| `stores.vector.api_key` (env `QDRANT_API_KEY`) | _secret_ | Qdrant API key (optional; blank for keyless/local). |
+| `stores.vector.collection` | `quack_memory` | Collection holding vetted findings. Created at startup, sized to the embedding model's dimension. |
+| `embeddings.provider` | `default` | Named provider used for commit + recall vectors — the same llama-swap endpoint as the chat models. Empty disables memory. |
+| `embeddings.model` (env `EMBEDDING_MODEL`) | `qwen3-embed` | Embedding model, selected by name on the shared endpoint. Changing it requires a fresh collection (dimension is fixed at creation). |
 | `auth.oidc.issuer` (env `OIDC_ISSUER`) | Authentik OIDC issuer URL | IdP that issues/verifies tokens. Any OIDC IdP works (Keycloak, Auth0, …). |
 | `auth.oidc.audience` (env `OIDC_AUDIENCE`) | `quack` | Expected token audience. |
 | `auth.oidc.jwks_url` (env `OIDC_JWKS_URL`) | Authentik JWKS URL | Keys used to verify bearer tokens. |
@@ -43,6 +47,29 @@ model in memory at a time** (the `main` group), and swapping a model is expensiv
 the large ones), which is why Quack's executor runs nodes sequentially. The embedding model and the
 CPU judge (`selene-mini`) are loaded **separately and stay resident**, so they never swap the GPU
 chat model. See the home-server `llm/llm-swap.yaml` for how each model is loaded.
+
+## Long-term memory (M4)
+
+Memory is **optional and all-or-nothing**: set both `stores.vector` and `embeddings`, or neither
+(a half-configured memory is rejected at startup). When enabled, the app ensures the Qdrant
+collection exists at startup — sizing it to the embedding model's vector dimension, which it
+discovers with a probe embedding — and fails fast if an existing collection has a different size
+(changing the embedding model means a fresh collection, not a destructive auto-migration).
+
+- **Scope** is the ADK default: each memory is keyed by `(appName, userID)`, and every agent serves
+  under its own app name, so an agent recalls only **its own** prior vetted findings.
+- **Commit** is gated by the trust gate: only an answer that **passes the judge** is stored. The
+  point ID is derived from `(appName, userID, query)`, so re-asking the same question or a judge
+  revise-loop **upserts in place** rather than duplicating.
+- **Recall** is wired per-agent via two tools selected in the agent's `tools:` list: `load_memory`
+  (LLM-invoked, surfaces as a visible `tool_call`) and `preload_memory` (auto-injects relevant
+  findings into the prompt). Both are stripped automatically when memory is disabled.
+- The embedding model (`qwen3-embed`) is **resident** in llama-swap's persistent group and reached
+  through the same endpoint as the chat models (`LLM_ENDPOINT`), selected by name — so commit and
+  recall never swap the GPU chat model. (It cold-loads on first use; the startup probe retries.)
+
+A commit surfaces as a `memory_commit` SSE event; recall surfaces as the `load_memory` tool's
+`tool_call` / `tool_result`.
 
 ## Gateway / deployment
 

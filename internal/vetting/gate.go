@@ -30,6 +30,7 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -44,11 +45,13 @@ type Config struct {
 }
 
 type gate struct {
-	worker      adkagent.Agent
-	workerModel model.LLM
-	judge       model.LLM
-	cfg         Config
-	name        string
+	worker adkagent.Agent
+	judge  model.LLM
+	cfg    Config
+	name   string
+	// committer stores the vetted answer to long-term memory after a passing
+	// judge verdict. Nil when memory is disabled.
+	committer memory.Committer
 }
 
 // GatedAgent is the public handle for a trust-gated worker. It embeds the ADK
@@ -64,11 +67,12 @@ type GatedAgent struct {
 // agentWithWorker interface to propagate skill metadata to the AgentCard).
 func (g *GatedAgent) Worker() adkagent.Agent { return g.worker }
 
-// NewGatedAgent wraps worker in the trust gate. workerModel is the worker's own
-// model (used for the free self-refine + revision passes); judge is the
-// independent judge model.
-func NewGatedAgent(worker adkagent.Agent, workerModel, judge model.LLM, cfg Config) (*GatedAgent, error) {
-	g := &gate{worker: worker, workerModel: workerModel, judge: judge, cfg: cfg, name: worker.Name()}
+// NewGatedAgent wraps worker in the trust gate. The worker's own agent (with its
+// tools) does both the self-refine and the post-judge revision passes; judge is
+// the independent judge model. committer (nil when memory is disabled) stores
+// the answer to long-term memory once it passes the judge.
+func NewGatedAgent(worker adkagent.Agent, judge model.LLM, cfg Config, committer memory.Committer) (*GatedAgent, error) {
+	g := &gate{worker: worker, judge: judge, cfg: cfg, name: worker.Name(), committer: committer}
 	// The worker is invoked directly (g.worker.Run), not registered as a SubAgent:
 	// the gate echoes the worker's name so A2A dispatch resolves it, and a SubAgent
 	// of the same name would collide in the runner's agent-tree uniqueness check.
@@ -106,7 +110,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			if !g.emit(ctx, yield, stream.SelfRefineStartPart()) {
 				return
 			}
-			refined, mergedAct, ok := g.runAgenticSelfRefine(ctx, yield, answer, act)
+			refined, mergedAct, ok := g.runAgenticSelfRefine(ctx, yield, answer, act, "")
 			if !ok {
 				return
 			}
@@ -126,6 +130,12 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// A judge error degrades gracefully: emit a judge_unavailable event then
 		// surface the answer with a quality-cannot-be-guaranteed flag rather than
 		// withholding it from the user entirely.
+		//
+		// didPass tracks whether any round cleared the threshold; only then does
+		// the answer reach memory. The loop also breaks on max-rounds-without-pass,
+		// so reaching the seam below is not itself proof of a pass.
+		var didPass bool
+		var passScore float64
 		for round := 1; round <= g.cfg.MaxRounds; round++ {
 			tj := time.Now()
 			log.Printf("vetting[%s]: judge round %d/%d start", g.name, round, g.cfg.MaxRounds)
@@ -159,30 +169,26 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			if !g.emit(ctx, yield, stream.JudgeVerdictPart(round, v.Score, passed, v.Feedback)) {
 				return
 			}
+			if passed {
+				didPass, passScore = true, v.Score
+			}
 			if passed || round == g.cfg.MaxRounds {
 				break
 			}
+			// Revision is the same agentic re-invocation as the self-refine pre-pass,
+			// but driven by the judge's specific feedback. Running the full worker
+			// agent (not a bare model call) lets it use its tools to actually fix what
+			// the judge flagged — fetch a source it cited but never retrieved, etc. —
+			// which a tool-less model round-trip structurally cannot do. It is also
+			// bounded by the agent's own tool loop, so it can't run away the way an
+			// open-ended single generation can.
 			tr := time.Now()
 			log.Printf("vetting[%s]: revise round %d start", g.name, round)
-			reviseCtx, cancelRevise := context.WithCancel(ctx)
-			onThinkingRevise := func(text string) {
-				if !g.emit(ctx, yield, stream.ThinkingPart(text)) {
-					cancelRevise()
-				}
+			revised, mergedAct, ok := g.runAgenticSelfRefine(ctx, yield, answer, act, v.Feedback)
+			if !ok {
+				return // consumer stopped mid-revision
 			}
-			revised, err := revise(reviseCtx, g.workerModel, ctx.UserContent(), answer, v.Feedback, onThinkingRevise)
-			cancelRevise()
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					return // consumer stopped mid-revision
-				}
-				log.Printf("vetting[%s]: revise round %d error after %s: %v (surfacing pre-revision answer)", g.name, round, time.Since(tr).Round(time.Millisecond), err)
-				if !g.emit(ctx, yield, stream.JudgeUnavailablePart(round, "revision failed: "+err.Error())) {
-					return
-				}
-				g.emitAnswer(ctx, yield, answer)
-				return
-			}
+			act = mergedAct
 			log.Printf("vetting[%s]: revise round %d done in %s", g.name, round, time.Since(tr).Round(time.Millisecond))
 			if strings.TrimSpace(revised) != "" {
 				answer = revised
@@ -192,11 +198,63 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 			}
 		}
 
-		// Surface the trusted answer as the agent's final output. (PR2 commits it
-		// to memory here, only after a passing verdict.)
+		// Commit the answer to long-term memory — but only after a passing verdict,
+		// never on the judge-unavailable / revision-failed / consumer-stop early
+		// returns above (which never reach here) nor on max-rounds-without-pass
+		// (didPass stays false). The commit + its marker precede emitAnswer so the
+		// recall/commit activity is visible in the stream before the turn closes.
+		if g.committer != nil && didPass && strings.TrimSpace(answer) != "" {
+			g.commit(ctx, yield, answer, act, passScore)
+		}
+
+		// Surface the trusted answer as the agent's final output.
 		log.Printf("vetting[%s]: vetted answer ready total=%s len=%d", g.name, time.Since(t0).Round(time.Second), len(answer))
 		g.emitAnswer(ctx, yield, answer)
 	}
+}
+
+// commit stores the vetted answer to long-term memory under the agent's own
+// (appName, userID) namespace — the same scope its recall tools search — with
+// the user's request as the dedup key and the fetched source URLs as
+// provenance. A memory-write error is logged and swallowed: it must never block
+// surfacing an already-vetted answer. On success it emits a memory_commit marker
+// so the commit is visible in the stream.
+func (g *gate) commit(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer string, act workerActivity, score float64) {
+	sess := ctx.Session()
+	sources := make([]string, 0, len(act.fetched))
+	for u := range act.fetched {
+		sources = append(sources, u)
+	}
+	req := memory.CommitRequest{
+		AppName: sess.AppName(),
+		UserID:  sess.UserID(),
+		Agent:   g.name,
+		Query:   contentText(ctx.UserContent()),
+		Finding: answer,
+		Sources: sources,
+		Score:   score,
+	}
+	if err := g.committer.Commit(ctx, req); err != nil {
+		log.Printf("vetting[%s]: memory commit failed (continuing): %v", g.name, err)
+		return
+	}
+	log.Printf("vetting[%s]: committed to memory score=%.2f sources=%d", g.name, score, len(sources))
+	g.emit(ctx, yield, stream.MemoryCommitPart(score, len(sources)))
+}
+
+// contentText concatenates the plain-text parts of c (the user request), used
+// as the memory dedup key and provenance.
+func contentText(c *genai.Content) string {
+	if c == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range c.Parts {
+		if p != nil && p.Text != "" {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
 }
 
 // critiqueContext wraps an InvocationContext, substituting a new UserContent
@@ -300,10 +358,11 @@ func isGateMarkerEvent(ev *session.Event) bool {
 // it can use its tools to fix what the draft got wrong — fetching missing
 // sources, verifying claims, retrieving URLs cited but not read. This is
 // genuinely agentic: the worker runs its full tool loop, not a single model
-// call. Returns the refined answer, merged activity (original + new fetches),
-// and false on early stop.
-func (g *gate) runAgenticSelfRefine(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer string, act workerActivity) (string, workerActivity, bool) {
-	content := buildCritiqueContent(g.cfg.Constitution, g.cfg.Rubric, ctx.UserContent(), answer, act)
+// call. feedback is the judge's verdict for a post-judge revision pass, or ""
+// for the pre-judge self-refine. Returns the refined answer, merged activity
+// (original + new fetches), and false on early stop.
+func (g *gate) runAgenticSelfRefine(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer string, act workerActivity, feedback string) (string, workerActivity, bool) {
+	content := buildCritiqueContent(g.cfg.Constitution, g.cfg.Rubric, ctx.UserContent(), answer, act, feedback)
 	cctx := newCritiqueContext(ctx, content)
 	// textAsThinking=true: plain text from the model streams as thinking events so
 	// the user sees activity inside the self-refine container. The local model
@@ -371,6 +430,10 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 
 	for ev, err := range g.worker.Run(ctx) {
 		if err != nil {
+			// Surface worker errors in the log: otherwise a failed LLM call
+			// (e.g. an endpoint rejecting a tool schema) is invisible — the
+			// error only flows out through the A2A stream.
+			log.Printf("vetting[%s]: worker run error: %v", g.name, err)
 			if !yield(nil, err) {
 				return "", workerActivity{}, false
 			}

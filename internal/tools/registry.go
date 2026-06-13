@@ -11,6 +11,8 @@ import (
 
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/loadmemorytool"
+	"google.golang.org/adk/tool/preloadmemorytool"
 )
 
 // Deps are the shared dependencies injected into built-in tools.
@@ -42,7 +44,26 @@ var registry = map[string]constructor{
 	"web_search": newWebSearch,
 	"web_fetch":  newFetch,
 	"summarize":  newSummarize,
+	// Memory recall tools (M4). Both reach the memory service through the
+	// invocation context (ctx.SearchMemory), so they need no Deps — they only
+	// need the runner to have a MemoryService. load_memory is LLM-invoked and
+	// surfaces as a visible tool_call; preload_memory auto-injects relevant
+	// findings into the prompt before each call. main only adds these to an
+	// agent's tool set when memory is enabled (see buildAgents), since recall
+	// errors when no MemoryService is wired.
+	"load_memory":    newLoadMemory,
+	"preload_memory": newPreloadMemory,
 }
+
+// MemoryToolNames are the recall tools that require a wired MemoryService.
+// buildAgents strips them when memory is disabled.
+var MemoryToolNames = map[string]bool{
+	"load_memory":    true,
+	"preload_memory": true,
+}
+
+func newLoadMemory(Deps) (tool.Tool, error)    { return loadmemorytool.New(), nil }
+func newPreloadMemory(Deps) (tool.Tool, error) { return preloadmemorytool.New(), nil }
 
 // Known reports whether name is a registered built-in tool. Used by config
 // validation so an unknown tool fails fast at startup.

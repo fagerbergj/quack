@@ -19,7 +19,16 @@ type Config struct {
 	Agents       map[string]AgentConfig    `yaml:"agents"`
 	Tools        ToolsConfig               `yaml:"tools"`
 	Adversarial  AdversarialConfig         `yaml:"adversarial"`
+	Embeddings   EmbeddingsConfig          `yaml:"embeddings"`
 	Server       ServerConfig              `yaml:"server"`
+}
+
+// MemoryEnabled reports whether long-term memory is configured: both a vector
+// store and an embeddings model must be set. When false, agents are served
+// without memory tools and the trust gate commits nothing — the template still
+// builds and runs with no vector store available.
+func (c *Config) MemoryEnabled() bool {
+	return c.Stores.Vector.Kind != "" && c.Embeddings.Model != ""
 }
 
 // AdversarialConfig configures the trust gate that wraps every agent: a
@@ -74,15 +83,36 @@ type ProviderConfig struct {
 	APIKey   string `yaml:"api_key"`
 }
 
-// StoresConfig groups the store roles. M0 needs only the relational store.
+// StoresConfig groups the store roles: the relational store (always required)
+// and the vector store (optional, drives long-term memory in M4).
 type StoresConfig struct {
-	Relational StoreConfig `yaml:"relational"`
+	Relational StoreConfig       `yaml:"relational"`
+	Vector     VectorStoreConfig `yaml:"vector"`
 }
 
 // StoreConfig is one store backend; `kind` selects it (postgres in M0).
 type StoreConfig struct {
 	Kind string `yaml:"kind"`
 	URL  string `yaml:"url"`
+}
+
+// VectorStoreConfig is the memory vector store; `kind` selects the backend
+// (qdrant in M4). Empty kind disables memory. Collection defaults to
+// "quack_memory".
+type VectorStoreConfig struct {
+	Kind       string `yaml:"kind"`
+	URL        string `yaml:"url"`
+	APIKey     string `yaml:"api_key"`
+	Collection string `yaml:"collection"`
+}
+
+// EmbeddingsConfig binds the embedding model (used to vectorise findings on
+// commit and queries on recall) to a named provider. Empty model disables
+// memory. The provider is an OpenAI-compatible `/v1/embeddings` endpoint —
+// typically a separate, resident embedding server from the chat models.
+type EmbeddingsConfig struct {
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
 }
 
 // OrchestratorConfig binds the orchestrator to a provider + model.
@@ -175,6 +205,28 @@ func (c *Config) validate() error {
 		}
 		if c.Adversarial.Threshold <= 0 || c.Adversarial.Threshold > 1 {
 			return fmt.Errorf("config: adversarial.threshold must be in (0,1]")
+		}
+	}
+	// Memory (M4) is optional but all-or-nothing: a vector store and an
+	// embeddings model must be configured together. A half-configured memory is
+	// a mistake, not a silent disable.
+	vectorSet := c.Stores.Vector.Kind != ""
+	embedSet := c.Embeddings.Model != ""
+	if vectorSet != embedSet {
+		return fmt.Errorf("config: memory needs both stores.vector and embeddings configured (or neither); got vector=%t embeddings=%t", vectorSet, embedSet)
+	}
+	if c.MemoryEnabled() {
+		if c.Stores.Vector.Kind != "qdrant" {
+			return fmt.Errorf("config: stores.vector.kind %q unsupported (only %q is implemented)", c.Stores.Vector.Kind, "qdrant")
+		}
+		if c.Stores.Vector.URL == "" {
+			return fmt.Errorf("config: stores.vector.url is empty")
+		}
+		if c.Stores.Vector.Collection == "" {
+			c.Stores.Vector.Collection = "quack_memory"
+		}
+		if _, ok := c.Providers[c.Embeddings.Provider]; !ok {
+			return fmt.Errorf("config: embeddings.provider %q is not defined under providers", c.Embeddings.Provider)
 		}
 	}
 	if c.Server.Addr == "" {

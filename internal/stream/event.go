@@ -36,6 +36,7 @@ const (
 	selfRefineStartTool  = "record_self_refine_start"
 	judgeUnavailableTool = "record_judge_unavailable"
 	reviseTool           = "record_revise"
+	memoryCommitTool     = "record_memory_commit"
 	// keepaliveTool is a heartbeat the gate emits every ~30 s during slow
 	// operations (judge model load + generation) to keep the A2A SSE connection
 	// alive. Translate drops it — it produces no wire event.
@@ -57,6 +58,7 @@ const (
 	EventRevise              = "revise"
 	EventJudgeVerdict        = "judge_verdict"
 	EventJudgeUnavailable    = "judge_unavailable"
+	EventMemoryCommit        = "memory_commit"
 	EventConfirmationRequest = "confirmation_request"
 	EventChatTitle           = "chat_title"
 	EventError               = "error"
@@ -166,6 +168,15 @@ type JudgeStartData struct {
 	NodeID string `json:"node_id,omitempty"`
 	Agent  string `json:"agent,omitempty"`
 	Round  int    `json:"round"`
+}
+
+// MemoryCommitData is the `memory_commit` event payload: the trust gate stored
+// this agent's vetted answer to long-term memory after a passing judge verdict.
+type MemoryCommitData struct {
+	NodeID  string  `json:"node_id,omitempty"`
+	Agent   string  `json:"agent,omitempty"`
+	Score   float64 `json:"score"`
+	Sources int     `json:"sources"`
 }
 
 // DagNodeDef is the wire representation of one node in a DAG plan.
@@ -293,6 +304,12 @@ func JudgeStart(agent string, round int) SSEEvent {
 	return SSEEvent{Name: EventJudgeStart, Data: JudgeStartData{Agent: agent, Round: round}}
 }
 
+// MemoryCommit builds a memory_commit event: the gate committed the vetted
+// answer to long-term memory.
+func MemoryCommit(agent string, score float64, sources int) SSEEvent {
+	return SSEEvent{Name: EventMemoryCommit, Data: MemoryCommitData{Agent: agent, Score: score, Sources: sources}}
+}
+
 // SelfRefinePart encodes a self-refine pass as the marker function-response part
 // the trust gate yields (see the judgeTool/selfRefineTool comment).
 func SelfRefinePart(changed bool) *genai.Part {
@@ -364,6 +381,15 @@ func JudgeUnavailablePart(round int, reason string) *genai.Part {
 	}}
 }
 
+// MemoryCommitPart encodes a successful memory commit as the marker
+// function-response part the trust gate yields after a passing verdict.
+func MemoryCommitPart(score float64, sources int) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     memoryCommitTool,
+		Response: map[string]any{"score": score, "sources": sources},
+	}}
+}
+
 // DagPlan builds a dag_plan event carrying the full plan structure.
 func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
 	return SSEEvent{Name: EventDagPlan, Data: DagPlanData{PlanID: planID, Nodes: nodes, Edges: edges}}
@@ -423,6 +449,9 @@ func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
 		d.NodeID = nodeID
 		ev.Data = d
 	case JudgeStartData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case MemoryCommitData:
 		d.NodeID = nodeID
 		ev.Data = d
 	}
@@ -507,6 +536,10 @@ func Translate(ev *session.Event) []SSEEvent {
 					r := p.FunctionResponse.Response
 					out = append(out, Revise(agent, asInt(r["round"])))
 					continue
+				case memoryCommitTool:
+					r := p.FunctionResponse.Response
+					out = append(out, MemoryCommit(agent, asFloat(r["score"]), asInt(r["sources"])))
+					continue
 				}
 				out = append(out, ToolResult(agent, p.FunctionResponse.Name, p.FunctionResponse.Response))
 			case p.Text != "":
@@ -541,7 +574,7 @@ func Translate(ev *session.Event) []SSEEvent {
 func IsGateMarkerName(name string) bool {
 	switch name {
 	case judgeTool, judgeStartTool, selfRefineTool, selfRefineStartTool,
-		judgeUnavailableTool, reviseTool, keepaliveTool:
+		judgeUnavailableTool, reviseTool, memoryCommitTool, keepaliveTool:
 		return true
 	}
 	return false

@@ -67,6 +67,7 @@ export interface AgentStreamHandlers {
   onRevise?: (round: number, nodeId?: string) => void
   onJudgeVerdict?: (v: JudgeVerdictPayload, nodeId?: string) => void
   onJudgeUnavailable?: (round: number, reason: string, nodeId?: string) => void
+  onMemoryCommit?: (score: number, sources: number, nodeId?: string) => void
   onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
   onChatTitle?: (title: string) => void
   onError?: (msg: string) => void
@@ -84,6 +85,7 @@ export const AGENT_EVENT_NAMES = [
   'token', 'thinking', 'tool_call', 'tool_result',
   'agent_start', 'agent_end',
   'self_refine_start', 'self_refine', 'judge_start', 'revise', 'judge_verdict', 'judge_unavailable',
+  'memory_commit',
   'confirmation_request', 'chat_title', 'error', 'done',
   // DAG events (M3)
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed',
@@ -162,6 +164,15 @@ export function dispatchAgentEvent(
       handlers.onJudgeUnavailable?.(
         typeof p.round === 'number' ? p.round : 0,
         typeof p.reason === 'string' ? p.reason : '',
+        nodeIdOf(parsed),
+      )
+      return true
+    }
+    case 'memory_commit': {
+      const p = parsed as { score?: number; sources?: number }
+      handlers.onMemoryCommit?.(
+        typeof p.score === 'number' ? p.score : 0,
+        typeof p.sources === 'number' ? p.sources : 0,
         nodeIdOf(parsed),
       )
       return true

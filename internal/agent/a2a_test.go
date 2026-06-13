@@ -112,7 +112,7 @@ func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answ
 // client, and asserts thinking / tool_call / tool_result / token all survive the
 // round-trip (adka2a DataPart metadata ↔ genai parts).
 func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService())
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func (m transferModel) GenerateContent(_ context.Context, req *model.LLMRequest,
 // orchestrator with the A2A client as a sub-agent transfers to it, and the
 // sub-agent's events surface through the orchestrator's runner.
 func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService())
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
