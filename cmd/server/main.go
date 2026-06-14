@@ -17,7 +17,6 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/skilltoolset"
@@ -92,7 +91,7 @@ func main() {
 	}
 
 	planner := dag.NewPlanner(llm, agentInfos)
-	executor := dag.NewExecutor(st.Sessions, clientMap)
+	executor := dag.NewExecutor(st.Sessions, clientMap, cfg.Dag.MaxActiveNodes)
 	orch := orchestrator.New(st.Sessions, planner, executor)
 
 	spa, err := fs.Sub(webDist, "web/dist")
@@ -135,25 +134,35 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	}
 	sort.Strings(names)
 
-	var judge model.LLM
+	urlCache := tools.NewInMemoryURLCache()
+
+	var judgeFactory vetting.JudgeFactory
 	var gateCfg vetting.Config
-	if cfg.Adversarial.Enabled() {
-		jprov, ok := cfg.Provider(cfg.Adversarial.Provider)
-		if !ok {
-			return nil, nil, fmt.Errorf("adversarial: provider %q not found", cfg.Adversarial.Provider)
-		}
+	if cfg.Gates.Enabled() {
 		var err error
-		if judge, err = inference.NewModel(jprov, cfg.Adversarial.Model); err != nil {
-			return nil, nil, fmt.Errorf("adversarial: judge model: %w", err)
-		}
-		if gateCfg, err = vetting.FromConfig(cfg.Adversarial); err != nil {
+		if gateCfg, err = vetting.FromConfig(cfg.Gates); err != nil {
 			return nil, nil, err
 		}
-		log.Printf("trust gate enabled: judge=%q max_rounds=%d threshold=%.2f self_refine=%t",
-			cfg.Adversarial.Model, gateCfg.MaxRounds, gateCfg.Threshold, gateCfg.SelfRefine)
+		// The judge model is only built when the judge stage is active; the
+		// deterministic + self-critique stages run without it. One-shot judge (no
+		// web tools): citation backing is now checked deterministically in code, so
+		// the judge scores in a single pass instead of an agentic re-fetch loop
+		// (minutes-long on a CPU judge for ~no gain).
+		if cfg.Gates.JudgeEnabled() {
+			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
+			if !ok {
+				return nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
+			}
+			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model)
+			if err != nil {
+				return nil, nil, fmt.Errorf("gates.judge: model: %w", err)
+			}
+			judgeFactory = vetting.NewJudgeFactory(judge, nil)
+		}
+		log.Printf("trust gate enabled: deterministic_rounds=%d self_critique_rounds=%d judge=%q judge_rounds=%d threshold=%.2f",
+			gateCfg.DeterministicRounds, gateCfg.SelfCritiqueRounds, cfg.Gates.Judge.Model, gateCfg.JudgeRounds, gateCfg.Threshold)
 	}
 
-	urlCache := tools.NewInMemoryURLCache()
 	clientMap := make(map[string]adkagent.Agent, len(cfg.Agents))
 	var servers []*agent.A2AServer
 
@@ -192,7 +201,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 
 		served := ag
-		if cfg.Adversarial.Enabled() {
+		if cfg.Gates.Enabled() {
 			agentGateCfg := gateCfg
 			if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
 				return nil, servers, fmtErr(name, "rubric: %v", err)
@@ -200,7 +209,15 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				agentGateCfg.Rubric = override
 				log.Printf("agent %q: using per-agent rubric from bundle", name)
 			}
-			if served, err = vetting.NewGatedAgent(ag, m, judge, agentGateCfg); err != nil {
+			// A tool-less twin of the worker (same model + prompt, no tools) for the
+			// finalize write-up: when the worker keeps researching instead of writing,
+			// a tool-having re-invoke ignores "stop and write" — a tool-less one can't,
+			// so it produces the answer from context in one pass.
+			writer, err := agent.Build(bundle, m, nil, nil)
+			if err != nil {
+				return nil, servers, fmtErr(name, "writer: %v", err)
+			}
+			if served, err = vetting.NewGatedAgent(ag, writer, judgeFactory, agentGateCfg); err != nil {
 				return nil, servers, fmtErr(name, "gate: %v", err)
 			}
 		}

@@ -18,30 +18,63 @@ type Config struct {
 	Orchestrator OrchestratorConfig        `yaml:"orchestrator"`
 	Agents       map[string]AgentConfig    `yaml:"agents"`
 	Tools        ToolsConfig               `yaml:"tools"`
-	Adversarial  AdversarialConfig         `yaml:"adversarial"`
+	Gates        GatesConfig               `yaml:"gates"`
+	Dag          DagConfig                 `yaml:"dag"`
 	Server       ServerConfig              `yaml:"server"`
 }
 
-// AdversarialConfig configures the trust gate that wraps every agent: a
-// self-refine pre-pass followed by an independent judge that scores the answer
-// against a standing rubric, looping up to MaxRounds or until Threshold is met.
-// It is optional — when Model is empty the gate is disabled and agents are served
-// unwrapped. The judge is platform-invoked (a dedicated model), so agent bundles
-// stay simple.
-type AdversarialConfig struct {
-	Provider         string  `yaml:"provider"`          // inference provider for the judge model
-	Model            string  `yaml:"model"`             // judge model (empty ⇒ vetting disabled)
-	MaxRounds        int     `yaml:"max_rounds"`        // judge/revise rounds before giving up (default 2)
-	Threshold        float64 `yaml:"threshold"`         // pass score in (0,1] (default 0.7)
-	SelfRefine       bool    `yaml:"self_refine"`       // run the same-model self-refine pre-pass
-	ConstitutionPath string  `yaml:"constitution_path"` // path to global principles file (optional)
-	Constitution     string  `yaml:"constitution"`      // inline constitution (alternative to constitution_path)
-	RubricPath       string  `yaml:"rubric_path"`       // path to the default scoring guide
-	Rubric           string  `yaml:"rubric"`            // inline rubric (alternative to rubric_path)
+// DagConfig tunes how the orchestrator's DAG is executed.
+type DagConfig struct {
+	// MaxActiveNodes caps how many nodes run concurrently (default 2). Nodes whose
+	// dependencies are met still queue behind this cap, so a wide layer doesn't
+	// fire many heavy model requests at the single worker at once.
+	MaxActiveNodes int `yaml:"max_active_nodes"`
 }
 
-// Enabled reports whether the trust gate should wrap agents.
-func (a AdversarialConfig) Enabled() bool { return a.Model != "" }
+// GatesConfig configures the trust gate that wraps every agent. Three stages run
+// lowest-effort-first, each with its own round budget (a stage with max_rounds 0
+// is skipped):
+//
+//   - deterministic_checks — free code checks (citation backing, length) that
+//     drive cheap targeted revisions before any expensive stage runs.
+//   - self_critique — the worker critiques and revises its own draft.
+//   - judge — an independent model scores the answer against the rubric and the
+//     worker revises on a fail.
+//
+// The gate is optional: when no stage is active it is disabled and agents are
+// served unwrapped. constitution/rubric are shared by self_critique and judge.
+type GatesConfig struct {
+	ConstitutionPath    string      `yaml:"constitution_path"`    // global principles file (optional)
+	Constitution        string      `yaml:"constitution"`         // inline constitution (alternative to path)
+	RubricPath          string      `yaml:"rubric_path"`          // scoring guide file
+	Rubric              string      `yaml:"rubric"`               // inline rubric (alternative to path)
+	DeterministicChecks StageConfig `yaml:"deterministic_checks"` // free citation/length checks + cheap revises
+	SelfCritique        StageConfig `yaml:"self_critique"`        // worker self-improvement passes
+	Judge               JudgeConfig `yaml:"judge"`                // expensive model-judge stage
+}
+
+// StageConfig is a gate stage bounded by a round budget. max_rounds 0 disables it.
+type StageConfig struct {
+	MaxRounds int `yaml:"max_rounds"`
+}
+
+// JudgeConfig configures the model-judge stage. Model empty (or max_rounds 0)
+// disables the judge; the other stages can still run.
+type JudgeConfig struct {
+	Provider      string  `yaml:"provider"`       // inference provider for the judge model
+	Model         string  `yaml:"model"`          // judge model (empty ⇒ judge disabled)
+	MaxRounds     int     `yaml:"max_rounds"`     // judge/revise rounds
+	Threshold     float64 `yaml:"threshold"`      // pass score in (0,1] (default 0.7)
+	MaxIterations int     `yaml:"max_iterations"` // cap on the agentic judge's model turns per round (default 6)
+}
+
+// JudgeEnabled reports whether the model-judge stage runs.
+func (g GatesConfig) JudgeEnabled() bool { return g.Judge.Model != "" && g.Judge.MaxRounds > 0 }
+
+// Enabled reports whether the trust gate should wrap agents (any stage active).
+func (g GatesConfig) Enabled() bool {
+	return g.DeterministicChecks.MaxRounds > 0 || g.SelfCritique.MaxRounds > 0 || g.JudgeEnabled()
+}
 
 // AgentConfig binds a declarative agent bundle (a directory holding an
 // agent-card.json + prompt.md) to a provider/model and a selection of built-in
@@ -151,31 +184,44 @@ func (c *Config) validate() error {
 		// Tool names are resolved (and unknown ones rejected) when the agent's
 		// tools are built at startup; see internal/tools.Build.
 	}
-	if c.Adversarial.Enabled() {
-		if _, ok := c.Providers[c.Adversarial.Provider]; !ok {
-			return fmt.Errorf("config: adversarial.provider %q is not defined under providers", c.Adversarial.Provider)
+	if c.Gates.Enabled() {
+		g := &c.Gates
+		if g.DeterministicChecks.MaxRounds < 0 || g.SelfCritique.MaxRounds < 0 || g.Judge.MaxRounds < 0 {
+			return fmt.Errorf("config: gates.*.max_rounds must be >= 0")
 		}
-		if c.Adversarial.ConstitutionPath != "" && c.Adversarial.Constitution != "" {
-			return fmt.Errorf("config: adversarial sets both constitution_path and constitution; use one")
+		if g.ConstitutionPath != "" && g.Constitution != "" {
+			return fmt.Errorf("config: gates sets both constitution_path and constitution; use one")
 		}
-		if c.Adversarial.RubricPath == "" && c.Adversarial.Rubric == "" {
-			return fmt.Errorf("config: adversarial needs one of rubric_path or rubric")
+		if g.RubricPath != "" && g.Rubric != "" {
+			return fmt.Errorf("config: gates sets both rubric_path and rubric; use one")
 		}
-		if c.Adversarial.RubricPath != "" && c.Adversarial.Rubric != "" {
-			return fmt.Errorf("config: adversarial sets both rubric_path and rubric; use one")
+		// self_critique and judge score against the rubric; deterministic checks don't.
+		if (g.SelfCritique.MaxRounds > 0 || g.JudgeEnabled()) && g.RubricPath == "" && g.Rubric == "" {
+			return fmt.Errorf("config: gates needs one of rubric_path or rubric when self_critique or judge is enabled")
 		}
-		if c.Adversarial.MaxRounds == 0 {
-			c.Adversarial.MaxRounds = 2
+		if g.JudgeEnabled() {
+			if _, ok := c.Providers[g.Judge.Provider]; !ok {
+				return fmt.Errorf("config: gates.judge.provider %q is not defined under providers", g.Judge.Provider)
+			}
+			if g.Judge.Threshold == 0 {
+				g.Judge.Threshold = 0.7
+			}
+			if g.Judge.Threshold <= 0 || g.Judge.Threshold > 1 {
+				return fmt.Errorf("config: gates.judge.threshold must be in (0,1]")
+			}
+			if g.Judge.MaxIterations == 0 {
+				g.Judge.MaxIterations = 6
+			}
+			if g.Judge.MaxIterations < 1 {
+				return fmt.Errorf("config: gates.judge.max_iterations must be >= 1")
+			}
 		}
-		if c.Adversarial.MaxRounds < 1 {
-			return fmt.Errorf("config: adversarial.max_rounds must be >= 1")
-		}
-		if c.Adversarial.Threshold == 0 {
-			c.Adversarial.Threshold = 0.7
-		}
-		if c.Adversarial.Threshold <= 0 || c.Adversarial.Threshold > 1 {
-			return fmt.Errorf("config: adversarial.threshold must be in (0,1]")
-		}
+	}
+	if c.Dag.MaxActiveNodes == 0 {
+		c.Dag.MaxActiveNodes = 2
+	}
+	if c.Dag.MaxActiveNodes < 1 {
+		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

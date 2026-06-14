@@ -28,6 +28,10 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset) (
 		},
 		Tools:    tools,
 		Toolsets: toolsets,
+		// Summarize the older turns when a long agentic loop nears the context slot,
+		// so the worker keeps its findings instead of overflowing and dying. Uses
+		// the agent's own model for the (tool-less) summary call.
+		BeforeModelCallbacks: []llmagent.BeforeModelCallback{compactionCallback(m)},
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			MaxOutputTokens: MaxOutputTokens,
 		},

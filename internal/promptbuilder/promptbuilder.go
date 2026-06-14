@@ -52,6 +52,38 @@ func Agent(name, description string, tools []tool.Tool, behaviour string) string
 	return strings.TrimSpace(sb.String())
 }
 
+// Judge assembles the layered system prompt for the trust gate's independent
+// judge, mirroring Agent's structure (identity, tools, behaviour, environment)
+// so the judge is prompted consistently with the agents it evaluates. tools are
+// the judge's verification tools plus submit_verdict; behaviour is the judging
+// instructions.
+func Judge(tools []tool.Tool, behaviour string) string {
+	var sb strings.Builder
+
+	// Layer 1: Identity
+	sb.WriteString("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.\n")
+
+	// Layer 2: Capabilities — the judge's verification tools.
+	if len(tools) > 0 {
+		sb.WriteString("\n## Tools\n\n")
+		for _, t := range tools {
+			fmt.Fprintf(&sb, "- `%s` — %s\n", t.Name(), t.Description())
+		}
+	}
+
+	// Layer 3: Behaviour
+	if b := strings.TrimSpace(behaviour); b != "" {
+		sb.WriteString("\n")
+		sb.WriteString(b)
+		sb.WriteString("\n")
+	}
+
+	// Layer 4: Environment
+	fmt.Fprintf(&sb, "\n## Environment\n\nToday is %s.\n", today())
+
+	return strings.TrimSpace(sb.String())
+}
+
 // Orchestrator assembles the 4-layer system prompt for the orchestrator.
 // skills come from the skills/ filesystem; behaviour from prompt.md.
 //

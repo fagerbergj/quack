@@ -70,7 +70,10 @@ func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string
 			}
 		}
 	}
-	title := strings.TrimSpace(out.String())
+	// Strip any leaked reasoning: /no_think above asks qwen to skip thinking, but
+	// it sometimes emits a <think> block into content anyway (often UNCLOSED when
+	// it runs to the token limit), which would otherwise become the "title".
+	title := stream.StripThinking(out.String())
 	log.Printf("title: %q (candidates=%d total=%d)", title, candidates, total)
 	return title
 }

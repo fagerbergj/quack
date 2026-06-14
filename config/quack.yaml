@@ -37,17 +37,34 @@ tools:
   web_fetch:
     render_backend: ${CRAWL4AI_URL}  # crawl4ai /md backend, e.g. http://crawl4ai:11235
 
-# The trust gate wraps every agent: a self-refine pre-pass, then an independent
-# judge (a dedicated model) scores the answer against the rubric below, looping
-# up to max_rounds or until threshold is met. Leave model empty to disable.
-adversarial:
-  provider: default
-  model: ${JUDGE_MODEL}
-  max_rounds: 2
-  threshold: 0.7
-  self_refine: true
-  constitution_path: config/constitution.md   # global principles, used for self-refine + judge
+# The trust gate wraps every agent and runs three stages cheapest-first, each
+# with its own round budget (a stage with max_rounds:0 is skipped):
+#   1. deterministic_checks — free code checks (citation backing + length) that
+#      drive cheap targeted revisions to drop fabricated citations up front.
+#   2. self_critique — the worker critiques and revises its own draft.
+#   3. judge — an independent model scores the answer; the worker revises on fail.
+# Deterministic citation/length scores are always folded into the judge's verdict.
+# Leave judge.model empty to disable the judge (the cheaper stages still run).
+gates:
+  constitution_path: config/constitution.md   # global principles, used for self-critique + judge
   rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.md in their bundle)
+  deterministic_checks:
+    max_rounds: 4   # free citation/length checks; up to 4 cheap worker revise cycles
+  self_critique:
+    max_rounds: 1   # worker self-improvement passes before the judge
+  judge:
+    provider: default
+    model: ${JUDGE_MODEL}   # empty ⇒ judge disabled
+    max_rounds: 1           # expensive model-judge/revise rounds
+    threshold: 0.7
+    max_iterations: 6       # safety cap on the judge's model turns per round
+
+# DAG execution policy.
+dag:
+  max_active_nodes: 4   # how many nodes run concurrently; extras queue. Matched to the
+                        # worker server's --parallel 4 (4 KV slots @ 65536 tokens each);
+                        # the CPU judge is also --parallel 4. Raising this past the
+                        # worker's slot count just queues requests at the model.
 
 server:
   addr: ":8080"

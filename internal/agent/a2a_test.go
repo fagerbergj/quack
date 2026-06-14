@@ -84,22 +84,25 @@ func newWorker(t *testing.T) adkagent.Agent {
 	return ag
 }
 
-// collect drains a runner stream into the wire-event vocabulary via stream.Translate.
+// collect drains a runner stream into the wire-event vocabulary via the stateful
+// Translator. The worker here is ungated, so its raw thinking/tool/text parts map
+// to agent_thinking / agent_tool_call / agent_tool_result / agent_token.
 func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answer string, toolCalls, toolResults []string) {
 	t.Helper()
+	tr := stream.NewTranslator()
 	for ev, err := range seq {
 		if err != nil {
 			t.Fatalf("stream error: %v", err)
 		}
-		for _, se := range stream.Translate(ev) {
+		for _, se := range tr.Event(ev) {
 			switch d := se.Data.(type) {
-			case stream.ThinkingData:
+			case stream.AgentThinkingData:
 				thinking += d.Text
-			case stream.TokenData:
+			case stream.AgentTokenData:
 				answer += d.Text
-			case stream.ToolCallData:
+			case stream.AgentToolCallData:
 				toolCalls = append(toolCalls, d.Name)
-			case stream.ToolResultData:
+			case stream.AgentToolResultData:
 				toolResults = append(toolResults, d.Name)
 			}
 		}

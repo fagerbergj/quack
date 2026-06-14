@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log"
 	"strings"
 	"time" //nolint:godot
 
@@ -23,21 +24,31 @@ import (
 type Executor struct {
 	sessions session.Service
 	clients  map[string]adkagent.Agent // keyed by agent name
+	// sem caps how many nodes execute concurrently across all DAG runs. Nodes
+	// whose dependencies are met still queue here until a slot frees, so a wide
+	// layer doesn't fire N huge model requests at the single worker at once.
+	sem chan struct{}
 }
 
 // NewExecutor returns an Executor. clients maps agent names to their A2A clients.
-func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent) *Executor {
-	return &Executor{sessions: sessions, clients: clients}
+// maxActive caps concurrent node executions (<1 ⇒ default 2).
+func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent, maxActive int) *Executor {
+	if maxActive < 1 {
+		maxActive = 2
+	}
+	return &Executor{sessions: sessions, clients: clients, sem: make(chan struct{}, maxActive)}
 }
 
 // nodeMsg is one message sent from a node goroutine to the Execute main loop.
-// When done=false it carries a live activity event; when done=true it signals
-// that the goroutine has finished (output, err, and stats are set accordingly).
+// start=true announces the node actually began (after acquiring a concurrency
+// slot); done=false carries a live activity event; done=true signals the
+// goroutine finished (output, err, and stats are set accordingly).
 type nodeMsg struct {
 	nodeID string
 	ev     stream.SSEEvent
 	output string
 	err    error
+	start  bool
 	done   bool
 	stats  stream.NodeDoneData // only meaningful when done=true
 }
@@ -61,15 +72,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 		gateFailed := make(map[string]bool)
 
 		for _, layer := range layers {
-			// Announce all nodes in this layer as queued, then running, before
-			// starting the goroutines so the frontend shows them simultaneously.
+			// Announce all nodes in this layer as queued. node_start is emitted later,
+			// by each goroutine once it actually acquires a concurrency slot — so a
+			// node capped behind the semaphore correctly shows "queued", not "running".
 			for _, node := range layer {
 				if !yield(stream.NodeQueued(node.ID), nil) {
-					return
-				}
-			}
-			for _, node := range layer {
-				if !yield(stream.NodeStart(node.ID, node.AgentName), nil) {
 					return
 				}
 			}
@@ -103,6 +110,13 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			for completed < len(layer) {
 				select {
 				case msg := <-ch:
+					if msg.start {
+						if !yield(msg.ev, nil) {
+							cancelLayer()
+							return
+						}
+						continue
+					}
 					if msg.done {
 						completed++
 						if msg.err != nil {
@@ -154,6 +168,19 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 		}
 	}
 
+	// Acquire a concurrency slot: the node's deps are met, but it waits here behind
+	// the max-active cap (it stays "queued" in the UI). Once a slot frees, emit
+	// node_start and proceed. On cancellation, still report done so Execute's
+	// completion accounting stays balanced.
+	select {
+	case e.sem <- struct{}{}:
+	case <-ctx.Done():
+		send(nodeMsg{nodeID: node.ID, done: true, err: ctx.Err()})
+		return
+	}
+	defer func() { <-e.sem }()
+	send(nodeMsg{nodeID: node.ID, start: true, ev: stream.NodeStart(node.ID, node.AgentName)})
+
 	client, ok := e.clients[node.AgentName]
 	if !ok {
 		send(nodeMsg{nodeID: node.ID, done: true, err: fmt.Errorf("node %q: unknown agent %q", node.ID, node.AgentName)})
@@ -161,6 +188,18 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	}
 
 	task := buildTask(plan, node, upstream, gateFailed)
+	// Diagnostic: how many of this node's upstream deps actually contributed a
+	// non-empty output. 0/N on a node with deps means upstream produced nothing —
+	// the input the synthesizer (or any dependent) is missing.
+	if len(node.DependsOn) > 0 {
+		filled := 0
+		for _, dep := range node.DependsOn {
+			if strings.TrimSpace(upstream[dep]) != "" {
+				filled++
+			}
+		}
+		log.Printf("dag: node %s built task from %d/%d upstream outputs (task_len=%d)", node.ID, filled, len(node.DependsOn), len(task))
+	}
 
 	r, err := runner.New(runner.Config{
 		AppName:           "quack-nodes",
@@ -189,19 +228,18 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	var answer strings.Builder
 	var stats stream.NodeDoneData
 	startedAt := time.Now()
+	translator := stream.NewTranslator()
 
 	for ev, err := range r.Run(ctx, userID, nodeSessionID, content, adkagent.RunConfig{}) {
 		if err != nil {
 			send(nodeMsg{nodeID: node.ID, done: true, err: fmt.Errorf("node %q: %w", node.ID, err)})
 			return
 		}
-		for _, se := range stream.Translate(ev) {
-			if se.Name == stream.EventAgentStart {
-				continue
-			}
-			// agent_end carries completion metadata; accumulate before suppressing.
-			if se.Name == stream.EventAgentEnd {
-				if d, ok := se.Data.(stream.AgentData); ok {
+		for _, se := range translator.Event(ev) {
+			// agent_complete carries each run's stats; summarise into NodeDoneData
+			// (the store persists these; the worker run drives model/finish/usage).
+			if se.Name == stream.EventAgentComplete {
+				if d, ok := se.Data.(stream.AgentCompleteData); ok {
 					stats.PromptTokens += d.PromptTokens
 					stats.CompletionTokens += d.CompletionTokens
 					stats.ReasoningTokens += d.ReasoningTokens
@@ -209,36 +247,32 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 					if d.Model != "" {
 						stats.Model = d.Model
 					}
-					if d.FinishReason != "" {
-						stats.FinishReason = d.FinishReason
+					switch d.Stage {
+					case stream.StageWorker:
+						if d.FinishReason != "" {
+							stats.FinishReason = d.FinishReason
+						}
+					case stream.StageSelfRefine:
+						stats.SelfRefined = true
+					case stream.StageJudge:
+						if d.Status == "" { // a completed verdict (not unavailable)
+							stats.JudgeRounds++
+							stats.JudgeFinalScore = d.Score
+							stats.JudgePassed = d.Passed
+						}
 					}
-				}
-				continue
-			}
-			// Accumulate gate metadata; these are forwarded to the frontend but
-			// also summarised into NodeDoneData so the store can persist them.
-			if se.Name == stream.EventSelfRefine {
-				stats.SelfRefined = true
-			}
-			if se.Name == stream.EventJudgeVerdict {
-				if d, ok := se.Data.(stream.JudgeVerdictData); ok {
-					stats.JudgeRounds++
-					stats.JudgeFinalScore = d.Score
-					stats.JudgePassed = d.Passed
 				}
 			}
 			scoped := stream.ScopeToNode(se, node.ID)
 			send(nodeMsg{nodeID: node.ID, ev: scoped})
-			if td, ok := scoped.Data.(stream.TokenData); ok {
+			if td, ok := scoped.Data.(stream.AgentTokenData); ok {
 				answer.WriteString(td.Text)
 			}
 		}
 	}
 	stats.DurationMs = time.Since(startedAt).Milliseconds()
-	out := answer.String()
-	if idx := strings.Index(out, "</think>"); idx >= 0 {
-		out = strings.TrimLeft(out[idx+len("</think>"):], "\n")
-	}
+	out := stream.StripThinking(answer.String())
+	log.Printf("dag: node %s done output_len=%d judge_passed=%v judge_rounds=%d", node.ID, len(out), stats.JudgePassed, stats.JudgeRounds)
 	send(nodeMsg{nodeID: node.ID, done: true, output: out, stats: stats})
 }
 

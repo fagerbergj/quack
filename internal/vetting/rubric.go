@@ -9,11 +9,11 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// FromConfig resolves the adversarial config into a gate Config, loading the
-// constitution (optional global principles) and rubric (required scoring guide)
-// from their inline values or files. Validation of the config itself happens in
+// FromConfig resolves the gates config into a gate Config, loading the
+// constitution (optional global principles) and rubric (scoring guide) from
+// their inline values or files. Validation of the config itself happens in
 // config.validate; this just materialises the text.
-func FromConfig(c config.AdversarialConfig) (Config, error) {
+func FromConfig(c config.GatesConfig) (Config, error) {
 	constitution, err := loadConstitution(c)
 	if err != nil {
 		return Config{}, err
@@ -23,15 +23,17 @@ func FromConfig(c config.AdversarialConfig) (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		MaxRounds:    c.MaxRounds,
-		Threshold:    c.Threshold,
-		SelfRefine:   c.SelfRefine,
-		Constitution: constitution,
-		Rubric:       rubric,
+		DeterministicRounds: c.DeterministicChecks.MaxRounds,
+		SelfCritiqueRounds:  c.SelfCritique.MaxRounds,
+		JudgeRounds:         c.Judge.MaxRounds,
+		Threshold:           c.Judge.Threshold,
+		JudgeMaxIterations:  c.Judge.MaxIterations,
+		Constitution:        constitution,
+		Rubric:              rubric,
 	}, nil
 }
 
-func loadConstitution(c config.AdversarialConfig) (string, error) {
+func loadConstitution(c config.GatesConfig) (string, error) {
 	if r := strings.TrimSpace(c.Constitution); r != "" {
 		return r, nil
 	}
@@ -45,9 +47,12 @@ func loadConstitution(c config.AdversarialConfig) (string, error) {
 	return strings.TrimSpace(string(raw)), nil
 }
 
-func loadRubric(c config.AdversarialConfig) (string, error) {
+func loadRubric(c config.GatesConfig) (string, error) {
 	if r := strings.TrimSpace(c.Rubric); r != "" {
 		return r, nil
+	}
+	if c.RubricPath == "" {
+		return "", nil // rubric is optional for a deterministic-only gate
 	}
 	return loadRubricFile(c.RubricPath)
 }

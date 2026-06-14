@@ -43,7 +43,7 @@ func Handler(orch *orchestrator.Orchestrator) http.Handler {
 					Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
 				}, nil, nil
 			}
-			if td, ok := ev.Data.(stream.TokenData); ok {
+			if td, ok := ev.Data.(stream.AgentTokenData); ok {
 				answer += td.Text
 			}
 		}

@@ -111,7 +111,7 @@ then an independent judge). Still single-agent; **no DAG** (that is M3); **no me
 - **Self-refine**: a free same-model pre-pass where the worker critiques and revises its own output
   before anything else looks at it.
 - **Independent judge**: the adversarial loop (ADK `LoopAgent` + the independent judge, e.g.
-  `selene-mini`), bounded by `max_rounds` and a score `threshold`. Output is not trusted until it
+  `gemma4-26b-a4b`), bounded by `max_rounds` and a score `threshold`. Output is not trusted until it
   passes (or rounds run out). The **executor** runs this loop around the agent dispatch (call the
   agent, judge the result, re-dispatch to revise on a fail); the judge is a platform-invoked model,
   so agents themselves stay simple.
@@ -226,7 +226,7 @@ Everything below is intentionally outside the M0–M5 plan, captured so it is no
 | Inference | **More model providers** | `gemini`, `anthropic` provider `kind`s; only `openai` is implemented. |
 | Stores | **More store backends** | `sqlite` (relational), `pgvector` (vector); only Postgres + qdrant are implemented. |
 | Tools | **More tool kinds** | `mcp` (consume external MCP servers' tools via ADK `mcptoolset`) and `http` (declarative HTTP tools); only `builtin` is implemented. |
-| Vetting | **70B Selene escalation** | Escalate high-stakes / low-confidence nodes to the batched 70B `selene` judge. The CPU `selene-mini` is the single gate for now. |
+| Vetting | **70B Selene escalation** | Escalate high-stakes / low-confidence nodes to the batched 70B `selene` judge. The CPU `gemma4-26b-a4b` is the single gate for now. |
 | Vetting | **Deterministic floor** | A `platform/verify` pass (citation grounding, source provenance, quote fidelity, schema, URL liveness, code/tests) that runs before the judge. Pulled because it forces structured agent output, a bigger decision. |
 | Vetting | **Tool-grounded critique** | CRITIC-style critics that call tools to verify claims rather than reason alone. |
 | Vetting | **Per-agent adversarial overrides** | Global adversarial policy only for now; later, per-agent judge / threshold / rounds overrides. |
