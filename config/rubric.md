@@ -75,22 +75,36 @@ override this score; here, judge only the presence of links.
 
 ---
 
+### `clean_output`
+
+The response is ONLY the answer — it begins directly with the answer (its title
+or first sentence) and ends with the answer (or its `Sources` section). It must
+contain no preamble, no process narration, no planning or self-talk, no
+meta-commentary about formatting/skills/rules, and no leftover reasoning. The
+reader sees the reply verbatim, so anything like "Let me…", "I see, I made a
+typo…", "Actually, wait…", "the skill says…", or trailing drafting notes is a
+defect — even when the buried content is excellent.
+
+- **1.0** — pure answer; no preamble, narration, or trailing reasoning
+- **0.5** — a stray opener or a single meta sentence, otherwise clean
+- **0.0** — noticeable preamble and/or leaked planning/reasoning in the output
+
+---
+
 ## Zero-retrieval handling
 
 If the agent explicitly states it could not retrieve any sources (tool errors,
 no results), score `grounded` and `cites_sources` at **0.0** but do **not**
 penalise `answers_question` or `internally_consistent` for the lack of
 retrieval — those criteria assess what the agent did with what it had.
-If the agent silently synthesises without retrieval (no disclaimer), apply the
-hard cap as normal.
 
 ## Aggregation rule
 
-1. Compute the arithmetic mean of the five criterion scores.
-2. **Hard cap**: if `cites_sources` scores **0.0**, the overall score must not
-   exceed **0.40**, regardless of the mean. A fluent answer with zero real
-   citations is a more dangerous failure than a rough but honest one.
-3. Report the capped mean as `score`.
+Each criterion is an **independent pass/fail** — there is no averaging and no
+hard caps. Report `score` as the **lowest** criterion score (the binding
+constraint); the gate passes only when every criterion clears the threshold, so
+one fatal failure (leaked preamble, no citations) sinks the answer on its own
+rather than being averaged away by strong scores elsewhere.
 
-`feedback` must name the specific failing criterion and what concretely would
-fix it so the next revision can act on it.
+`feedback` must name the lowest-scoring criterion/criteria and what concretely
+would fix them so the next revision can act on it.

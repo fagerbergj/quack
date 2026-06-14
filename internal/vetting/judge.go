@@ -41,10 +41,9 @@ const (
 	// re-derives the overall score with hard caps in aggregateVerdict.
 	judgeAgentBehaviour = "You did NOT write the answer being evaluated, and you must not trust its assertions. " +
 		"You have no tools — judge the answer on its own merits against the rubric: whether it actually answers the question, stays internally consistent, and whether anything stated with specificity (names, prices, numbers, dates) reads as invented or unsupported. Do NOT try to verify which URLs were fetched — citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. " +
-		"Work through each named criterion in the rubric. For each, reason in one or two sentences, then assign a score 0.0–1.0 using the rubric's scoring anchors. " +
-		"When — and only when — you have evaluated every criterion, call the submit_verdict tool exactly once with: `score` (the rubric mean after applying any hard caps stated in the rubric), `criteria` (an object mapping each criterion name to {reason, score}), and `feedback` (concrete, actionable notes on what to fix; empty when the answer passes). " +
-		"Do NOT write the verdict as prose or JSON in your reply — calling submit_verdict is the only way to finish. " +
-		"The five criteria are: grounded, no_fabrication, answers_question, internally_consistent, cites_sources."
+		"Score EVERY criterion the rubric names — no more, no fewer. For each, reason in one or two sentences, then assign a score 0.0–1.0 using the rubric's scoring anchors. Each criterion is an independent pass/fail: the answer's overall score is its WEAKEST criterion, so a single bad criterion sinks it — do not let a strong dimension excuse a failing one. " +
+		"When — and only when — you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {reason, score}), `score` (the lowest criterion score), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
+		"Do NOT write the verdict as prose or JSON in your reply — calling submit_verdict is the only way to finish."
 )
 
 // criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
@@ -500,21 +499,20 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 // holistic value), and clamps the final score to [0,1]. Used for both the
 // structured submit_verdict path and the parseVerdict text fallback.
 func aggregateVerdict(v verdict) verdict {
+	// Per-criterion gating (DeepEval-style G-Eval composition): each criterion is
+	// an independent pass/fail, so the overall score is the WEAKEST criterion — the
+	// binding constraint. The gate passes only when every criterion clears the
+	// threshold, so one fatal flaw (leaked preamble, no citations) can't be
+	// averaged away by strong scores elsewhere. No hard caps: a low criterion fails
+	// on its own and drives a targeted revision rather than code overriding a mean.
 	if len(v.Criteria) > 0 {
-		var sum float64
+		lowest := 1.0
 		for _, c := range v.Criteria {
-			sum += c.Score
-		}
-		avg := sum / float64(len(v.Criteria))
-
-		// Hard cap: zero citations → score ≤ 0.40 regardless of other criteria.
-		// Using < 0.05 rather than == 0 to tolerate floating-point imprecision.
-		if cs, ok := v.Criteria["cites_sources"]; ok && cs.Score < 0.05 {
-			if avg > 0.40 {
-				avg = 0.40
+			if c.Score < lowest {
+				lowest = c.Score
 			}
 		}
-		v.Score = avg
+		v.Score = lowest
 	}
 	if v.Score < 0 {
 		v.Score = 0
