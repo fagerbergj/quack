@@ -533,14 +533,15 @@ func (g *gate) runAgenticRevision(ctx adkagent.InvocationContext, yield func(*se
 // inference-config bug) must not spin forever.
 const maxEmptyRetries = 4
 
-// maxToolCalls is a HARD ceiling on tool calls per worker invocation. qwen3.6
-// ignores the prompt's "stop after ~10 searches" guidance and has fired hundreds
-// of tool calls (688 observed) — blowing the 65536-token context window and
-// burning 30+ minutes on a single node. When the worker crosses this, runWorker
-// cancels its run and the empty-answer recovery writes the answer from what was
-// gathered. Generous enough for a real sub-question (a node is one sub-question),
-// low enough to bound time and keep context under the window.
-const maxToolCalls = 30
+// maxToolCalls is a HARD ceiling on tool calls per worker invocation — a backstop
+// against catastrophic runaways (qwen3.6 has fired 688 tool calls on one node,
+// burning 30+ min). It is deliberately generous so it never cuts off legitimate
+// research; with worker thinking ON the model should self-regulate far below it
+// (the prompt's explicit stop criteria + thinking), and a node that overflows the
+// context window before reaching this is handled gracefully by the empty-answer
+// floor. When the worker crosses this, runWorker cancels its run and the
+// empty-answer recovery writes the answer from what was gathered.
+const maxToolCalls = 100
 
 // finalizeUntilNonEmpty re-invokes the worker (a finalize write-up pass)
 // repeatedly until it returns a non-empty answer or maxEmptyRetries is hit. Each
