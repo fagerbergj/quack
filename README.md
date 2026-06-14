@@ -105,7 +105,7 @@ output passes a **trust gate** before it counts:
    ([Self-Refine][self-refine]). Cheap, but it shares the worker's blind spots, so it's a polish
    pass, not the trust decision.
 2. **Independent judge.** A separate, independently-configured judge model (e.g.
-   [`selene-mini`][selenemini]) scores the output. Because it is genuinely different weights from
+   [`gemma4-26b-a4b`][selenemini]) scores the output. Because it is genuinely different weights from
    the worker, it catches blind spots the worker cannot see in its own output. This is the real
    trust decision ([the case for adversarial agents][adv]).
 
@@ -272,14 +272,17 @@ orchestrator:
       provider: local
       model: gpt-oss-120b
 
-adversarial:
-  self_refine: true
+gates:                             # trust gate: cheapest-first stages, each with its own budget
+  rubric_path: config/rubric.md
+  deterministic_checks:
+    max_rounds: 4                  # free citation/length checks + cheap revise cycles
+  self_critique:
+    max_rounds: 1                  # worker improves its own draft
   judge:
-    inference:
-      provider: local
-      model: selene-mini         # independent judge
+    provider: local
+    model: gemma4-26b-a4b          # independent judge (empty ⇒ judge disabled)
+    max_rounds: 1
     threshold: 0.7
-  max_rounds: 2
 
 tools:                           # registry: catalog of available tools (agents select by name)
   web_search:

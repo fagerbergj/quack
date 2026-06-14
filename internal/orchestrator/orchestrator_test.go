@@ -47,7 +47,7 @@ func TestOrchestratorReturnType(t *testing.T) {
 			var _ string = ev.Name
 			// stream.SSEEvent has a Name field of type string.
 			switch ev.Data.(type) {
-			case stream.TokenData, stream.DagPlanData, stream.NodeStartData:
+			case stream.AgentTokenData, stream.DagPlanData, stream.NodeStartData:
 			}
 			if err != nil {
 				break

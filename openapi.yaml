@@ -84,20 +84,33 @@ paths:
         Streams the orchestrator's response as Server-Sent Events. Each event is
         `event: <name>` followed by `data: <json>`.
 
-        Standard events: `token` ({"text"}) is answer text; `thinking` ({"text"})
-        is reasoning; `tool_call` ({"name","args"}) and `tool_result`
-        ({"name","result"}) are tool activity; `agent_start` / `agent_end`
-        ({"agent"}) bracket a dispatched sub-agent; `self_refine` ({"changed"})
-        and `judge_verdict` ({"round","score","passed","feedback"}) are trust-gate
-        activity; `chat_title` ({"title"}) is sent once the title is generated;
-        `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
+        The model is flat and agent-centric: the DAG (dag_plan + node_* events) is
+        the static structure, and within each node the trust gate runs a SEQUENCE
+        of agent invocations ("runs") — the worker draft, an optional self-refine,
+        each judge round, and each revision. Every run is delimited by
+        `agent_start` / `agent_complete` and carries a `run_id` + `stage`
+        (`worker` | `self_refine` | `judge` | `revise`); its activity references
+        that `run_id`. Clients group runs by `node_id` and pair tools by `call_id`.
 
-        DAG events (quack extension): `dag_plan` ({"plan_id","nodes","edges"})
-        signals a quack:dag output item has been added; `node_queued`
-        ({"node_id"}), `node_start` ({"node_id","agent"}), `node_done`
-        ({"node_id",...metadata}), and `node_failed` ({"node_id","error"}) track
-        individual node lifecycle. Activity events within a node carry a
-        `node_id` field routing them to the correct node card.
+        Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round"})
+        opens a run; `agent_thinking` ({"node_id","run_id","text"}) is reasoning;
+        `agent_tool_call` ({"node_id","run_id","call_id","name","args"}) and
+        `agent_tool_result` ({"node_id","run_id","call_id","name","result"}) are
+        tool activity; `agent_token` ({"node_id","run_id","text"}) is answer text
+        (the final vetted answer is emitted with an empty `run_id` — it belongs to
+        the node); `agent_complete` ({"node_id","run_id","stage",...}) closes a run
+        with its stage-specific result — judge runs carry `score`/`passed`/
+        `feedback` (or `status:"unavailable"`+`reason` when the judge couldn't
+        run), self_refine carries `changed`, model runs carry `finish_reason` +
+        token usage.
+
+        DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
+        output item has been added; `node_queued` ({"node_id"}), `node_start`
+        ({"node_id","agent"}), `node_done` ({"node_id",...metadata}), and
+        `node_failed` ({"node_id","error"}) track node lifecycle.
+
+        Lifecycle: `chat_title` ({"title"}) is sent once the title is generated;
+        `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       requestBody:
@@ -107,14 +120,12 @@ paths:
             schema:
               $ref: "#/components/schemas/SendMessageBody"
       x-sse-events:
-        - token
-        - thinking
-        - tool_call
-        - tool_result
         - agent_start
-        - agent_end
-        - self_refine
-        - judge_verdict
+        - agent_thinking
+        - agent_tool_call
+        - agent_tool_result
+        - agent_token
+        - agent_complete
         - dag_plan
         - node_queued
         - node_start

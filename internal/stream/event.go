@@ -1,12 +1,20 @@
-// Package stream defines Quack's wire-level event vocabulary and translates
-// ADK session events into it. The vocabulary mirrors the frontend contract in
-// frontend/src/state/agentStream.ts and is shared by the REST and MCP transports.
+// Package stream defines Quack's wire-level event vocabulary and translates the
+// gate's ADK session-event stream into it. The vocabulary mirrors the frontend
+// contract in frontend/src/state/agentStream.ts and is shared by the REST and
+// MCP transports.
 //
-// Every activity event carries the `agent` that produced it (the ADK event
-// author), and the dispatch lifecycle is explicit: `agent_start` when the
-// orchestrator transfers to a specialist, `agent_end` when that specialist's turn
-// completes. The frontend uses these to nest activity under the right actor
-// instead of inferring boundaries from message content.
+// The model is flat and agent-centric: the DAG (dag_plan + node_* events) is the
+// static structure, and within each node the gate runs a SEQUENCE of agent
+// invocations ("runs") — the worker draft, optional self-refine, each judge
+// round, each revision. Every run is delimited by agent_start / agent_complete
+// and carries a run_id + stage; its activity (agent_thinking, agent_tool_call,
+// agent_tool_result, agent_token) references that run_id. The client groups runs
+// by node and pairs tools by call_id — no nesting heuristics.
+//
+// Translation is stateful: the gate yields agent_start/agent_complete marker
+// FunctionResponse parts to delimit runs, and a per-node Translator tracks the
+// current run so the worker's passthrough activity is attributed to it. Token
+// usage is accumulated from the raw model events and reported on agent_complete.
 package stream
 
 import (
@@ -14,54 +22,42 @@ import (
 	"google.golang.org/genai"
 )
 
-// OrchestratorAuthor is the ADK author of the root dispatcher's events (mirrors
-// the agent name in internal/orchestrator). Its turn-completion is its own, not a
-// dispatched specialist's, so it does not emit an agent_end.
-const OrchestratorAuthor = "orchestrator"
-
-// transferTool is ADK's built-in dispatch tool; its call/response surface as the
-// agent_start lifecycle event rather than as a normal tool call.
+// transferTool is ADK's built-in dispatch tool; its call/response are suppressed
+// (Quack dispatches via the DAG executor, not agent transfer).
 const transferTool = "transfer_to_agent"
 
-// The trust gate (internal/vetting) emits its self-refine and judge activity as
-// session events carrying a single marker function-response part with one of
-// these reserved names. Encoding them this way means they ride the same A2A
-// artifact path as real tool results, are skipped by the chat-history projection,
-// and — as orphan responses with no matching call — are dropped from the worker's
-// future LLM context by ADK. Translate decodes them into dedicated wire events.
+// Stage names label what an agent run is doing within a node.
 const (
-	judgeTool            = "record_judge_verdict"
-	judgeStartTool       = "record_judge_start"
-	selfRefineTool       = "record_self_refine"
-	selfRefineStartTool  = "record_self_refine_start"
-	judgeUnavailableTool = "record_judge_unavailable"
-	reviseTool           = "record_revise"
-	// keepaliveTool is a heartbeat the gate emits every ~30 s during slow
-	// operations (judge model load + generation) to keep the A2A SSE connection
-	// alive. Translate drops it — it produces no wire event.
-	keepaliveTool = "_quack_keepalive"
+	StageWorker     = "worker"
+	StageSelfRefine = "self_refine"
+	StageJudge      = "judge"
+	StageRevise     = "revise"
 )
 
-// Event names. M0 emitted only token / done / error; the rest fill in as later
-// milestones emit them.
+// Gate marker tool names: the gate yields these as function-response parts to
+// delimit each run; the Translator decodes them into agent_start/agent_complete.
+// keepalive is a heartbeat the gate emits during slow operations to keep the A2A
+// SSE connection alive; the Translator drops it.
 const (
-	EventToken               = "token"
-	EventThinking            = "thinking"
-	EventToolCall            = "tool_call"
-	EventToolResult          = "tool_result"
-	EventAgentStart          = "agent_start"
-	EventAgentEnd            = "agent_end"
-	EventSelfRefineStart     = "self_refine_start"
-	EventSelfRefine          = "self_refine"
-	EventJudgeStart          = "judge_start"
-	EventRevise              = "revise"
-	EventJudgeVerdict        = "judge_verdict"
-	EventJudgeUnavailable    = "judge_unavailable"
-	EventConfirmationRequest = "confirmation_request"
-	EventChatTitle           = "chat_title"
-	EventError               = "error"
-	EventDone                = "done"
-	// DAG events (M3).
+	agentStartTool    = "record_agent_start"
+	agentCompleteTool = "record_agent_complete"
+	keepaliveTool     = "_quack_keepalive"
+)
+
+// Event names.
+const (
+	EventAgentStart      = "agent_start"
+	EventAgentThinking   = "agent_thinking"
+	EventAgentToolCall   = "agent_tool_call"
+	EventAgentToolResult = "agent_tool_result"
+	EventAgentToken      = "agent_token"
+	EventAgentComplete   = "agent_complete"
+
+	EventChatTitle = "chat_title"
+	EventError     = "error"
+	EventDone      = "done"
+
+	// DAG / static structure.
 	EventDagPlan    = "dag_plan"
 	EventNodeQueued = "node_queued"
 	EventNodeStart  = "node_start"
@@ -75,11 +71,74 @@ type SSEEvent struct {
 	Data any
 }
 
-// TokenData is the `token` event payload.
-type TokenData struct {
+// ── agent-run events ─────────────────────────────────────────────────────────
+
+// AgentStartData opens an agent run within a node.
+type AgentStartData struct {
 	NodeID string `json:"node_id,omitempty"`
-	Agent  string `json:"agent,omitempty"`
+	RunID  string `json:"run_id"`
+	Agent  string `json:"agent"`
+	Stage  string `json:"stage"` // worker | self_refine | judge | revise
+	Round  int    `json:"round,omitempty"`
+}
+
+// AgentThinkingData is reasoning streamed during a run.
+type AgentThinkingData struct {
+	NodeID string `json:"node_id,omitempty"`
+	RunID  string `json:"run_id"`
 	Text   string `json:"text"`
+}
+
+// AgentTokenData is answer/output text. The final vetted answer is emitted with
+// an empty RunID (it belongs to the node, not a particular run).
+type AgentTokenData struct {
+	NodeID string `json:"node_id,omitempty"`
+	RunID  string `json:"run_id,omitempty"`
+	Text   string `json:"text"`
+}
+
+// AgentToolCallData is a tool invocation during a run; pairs with a result by CallID.
+type AgentToolCallData struct {
+	NodeID string         `json:"node_id,omitempty"`
+	RunID  string         `json:"run_id"`
+	CallID string         `json:"call_id"`
+	Name   string         `json:"name"`
+	Args   map[string]any `json:"args"`
+}
+
+// AgentToolResultData is the result of a tool call, matched to it by CallID.
+type AgentToolResultData struct {
+	NodeID string `json:"node_id,omitempty"`
+	RunID  string `json:"run_id"`
+	CallID string `json:"call_id"`
+	Name   string `json:"name"`
+	Result any    `json:"result"`
+}
+
+// AgentCompleteData closes an agent run. Fields are populated by stage: model +
+// usage + finish_reason for model runs (worker/self_refine/revise), changed for
+// self_refine, score/passed/feedback for judge, and status/reason when a run was
+// not completed normally (e.g. the judge was unavailable).
+type AgentCompleteData struct {
+	NodeID string `json:"node_id,omitempty"`
+	RunID  string `json:"run_id"`
+	Stage  string `json:"stage"`
+	Round  int    `json:"round,omitempty"`
+
+	Model            string `json:"model,omitempty"`
+	PromptTokens     int32  `json:"prompt_tokens,omitempty"`
+	CompletionTokens int32  `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
+	TotalTokens      int32  `json:"total_tokens,omitempty"`
+	FinishReason     string `json:"finish_reason,omitempty"`
+
+	Changed  bool    `json:"changed,omitempty"`  // self_refine
+	Score    float64 `json:"score,omitempty"`    // judge
+	Passed   bool    `json:"passed,omitempty"`   // judge
+	Feedback string  `json:"feedback,omitempty"` // judge
+
+	Status string `json:"status,omitempty"` // "" ok | "unavailable"
+	Reason string `json:"reason,omitempty"`
 }
 
 // ErrorData is the `error` event payload.
@@ -87,86 +146,7 @@ type ErrorData struct {
 	Error string `json:"error"`
 }
 
-// ThinkingData is the `thinking` event payload.
-type ThinkingData struct {
-	NodeID string `json:"node_id,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Text   string `json:"text"`
-}
-
-// ToolCallData is the `tool_call` event payload.
-type ToolCallData struct {
-	NodeID string         `json:"node_id,omitempty"`
-	Agent  string         `json:"agent,omitempty"`
-	Name   string         `json:"name"`
-	Args   map[string]any `json:"args"`
-}
-
-// ToolResultData is the `tool_result` event payload.
-type ToolResultData struct {
-	NodeID string `json:"node_id,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Name   string `json:"name"`
-	Result any    `json:"result"`
-}
-
-// AgentData is the payload for the agent_start / agent_end lifecycle events.
-// Completion stats are populated only on agent_end when the model reported them;
-// all stat fields are omitted when zero.
-type AgentData struct {
-	NodeID           string `json:"node_id,omitempty"`
-	Agent            string `json:"agent"`
-	Model            string `json:"model,omitempty"`
-	PromptTokens     int32  `json:"prompt_tokens,omitempty"`
-	CompletionTokens int32  `json:"completion_tokens,omitempty"`
-	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
-	TotalTokens      int32  `json:"total_tokens,omitempty"`
-	FinishReason     string `json:"finish_reason,omitempty"`
-}
-
-// SelfRefineData is the `self_refine` event payload: the gate ran the worker's
-// own self-critique pre-pass, and whether it changed the answer.
-type SelfRefineData struct {
-	NodeID  string `json:"node_id,omitempty"`
-	Agent   string `json:"agent,omitempty"`
-	Changed bool   `json:"changed"`
-}
-
-// ReviseData is the `revise` event payload: the gate revised the answer in
-// response to the judge's feedback before starting the next round.
-type ReviseData struct {
-	NodeID string `json:"node_id,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Round  int    `json:"round"`
-}
-
-// JudgeVerdictData is the `judge_verdict` event payload: the independent judge's
-// score for one round, whether it passed the threshold, and revision feedback.
-type JudgeVerdictData struct {
-	NodeID   string  `json:"node_id,omitempty"`
-	Agent    string  `json:"agent,omitempty"`
-	Round    int     `json:"round"`
-	Score    float64 `json:"score"`
-	Passed   bool    `json:"passed"`
-	Feedback string  `json:"feedback,omitempty"`
-}
-
-// JudgeUnavailableData is the `judge_unavailable` event payload: the judge
-// failed and the answer is surfaced unvetted, with a quality warning.
-type JudgeUnavailableData struct {
-	NodeID string `json:"node_id,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Round  int    `json:"round"`
-	Reason string `json:"reason,omitempty"`
-}
-
-// JudgeStartData is the `judge_start` event payload: the gate is beginning
-// an independent judge round. Pairs with a later judge_verdict to close it.
-type JudgeStartData struct {
-	NodeID string `json:"node_id,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Round  int    `json:"round"`
-}
+// ── DAG / static structure ───────────────────────────────────────────────────
 
 // DagNodeDef is the wire representation of one node in a DAG plan.
 type DagNodeDef struct {
@@ -200,8 +180,8 @@ type NodeStartData struct {
 	Agent  string `json:"agent"`
 }
 
-// NodeDoneData is the `node_done` event payload. Completion stats are the
-// sum across all LLM calls made during the node's run; omitted when zero.
+// NodeDoneData is the `node_done` event payload. Completion stats are the sum
+// across all runs made during the node's execution; omitted when zero.
 type NodeDoneData struct {
 	NodeID           string  `json:"node_id"`
 	OutputPreview    string  `json:"output_preview,omitempty"`
@@ -224,145 +204,12 @@ type NodeFailedData struct {
 	Error  string `json:"error"`
 }
 
-// Token builds a token event.
-func Token(agent, text string) SSEEvent {
-	return SSEEvent{Name: EventToken, Data: TokenData{Agent: agent, Text: text}}
+// ChatTitleData is the `chat_title` event payload.
+type ChatTitleData struct {
+	Title string `json:"title"`
 }
 
-// Thinking builds a thinking (reasoning) event.
-func Thinking(agent, text string) SSEEvent {
-	return SSEEvent{Name: EventThinking, Data: ThinkingData{Agent: agent, Text: text}}
-}
-
-// ToolCall builds a tool_call event.
-func ToolCall(agent, name string, args map[string]any) SSEEvent {
-	return SSEEvent{Name: EventToolCall, Data: ToolCallData{Agent: agent, Name: name, Args: args}}
-}
-
-// ToolResult builds a tool_result event.
-func ToolResult(agent, name string, result any) SSEEvent {
-	return SSEEvent{Name: EventToolResult, Data: ToolResultData{Agent: agent, Name: name, Result: result}}
-}
-
-// AgentStart marks the orchestrator dispatching to a specialist agent.
-func AgentStart(agent string) SSEEvent {
-	return SSEEvent{Name: EventAgentStart, Data: AgentData{Agent: agent}}
-}
-
-// AgentEnd marks a specialist agent's turn completing, optionally carrying
-// completion metadata extracted from the underlying LLM response.
-func AgentEnd(data AgentData) SSEEvent {
-	return SSEEvent{Name: EventAgentEnd, Data: data}
-}
-
-// SelfRefine builds a self_refine event.
-func SelfRefine(agent string, changed bool) SSEEvent {
-	return SSEEvent{Name: EventSelfRefine, Data: SelfRefineData{Agent: agent, Changed: changed}}
-}
-
-// Revise builds a revise event: the gate revised the worker's answer in
-// response to judge feedback before running the next judge round.
-func Revise(agent string, round int) SSEEvent {
-	return SSEEvent{Name: EventRevise, Data: ReviseData{Agent: agent, Round: round}}
-}
-
-// JudgeVerdict builds a judge_verdict event.
-func JudgeVerdict(agent string, round int, score float64, passed bool, feedback string) SSEEvent {
-	return SSEEvent{Name: EventJudgeVerdict, Data: JudgeVerdictData{
-		Agent: agent, Round: round, Score: score, Passed: passed, Feedback: feedback,
-	}}
-}
-
-// JudgeUnavailable builds a judge_unavailable event: the judge failed and the
-// answer is being surfaced anyway with a quality-cannot-be-guaranteed flag.
-func JudgeUnavailable(agent string, round int, reason string) SSEEvent {
-	return SSEEvent{Name: EventJudgeUnavailable, Data: JudgeUnavailableData{
-		Agent: agent, Round: round, Reason: reason,
-	}}
-}
-
-// SelfRefineStart signals that the gate is beginning a self-refine pass.
-// Thinking events that follow belong inside this container until SelfRefine closes it.
-func SelfRefineStart(agent string) SSEEvent {
-	return SSEEvent{Name: EventSelfRefineStart, Data: AgentData{Agent: agent}}
-}
-
-// JudgeStart signals that the gate is beginning an independent judge round.
-// Thinking events that follow belong inside this container until JudgeVerdict closes it.
-func JudgeStart(agent string, round int) SSEEvent {
-	return SSEEvent{Name: EventJudgeStart, Data: JudgeStartData{Agent: agent, Round: round}}
-}
-
-// SelfRefinePart encodes a self-refine pass as the marker function-response part
-// the trust gate yields (see the judgeTool/selfRefineTool comment).
-func SelfRefinePart(changed bool) *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     selfRefineTool,
-		Response: map[string]any{"changed": changed},
-	}}
-}
-
-// KeepAlivePart builds the marker part the gate emits during long-running judge
-// or revise calls to prevent A2A SSE connection idle timeouts. Translate drops it.
-func KeepAlivePart() *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     keepaliveTool,
-		Response: map[string]any{},
-	}}
-}
-
-// SelfRefineStartPart encodes the start of a self-refine pass as a marker
-// function-response part the trust gate yields.
-func SelfRefineStartPart() *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     selfRefineStartTool,
-		Response: map[string]any{},
-	}}
-}
-
-// JudgeStartPart encodes the start of a judge round as a marker
-// function-response part the trust gate yields.
-func JudgeStartPart(round int) *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     judgeStartTool,
-		Response: map[string]any{"round": round},
-	}}
-}
-
-// ThinkingPart creates a reasoning part for direct emission by the gate during
-// self-refine and judge model calls, surfacing as a `thinking` wire event.
-func ThinkingPart(text string) *genai.Part {
-	return &genai.Part{Thought: true, Text: text}
-}
-
-// JudgeVerdictPart encodes one judge verdict as the marker function-response part
-// the trust gate yields.
-func JudgeVerdictPart(round int, score float64, passed bool, feedback string) *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name: judgeTool,
-		Response: map[string]any{
-			"round": round, "score": score, "passed": passed, "feedback": feedback,
-		},
-	}}
-}
-
-// RevisePart encodes a revision pass as the marker function-response part the
-// trust gate yields after the judge requests a revision.
-func RevisePart(round int) *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     reviseTool,
-		Response: map[string]any{"round": round},
-	}}
-}
-
-// JudgeUnavailablePart encodes a judge-unavailable notice as the marker
-// function-response part the trust gate yields before surfacing the answer.
-func JudgeUnavailablePart(round int, reason string) *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     judgeUnavailableTool,
-		Response: map[string]any{"round": round, "reason": reason},
-	}}
-}
+// ── event constructors ───────────────────────────────────────────────────────
 
 // DagPlan builds a dag_plan event carrying the full plan structure.
 func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
@@ -390,52 +237,7 @@ func NodeFailed(nodeID, errMsg string) SSEEvent {
 	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
 }
 
-// ScopeToNode sets the NodeID field on an activity SSEEvent's data payload,
-// routing it to the correct DAG node in the frontend. Events that don't carry
-// a NodeID field (dag lifecycle events, done, error) are returned unchanged.
-func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
-	switch d := ev.Data.(type) {
-	case TokenData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case ThinkingData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case ToolCallData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case ToolResultData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case AgentData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case SelfRefineData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case ReviseData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case JudgeVerdictData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case JudgeUnavailableData:
-		d.NodeID = nodeID
-		ev.Data = d
-	case JudgeStartData:
-		d.NodeID = nodeID
-		ev.Data = d
-	}
-	return ev
-}
-
-// ChatTitleData is the `chat_title` event payload.
-type ChatTitleData struct {
-	Title string `json:"title"`
-}
-
-// ChatTitle builds a chat_title event: sent as soon as the title LLM call
-// completes so the client can update the sidebar without waiting for done.
+// ChatTitle builds a chat_title event.
 func ChatTitle(title string) SSEEvent {
 	return SSEEvent{Name: EventChatTitle, Data: ChatTitleData{Title: title}}
 }
@@ -446,105 +248,191 @@ func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: Error
 // Done builds the terminal done event.
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }
 
-// Translate maps one ADK session event to zero or more wire events. Each part is
-// labeled by kind — reasoning (Thought) → thinking, function calls → tool_call,
-// function responses → tool_result, plain text → token — and tagged with the
-// event's author so the frontend can attribute it. A dispatch (Actions.
-// TransferToAgent) emits agent_start; a specialist's turn completion (TurnComplete
-// from a non-orchestrator author) emits agent_end. The built-in transfer tool's
-// own call/response are suppressed in favor of those lifecycle events. The caller
-// emits the terminal `done` after the stream ends.
-func Translate(ev *session.Event) []SSEEvent {
+// ── gate marker parts (yielded by the gate, decoded by the Translator) ────────
+
+// AgentStartPart encodes the start of an agent run.
+func AgentStartPart(runID, agent, stage string, round int) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     agentStartTool,
+		Response: map[string]any{"run_id": runID, "agent": agent, "stage": stage, "round": round},
+	}}
+}
+
+// AgentCompletePart encodes the end of an agent run with its stage-specific
+// result. Token usage / model / finish_reason are filled in by the Translator
+// from the run's model events, so the gate need not supply them.
+func AgentCompletePart(d AgentCompleteData) *genai.Part {
+	resp := map[string]any{"run_id": d.RunID, "stage": d.Stage, "round": d.Round}
+	if d.Changed {
+		resp["changed"] = d.Changed
+	}
+	if d.Stage == StageJudge {
+		resp["score"] = d.Score
+		resp["passed"] = d.Passed
+		resp["feedback"] = d.Feedback
+	}
+	if d.Status != "" {
+		resp["status"] = d.Status
+		resp["reason"] = d.Reason
+	}
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: agentCompleteTool, Response: resp}}
+}
+
+// KeepAlivePart builds the heartbeat marker the gate emits during long runs.
+func KeepAlivePart() *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: keepaliveTool, Response: map[string]any{}}}
+}
+
+// AgentTokenPart builds a plain-text part the gate yields for the final answer.
+func AgentTokenPart(text string) *genai.Part { return &genai.Part{Text: text} }
+
+// ThinkingPart builds a reasoning part the gate yields directly (e.g. judge
+// thinking re-emitted from its isolated run).
+func ThinkingPart(text string) *genai.Part { return &genai.Part{Thought: true, Text: text} }
+
+// IsGateMarkerName reports whether name is a reserved gate-internal tool name.
+// These orphan FunctionResponses are hidden from the worker's session view during
+// re-invocation (ADK errors on a trailing orphan FunctionResponse).
+func IsGateMarkerName(name string) bool {
+	switch name {
+	case agentStartTool, agentCompleteTool, keepaliveTool:
+		return true
+	}
+	return false
+}
+
+// ── stateful translation ─────────────────────────────────────────────────────
+
+// Translator converts one node's gate event stream into wire events. It tracks
+// the current run (delimited by agent_start/agent_complete markers) so activity
+// is attributed correctly, and accumulates token usage per run to report on
+// agent_complete. Create one per node stream; it is not safe for concurrent use.
+type Translator struct {
+	curRun   string
+	curStage string
+	curRound int
+	curAgent string
+
+	prompt, completion, reasoning, total int32
+	model                                string
+	finish                               string
+}
+
+// NewTranslator returns a Translator for one node stream.
+func NewTranslator() *Translator { return &Translator{} }
+
+// Event maps one ADK session event to zero or more wire events.
+func (t *Translator) Event(ev *session.Event) []SSEEvent {
 	if ev == nil {
 		return nil
 	}
-	agent := ev.Author
-	var out []SSEEvent
 
-	// A dispatch opens the specialist's group before its events arrive.
-	if ev.Actions.TransferToAgent != "" {
-		out = append(out, AgentStart(ev.Actions.TransferToAgent))
-	}
-
-	if ev.Content != nil {
-		for _, p := range ev.Content.Parts {
-			switch {
-			case p == nil:
-				continue
-			case p.Thought && p.Text != "":
-				out = append(out, Thinking(agent, p.Text))
-			case p.FunctionCall != nil:
-				if p.FunctionCall.Name == transferTool {
-					continue // surfaced as agent_start
-				}
-				out = append(out, ToolCall(agent, p.FunctionCall.Name, p.FunctionCall.Args))
-			case p.FunctionResponse != nil:
-				switch p.FunctionResponse.Name {
-				case transferTool:
-					continue // surfaced as agent_start
-				case keepaliveTool:
-					continue // heartbeat only; no wire event
-				case selfRefineStartTool:
-					out = append(out, SelfRefineStart(agent))
-					continue
-				case selfRefineTool:
-					r := p.FunctionResponse.Response
-					out = append(out, SelfRefine(agent, asBool(r["changed"])))
-					continue
-				case judgeStartTool:
-					r := p.FunctionResponse.Response
-					out = append(out, JudgeStart(agent, asInt(r["round"])))
-					continue
-				case judgeTool:
-					r := p.FunctionResponse.Response
-					out = append(out, JudgeVerdict(agent, asInt(r["round"]), asFloat(r["score"]), asBool(r["passed"]), asString(r["feedback"])))
-					continue
-				case judgeUnavailableTool:
-					r := p.FunctionResponse.Response
-					out = append(out, JudgeUnavailable(agent, asInt(r["round"]), asString(r["reason"])))
-					continue
-				case reviseTool:
-					r := p.FunctionResponse.Response
-					out = append(out, Revise(agent, asInt(r["round"])))
-					continue
-				}
-				out = append(out, ToolResult(agent, p.FunctionResponse.Name, p.FunctionResponse.Response))
-			case p.Text != "":
-				out = append(out, Token(agent, p.Text))
-			}
-		}
-	}
-
-	// A specialist completing its turn closes its group. The orchestrator's own
-	// turn-completion is the run itself, closed by the caller, not a dispatch.
-	// Attach completion metadata from the underlying LLM response when available.
-	if ev.TurnComplete && agent != "" && agent != OrchestratorAuthor {
-		end := AgentData{Agent: agent, Model: ev.ModelVersion}
-		if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
-			end.FinishReason = string(ev.FinishReason)
-		}
+	// Accumulate this event's usage/model/finish into the current run; reported
+	// on the run's agent_complete. (Model events carry these; markers don't.)
+	if t.curRun != "" {
 		if ev.UsageMetadata != nil {
-			end.PromptTokens = ev.UsageMetadata.PromptTokenCount
-			end.CompletionTokens = ev.UsageMetadata.CandidatesTokenCount
-			end.ReasoningTokens = ev.UsageMetadata.ThoughtsTokenCount
-			end.TotalTokens = ev.UsageMetadata.TotalTokenCount
+			t.prompt += ev.UsageMetadata.PromptTokenCount
+			t.completion += ev.UsageMetadata.CandidatesTokenCount
+			t.reasoning += ev.UsageMetadata.ThoughtsTokenCount
+			t.total += ev.UsageMetadata.TotalTokenCount
 		}
-		out = append(out, AgentEnd(end))
+		if ev.ModelVersion != "" {
+			t.model = ev.ModelVersion
+		}
+		if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
+			t.finish = string(ev.FinishReason)
+		}
+	}
+
+	if ev.Content == nil {
+		return nil
+	}
+
+	var out []SSEEvent
+	for _, p := range ev.Content.Parts {
+		if p == nil {
+			continue
+		}
+		switch {
+		case p.FunctionResponse != nil && p.FunctionResponse.Name == agentStartTool:
+			r := p.FunctionResponse.Response
+			t.curRun = asString(r["run_id"])
+			t.curStage = asString(r["stage"])
+			t.curRound = asInt(r["round"])
+			t.curAgent = asString(r["agent"])
+			t.prompt, t.completion, t.reasoning, t.total = 0, 0, 0, 0
+			t.model, t.finish = "", ""
+			out = append(out, SSEEvent{Name: EventAgentStart, Data: AgentStartData{
+				RunID: t.curRun, Agent: t.curAgent, Stage: t.curStage, Round: t.curRound,
+			}})
+
+		case p.FunctionResponse != nil && p.FunctionResponse.Name == agentCompleteTool:
+			r := p.FunctionResponse.Response
+			d := AgentCompleteData{
+				RunID: asString(r["run_id"]), Stage: asString(r["stage"]), Round: asInt(r["round"]),
+				Changed: asBool(r["changed"]), Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
+				Feedback: asString(r["feedback"]), Status: asString(r["status"]), Reason: asString(r["reason"]),
+				Model: t.model, PromptTokens: t.prompt, CompletionTokens: t.completion,
+				ReasoningTokens: t.reasoning, TotalTokens: t.total, FinishReason: t.finish,
+			}
+			out = append(out, SSEEvent{Name: EventAgentComplete, Data: d})
+			t.curRun, t.curStage, t.curRound, t.curAgent = "", "", 0, ""
+
+		case p.FunctionResponse != nil && p.FunctionResponse.Name == keepaliveTool:
+			// heartbeat; no wire event
+
+		case p.FunctionCall != nil:
+			if p.FunctionCall.Name == transferTool {
+				continue
+			}
+			out = append(out, SSEEvent{Name: EventAgentToolCall, Data: AgentToolCallData{
+				RunID: t.curRun, CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
+			}})
+
+		case p.FunctionResponse != nil:
+			if p.FunctionResponse.Name == transferTool {
+				continue
+			}
+			out = append(out, SSEEvent{Name: EventAgentToolResult, Data: AgentToolResultData{
+				RunID: t.curRun, CallID: p.FunctionResponse.ID, Name: p.FunctionResponse.Name, Result: p.FunctionResponse.Response,
+			}})
+
+		case p.Thought && p.Text != "":
+			out = append(out, SSEEvent{Name: EventAgentThinking, Data: AgentThinkingData{RunID: t.curRun, Text: p.Text}})
+
+		case p.Text != "":
+			// Plain text is the final answer (the gate buffers per-run answers and
+			// surfaces only the vetted one, with curRun cleared → node-level).
+			out = append(out, SSEEvent{Name: EventAgentToken, Data: AgentTokenData{RunID: t.curRun, Text: p.Text}})
+		}
 	}
 	return out
 }
 
-// IsGateMarkerName reports whether name is a reserved gate-internal tool name.
-// These events must be hidden from the worker's session view during agentic
-// self-refine — they are orphan FunctionResponses (no matching FunctionCall)
-// and ADK v1.4.0+ errors if it sees one as the last session event.
-func IsGateMarkerName(name string) bool {
-	switch name {
-	case judgeTool, judgeStartTool, selfRefineTool, selfRefineStartTool,
-		judgeUnavailableTool, reviseTool, keepaliveTool:
-		return true
+// ScopeToNode stamps nodeID onto a wire event's payload so the frontend routes it
+// to the right DAG node. Events without a NodeID field are returned unchanged.
+func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
+	switch d := ev.Data.(type) {
+	case AgentStartData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case AgentThinkingData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case AgentTokenData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case AgentToolCallData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case AgentToolResultData:
+		d.NodeID = nodeID
+		ev.Data = d
+	case AgentCompleteData:
+		d.NodeID = nodeID
+		ev.Data = d
 	}
-	return false
+	return ev
 }
 
 // Marker-payload values survive the A2A round-trip as JSON, so numbers may arrive

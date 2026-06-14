@@ -30,31 +30,19 @@ limits). If it synthesised silently despite failed fetches, score **0.0**.
 
 ### `no_fabrication`
 
-Specific names (businesses, operators, venues, people), addresses, phone
-numbers, prices, opening hours, speeds, distances, ratings, and URLs must
-all appear verbatim in retrieved content — not inferred, interpolated, or
-invented. Web retrieval makes fabrication especially easy to detect and
-especially harmful because users act on the information.
+Judge whether anything in the answer reads as **invented** — a specific (name,
+price, address, rating, date, statistic) stated with false confidence that the
+answer's own reasoning doesn't support, or a quote/figure that looks made up.
+Score this on the answer's own merits: internal plausibility and consistency.
 
-**Any quantitative claim — a percentage, count, price, speed, rating, or time
-value — must appear verbatim in fetched content.** A plausible-sounding number
-with no retrieved source is fabrication, not approximation.
+**Do not try to verify which URLs were fetched** — whether each citation is
+backed by retrieval is checked separately by deterministic code (it grades each
+cited URL against what was actually fetched/searched), so don't second-guess a
+URL's realness here. Focus only on invented-looking specifics.
 
-Business names, operator details, tour prices, and specific service
-descriptions are **high-risk fabrication vectors**: treat any unverified
-specific as a near-fail on this criterion.
-
-When a **Source verification** section is provided before this question:
-- A URL marked **NOT fetched** was cited but never successfully retrieved.
-  Treat any specific detail attributed to that source as unverified, and
-  score accordingly (near-0 if the unverified source carries load-bearing claims).
-- For **fetched** URLs, cross-check the content sample against the cited
-  claim. If the sample contradicts or does not support the claim, that claim
-  is fabricated even though the URL itself is real.
-
-- **1.0** — every specific and every quantitative claim is verified in fetched content
-- **0.5** — minor secondary details may be approximate; no operator names, prices, addresses, or specific numbers are fabricated
-- **0.0** — business names, prices, statistics, or any specific number appears without a fetched source, or a NOT-fetched URL carries load-bearing claims
+- **1.0** — nothing reads as invented; specifics are presented with appropriate confidence
+- **0.5** — minor secondary details look approximate or loosely stated
+- **0.0** — a name, price, or statistic is clearly fabricated or wildly unsupported by the answer's own evidence
 
 ---
 
@@ -83,18 +71,18 @@ evidence it presents.
 
 ### `cites_sources`
 
-Every non-trivial claim has a URL the reader can follow to verify it. Source
-names alone ("According to TechCrunch…") do not count — a name cannot be
-checked, only a link can. For a web researcher, URLs are a baseline
-requirement, not a bonus.
+Score only **whether claims carry followable links at all** — a web-researcher
+answer should attach inline URLs, not just name sources ("According to
+TechCrunch…"), since a name can't be checked but a link can.
 
-When a **Source verification** section is provided: a URL marked NOT fetched
-counts as a missing citation for scoring purposes — citing a URL you did not
-read is not attribution, it is misdirection.
+**Note:** the *quality* of those links — whether each cited URL was actually
+fetched or searched this session — is graded separately by deterministic code
+and overrides this criterion's score. So here, judge only the presence/absence
+of links; don't reason about whether a given URL is real.
 
-- **1.0** — URLs provided for all non-trivial claims, and all cited URLs were fetched
-- **0.5** — URLs for most claims; a few unreferenced or not fetched
-- **0.0** — no URLs cited, only source names with no links, or every cited URL is marked NOT fetched
+- **1.0** — every non-trivial claim has an inline URL
+- **0.5** — URLs for most claims; a few unreferenced
+- **0.0** — no URLs cited, only source names with no links
 
 ---
 
@@ -120,10 +108,12 @@ hard caps as normal.
 
 1. Compute the arithmetic mean of the five criterion scores.
 2. **Hard cap**: if `cites_sources` scores **0.0**, the overall score must not
-   exceed **0.40**, regardless of the mean.
-3. **Hard cap**: if `no_fabrication` scores **0.0**, the overall score must not
-   exceed **0.35**. An answer with fabricated business names or invented URLs
-   is actively harmful — it fails harder than one that merely omits citations.
+   exceed **0.40**. (Note: `cites_sources` is set deterministically by code from
+   how well each cited URL is backed by retrieval — so this cap fires only when
+   the answer's citations genuinely aren't backed, not on a judge's guess.)
+3. **Hard cap**: if `no_fabrication` scores **0.0** (a clearly invented specific),
+   the overall score must not exceed **0.35** — an answer with fabricated
+   specifics is actively harmful.
 4. Report the most restrictive cap (if any) as `score`.
 
 `feedback` must name the specific failing criterion and what concretely would

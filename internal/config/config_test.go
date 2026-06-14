@@ -169,44 +169,65 @@ stores:
 orchestrator: { provider: default, model: m }
 `
 
-func TestLoadAdversarialDefaultsAndDisabled(t *testing.T) {
-	// No adversarial block ⇒ vetting disabled, config still valid.
+func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
+	// No gates block ⇒ vetting disabled, config still valid.
 	c, err := Load(writeTemp(t, baseConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Adversarial.Enabled() {
-		t.Error("adversarial should be disabled when no model is set")
+	if c.Gates.Enabled() {
+		t.Error("gates should be disabled when no stage is configured")
 	}
 
-	// Enabled with zero rounds/threshold ⇒ defaults applied.
+	// Judge enabled with zero threshold/iterations ⇒ defaults applied.
 	c, err = Load(writeTemp(t, baseConfig+`
-adversarial:
-  provider: default
-  model: judge-m
+gates:
   rubric: "be good"
+  deterministic_checks: { max_rounds: 4 }
+  self_critique: { max_rounds: 1 }
+  judge:
+    provider: default
+    model: judge-m
+    max_rounds: 1
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.Adversarial.Enabled() {
-		t.Fatal("adversarial should be enabled")
+	if !c.Gates.Enabled() || !c.Gates.JudgeEnabled() {
+		t.Fatal("gates/judge should be enabled")
 	}
-	if c.Adversarial.MaxRounds != 2 || c.Adversarial.Threshold != 0.7 {
-		t.Errorf("defaults not applied: rounds=%d threshold=%v", c.Adversarial.MaxRounds, c.Adversarial.Threshold)
+	if c.Gates.Judge.Threshold != 0.7 || c.Gates.Judge.MaxIterations != 6 {
+		t.Errorf("judge defaults not applied: threshold=%v max_iterations=%d", c.Gates.Judge.Threshold, c.Gates.Judge.MaxIterations)
+	}
+	if c.Gates.DeterministicChecks.MaxRounds != 4 || c.Gates.SelfCritique.MaxRounds != 1 {
+		t.Errorf("stage rounds wrong: det=%d self=%d", c.Gates.DeterministicChecks.MaxRounds, c.Gates.SelfCritique.MaxRounds)
+	}
+
+	// Deterministic-only gate (no judge model) is valid and enabled.
+	c, err = Load(writeTemp(t, baseConfig+`
+gates:
+  deterministic_checks: { max_rounds: 3 }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Gates.Enabled() || c.Gates.JudgeEnabled() {
+		t.Error("deterministic-only gate should be enabled with judge disabled")
 	}
 }
 
-func TestLoadAdversarialRejectsBadConfig(t *testing.T) {
+func TestLoadGatesRejectsBadConfig(t *testing.T) {
 	cases := map[string]string{
 		"unknown provider": `
-adversarial: { provider: nope, model: j, rubric: r }`,
-		"no rubric": `
-adversarial: { provider: default, model: j }`,
+gates: { rubric: r, judge: { provider: nope, model: j, max_rounds: 1 } }`,
+		"judge/self_critique need rubric": `
+gates: { self_critique: { max_rounds: 1 } }`,
 		"both rubrics": `
-adversarial: { provider: default, model: j, rubric: r, rubric_path: p }`,
+gates: { rubric: r, rubric_path: p, judge: { provider: default, model: j, max_rounds: 1 } }`,
 		"bad threshold": `
-adversarial: { provider: default, model: j, rubric: r, threshold: 1.5 }`,
+gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, threshold: 1.5 } }`,
+		"negative rounds": `
+gates: { rubric: r, deterministic_checks: { max_rounds: -1 }, judge: { provider: default, model: j, max_rounds: 1 } }`,
 	}
 	for name, block := range cases {
 		if _, err := Load(writeTemp(t, baseConfig+block)); err == nil {

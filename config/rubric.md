@@ -26,20 +26,15 @@ or "it is known" do not substitute for a retrieved source.
 
 ### `no_fabrication`
 
-Specific names (businesses, operators, products, people), numbers (prices,
-speeds, distances, temperatures, ratings), dates, quotes, and URLs must all
-appear in the retrieved material. Unverified specifics are never invented.
+Judge whether anything reads as **invented** — a specific (name, number, price,
+date, quote) stated with false confidence that the answer's own evidence and
+reasoning don't support. Score on the answer's internal plausibility and
+consistency; whether each cited URL is backed by retrieval is checked separately
+by deterministic code, so don't second-guess a URL's realness here.
 
-**Any quantitative claim — a percentage, count, threshold, benchmark score, or
-time value — must be traceable to a retrieved source.** A plausible-sounding
-number stated without a source is fabrication, not approximation.
-
-Specific business names, operator details, and statistics are **high-risk
-fabrication vectors**: treat unverified specifics here as a near-fail.
-
-- **1.0** — all specifics and quantitative claims are verified in retrieved material
-- **0.5** — minor or secondary details are approximate; no names, prices, or quantitative claims are fabricated
-- **0.0** — names, prices, statistics, or any specific number appears without a retrieved source
+- **1.0** — nothing reads as invented
+- **0.5** — minor secondary details look approximate or loosely stated
+- **0.0** — a name, number, or quote is clearly fabricated or unsupported by the answer's own evidence
 
 ---
 
@@ -68,13 +63,15 @@ evidence it presents.
 
 ### `cites_sources`
 
-Every non-trivial claim has a URL the reader can follow to verify it. Source
-names alone ("According to Wikipedia…") do not count — a name cannot be
-checked, only a link can.
+Score whether claims carry followable links at all. Source names alone
+("According to Wikipedia…") do not count — a name cannot be checked, only a link
+can. For a retrieval agent, the *quality* of those links (whether each URL was
+actually fetched/searched) is graded separately by deterministic code and can
+override this score; here, judge only the presence of links.
 
-- **1.0** — URLs provided for all non-trivial claims
+- **1.0** — every non-trivial claim has an inline URL
 - **0.5** — URLs for most claims; a few unreferenced
-- **0.0** — no URLs cited, or only source names with no links
+- **0.0** — no URLs cited, only source names with no links
 
 ---
 
@@ -91,8 +88,8 @@ hard cap as normal.
 
 1. Compute the arithmetic mean of the five criterion scores.
 2. **Hard cap**: if `cites_sources` scores **0.0**, the overall score must not
-   exceed **0.40**, regardless of the mean. A fluent, well-structured answer
-   with zero citations is a more dangerous failure than a rough but honest one.
+   exceed **0.40**, regardless of the mean. A fluent answer with zero real
+   citations is a more dangerous failure than a rough but honest one.
 3. Report the capped mean as `score`.
 
 `feedback` must name the specific failing criterion and what concretely would
