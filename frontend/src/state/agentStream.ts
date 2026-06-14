@@ -10,12 +10,32 @@ export interface ConfirmationRequestPayload {
   payload: Record<string, unknown>
 }
 
-// JudgeVerdictPayload is one round of the independent judge's score.
-export interface JudgeVerdictPayload {
-  round: number
-  score: number
-  passed: boolean
-  feedback: string
+export type Stage = 'worker' | 'self_refine' | 'judge' | 'revise'
+
+// AgentStartPayload opens an agent run within a node.
+export interface AgentStartPayload {
+  nodeId?: string
+  runId: string
+  agent: string
+  stage: Stage
+  round?: number
+}
+
+// AgentCompletePayload closes an agent run with its stage-specific result.
+export interface AgentCompletePayload {
+  nodeId?: string
+  runId: string
+  stage: Stage
+  round?: number
+  changed?: boolean
+  score?: number
+  passed?: boolean
+  feedback?: string
+  status?: string
+  reason?: string
+  finishReason?: string
+  model?: string
+  totalTokens?: number
 }
 
 // DagNodeDef is one node in a DAG plan, as received from the server.
@@ -55,23 +75,18 @@ export interface DagPlanPayload {
 }
 
 export interface AgentStreamHandlers {
-  onToken?: (text: string, nodeId?: string) => void
-  onThinking?: (text: string, nodeId?: string) => void
-  onToolCall?: (name: string, args: Record<string, unknown>, nodeId?: string) => void
-  onToolResult?: (name: string, result: unknown, nodeId?: string) => void
-  onAgentStart?: (agent: string, nodeId?: string) => void
-  onAgentEnd?: (agent: string, nodeId?: string) => void
-  onSelfRefineStart?: (nodeId?: string) => void
-  onSelfRefine?: (changed: boolean, nodeId?: string) => void
-  onJudgeStart?: (round: number, nodeId?: string) => void
-  onRevise?: (round: number, nodeId?: string) => void
-  onJudgeVerdict?: (v: JudgeVerdictPayload, nodeId?: string) => void
-  onJudgeUnavailable?: (round: number, reason: string, nodeId?: string) => void
+  // Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
+  onAgentStart?: (d: AgentStartPayload) => void
+  onAgentThinking?: (runId: string, text: string, nodeId?: string) => void
+  onAgentToolCall?: (runId: string, callId: string, name: string, args: Record<string, unknown>, nodeId?: string) => void
+  onAgentToolResult?: (runId: string, callId: string, name: string, result: unknown, nodeId?: string) => void
+  onAgentToken?: (runId: string, text: string, nodeId?: string) => void
+  onAgentComplete?: (d: AgentCompletePayload) => void
   onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
   onChatTitle?: (title: string) => void
   onError?: (msg: string) => void
   onDone?: () => void
-  // DAG lifecycle events (M3)
+  // DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
   onNodeStart?: (nodeId: string, agent: string) => void
@@ -81,11 +96,8 @@ export interface AgentStreamHandlers {
 
 // Wire-level event names. Mirrors internal/stream/event.go.
 export const AGENT_EVENT_NAMES = [
-  'token', 'thinking', 'tool_call', 'tool_result',
-  'agent_start', 'agent_end',
-  'self_refine_start', 'self_refine', 'judge_start', 'revise', 'judge_verdict', 'judge_unavailable',
+  'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done',
-  // DAG events (M3)
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
@@ -105,65 +117,62 @@ export function dispatchAgentEvent(
   handlers: AgentStreamHandlers,
 ): boolean {
   switch (event) {
-    case 'token':
-      if (hasStringField(parsed, 'text')) handlers.onToken?.(parsed.text, nodeIdOf(parsed))
-      return true
-    case 'thinking':
-      if (hasStringField(parsed, 'text')) handlers.onThinking?.(parsed.text, nodeIdOf(parsed))
-      return true
-    case 'tool_call':
-      if (hasStringField(parsed, 'name')) {
-        const args = (parsed as { args?: Record<string, unknown> }).args ?? {}
-        handlers.onToolCall?.(parsed.name, args, nodeIdOf(parsed))
+    case 'agent_start': {
+      const p = parsed as { run_id?: string; agent?: string; stage?: string; round?: number }
+      if (typeof p.run_id === 'string') {
+        handlers.onAgentStart?.({
+          nodeId: nodeIdOf(parsed),
+          runId: p.run_id,
+          agent: typeof p.agent === 'string' ? p.agent : '',
+          stage: (p.stage ?? 'worker') as Stage,
+          round: typeof p.round === 'number' ? p.round : undefined,
+        })
       }
       return true
-    case 'tool_result':
-      if (hasStringField(parsed, 'name')) {
-        const result = (parsed as unknown as { result: unknown }).result
-        handlers.onToolResult?.(parsed.name, result, nodeIdOf(parsed))
+    }
+    case 'agent_thinking': {
+      const p = parsed as { run_id?: string; text?: string }
+      if (typeof p.text === 'string') handlers.onAgentThinking?.(p.run_id ?? '', p.text, nodeIdOf(parsed))
+      return true
+    }
+    case 'agent_tool_call': {
+      const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown> }
+      if (typeof p.name === 'string') {
+        handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed))
       }
       return true
-    case 'agent_start':
-      if (hasStringField(parsed, 'agent')) handlers.onAgentStart?.(parsed.agent, nodeIdOf(parsed))
-      return true
-    case 'agent_end':
-      if (hasStringField(parsed, 'agent')) handlers.onAgentEnd?.(parsed.agent, nodeIdOf(parsed))
-      return true
-    case 'self_refine_start':
-      handlers.onSelfRefineStart?.(nodeIdOf(parsed))
-      return true
-    case 'self_refine': {
-      const changed = (parsed as { changed?: boolean }).changed === true
-      handlers.onSelfRefine?.(changed, nodeIdOf(parsed))
+    }
+    case 'agent_tool_result': {
+      const p = parsed as { run_id?: string; call_id?: string; name?: string; result?: unknown }
+      if (typeof p.name === 'string') {
+        handlers.onAgentToolResult?.(p.run_id ?? '', p.call_id ?? '', p.name, p.result, nodeIdOf(parsed))
+      }
       return true
     }
-    case 'judge_start': {
-      const p = parsed as { round?: number }
-      handlers.onJudgeStart?.(typeof p.round === 'number' ? p.round : 0, nodeIdOf(parsed))
+    case 'agent_token': {
+      const p = parsed as { run_id?: string; text?: string }
+      if (typeof p.text === 'string') handlers.onAgentToken?.(p.run_id ?? '', p.text, nodeIdOf(parsed))
       return true
     }
-    case 'revise': {
-      const p = parsed as { round?: number }
-      handlers.onRevise?.(typeof p.round === 'number' ? p.round : 0, nodeIdOf(parsed))
-      return true
-    }
-    case 'judge_verdict': {
-      const p = parsed as { round?: number; score?: number; passed?: boolean; feedback?: string }
-      handlers.onJudgeVerdict?.({
-        round: typeof p.round === 'number' ? p.round : 0,
-        score: typeof p.score === 'number' ? p.score : 0,
-        passed: p.passed === true,
-        feedback: typeof p.feedback === 'string' ? p.feedback : '',
-      }, nodeIdOf(parsed))
-      return true
-    }
-    case 'judge_unavailable': {
-      const p = parsed as { round?: number; reason?: string }
-      handlers.onJudgeUnavailable?.(
-        typeof p.round === 'number' ? p.round : 0,
-        typeof p.reason === 'string' ? p.reason : '',
-        nodeIdOf(parsed),
-      )
+    case 'agent_complete': {
+      const p = parsed as Record<string, unknown>
+      if (typeof p.run_id === 'string') {
+        handlers.onAgentComplete?.({
+          nodeId: nodeIdOf(parsed),
+          runId: p.run_id,
+          stage: (typeof p.stage === 'string' ? p.stage : 'worker') as Stage,
+          round: typeof p.round === 'number' ? p.round : undefined,
+          changed: p.changed === true,
+          score: typeof p.score === 'number' ? p.score : undefined,
+          passed: p.passed === true,
+          feedback: typeof p.feedback === 'string' ? p.feedback : undefined,
+          status: typeof p.status === 'string' ? p.status : undefined,
+          reason: typeof p.reason === 'string' ? p.reason : undefined,
+          finishReason: typeof p.finish_reason === 'string' ? p.finish_reason : undefined,
+          model: typeof p.model === 'string' ? p.model : undefined,
+          totalTokens: typeof p.total_tokens === 'number' ? p.total_tokens : undefined,
+        })
+      }
       return true
     }
     case 'confirmation_request':

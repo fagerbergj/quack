@@ -1,18 +1,12 @@
 import { readAgentStream, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta } from './agentStream'
 import {
-  appendTextPart,
-  appendThinkingPart,
-  appendToolCall,
-  fillToolResult,
-  openAgent,
-  closeAgent,
-  openSelfRefine,
-  closeSelfRefine,
-  openJudgeVerdict,
-  closeJudgeVerdict,
-  appendRevise,
-  appendJudgeUnavailable,
-  type MessagePart,
+  startRun,
+  appendRunThinking,
+  appendRunToolCall,
+  fillRunToolResult,
+  completeRun,
+  freezeOpenRuns,
+  type AgentRun,
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem } from '../generated'
 
@@ -43,7 +37,8 @@ export interface DagTurnState {
   nodes: DagNodeDef[]
   edges: DagEdgeDef[]
   nodeStates: Record<string, NodeState>
-  nodeParts: Record<string, MessagePart[]>
+  nodeRuns: Record<string, AgentRun[]>   // ordered agent runs per node
+  nodeAnswer: Record<string, string>     // final vetted answer text per node
   startedAt?: number
   finishedAt?: number
 }
@@ -52,7 +47,6 @@ export interface DagTurnState {
 export interface LiveTurn {
   id: string             // turn ID (response_id) — empty string while streaming before first event
   userText: string
-  parts: MessagePart[]   // accumulates assistant content live
   dag?: DagTurnState
   streaming: boolean
   error: string
@@ -129,7 +123,7 @@ export class ChatStore {
       cur = this.get(chatId)
     }
 
-    const live: LiveTurn = { id: '', userText: trimmed, parts: [], streaming: true, error: '' }
+    const live: LiveTurn = { id: '', userText: trimmed, streaming: true, error: '' }
     this.write(chatId, { ...cur, live, error: '' })
 
     await this.runStream(
@@ -169,21 +163,23 @@ export class ChatStore {
       }
       if (!res.body) throw new Error('No response body')
 
-      const updateParts = (fn: (parts: MessagePart[]) => MessagePart[]) => {
-        const s = this.states.get(chatId)
-        if (!s?.live) return
-        this.write(chatId, { ...s, live: { ...s.live, parts: fn(s.live.parts) } })
-      }
-
-      const updateNodeParts = (nodeId: string, fn: (parts: MessagePart[]) => MessagePart[], extraChars?: number) => {
+      const updateNodeRuns = (nodeId: string | undefined, fn: (runs: AgentRun[]) => AgentRun[]) => {
+        if (!nodeId) return
         const s = this.states.get(chatId)
         if (!s?.live?.dag) return
-        const prev = s.live.dag.nodeParts[nodeId] ?? []
-        const dag = { ...s.live.dag, nodeParts: { ...s.live.dag.nodeParts, [nodeId]: fn(prev) } }
-        if (extraChars) {
-          const ns = dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
-          dag.nodeStates = { ...dag.nodeStates, [nodeId]: { ...ns, outputChars: (ns.outputChars ?? 0) + extraChars } }
-        }
+        const prev = s.live.dag.nodeRuns[nodeId] ?? []
+        const dag = { ...s.live.dag, nodeRuns: { ...s.live.dag.nodeRuns, [nodeId]: fn(prev) } }
+        this.write(chatId, { ...s, live: { ...s.live, dag } })
+      }
+
+      const updateNodeAnswer = (nodeId: string | undefined, text: string) => {
+        if (!nodeId) return
+        const s = this.states.get(chatId)
+        if (!s?.live?.dag) return
+        const prev = s.live.dag.nodeAnswer[nodeId] ?? ''
+        const dag = { ...s.live.dag, nodeAnswer: { ...s.live.dag.nodeAnswer, [nodeId]: prev + text } }
+        const ns = dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
+        dag.nodeStates = { ...dag.nodeStates, [nodeId]: { ...ns, outputChars: (ns.outputChars ?? 0) + text.length } }
         this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
@@ -200,28 +196,17 @@ export class ChatStore {
         this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
-      const route = (nodeId: string | undefined, fn: (parts: MessagePart[]) => MessagePart[]) => {
-        if (nodeId) updateNodeParts(nodeId, fn)
-        else updateParts(fn)
-      }
-
       let streamError = ''
       await readAgentStream(res.body, {
-        onToken: (t, nid) => {
-          if (nid) updateNodeParts(nid, p => appendTextPart(p, t), t.length)
-          else updateParts(p => appendTextPart(p, t))
-        },
-        onThinking: (t, nid) => route(nid, p => appendThinkingPart(p, t)),
-        onToolCall: (name, args, nid) => route(nid, p => appendToolCall(p, name, args)),
-        onToolResult: (name, result, nid) => route(nid, p => fillToolResult(p, name, result)),
-        onAgentStart: (agent, nid) => route(nid, p => openAgent(p, agent)),
-        onAgentEnd: (agent, nid) => route(nid, p => closeAgent(p, agent)),
-        onSelfRefineStart: nid => route(nid, p => openSelfRefine(p, Date.now())),
-        onSelfRefine: (changed, nid) => route(nid, p => closeSelfRefine(p, changed, Date.now())),
-        onJudgeStart: (round, nid) => route(nid, p => openJudgeVerdict(p, round, Date.now())),
-        onRevise: (round, nid) => route(nid, p => appendRevise(p, round)),
-        onJudgeVerdict: (v, nid) => route(nid, p => closeJudgeVerdict(p, v.round, v.score, v.passed, v.feedback, Date.now())),
-        onJudgeUnavailable: (round, reason, nid) => route(nid, p => appendJudgeUnavailable(p, round, reason)),
+        onAgentStart: d => updateNodeRuns(d.nodeId, r => startRun(r, { runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: Date.now() })),
+        onAgentThinking: (runId, text, nid) => updateNodeRuns(nid, r => appendRunThinking(r, runId, text)),
+        onAgentToolCall: (runId, callId, name, args, nid) => updateNodeRuns(nid, r => appendRunToolCall(r, runId, callId, name, args)),
+        onAgentToolResult: (runId, callId, name, result, nid) => updateNodeRuns(nid, r => fillRunToolResult(r, runId, callId, name, result)),
+        onAgentToken: (_runId, text, nid) => updateNodeAnswer(nid, text),
+        onAgentComplete: d => updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, {
+          changed: d.changed, score: d.score, passed: d.passed, feedback: d.feedback,
+          status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
+        }, Date.now())),
         onChatTitle: title => onTitle?.(title),
         onError: msg => { streamError = msg },
         onDagPlan: plan => {
@@ -234,28 +219,36 @@ export class ChatStore {
             nodes: plan.nodes,
             edges: plan.edges,
             nodeStates,
-            nodeParts: {},
+            nodeRuns: {},
+            nodeAnswer: {},
             startedAt: Date.now(),
           }
           this.write(chatId, { ...s, live: { ...s.live, dag } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         onNodeStart: nodeId => updateNodeState(nodeId, { status: 'running', startedAt: Date.now() }),
-        onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => updateNodeState(nodeId, {
-          status: 'done', finishedAt: Date.now(), outputPreview: preview,
-          model: meta.model,
-          promptTokens: meta.promptTokens,
-          completionTokens: meta.completionTokens,
-          reasoningTokens: meta.reasoningTokens,
-          totalTokens: meta.totalTokens,
-          finishReason: meta.finishReason,
-          serverDurationMs: meta.durationMs,
-          selfRefined: meta.selfRefined,
-          judgeRounds: meta.judgeRounds,
-          judgeFinalScore: meta.judgeFinalScore,
-          judgePassed: meta.judgePassed,
-        }),
-        onNodeFailed: (nodeId, error) => updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error }),
+        onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => {
+          // Freeze any run still counting — the node is done, so no run is live.
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeState(nodeId, {
+            status: 'done', finishedAt: Date.now(), outputPreview: preview,
+            model: meta.model,
+            promptTokens: meta.promptTokens,
+            completionTokens: meta.completionTokens,
+            reasoningTokens: meta.reasoningTokens,
+            totalTokens: meta.totalTokens,
+            finishReason: meta.finishReason,
+            serverDurationMs: meta.durationMs,
+            selfRefined: meta.selfRefined,
+            judgeRounds: meta.judgeRounds,
+            judgeFinalScore: meta.judgeFinalScore,
+            judgePassed: meta.judgePassed,
+          })
+        },
+        onNodeFailed: (nodeId, error) => {
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
+        },
       })
       if (streamError) throw new Error(streamError)
     } catch (err: unknown) {
