@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/model"
@@ -120,7 +121,10 @@ func (p *Planner) buildSystemPrompt() string {
 		agentList.WriteString(fmt.Sprintf("- %s: %s\n", a.Name, a.Description))
 	}
 
-	return fmt.Sprintf(`You are a task decomposition specialist. Decompose the user's query into a minimal DAG of research tasks.
+	now := time.Now()
+	return fmt.Sprintf(`Today's date is %s. The query may be time-sensitive: when it mentions "recent", "latest", "new", "current", or "this year", scope the tasks you write to the PRESENT — name the current year explicitly (e.g. "in %d") rather than defaulting to dates from your training data, which are in the past.
+
+You are a task decomposition specialist. Decompose the user's query into a minimal DAG of research tasks.
 
 Available agents:
 %s
@@ -156,7 +160,7 @@ Output ONLY a JSON object (no markdown, no explanation):
     {"id": "n2", "agent": "web-researcher", "task": "...", "depends_on": ["n1"]},
     {"id": "n3", "agent": "synthesizer", "task": "Combine findings into a comprehensive answer", "depends_on": ["n1","n2"]}
   ]
-}`, agentList.String())
+}`, now.Format("Monday, January 2, 2006"), now.Year(), agentList.String())
 }
 
 // rawNode is the JSON shape the planner LLM is asked to emit.

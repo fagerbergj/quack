@@ -39,9 +39,10 @@ type Deps struct {
 type constructor func(Deps) (tool.Tool, error)
 
 var registry = map[string]constructor{
-	"web_search": newWebSearch,
-	"web_fetch":  newFetch,
-	"summarize":  newSummarize,
+	"web_search":   newWebSearch,
+	"web_fetch":    newFetch,
+	"summarize":    newSummarize,
+	"current_date": newCurrentDate,
 }
 
 // Known reports whether name is a registered built-in tool. Used by config

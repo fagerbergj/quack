@@ -126,7 +126,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// Run the worker against a gate-marker-filtered session view: the agent_start
 		// marker just emitted is an orphan FunctionResponse that ADK would otherwise
 		// choke on when the worker's llmagent rebuilds its request from the session.
-		answer, act, ok := g.runWorker(newCritiqueContext(ctx, ctx.UserContent()), yield, g.worker, false)
+		answer, act, ok, workerErr := g.runWorker(newCritiqueContext(ctx, ctx.UserContent()), yield, g.worker, false)
 		if !ok {
 			return
 		}
@@ -162,8 +162,8 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// (slow, agentic) judge round scoring an empty answer 0 — surface it directly
 		// so the node reads as "no answer" rather than a confusing failed verdict.
 		if strings.TrimSpace(answer) == "" {
-			log.Printf("vetting[%s]: still no answer after finalize; skipping judge", g.name)
-			g.emitAnswer(ctx, yield, answer)
+			log.Printf("vetting[%s]: still no answer after finalize; emitting fallback (worker_err=%v), skipping judge", g.name, workerErr)
+			g.emitAnswer(ctx, yield, emptyAnswerFallback(workerErr))
 			return
 		}
 
@@ -254,10 +254,11 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					return
 				}
 				act = mergedAct
-				if strings.TrimSpace(revised) != "" {
+				changed := strings.TrimSpace(revised) != "" && strings.TrimSpace(revised) != strings.TrimSpace(answer)
+				if changed {
 					answer = revised
 				}
-				log.Printf("vetting[%s]: deterministic revise %d done in %s (%d unbacked citation(s))", g.name, round, time.Since(td).Round(time.Millisecond), len(unbacked))
+				log.Printf("vetting[%s]: deterministic revise %d done in %s changed=%v revised_len=%d (%d unbacked citation(s))", g.name, round, time.Since(td).Round(time.Millisecond), changed, len(strings.TrimSpace(revised)), len(unbacked))
 				if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: detRun, Stage: stream.StageRevise, Round: round})) {
 					return
 				}
@@ -353,10 +354,11 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					return // consumer stopped mid-revision
 				}
 				act = mergedAct
-				if strings.TrimSpace(revised) != "" {
+				changed := strings.TrimSpace(revised) != "" && strings.TrimSpace(revised) != strings.TrimSpace(answer)
+				if changed {
 					answer = revised
 				}
-				log.Printf("vetting[%s]: revise round %d done in %s", g.name, round, time.Since(tr).Round(time.Millisecond))
+				log.Printf("vetting[%s]: revise round %d done in %s changed=%v revised_len=%d", g.name, round, time.Since(tr).Round(time.Millisecond), changed, len(strings.TrimSpace(revised)))
 				if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: reviseRun, Stage: stream.StageRevise, Round: round})) {
 					return
 				}
@@ -483,7 +485,7 @@ func (g *gate) runSelfCritique(ctx adkagent.InvocationContext, yield func(*sessi
 	// the user sees activity inside the self-critique container. The local model
 	// outputs reasoning as plain text (not Thought parts), so without this the
 	// self-critique phase is a silent blank for the user.
-	refined, refinedAct, ok := g.runWorker(cctx, yield, g.worker, true)
+	refined, refinedAct, ok, _ := g.runWorker(cctx, yield, g.worker, true)
 	if !ok {
 		return "", workerActivity{}, false
 	}
@@ -498,9 +500,15 @@ func (g *gate) runSelfCritique(ctx adkagent.InvocationContext, yield func(*sessi
 func (g *gate) runAgenticRevision(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer, feedback string, act workerActivity) (string, workerActivity, bool) {
 	content := buildRevisionContent(g.cfg.Constitution, ctx.UserContent(), answer, feedback, act)
 	cctx := newCritiqueContext(ctx, content)
-	revised, revisedAct, ok := g.runWorker(cctx, yield, g.worker, true)
+	revised, revisedAct, ok, werr := g.runWorker(cctx, yield, g.worker, true)
 	if !ok {
 		return "", workerActivity{}, false
+	}
+	if werr != nil {
+		// The revision's worker call failed (commonly a context-overflow 400 on the
+		// largest request the node makes). Log it so a silent no-op revision — which
+		// keeps the prior answer unchanged — is visible rather than mysteriously fast.
+		log.Printf("vetting[%s]: revision worker errored (%v); answer unchanged unless finalize recovers", g.name, werr)
 	}
 	merged := mergeActivity(act, revisedAct)
 
@@ -557,7 +565,7 @@ func (g *gate) runFinalize(ctx adkagent.InvocationContext, yield func(*session.E
 	cctx := newCritiqueContext(ctx, content)
 	// textAsThinking=false: this pass produces the primary answer (like round 0),
 	// so its text is buffered as the answer rather than streamed as thinking.
-	finalized, finalAct, ok := g.runWorker(cctx, yield, g.writer, false)
+	finalized, finalAct, ok, _ := g.runWorker(cctx, yield, g.writer, false)
 	if !ok {
 		return "", workerActivity{}, false
 	}
@@ -675,7 +683,7 @@ type workerActivity struct {
 // When textAsThinking is true, plain text parts are converted to thought parts
 // so they stream as thinking events — used during agentic self-refine so the
 // user sees the model working instead of a silent blank.
-func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, ag adkagent.Agent, textAsThinking bool) (string, workerActivity, bool) {
+func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, ag adkagent.Agent, textAsThinking bool) (string, workerActivity, bool, error) {
 	var answer strings.Builder
 	var act workerActivity
 	act.fetched = make(map[string]fetchRecord)
@@ -689,13 +697,21 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 	var lastFinish genai.FinishReason
 	var lastPartial bool
 	var steps int
+	var workerErr error
 
 	for ev, err := range ag.Run(ctx) {
 		if err != nil {
-			if !yield(nil, err) {
-				return "", workerActivity{}, false
-			}
-			continue
+			// A worker stream error (the model server 400s on an over-long context, a
+			// transport hiccup, etc.) must NOT be yielded up: the ADK runner aborts
+			// the whole node on a sub-agent error and SWALLOWS it, so the node would
+			// surface as a silent 0-length output with no trace of why (the exact
+			// "node done output_len=0 judge_rounds=0, no worker-done log" symptom).
+			// Instead log it, remember it, and stop consuming this stream — the caller
+			// then runs empty-answer recovery (finalize) and, failing that, emits an
+			// explicit non-empty placeholder. A node must never go out silently empty.
+			workerErr = err
+			log.Printf("vetting[%s]: worker stream error after %d tool-steps: %v", g.name, steps, err)
+			break
 		}
 		if ev == nil {
 			continue
@@ -760,7 +776,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 		answer.WriteString(ans)
 		if passthrough != nil {
 			if !yield(passthrough, nil) {
-				return "", workerActivity{}, false
+				return "", workerActivity{}, false, nil
 			}
 		}
 	}
@@ -783,7 +799,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 		log.Printf("vetting[%s]: EMPTY answer after %d tool-steps (finish_reason=%q partial=%v think_stripped=%v raw_len=%d) — worker ended its turn with no answer text",
 			g.name, steps, string(lastFinish), lastPartial, stripped, rawLen)
 	}
-	return ans, act, true
+	return ans, act, true, workerErr
 }
 
 // splitAnswer separates a worker event's answer text (plain non-thought text)
@@ -871,9 +887,27 @@ func (g *gate) emitAuthored(ctx adkagent.InvocationContext, yield func(*session.
 	return yield(ev, nil)
 }
 
+// emptyAnswerFallback returns a non-empty placeholder so a node NEVER surfaces a
+// 0-length answer — an empty node breaks downstream synthesis and reads to the
+// user as a silent failure. When the worker error is known it's included so the
+// failure is visible rather than mysterious.
+func emptyAnswerFallback(workerErr error) string {
+	if workerErr != nil {
+		return fmt.Sprintf("_This research step could not be completed: the worker failed before producing an answer (%v)._", workerErr)
+	}
+	return "_This research step could not be completed: the worker ended without producing an answer._"
+}
+
 // emitAnswer yields the final, vetted answer as the agent's turn-completing
-// output, so it streams to the chat and persists as the assistant message.
+// output, so it streams to the chat and persists as the assistant message. It is
+// the single choke point for the node's output, so it enforces the hard floor:
+// never emit an empty answer (every earlier recovery path should have filled it,
+// but this is the last guard).
 func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer string) bool {
+	if strings.TrimSpace(answer) == "" {
+		log.Printf("vetting[%s]: empty final answer reached emit — substituting fallback placeholder", g.name)
+		answer = emptyAnswerFallback(nil)
+	}
 	ev := session.NewEvent(ctx.InvocationID())
 	ev.Author = g.name
 	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
