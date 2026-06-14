@@ -147,7 +147,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// deterministic + self-critique stages run without it. One-shot judge (no
 		// web tools): citation backing is now checked deterministically in code, so
 		// the judge scores in a single pass instead of an agentic re-fetch loop
-		// (minutes-long on a CPU judge for ~no gain).
+		// (a multi-step re-fetch loop is wasted work for ~no gain).
 		if cfg.Gates.JudgeEnabled() {
 			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
 			if !ok {

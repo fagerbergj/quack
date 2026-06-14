@@ -39,11 +39,13 @@ JSON files (`agents[].card`), not inlined.
 ## Inference backend (llama-swap)
 
 Models are served by a local [llama-swap](https://github.com/fagerbergj/home-server/tree/main/llm)
-instance, OpenAI-compatible at `http://jason-server:11436/v1` (key `unused`). It holds **one chat
-model in memory at a time** (the `main` group), and swapping a model is expensive (multi-minute for
-the large ones), which is why Quack's executor runs nodes sequentially. The embedding model and the
-CPU judge (`gemma4-26b-a4b`) are loaded **separately and stay resident**, so they never swap the GPU
-chat model. See the home-server `llm/llm-swap.yaml` for how each model is loaded.
+instance, OpenAI-compatible at `http://jason-server:11436/v1` (key `unused`). The worker
+(`qwen3.6-35b`) and the judge (`gemma4-26b-a4b`) are **co-resident on the GPU** in llama-swap's
+`chat` group (`swap:false`), so the judge never swaps the worker mid-request. The worker serves
+`--parallel 2`, so up to **2 nodes run concurrently** (matched by `dag.max_active_nodes`). Other heavy
+models (the coder, plus fallbacks) live in separate exclusive groups that swap the chat group in/out
+on demand, and swapping those large models is expensive (multi-minute). See the home-server
+`llm/llm-swap.yaml` for how each model is loaded.
 
 ## Gateway / deployment
 
