@@ -130,7 +130,13 @@ Rules:
 3. For a simple single-topic query, use ONE web-researcher node (no synthesizer needed).
 4. For multi-part queries, use 2–4 web-researcher nodes + ONE synthesizer as the final node.
 5. Maximum 5 nodes total.
-6. Give each node a focused, specific task description.
+6. Each node runs as a STATELESS worker: it sees ONLY the task you write — not
+   this conversation, not your plan, not the other nodes' work. So write
+   SELF-CONTAINED tasks. Resolve every reference ("this", "that", "the above",
+   "your previous answer", "it") into explicit content. For a follow-up that
+   transforms a prior answer (clean up, reformat, shorten, expand, correct,
+   translate), QUOTE the relevant prior answer (or the exact part to change)
+   inside the task — the worker has no other way to see it.
 7. synthesizer depends_on ALL web-researcher nodes.
 8. CRITICAL — serial vs parallel researchers:
    - Run researchers IN PARALLEL (depends_on: []) only when they are TRULY independent
