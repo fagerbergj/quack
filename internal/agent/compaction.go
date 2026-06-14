@@ -129,15 +129,28 @@ func summarizeText(ctx context.Context, m model.LLM, text string, depth int) (st
 	return summarizeText(ctx, m, joined, depth+1) // reduce
 }
 
-// summarizeOnce is a single window-safe summary call.
+// summarizeOnce is a single window-safe summary call, memoized by chunk content so
+// the stable (immutable) chunks of a growing head are summarized exactly once and
+// reused on later over-budget turns — only the trailing chunk is ever redone.
 func summarizeOnce(ctx context.Context, m model.LLM, text string) (string, error) {
-	return inference.Generate(ctx, m, &model.LLMRequest{
+	key := chunkKey(text)
+	if cached, ok := summaryCache.get(key); ok {
+		return cached, nil
+	}
+	out, err := inference.Generate(ctx, m, &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: text}}}},
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: compactionInstruction}}},
 			MaxOutputTokens:   compactionSummaryMaxTokens,
 		},
 	})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(out) != "" {
+		summaryCache.put(key, out)
+	}
+	return out, nil
 }
 
 // renderHeadText concatenates the readable text of the head contents (turn text +
