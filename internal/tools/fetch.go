@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
@@ -24,9 +25,19 @@ const (
 	// minUsefulText: a direct GET returning less readable text than this is
 	// treated as "probably JS-rendered" and retried via the browser backend.
 	minUsefulText = 200
-	// maxFetchBytes caps how much we read and return, to protect the agent's
-	// context window and our memory.
+	// maxFetchBytes caps how much of a page we read and keep in the cache — the
+	// "full" copy that grep/offset slice. Generous so the whole page is available
+	// to drill into; bounds the read and per-entry memory. Applied to both the
+	// direct-GET read and the cached result (so a crawl4ai-rendered page is capped).
 	maxFetchBytes = 200_000
+	// fetchHeadLines: lines web_fetch returns by default (and per offset window).
+	// The full page stays cached; the agent narrows in with grep= or offset=.
+	fetchHeadLines = 120
+	// fetchGrepMaxLines caps how many matching lines a grep returns.
+	fetchGrepMaxLines = 120
+	// fetchReturnMaxBytes hard-bounds any single web_fetch return so a page with
+	// very long lines can't flood the context window regardless of mode.
+	fetchReturnMaxBytes = 24_000
 	// browserUA presents as a real desktop Chrome. Many sites serve bot-blocking
 	// interstitials (or nothing) to obvious crawler UAs, so we look like a browser.
 	browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -42,6 +53,14 @@ var errCloudflareChallenge = errors.New("web_fetch: cloudflare challenge (cf-mit
 
 type fetchArgs struct {
 	URL string `json:"url"`
+	// Pattern, when set, returns only the lines of the page matching this
+	// (case-insensitive) regular expression, each prefixed with its line number.
+	// The full page is cached, so this searches the whole page, not just the head.
+	Pattern string `json:"pattern,omitempty"`
+	// Offset, when > 0, returns a window of the page starting at this 1-based line
+	// number (instead of the head). Use it to read past the head or around a line
+	// a grep surfaced.
+	Offset int `json:"offset,omitempty"`
 }
 
 // newFetch builds the fetch tool: SSRF-guard the URL, GET it with the guarded
@@ -51,7 +70,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 	return functiontool.New[fetchArgs, string](
 		functiontool.Config{
 			Name:        "web_fetch",
-			Description: "Fetch a web page by URL and return its readable text. Falls back to a headless browser for JavaScript-rendered pages.",
+			Description: "Fetch a web page by URL and return its readable text. Falls back to a headless browser for JavaScript-rendered pages. Long pages return only a head by default; the FULL page is retained, so pass `pattern` (a regex) to return just the matching lines, or `offset` (a line number) to read a window further down. Re-call the same URL with pattern/offset to drill in without re-paying the fetch.",
 		},
 		func(tc agent.ToolContext, a fetchArgs) (string, error) {
 			u, err := ValidateURL(strings.TrimSpace(a.URL))
@@ -60,25 +79,112 @@ func newFetch(d Deps) (tool.Tool, error) {
 			}
 			target := u.String()
 
+			// Ensure the FULL page is in the cache; grep/offset slice that copy. On a
+			// miss (first fetch, or the entry expired/evicted) we fetch and cache it.
+			var full string
 			if d.Cache != nil {
 				if cached, ok := d.Cache.Get(tc, target); ok {
-					return cached, nil
+					full = cached
+				}
+			}
+			if full == "" {
+				fetched, ferr := fetchBest(tc, d, u, target)
+				if ferr != nil {
+					return "", ferr
+				}
+				if fetched, ferr = sanitizeFetched(target, fetched); ferr != nil {
+					return "", ferr
+				}
+				// Cap the cached "full" copy so a huge (e.g. crawl4ai-rendered) page
+				// can't bloat memory; 200KB holds essentially any real article.
+				if len(fetched) > maxFetchBytes {
+					fetched = strings.ToValidUTF8(fetched[:maxFetchBytes], "") + "\n[content truncated at fetch limit]"
+				}
+				full = fetched
+				if d.Cache != nil {
+					d.Cache.Set(tc, target, full, tc.SessionID(), tc.AppName())
 				}
 			}
 
-			result, ferr := fetchBest(tc, d, u, target)
-			if ferr != nil {
-				return "", ferr
-			}
-			if result, ferr = sanitizeFetched(target, result); ferr != nil {
-				return "", ferr
-			}
-			if d.Cache != nil {
-				d.Cache.Set(tc, target, result, tc.SessionID(), tc.AppName())
-			}
-			return result, nil
+			return shapeFetchResult(full, a.Pattern, a.Offset), nil
 		},
 	)
+}
+
+// shapeFetchResult decides what slice of a cached page to return: grep matches,
+// an offset window, or (by default) the head. The full page stays cached so the
+// agent can drill in with successive grep/offset calls on the same URL.
+func shapeFetchResult(full, pattern string, offset int) string {
+	lines := strings.Split(full, "\n")
+	total := len(lines)
+	if strings.TrimSpace(pattern) != "" {
+		return grepPage(lines, pattern)
+	}
+	start := offset
+	if start < 1 {
+		start = 1
+	}
+	return windowPage(lines, start, total)
+}
+
+// windowPage returns up to fetchHeadLines lines starting at the 1-based `start`,
+// with a footer telling the agent the range, the total, and how to read more.
+func windowPage(lines []string, start, total int) string {
+	if start > total {
+		return fmt.Sprintf("[offset %d is past the end of this page (%d lines). Use a smaller offset or grep to search.]", start, total)
+	}
+	end := start + fetchHeadLines - 1
+	if end > total {
+		end = total
+	}
+	body := strings.Join(lines[start-1:end], "\n")
+	var footer string
+	if end < total {
+		footer = fmt.Sprintf("\n\n[lines %d–%d of %d. Pass pattern=\"regex\" to search this page, or offset=%d to read further.]", start, end, total, end+1)
+	} else {
+		footer = fmt.Sprintf("\n\n[lines %d–%d of %d (end of page).]", start, end, total)
+	}
+	return capFetchReturn(body) + footer
+}
+
+// grepPage returns the page lines matching pattern (case-insensitive regex, with
+// a literal-substring fallback for an invalid regex), each prefixed with its
+// 1-based line number so the agent can follow up with offset=.
+func grepPage(lines []string, pattern string) string {
+	re, err := regexp.Compile("(?i)" + pattern)
+	matchLine := func(s string) bool { return re.MatchString(s) }
+	if err != nil {
+		needle := strings.ToLower(strings.TrimSpace(pattern))
+		matchLine = func(s string) bool { return strings.Contains(strings.ToLower(s), needle) }
+	}
+	var matches []string
+	capped := false
+	for i, ln := range lines {
+		if !matchLine(ln) {
+			continue
+		}
+		if len(matches) >= fetchGrepMaxLines {
+			capped = true
+			break
+		}
+		matches = append(matches, fmt.Sprintf("%d: %s", i+1, strings.TrimSpace(ln)))
+	}
+	if len(matches) == 0 {
+		return fmt.Sprintf("[no lines match %q in this page (%d lines). Try a broader pattern or offset=N to browse.]", pattern, len(lines))
+	}
+	footer := fmt.Sprintf("\n\n[%d matching line(s). Use offset=N to read the lines around a match.]", len(matches))
+	if capped {
+		footer = fmt.Sprintf("\n\n[first %d matches shown (more exist) — narrow the pattern, or offset=N to read around one.]", fetchGrepMaxLines)
+	}
+	return capFetchReturn(strings.Join(matches, "\n")) + footer
+}
+
+// capFetchReturn hard-bounds a return body so long lines can't flood context.
+func capFetchReturn(s string) string {
+	if len(s) <= fetchReturnMaxBytes {
+		return s
+	}
+	return strings.ToValidUTF8(s[:fetchReturnMaxBytes], "") + "\n[…truncated; narrow your grep or use offset=N]"
 }
 
 // fetchBest tries to get the best readable text for target. It first tries a
