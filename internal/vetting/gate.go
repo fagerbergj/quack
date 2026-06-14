@@ -533,6 +533,15 @@ func (g *gate) runAgenticRevision(ctx adkagent.InvocationContext, yield func(*se
 // inference-config bug) must not spin forever.
 const maxEmptyRetries = 4
 
+// maxToolCalls is a HARD ceiling on tool calls per worker invocation. qwen3.6
+// ignores the prompt's "stop after ~10 searches" guidance and has fired hundreds
+// of tool calls (688 observed) — blowing the 65536-token context window and
+// burning 30+ minutes on a single node. When the worker crosses this, runWorker
+// cancels its run and the empty-answer recovery writes the answer from what was
+// gathered. Generous enough for a real sub-question (a node is one sub-question),
+// low enough to bound time and keep context under the window.
+const maxToolCalls = 30
+
 // finalizeUntilNonEmpty re-invokes the worker (a finalize write-up pass)
 // repeatedly until it returns a non-empty answer or maxEmptyRetries is hit. Each
 // attempt continues the worker's session (all tool results in context) and asks
@@ -697,10 +706,21 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 	var lastFinish genai.FinishReason
 	var lastPartial bool
 	var steps int
+	var toolCalls int
+	var capped bool
 	var workerErr error
 
-	for ev, err := range ag.Run(ctx) {
+	// Run the worker against a child context we can cancel, to enforce the hard
+	// tool-call cap (the model ignores the prompt's soft budget). On cap we cancel
+	// and the caller's empty-answer recovery writes the answer from what's gathered.
+	goCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	for ev, err := range ag.Run(ctx.WithContext(goCtx)) {
 		if err != nil {
+			if capped && errors.Is(err, context.Canceled) {
+				break // we stopped the worker on purpose at the tool-call cap, not a failure
+			}
 			// A worker stream error (the model server 400s on an over-long context, a
 			// transport hiccup, etc.) must NOT be yielded up: the ADK runner aborts
 			// the whole node on a sub-agent error and SWALLOWS it, so the node would
@@ -730,6 +750,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 					evHasTool = true
 				}
 				if p.FunctionCall != nil {
+					toolCalls++
 					switch p.FunctionCall.Name {
 					case "web_search":
 						// Record the query so self-refine knows searches happened.
@@ -763,6 +784,11 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 					recordSearchResults(act.seen, p.FunctionResponse.Response)
 				}
 			}
+		}
+		if toolCalls >= maxToolCalls && !capped {
+			capped = true
+			log.Printf("vetting[%s]: tool-call cap reached (%d); stopping the worker so it writes its answer from what it has", g.name, toolCalls)
+			cancel()
 		}
 		// The answer is the text that follows the worker's LAST tool activity.
 		// Text-only narration events between tool calls ("Now I have everything
