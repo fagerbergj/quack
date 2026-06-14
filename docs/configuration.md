@@ -12,7 +12,7 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `gates.deterministic_checks.max_rounds` | `4` | Free citation/length checks + cheap targeted revise cycles, run first. |
 | `gates.self_critique.max_rounds` | `1` | Worker self-improvement passes before the judge; `0` disables. |
 | `gates.judge.model` | `gemma4-26b-a4b` | Independent rubric scorer (empty ⇒ judge disabled); cheaper stages still run. |
-| `gates.judge.threshold` | `0.7` | Score bar to pass the gate. |
+| `gates.judge.threshold` | `0.6` | Per-criterion pass bar — every rubric criterion must clear it (verdict score = the lowest criterion; no averaging or hard caps). |
 | `gates.judge.max_rounds` | `1` | Judge/revise rounds; bounds cost and keeps the node loop acyclic. |
 | `agents[web-researcher].inference` | provider `local`, model `qwen3.6-35b` | Fast, capable general worker for web research. |
 | `agents[web-researcher].tools` | `web_search, fetch, summarize` | Tool bindings (explicit; independent of the card's skills). |

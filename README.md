@@ -282,7 +282,7 @@ gates:                             # trust gate: cheapest-first stages, each wit
     provider: local
     model: gemma4-26b-a4b          # independent judge (empty ⇒ judge disabled)
     max_rounds: 1
-    threshold: 0.7
+    threshold: 0.6                 # per-criterion pass bar (verdict = lowest criterion)
 
 tools:                           # registry: catalog of available tools (agents select by name)
   web_search:

@@ -475,9 +475,9 @@ func TestParseVerdictMisplacedTopLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseVerdict(misplaced): %v", err)
 	}
-	// cites_sources=0 → hard cap at 0.40
-	if v.Score > 0.40 {
-		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
+	// cites_sources=0 is the lowest criterion → overall score is that minimum (0.0)
+	if v.Score != 0 {
+		t.Errorf("score = %.2f, want 0 (lowest criterion: cites_sources=0)", v.Score)
 	}
 	// Feedback recovered from misplaced entry
 	if v.Feedback != "add citations" {
@@ -508,20 +508,22 @@ func TestParseVerdictDuplicatedBlob(t *testing.T) {
 	}
 }
 
-func TestParseVerdictCitesCap(t *testing.T) {
-	// Well-formed G-Eval verdict; cites_sources=0 should cap the mean.
+func TestParseVerdictLowestCriterion(t *testing.T) {
+	// Well-formed G-Eval verdict; the overall score is the lowest criterion, so
+	// cites_sources=0 sinks it to 0.0 regardless of the model's holistic 0.96.
 	input := `{"criteria":{"grounded":{"score":0.9},"no_fabrication":{"score":1.0},"answers_question":{"score":1.0},"internally_consistent":{"score":0.9},"cites_sources":{"score":0.0}},"score":0.96,"passed":true,"feedback":"no sources"}`
 	v, err := parseVerdict(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Score > 0.40 {
-		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
+	if v.Score != 0 {
+		t.Errorf("score = %.2f, want 0 (lowest criterion: cites_sources=0)", v.Score)
 	}
 }
 
-func TestAggregateVerdictCitesCapAndClamp(t *testing.T) {
-	// Structured (submit_verdict) path: cites_sources=0 caps the criterion mean.
+func TestAggregateVerdictMinAndClamp(t *testing.T) {
+	// Per-criterion gating: the overall is the WEAKEST criterion (cites_sources=0),
+	// not the mean, and not the model's submitted 0.96.
 	v := aggregateVerdict(verdict{Criteria: map[string]criterionScore{
 		"grounded":              {Score: 0.9},
 		"no_fabrication":        {Score: 1.0},
@@ -529,8 +531,14 @@ func TestAggregateVerdictCitesCapAndClamp(t *testing.T) {
 		"internally_consistent": {Score: 0.9},
 		"cites_sources":         {Score: 0.0},
 	}, Score: 0.96})
-	if v.Score > 0.40 {
-		t.Errorf("score = %.2f, want ≤ 0.40 (cites_sources=0 hard cap)", v.Score)
+	if v.Score != 0 {
+		t.Errorf("score = %.2f, want 0 (lowest criterion)", v.Score)
+	}
+	// All-strong criteria → overall is the lowest of them.
+	if got := aggregateVerdict(verdict{Criteria: map[string]criterionScore{
+		"a": {Score: 0.8}, "b": {Score: 0.9}, "c": {Score: 0.7},
+	}}).Score; got != 0.7 {
+		t.Errorf("min: score = %v, want 0.7", got)
 	}
 	// No criteria: the submitted score is kept but clamped to [0,1].
 	if got := aggregateVerdict(verdict{Score: 1.5}).Score; got != 1 {
