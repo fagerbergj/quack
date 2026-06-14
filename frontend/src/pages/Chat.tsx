@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
-import { AssistantParts, AssistantText, partsToText } from '../components/AgentParts'
+import { AssistantText } from '../components/AgentParts'
 import { DagView } from '../components/DagView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
@@ -20,7 +20,7 @@ function relativeDate(iso: string): string {
 }
 
 // dagTurnStateFromItem converts a persisted DagOutputItem into a DagTurnState
-// suitable for DagView. nodeParts is empty (streaming content not persisted).
+// suitable for DagView. Runs/answers are empty (streaming content isn't persisted).
 function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
   const nodeStates: DagTurnState['nodeStates'] = {}
   let startedAt: number | undefined
@@ -49,22 +49,23 @@ function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
     nodes: item.nodes,
     edges: item.edges,
     nodeStates,
-    nodeParts: {},
+    nodeRuns: {},
+    nodeAnswer: {},
     startedAt,
     finishedAt,
   }
 }
 
-// liveDagFinalText extracts the answer from the terminal node's accumulated parts.
+// liveDagFinalText extracts the answer from the terminal node's accumulated answer.
 // The orchestrator never emits top-level token events — the final answer lives in
-// the last DAG node's nodeParts.
+// the last DAG node's nodeAnswer.
 function liveDagFinalText(dag: DagTurnState): string {
   if (!dag.nodes.length) return ''
   const hasSuccessor = new Set<string>()
   for (const n of dag.nodes) for (const dep of n.depends_on ?? []) hasSuccessor.add(dep)
   const finalNode = dag.nodes.find(n => !hasSuccessor.has(n.id))
   if (!finalNode) return ''
-  return partsToText(dag.nodeParts[finalNode.id] ?? [])
+  return dag.nodeAnswer[finalNode.id] ?? ''
 }
 
 export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPrompt: string }) {
@@ -372,10 +373,9 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             }
 
             // Live turn
-            const liveParts = live!.parts
             const liveDag = live!.dag
-            const liveText = liveDag ? liveDagFinalText(liveDag) : partsToText(liveParts)
-            const showSpinner = streaming && liveParts.length === 0 && !liveDag
+            const liveText = liveDag ? liveDagFinalText(liveDag) : ''
+            const showSpinner = streaming && !liveDag
             const liveDone = !streaming
             const copyKey = `live-${live!.userText.slice(0, 20)}`
             return (
@@ -390,7 +390,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                 </div>
                 {/* Assistant response */}
                 <div className="flex justify-start">
-                  <div className={liveDag || liveParts.length > 0 ? 'w-full' : 'w-auto'}>
+                  <div className={liveDag ? 'w-full' : 'w-auto'}>
                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
                       {showSpinner ? (
                         <span className="flex items-center gap-1 h-5">
@@ -412,9 +412,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                           </details>
                           {liveText && <AssistantText text={liveText} />}
                         </>
-                      ) : (
-                        <AssistantParts parts={liveParts} showCursor={streaming} />
-                      )}
+                      ) : null}
                     </div>
                     {liveText && (!streaming) && (
                       <div className="flex items-center gap-3 mt-1.5 px-1">

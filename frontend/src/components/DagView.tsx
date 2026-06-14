@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { DagNode } from './DagNode'
 import type { DagTurnState, NodeState } from '../state/chatStore'
-import type { MessagePart } from './messageParts'
+import type { AgentRun } from './messageParts'
 
 function fmtMs(ms: number): string {
   const s = ms / 1000
@@ -75,8 +75,10 @@ export function DagView({ dag }: Props) {
 
   const getState = (id: string): NodeState =>
     dag.nodeStates[id] ?? { status: 'queued' }
-  const getParts = (id: string): MessagePart[] =>
-    dag.nodeParts[id] ?? []
+  const getRuns = (id: string): AgentRun[] =>
+    dag.nodeRuns[id] ?? []
+  const getAnswer = (id: string): string =>
+    dag.nodeAnswer[id] ?? ''
 
   const totalTokens = dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
 
@@ -103,7 +105,8 @@ export function DagView({ dag }: Props) {
                 <DagNode
                   node={nodeMap[id]}
                   state={getState(id)}
-                  parts={getParts(id)}
+                  runs={getRuns(id)}
+                  answer={getAnswer(id)}
                   isFinal={id === finalId}
                 />
               </div>
