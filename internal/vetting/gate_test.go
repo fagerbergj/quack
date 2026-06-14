@@ -255,14 +255,18 @@ func TestGateRecoversFromEmptyAnswer(t *testing.T) {
 
 func TestGateEmptyAnswerExhaustsRetriesAndSkipsJudge(t *testing.T) {
 	// The worker never produces answer text. The gate retries the finalize pass up
-	// to maxEmptyRetries times, then surfaces the empty answer without burning a
-	// (slow, agentic) judge round scoring nothing.
+	// to maxEmptyRetries times, then — rather than surfacing a 0-length node, which
+	// breaks downstream synthesis and reads as a silent failure — emits a non-empty
+	// fallback placeholder, still without burning a judge round on nothing.
 	worker := &scriptedModel{name: "w", resps: []string{""}}
 	judge := scriptedJudge(judgeTurn{score: 0.9, feedback: "unused"})
 	res := runGate(t, worker, judge, Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "r"})
 
-	if res.answer != "" {
-		t.Errorf("answer = %q, want empty (every finalize retry came back empty)", res.answer)
+	if want := emptyAnswerFallback(nil); res.answer != want {
+		t.Errorf("answer = %q, want fallback placeholder %q (every finalize retry came back empty)", res.answer, want)
+	}
+	if strings.TrimSpace(res.answer) == "" {
+		t.Errorf("answer is empty — a node must never surface a 0-length response")
 	}
 	if want := 1 + maxEmptyRetries; worker.calls != want {
 		t.Errorf("worker model called %d times, want %d (round 0 + %d finalize retries)", worker.calls, want, maxEmptyRetries)

@@ -1,95 +1,148 @@
 package agent
 
 import (
+	"context"
 	"log"
 	"strings"
+	"unicode/utf8"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// Session compaction — when a long agentic loop fills the model's context slot,
+// Session compaction — when a long agentic loop fills the model's context window,
 // summarize the OLDER turns into a compact briefing and continue from it, so the
 // worker keeps its findings (and their URLs) instead of overflowing and dying.
+//
 // Modelled on opencode's summarize tier (sst/opencode session/compaction.ts):
 // keep the most recent turns verbatim ("tail"), summarize everything before
-// ("head"). We do it in a BeforeModelCallback because the overflow builds up
-// INSIDE one agent loop (between tool steps), which is where this hook fires.
+// ("head"). It is triggered REACTIVELY — when the model server rejects a request
+// for exceeding the context window (see reactivecompact.go) — NOT by a token
+// estimate. We tried estimating (chars/token, then the model's own tokenizer) and
+// kept getting it wrong on dense content; the server's 400 is the ground truth for
+// "too big," so we compact on that and retry.
 const (
-	// compactionContextTokens approximates the worker's per-request context slot
-	// (llama-server --parallel 2 over -c 131072 ⇒ 65536 tokens/slot). If you change
-	// --parallel or -c such that the per-slot size changes, change this.
-	compactionContextTokens = 65536
-	// compactionMargin leaves room under the slot for the model's own output plus
-	// a safety buffer; compaction triggers once a request crosses it.
-	compactionMargin = MaxOutputTokens + 6000
-	// compactionTailTokens is how much recent context is kept verbatim; anything
-	// older than this is summarized.
+	// compactionTailTokens bounds how much recent context is kept verbatim; older
+	// turns are summarized. Sized with a conservative chars/2 (~a dense 2
+	// chars/token) so the compacted request comfortably fits the window on retry.
 	compactionTailTokens = 24000
 	// compactionSummaryMaxTokens caps the generated briefing.
 	compactionSummaryMaxTokens = 1800
+	// maxSummarizeInputChars bounds the text fed to ONE summary call so the call
+	// itself can't overflow the window — the crux of the problem: we compact
+	// BECAUSE we're at the limit, so the summarizer must never see the whole
+	// over-limit context at once. 60000 chars stays under the 65536-token slot even
+	// at a pathological 1 char/token (60000 + instruction + 1800 output reserve).
+	maxSummarizeInputChars = 60000
+	// maxSummarizeDepth bounds the reduce recursion (summaries-of-summaries) so a
+	// gigantic head can't loop forever.
+	maxSummarizeDepth = 3
 	// compactionInstruction preserves the specifics the citation gate needs.
 	compactionInstruction = "You are compacting an in-progress research session to save context. Summarize everything found SO FAR into a compact briefing the agent can continue from without re-reading: the key findings, every exact figure (price, rating, date, time, address, name), and the source URL each fact came from. Preserve specifics and URLs verbatim — they will be cited. Output only the briefing, no preamble."
 )
 
-// compactionCallback returns a BeforeModelCallback that summarizes the older part
-// of a long session before it overflows the context slot. It keeps the first
-// message (the task) and a recent tail of turns verbatim, summarizes the middle
-// via summarizer, and folds the briefing into the task message. On any
-// uncertainty — no safe split point, empty/failed summary — it leaves the request
-// untouched rather than risk corrupting the message sequence.
-func compactionCallback(summarizer model.LLM) llmagent.BeforeModelCallback {
-	return func(cbctx adkagent.CallbackContext, req *model.LLMRequest) (*model.LLMResponse, error) {
-		contents := req.Contents
-		if len(contents) < 4 {
-			return nil, nil
-		}
-		if estimateTokens(contents) < compactionContextTokens-compactionMargin {
-			return nil, nil
-		}
-		// Find the oldest "safe" tail boundary — a content with NO FunctionResponse,
-		// so the tail can't start with a tool result whose call we summarized away
-		// (an orphan the model API would reject) — that still keeps the tail within
-		// budget.
-		split := len(contents)
-		tokens := 0
-		for i := len(contents) - 1; i >= 1; i-- {
-			tokens += contentChars(contents[i]) / 4
-			if tokens > compactionTailTokens {
-				break
-			}
-			if !hasFunctionResponse(contents[i]) {
-				split = i
-			}
-		}
-		if split <= 1 || split >= len(contents) {
-			return nil, nil // no safe, useful split
-		}
-		summary, err := summarizeHead(cbctx, summarizer, contents[1:split])
-		if err != nil || strings.TrimSpace(summary) == "" {
-			log.Printf("compaction: skipped (summary unavailable: %v)", err)
-			return nil, nil
-		}
-		// Fold the briefing into the task message (keeps a single leading user turn
-		// → clean alternation with the tail), then keep the recent tail verbatim.
-		task := *contents[0]
-		task.Parts = append(append([]*genai.Part{}, contents[0].Parts...),
-			&genai.Part{Text: "\n\n[Earlier research this session, summarized to save context]\n" + summary})
-		newContents := append([]*genai.Content{&task}, contents[split:]...)
-		log.Printf("compaction: summarized %d→%d contents (~%d→~%d tokens)", len(contents), len(newContents), estimateTokens(contents), estimateTokens(newContents))
-		req.Contents = newContents
-		return nil, nil
+// compactContents summarizes the older turns of an over-long session and returns a
+// shorter content slice: the first message (the task) with the summary folded in,
+// then the recent tail verbatim. ok is false when it can't safely compact (too
+// short, no safe split point, or the summary call failed) so the caller leaves the
+// request unchanged. summarizer MUST be a raw model (not the compacting wrapper)
+// so the summary call can't recurse back through the overflow path.
+func compactContents(ctx context.Context, summarizer model.LLM, contents []*genai.Content) ([]*genai.Content, bool) {
+	if len(contents) < 4 {
+		return contents, false
 	}
+	// Find the oldest "safe" tail boundary — a content with NO FunctionResponse, so
+	// the tail can't start with a tool result whose call we summarized away (an
+	// orphan the model API rejects) — that keeps the tail within budget.
+	split := len(contents)
+	tokens := 0
+	for i := len(contents) - 1; i >= 1; i-- {
+		tokens += contentChars(contents[i]) / 2 // conservative chars/token (dense web content ~2.3)
+		if tokens > compactionTailTokens {
+			break
+		}
+		if !hasFunctionResponse(contents[i]) {
+			split = i
+		}
+	}
+	if split <= 1 || split >= len(contents) {
+		log.Printf("compaction: over budget but no safe split point — cannot compact")
+		return contents, false
+	}
+	summary, err := summarizeHead(ctx, summarizer, contents[1:split])
+	if err != nil || strings.TrimSpace(summary) == "" {
+		log.Printf("compaction: skipped (summary unavailable: %v)", err)
+		return contents, false
+	}
+	// Fold the briefing into the task message (keeps a single leading user turn →
+	// clean alternation with the tail), then keep the recent tail verbatim.
+	task := *contents[0]
+	task.Parts = append(append([]*genai.Part{}, contents[0].Parts...),
+		&genai.Part{Text: "\n\n[Earlier research this session, summarized to save context]\n" + summary})
+	newContents := append([]*genai.Content{&task}, contents[split:]...)
+	log.Printf("compaction: summarized %d→%d contents", len(contents), len(newContents))
+	return newContents, true
 }
 
-// summarizeHead renders the head contents to text and asks summarizer for a
-// fact/URL-preserving briefing. It's a raw model call (not an agent run), so it
-// doesn't recurse back into this callback.
-func summarizeHead(ctx adkagent.CallbackContext, m model.LLM, head []*genai.Content) (string, error) {
+// summarizeHead renders the head contents to text and summarizes them into a
+// fact/URL-preserving briefing. It is raw model call(s) (not agent runs), so it
+// doesn't recurse back into the compaction path.
+func summarizeHead(ctx context.Context, m model.LLM, head []*genai.Content) (string, error) {
+	text := strings.TrimSpace(renderHeadText(head))
+	if text == "" {
+		return "", nil
+	}
+	return summarizeText(ctx, m, text, 0)
+}
+
+// summarizeText summarizes text that may ITSELF exceed the context window — the
+// whole point of the question "how can we summarize if we're at the limit?". It
+// splits the text into window-safe chunks and summarizes each (map); if the
+// combined briefing is still too big, it summarizes THAT (reduce), bounded by
+// maxSummarizeDepth. No single model call ever sees more than maxSummarizeInputChars.
+func summarizeText(ctx context.Context, m model.LLM, text string, depth int) (string, error) {
+	if len(text) <= maxSummarizeInputChars {
+		return summarizeOnce(ctx, m, text)
+	}
+	if depth >= maxSummarizeDepth {
+		// Can't reduce further; summarize the leading window as a best effort rather
+		// than fail compaction entirely.
+		return summarizeOnce(ctx, m, text[:safeCut(text, maxSummarizeInputChars)])
+	}
+	chunks := chunkByChars(text, maxSummarizeInputChars)
+	parts := make([]string, 0, len(chunks))
+	for _, ch := range chunks {
+		s, err := summarizeOnce(ctx, m, ch)
+		if err != nil {
+			return "", err
+		}
+		if t := strings.TrimSpace(s); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	joined := strings.Join(parts, "\n\n")
+	if len(joined) <= maxSummarizeInputChars {
+		return joined, nil
+	}
+	return summarizeText(ctx, m, joined, depth+1) // reduce
+}
+
+// summarizeOnce is a single window-safe summary call.
+func summarizeOnce(ctx context.Context, m model.LLM, text string) (string, error) {
+	return inference.Generate(ctx, m, &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: text}}}},
+		Config: &genai.GenerateContentConfig{
+			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: compactionInstruction}}},
+			MaxOutputTokens:   compactionSummaryMaxTokens,
+		},
+	})
+}
+
+// renderHeadText concatenates the readable text of the head contents (turn text +
+// tool-result "result" strings) for summarization.
+func renderHeadText(head []*genai.Content) string {
 	var sb strings.Builder
 	for _, c := range head {
 		for _, p := range c.Parts {
@@ -108,26 +161,43 @@ func summarizeHead(ctx adkagent.CallbackContext, m model.LLM, head []*genai.Cont
 			}
 		}
 	}
-	text := strings.TrimSpace(sb.String())
-	if text == "" {
-		return "", nil
-	}
-	return inference.Generate(ctx, m, &model.LLMRequest{
-		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: text}}}},
-		Config: &genai.GenerateContentConfig{
-			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: compactionInstruction}}},
-			MaxOutputTokens:   compactionSummaryMaxTokens,
-		},
-	})
+	return sb.String()
 }
 
-// estimateTokens approximates the token count of contents (~4 chars/token).
-func estimateTokens(contents []*genai.Content) int {
-	chars := 0
-	for _, c := range contents {
-		chars += contentChars(c)
+// chunkByChars splits s into pieces of at most max bytes, preferring to cut at a
+// newline (and never mid-rune) so each chunk is valid text the summarizer can read.
+func chunkByChars(s string, max int) []string {
+	if len(s) <= max {
+		return []string{s}
 	}
-	return chars / 4
+	var chunks []string
+	for len(s) > max {
+		cut := strings.LastIndexByte(s[:max], '\n')
+		if cut <= 0 {
+			cut = safeCut(s, max)
+		}
+		chunks = append(chunks, s[:cut])
+		s = s[cut:]
+	}
+	if strings.TrimSpace(s) != "" {
+		chunks = append(chunks, s)
+	}
+	return chunks
+}
+
+// safeCut returns a cut index ≤ max that doesn't split a UTF-8 rune.
+func safeCut(s string, max int) int {
+	if max >= len(s) {
+		return len(s)
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if cut == 0 {
+		return max // pathological; accept the byte cut
+	}
+	return cut
 }
 
 // contentChars sums the text-bearing characters of a content (answer/reasoning

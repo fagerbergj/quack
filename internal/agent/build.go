@@ -22,16 +22,15 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset) (
 	return llmagent.New(llmagent.Config{
 		Name:        name,
 		Description: desc,
-		Model:       m,
+		// Wrap the model so a context-overflow (the server's 400) summarizes the
+		// older turns and retries, instead of dropping the node. Reactive, not a
+		// token estimate — see reactivecompact.go / compaction.go.
+		Model: WrapCompacting(m),
 		InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
 			return promptbuilder.Agent(name, desc, tools, behaviour), nil
 		},
 		Tools:    tools,
 		Toolsets: toolsets,
-		// Summarize the older turns when a long agentic loop nears the context slot,
-		// so the worker keeps its findings instead of overflowing and dying. Uses
-		// the agent's own model for the (tool-less) summary call.
-		BeforeModelCallbacks: []llmagent.BeforeModelCallback{compactionCallback(m)},
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			MaxOutputTokens: MaxOutputTokens,
 		},

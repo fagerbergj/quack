@@ -38,6 +38,11 @@ const (
 	// fetchReturnMaxBytes hard-bounds any single web_fetch return so a page with
 	// very long lines can't flood the context window regardless of mode.
 	fetchReturnMaxBytes = 24_000
+	// maxTokenChars: any unbroken (whitespace-free) run longer than this is not
+	// prose — it's a base64 blob, a minified payload, or similar machine data — so
+	// it's collapsed to a placeholder. Real text and even long URLs never approach
+	// this, so the cap only ever drops garbage.
+	maxTokenChars = 4_000
 	// browserUA presents as a real desktop Chrome. Many sites serve bot-blocking
 	// interstitials (or nothing) to obvious crawler UAs, so we look like a browser.
 	browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -50,6 +55,11 @@ const (
 // errCloudflareChallenge marks a direct GET that hit a Cloudflare bot challenge
 // (403 + cf-mitigated: challenge), so the final error can name the cause.
 var errCloudflareChallenge = errors.New("web_fetch: cloudflare challenge (cf-mitigated)")
+
+// dataURIRe matches inline data: URIs (base64 images/SVGs/fonts) that HTML→
+// markdown conversion preserves verbatim. A single one can be hundreds of KB of
+// valid-UTF8 base64 — pure context garbage with no readable value.
+var dataURIRe = regexp.MustCompile(`data:[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+[;,][^\s)"'<>]*`)
 
 type fetchArgs struct {
 	URL string `json:"url"`
@@ -245,7 +255,54 @@ func sanitizeFetched(target, s string) (string, error) {
 	if len(s) > 512 && len(clean) < len(s)*9/10 {
 		return "", fmt.Errorf("web_fetch: %s returned binary (non-text) content — it cannot be read as a page; try a different source", target)
 	}
-	return clean, nil
+	return stripInlineMedia(clean), nil
+}
+
+// stripInlineMedia removes context garbage that HTML→markdown conversion carries
+// through verbatim and that is valid UTF-8 (so sanitizeFetched's binary check
+// misses it): inline data: URIs (base64 images/SVGs/fonts) and any other absurdly
+// long unbroken token (base64 blobs, minified payloads). This is the user-observed
+// "images/videos putting garbage into context" — and a real overflow source.
+func stripInlineMedia(s string) string {
+	s = dataURIRe.ReplaceAllString(s, "[inline-data-uri removed]")
+	return collapseLongTokens(s)
+}
+
+// collapseLongTokens replaces any whitespace-free run longer than maxTokenChars
+// with a placeholder — base64/minified machine data that isn't prose. Done by
+// hand rather than regexp because RE2 caps bounded repeats at 1000, well below the
+// 4000 threshold (which keeps even long signed URLs intact).
+func collapseLongTokens(s string) string {
+	if len(s) <= maxTokenChars {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	runStart := -1
+	flush := func(end int) {
+		if runStart < 0 {
+			return
+		}
+		if end-runStart > maxTokenChars {
+			b.WriteString("[long token removed]")
+		} else {
+			b.WriteString(s[runStart:end])
+		}
+		runStart = -1
+	}
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r':
+			flush(i)
+			b.WriteByte(s[i])
+		default:
+			if runStart < 0 {
+				runStart = i
+			}
+		}
+	}
+	flush(len(s))
+	return b.String()
 }
 
 // fetchReadable does a guarded GET and returns the page's readable text.
@@ -328,8 +385,12 @@ func crawl4aiMD(ctx context.Context, client *http.Client, backend, target, filte
 // (preserving links + structure) so the agent can cite the URLs a page links to;
 // other content types are returned raw (capped).
 func readableBody(contentType string, r io.Reader) (string, error) {
+	ct := strings.ToLower(contentType)
+	if isUnreadableContentType(ct) {
+		return "", fmt.Errorf("web_fetch: content-type %q is not a readable page (image/video/audio/binary) — try a different source", contentType)
+	}
 	limited := io.LimitReader(r, maxFetchBytes)
-	if contentType != "" && !strings.Contains(contentType, "html") && !strings.Contains(contentType, "xml") {
+	if ct != "" && !strings.Contains(ct, "html") && !strings.Contains(ct, "xml") {
 		raw, err := io.ReadAll(limited)
 		if err != nil {
 			return "", err
@@ -337,6 +398,18 @@ func readableBody(contentType string, r io.Reader) (string, error) {
 		return strings.TrimSpace(string(raw)), nil
 	}
 	return htmlToMarkdown(limited)
+}
+
+// isUnreadableContentType reports whether a Content-Type is a binary/media payload
+// that has no readable text — so we reject it up front instead of reading raw
+// bytes (image/video/audio/font/archives/octet-stream).
+func isUnreadableContentType(ct string) bool {
+	for _, p := range []string{"image/", "video/", "audio/", "font/", "application/octet-stream", "application/zip", "application/x-"} {
+		if strings.Contains(ct, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // markdownConverter turns HTML into Markdown. The base plugin drops
