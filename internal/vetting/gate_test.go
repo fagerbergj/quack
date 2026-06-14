@@ -358,11 +358,11 @@ func TestCitationScoreLayers(t *testing.T) {
 	// One cited URL per layer: exact-fetched(1.0), exact-searched(0.75),
 	// same-host-fetched(0.5), same-host-searched(0.25), unbacked(0.0).
 	answer := strings.Join([]string{
-		"[a](https://ex.com/fetched-page)",       // exact fetched
-		"[b](https://srch.com/exact-result)",     // exact searched
-		"[c](https://ex.com/other)",              // same host as a fetched page
-		"[d](https://srch.com/other)",            // same host as a search result
-		"[e](https://nowhere.com/made-up)",       // never seen
+		"[a](https://ex.com/fetched-page)",   // exact fetched
+		"[b](https://srch.com/exact-result)", // exact searched
+		"[c](https://ex.com/other)",          // same host as a fetched page
+		"[d](https://srch.com/other)",        // same host as a search result
+		"[e](https://nowhere.com/made-up)",   // never seen
 	}, " ")
 	act := workerActivity{
 		fetched: map[string]fetchRecord{"https://ex.com/fetched-page": {}},
@@ -445,9 +445,9 @@ func TestNormalizeURL(t *testing.T) {
 		wantHost string
 	}{
 		{"https://Ex.com/Page/#section", "https://ex.com/Page", "ex.com"},
-		{"http://A.com/", "http://a.com/", "a.com"},         // root path kept
+		{"http://A.com/", "http://a.com/", "a.com"},          // root path kept
 		{"https://b.com/x/y/", "https://b.com/x/y", "b.com"}, // trailing slash trimmed
-		{"not a url", "not a url", ""},                        // parse fallback
+		{"not a url", "not a url", ""},                       // parse fallback
 	} {
 		gotNorm, gotHost := normalizeURL(c.in)
 		if gotNorm != c.wantNorm || gotHost != c.wantHost {
