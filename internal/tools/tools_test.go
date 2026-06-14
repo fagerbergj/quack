@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
@@ -166,6 +167,52 @@ func TestCrawl4AIMarkdownFitFallsBackToRaw(t *testing.T) {
 	}
 	if len(calls) != 2 || calls[0] != "fit" || calls[1] != "raw" {
 		t.Errorf("filter calls = %v, want [fit raw]", calls)
+	}
+}
+
+func TestShapeFetchResultHeadAndOffset(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 300; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	full := b.String()
+
+	head := shapeFetchResult(full, "", 0)
+	if !strings.Contains(head, "line 1\n") || !strings.Contains(head, fmt.Sprintf("line %d", fetchHeadLines)) {
+		t.Errorf("head missing expected lines")
+	}
+	if strings.Contains(head, fmt.Sprintf("\nline %d\n", fetchHeadLines+1)) {
+		t.Errorf("head leaked a line past the window")
+	}
+	if !strings.Contains(head, "offset=") {
+		t.Errorf("head footer should hint offset=: %q", head)
+	}
+
+	win := shapeFetchResult(full, "", 150)
+	if !strings.Contains(win, "line 150") || strings.Contains(win, "\nline 149\n") {
+		t.Errorf("offset window should start at line 150")
+	}
+}
+
+func TestShapeFetchResultGrep(t *testing.T) {
+	full := "Apple pie\nBanana split\napple turnover\nCherry\n"
+
+	out := shapeFetchResult(full, "apple", 0)
+	if !strings.Contains(out, "1: Apple pie") || !strings.Contains(out, "3: apple turnover") {
+		t.Errorf("grep should match case-insensitively with line numbers: %q", out)
+	}
+	if strings.Contains(out, "Banana") {
+		t.Errorf("grep returned a non-matching line: %q", out)
+	}
+
+	if none := shapeFetchResult(full, "zzz", 0); !strings.Contains(none, "no lines match") {
+		t.Errorf("expected a no-match message: %q", none)
+	}
+
+	// An invalid regex ("(") falls back to a literal substring search.
+	lit := shapeFetchResult("a (b) c\nx y z\n", "(", 0)
+	if !strings.Contains(lit, "1: a (b) c") || strings.Contains(lit, "x y z") {
+		t.Errorf("invalid regex should fall back to literal substring: %q", lit)
 	}
 }
 
