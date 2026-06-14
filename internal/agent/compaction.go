@@ -21,8 +21,8 @@ import (
 // INSIDE one agent loop (between tool steps), which is where this hook fires.
 const (
 	// compactionContextTokens approximates the worker's per-request context slot
-	// (llama-server --parallel 4 ⇒ 65536 tokens/slot). If you change --parallel,
-	// change this.
+	// (llama-server --parallel 2 over -c 131072 ⇒ 65536 tokens/slot). If you change
+	// --parallel or -c such that the per-slot size changes, change this.
 	compactionContextTokens = 65536
 	// compactionMargin leaves room under the slot for the model's own output plus
 	// a safety buffer; compaction triggers once a request crosses it.

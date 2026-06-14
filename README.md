@@ -91,8 +91,9 @@ providers, and per-agent model choices live in [docs/configuration.md](docs/conf
   genuinely-different-weights independence the trust gate relies on. See **Adversarial vetting**
   below.
 - **Concurrency follows the provider.** The executor topologically orders the DAG and runs nodes
-  as concurrently as the providers allow. A single-model local backend forces sequential
-  execution; a hosted API or multiple providers allow parallel branches.
+  as concurrently as the providers allow. A single-model local backend allows only as much
+  parallelism as the server's slot count (currently `--parallel 2` ⇒ 2 nodes); a hosted API or
+  multiple providers allow wider parallel branches.
 - **Context budgeting.** Before a node's output flows downstream, `platform` trims or
   summarizes it, so the final synthesis stays inside the model's context window.
 
@@ -156,7 +157,7 @@ The orchestrator is a **pure planner and executor**. It holds no domain tools of
    nodes are agent invocations chosen from the **discovered agent-card registry**; edges are
    explicit data dependencies (a node's named outputs feed its dependents' inputs).
 2. **Execute.** A custom **topological executor** walks the DAG. It runs nodes in dependency
-   order (sequentially, per the inference constraint), passing outputs along edges.
+   order (with limited concurrency, per the inference constraint), passing outputs along edges.
 3. **Vet (auto-wrapped nodes).** Every node is wrapped in an adversarial loop, an ADK
    `LoopAgent` that runs **generate → critique → revise → judge** for a bounded number of
    rounds. The loop lives *inside* the node, never as a cycle in the graph, so the DAG stays

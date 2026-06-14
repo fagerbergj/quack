@@ -62,10 +62,11 @@ gates:
 
 # DAG execution policy.
 dag:
-  max_active_nodes: 4   # how many nodes run concurrently; extras queue. Matched to the
-                        # worker server's --parallel 4 (4 KV slots @ 65536 tokens each);
-                        # the CPU judge is also --parallel 4. Raising this past the
-                        # worker's slot count just queues requests at the model.
+  max_active_nodes: 2   # how many nodes run concurrently; extras queue. Matched to the
+                        # worker server's --parallel 2 (2 KV slots @ 65536 tokens each);
+                        # the GPU judge (gemma4-26b-a4b, co-resident with the worker)
+                        # is also --parallel 2. Raising this past the worker's slot
+                        # count just queues requests at the model.
 
 server:
   addr: ":8080"
