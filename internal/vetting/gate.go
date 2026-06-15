@@ -309,8 +309,8 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				}
 				trimmedLen := len(strings.TrimSpace(answer))
 				ls := lengthScore(answer)
-				// Only fold length in when it docks (empty), so a constant 1.0 doesn't
-				// inflate the criterion mean for every normal answer.
+				// Only fold length in when it docks (empty): a full-length 1.0 is never
+				// the weakest criterion, so adding it would just clutter the verdict.
 				if ls < 1.0 {
 					v.Criteria["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf("deterministic: %d chars", trimmedLen)}
 				}
@@ -390,7 +390,7 @@ func newCritiqueContext(ctx adkagent.InvocationContext, content *genai.Content) 
 	return &critiqueContext{
 		InvocationContext: ctx,
 		content:           content,
-		sess:              &filteredSession{Session: ctx.Session()},
+		sess:              &filteredSession{Session: ctx.Session(), prompt: content},
 	}
 }
 
@@ -410,6 +410,15 @@ func (c *critiqueContext) WithContext(goCtx context.Context) adkagent.Invocation
 // FunctionResponses in its session history during agentic self-refine.
 type filteredSession struct {
 	session.Session
+	// prompt is the current-turn instruction for the worker (revision feedback,
+	// finalize write-up request, self-critique, or the original query). ADK's
+	// llmagent builds its request purely from Session().Events() and ignores
+	// InvocationContext.UserContent(), so the prompt MUST appear here as the
+	// final user event. Without it a re-invocation never receives the
+	// instruction and the request ends on the worker's own assistant turn(s),
+	// which the model server rejects with a 400 ("Cannot have 2 or more
+	// assistant messages at the end of the list"). nil disables the append.
+	prompt *genai.Content
 }
 
 func (f *filteredSession) Events() session.Events {
@@ -425,7 +434,44 @@ func (f *filteredSession) Events() session.Events {
 		}
 		events = append(events, ev)
 	}
+	// Surface the current-turn prompt as the trailing user event — unless the
+	// history already ends with it (round 0, where the prompt IS the original
+	// query the runner already recorded). Author "user" so the contents builder
+	// passes it through verbatim rather than rewriting it as a foreign reply.
+	if f.prompt != nil && !endsWithPrompt(events, f.prompt) {
+		ev := &session.Event{Author: "user"}
+		ev.Content = f.prompt
+		events = append(events, ev)
+	}
 	return &materializedEvents{events: events}
+}
+
+// endsWithPrompt reports whether the last event already carries prompt (same
+// role and text), so the prompt isn't appended twice on round 0.
+func endsWithPrompt(events []*session.Event, prompt *genai.Content) bool {
+	if len(events) == 0 {
+		return false
+	}
+	last := events[len(events)-1]
+	if last == nil || last.Content == nil {
+		return false
+	}
+	return last.Content.Role == prompt.Role && contentPlainText(last.Content) == contentPlainText(prompt)
+}
+
+// contentPlainText concatenates the text parts of a content, ignoring function
+// call/response parts — enough to tell two prompts apart for dedup.
+func contentPlainText(c *genai.Content) string {
+	if c == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, p := range c.Parts {
+		if p != nil && p.Text != "" {
+			sb.WriteString(p.Text)
+		}
+	}
+	return sb.String()
 }
 
 // materializedEvents is a snapshot of the filtered session used within one
