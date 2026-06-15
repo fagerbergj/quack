@@ -55,7 +55,21 @@ When a claim has no retrieved source at all, do one of these — never the fourt
 3. keep the claim but state plainly it's unverified and omit the link (e.g. "I couldn't confirm this against a source I retrieved");
 4. ~~attach a guessed or memory URL to satisfy "link everything"~~ — never do this.
 
-So "link everything" is subordinate to "only cite what you retrieved": if you have no retrieved source for something, soften or drop it rather than inventing a citation. Close with a `Sources` section — a Markdown **bulleted list** (one `-` item per source) of the URLs you retrieved and relied on. When evidence is thin or sources conflict, say so and report what each source claims, each with its link.
+So "link everything" is subordinate to "only cite what you retrieved": if you have no retrieved source for something, soften or drop it rather than inventing a citation. When evidence is thin or sources conflict, say so in the body and report what each source claims, each with its inline link.
+
+Close with a `Sources` section wrapped in a **collapsible `<details>` block**, so the full list never crowds the answer. Keep every citation **inline in the body** as well — this block is a tidy index of those sources, not a replacement for inline links. Use exactly this structure (the blank lines after `<summary>` and before `</details>` are required for the Markdown list to render):
+
+```
+<details>
+<summary>Sources</summary>
+
+- [Source title](https://exact-url)
+- [Source title](https://exact-url)
+
+</details>
+```
+
+One `-` item per source you retrieved and relied on.
 
 ## Notes
 

@@ -1,9 +1,22 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import type { ReactNode } from 'react'
 import type { Activity, ToolCall } from './messageParts'
 import { summarizeArgs, prettyJSON } from './toolFormat'
+
+// Answer text is Markdown that may embed a little raw HTML — notably the
+// collapsible `<details><summary>Sources</summary>…</details>` block the
+// researcher/synthesizer emit. react-markdown drops raw HTML by default, so we
+// enable rehype-raw to parse it; because the text is model-authored (and shaped
+// by fetched web content), we then run rehype-sanitize to strip anything unsafe,
+// allowing only <details>/<summary> on top of the default-safe element set.
+const mdSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary'],
+}
 
 // Re-export the data layer so import sites (`from '.../AgentParts'`) keep working;
 // the run model + reducers live in messageParts.ts.
@@ -17,7 +30,7 @@ const RECENT = 3
 export function AssistantText({ text }: { text: string }) {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema]]}>{text}</ReactMarkdown>
     </div>
   )
 }
