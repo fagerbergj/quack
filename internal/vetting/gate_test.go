@@ -572,6 +572,25 @@ func TestParseVerdictNormalizes0To10Scale(t *testing.T) {
 	}
 }
 
+// verdictScores logs each criterion score, names the lowest (the binding
+// overall under weakest-link gating), and reports the mean as a diagnostic.
+func TestVerdictScores(t *testing.T) {
+	s := verdictScores(verdict{Criteria: map[string]criterionScore{
+		"grounded":      {Score: 0.9},
+		"cites_sources": {Score: 0.6},
+		"clean_output":  {Score: 1.0},
+	}})
+	// Sorted order, the lowest named, and the mean (0.9+0.6+1.0)/3 = 0.83.
+	for _, want := range []string{"cites_sources=0.60", "grounded=0.90", "lowest=cites_sources(0.60)", "mean=0.83"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("verdictScores missing %q in: %s", want, s)
+		}
+	}
+	if got := verdictScores(verdict{}); !strings.Contains(got, "no per-criterion") {
+		t.Errorf("empty criteria should note absence, got: %s", got)
+	}
+}
+
 // normalizeScale must leave a verdict already on the 0–1 axis untouched (some
 // models ignore the 0–10 instruction and answer in 0–1).
 func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {

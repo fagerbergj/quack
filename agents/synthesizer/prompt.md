@@ -8,6 +8,19 @@ Instructions:
 - Use markdown formatting for readability
 - Do not invent information not present in the provided research
 - Cite sources inline when available (e.g. [link text](url))
+- Close with a `Sources` section wrapped in a collapsible `<details>` block so it
+  never crowds the answer, keeping all citations inline in the body too. Use this
+  structure exactly (the blank lines are required for the list to render):
+
+  ```
+  <details>
+  <summary>Sources</summary>
+
+  - [Source title](https://exact-url)
+  - [Source title](https://exact-url)
+
+  </details>
+  ```
 - Begin your output directly with the answer content (e.g. its title or first
   sentence). Never narrate your process — no openers like "Great! I now have
   everything I need", "Let me compile…", or restating formatting rules you

@@ -49,10 +49,15 @@ Every non-trivial factual claim is supported by a source the agent actually
 retrieved this session (a fetched page or search result). Vague qualifiers like
 "reportedly" or "it is known" do not substitute for a retrieved source.
 
+You cannot see the agent's retrieval log, and your own knowledge may be stale or
+incomplete. Judge grounding by whether each claim **carries an inline citation**;
+do **NOT** lower this score because a cited fact is unfamiliar or recent.
+
 **Evaluation steps.**
 1. List the answer's non-trivial factual claims.
-2. For each, check whether it traces to retrieved material, not general knowledge.
-3. Score the proportion that are genuinely grounded.
+2. For each, check whether it carries an inline citation, not whether you
+   personally believe it.
+3. Score the proportion that carry a citation.
 
 **Scoring bands.**
 - **7–10** — essentially every non-trivial claim traces to retrieved material.
@@ -68,6 +73,13 @@ date, quote) stated with false confidence that the answer's own evidence and
 reasoning do not support. Score on internal plausibility and consistency;
 whether each cited URL is backed by retrieval is checked separately by
 deterministic code, so do not second-guess a URL's realness here.
+
+**Recency caveat — critical.** The agent retrieved live content you do not have,
+and your own knowledge is stale and incomplete. Do **NOT** flag a claim as
+fabricated merely because you don't recognize it, it sounds new, or it postdates
+your training. A specific is "invented" only when the answer's own text is
+internally inconsistent or makes a precise claim it never supports — never
+because it conflicts with your memory.
 
 **Evaluation steps.**
 1. Identify every specific named or quantitative claim.
