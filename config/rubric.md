@@ -1,26 +1,63 @@
 # Default scoring rubric
 
 This is the default G-Eval scoring guide. It operationalises the global
-constitution into named criteria with explicit scoring anchors. Agents that
-need domain-specific scoring drop a rubric.md into their bundle directory —
-that replaces this file while the constitution remains in effect.
+constitution into named criteria, each scored on a **0–10 integer scale**.
+Agents that need domain-specific scoring drop a rubric.md into their bundle
+directory — that replaces this file while the constitution remains in effect.
 
-## Evaluation steps
+## How to score (G-Eval)
 
-For each criterion: read the definition and scoring anchors, reason about how
-the answer performs, then assign a score 0.0–1.0.
+Work through the criteria **in order**. For each one:
+
+1. Read its definition and **evaluation steps**.
+2. Reason in one or two sentences about how the answer performs against those
+   steps — cite the specific passage or omission that drives your score.
+3. Assign an **integer from 0 to 10** using the scale below and the criterion's
+   own scoring bands.
+
+Score **substance, not style**: length, fluency, and confident phrasing earn no
+credit on their own.
+
+### The 0–10 scale
+
+The same scale applies to every criterion. The per-criterion **scoring bands**
+below tell you what "met", "partially met", and "failed" mean *for that
+criterion*; this scale tells you which number within those ranges to pick.
+
+- **10** — flawless on this criterion; nothing to fault.
+- **9** — met; only a trivial, cosmetic nitpick.
+- **8** — met; one minor gap that does not weaken the answer.
+- **7** — met, but barely; a real (if small) shortcoming. *Lowest passing score —
+  the gate's threshold sits here.*
+- **6** — partially met; a noticeable weakness that should be fixed.
+- **5** — partially met; as much wrong as right.
+- **4** — mostly unmet; more violated than satisfied.
+- **3** — largely failed; a serious problem on this dimension.
+- **2** — failed; essentially not satisfied.
+- **1** — failed badly; actively wrong on this dimension.
+- **0** — total failure, or what this criterion asks for is entirely absent.
+
+**Choosing within a band:** pick the higher number when the criterion is met
+more completely or the flaw is more trivial; the lower number when it only just
+clears the band. Do not default to 0, 5, or 10.
 
 ---
 
 ### `grounded`
 
 Every non-trivial factual claim is supported by a source the agent actually
-retrieved (a fetched page or search result). Vague qualifiers like "reportedly"
-or "it is known" do not substitute for a retrieved source.
+retrieved this session (a fetched page or search result). Vague qualifiers like
+"reportedly" or "it is known" do not substitute for a retrieved source.
 
-- **1.0** — every non-trivial claim traces to retrieved material
-- **0.5** — most claims are sourced; a few minor assertions lack explicit support
-- **0.0** — the majority of claims have no retrieved backing
+**Evaluation steps.**
+1. List the answer's non-trivial factual claims.
+2. For each, check whether it traces to retrieved material, not general knowledge.
+3. Score the proportion that are genuinely grounded.
+
+**Scoring bands.**
+- **7–10** — essentially every non-trivial claim traces to retrieved material.
+- **4–6** — most claims are sourced; several lack explicit support.
+- **0–3** — the majority of claims have no retrieved backing.
 
 ---
 
@@ -28,25 +65,38 @@ or "it is known" do not substitute for a retrieved source.
 
 Judge whether anything reads as **invented** — a specific (name, number, price,
 date, quote) stated with false confidence that the answer's own evidence and
-reasoning don't support. Score on the answer's internal plausibility and
-consistency; whether each cited URL is backed by retrieval is checked separately
-by deterministic code, so don't second-guess a URL's realness here.
+reasoning do not support. Score on internal plausibility and consistency;
+whether each cited URL is backed by retrieval is checked separately by
+deterministic code, so do not second-guess a URL's realness here.
 
-- **1.0** — nothing reads as invented
-- **0.5** — minor secondary details look approximate or loosely stated
-- **0.0** — a name, number, or quote is clearly fabricated or unsupported by the answer's own evidence
+**Evaluation steps.**
+1. Identify every specific named or quantitative claim.
+2. For each, judge whether the answer's own evidence justifies its confidence.
+3. Weight load-bearing specifics most heavily.
+
+**Scoring bands.**
+- **7–10** — nothing reads as invented.
+- **4–6** — minor secondary details look approximate or loosely stated.
+- **0–3** — a name, number, or quote is clearly fabricated or unsupported by the
+  answer's own evidence.
 
 ---
 
 ### `answers_question`
 
 The response addresses exactly what the user asked, in full — not a
-related-but-different question, and not a partial answer that drops part of
-the request.
+related-but-different question, and not a partial answer that drops part of the
+request.
 
-- **1.0** — addresses the request completely
-- **0.5** — addresses the main ask; minor gaps
-- **0.0** — misses the core ask or redirects to a different question
+**Evaluation steps.**
+1. Decompose the question into its distinct asks and constraints.
+2. Check that each is addressed.
+3. Note any silent narrowing or topic drift.
+
+**Scoring bands.**
+- **7–10** — addresses the request completely.
+- **4–6** — addresses the main ask; minor gaps.
+- **0–3** — misses the core ask or redirects to a different question.
 
 ---
 
@@ -55,9 +105,15 @@ the request.
 The answer does not contradict itself, and its conclusions follow from the
 evidence it presents.
 
-- **1.0** — fully consistent throughout
-- **0.5** — minor tensions that do not undermine the core conclusion
-- **0.0** — clear contradictions, or conclusions the evidence does not support
+**Evaluation steps.**
+1. Check for self-contradiction across the answer.
+2. Check that conclusions follow from the cited evidence.
+3. Check that uncertainty is stated where evidence is thin.
+
+**Scoring bands.**
+- **7–10** — fully consistent throughout.
+- **4–6** — minor tensions that do not undermine the core conclusion.
+- **0–3** — clear contradictions, or conclusions the evidence does not support.
 
 ---
 
@@ -69,9 +125,15 @@ can. For a retrieval agent, the *quality* of those links (whether each URL was
 actually fetched/searched) is graded separately by deterministic code and can
 override this score; here, judge only the presence of links.
 
-- **1.0** — every non-trivial claim has an inline URL
-- **0.5** — URLs for most claims; a few unreferenced
-- **0.0** — no URLs cited, only source names with no links
+**Evaluation steps.**
+1. Count the answer's non-trivial claims.
+2. Count how many carry an inline, followable URL.
+3. Score the proportion that are linked.
+
+**Scoring bands.**
+- **7–10** — every non-trivial claim has an inline URL.
+- **4–6** — URLs for most claims; a few unreferenced.
+- **0–3** — no URLs cited, only source names with no links.
 
 ---
 
@@ -85,26 +147,33 @@ reader sees the reply verbatim, so anything like "Let me…", "I see, I made a
 typo…", "Actually, wait…", "the skill says…", or trailing drafting notes is a
 defect — even when the buried content is excellent.
 
-- **1.0** — pure answer; no preamble, narration, or trailing reasoning
-- **0.5** — a stray opener or a single meta sentence, otherwise clean
-- **0.0** — noticeable preamble and/or leaked planning/reasoning in the output
+**Evaluation steps.**
+1. Read the first sentence: direct answer, or preamble / process narration?
+2. Scan the body and tail for leaked planning, self-talk, or meta-commentary.
+3. Score down for each intrusion; the buried answer's quality does not excuse it.
+
+**Scoring bands.**
+- **7–10** — pure answer; no preamble, narration, or trailing reasoning.
+- **4–6** — a stray opener or a single meta sentence, otherwise clean.
+- **0–3** — noticeable preamble and/or leaked planning/reasoning in the output.
 
 ---
 
 ## Zero-retrieval handling
 
 If the agent explicitly states it could not retrieve any sources (tool errors,
-no results), score `grounded` and `cites_sources` at **0.0** but do **not**
+no results), score `grounded` and `cites_sources` at **0** but do **not**
 penalise `answers_question` or `internally_consistent` for the lack of
 retrieval — those criteria assess what the agent did with what it had.
 
-## Aggregation rule
+## Aggregation
 
-Each criterion is an **independent pass/fail** — there is no averaging and no
-hard caps. Report `score` as the **lowest** criterion score (the binding
-constraint); the gate passes only when every criterion clears the threshold, so
-one fatal failure (leaked preamble, no citations) sinks the answer on its own
-rather than being averaged away by strong scores elsewhere.
+Each criterion is an **independent requirement**, scored 0–10 and normalised to
+0.0–1.0 (divide by 10). The overall score is the **lowest** criterion — the
+binding constraint (weakest-link gating). There is **no averaging and no caps**:
+one fatal failure (leaked preamble, no citations, fabricated specifics) sinks
+the answer on its own rather than being averaged away by strong scores
+elsewhere. The gate passes only when **every** criterion clears the threshold.
 
 `feedback` must name the lowest-scoring criterion/criteria and what concretely
 would fix them so the next revision can act on it.

@@ -231,12 +231,56 @@ func TestSearchWebParsesResults(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := searchWeb(context.Background(), srv.Client(), srv.URL, "golang")
+	got, _, err := searchWeb(context.Background(), srv.Client(), srv.URL, "golang")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0].Snippet != "snippet a" || got[1].URL != "http://b" {
 		t.Errorf("searchWeb = %+v, want both parsed results", got)
+	}
+}
+
+// SearXNG answers HTTP 200 even when every upstream engine 429s, listing the
+// failures only in unresponsive_engines. searchWeb must turn an all-failed,
+// zero-result search into an error so the agent sees the rate limit instead of a
+// silently empty list.
+func TestSearchWebSurfacesRateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"results":[],"unresponsive_engines":[
+			["brave","Too many requests"],
+			["google","timeout"]
+		]}`)
+	}))
+	defer srv.Close()
+
+	_, _, err := searchWeb(context.Background(), srv.Client(), srv.URL, "golang")
+	if err == nil {
+		t.Fatal("expected an error when all backends are rate-limited, got nil")
+	}
+	if !strings.Contains(err.Error(), "brave") || !strings.Contains(err.Error(), "Too many requests") {
+		t.Errorf("error should name the failed engine and reason, got: %v", err)
+	}
+}
+
+// When some backends fail but others return hits, searchWeb returns the hits
+// plus a non-fatal note so the agent knows coverage was reduced.
+func TestSearchWebPartialResultsNote(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"results":[
+			{"title":"A","url":"http://a","content":"snippet a"}
+		],"unresponsive_engines":[["brave","Too many requests"]]}`)
+	}))
+	defer srv.Close()
+
+	got, note, err := searchWeb(context.Background(), srv.Client(), srv.URL, "golang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("want the one available result, got %+v", got)
+	}
+	if !strings.Contains(note, "brave") {
+		t.Errorf("note should name the failed backend, got: %q", note)
 	}
 }
 

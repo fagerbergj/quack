@@ -38,24 +38,28 @@ const (
 	// (re-fetching cited URLs, checking claims) before scoring, then to terminate
 	// by calling submit_verdict — never by emitting JSON text. Per-criterion
 	// reason-before-score (G-Eval) keeps the scoring disciplined; the caller
-	// re-derives the overall score with hard caps in aggregateVerdict.
+	// re-derives the overall score as the lowest criterion in aggregateVerdict.
 	judgeAgentBehaviour = "You did NOT write the answer being evaluated, and you must not trust its assertions. " +
 		"You have no tools — judge the answer on its own merits against the rubric: whether it actually answers the question, stays internally consistent, and whether anything stated with specificity (names, prices, numbers, dates) reads as invented or unsupported. Do NOT try to verify which URLs were fetched — citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. " +
-		"Score EVERY criterion the rubric names — no more, no fewer. For each, reason in one or two sentences, then assign a score 0.0–1.0 using the rubric's scoring anchors. Each criterion is an independent pass/fail: the answer's overall score is its WEAKEST criterion, so a single bad criterion sinks it — do not let a strong dimension excuse a failing one. " +
-		"When — and only when — you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {reason, score}), `score` (the lowest criterion score), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
+		"Score EVERY criterion the rubric names — no more, no fewer. For each, reason in one or two sentences, then assign an INTEGER score from 0 to 10 using the rubric's scoring bands (10 = the criterion is fully met, 0 = total failure; use the intermediate values for partial quality — do not snap to 0, 5, or 10). Judge substance, not style: length and fluent prose earn no credit. Each criterion is an independent requirement: the answer's overall score is its WEAKEST criterion, so a single failing criterion sinks it — do not let a strong dimension excuse a failing one. " +
+		"When — and only when — you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {reason, score}), `score` (the lowest of your criterion scores), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
 		"Do NOT write the verdict as prose or JSON in your reply — calling submit_verdict is the only way to finish."
 )
 
 // criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
+// The judge scores each criterion on the rubric's 0–10 integer scale; the score
+// is normalised to 0.0–1.0 at capture (see normalizeScale) so the rest of the
+// pipeline — deterministic criteria, caps-free aggregation, the threshold — all
+// work on a single 0–1 axis.
 type criterionScore struct {
 	Reason string  `json:"reason,omitempty"`
 	Score  float64 `json:"score"`
 }
 
 // verdict is the judge's structured score for one round. When Criteria is
-// populated (G-Eval mode), parseVerdict recomputes Score from the criterion
-// averages and enforces hard caps in code rather than trusting the judge's
-// holistic value.
+// populated, aggregateVerdict sets Score to the LOWEST criterion (weakest-link
+// gating) rather than the judge's holistic value — there is no averaging and no
+// hard caps, so a single failing criterion sinks the answer on its own.
 type verdict struct {
 	Criteria map[string]criterionScore `json:"criteria,omitempty"`
 	Score    float64                   `json:"score"`
@@ -114,7 +118,9 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 		Name:        submitVerdictTool,
 		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion.",
 	}, func(ctx tool.Context, args verdictArgs) (map[string]any, error) {
-		*sink = verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback}
+		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback}
+		normalizeScale(&v)
+		*sink = v
 		ctx.Actions().Escalate = true
 		ctx.Actions().SkipSummarization = true
 		return map[string]any{"recorded": true}, nil
@@ -494,17 +500,48 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
-// aggregateVerdict re-derives the overall score from per-criterion values when
-// present (G-Eval mode), applies hard caps in code (overriding the judge's
-// holistic value), and clamps the final score to [0,1]. Used for both the
-// structured submit_verdict path and the parseVerdict text fallback.
+// normalizeScale converts a verdict's scores from the rubric's 0–10 integer
+// scale to the internal 0.0–1.0 axis the gate, deterministic criteria, and
+// threshold all use. The rubric asks the judge for whole numbers 0–10 (an LLM
+// scores more reliably on a coarse integer scale than on fine decimals, per
+// G-Eval practice), but everything downstream works in 0–1.
+//
+// The scale is DETECTED rather than always divided: if no score exceeds 1.0 the
+// judge answered in 0–1 (some models ignore the 0–10 instruction), so we leave
+// it untouched. The one ambiguous case — a genuine 0–10 verdict whose every
+// score is ≤1 (a uniformly catastrophic answer) — fails the gate under either
+// reading, so the ambiguity is harmless. Idempotent: a second call is a no-op.
+func normalizeScale(v *verdict) {
+	maxScore := v.Score
+	for _, c := range v.Criteria {
+		if c.Score > maxScore {
+			maxScore = c.Score
+		}
+	}
+	if maxScore <= 1.0 {
+		return // already on the 0–1 axis
+	}
+	v.Score /= 10
+	for name, c := range v.Criteria {
+		c.Score /= 10
+		v.Criteria[name] = c
+	}
+}
+
+// aggregateVerdict derives the overall score from the per-criterion values: it
+// takes the LOWEST criterion (weakest-link gating) and clamps to [0,1]. There is
+// no averaging and no hard caps — a single failing criterion sinks the answer on
+// its own. Scores must already be on the 0–1 axis (see normalizeScale). Used for
+// both the submit_verdict path and the parseVerdict text fallback, and called
+// again by the gate after it folds in the deterministic criteria; it is
+// idempotent on the lowest value.
 func aggregateVerdict(v verdict) verdict {
-	// Per-criterion gating (DeepEval-style G-Eval composition): each criterion is
-	// an independent pass/fail, so the overall score is the WEAKEST criterion — the
-	// binding constraint. The gate passes only when every criterion clears the
-	// threshold, so one fatal flaw (leaked preamble, no citations) can't be
-	// averaged away by strong scores elsewhere. No hard caps: a low criterion fails
-	// on its own and drives a targeted revision rather than code overriding a mean.
+	// Per-criterion gating (DeepEval-style multi-metric composition): each
+	// criterion is an independent requirement, so the overall score is the WEAKEST
+	// criterion — the binding constraint. The gate passes only when every criterion
+	// clears the threshold, so one fatal flaw (leaked preamble, no citations) can't
+	// be averaged away by strong scores elsewhere. No hard caps: a low criterion
+	// fails on its own and drives a targeted revision rather than code overriding.
 	if len(v.Criteria) > 0 {
 		lowest := 1.0
 		for _, c := range v.Criteria {
@@ -535,9 +572,9 @@ func aggregateVerdict(v verdict) verdict {
 //     appear as keys inside criteria (not valid criterionScore objects). We
 //     skip non-object entries and recover feedback/passed from them directly.
 //
-// When per-criterion scores are present (G-Eval mode) the overall score is
-// recomputed from the criterion average with hard caps applied in code,
-// overriding the judge's holistic value. The final score is clamped [0,1].
+// Scores are normalised from the rubric's 0–10 scale to 0–1 (normalizeScale),
+// then the overall score is set to the LOWEST criterion (weakest-link gating, no
+// averaging and no caps) and clamped to [0,1] by aggregateVerdict.
 func parseVerdict(raw string) (verdict, error) {
 	s := strings.TrimSpace(raw)
 	// Strip any prefix before the first '{' (e.g. ```json fences).
@@ -597,6 +634,7 @@ func parseVerdict(raw string) (verdict, error) {
 		v.Criteria[name] = cs
 	}
 
+	normalizeScale(&v)
 	return aggregateVerdict(v), nil
 }
 
