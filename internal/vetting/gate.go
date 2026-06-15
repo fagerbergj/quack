@@ -331,7 +331,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					v.Feedback = strings.TrimSpace(v.Feedback + "\n\n" + strings.Join(notes, "; "))
 				}
 				passed := v.Score >= g.cfg.Threshold
-				log.Printf("vetting[%s]: judge round %d done in %s score=%.2f passed=%v", g.name, round, time.Since(tj).Round(time.Millisecond), v.Score, passed)
+				log.Printf("vetting[%s]: judge round %d done in %s score=%.2f passed=%v | %s", g.name, round, time.Since(tj).Round(time.Millisecond), v.Score, passed, verdictScores(v))
 				if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: judgeRun, Stage: stream.StageJudge, Round: round, Score: v.Score, Passed: passed, Feedback: v.Feedback})) {
 					return
 				}
@@ -678,6 +678,35 @@ func fetchedKeys(m map[string]fetchRecord) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// verdictScores renders a verdict's per-criterion scores in stable (sorted)
+// order as "name=0.82", plus the resulting overall: `lowest` is the binding
+// constraint the score comes from under weakest-link gating, and `mean` is a
+// diagnostic — a low lowest with a high mean means one outlier criterion is
+// gating an otherwise-strong answer. Logged on every judge round so each score
+// and the resulting overall are visible, not just the final number.
+func verdictScores(v verdict) string {
+	if len(v.Criteria) == 0 {
+		return "(no per-criterion scores)"
+	}
+	names := make([]string, 0, len(v.Criteria))
+	for n := range v.Criteria {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	var sum float64
+	lowest, lowestName := 1.1, ""
+	for _, n := range names {
+		s := v.Criteria[n].Score
+		parts = append(parts, fmt.Sprintf("%s=%.2f", n, s))
+		sum += s
+		if s < lowest {
+			lowest, lowestName = s, n
+		}
+	}
+	return fmt.Sprintf("%s | lowest=%s(%.2f) mean=%.2f", strings.Join(parts, " "), lowestName, lowest, sum/float64(len(names)))
 }
 
 // mergeActivity unions two workerActivity records. Entries in b (the
