@@ -56,8 +56,10 @@ gates:
     provider: default
     model: ${JUDGE_MODEL}   # empty ⇒ judge disabled
     max_rounds: 1           # expensive model-judge/revise rounds
-    threshold: 0.6          # PER-CRITERION pass bar: every rubric criterion must clear it
-                            # (the verdict score is the lowest criterion, no averaging/caps)
+    threshold: 0.7          # PER-CRITERION pass bar: every rubric criterion must clear it.
+                            # On the rubric's 0-10 scale this is 7/10 ("met, with only
+                            # minor gaps"); the verdict score is the lowest criterion
+                            # (weakest-link gating, no averaging, no caps).
     max_iterations: 6       # safety cap on the judge's model turns per round
 
 # DAG execution policy.

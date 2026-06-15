@@ -461,12 +461,13 @@ func TestNormalizeURL(t *testing.T) {
 }
 
 func TestParseVerdictToleratesFencedJSON(t *testing.T) {
-	v, err := parseVerdict("```json\n{\"score\": 1.5, \"passed\": true, \"feedback\": \"x\"}\n```")
+	// Fenced block is stripped, and the 0–10 score is normalized to 0–1.
+	v, err := parseVerdict("```json\n{\"score\": 8, \"passed\": true, \"feedback\": \"x\"}\n```")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Score != 1 { // clamped to [0,1]
-		t.Errorf("score = %v, want clamped to 1", v.Score)
+	if v.Score != 0.8 {
+		t.Errorf("score = %v, want 0.8 (8/10 normalized)", v.Score)
 	}
 }
 
@@ -553,6 +554,34 @@ func TestAggregateVerdictMinAndClamp(t *testing.T) {
 	}
 }
 
+// The rubric asks the judge for 0–10 integers; the pipeline works in 0–1. A
+// verdict on the 0–10 scale (detected by any score > 1) must be divided by 10,
+// so a perfect criterion (10) becomes 1.0 and the weakest drives the overall.
+func TestParseVerdictNormalizes0To10Scale(t *testing.T) {
+	input := `{"criteria":{"grounded":{"score":9},"no_fabrication":{"score":10},"answers_question":{"score":8},"internally_consistent":{"score":9},"cites_sources":{"score":6}},"score":8,"passed":true,"feedback":""}`
+	v, err := parseVerdict(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Lowest criterion is cites_sources=6 → 0.6 after /10.
+	if v.Score != 0.6 {
+		t.Errorf("score = %v, want 0.6 (lowest criterion 6/10)", v.Score)
+	}
+	if g := v.Criteria["grounded"].Score; g != 0.9 {
+		t.Errorf("grounded = %v, want 0.9 (9/10)", g)
+	}
+}
+
+// normalizeScale must leave a verdict already on the 0–1 axis untouched (some
+// models ignore the 0–10 instruction and answer in 0–1).
+func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
+	v := verdict{Score: 0.9, Criteria: map[string]criterionScore{"a": {Score: 0.8}, "b": {Score: 0.5}}}
+	normalizeScale(&v)
+	if v.Score != 0.9 || v.Criteria["a"].Score != 0.8 || v.Criteria["b"].Score != 0.5 {
+		t.Errorf("0–1 verdict was altered: %+v", v)
+	}
+}
+
 // TestGateJudgeVerifiesAgentically proves the judge runs a tool loop before
 // scoring (requirement: agentic, not one-shot) and that its tool activity
 // streams to the consumer. The judge calls a verification tool, then submits.
@@ -593,5 +622,63 @@ func TestGateJudgeVerifiesAgentically(t *testing.T) {
 	}
 	if res.answer != "draft answer" {
 		t.Errorf("answer = %q, want %q", res.answer, "draft answer")
+	}
+}
+
+// stubSession is a minimal session.Session that returns a fixed event list,
+// used to unit-test filteredSession's prompt injection without a full runner.
+type stubSession struct {
+	session.Session
+	evs []*session.Event
+}
+
+func (s *stubSession) Events() session.Events { return &materializedEvents{events: s.evs} }
+
+func userContent(text string) *genai.Content {
+	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
+}
+
+func modelEvent(text string) *session.Event {
+	ev := &session.Event{Author: "worker"}
+	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: text}}}
+	return ev
+}
+
+// A revision/finalize re-invocation must surface the new prompt as the trailing
+// user event, or ADK builds a request ending on the worker's assistant turn and
+// the model server 400s ("2 or more assistant messages at the end of the list").
+func TestFilteredSessionAppendsPromptAfterAssistantTurn(t *testing.T) {
+	prompt := userContent("please revise: drop the unbacked citation")
+	fs := &filteredSession{
+		Session: &stubSession{evs: []*session.Event{modelEvent("the draft answer")}},
+		prompt:  prompt,
+	}
+
+	evs := fs.Events()
+	if evs.Len() != 2 {
+		t.Fatalf("want 2 events (draft + prompt), got %d", evs.Len())
+	}
+	last := evs.At(1)
+	if last.Author != "user" {
+		t.Errorf("appended prompt Author = %q, want \"user\" (else ConvertForeignEvent rewrites it)", last.Author)
+	}
+	if last.Content.Role != "user" || contentPlainText(last.Content) != contentPlainText(prompt) {
+		t.Errorf("trailing event = %+v, want the user prompt", last.Content)
+	}
+}
+
+// Round 0: the prompt IS the original query the runner already recorded, so it
+// must not be appended a second time.
+func TestFilteredSessionDoesNotDuplicateExistingPrompt(t *testing.T) {
+	prompt := userContent("what's on tonight in Vancouver?")
+	existing := &session.Event{Author: "user"}
+	existing.Content = prompt
+	fs := &filteredSession{
+		Session: &stubSession{evs: []*session.Event{existing}},
+		prompt:  prompt,
+	}
+
+	if got := fs.Events().Len(); got != 1 {
+		t.Fatalf("want 1 event (no duplicate), got %d", got)
 	}
 }
