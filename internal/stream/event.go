@@ -18,6 +18,8 @@
 package stream
 
 import (
+	"encoding/json"
+
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 )
@@ -139,6 +141,35 @@ type AgentCompleteData struct {
 
 	Status string `json:"status,omitempty"` // "" ok | "unavailable"
 	Reason string `json:"reason,omitempty"`
+}
+
+// MarshalJSON forces judge runs to always serialize score/passed/feedback, even
+// at their zero values. A failing verdict legitimately scores 0.0 with
+// passed=false; the omitempty tags above would drop those, so the UI could not
+// tell a real 0% score from an absent one and rendered no score badge at all
+// (only passing, non-zero judges showed a score). Non-judge stages keep the
+// omitempty behaviour — they carry no judge result.
+func (d AgentCompleteData) MarshalJSON() ([]byte, error) {
+	type alias AgentCompleteData // shed the MarshalJSON method to avoid recursion
+	b, err := json.Marshal(alias(d))
+	if err != nil || d.Stage != StageJudge {
+		return b, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	for key, val := range map[string]any{"score": d.Score, "passed": d.Passed, "feedback": d.Feedback} {
+		if _, present := m[key]; present {
+			continue // a non-zero value already survived omitempty
+		}
+		raw, err := json.Marshal(val)
+		if err != nil {
+			return nil, err
+		}
+		m[key] = raw
+	}
+	return json.Marshal(m)
 }
 
 // ErrorData is the `error` event payload.
