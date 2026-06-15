@@ -53,14 +53,20 @@ Every non-trivial factual claim traces to a URL, page, or search result the
 agent actually fetched this session. General knowledge or prior training does
 **not** count as retrieved.
 
+You cannot see the agent's retrieval log, and your own knowledge may be stale or
+incomplete. Judge grounding by whether each non-trivial claim **carries an inline
+citation** to a source — treat a cited claim as grounded. Do **NOT** lower this
+score because a cited fact is unfamiliar, recent, or absent from your own
+knowledge; that is not evidence it is ungrounded.
+
 **Evaluation steps.**
 1. List the answer's non-trivial factual claims.
-2. For each, check whether it is attributed to retrieved content (a fetched page
-   or search result), not asserted from general knowledge.
-3. If `web_fetch` failed for most/all sources, check whether the agent said so
-   plainly. An honest disclosure of failed retrieval caps this criterion at
-   **5** (not lower); silent synthesis despite failed fetches scores **0–2**.
-4. Score the proportion of claims that are genuinely grounded.
+2. For each, check whether it carries an inline citation (an attribution to a
+   retrieved page or search result), not whether you personally believe it.
+3. If the agent states `web_fetch` failed for most/all sources, check whether it
+   said so plainly. An honest disclosure of failed retrieval caps this criterion
+   at **5** (not lower); silent synthesis despite failed fetches scores **0–2**.
+4. Score the proportion of claims that carry a citation.
 
 **Scoring bands.**
 - **7–10** — essentially every non-trivial claim traces to retrieved material.
@@ -80,6 +86,15 @@ easy to commit and harmful, because users act on the specifics.
 **Do not** try to verify which URLs were fetched — citation backing is graded
 separately by deterministic code, which overrides `cites_sources`. Here, judge
 only invented-looking specifics on the answer's internal merits.
+
+**Recency caveat — critical.** The agent retrieved live web content that you do
+not have, and your own knowledge is stale and incomplete. Do **NOT** flag a
+claim as fabricated merely because you don't recognize it, it sounds new, or it
+postdates your training — an unfamiliar movie, show, product, person, or event
+is **not** evidence of fabrication. A specific is "invented" only when the
+answer's own text is internally inconsistent or makes a precise claim it never
+supports — never because it conflicts with your memory. When in doubt about an
+unfamiliar-but-cited specific, do not dock this criterion.
 
 **Evaluation steps.**
 1. Identify every specific quantitative or named claim (prices, counts, ratings,
