@@ -524,7 +524,11 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionPar
 				params = shared.FunctionParameters(m)
 			}
 			if params == nil {
-				return nil, fmt.Errorf("funcDecl.Parameters is nil for tool %s", funcDecl.Name)
+				// Tool has no declared parameters — use an empty object schema.
+				params = shared.FunctionParameters{
+					"type":       "object",
+					"properties": map[string]any{},
+				}
 			}
 
 			tools = append(tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
