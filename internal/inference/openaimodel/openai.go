@@ -1,6 +1,7 @@
 // Package openaimodel is a vendored + modified copy of github.com/byebyebruce/adk-go-openai,
 // adapting an OpenAI-compatible endpoint to ADK's model.LLM. Modifications: reasoning_content
 // is surfaced as Thought parts (both streaming and non-streaming) so the UI can render thinking.
+// Now uses github.com/openai/openai-go/v3 (official SDK) for input_audio support in Phase 2+.
 // Upstream is MIT-licensed.
 package openaimodel
 
@@ -10,10 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"iter"
+	"sort"
 
-	"github.com/sashabaranov/go-openai"
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 )
@@ -26,19 +29,17 @@ var (
 )
 
 type OpenAIModel struct {
-	Client    *openai.Client
+	client    openai.Client
 	ModelName string
 }
 
-func NewOpenAIModelWithAPIKey(modelName string, apiKey string) *OpenAIModel {
-	cfg := openai.DefaultConfig(apiKey)
-	return NewOpenAIModel(modelName, cfg)
-}
-
-func NewOpenAIModel(modelName string, cfg openai.ClientConfig) *OpenAIModel {
-	client := openai.NewClientWithConfig(cfg)
+func NewOpenAIModel(modelName, endpoint, apiKey string) *OpenAIModel {
+	client := openai.NewClient(
+		option.WithBaseURL(endpoint),
+		option.WithAPIKey(apiKey),
+	)
 	return &OpenAIModel{
-		Client:    client,
+		client:    client,
 		ModelName: modelName,
 	}
 }
@@ -64,13 +65,13 @@ func (o *OpenAIModel) generate(ctx context.Context, req *model.LLMRequest) iter.
 			return
 		}
 
-		resp, err := o.Client.CreateChatCompletion(ctx, openaiReq)
+		resp, err := o.client.Chat.Completions.New(ctx, openaiReq)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 
-		llmResp, err := convertChatCompletionResponse(&resp)
+		llmResp, err := convertChatCompletionResponse(resp)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -87,17 +88,13 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			yield(nil, err)
 			return
 		}
-		openaiReq.Stream = true
-		openaiReq.StreamOptions = &openai.StreamOptions{IncludeUsage: true}
-
-		stream, err := o.Client.CreateChatCompletionStream(ctx, openaiReq)
-		if err != nil {
-			yield(nil, err)
-			return
+		openaiReq.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: openai.Bool(true),
 		}
+
+		stream := o.client.Chat.Completions.NewStreaming(ctx, openaiReq)
 		defer stream.Close()
 
-		// Aggregate the streaming chunks
 		aggregatedContent := &genai.Content{
 			Role:  "model",
 			Parts: []*genai.Part{},
@@ -105,31 +102,36 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		var finishReason genai.FinishReason
 		var usageMetadata *genai.GenerateContentResponseUsageMetadata
 
-		// Track tool calls by index to properly aggregate them across chunks
-		toolCallsMap := make(map[int]*toolCallBuilder)
+		// Track tool calls by index to properly aggregate them across chunks.
+		toolCallsMap := make(map[int64]*toolCallBuilder)
 
 		var modelVersion string
 		lastPartIsText := false
-		for {
-			chunk, err := stream.Recv()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				yield(nil, err)
-				return
-			}
+
+		for stream.Next() {
+			chunk := stream.Current()
 
 			if chunk.Model != "" {
 				modelVersion = chunk.Model
 			}
+
+			// Capture usage — present on the final usage-only chunk when IncludeUsage is set.
+			if chunk.Usage.TotalTokens > 0 {
+				usageMetadata = &genai.GenerateContentResponseUsageMetadata{
+					PromptTokenCount:        int32(chunk.Usage.PromptTokens),
+					CandidatesTokenCount:    int32(chunk.Usage.CompletionTokens),
+					TotalTokenCount:         int32(chunk.Usage.TotalTokens),
+					CachedContentTokenCount: int32(chunk.Usage.PromptTokensDetails.CachedTokens),
+				}
+			}
+
 			if len(chunk.Choices) == 0 {
 				continue
 			}
 
 			choice := chunk.Choices[0]
 
-			// Handle delta content
+			// Handle delta content.
 			if choice.Delta.Content != "" {
 				part := &genai.Part{Text: choice.Delta.Content}
 				if lastPartIsText {
@@ -137,9 +139,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 				} else {
 					aggregatedContent.Parts = append(aggregatedContent.Parts, part)
 				}
-
 				lastPartIsText = true
-				// Yield partial response
 				llmResp := &model.LLMResponse{
 					Content:      &genai.Content{Role: "model", Parts: []*genai.Part{part}},
 					Partial:      true,
@@ -153,133 +153,111 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			}
 
 			// Surface reasoning_content as a Thought part so the UI can render thinking.
-			if choice.Delta.ReasoningContent != "" {
-				part := &genai.Part{Text: choice.Delta.ReasoningContent, Thought: true}
-				aggregatedContent.Parts = append(aggregatedContent.Parts, part)
-				lastPartIsText = false
-				llmResp := &model.LLMResponse{
-					Content:      &genai.Content{Role: "model", Parts: []*genai.Part{part}},
-					Partial:      true,
-					TurnComplete: false,
-				}
-				if !yield(llmResp, nil) {
-					return
-				}
-			}
-
-			// Handle tool calls in delta - aggregate across chunks
-			if len(choice.Delta.ToolCalls) > 0 {
-				for _, toolCall := range choice.Delta.ToolCalls {
-					// Use Index if available, otherwise use 0 as default
-					idx := 0
-					if toolCall.Index != nil {
-						idx = *toolCall.Index
-					}
-
-					builder, exists := toolCallsMap[idx]
-					if !exists {
-						builder = &toolCallBuilder{
-							id:   toolCall.ID,
-							name: toolCall.Function.Name,
-							args: "",
+			if rc := choice.Delta.JSON.ExtraFields["reasoning_content"]; rc.Valid() {
+				if raw := rc.Raw(); raw != "" && raw != "null" {
+					var text string
+					if jsonErr := json.Unmarshal([]byte(raw), &text); jsonErr == nil && text != "" {
+						part := &genai.Part{Text: text, Thought: true}
+						aggregatedContent.Parts = append(aggregatedContent.Parts, part)
+						lastPartIsText = false
+						llmResp := &model.LLMResponse{
+							Content:      &genai.Content{Role: "model", Parts: []*genai.Part{part}},
+							Partial:      true,
+							TurnComplete: false,
 						}
-						toolCallsMap[idx] = builder
-					}
-
-					// Update fields if present
-					if toolCall.ID != "" {
-						builder.id = toolCall.ID
-					}
-					if toolCall.Function.Name != "" {
-						builder.name = toolCall.Function.Name
-					}
-					if toolCall.Function.Arguments != "" {
-						builder.args += toolCall.Function.Arguments
+						if !yield(llmResp, nil) {
+							return
+						}
 					}
 				}
 			}
 
-			// Capture finish reason
+			// Handle tool calls in delta — aggregate across chunks keyed by index.
+			for _, toolCall := range choice.Delta.ToolCalls {
+				idx := toolCall.Index
+				builder, exists := toolCallsMap[idx]
+				if !exists {
+					builder = &toolCallBuilder{}
+					toolCallsMap[idx] = builder
+				}
+				if toolCall.ID != "" {
+					builder.id = toolCall.ID
+				}
+				if toolCall.Function.Name != "" {
+					builder.name = toolCall.Function.Name
+				}
+				builder.args += toolCall.Function.Arguments
+			}
+
 			if choice.FinishReason != "" {
-				finishReason = convertFinishReason(string(choice.FinishReason))
-			}
-
-			// Capture usage metadata if available
-			if chunk.Usage != nil {
-				usageMetadata = &genai.GenerateContentResponseUsageMetadata{
-					PromptTokenCount:     int32(chunk.Usage.PromptTokens),
-					CandidatesTokenCount: int32(chunk.Usage.CompletionTokens),
-					TotalTokenCount:      int32(chunk.Usage.TotalTokens),
-				}
+				finishReason = convertFinishReason(choice.FinishReason)
 			}
 		}
 
-		// Convert aggregated tool calls to parts
+		if err := stream.Err(); err != nil {
+			yield(nil, err)
+			return
+		}
+
+		// Emit aggregated tool calls as FunctionCall parts, ordered by index.
 		if len(toolCallsMap) > 0 {
-			// Sort by index to maintain order
-			indices := make([]int, 0, len(toolCallsMap))
+			indices := make([]int64, 0, len(toolCallsMap))
 			for idx := range toolCallsMap {
 				indices = append(indices, idx)
 			}
-			// Simple bubble sort for small arrays
-			for i := 0; i < len(indices)-1; i++ {
-				for j := 0; j < len(indices)-i-1; j++ {
-					if indices[j] > indices[j+1] {
-						indices[j], indices[j+1] = indices[j+1], indices[j]
-					}
-				}
-			}
-
+			sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
 			for _, idx := range indices {
-				builder := toolCallsMap[idx]
-				part := &genai.Part{
+				b := toolCallsMap[idx]
+				aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{
 					FunctionCall: &genai.FunctionCall{
-						ID:   builder.id,
-						Name: builder.name,
-						Args: parseJSONArgs(builder.args),
+						ID:   b.id,
+						Name: b.name,
+						Args: parseJSONArgs(b.args),
 					},
-				}
-				aggregatedContent.Parts = append(aggregatedContent.Parts, part)
+				})
 			}
 		}
 
-		// Send final complete response
 		if modelVersion == "" {
-			modelVersion = openaiReq.Model
+			modelVersion = string(openaiReq.Model)
 		}
-		finalResp := &model.LLMResponse{
+		yield(&model.LLMResponse{
 			Content:       aggregatedContent,
 			UsageMetadata: usageMetadata,
 			FinishReason:  finishReason,
 			ModelVersion:  modelVersion,
 			Partial:       false,
 			TurnComplete:  true,
-		}
-		yield(finalResp, nil)
+		}, nil)
 	}
 }
 
-// toolCallBuilder helps aggregate tool call information across streaming chunks
+// toolCallBuilder helps aggregate tool call information across streaming chunks.
 type toolCallBuilder struct {
 	id   string
 	name string
 	args string
 }
 
-func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionRequest, error) {
-	openaiMessages := make([]openai.ChatCompletionMessage, 0, len(req.Contents))
+func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Contents))
 	for _, content := range req.Contents {
 		msgs, err := toOpenAIChatCompletionMessage(content)
 		if err != nil {
-			return openai.ChatCompletionRequest{}, err
+			return openai.ChatCompletionNewParams{}, err
 		}
-		openaiMessages = append(openaiMessages, msgs...)
+		messages = append(messages, msgs...)
 	}
 
-	openaiReq := openai.ChatCompletionRequest{
-		Model:    modelName,
-		Messages: openaiMessages,
+	openaiReq := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(modelName),
+		Messages: messages,
 	}
+
+	if req.Config == nil {
+		return openaiReq, nil
+	}
+
 	if req.Config.ThinkingConfig != nil {
 		switch req.Config.ThinkingConfig.ThinkingLevel {
 		case genai.ThinkingLevelLow:
@@ -290,79 +268,66 @@ func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (ope
 			openaiReq.ReasoningEffort = "medium"
 		}
 	}
+
 	if req.Config.ResponseSchema != nil {
-		openaiSchema, err := genaiSchemaToOpenaiSchema(req.Config.ResponseSchema)
-		if err != nil {
-			return openai.ChatCompletionRequest{}, err
+		openaiReq.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   "response",
+					Strict: openai.Bool(true),
+					Schema: req.Config.ResponseSchema,
+				},
+			},
 		}
-		openaiReq.ResponseFormat = &openai.ChatCompletionResponseFormat{
-			Type:       openai.ChatCompletionResponseFormatTypeJSONObject,
-			JSONSchema: openaiSchema,
+	} else if req.Config.ResponseMIMEType == "application/json" {
+		openaiReq.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}
 	}
 
-	// Convert tools if present
-	if req.Config != nil && len(req.Config.Tools) > 0 {
+	if len(req.Config.Tools) > 0 {
 		tools, err := convertTools(req.Config.Tools)
 		if err != nil {
-			return openai.ChatCompletionRequest{}, err
+			return openai.ChatCompletionNewParams{}, err
 		}
 		openaiReq.Tools = tools
 	}
 
-	// Apply config settings
-	if req.Config != nil {
-		if req.Config.Temperature != nil {
-			openaiReq.Temperature = *req.Config.Temperature
+	if req.Config.Temperature != nil {
+		openaiReq.Temperature = openai.Float(float64(*req.Config.Temperature))
+	}
+	if req.Config.MaxOutputTokens > 0 {
+		openaiReq.MaxTokens = openai.Int(int64(req.Config.MaxOutputTokens))
+	}
+	if req.Config.TopP != nil {
+		openaiReq.TopP = openai.Float(float64(*req.Config.TopP))
+	}
+	if len(req.Config.StopSequences) > 0 {
+		openaiReq.Stop = openai.ChatCompletionNewParamsStopUnion{
+			OfStringArray: req.Config.StopSequences,
 		}
-		if req.Config.MaxOutputTokens > 0 {
-			openaiReq.MaxTokens = int(req.Config.MaxOutputTokens)
-		}
-		if req.Config.TopP != nil {
-			openaiReq.TopP = *req.Config.TopP
-		}
-		if len(req.Config.StopSequences) > 0 {
-			openaiReq.Stop = req.Config.StopSequences
-		}
+	}
 
-		// Handle system instruction
-		if req.Config.SystemInstruction != nil {
-			systemMsg := openai.ChatCompletionMessage{
-				Role:    openai.ChatMessageRoleSystem,
-				Content: extractTextFromContent(req.Config.SystemInstruction),
-			}
-			openaiMessages = append([]openai.ChatCompletionMessage{systemMsg}, openaiMessages...)
-			openaiReq.Messages = openaiMessages
-		}
-
-		// Handle JSON mode
-		if req.Config.ResponseMIMEType == "application/json" {
-			openaiReq.ResponseFormat = &openai.ChatCompletionResponseFormat{
-				Type: openai.ChatCompletionResponseFormatTypeJSONObject,
-			}
-		}
+	if req.Config.SystemInstruction != nil {
+		sysMsg := openai.SystemMessage(extractTextFromContent(req.Config.SystemInstruction))
+		openaiReq.Messages = append([]openai.ChatCompletionMessageParamUnion{sysMsg}, openaiReq.Messages...)
 	}
 
 	return openaiReq, nil
 }
 
-func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatCompletionMessage, error) {
-	// Special: if all parts are function responses, return multi tool message
-	toolRespMessages := make([]openai.ChatCompletionMessage, 0)
+func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatCompletionMessageParamUnion, error) {
+	// Collect leading FunctionResponse parts as individual tool messages.
+	toolRespMessages := make([]openai.ChatCompletionMessageParamUnion, 0)
 	skipIdx := 0
 	for idx, part := range content.Parts {
 		if part.FunctionResponse != nil {
-			openaiMsg := openai.ChatCompletionMessage{
-				Role:       openai.ChatMessageRoleTool,
-				ToolCallID: part.FunctionResponse.ID,
-			}
-			// Function responses become tool messages
 			responseJSON, err := json.Marshal(part.FunctionResponse.Response)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal function response: %w", err)
 			}
-			openaiMsg.Content = string(responseJSON)
-			toolRespMessages = append(toolRespMessages, openaiMsg)
+			toolRespMessages = append(toolRespMessages,
+				openai.ToolMessage(string(responseJSON), part.FunctionResponse.ID))
 			skipIdx = idx + 1
 			continue
 		}
@@ -373,30 +338,32 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 		return toolRespMessages, nil
 	}
 
-	openaiMsg := openai.ChatCompletionMessage{
-		Role: convertRoleToOpenAI(content.Role),
-	}
-
-	// Simple case: single text part
+	// Simple case: single text part — use string variant of the message constructor.
 	if len(parts) == 1 && parts[0].Text != "" {
-		openaiMsg.Content = parts[0].Text
-		return []openai.ChatCompletionMessage{openaiMsg}, nil
+		role := convertRoleToOpenAI(content.Role)
+		var msg openai.ChatCompletionMessageParamUnion
+		switch role {
+		case "assistant":
+			msg = openai.AssistantMessage(parts[0].Text)
+		case "system":
+			msg = openai.SystemMessage(parts[0].Text)
+		default:
+			msg = openai.UserMessage(parts[0].Text)
+		}
+		return append(toolRespMessages, msg), nil
 	}
 
-	// Complex case: multiple parts or special part types
+	// Complex case: multiple parts or special part types (tool calls, images, etc.).
 	var textContent string
-	var toolCalls []openai.ToolCall
-	var multiContent []openai.ChatMessagePart
+	var userParts []openai.ChatCompletionContentPartUnionParam
+	var toolCalls []openai.ChatCompletionMessageToolCallUnionParam
 
 	for _, part := range parts {
 		if part.Text != "" {
-			if len(content.Parts) == 1 {
+			if len(parts) == 1 {
 				textContent = part.Text
 			} else {
-				multiContent = append(multiContent, openai.ChatMessagePart{
-					Type: openai.ChatMessagePartTypeText,
-					Text: part.Text,
-				})
+				userParts = append(userParts, openai.TextContentPart(part.Text))
 			}
 		}
 
@@ -405,40 +372,27 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal function args: %w", err)
 			}
-			toolCall := openai.ToolCall{
-				ID:   part.FunctionCall.ID,
-				Type: openai.ToolTypeFunction,
-				Function: openai.FunctionCall{
-					Name:      part.FunctionCall.Name,
-					Arguments: string(argsJSON),
+			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+					ID: part.FunctionCall.ID,
+					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+						Name:      part.FunctionCall.Name,
+						Arguments: string(argsJSON),
+					},
 				},
-			}
-			toolCalls = append(toolCalls, toolCall)
-		}
-
-		if part.FunctionResponse != nil {
-			// Function responses become tool messages
-			responseJSON, err := json.Marshal(part.FunctionResponse.Response)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal function response: %w", err)
-			}
-			openaiMsg.Role = openai.ChatMessageRoleTool
-			openaiMsg.Content = string(responseJSON)
-			openaiMsg.ToolCallID = part.FunctionResponse.ID
+			})
 		}
 
 		if part.InlineData != nil {
 			switch part.InlineData.MIMEType {
 			case "image/jpg", "image/jpeg", "image/png", "image/gif", "image/webp":
 				base64Data := base64.StdEncoding.EncodeToString(part.InlineData.Data)
-				imageURL := openai.ChatMessageImageURL{
-					URL:    fmt.Sprintf("data:%s;base64,%s", part.InlineData.MIMEType, base64Data),
-					Detail: openai.ImageURLDetailAuto,
-				}
-				multiContent = append(multiContent, openai.ChatMessagePart{
-					Type:     openai.ChatMessagePartTypeImageURL,
-					ImageURL: &imageURL,
-				})
+				userParts = append(userParts, openai.ImageContentPart(
+					openai.ChatCompletionContentPartImageImageURLParam{
+						URL:    fmt.Sprintf("data:%s;base64,%s", part.InlineData.MIMEType, base64Data),
+						Detail: "auto",
+					},
+				))
 			case "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/webm":
 				return nil, fmt.Errorf("unsupported audio MIME type: %s", part.InlineData.MIMEType)
 			case "video/mp4", "video/webm", "video/ogg":
@@ -446,36 +400,44 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 			case "application/pdf":
 				return nil, fmt.Errorf("unsupported PDF MIME type: %s", part.InlineData.MIMEType)
 			default:
-				// TODO: support other MIME types
-				multiContent = append(multiContent, openai.ChatMessagePart{
-					Type: openai.ChatMessagePartTypeText,
-					Text: string(part.InlineData.Data),
-				})
+				userParts = append(userParts, openai.TextContentPart(string(part.InlineData.Data)))
 			}
 		}
 
-		if part.FileData != nil {
-
-			// OpenAI doesn't support file references directly, would need to download
-			// For now, we'll skip or add as text description
-		}
+		// FileData: OpenAI doesn't support file references directly; skip for now.
 	}
 
-	// Set content based on what we found
-	if len(multiContent) > 0 {
-		openaiMsg.MultiContent = multiContent
-	} else if textContent != "" {
-		openaiMsg.Content = textContent
-	}
+	role := convertRoleToOpenAI(content.Role)
 
 	if len(toolCalls) > 0 {
-		openaiMsg.ToolCalls = toolCalls
+		// Assistant message carrying tool calls (and optional text).
+		var assistant openai.ChatCompletionAssistantMessageParam
+		if textContent != "" {
+			assistant.Content.OfString = openai.String(textContent)
+		}
+		assistant.ToolCalls = toolCalls
+		return append(toolRespMessages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}), nil
 	}
 
-	return append(toolRespMessages, openaiMsg), nil
+	if len(userParts) > 0 {
+		// Multi-part user message (e.g. text + image).
+		return append(toolRespMessages, openai.UserMessage(userParts)), nil
+	}
+
+	// Fallback: plain text message.
+	var msg openai.ChatCompletionMessageParamUnion
+	switch role {
+	case "assistant":
+		msg = openai.AssistantMessage(textContent)
+	case "system":
+		msg = openai.SystemMessage(textContent)
+	default:
+		msg = openai.UserMessage(textContent)
+	}
+	return append(toolRespMessages, msg), nil
 }
 
-func convertChatCompletionResponse(resp *openai.ChatCompletionResponse) (*model.LLMResponse, error) {
+func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMResponse, error) {
 	if len(resp.Choices) == 0 {
 		return nil, ErrNoChoicesInResponse
 	}
@@ -487,17 +449,21 @@ func convertChatCompletionResponse(resp *openai.ChatCompletionResponse) (*model.
 	}
 
 	// Surface reasoning_content as a Thought part (reasoning precedes the answer).
-	if choice.Message.ReasoningContent != "" {
-		content.Parts = append(content.Parts, &genai.Part{Text: choice.Message.ReasoningContent, Thought: true})
+	if rc := choice.Message.JSON.ExtraFields["reasoning_content"]; rc.Valid() {
+		if raw := rc.Raw(); raw != "" && raw != "null" {
+			var text string
+			if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
+				content.Parts = append(content.Parts, &genai.Part{Text: text, Thought: true})
+			}
+		}
 	}
-	// Convert message content
+
 	if choice.Message.Content != "" {
 		content.Parts = append(content.Parts, &genai.Part{Text: choice.Message.Content})
 	}
 
-	// Convert tool calls
 	for _, toolCall := range choice.Message.ToolCalls {
-		if toolCall.Type == openai.ToolTypeFunction {
+		if toolCall.Type == "function" {
 			content.Parts = append(content.Parts, &genai.Part{
 				FunctionCall: &genai.FunctionCall{
 					ID:   toolCall.ID,
@@ -508,37 +474,33 @@ func convertChatCompletionResponse(resp *openai.ChatCompletionResponse) (*model.
 		}
 	}
 
-	// Convert usage metadata
 	var usageMetadata *genai.GenerateContentResponseUsageMetadata
 	if resp.Usage.TotalTokens > 0 {
 		usageMetadata = &genai.GenerateContentResponseUsageMetadata{
-			PromptTokenCount:     int32(resp.Usage.PromptTokens),
-			CandidatesTokenCount: int32(resp.Usage.CompletionTokens),
-			TotalTokenCount:      int32(resp.Usage.TotalTokens),
-		}
-		if resp.Usage.PromptTokensDetails != nil {
-			usageMetadata.CachedContentTokenCount = int32(resp.Usage.PromptTokensDetails.CachedTokens)
+			PromptTokenCount:        int32(resp.Usage.PromptTokens),
+			CandidatesTokenCount:    int32(resp.Usage.CompletionTokens),
+			TotalTokenCount:         int32(resp.Usage.TotalTokens),
+			CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
 		}
 	}
 
 	return &model.LLMResponse{
 		Content:       content,
 		UsageMetadata: usageMetadata,
-		FinishReason:  convertFinishReason(string(choice.FinishReason)),
+		FinishReason:  convertFinishReason(choice.FinishReason),
 		ModelVersion:  resp.Model,
 		TurnComplete:  true,
 	}, nil
 }
 
-func convertTools(genaiTools []*genai.Tool) ([]openai.Tool, error) {
-	var openaiTools []openai.Tool
+func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
+	var tools []openai.ChatCompletionToolUnionParam
 
 	for _, genaiTool := range genaiTools {
 		if genaiTool == nil {
 			continue
 		}
 
-		// TODO
 		if genaiTool.GoogleSearch != nil ||
 			genaiTool.CodeExecution != nil ||
 			genaiTool.FileSearch != nil ||
@@ -547,28 +509,33 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.Tool, error) {
 			return nil, fmt.Errorf("GoogleSearch is not supported")
 		}
 
-		// Convert function declarations
 		for _, funcDecl := range genaiTool.FunctionDeclarations {
-			openaiTool := openai.Tool{
-				Type: openai.ToolTypeFunction,
-				Function: &openai.FunctionDefinition{
-					Name:        funcDecl.Name,
-					Description: funcDecl.Description,
-					Parameters:  funcDecl.ParametersJsonSchema,
-				},
+			var params shared.FunctionParameters
+			if funcDecl.ParametersJsonSchema != nil {
+				if m, ok := funcDecl.ParametersJsonSchema.(map[string]any); ok {
+					params = shared.FunctionParameters(m)
+				}
 			}
-			if openaiTool.Function.Parameters == nil {
-				openaiTool.Function.Parameters = funcDecl.Parameters
+			if params == nil && funcDecl.Parameters != nil {
+				m, err := convertSchema(funcDecl.Parameters)
+				if err != nil {
+					return nil, err
+				}
+				params = shared.FunctionParameters(m)
 			}
-			if openaiTool.Function.Parameters == nil {
+			if params == nil {
 				return nil, fmt.Errorf("funcDecl.Parameters is nil for tool %s", funcDecl.Name)
 			}
 
-			openaiTools = append(openaiTools, openaiTool)
+			tools = append(tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+				Name:        funcDecl.Name,
+				Description: openai.String(funcDecl.Description),
+				Parameters:  params,
+			}))
 		}
 	}
 
-	return openaiTools, nil
+	return tools, nil
 }
 
 func convertSchema(schema *genai.Schema) (map[string]any, error) {
@@ -581,17 +548,14 @@ func convertSchema(schema *genai.Schema) (map[string]any, error) {
 
 	result := make(map[string]any)
 
-	// Convert type
 	if schema.Type != genai.TypeUnspecified {
 		result["type"] = convertSchemaType(schema.Type)
 	}
 
-	// Add description
 	if schema.Description != "" {
 		result["description"] = schema.Description
 	}
 
-	// Convert properties recursively
 	if len(schema.Properties) > 0 {
 		properties := make(map[string]any)
 		for propName, propSchema := range schema.Properties {
@@ -604,12 +568,10 @@ func convertSchema(schema *genai.Schema) (map[string]any, error) {
 		result["properties"] = properties
 	}
 
-	// Add required fields
 	if len(schema.Required) > 0 {
 		result["required"] = schema.Required
 	}
 
-	// Convert array items
 	if schema.Items != nil {
 		items, err := convertSchema(schema.Items)
 		if err != nil {
@@ -618,7 +580,6 @@ func convertSchema(schema *genai.Schema) (map[string]any, error) {
 		result["items"] = items
 	}
 
-	// Add enum if present
 	if len(schema.Enum) > 0 {
 		result["enum"] = schema.Enum
 	}
@@ -648,13 +609,13 @@ func convertSchemaType(t genai.Type) string {
 func convertRoleToOpenAI(role string) string {
 	switch role {
 	case "user":
-		return openai.ChatMessageRoleUser
+		return "user"
 	case "model":
-		return openai.ChatMessageRoleAssistant
+		return "assistant"
 	case "system":
-		return openai.ChatMessageRoleSystem
+		return "system"
 	default:
-		return openai.ChatMessageRoleUser
+		return "user"
 	}
 }
 
@@ -709,27 +670,7 @@ func parseJSONArgs(argsJSON string) map[string]any {
 	}
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		// If parsing fails, return empty map
 		return make(map[string]any)
 	}
 	return args
-}
-
-func genaiSchemaToOpenaiSchema(schema *genai.Schema) (*openai.ChatCompletionResponseFormatJSONSchema, error) {
-	tmp := map[string]any{
-		"name":        "response",
-		"description": schema.Description,
-		"strict":      true,
-		"schema":      schema,
-	}
-	jsonSchema, err := json.Marshal(tmp)
-	if err != nil {
-		return nil, err
-	}
-
-	var openaiSchema openai.ChatCompletionResponseFormatJSONSchema
-	if err := openaiSchema.UnmarshalJSON(jsonSchema); err != nil {
-		return nil, err
-	}
-	return &openaiSchema, nil
 }

@@ -6,7 +6,6 @@ package inference
 import (
 	"fmt"
 
-	goopenai "github.com/sashabaranov/go-openai"
 	"google.golang.org/adk/model"
 
 	"github.com/fagerbergj/quack/internal/config"
@@ -19,9 +18,7 @@ import (
 func NewModel(p config.ProviderConfig, modelName string) (model.LLM, error) {
 	switch p.Kind {
 	case "openai":
-		cfg := goopenai.DefaultConfig(p.APIKey)
-		cfg.BaseURL = p.Endpoint
-		return openaimodel.NewOpenAIModel(modelName, cfg), nil
+		return openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), nil
 	default:
 		return nil, fmt.Errorf("inference: unsupported provider kind %q", p.Kind)
 	}
