@@ -511,15 +511,8 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionPar
 
 		for _, funcDecl := range genaiTool.FunctionDeclarations {
 			var params shared.FunctionParameters
-			switch v := funcDecl.ParametersJsonSchema.(type) {
-			case map[string]any:
-				params = shared.FunctionParameters(v)
-			case nil:
-				// fall through to Parameters below
-			default:
-				// Any other type (e.g. *jsonschema.Schema from ADK functiontool) —
-				// round-trip through JSON, matching what the old SDK did implicitly.
-				b, err := json.Marshal(v)
+			if funcDecl.ParametersJsonSchema != nil {
+				b, err := json.Marshal(funcDecl.ParametersJsonSchema)
 				if err != nil {
 					return nil, fmt.Errorf("marshal tool %s schema: %w", funcDecl.Name, err)
 				}
