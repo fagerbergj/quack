@@ -101,7 +101,7 @@ export class ChatStore {
     this.notify(chatId)
   }
 
-  async submit(chatId: string, content: string, onTitle?: (title: string) => void): Promise<void> {
+  async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void): Promise<void> {
     const trimmed = content.trim()
     if (!trimmed) return
     let cur = this.get(chatId)
@@ -128,12 +128,20 @@ export class ChatStore {
 
     await this.runStream(
       chatId,
-      signal => fetch(`/api/v1/chats/${chatId}/responses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: trimmed }),
-        signal,
-      }),
+      signal => {
+        if (files && files.length > 0) {
+          const fd = new FormData()
+          fd.append('content', trimmed)
+          for (const f of files) fd.append('files', f)
+          return fetch(`/api/v1/chats/${chatId}/responses`, { method: 'POST', body: fd, signal })
+        }
+        return fetch(`/api/v1/chats/${chatId}/responses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: trimmed }),
+          signal,
+        })
+      },
       onTitle,
     )
   }

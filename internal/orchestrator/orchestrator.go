@@ -40,8 +40,10 @@ func New(sessions session.Service, planner *dag.Planner, executor *dag.Executor)
 }
 
 // Run decomposes message into a DAG, executes it, and yields SSE events.
+// attachments carries media parts (images, audio) from the current turn; they
+// are threaded to nodes whose agents declare media input capability.
 // The final answer from the last DAG node is persisted as the assistant turn.
-func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
+func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// Build the prior-conversation context BEFORE persisting the current
 		// message, so the new message isn't duplicated into its own history.
@@ -53,7 +55,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		invID := o.persistUserMessage(ctx, userID, sessionID, message)
 
 		// Plan the DAG.
-		plan, err := o.planner.Plan(ctx, history, message)
+		plan, err := o.planner.Plan(ctx, history, message, attachments)
 		if err != nil {
 			yield(stream.Errorf("planner: "+err.Error()), nil)
 			return

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
 import { AssistantText } from '../components/AgentParts'
@@ -84,6 +84,8 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<File[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const stored = localStorage.getItem('theme')
@@ -180,7 +182,9 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     if (!trimmed || streaming) return
     if (!activeChatId) return
     setInput('')
-    await store.submit(activeChatId, trimmed, title => {
+    const files = attachments.slice()
+    setAttachments([])
+    await store.submit(activeChatId, trimmed, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
     })
     await loadChats().then(data => setChats(data))
@@ -444,33 +448,83 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
         </div>
 
         <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
-          <form onSubmit={handleSubmit} className="flex gap-3 items-end">
-            <textarea
-              className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
-              rows={1}
-              placeholder={activeChatId ? 'Ask something… (Enter to send, Shift+Enter for newline)' : 'Select or start a chat first'}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={streaming || !activeChatId}
-            />
-            {streaming ? (
+          <form onSubmit={handleSubmit} className="flex flex-col gap-2">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {attachments.map((f, i) => (
+                  <div key={i} className="relative group">
+                    {f.type.startsWith('image/') ? (
+                      <img
+                        src={URL.createObjectURL(f)}
+                        alt={f.name}
+                        className="h-16 w-16 object-cover rounded-lg border border-gray-300 dark:border-gray-600"
+                      />
+                    ) : (
+                      <div className="h-16 w-24 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-400 px-1 text-center">
+                        {f.name}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}
+                      className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-gray-700 text-white text-xs"
+                      aria-label="Remove attachment"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 items-end">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,audio/*"
+                multiple
+                className="hidden"
+                onChange={e => {
+                  if (e.target.files) setAttachments(prev => [...prev, ...Array.from(e.target.files!)])
+                  e.target.value = ''
+                }}
+              />
               <button
                 type="button"
-                onClick={handleStop}
-                className="px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming || !activeChatId}
+                className="p-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                aria-label="Attach file"
+                title="Attach image or audio"
               >
-                Stop
+                📎
               </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!input.trim() || !activeChatId}
-                className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-              >
-                Send
-              </button>
-            )}
+              <textarea
+                className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+                rows={1}
+                placeholder={activeChatId ? 'Ask something… (Enter to send, Shift+Enter for newline)' : 'Select or start a chat first'}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={streaming || !activeChatId}
+              />
+              {streaming ? (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={(!input.trim() && attachments.length === 0) || !activeChatId}
+                  className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                >
+                  Send
+                </button>
+              )}
+            </div>
           </form>
         </div>
       </div>

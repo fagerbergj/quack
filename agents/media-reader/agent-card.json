@@ -1,0 +1,5 @@
+{
+  "name": "media-reader",
+  "description": "Processes images and audio files attached by the user. Use when the user has attached an image or audio clip and asks about its content, wants a description, transcription, or analysis.",
+  "skills": []
+}

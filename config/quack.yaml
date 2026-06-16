@@ -29,6 +29,12 @@ agents:
     provider: default
     model: ${RESEARCHER_MODEL}
     tools: []
+  media-reader:
+    bundle: agents/media-reader
+    provider: default
+    model: ${MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); falls back to RESEARCHER_MODEL if unset
+    tools: []
+    inputs: [text, image, audio]
 
 # Backend bindings for the built-in tools (keyless, internal services in M1).
 tools:

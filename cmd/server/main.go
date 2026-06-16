@@ -84,14 +84,24 @@ func main() {
 		}
 	}()
 
-	// Build agent info list for the planner (name + description).
+	// Build agent info list for the planner (name + description) and a set of
+	// media-capable agents (those with "image" or "audio" in their Inputs config)
+	// so the executor knows which nodes should receive attachment parts.
 	agentInfos := make([]dag.AgentInfo, 0, len(clientMap))
+	mediaAgents := make(map[string]bool)
 	for name, c := range clientMap {
 		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description()})
+		ac := cfg.Agents[name]
+		for _, inp := range ac.Inputs {
+			if inp == "image" || inp == "audio" {
+				mediaAgents[name] = true
+				break
+			}
+		}
 	}
 
 	planner := dag.NewPlanner(llm, agentInfos)
-	executor := dag.NewExecutor(st.Sessions, clientMap, cfg.Dag.MaxActiveNodes)
+	executor := dag.NewExecutor(st.Sessions, clientMap, mediaAgents, cfg.Dag.MaxActiveNodes)
 	orch := orchestrator.New(st.Sessions, planner, executor)
 
 	spa, err := fs.Sub(webDist, "web/dist")
