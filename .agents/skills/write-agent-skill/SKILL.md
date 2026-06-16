@@ -128,6 +128,23 @@ skills-ref validate ./<skill-name>
 
 ---
 
+## Quack repo — prompt.md gotcha
+
+`internal/promptbuilder/promptbuilder.go` automatically injects tools and identity into every agent's system prompt before the `prompt.md` content runs:
+
+- **Layer 1 (identity):** `"You are Quack's {name}. {description}"` — sourced from `agent-card.json`.
+- **Layer 2 (tools):** a `## Tools` block listing each registered tool's name + description. ADK also sends function declarations in the API request.
+- **Layer 3 (behaviour):** the `prompt.md` content.
+- **Layer 4 (environment):** today's date.
+
+For the orchestrator pattern, ADK auto-injects subagents + `transfer_to_agent` via `agentTransferInstructionTemplate`.
+
+**Rule:** `prompt.md` files in this repo should contain only Layer 3 — behavioural rules, reasoning protocols, and output format. Do not redeclare tools, agents, or identity; they are injected by the runtime and duplicating them creates conflicting instructions.
+
+Verified in: `internal/promptbuilder/promptbuilder.go` (lines 26–53, `Agent` function).
+
+---
+
 ## Anti-Patterns
 
 | Anti-Pattern | Problem | Fix |

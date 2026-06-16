@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
-import { AssistantText } from '../components/AgentParts'
+import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
 import { DagView } from '../components/DagView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
@@ -374,8 +374,11 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
 
             // Live turn
             const liveDag = live!.dag
-            const liveText = liveDag ? liveDagFinalText(liveDag) : ''
-            const showSpinner = streaming && !liveDag
+            const liveTopText = live!.text ?? ''
+            const liveTopRuns = live!.runs ?? []
+            const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
+            // Show spinner only when streaming and there's nothing to show yet.
+            const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
             const liveDone = !streaming
             const copyKey = `live-${live!.userText.slice(0, 20)}`
             return (
@@ -412,7 +415,19 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                           </details>
                           {liveText && <AssistantText text={liveText} />}
                         </>
-                      ) : null}
+                      ) : (
+                        // No DAG: orchestrator answered directly (conversational or
+                        // tool-based research where DAG events don't reach the frontend).
+                        <div>
+                          {liveTopRuns.length > 0 && (
+                            <ActivityList activity={liveTopRuns.flatMap(r => r.activity)} />
+                          )}
+                          {liveTopText
+                            ? <AssistantText text={liveTopText} />
+                            : streaming && <Dots />
+                          }
+                        </div>
+                      )}
                     </div>
                     {liveText && (!streaming) && (
                       <div className="flex items-center gap-3 mt-1.5 px-1">
