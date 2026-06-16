@@ -7,6 +7,8 @@ import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
 import type { Turn, DagOutputItem } from '../generated'
 
+import { AttachmentPreviews, AttachmentStrip, type AttachmentItem } from '../components/AttachmentUI'
+
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
   const mins = Math.floor(diff / 60000)
@@ -84,7 +86,8 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
-  const [attachments, setAttachments] = useState<File[]>([])
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([])
+  const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -163,11 +166,13 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   }
 
   function handleDownload(content: string, idx: number) {
+    const h1 = content.match(/^#\s+(.+)$/m)?.[1]?.trim()
+    const slug = h1 ? h1.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') : `answer-${idx + 1}`
     const blob = new Blob([content], { type: 'text/markdown' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `answer-${idx + 1}.md`
+    a.download = `${slug}.md`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -182,8 +187,10 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     if (!trimmed || streaming) return
     if (!activeChatId) return
     setInput('')
-    const files = attachments.slice()
+    const items = attachments.slice()
     setAttachments([])
+    setLiveAttachmentPreviews(items.map(a => ({ url: a.url, mime: a.file.type, name: a.file.name })))
+    const files = items.map(a => a.file)
     await store.submit(activeChatId, trimmed, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
     })
@@ -388,6 +395,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                 <div className="flex justify-end mb-3">
                   <div className="max-w-2xl ml-auto">
                     <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                      <AttachmentPreviews previews={liveAttachmentPreviews} />
                       {live!.userText}
                     </div>
                   </div>
@@ -449,33 +457,13 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
 
         <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
           <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-            {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {attachments.map((f, i) => (
-                  <div key={i} className="relative group">
-                    {f.type.startsWith('image/') ? (
-                      <img
-                        src={URL.createObjectURL(f)}
-                        alt={f.name}
-                        className="h-16 w-16 object-cover rounded-lg border border-gray-300 dark:border-gray-600"
-                      />
-                    ) : (
-                      <div className="h-16 w-24 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-400 px-1 text-center">
-                        {f.name}
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}
-                      className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-gray-700 text-white text-xs"
-                      aria-label="Remove attachment"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <AttachmentStrip
+              attachments={attachments}
+              onRemove={i => setAttachments(prev => {
+                if (prev[i].url) URL.revokeObjectURL(prev[i].url)
+                return prev.filter((_, j) => j !== i)
+              })}
+            />
             <div className="flex gap-2 items-end">
               <input
                 ref={fileInputRef}
@@ -484,7 +472,13 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                 multiple
                 className="hidden"
                 onChange={e => {
-                  if (e.target.files) setAttachments(prev => [...prev, ...Array.from(e.target.files!)])
+                  if (e.target.files) {
+                    const items: AttachmentItem[] = Array.from(e.target.files).map(f => ({
+                      file: f,
+                      url: URL.createObjectURL(f),
+                    }))
+                    setAttachments(prev => [...prev, ...items])
+                  }
                   e.target.value = ''
                 }}
               />

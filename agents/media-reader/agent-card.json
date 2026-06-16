@@ -1,5 +1,68 @@
 {
   "name": "media-reader",
-  "description": "Processes images and audio files attached by the user. Use when the user has attached an image or audio clip and asks about its content, wants a description, transcription, or analysis.",
-  "skills": []
+  "description": "Reads attached images and audio clips. Transcribes text visible in photos and screenshots (OCR), describes image content, extracts structured data from documents and forms, and transcribes audio. Produces Markdown output. Use when the user attaches a file and asks about its content, wants a transcription, description, or data extraction.",
+  "version": "0.1.0",
+  "defaultInputModes": ["text/plain", "image/jpeg", "image/png", "image/webp", "image/gif", "audio/wav", "audio/mp3", "audio/mpeg"],
+  "defaultOutputModes": ["text/plain"],
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "skills": [
+    {
+      "id": "describe-image",
+      "name": "Image description",
+      "description": "Describes the content of an attached photo or image. Use when the user asks what is in an image, to identify objects, scenes, or people, or to get a general description of a picture.",
+      "tags": ["image", "vision", "description"],
+      "examples": [
+        "What's in this photo?",
+        "Describe this image for me",
+        "What do you see in this picture?"
+      ],
+      "inputModes": ["image/jpeg", "image/png", "image/webp", "image/gif"],
+      "outputModes": ["text/plain"]
+    },
+    {
+      "id": "transcribe-image-text",
+      "name": "Image text extraction (OCR)",
+      "description": "Extracts and transcribes all visible text from an attached image, screenshot, or document photo. Preserves layout structure as Markdown (headings, lists, tables). Use when the user wants text read from a photo of a document, whiteboard, handwritten note, or screenshot.",
+      "tags": ["ocr", "transcription", "image", "document"],
+      "examples": [
+        "Transcribe the text in this photo",
+        "What does the whiteboard say?",
+        "Can you read the handwriting in this image?",
+        "Extract the text from this screenshot"
+      ],
+      "inputModes": ["image/jpeg", "image/png", "image/webp"],
+      "outputModes": ["text/plain"]
+    },
+    {
+      "id": "extract-structured-data",
+      "name": "Structured data extraction",
+      "description": "Parses structured content from an attached image — forms, tables, receipts, session logs, notes — and outputs it as Markdown sections. Use when the user wants data extracted, parsed, or summarised from a document image.",
+      "tags": ["extraction", "document", "image", "parsing"],
+      "examples": [
+        "Parse this form and list all the fields",
+        "Summarise these session notes",
+        "Extract the line items from this receipt",
+        "Turn this table into Markdown"
+      ],
+      "inputModes": ["image/jpeg", "image/png", "image/webp"],
+      "outputModes": ["text/plain"]
+    },
+    {
+      "id": "transcribe-audio",
+      "name": "Audio transcription",
+      "description": "Transcribes speech or audio from an attached audio clip. Flags unclear passages inline. Use when the user attaches an audio file and wants a transcript.",
+      "tags": ["audio", "transcription", "speech"],
+      "examples": [
+        "Transcribe this audio clip",
+        "What does this recording say?",
+        "Can you write out what's being said in this file?"
+      ],
+      "inputModes": ["audio/wav", "audio/mp3", "audio/mpeg"],
+      "outputModes": ["text/plain"]
+    }
+  ]
 }
