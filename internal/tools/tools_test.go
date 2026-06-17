@@ -16,14 +16,6 @@ import (
 )
 
 func TestRegistryBuild(t *testing.T) {
-	for _, name := range []string{"web_search", "web_fetch", "summarize"} {
-		if !Known(name) {
-			t.Fatalf("expected %q to be known", name)
-		}
-	}
-	if Known("nope") {
-		t.Fatal("unknown tool reported as known")
-	}
 	if _, err := Build([]string{"web_fetch"}, Deps{Crawl4AI: "http://x"}); err != nil {
 		t.Fatalf("Build(fetch) error: %v", err)
 	}

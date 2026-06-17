@@ -93,7 +93,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 			// miss (first fetch, or the entry expired/evicted) we fetch and cache it.
 			var full string
 			if d.Cache != nil {
-				if cached, ok := d.Cache.Get(tc, target); ok {
+				if cached, ok := d.Cache.Get(target); ok {
 					full = cached
 				}
 			}
@@ -112,7 +112,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 				}
 				full = fetched
 				if d.Cache != nil {
-					d.Cache.Set(tc, target, full, tc.SessionID(), tc.AppName())
+					d.Cache.Set(target, full)
 				}
 			}
 

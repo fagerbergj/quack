@@ -23,65 +23,19 @@ import (
 // Agent assembles the 4-layer system prompt for a specialist agent.
 // name and description come from agent-card.json; tools from the registered
 // tool list; behaviour from the agent's prompt.md.
+//
+// The tools are also sent as function declarations in the API request, so the
+// model already knows what each does; listing them here adds workflow context.
 func Agent(name, description string, tools []tool.Tool, behaviour string) string {
-	var sb strings.Builder
-
-	// Layer 1: Identity
-	fmt.Fprintf(&sb, "You are Quack's %s. %s\n", name, description)
-
-	// Layer 2: Capabilities — tool names and descriptions.
-	// ADK sends these as function declarations in the API request, so the model
-	// already knows what each tool does; listing them here adds workflow context.
-	if len(tools) > 0 {
-		sb.WriteString("\n## Tools\n\n")
-		for _, t := range tools {
-			fmt.Fprintf(&sb, "- `%s` — %s\n", t.Name(), t.Description())
-		}
-	}
-
-	// Layer 3: Behaviour
-	if b := strings.TrimSpace(behaviour); b != "" {
-		sb.WriteString("\n")
-		sb.WriteString(b)
-		sb.WriteString("\n")
-	}
-
-	// Layer 4: Environment
-	fmt.Fprintf(&sb, "\n## Environment\n\nToday is %s.\n", today())
-
-	return strings.TrimSpace(sb.String())
+	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Tools", toolLines(tools), behaviour)
 }
 
 // Judge assembles the layered system prompt for the trust gate's independent
-// judge, mirroring Agent's structure (identity, tools, behaviour, environment)
-// so the judge is prompted consistently with the agents it evaluates. tools are
-// the judge's verification tools plus submit_verdict; behaviour is the judging
-// instructions.
+// judge, mirroring Agent's structure so the judge is prompted consistently with
+// the agents it evaluates. tools are the judge's verification tools plus
+// submit_verdict; behaviour is the judging instructions.
 func Judge(tools []tool.Tool, behaviour string) string {
-	var sb strings.Builder
-
-	// Layer 1: Identity
-	sb.WriteString("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.\n")
-
-	// Layer 2: Capabilities — the judge's verification tools.
-	if len(tools) > 0 {
-		sb.WriteString("\n## Tools\n\n")
-		for _, t := range tools {
-			fmt.Fprintf(&sb, "- `%s` — %s\n", t.Name(), t.Description())
-		}
-	}
-
-	// Layer 3: Behaviour
-	if b := strings.TrimSpace(behaviour); b != "" {
-		sb.WriteString("\n")
-		sb.WriteString(b)
-		sb.WriteString("\n")
-	}
-
-	// Layer 4: Environment
-	fmt.Fprintf(&sb, "\n## Environment\n\nToday is %s.\n", today())
-
-	return strings.TrimSpace(sb.String())
+	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "Tools", toolLines(tools), behaviour)
 }
 
 // Orchestrator assembles the 4-layer system prompt for the orchestrator.
@@ -92,33 +46,49 @@ func Judge(tools []tool.Tool, behaviour string) string {
 // agentTransferInstructionTemplate when SubAgents are registered on the
 // llmagent.Config, so duplicating them here would be redundant.
 func Orchestrator(skills []*skill.Frontmatter, behaviour string) string {
+	return layered("You are Quack's orchestrator. You understand what the user needs, coordinate specialist agents, and apply skills to improve your output before responding.", "Skills", skillLines(skills), behaviour)
+}
+
+// layered assembles the four prompt layers, ordered most-stable-first for prompt
+// caching: identity, an optional capabilities section (## header + body),
+// behaviour (prompt.md), and the environment footer.
+func layered(identity, capsHeader, capsBody, behaviour string) string {
 	var sb strings.Builder
-
-	// Layer 1: Identity
-	sb.WriteString("You are Quack's orchestrator. You understand what the user needs, coordinate specialist agents, and apply skills to improve your output before responding.\n")
-
-	// Layer 2: Capabilities — available skills.
-	// ADK does not surface skill names to the model automatically, so we inject
-	// them here so the orchestrator knows what exists before deciding to act.
-	if len(skills) > 0 {
-		sb.WriteString("\n## Skills\n\n")
-		sb.WriteString("Use `load_skill(name)` to load a skill's full instructions before applying it.\n\n")
-		for _, s := range skills {
-			fmt.Fprintf(&sb, "- `%s` — %s\n", s.Name, s.Description)
-		}
+	sb.WriteString(identity)
+	sb.WriteString("\n")
+	if capsBody != "" {
+		fmt.Fprintf(&sb, "\n## %s\n\n%s", capsHeader, capsBody)
 	}
-
-	// Layer 3: Behaviour
 	if b := strings.TrimSpace(behaviour); b != "" {
 		sb.WriteString("\n")
 		sb.WriteString(b)
 		sb.WriteString("\n")
 	}
-
-	// Layer 4: Environment
 	fmt.Fprintf(&sb, "\n## Environment\n\nToday is %s.\n", today())
-
 	return strings.TrimSpace(sb.String())
+}
+
+// toolLines renders one bullet per tool (name + description), or "" if none.
+func toolLines(tools []tool.Tool) string {
+	var sb strings.Builder
+	for _, t := range tools {
+		fmt.Fprintf(&sb, "- `%s` — %s\n", t.Name(), t.Description())
+	}
+	return sb.String()
+}
+
+// skillLines renders the load_skill hint plus one bullet per skill, or "" if
+// none. ADK does not surface skill names to the model automatically.
+func skillLines(skills []*skill.Frontmatter) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("Use `load_skill(name)` to load a skill's full instructions before applying it.\n\n")
+	for _, s := range skills {
+		fmt.Fprintf(&sb, "- `%s` — %s\n", s.Name, s.Description)
+	}
+	return sb.String()
 }
 
 func today() string {

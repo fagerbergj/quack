@@ -159,7 +159,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	}
 	sort.Strings(names)
 
-	urlCache := tools.NewInMemoryURLCache()
+	urlCache := tools.NewURLCache()
 
 	var judgeFactory vetting.JudgeFactory
 	var gateCfg vetting.Config

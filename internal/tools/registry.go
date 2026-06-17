@@ -31,8 +31,7 @@ type Deps struct {
 	Summarizer model.LLM
 	// Cache is a shared response cache used by web_fetch and web_search to avoid
 	// redundant network requests. Optional; when nil, caching is disabled.
-	// Swap for a persistent implementation without changing callers.
-	Cache URLCache
+	Cache *URLCache
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -43,13 +42,6 @@ var registry = map[string]constructor{
 	"web_fetch":    newFetch,
 	"summarize":    newSummarize,
 	"current_date": newCurrentDate,
-}
-
-// Known reports whether name is a registered built-in tool. Used by config
-// validation so an unknown tool fails fast at startup.
-func Known(name string) bool {
-	_, ok := registry[name]
-	return ok
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an

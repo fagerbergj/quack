@@ -32,7 +32,11 @@ type planResult struct {
 // attachments are the current turn's media parts; they are passed to the planner
 // (which describes them for routing and stamps them on the plan) so the executor
 // can deliver the raw bytes to a media-capable node.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part) (tool.Tool, error) {
+//
+// history is the prior conversation (nil for a fresh chat); it is passed to the
+// planner so follow-up requests — including a re-plan after an upfront clarifying
+// exchange — resolve references against what was already said.
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn) (tool.Tool, error) {
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
 			Name: "plan",
@@ -42,7 +46,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"Returns a plan_id; pass it to the execute tool to run the plan.",
 		},
 		func(tc agent.ToolContext, a planArgs) (planResult, error) {
-			p, err := planner.Plan(tc, nil, a.Query, attachments)
+			p, err := planner.Plan(tc, history, a.Query, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}

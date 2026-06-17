@@ -7,6 +7,7 @@ package orchestrator
 import (
 	"context"
 	"iter"
+	"strings"
 
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
@@ -63,7 +64,14 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()
-		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments)
+		// Persisted session, read BEFORE the runner appends this turn's user
+		// message — so it holds only earlier turns. Used for both the planner's
+		// history and pending-clarification detection below.
+		prior := o.priorEvents(ctx, userID, sessionID)
+		// Threaded to the planner so a re-plan after a clarifying exchange (or any
+		// follow-up) resolves references against what was already said.
+		history := buildHistory(prior)
+		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
@@ -71,6 +79,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		execTool, err := tools.NewExecuteTool(o.executor, planCache, userID)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
+			return
+		}
+		// Clarification tool: a long-running ask that pauses the turn until the
+		// user picks an option (its answer is resumed below).
+		choiceTool, err := tools.NewGetUserChoiceTool()
+		if err != nil {
+			yield(stream.Errorf("orchestrator: choice tool: "+err.Error()), nil)
 			return
 		}
 
@@ -84,7 +99,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Description: "Routes research requests to specialist agents and answers conversational queries directly.",
 			Model:       o.model,
 			Instruction: o.sysPrompt,
-			Tools:       []tool.Tool{planTool, execTool},
+			Tools:       []tool.Tool{planTool, execTool, choiceTool},
 			Toolsets:    toolsets,
 			GenerateContentConfig: &genai.GenerateContentConfig{
 				MaxOutputTokens: internalagent.MaxOutputTokens,
@@ -119,6 +134,25 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			text += "\n\n" + desc
 		}
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
+
+		// Resume a pending clarification: if the previous turn ended on an
+		// unanswered get_user_choice call, deliver THIS message as that call's
+		// answer (a FunctionResponse with the matching call ID) rather than a fresh
+		// user turn. The model then continues from where it paused with the choice
+		// resolved, instead of re-reading an open question. (The orchestrator runs
+		// as a direct llmagent — not over A2A — so there is no adka2a layer to do
+		// this; we hand-roll it here. See ChoiceToolName's TODO.) Any attachments on
+		// a clarification-answer turn are dropped — answering a choice with a file is
+		// not a supported flow.
+		if callID := pendingChoiceCallID(prior); callID != "" {
+			content = &genai.Content{Role: "user", Parts: []*genai.Part{{
+				FunctionResponse: &genai.FunctionResponse{
+					ID:       callID,
+					Name:     tools.ChoiceToolName,
+					Response: map[string]any{tools.ChoiceAnswerKey: message},
+				},
+			}}}
+		}
 		translator := stream.NewTranslator()
 
 		// The orchestrator runs un-gated, so the translator never emits the
@@ -164,6 +198,105 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		}
 		yield(stream.Done(), nil)
 	}
+}
+
+// priorEvents reads the persisted session's events (nil if the session is
+// missing). Called BEFORE the runner appends the current turn, so it holds only
+// earlier turns; shared by buildHistory and pendingChoiceCallID so one Run reads
+// the session once.
+func (o *Orchestrator) priorEvents(ctx context.Context, userID, sessionID string) []*session.Event {
+	resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+	if err != nil || resp == nil {
+		return nil
+	}
+	var events []*session.Event
+	for ev := range resp.Session.Events().All() {
+		events = append(events, ev)
+	}
+	return events
+}
+
+// buildHistory converts prior session events into dag.HistoryTurn values for the
+// planner. The current message reaches the planner separately as the plan query.
+//
+// It tolerates a half-finished turn: a user turn with no assistant reply yet —
+// e.g. an upfront clarifying question still awaiting an answer, or a DAG paused
+// mid-run (M5 pause/resume) — contributes its user text and simply no model
+// text, so the planner still sees the open question. Thinking and tool
+// call/response parts are dropped (the planner is a raw text LLM call).
+func buildHistory(events []*session.Event) []dag.HistoryTurn {
+	var turns []dag.HistoryTurn
+	var userText, modelText strings.Builder
+	haveTurn := false
+	// flush emits the accumulated turn (user line, then model line) skipping
+	// empty halves, so a half-finished turn yields just its user line.
+	flush := func() {
+		if !haveTurn {
+			return
+		}
+		if t := strings.TrimSpace(userText.String()); t != "" {
+			turns = append(turns, dag.HistoryTurn{Role: "user", Text: t})
+		}
+		if t := strings.TrimSpace(modelText.String()); t != "" {
+			turns = append(turns, dag.HistoryTurn{Role: "model", Text: t})
+		}
+	}
+
+	for _, ev := range events {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		if ev.Author == "user" {
+			flush()
+			userText.Reset()
+			modelText.Reset()
+			haveTurn = true
+			for _, p := range ev.Content.Parts {
+				if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+					userText.WriteString(p.Text)
+				}
+			}
+		} else if haveTurn {
+			for _, p := range ev.Content.Parts {
+				if p == nil || p.Thought || p.FunctionCall != nil || p.FunctionResponse != nil {
+					continue
+				}
+				modelText.WriteString(p.Text)
+			}
+		}
+	}
+	flush()
+	return turns
+}
+
+// pendingChoiceCallID returns the call ID of an unanswered get_user_choice
+// clarification in the prior events, or "" if none is awaiting an answer. It
+// scans for the most recent choice FunctionCall and clears it once a real answer
+// (a FunctionResponse carrying tools.ChoiceAnswerKey) follows. The framework
+// auto-emits a "pending" placeholder FunctionResponse for every long-running
+// call, so presence of a response alone does not mean answered — only one
+// carrying the answer key does.
+func pendingChoiceCallID(events []*session.Event) string {
+	var pendingID string
+	for _, ev := range events {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p == nil {
+				continue
+			}
+			if p.FunctionCall != nil && p.FunctionCall.Name == tools.ChoiceToolName {
+				pendingID = p.FunctionCall.ID
+			}
+			if p.FunctionResponse != nil && p.FunctionResponse.Name == tools.ChoiceToolName && p.FunctionResponse.ID == pendingID {
+				if _, answered := p.FunctionResponse.Response[tools.ChoiceAnswerKey]; answered {
+					pendingID = ""
+				}
+			}
+		}
+	}
+	return pendingID
 }
 
 // lastOutput returns the output of the terminal node (no successors) in the

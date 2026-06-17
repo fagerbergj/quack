@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"iter"
 	"sort"
+	"strings"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -652,24 +653,7 @@ func extractTextFromContent(content *genai.Content) string {
 			texts = append(texts, part.Text)
 		}
 	}
-	return joinTexts(texts)
-}
-
-func joinTexts(texts []string) string {
-	if len(texts) == 0 {
-		return ""
-	}
-	if len(texts) == 1 {
-		return texts[0]
-	}
-	result := ""
-	for i, text := range texts {
-		if i > 0 {
-			result += "\n"
-		}
-		result += text
-	}
-	return result
+	return strings.Join(texts, "\n")
 }
 
 func parseJSONArgs(argsJSON string) map[string]any {
