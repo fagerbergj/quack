@@ -236,9 +236,11 @@ export class ChatStore {
             changed: d.changed, score: d.score, passed: d.passed, feedback: d.feedback,
             status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
           }
-          d.nodeId
-            ? updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, completeArgs, Date.now()))
-            : updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, Date.now()))
+          if (d.nodeId) {
+            updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, completeArgs, Date.now()))
+          } else {
+            updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, Date.now()))
+          }
         },
         onChatTitle: title => onTitle?.(title),
         onError: msg => { streamError = msg },

@@ -402,7 +402,14 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                           <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
                         </span>
                       ) : liveDag && !liveDone ? (
-                        <DagView dag={liveDag} />
+                        <>
+                          <DagView dag={liveDag} />
+                          {liveText && (
+                            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                              <AssistantText text={liveText} />
+                            </div>
+                          )}
+                        </>
                       ) : liveDag && liveDone ? (
                         <>
                           <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">

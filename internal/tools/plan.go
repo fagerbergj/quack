@@ -27,8 +27,10 @@ type planResult struct {
 func NewPlanTool(planner *dag.Planner) (tool.Tool, error) {
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
-			Name:        "plan",
-			Description: "Tool to decompose a research query into a DAG plan. Returns a JSON plan. Call this when the user needs information from the web or asks a question that cannot be answered from the current conversation. Do NOT call for greetings, follow-up questions about prior answers, or anything answerable from conversation history.",
+			Name: "plan",
+			Description: "Tool to decompose a task into a DAG plan for specialist agents to execute. " +
+				"Use when the task is too large, too complex, or requires capabilities you cannot perform directly. " +
+				"Do NOT call for tasks you can complete in a single response.",
 		},
 		func(tc agent.ToolContext, a planArgs) (planResult, error) {
 			p, err := planner.Plan(tc, nil, a.Query)
