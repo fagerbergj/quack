@@ -79,6 +79,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return
 		}
+		// Clarification tool: a long-running ask that pauses the turn until the
+		// user picks an option (its answer is resumed below).
+		choiceTool, err := tools.NewGetUserChoiceTool()
+		if err != nil {
+			yield(stream.Errorf("orchestrator: choice tool: "+err.Error()), nil)
+			return
+		}
 
 		var toolsets []tool.Toolset
 		if o.skillTS != nil {
@@ -90,7 +97,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Description: "Routes research requests to specialist agents and answers conversational queries directly.",
 			Model:       o.model,
 			Instruction: o.sysPrompt,
-			Tools:       []tool.Tool{planTool, execTool},
+			Tools:       []tool.Tool{planTool, execTool, choiceTool},
 			Toolsets:    toolsets,
 			GenerateContentConfig: &genai.GenerateContentConfig{
 				MaxOutputTokens: internalagent.MaxOutputTokens,
@@ -125,6 +132,25 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			text += "\n\n" + desc
 		}
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
+
+		// Resume a pending clarification: if the previous turn ended on an
+		// unanswered get_user_choice call, deliver THIS message as that call's
+		// answer (a FunctionResponse with the matching call ID) rather than a fresh
+		// user turn. The model then continues from where it paused with the choice
+		// resolved, instead of re-reading an open question. (The orchestrator runs
+		// as a direct llmagent — not over A2A — so there is no adka2a layer to do
+		// this; we hand-roll it here. See ChoiceToolName's TODO.) Any attachments on
+		// a clarification-answer turn are dropped — answering a choice with a file is
+		// not a supported flow.
+		if callID := o.pendingChoiceCallID(ctx, userID, sessionID); callID != "" {
+			content = &genai.Content{Role: "user", Parts: []*genai.Part{{
+				FunctionResponse: &genai.FunctionResponse{
+					ID:       callID,
+					Name:     tools.ChoiceToolName,
+					Response: map[string]any{tools.ChoiceAnswerKey: message},
+				},
+			}}}
+		}
 		translator := stream.NewTranslator()
 
 		// The orchestrator runs un-gated, so the translator never emits the
@@ -230,6 +256,41 @@ func (o *Orchestrator) buildHistory(ctx context.Context, userID, sessionID strin
 	}
 	flush()
 	return turns
+}
+
+// pendingChoiceCallID returns the call ID of an unanswered get_user_choice
+// clarification in the session, or "" if none is awaiting an answer. It scans
+// for the most recent choice FunctionCall and clears it once a real answer
+// (a FunctionResponse carrying tools.ChoiceAnswerKey) follows. The framework
+// auto-emits a "pending" placeholder FunctionResponse for every long-running
+// call, so presence of a response alone does not mean answered — only one
+// carrying the answer key does. Called before the runner appends the current
+// turn, so the awaiting call (if any) is the tail of the persisted session.
+func (o *Orchestrator) pendingChoiceCallID(ctx context.Context, userID, sessionID string) string {
+	resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+	if err != nil || resp == nil {
+		return ""
+	}
+	var pendingID string
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p == nil {
+				continue
+			}
+			if p.FunctionCall != nil && p.FunctionCall.Name == tools.ChoiceToolName {
+				pendingID = p.FunctionCall.ID
+			}
+			if p.FunctionResponse != nil && p.FunctionResponse.Name == tools.ChoiceToolName && p.FunctionResponse.ID == pendingID {
+				if _, answered := p.FunctionResponse.Response[tools.ChoiceAnswerKey]; answered {
+					pendingID = ""
+				}
+			}
+		}
+	}
+	return pendingID
 }
 
 // lastOutput returns the output of the terminal node (no successors) in the

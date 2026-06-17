@@ -9,6 +9,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 )
 
 // TestLastOutput verifies that lastOutput picks the terminal node's result.
@@ -97,6 +98,57 @@ func TestBuildHistoryEmptySession(t *testing.T) {
 	o := &Orchestrator{sessions: session.InMemoryService()}
 	if got := o.buildHistory(context.Background(), "u", "missing"); got != nil {
 		t.Errorf("buildHistory on missing session = %+v, want nil", got)
+	}
+}
+
+// appendPartsEvent appends a model-authored event carrying arbitrary parts.
+func appendPartsEvent(t *testing.T, svc session.Service, sess session.Session, longRunningIDs []string, parts ...*genai.Part) {
+	t.Helper()
+	ev := session.NewEvent("test")
+	ev.Author = "orchestrator"
+	ev.LongRunningToolIDs = longRunningIDs
+	ev.Content = &genai.Content{Role: "model", Parts: parts}
+	if err := svc.AppendEvent(context.Background(), sess, ev); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+}
+
+// TestPendingChoiceCallID verifies a pending get_user_choice call is detected
+// while unanswered and clears once a real answer (carrying the answer key)
+// follows — so the orchestrator resumes the right turn exactly once.
+func TestPendingChoiceCallID(t *testing.T) {
+	svc := session.InMemoryService()
+	ctx := context.Background()
+	const userID, sessionID, callID = "u1", "c1", "call-xyz"
+	resp, err := svc.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sess := resp.Session
+	o := &Orchestrator{sessions: svc}
+
+	// No clarification yet → nothing pending.
+	if got := o.pendingChoiceCallID(ctx, userID, sessionID); got != "" {
+		t.Errorf("fresh session pendingChoiceCallID = %q, want empty", got)
+	}
+
+	// The orchestrator asks: a long-running choice call + its auto pending
+	// placeholder response (note: NO answer key).
+	appendPartsEvent(t, svc, sess, []string{callID},
+		&genai.Part{FunctionCall: &genai.FunctionCall{ID: callID, Name: tools.ChoiceToolName, Args: map[string]any{"options": []string{"Illinois", "Missouri"}}}})
+	appendPartsEvent(t, svc, sess, nil,
+		&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: callID, Name: tools.ChoiceToolName, Response: map[string]any{"status": "pending"}}})
+
+	if got := o.pendingChoiceCallID(ctx, userID, sessionID); got != callID {
+		t.Errorf("after ask, pendingChoiceCallID = %q, want %q", got, callID)
+	}
+
+	// The user answers: a FunctionResponse carrying the answer key resolves it.
+	appendPartsEvent(t, svc, sess, nil,
+		&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: callID, Name: tools.ChoiceToolName, Response: map[string]any{tools.ChoiceAnswerKey: "Illinois"}}})
+
+	if got := o.pendingChoiceCallID(ctx, userID, sessionID); got != "" {
+		t.Errorf("after answer, pendingChoiceCallID = %q, want empty", got)
 	}
 }
 
