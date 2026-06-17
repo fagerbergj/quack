@@ -7,6 +7,7 @@ package orchestrator
 import (
 	"context"
 	"iter"
+	"strings"
 
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
@@ -63,7 +64,12 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()
-		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments)
+		// Prior conversation, read BEFORE the runner appends this turn's user
+		// message — so it holds only earlier turns. Threaded to the planner so a
+		// re-plan after a clarifying exchange (or any follow-up) resolves
+		// references against what was already said.
+		history := o.buildHistory(ctx, userID, sessionID)
+		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
@@ -164,6 +170,66 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		}
 		yield(stream.Done(), nil)
 	}
+}
+
+// buildHistory reads the persisted chat session and returns prior turns as
+// dag.HistoryTurn values for the planner. It is called BEFORE the runner appends
+// the current turn's user message, so it returns only earlier turns (the current
+// message reaches the planner separately as the plan query).
+//
+// It tolerates a half-finished turn: a user turn with no assistant reply yet —
+// e.g. an upfront clarifying question still awaiting an answer, or a DAG paused
+// mid-run (M5 pause/resume) — contributes its user text and simply no model
+// text, so the planner still sees the open question. Thinking and tool
+// call/response parts are dropped (the planner is a raw text LLM call).
+func (o *Orchestrator) buildHistory(ctx context.Context, userID, sessionID string) []dag.HistoryTurn {
+	resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+	if err != nil || resp == nil {
+		return nil
+	}
+
+	var turns []dag.HistoryTurn
+	var userText, modelText strings.Builder
+	haveTurn := false
+	// flush emits the accumulated turn (user line, then model line) skipping
+	// empty halves, so a half-finished turn yields just its user line.
+	flush := func() {
+		if !haveTurn {
+			return
+		}
+		if t := strings.TrimSpace(userText.String()); t != "" {
+			turns = append(turns, dag.HistoryTurn{Role: "user", Text: t})
+		}
+		if t := strings.TrimSpace(modelText.String()); t != "" {
+			turns = append(turns, dag.HistoryTurn{Role: "model", Text: t})
+		}
+	}
+
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		if ev.Author == "user" {
+			flush()
+			userText.Reset()
+			modelText.Reset()
+			haveTurn = true
+			for _, p := range ev.Content.Parts {
+				if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+					userText.WriteString(p.Text)
+				}
+			}
+		} else if haveTurn {
+			for _, p := range ev.Content.Parts {
+				if p == nil || p.Thought || p.FunctionCall != nil || p.FunctionResponse != nil {
+					continue
+				}
+				modelText.WriteString(p.Text)
+			}
+		}
+	}
+	flush()
+	return turns
 }
 
 // lastOutput returns the output of the terminal node (no successors) in the
