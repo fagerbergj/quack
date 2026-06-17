@@ -388,12 +388,11 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             const liveTopText = live!.text ?? ''
             const liveTopRuns = live!.runs ?? []
             const liveDone = !streaming
-            // When a DAG ran and is complete, the terminal node's output IS the
-            // answer — ignore any top-level text (orchestrator preamble before the
-            // first tool call). When no DAG ran, use the orchestrator's own text.
-            const liveText = (liveDone && liveDag)
-              ? liveDagFinalText(liveDag)
-              : (liveTopText || (liveDag ? liveDagFinalText(liveDag) : ''))
+            // When a DAG is present (streaming or done) the terminal node's answer
+            // is the response — it streams token-by-token via nodeAnswer. Ignore any
+            // top-level orchestrator text (pre-plan preamble). Only use liveTopText
+            // when no DAG exists (orchestrator answered directly).
+            const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
             // Show spinner only when streaming and there's nothing to show yet.
             const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
             const copyKey = `live-${live!.userText.slice(0, 20)}`
