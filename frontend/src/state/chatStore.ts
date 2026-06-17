@@ -48,6 +48,9 @@ export interface LiveTurn {
   id: string             // turn ID (response_id) — empty string while streaming before first event
   userText: string
   dag?: DagTurnState
+  // Top-level fields for orchestrator responses that don't go through a DAG node.
+  text: string           // accumulated answer text from node-less agent_token events
+  runs: AgentRun[]       // agent runs (thinking, tool calls) at the top level
   streaming: boolean
   error: string
 }
@@ -123,7 +126,7 @@ export class ChatStore {
       cur = this.get(chatId)
     }
 
-    const live: LiveTurn = { id: '', userText: trimmed, streaming: true, error: '' }
+    const live: LiveTurn = { id: '', userText: trimmed, streaming: true, error: '', text: '', runs: [] }
     this.write(chatId, { ...cur, live, error: '' })
 
     await this.runStream(
@@ -172,6 +175,13 @@ export class ChatStore {
         this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
+      // updateTopLevelRuns updates the orchestrator-level run list (no DAG node).
+      const updateTopLevelRuns = (fn: (runs: AgentRun[]) => AgentRun[]) => {
+        const s = this.states.get(chatId)
+        if (!s?.live) return
+        this.write(chatId, { ...s, live: { ...s.live, runs: fn(s.live.runs) } })
+      }
+
       const updateNodeAnswer = (nodeId: string | undefined, text: string) => {
         if (!nodeId) return
         const s = this.states.get(chatId)
@@ -181,6 +191,13 @@ export class ChatStore {
         const ns = dag.nodeStates[nodeId] ?? { status: 'queued' as NodeStatus }
         dag.nodeStates = { ...dag.nodeStates, [nodeId]: { ...ns, outputChars: (ns.outputChars ?? 0) + text.length } }
         this.write(chatId, { ...s, live: { ...s.live, dag } })
+      }
+
+      // updateTopLevelText appends to the orchestrator's top-level answer (no DAG node).
+      const updateTopLevelText = (text: string) => {
+        const s = this.states.get(chatId)
+        if (!s?.live) return
+        this.write(chatId, { ...s, live: { ...s.live, text: s.live.text + text } })
       }
 
       const updateNodeState = (nodeId: string, patch: Partial<NodeState>) => {
@@ -196,17 +213,35 @@ export class ChatStore {
         this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
+      const runArgs = (d: { runId: string; agent: string; stage: import('./agentStream').Stage; round?: number }) =>
+        ({ runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: Date.now() })
+
       let streamError = ''
       await readAgentStream(res.body, {
-        onAgentStart: d => updateNodeRuns(d.nodeId, r => startRun(r, { runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: Date.now() })),
-        onAgentThinking: (runId, text, nid) => updateNodeRuns(nid, r => appendRunThinking(r, runId, text)),
-        onAgentToolCall: (runId, callId, name, args, nid) => updateNodeRuns(nid, r => appendRunToolCall(r, runId, callId, name, args)),
-        onAgentToolResult: (runId, callId, name, result, nid) => updateNodeRuns(nid, r => fillRunToolResult(r, runId, callId, name, result)),
-        onAgentToken: (_runId, text, nid) => updateNodeAnswer(nid, text),
-        onAgentComplete: d => updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, {
-          changed: d.changed, score: d.score, passed: d.passed, feedback: d.feedback,
-          status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
-        }, Date.now())),
+        onAgentStart: d => d.nodeId
+          ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
+          : updateTopLevelRuns(r => startRun(r, runArgs(d))),
+        onAgentThinking: (runId, text, nid) => nid
+          ? updateNodeRuns(nid, r => appendRunThinking(r, runId, text))
+          : updateTopLevelRuns(r => appendRunThinking(r, runId, text)),
+        onAgentToolCall: (runId, callId, name, args, nid) => nid
+          ? updateNodeRuns(nid, r => appendRunToolCall(r, runId, callId, name, args))
+          : updateTopLevelRuns(r => appendRunToolCall(r, runId, callId, name, args)),
+        onAgentToolResult: (runId, callId, name, result, nid) => nid
+          ? updateNodeRuns(nid, r => fillRunToolResult(r, runId, callId, name, result))
+          : updateTopLevelRuns(r => fillRunToolResult(r, runId, callId, name, result)),
+        onAgentToken: (_runId, text, nid) => nid ? updateNodeAnswer(nid, text) : updateTopLevelText(text),
+        onAgentComplete: d => {
+          const completeArgs = {
+            changed: d.changed, score: d.score, passed: d.passed, feedback: d.feedback,
+            status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
+          }
+          if (d.nodeId) {
+            updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, completeArgs, Date.now()))
+          } else {
+            updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, Date.now()))
+          }
+        },
         onChatTitle: title => onTitle?.(title),
         onError: msg => { streamError = msg },
         onDagPlan: plan => {

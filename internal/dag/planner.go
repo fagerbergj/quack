@@ -153,7 +153,7 @@ Rules:
    - Ask yourself: "Could a researcher answer this task without seeing the previous
      researcher's output?" If NO, set depends_on.
 
-Output ONLY a JSON object (no markdown, no explanation):
+Output ONLY valid JSON (no markdown fences, no explanation):
 {
   "nodes": [
     {"id": "n1", "agent": "web-researcher", "task": "...", "depends_on": []},
@@ -178,6 +178,7 @@ type rawPlan struct {
 
 func parsePlan(text string, agents []AgentInfo) (*Plan, error) {
 	text = extractJSON(text)
+
 	var raw rawPlan
 	if err := json.Unmarshal([]byte(text), &raw); err != nil {
 		return nil, fmt.Errorf("parse json: %w", err)

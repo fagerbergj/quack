@@ -104,6 +104,8 @@ When uncertain, ask at most 2 clarifying questions before proceeding.
 - Side-effecting tools (file writes, shell, destructive ops) need explicit "require user confirmation" rules in Section 4
 - If a tool has runtime-substituted values (working dir, date), note the substitution in the declaration
 
+> **Quack repo — skip this section for `prompt.md` files.** `internal/promptbuilder/promptbuilder.go` auto-injects a `## Tools` block (Layer 2) listing every registered tool name + description before the `prompt.md` content (Layer 3). ADK also sends function declarations in the API request. Redeclaring tools in `prompt.md` creates duplicate, potentially conflicting instructions. For the orchestrator pattern, ADK auto-injects subagents + `transfer_to_agent` via `agentTransferInstructionTemplate` — same rule applies. Focus `prompt.md` on behaviour (rules, protocols, output format) only.
+
 ## Step 5 — Iteration
 
 Treat prompts as code: change one section at a time, test with adversarial inputs, score against "does the agent execute without hesitation or contradiction?" — not "does this read well to a human?"

@@ -1,0 +1,28 @@
+{
+  "name": "orchestrator",
+  "description": "Routes research requests to specialist agents and handles simple conversational questions directly. Use for any user-facing request: factual questions, comparisons, recommendations, and multi-part research tasks.",
+  "skills": [
+    {
+      "id": "route_request",
+      "name": "Request routing",
+      "description": "Decomposes a user request and routes sub-tasks to the appropriate specialist agents (web researcher, synthesizer). Handles simple conversational queries directly without delegation.",
+      "tags": ["routing", "orchestration", "planning"],
+      "examples": [
+        "What are the best hiking trails near Seattle?",
+        "Compare the latest MacBook Pro and Dell XPS 15",
+        "What is Quack?",
+        "Summarize the key findings from the research above"
+      ]
+    },
+    {
+      "id": "format_markdown",
+      "name": "Format Markdown",
+      "description": "Reformats a Markdown document for clean visual rendering — consistent whitespace, heading hierarchy, scannability, and formatting consistency. Applied to direct-answer responses before returning them to the user.",
+      "tags": ["formatting", "markdown"],
+      "examples": [
+        "Clean up this markdown output",
+        "Format the answer for readability"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
-import { AssistantText } from '../components/AgentParts'
+import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
 import { DagView } from '../components/DagView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
@@ -57,8 +57,8 @@ function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
 }
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
-// The orchestrator never emits top-level token events — the final answer lives in
-// the last DAG node's nodeAnswer.
+// Used as a fallback when the orchestrator presents no top-level text of its own —
+// the answer then lives in the last DAG node's nodeAnswer.
 function liveDagFinalText(dag: DagTurnState): string {
   if (!dag.nodes.length) return ''
   const hasSuccessor = new Set<string>()
@@ -374,8 +374,14 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
 
             // Live turn
             const liveDag = live!.dag
-            const liveText = liveDag ? liveDagFinalText(liveDag) : ''
-            const showSpinner = streaming && !liveDag
+            const liveTopText = live!.text ?? ''
+            const liveTopRuns = live!.runs ?? []
+            // Prefer the orchestrator's own streamed answer (it presents the result
+            // after execute); fall back to the terminal DAG node's output if the
+            // orchestrator emitted nothing top-level.
+            const liveText = liveTopText || (liveDag ? liveDagFinalText(liveDag) : '')
+            // Show spinner only when streaming and there's nothing to show yet.
+            const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
             const liveDone = !streaming
             const copyKey = `live-${live!.userText.slice(0, 20)}`
             return (
@@ -399,7 +405,14 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                           <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
                         </span>
                       ) : liveDag && !liveDone ? (
-                        <DagView dag={liveDag} />
+                        <>
+                          <DagView dag={liveDag} />
+                          {liveText && (
+                            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                              <AssistantText text={liveText} />
+                            </div>
+                          )}
+                        </>
                       ) : liveDag && liveDone ? (
                         <>
                           <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
@@ -412,7 +425,19 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                           </details>
                           {liveText && <AssistantText text={liveText} />}
                         </>
-                      ) : null}
+                      ) : (
+                        // No DAG: orchestrator answered directly (conversational or
+                        // tool-based research where DAG events don't reach the frontend).
+                        <div>
+                          {liveTopRuns.length > 0 && (
+                            <ActivityList activity={liveTopRuns.flatMap(r => r.activity)} />
+                          )}
+                          {liveTopText
+                            ? <AssistantText text={liveTopText} />
+                            : streaming && <Dots />
+                          }
+                        </div>
+                      )}
                     </div>
                     {liveText && (!streaming) && (
                       <div className="flex items-center gap-3 mt-1.5 px-1">

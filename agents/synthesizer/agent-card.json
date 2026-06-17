@@ -1,5 +1,17 @@
 {
   "name": "synthesizer",
-  "description": "Synthesizes findings from multiple research nodes into a single, well-structured final answer with citations.",
-  "skills": []
+  "description": "Combines research findings from multiple completed web-researcher nodes into a single, well-structured answer with all inline citations preserved. Use only when two or more research nodes have run and their outputs need merging.",
+  "skills": [
+    {
+      "id": "synthesize_research",
+      "name": "Research synthesis",
+      "description": "Merges findings from multiple research nodes into a comprehensive, well-organized Markdown answer. Preserves all source citations inline and closes with a collapsible Sources block.",
+      "tags": ["synthesis", "summarization", "citation", "research"],
+      "examples": [
+        "Combine the findings from the two researchers into a single answer",
+        "Synthesize the research on climate policy and renewable energy into one report",
+        "Merge the product comparison research into a structured recommendation"
+      ]
+    }
+  ]
 }

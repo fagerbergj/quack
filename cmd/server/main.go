@@ -27,6 +27,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/server"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
 	"github.com/fagerbergj/quack/internal/server/rest"
@@ -90,9 +91,23 @@ func main() {
 		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description()})
 	}
 
+	// Load orchestrator bundle for its system prompt.
+	orchBundle, err := agent.LoadBundle("agents/orchestrator")
+	if err != nil {
+		log.Fatalf("orchestrator bundle: %v", err)
+	}
+	// Load the format-markdown skill frontmatter so the orchestrator's prompt
+	// lists it and the model knows to call load_skill("format-markdown") for
+	// direct-answer responses.
+	fmFm, err := skillSrc.LoadFrontmatter(context.Background(), "format-markdown")
+	if err != nil {
+		log.Fatalf("skills: format-markdown: %v", err)
+	}
+	orchSysPrompt := promptbuilder.Orchestrator([]*skill.Frontmatter{fmFm}, orchBundle.Prompt)
+
 	planner := dag.NewPlanner(llm, agentInfos)
 	executor := dag.NewExecutor(st.Sessions, clientMap, cfg.Dag.MaxActiveNodes)
-	orch := orchestrator.New(st.Sessions, planner, executor)
+	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS)
 
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
