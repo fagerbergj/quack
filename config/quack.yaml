@@ -35,6 +35,12 @@ agents:
     model: ${MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); falls back to RESEARCHER_MODEL if unset
     tools: []
     inputs: [text, image, audio]
+  image-reader:
+    bundle: agents/image-reader
+    provider: default
+    model: ${IMAGE_MODEL}       # Qwen3-VL-32B (vision llm-swap group); specialist for hard image reading
+    tools: []
+    inputs: [text, image]
 
 # Backend bindings for the built-in tools (keyless, internal services in M1).
 tools:
