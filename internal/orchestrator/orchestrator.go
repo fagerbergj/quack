@@ -54,12 +54,16 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // The ADK runner manages session persistence (history, user/assistant turns).
 // SSE events emitted by the plan and execute tools (dag_plan, node events,
 // agent activity) are forwarded via yield context so they appear in the stream.
-func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
+// attachments carries media parts (images, audio) from the current turn; their
+// presence is described to the orchestrator in text and the raw parts are
+// threaded through the plan tool to the planner, which routes them to a
+// media-capable node (the orchestrator model itself stays text/vision-only).
+func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()
-		planTool, err := tools.NewPlanTool(o.planner, planCache)
+		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
@@ -107,7 +111,14 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// through this stream without going through the ADK session pipeline.
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
 
-		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: message}}}
+		// Tell the orchestrator (in text) that media is attached so it routes to
+		// research/plan rather than claiming it cannot see the file. The raw bytes
+		// reach the media-capable node via the plan tool → planner → executor.
+		text := message
+		if desc := dag.AttachmentDesc(attachments); desc != "" {
+			text += "\n\n" + desc
+		}
+		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
 		translator := stream.NewTranslator()
 
 		for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {

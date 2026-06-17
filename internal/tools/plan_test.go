@@ -10,7 +10,7 @@ import (
 func TestNewPlanToolMetadata(t *testing.T) {
 	// stubModel is defined in tools_test.go (same package).
 	planner := dag.NewPlanner(stubModel{out: `{"nodes":[]}`}, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache())
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)
 	}

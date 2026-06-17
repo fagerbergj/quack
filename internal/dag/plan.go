@@ -4,7 +4,11 @@
 // in parallel where possible, and streams progress events.
 package dag
 
-import "fmt"
+import (
+	"fmt"
+
+	"google.golang.org/genai"
+)
 
 // HistoryTurn is one prior conversation turn, passed to nodes as native ADK
 // session events so the model sees real user/model turns rather than a
@@ -17,13 +21,15 @@ type HistoryTurn struct {
 // Plan is a DAG of agent tasks for one user request. UserMessage is the user's
 // request verbatim and History the prior conversation — both flow to every
 // node so specialists see the full context, not just the planner's compressed
-// task description.
+// task description. Attachments carries media parts (images, audio) from the
+// current turn; they are threaded to nodes whose agents declare image/audio inputs.
 type Plan struct {
 	ID          string
 	Nodes       []Node
 	Edges       []Edge
 	UserMessage string
 	History     []HistoryTurn
+	Attachments []*genai.Part
 }
 
 // Node is one task in the plan: the agent to run, what to do, an acceptance

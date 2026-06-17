@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
 import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
@@ -6,6 +6,8 @@ import { DagView } from '../components/DagView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
 import type { Turn, DagOutputItem } from '../generated'
+
+import { AttachmentPreviews, AttachmentStrip, type AttachmentItem } from '../components/AttachmentUI'
 
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -84,6 +86,9 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([])
+  const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const stored = localStorage.getItem('theme')
@@ -161,11 +166,13 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   }
 
   function handleDownload(content: string, idx: number) {
+    const h1 = content.match(/^#\s+(.+)$/m)?.[1]?.trim()
+    const slug = h1 ? h1.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') : `answer-${idx + 1}`
     const blob = new Blob([content], { type: 'text/markdown' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `answer-${idx + 1}.md`
+    a.download = `${slug}.md`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -180,7 +187,11 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
     if (!trimmed || streaming) return
     if (!activeChatId) return
     setInput('')
-    await store.submit(activeChatId, trimmed, title => {
+    const items = attachments.slice()
+    setAttachments([])
+    setLiveAttachmentPreviews(items.map(a => ({ url: a.url, mime: a.file.type, name: a.file.name })))
+    const files = items.map(a => a.file)
+    await store.submit(activeChatId, trimmed, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
     })
     await loadChats().then(data => setChats(data))
@@ -376,13 +387,14 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             const liveDag = live!.dag
             const liveTopText = live!.text ?? ''
             const liveTopRuns = live!.runs ?? []
-            // Prefer the orchestrator's own streamed answer (it presents the result
-            // after execute); fall back to the terminal DAG node's output if the
-            // orchestrator emitted nothing top-level.
-            const liveText = liveTopText || (liveDag ? liveDagFinalText(liveDag) : '')
+            const liveDone = !streaming
+            // When a DAG is present (streaming or done) the terminal node's answer
+            // is the response — it streams token-by-token via nodeAnswer. Ignore any
+            // top-level orchestrator text (pre-plan preamble). Only use liveTopText
+            // when no DAG exists (orchestrator answered directly).
+            const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
             // Show spinner only when streaming and there's nothing to show yet.
             const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
-            const liveDone = !streaming
             const copyKey = `live-${live!.userText.slice(0, 20)}`
             return (
               <div key="live">
@@ -390,6 +402,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                 <div className="flex justify-end mb-3">
                   <div className="max-w-2xl ml-auto">
                     <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                      <AttachmentPreviews previews={liveAttachmentPreviews} />
                       {live!.userText}
                     </div>
                   </div>
@@ -469,33 +482,69 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
         </div>
 
         <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
-          <form onSubmit={handleSubmit} className="flex gap-3 items-end">
-            <textarea
-              className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
-              rows={1}
-              placeholder={activeChatId ? 'Ask something… (Enter to send, Shift+Enter for newline)' : 'Select or start a chat first'}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={streaming || !activeChatId}
+          <form onSubmit={handleSubmit} className="flex flex-col gap-2">
+            <AttachmentStrip
+              attachments={attachments}
+              onRemove={i => setAttachments(prev => {
+                if (prev[i].url) URL.revokeObjectURL(prev[i].url)
+                return prev.filter((_, j) => j !== i)
+              })}
             />
-            {streaming ? (
+            <div className="flex gap-2 items-end">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,audio/*"
+                multiple
+                className="hidden"
+                onChange={e => {
+                  if (e.target.files) {
+                    const items: AttachmentItem[] = Array.from(e.target.files).map(f => ({
+                      file: f,
+                      url: URL.createObjectURL(f),
+                    }))
+                    setAttachments(prev => [...prev, ...items])
+                  }
+                  e.target.value = ''
+                }}
+              />
               <button
                 type="button"
-                onClick={handleStop}
-                className="px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming || !activeChatId}
+                className="p-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                aria-label="Attach file"
+                title="Attach image or audio"
               >
-                Stop
+                📎
               </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!input.trim() || !activeChatId}
-                className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-              >
-                Send
-              </button>
-            )}
+              <textarea
+                className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+                rows={1}
+                placeholder={activeChatId ? 'Ask something… (Enter to send, Shift+Enter for newline)' : 'Select or start a chat first'}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={streaming || !activeChatId}
+              />
+              {streaming ? (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={(!input.trim() && attachments.length === 0) || !activeChatId}
+                  className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                >
+                  Send
+                </button>
+              )}
+            </div>
           </form>
         </div>
       </div>

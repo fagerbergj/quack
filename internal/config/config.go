@@ -84,6 +84,7 @@ type AgentConfig struct {
 	Provider string   `yaml:"provider"` // inference provider name
 	Model    string   `yaml:"model"`    // model served to this agent
 	Tools    []string `yaml:"tools"`    // built-in tool names (kind: builtin)
+	Inputs   []string `yaml:"inputs"`   // accepted input modalities: "text", "image", "audio" (text assumed if empty)
 }
 
 // ToolsConfig holds backend bindings for the built-in tools that need them.

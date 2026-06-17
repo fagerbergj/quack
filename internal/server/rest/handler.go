@@ -5,6 +5,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -163,9 +164,46 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 }
 
 // SendChatMessage runs the orchestrator and streams the response as SSE.
+// Accepts either application/json ({"content":"..."}) or multipart/form-data
+// with a "content" text field and optional "files" file parts (image/audio).
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	var body schema.SendMessageBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
+	var attachments []*genai.Part
+
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "multipart/form-data") {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			http.Error(w, "invalid multipart body", http.StatusBadRequest)
+			return
+		}
+		body.Content = r.FormValue("content")
+		for _, fhs := range r.MultipartForm.File {
+			for _, fh := range fhs {
+				f, err := fh.Open()
+				if err != nil {
+					continue
+				}
+				data, err := io.ReadAll(f)
+				f.Close()
+				if err != nil {
+					continue
+				}
+				mime := fh.Header.Get("Content-Type")
+				if mime == "" {
+					mime = "application/octet-stream"
+				}
+				attachments = append(attachments, &genai.Part{
+					InlineData: &genai.Blob{Data: data, MIMEType: mime},
+				})
+			}
+		}
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+	}
+	if body.Content == "" {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -215,7 +253,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	var activePlanID string
 	now := func() *time.Time { t := time.Now().UTC(); return &t }
 
-	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content) {
+	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content, attachments) {
 		trySendTitle()
 		if err != nil {
 			if !clientGone {

@@ -21,8 +21,9 @@ import (
 // events stream live as they are produced; the node_id field routes each event
 // to the correct node card in the frontend DAG view.
 type Executor struct {
-	sessions session.Service
-	clients  map[string]adkagent.Agent // keyed by agent name
+	sessions    session.Service
+	clients     map[string]adkagent.Agent // keyed by agent name
+	mediaAgents map[string]bool           // agents that accept image/audio InlineData parts
 	// sem caps how many nodes execute concurrently across all DAG runs. Nodes
 	// whose dependencies are met still queue here until a slot frees, so a wide
 	// layer doesn't fire N huge model requests at the single worker at once.
@@ -30,12 +31,13 @@ type Executor struct {
 }
 
 // NewExecutor returns an Executor. clients maps agent names to their A2A clients.
+// mediaAgents is the set of agent names that accept image/audio parts in their content.
 // maxActive caps concurrent node executions (<1 ⇒ default 2).
-func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent, maxActive int) *Executor {
+func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent, mediaAgents map[string]bool, maxActive int) *Executor {
 	if maxActive < 1 {
 		maxActive = 2
 	}
-	return &Executor{sessions: sessions, clients: clients, sem: make(chan struct{}, maxActive)}
+	return &Executor{sessions: sessions, clients: clients, mediaAgents: mediaAgents, sem: make(chan struct{}, maxActive)}
 }
 
 // nodeMsg is one message sent from a node goroutine to the Execute main loop.
@@ -218,7 +220,15 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	// nodes lean and avoids dumping the whole transcript into every node.
 	nodeSessionID := plan.ID + ":" + node.ID
 
-	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: task}}}
+	// Media-capable agents (image/audio inputs) receive the attachment parts
+	// prepended before the text task so the model sees the file before the
+	// instruction — the standard layout for multimodal VLMs.
+	parts := []*genai.Part{{Text: task}}
+	if e.mediaAgents[node.AgentName] && len(plan.Attachments) > 0 {
+		parts = append(plan.Attachments, parts...)
+		log.Printf("dag: node %s sending %d attachment(s) to media agent %q", node.ID, len(plan.Attachments), node.AgentName)
+	}
+	content := &genai.Content{Role: "user", Parts: parts}
 	var answer strings.Builder
 	var stats stream.NodeDoneData
 	startedAt := time.Now()

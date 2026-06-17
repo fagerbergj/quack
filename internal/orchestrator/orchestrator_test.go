@@ -42,7 +42,7 @@ func TestOrchestratorReturnType(t *testing.T) {
 	var orch *Orchestrator
 	if orch != nil {
 		// This line confirms the return type compiles correctly.
-		for ev, err := range orch.Run(nil, "", "", "") { //nolint:all
+		for ev, err := range orch.Run(nil, "", "", "", nil) { //nolint:all
 			_ = ev.Name
 			var _ string = ev.Name
 			// stream.SSEEvent has a Name field of type string.

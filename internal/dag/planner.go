@@ -32,12 +32,17 @@ func NewPlanner(m model.LLM, agents []AgentInfo) *Planner {
 // Plan calls the model to produce a DAG for the given user message. history is
 // the prior conversation (empty for a fresh chat); it is shown to the planner
 // so follow-up requests resolve correctly, and stamped on the plan so every
-// node receives it. On any failure it falls back to a single web-researcher node.
-func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message string) (*Plan, error) {
+// node receives it. attachments are media parts (images, audio) from the current
+// turn; their MIME types are described as text so the text-only planner can route
+// to a media-capable agent. On any failure it falls back to a single web-researcher node.
+func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
 	sysPrompt := p.buildSystemPrompt()
 	userText := message
 	if len(history) > 0 {
 		userText = "Conversation so far:\n" + flattenHistory(history) + "\n\nNew user request:\n" + message
+	}
+	if desc := AttachmentDesc(attachments); desc != "" {
+		userText += "\n\n" + desc
 	}
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{
@@ -52,7 +57,7 @@ func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message strin
 	var sb strings.Builder
 	for resp, err := range p.model.GenerateContent(ctx, req, false) {
 		if err != nil {
-			return p.stamp(p.fallback(message), history, message), nil // degrade gracefully
+			return p.stamp(p.fallback(message), history, message, attachments), nil // degrade gracefully
 		}
 		if resp.Content != nil {
 			for _, part := range resp.Content.Parts {
@@ -65,16 +70,35 @@ func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message strin
 
 	plan, err := parsePlan(sb.String(), p.agents)
 	if err != nil {
-		return p.stamp(p.fallback(message), history, message), nil // degrade gracefully
+		return p.stamp(p.fallback(message), history, message, attachments), nil // degrade gracefully
 	}
-	return p.stamp(plan, history, message), nil
+	return p.stamp(plan, history, message, attachments), nil
 }
 
-// stamp records the verbatim user message and conversation history on the plan
-// so the executor can pass them to every node.
-func (p *Planner) stamp(plan *Plan, history []HistoryTurn, message string) *Plan {
+// AttachmentDesc returns a human-readable description of the attachment list for
+// the text-only planner prompt (e.g. "[User attached: 2 file(s): image/jpeg, audio/mp3]").
+func AttachmentDesc(parts []*genai.Part) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	var mimes []string
+	for _, p := range parts {
+		if p.InlineData != nil && p.InlineData.MIMEType != "" {
+			mimes = append(mimes, p.InlineData.MIMEType)
+		}
+	}
+	if len(mimes) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("[User attached: %d file(s): %s]", len(mimes), strings.Join(mimes, ", "))
+}
+
+// stamp records the verbatim user message, conversation history, and attachments
+// on the plan so the executor can pass them to every node.
+func (p *Planner) stamp(plan *Plan, history []HistoryTurn, message string, attachments []*genai.Part) *Plan {
 	plan.History = history
 	plan.UserMessage = message
+	plan.Attachments = attachments
 	return plan
 }
 
@@ -115,6 +139,16 @@ func (p *Planner) fallback(message string) *Plan {
 	}
 }
 
+// hasMediaAgent returns true if any configured agent is named "media-reader" or similar.
+func (p *Planner) hasMediaAgent() bool {
+	for _, a := range p.agents {
+		if strings.Contains(a.Name, "media-reader") || strings.Contains(a.Name, "media") {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Planner) buildSystemPrompt() string {
 	var agentList strings.Builder
 	for _, a := range p.agents {
@@ -122,6 +156,15 @@ func (p *Planner) buildSystemPrompt() string {
 	}
 
 	now := time.Now()
+	mediaRule := ""
+	if p.hasMediaAgent() {
+		mediaRule = `
+9. MEDIA ROUTING — when the user message contains "[User attached: ...]":
+   - Use ONE media-reader node (no web-researcher needed unless the user also asks a factual question).
+   - The media-reader node receives the actual file bytes; write its task as a clear instruction about what to do with the file.
+   - If the user asks a factual question AND has an attachment, use media-reader first, then web-researcher (serial chain), then synthesizer.`
+	}
+
 	return fmt.Sprintf(`Today's date is %s. The query may be time-sensitive: when it mentions "recent", "latest", "new", "current", or "this year", scope the tasks you write to the PRESENT — name the current year explicitly (e.g. "in %d") rather than defaulting to dates from your training data, which are in the past.
 
 You are a task decomposition specialist. Decompose the user's query into a minimal DAG of research tasks.
@@ -151,7 +194,7 @@ Rules:
      specs for those exact models. The second researcher receives the first's answer
      as context, so it can search for the right things.
    - Ask yourself: "Could a researcher answer this task without seeing the previous
-     researcher's output?" If NO, set depends_on.
+     researcher's output?" If NO, set depends_on.%s
 
 Output ONLY valid JSON (no markdown fences, no explanation):
 {
@@ -160,7 +203,7 @@ Output ONLY valid JSON (no markdown fences, no explanation):
     {"id": "n2", "agent": "web-researcher", "task": "...", "depends_on": ["n1"]},
     {"id": "n3", "agent": "synthesizer", "task": "Combine findings into a comprehensive answer", "depends_on": ["n1","n2"]}
   ]
-}`, now.Format("Monday, January 2, 2006"), now.Year(), agentList.String())
+}`, now.Format("Monday, January 2, 2006"), now.Year(), agentList.String(), mediaRule)
 }
 
 // rawNode is the JSON shape the planner LLM is asked to emit.

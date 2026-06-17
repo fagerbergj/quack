@@ -40,7 +40,9 @@ const (
 	// reason-before-score (G-Eval) keeps the scoring disciplined; the caller
 	// re-derives the overall score as the lowest criterion in aggregateVerdict.
 	judgeAgentBehaviour = "You did NOT write the answer being evaluated, and you must not trust its assertions. " +
-		"You have no tools — judge the answer on its own merits against the rubric: whether it actually answers the question, stays internally consistent, and whether anything stated with specificity (names, prices, numbers, dates) reads as invented or unsupported. Do NOT try to verify which URLs were fetched — citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. " +
+		"You have no tools. Judge the answer on its own merits against the rubric. " +
+		"If an image is attached to this message, you can see it — use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
+		"Do NOT try to verify which URLs were fetched — citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. " +
 		"CRITICAL: the agent retrieved live web content that you do not have, and your own world knowledge is stale and incomplete. NEVER treat a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training — an unfamiliar title, name, product, or event is NOT evidence of fabrication. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. When a claim carries an inline citation, treat it as grounded. " +
 		"Score EVERY criterion the rubric names — no more, no fewer. For each, reason in one or two sentences, then assign an INTEGER score from 0 to 10 using the rubric's scoring bands (10 = the criterion is fully met, 0 = total failure; use the intermediate values for partial quality — do not snap to 0, 5, or 10). Judge substance, not style: length and fluent prose earn no credit. Each criterion is an independent requirement: the answer's overall score is its WEAKEST criterion, so a single failing criterion sinks it — do not let a strong dimension excuse a failing one. " +
 		"When — and only when — you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {reason, score}), `score` (the lowest of your criterion scores), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
@@ -183,7 +185,13 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer)}}}
+	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer)}}
+	for _, p := range question.Parts {
+		if p != nil && p.InlineData != nil {
+			parts = append(parts, p)
+		}
+	}
+	content := &genai.Content{Role: "user", Parts: parts}
 
 	var (
 		submitted bool

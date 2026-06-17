@@ -7,6 +7,7 @@ import (
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -27,7 +28,11 @@ type planResult struct {
 // copy the (large) plan JSON between calls, which is where nodes were being
 // dropped. A dag_plan SSE event is emitted immediately via the yield context so
 // the frontend can render the DAG structure before execution begins.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache) (tool.Tool, error) {
+//
+// attachments are the current turn's media parts; they are passed to the planner
+// (which describes them for routing and stamps them on the plan) so the executor
+// can deliver the raw bytes to a media-capable node.
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part) (tool.Tool, error) {
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
 			Name: "plan",
@@ -37,7 +42,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache) (tool.Tool, error) {
 				"Returns a plan_id; pass it to the execute tool to run the plan.",
 		},
 		func(tc agent.ToolContext, a planArgs) (planResult, error) {
-			p, err := planner.Plan(tc, nil, a.Query)
+			p, err := planner.Plan(tc, nil, a.Query, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
