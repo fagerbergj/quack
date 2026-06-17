@@ -76,7 +76,7 @@ func TestBuildHistory(t *testing.T) {
 	appendEvent(t, svc, sess, "user", "Illinois", false)
 
 	o := &Orchestrator{sessions: svc}
-	got := o.buildHistory(ctx, userID, sessionID)
+	got := buildHistory(o.priorEvents(ctx, userID, sessionID))
 
 	want := []dag.HistoryTurn{
 		{Role: "user", Text: "which Springfield?"},
@@ -96,7 +96,7 @@ func TestBuildHistory(t *testing.T) {
 // TestBuildHistoryEmptySession returns nil for a session that doesn't exist.
 func TestBuildHistoryEmptySession(t *testing.T) {
 	o := &Orchestrator{sessions: session.InMemoryService()}
-	if got := o.buildHistory(context.Background(), "u", "missing"); got != nil {
+	if got := buildHistory(o.priorEvents(context.Background(), "u", "missing")); got != nil {
 		t.Errorf("buildHistory on missing session = %+v, want nil", got)
 	}
 }
@@ -128,7 +128,7 @@ func TestPendingChoiceCallID(t *testing.T) {
 	o := &Orchestrator{sessions: svc}
 
 	// No clarification yet → nothing pending.
-	if got := o.pendingChoiceCallID(ctx, userID, sessionID); got != "" {
+	if got := pendingChoiceCallID(o.priorEvents(ctx, userID, sessionID)); got != "" {
 		t.Errorf("fresh session pendingChoiceCallID = %q, want empty", got)
 	}
 
@@ -139,7 +139,7 @@ func TestPendingChoiceCallID(t *testing.T) {
 	appendPartsEvent(t, svc, sess, nil,
 		&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: callID, Name: tools.ChoiceToolName, Response: map[string]any{"status": "pending"}}})
 
-	if got := o.pendingChoiceCallID(ctx, userID, sessionID); got != callID {
+	if got := pendingChoiceCallID(o.priorEvents(ctx, userID, sessionID)); got != callID {
 		t.Errorf("after ask, pendingChoiceCallID = %q, want %q", got, callID)
 	}
 
@@ -147,7 +147,7 @@ func TestPendingChoiceCallID(t *testing.T) {
 	appendPartsEvent(t, svc, sess, nil,
 		&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: callID, Name: tools.ChoiceToolName, Response: map[string]any{tools.ChoiceAnswerKey: "Illinois"}}})
 
-	if got := o.pendingChoiceCallID(ctx, userID, sessionID); got != "" {
+	if got := pendingChoiceCallID(o.priorEvents(ctx, userID, sessionID)); got != "" {
 		t.Errorf("after answer, pendingChoiceCallID = %q, want empty", got)
 	}
 }
