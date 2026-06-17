@@ -466,6 +466,37 @@ func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
 	return ev
 }
 
+// ScopeToRun stamps runID onto a wire event whose RunID is empty, so activity the
+// orchestrator emits from its own (un-gated) run attaches to a single top-level
+// run on the client instead of being dropped (the client keys activity by run_id
+// and discards events with no matching run). Events that already carry a RunID,
+// or have no RunID field, are returned unchanged.
+func ScopeToRun(ev SSEEvent, runID string) SSEEvent {
+	switch d := ev.Data.(type) {
+	case AgentThinkingData:
+		if d.RunID == "" {
+			d.RunID = runID
+			ev.Data = d
+		}
+	case AgentTokenData:
+		if d.RunID == "" {
+			d.RunID = runID
+			ev.Data = d
+		}
+	case AgentToolCallData:
+		if d.RunID == "" {
+			d.RunID = runID
+			ev.Data = d
+		}
+	case AgentToolResultData:
+		if d.RunID == "" {
+			d.RunID = runID
+			ev.Data = d
+		}
+	}
+	return ev
+}
+
 // Marker-payload values survive the A2A round-trip as JSON, so numbers may arrive
 // as float64; these extractors read a value tolerantly with a zero fallback.
 func asInt(v any) int {

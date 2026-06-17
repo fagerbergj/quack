@@ -92,9 +92,17 @@ function ResearchCard({ run, running, answer, isFinal }: { run: AgentRun; runnin
         </details>
       )}
       {isFinal && answer && (
-        <div className="px-4 py-3 border-t border-gray-100 dark:border-gray-700">
-          <AssistantText text={answer} />
-        </div>
+        // The terminal node's answer is the user-facing reply (shown in the main
+        // message bubble), so keep it collapsed here to avoid a duplicate render —
+        // expandable for anyone who wants to inspect the raw specialist output.
+        <details className="not-prose border-t border-gray-100 dark:border-gray-700">
+          <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+            answer
+          </summary>
+          <div className="px-4 pb-3">
+            <AssistantText text={answer} />
+          </div>
+        </details>
       )}
     </div>
   )

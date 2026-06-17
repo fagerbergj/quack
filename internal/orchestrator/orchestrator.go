@@ -121,15 +121,45 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
 		translator := stream.NewTranslator()
 
+		// The orchestrator runs un-gated, so the translator never emits the
+		// agent_start marker that gives node workers a run_id; its own thinking and
+		// plan/execute tool calls would come out with an empty run_id and be dropped
+		// by the client. Open one top-level run here and stamp the orchestrator's
+		// events onto it (ScopeToRun) so its activity renders as the agent wrapping
+		// the DAG. node events forwarded by the execute tool already carry their own
+		// run_id/node_id and are untouched.
+		const orchRunID = "orchestrator"
+		yield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
+			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker,
+		}}, nil)
+
 		for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
 			if err != nil {
 				yield(stream.Errorf(err.Error()), nil)
 				return
 			}
 			for _, se := range translator.Event(ev) {
-				if !yield(se, nil) {
+				if !yield(stream.ScopeToRun(se, orchRunID), nil) {
 					return
 				}
+			}
+		}
+		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
+			RunID: orchRunID, Stage: stream.StageWorker,
+		}}, nil)
+
+		// Deliver mode (execute end_turn=true): the specialist's answer streamed
+		// straight to the user and the orchestrator stayed silent, so its session
+		// holds no record of the answer. Append it as the assistant message so it
+		// survives reload (AsstText) and is visible to follow-up turns. Use a
+		// detached context so a client disconnect at end-of-stream still persists.
+		if delivered := planCache.Delivered(); delivered != "" {
+			persistCtx := context.WithoutCancel(ctx)
+			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
+				aev := session.NewEvent("")
+				aev.Author = ag.Name()
+				aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: delivered}}}
+				_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
 			}
 		}
 		yield(stream.Done(), nil)
