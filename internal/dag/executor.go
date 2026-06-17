@@ -21,9 +21,9 @@ import (
 // events stream live as they are produced; the node_id field routes each event
 // to the correct node card in the frontend DAG view.
 type Executor struct {
-	sessions     session.Service
-	clients      map[string]adkagent.Agent // keyed by agent name
-	mediaAgents  map[string]bool           // agents that accept image/audio InlineData parts
+	sessions    session.Service
+	clients     map[string]adkagent.Agent // keyed by agent name
+	mediaAgents map[string]bool           // agents that accept image/audio InlineData parts
 	// sem caps how many nodes execute concurrently across all DAG runs. Nodes
 	// whose dependencies are met still queue here until a slot frees, so a wide
 	// layer doesn't fire N huge model requests at the single worker at once.

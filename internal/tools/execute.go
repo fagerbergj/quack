@@ -1,0 +1,81 @@
+package tools
+
+import (
+	"fmt"
+
+	"google.golang.org/adk/agent"
+	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/functiontool"
+
+	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/stream"
+)
+
+type executeArgs struct {
+	PlanID string `json:"plan_id"` // the plan_id returned by the plan tool
+}
+
+type executeResult struct {
+	Answer string `json:"answer"`
+}
+
+// NewExecuteTool returns a tool that runs a DAG plan produced by the plan tool.
+// The plan is looked up by ID from cache (the same cache the plan tool wrote to)
+// rather than parsed from a model-relayed JSON blob — the model only passes the
+// short plan_id, so no nodes can be lost in transit. Node events (node_queued,
+// node_start, agent activity, node_done/failed) are forwarded up through the
+// orchestrator's SSE stream via the yield context so the frontend can render
+// live DAG progress. Returns the final answer.
+func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (tool.Tool, error) {
+	return functiontool.New[executeArgs, executeResult](
+		functiontool.Config{
+			Name:        "execute",
+			Description: "Tool to execute a DAG plan produced by the plan tool. Pass the plan_id returned by plan. Returns the final synthesized answer.",
+		},
+		func(tc agent.ToolContext, a executeArgs) (executeResult, error) {
+			plan, ok := cache.Get(a.PlanID)
+			if !ok {
+				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q — call plan first and pass the plan_id it returns", a.PlanID)
+			}
+			yieldFn, hasYield := stream.YieldFromContext(tc)
+			nodeOutputs := make(map[string]string)
+			for ev, err := range executor.Execute(tc, plan, userID, nodeOutputs) {
+				if hasYield {
+					yieldFn(ev)
+				}
+				if err != nil {
+					return executeResult{}, fmt.Errorf("execute: %w", err)
+				}
+			}
+			answer := terminalOutput(plan, nodeOutputs)
+			if answer == "" {
+				return executeResult{}, fmt.Errorf("execute: all nodes completed but produced no output")
+			}
+			return executeResult{Answer: answer}, nil
+		},
+	)
+}
+
+// terminalOutput returns the output of the plan's terminal node (the one with
+// no successors). Falls back to the last node in slice order.
+func terminalOutput(plan dag.Plan, outputs map[string]string) string {
+	hasSuccessor := make(map[string]bool, len(plan.Nodes))
+	for _, n := range plan.Nodes {
+		for _, dep := range n.DependsOn {
+			hasSuccessor[dep] = true
+		}
+	}
+	for _, n := range plan.Nodes {
+		if !hasSuccessor[n.ID] {
+			if out, ok := outputs[n.ID]; ok {
+				return stream.StripThinking(out)
+			}
+		}
+	}
+	for i := len(plan.Nodes) - 1; i >= 0; i-- {
+		if out, ok := outputs[plan.Nodes[i].ID]; ok {
+			return stream.StripThinking(out)
+		}
+	}
+	return ""
+}

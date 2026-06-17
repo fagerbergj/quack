@@ -41,7 +41,7 @@ func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message strin
 	if len(history) > 0 {
 		userText = "Conversation so far:\n" + flattenHistory(history) + "\n\nNew user request:\n" + message
 	}
-	if desc := attachmentDesc(attachments); desc != "" {
+	if desc := AttachmentDesc(attachments); desc != "" {
 		userText += "\n\n" + desc
 	}
 	req := &model.LLMRequest{
@@ -75,9 +75,9 @@ func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message strin
 	return p.stamp(plan, history, message, attachments), nil
 }
 
-// attachmentDesc returns a human-readable description of the attachment list for
+// AttachmentDesc returns a human-readable description of the attachment list for
 // the text-only planner prompt (e.g. "[User attached: 2 file(s): image/jpeg, audio/mp3]").
-func attachmentDesc(parts []*genai.Part) string {
+func AttachmentDesc(parts []*genai.Part) string {
 	if len(parts) == 0 {
 		return ""
 	}
@@ -196,7 +196,7 @@ Rules:
    - Ask yourself: "Could a researcher answer this task without seeing the previous
      researcher's output?" If NO, set depends_on.%s
 
-Output ONLY a JSON object (no markdown, no explanation):
+Output ONLY valid JSON (no markdown fences, no explanation):
 {
   "nodes": [
     {"id": "n1", "agent": "web-researcher", "task": "...", "depends_on": []},
@@ -221,6 +221,7 @@ type rawPlan struct {
 
 func parsePlan(text string, agents []AgentInfo) (*Plan, error) {
 	text = extractJSON(text)
+
 	var raw rawPlan
 	if err := json.Unmarshal([]byte(text), &raw); err != nil {
 		return nil, fmt.Errorf("parse json: %w", err)

@@ -1,24 +1,36 @@
 {
   "name": "web-researcher",
-  "description": "Researches questions using live web search and page retrieval, then synthesizes a cited answer.",
+  "description": "Searches the web and retrieves pages to answer factual questions with inline citations. Use for any query requiring live, current information: events, prices, hours, people, places, products, comparisons, or anything where training-data accuracy cannot be assumed.",
   "skills": [
     {
       "id": "web_search",
       "name": "Web search",
-      "description": "Find relevant pages for a query using a keyless web search backend.",
-      "tags": ["search", "web", "research"]
+      "description": "Finds relevant pages for a query using a keyless web search backend. Returns titles, URLs, and snippets.",
+      "tags": ["search", "web", "research"],
+      "examples": [
+        "What are the current mortgage rates?",
+        "Find the latest news about the EU AI Act"
+      ]
     },
     {
       "id": "web_fetch",
       "name": "Fetch page",
-      "description": "Retrieve and read the readable text of a web page, rendering JavaScript-heavy pages when needed.",
-      "tags": ["fetch", "http", "render"]
+      "description": "Retrieves and reads the text of a web page, falling back to a headless browser for JavaScript-rendered pages. Supports pattern-based grep and line-offset navigation for long pages.",
+      "tags": ["fetch", "http", "scrape"],
+      "examples": [
+        "Read the full article at this URL",
+        "Get the pricing details from the product page"
+      ]
     },
     {
       "id": "summarize",
       "name": "Summarize",
-      "description": "Condense long page text into a faithful, compact summary.",
-      "tags": ["summarize"]
+      "description": "Condenses long page text into a faithful, compact summary. Optionally focused on a specific question or topic.",
+      "tags": ["summarize", "condense"],
+      "examples": [
+        "Summarize this article focused on the funding details",
+        "Condense this long page into its key points"
+      ]
     }
   ]
 }
