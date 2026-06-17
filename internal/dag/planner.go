@@ -297,13 +297,6 @@ func parsePlan(text string, agents []AgentInfo) (*Plan, error) {
 		}
 	}
 
-	// Build edges from the (possibly corrected) DependsOn arrays.
-	for _, n := range plan.Nodes {
-		for _, dep := range n.DependsOn {
-			plan.Edges = append(plan.Edges, Edge{From: dep, To: n.ID})
-		}
-	}
-
 	// Validate: must be acyclic.
 	if _, err := TopoSort(*plan); err != nil {
 		return nil, err
