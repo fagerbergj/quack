@@ -1,8 +1,8 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
+	"strings"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/tool"
@@ -17,26 +17,32 @@ type planArgs struct {
 }
 
 type planResult struct {
-	Plan string `json:"plan"` // JSON-encoded dag.Plan
+	PlanID  string `json:"plan_id"` // pass this to the execute tool
+	Summary string `json:"summary"` // human-readable node list for the model
 }
 
-// NewPlanTool returns a tool that decomposes a research query into a DAG plan.
-// The returned plan JSON is passed to the execute tool to run the DAG.
-// A dag_plan SSE event is emitted immediately via the yield context so the
-// frontend can render the DAG structure before execution begins.
-func NewPlanTool(planner *dag.Planner) (tool.Tool, error) {
+// NewPlanTool returns a tool that decomposes a request into a DAG plan. The full
+// plan is stored in cache keyed by a plan ID; the tool returns only that ID plus
+// a short summary. The execute tool runs the plan by ID — the model never has to
+// copy the (large) plan JSON between calls, which is where nodes were being
+// dropped. A dag_plan SSE event is emitted immediately via the yield context so
+// the frontend can render the DAG structure before execution begins.
+func NewPlanTool(planner *dag.Planner, cache *PlanCache) (tool.Tool, error) {
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
 			Name: "plan",
 			Description: "Tool to decompose a task into a DAG plan for specialist agents to execute. " +
 				"Use when the task is too large, too complex, or requires capabilities you cannot perform directly. " +
-				"Do NOT call for tasks you can complete in a single response.",
+				"Do NOT call for tasks you can complete in a single response. " +
+				"Returns a plan_id; pass it to the execute tool to run the plan.",
 		},
 		func(tc agent.ToolContext, a planArgs) (planResult, error) {
 			p, err := planner.Plan(tc, nil, a.Query)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
+
+			cache.Put(*p)
 
 			// Emit dag_plan immediately so the frontend knows the plan structure
 			// before the execute tool starts running nodes.
@@ -52,11 +58,21 @@ func NewPlanTool(planner *dag.Planner) (tool.Tool, error) {
 				yieldFn(stream.DagPlan(p.ID, nodes, edges))
 			}
 
-			b, err := json.Marshal(p)
-			if err != nil {
-				return planResult{}, fmt.Errorf("plan: marshal: %w", err)
-			}
-			return planResult{Plan: string(b)}, nil
+			return planResult{PlanID: p.ID, Summary: summarizePlan(p)}, nil
 		},
 	)
+}
+
+// summarizePlan renders a one-line-per-node overview of the plan for the model.
+// It is informational only — execution uses the cached plan, not this text.
+func summarizePlan(p *dag.Plan) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
+	for _, n := range p.Nodes {
+		fmt.Fprintf(&sb, "\n- %s (%s)", n.ID, n.AgentName)
+		if len(n.DependsOn) > 0 {
+			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
+		}
+	}
+	return sb.String()
 }

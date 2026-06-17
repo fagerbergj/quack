@@ -57,8 +57,8 @@ function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
 }
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
-// The orchestrator never emits top-level token events — the final answer lives in
-// the last DAG node's nodeAnswer.
+// Used as a fallback when the orchestrator presents no top-level text of its own —
+// the answer then lives in the last DAG node's nodeAnswer.
 function liveDagFinalText(dag: DagTurnState): string {
   if (!dag.nodes.length) return ''
   const hasSuccessor = new Set<string>()
@@ -376,7 +376,10 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             const liveDag = live!.dag
             const liveTopText = live!.text ?? ''
             const liveTopRuns = live!.runs ?? []
-            const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
+            // Prefer the orchestrator's own streamed answer (it presents the result
+            // after execute); fall back to the terminal DAG node's output if the
+            // orchestrator emitted nothing top-level.
+            const liveText = liveTopText || (liveDag ? liveDagFinalText(liveDag) : '')
             // Show spinner only when streaming and there's nothing to show yet.
             const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
             const liveDone = !streaming

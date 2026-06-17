@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"google.golang.org/adk/agent"
@@ -13,7 +12,7 @@ import (
 )
 
 type executeArgs struct {
-	Plan string `json:"plan"` // JSON-encoded dag.Plan from the plan tool
+	PlanID string `json:"plan_id"` // the plan_id returned by the plan tool
 }
 
 type executeResult struct {
@@ -21,19 +20,22 @@ type executeResult struct {
 }
 
 // NewExecuteTool returns a tool that runs a DAG plan produced by the plan tool.
-// Node events (node_queued, node_start, agent activity, node_done/failed) are
-// forwarded up through the orchestrator's SSE stream via the yield context so
-// the frontend can render live DAG progress. Returns the final answer.
-func NewExecuteTool(executor *dag.Executor, userID string) (tool.Tool, error) {
+// The plan is looked up by ID from cache (the same cache the plan tool wrote to)
+// rather than parsed from a model-relayed JSON blob — the model only passes the
+// short plan_id, so no nodes can be lost in transit. Node events (node_queued,
+// node_start, agent activity, node_done/failed) are forwarded up through the
+// orchestrator's SSE stream via the yield context so the frontend can render
+// live DAG progress. Returns the final answer.
+func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{
 			Name:        "execute",
-			Description: "Tool to execute a DAG plan produced by the plan tool. Pass the plan JSON returned by plan. Returns the final synthesized answer.",
+			Description: "Tool to execute a DAG plan produced by the plan tool. Pass the plan_id returned by plan. Returns the final synthesized answer.",
 		},
 		func(tc agent.ToolContext, a executeArgs) (executeResult, error) {
-			var plan dag.Plan
-			if err := json.Unmarshal([]byte(a.Plan), &plan); err != nil {
-				return executeResult{}, fmt.Errorf("execute: parse plan: %w", err)
+			plan, ok := cache.Get(a.PlanID)
+			if !ok {
+				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q — call plan first and pass the plan_id it returns", a.PlanID)
 			}
 			yieldFn, hasYield := stream.YieldFromContext(tc)
 			nodeOutputs := make(map[string]string)

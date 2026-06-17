@@ -56,12 +56,15 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // agent activity) are forwarded via yield context so they appear in the stream.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		planTool, err := tools.NewPlanTool(o.planner)
+		// One plan cache per run, shared by this run's plan and execute tools, so
+		// execute looks the plan up by ID instead of the model copying plan JSON.
+		planCache := tools.NewPlanCache()
+		planTool, err := tools.NewPlanTool(o.planner, planCache)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(o.executor, userID)
+		execTool, err := tools.NewExecuteTool(o.executor, planCache, userID)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return
