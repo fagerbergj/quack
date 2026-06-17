@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	adkagent "google.golang.org/adk/agent"
@@ -281,8 +283,8 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 	if len(act.fetched) == 0 && len(act.seen) == 0 {
 		return 0, nil, false
 	}
-	fetchedURL, fetchedHost := normalizedSets(keysOf(act.fetched))
-	seenURL, seenHost := normalizedSets(keysOf(act.seen))
+	fetchedURL, fetchedHost := normalizedSets(slices.Collect(maps.Keys(act.fetched)))
+	seenURL, seenHost := normalizedSets(slices.Collect(maps.Keys(act.seen)))
 
 	dedup := make(map[string]struct{})
 	var sum float64
@@ -359,15 +361,6 @@ func normalizedSets(urls []string) (urlSet, hostSet map[string]bool) {
 		}
 	}
 	return urlSet, hostSet
-}
-
-// keysOf returns the keys of a string-keyed map (works for both fetched and seen).
-func keysOf[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 // lengthScore is a deterministic length gate. For now it only catches a

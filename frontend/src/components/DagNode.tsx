@@ -1,29 +1,8 @@
-import { useState, useEffect } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
 import type { DagNodeDef } from '../state/agentStream'
-
-function fmtMs(ms: number): string {
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1)}s`
-  const m = Math.floor(s / 60)
-  const rem = Math.floor(s % 60)
-  if (m < 60) return `${m}m ${rem}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${m % 60}m ${rem}s`
-}
-
-// LiveTimer ticks every 100ms while running, then freezes on the final value.
-function LiveTimer({ startedAt, finishedAt }: { startedAt: number; finishedAt?: number }) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (finishedAt != null) return
-    const id = setInterval(() => setNow(Date.now()), 100)
-    return () => clearInterval(id)
-  }, [finishedAt])
-  return <>{fmtMs((finishedAt ?? now) - startedAt)}</>
-}
+import { fmtMs, LiveTimer } from '../utils/timer'
 
 function StatusBadge({ status }: { status: NodeStatus }) {
   const styles: Record<NodeStatus, string> = {

@@ -139,20 +139,10 @@ func (p *Planner) fallback(message string) *Plan {
 	}
 }
 
-// hasMediaAgent returns true if any configured agent can process image or audio input.
-func (p *Planner) hasMediaAgent() bool {
+// hasAgentNamed reports whether any configured agent's name contains sub.
+func (p *Planner) hasAgentNamed(sub string) bool {
 	for _, a := range p.agents {
-		if strings.Contains(a.Name, "media-reader") || strings.Contains(a.Name, "image-reader") {
-			return true
-		}
-	}
-	return false
-}
-
-// hasImageReader returns true if the image-reader specialist is configured.
-func (p *Planner) hasImageReader() bool {
-	for _, a := range p.agents {
-		if strings.Contains(a.Name, "image-reader") {
+		if strings.Contains(a.Name, sub) {
 			return true
 		}
 	}
@@ -167,8 +157,8 @@ func (p *Planner) buildSystemPrompt() string {
 
 	now := time.Now()
 	mediaRule := ""
-	if p.hasMediaAgent() {
-		if p.hasImageReader() {
+	if p.hasAgentNamed("media-reader") || p.hasAgentNamed("image-reader") {
+		if p.hasAgentNamed("image-reader") {
 			mediaRule = `
 9. MEDIA ROUTING — when the user message contains "[User attached: ...]", pick ONE media agent:
    - audio/* attachment → always use media-reader (image-reader cannot process audio).
@@ -294,13 +284,6 @@ func parsePlan(text string, agents []AgentInfo) (*Plan, error) {
 			if n.AgentName == "synthesizer" {
 				plan.Nodes[i].DependsOn = nonSynthIDs
 			}
-		}
-	}
-
-	// Build edges from the (possibly corrected) DependsOn arrays.
-	for _, n := range plan.Nodes {
-		for _, dep := range n.DependsOn {
-			plan.Edges = append(plan.Edges, Edge{From: dep, To: n.ID})
 		}
 	}
 

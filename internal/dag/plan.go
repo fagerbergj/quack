@@ -26,7 +26,6 @@ type HistoryTurn struct {
 type Plan struct {
 	ID          string
 	Nodes       []Node
-	Edges       []Edge
 	UserMessage string
 	History     []HistoryTurn
 	Attachments []*genai.Part
@@ -40,12 +39,6 @@ type Node struct {
 	Task      string
 	Rubric    string
 	DependsOn []string // IDs of predecessor nodes
-}
-
-// Edge is a dependency between two nodes.
-type Edge struct {
-	From string
-	To   string
 }
 
 // TopoSort returns the plan's nodes grouped into layers. Nodes in layer 0

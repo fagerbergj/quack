@@ -60,16 +60,25 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				for i, n := range p.Nodes {
 					nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn}
 				}
-				edges := make([]stream.DagEdgeDef, len(p.Edges))
-				for i, e := range p.Edges {
-					edges[i] = stream.DagEdgeDef{From: e.From, To: e.To}
-				}
-				yieldFn(stream.DagPlan(p.ID, nodes, edges))
+				yieldFn(stream.DagPlan(p.ID, nodes, planEdges(p.Nodes)))
 			}
 
 			return planResult{PlanID: p.ID, Summary: summarizePlan(p)}, nil
 		},
 	)
+}
+
+// planEdges projects each node's DependsOn into the wire edge list. The dag_plan
+// event carries edges separately for the frontend, though they are fully derived
+// from DependsOn (the single source of truth on the plan itself).
+func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
+	var edges []stream.DagEdgeDef
+	for _, n := range nodes {
+		for _, dep := range n.DependsOn {
+			edges = append(edges, stream.DagEdgeDef{From: dep, To: n.ID})
+		}
+	}
+	return edges
 }
 
 // summarizePlan renders a one-line-per-node overview of the plan for the model.
