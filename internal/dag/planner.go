@@ -139,10 +139,20 @@ func (p *Planner) fallback(message string) *Plan {
 	}
 }
 
-// hasMediaAgent returns true if any configured agent is named "media-reader" or similar.
+// hasMediaAgent returns true if any configured agent can process image or audio input.
 func (p *Planner) hasMediaAgent() bool {
 	for _, a := range p.agents {
-		if strings.Contains(a.Name, "media-reader") || strings.Contains(a.Name, "media") {
+		if strings.Contains(a.Name, "media-reader") || strings.Contains(a.Name, "image-reader") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasImageReader returns true if the image-reader specialist is configured.
+func (p *Planner) hasImageReader() bool {
+	for _, a := range p.agents {
+		if strings.Contains(a.Name, "image-reader") {
 			return true
 		}
 	}
@@ -158,11 +168,21 @@ func (p *Planner) buildSystemPrompt() string {
 	now := time.Now()
 	mediaRule := ""
 	if p.hasMediaAgent() {
-		mediaRule = `
+		if p.hasImageReader() {
+			mediaRule = `
+9. MEDIA ROUTING — when the user message contains "[User attached: ...]", pick ONE media agent:
+   - audio/* attachment → always use media-reader (image-reader cannot process audio).
+   - image/* + request involves handwriting, cursive, messy writing, dense text, small print, multi-column layout, degraded/blurry/faded image, or "transcribe" → use image-reader.
+   - image/* + request is a general description, identification, simple screenshot, or anything not covered above → use media-reader.
+   The chosen node receives the actual file bytes. Write its task as a specific instruction.
+   If the user also asks a factual question, chain: media-agent → web-researcher → synthesizer.`
+		} else {
+			mediaRule = `
 9. MEDIA ROUTING — when the user message contains "[User attached: ...]":
    - Use ONE media-reader node (no web-researcher needed unless the user also asks a factual question).
    - The media-reader node receives the actual file bytes; write its task as a clear instruction about what to do with the file.
    - If the user asks a factual question AND has an attachment, use media-reader first, then web-researcher (serial chain), then synthesizer.`
+		}
 	}
 
 	return fmt.Sprintf(`Today's date is %s. The query may be time-sensitive: when it mentions "recent", "latest", "new", "current", or "this year", scope the tasks you write to the PRESENT — name the current year explicitly (e.g. "in %d") rather than defaulting to dates from your training data, which are in the past.
