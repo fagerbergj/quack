@@ -299,29 +299,5 @@ func pendingChoiceCallID(events []*session.Event) string {
 	return pendingID
 }
 
-// lastOutput returns the output of the terminal node (no successors) in the
-// plan. Falls back to the last node in slice order. Used by tests.
-func lastOutput(plan *dag.Plan, outputs map[string]string) string {
-	hasSuccessor := make(map[string]bool, len(plan.Nodes))
-	for _, n := range plan.Nodes {
-		for _, dep := range n.DependsOn {
-			hasSuccessor[dep] = true
-		}
-	}
-	for _, n := range plan.Nodes {
-		if !hasSuccessor[n.ID] {
-			if out, ok := outputs[n.ID]; ok {
-				return out
-			}
-		}
-	}
-	for i := len(plan.Nodes) - 1; i >= 0; i-- {
-		if out, ok := outputs[plan.Nodes[i].ID]; ok {
-			return out
-		}
-	}
-	return ""
-}
-
 // AgentClients is a convenience alias used by callers to pass the client map.
 type AgentClients = map[string]adkagent.Agent

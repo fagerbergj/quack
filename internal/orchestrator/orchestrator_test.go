@@ -12,34 +12,6 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// TestLastOutput verifies that lastOutput picks the terminal node's result.
-func TestLastOutput(t *testing.T) {
-	plan := &dag.Plan{
-		Nodes: []dag.Node{
-			{ID: "n1", AgentName: "web-researcher", DependsOn: nil},
-			{ID: "n2", AgentName: "synthesizer", DependsOn: []string{"n1"}},
-		},
-	}
-	outputs := map[string]string{"n1": "research result", "n2": "final answer"}
-	got := lastOutput(plan, outputs)
-	if got != "final answer" {
-		t.Errorf("lastOutput = %q, want %q", got, "final answer")
-	}
-}
-
-func TestLastOutputSingleNode(t *testing.T) {
-	plan := &dag.Plan{
-		Nodes: []dag.Node{
-			{ID: "n1", AgentName: "web-researcher"},
-		},
-	}
-	outputs := map[string]string{"n1": "only answer"}
-	got := lastOutput(plan, outputs)
-	if got != "only answer" {
-		t.Errorf("lastOutput = %q, want %q", got, "only answer")
-	}
-}
-
 // appendUserText / appendModelText add a turn-shaped event to a session.
 func appendEvent(t *testing.T, svc session.Service, sess session.Session, author, text string, thought bool) {
 	t.Helper()

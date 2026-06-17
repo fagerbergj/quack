@@ -1,27 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { DagNode } from './DagNode'
 import type { DagTurnState, NodeState } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
-
-function fmtMs(ms: number): string {
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1)}s`
-  const m = Math.floor(s / 60)
-  const rem = Math.floor(s % 60)
-  if (m < 60) return `${m}m ${rem}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${m % 60}m ${rem}s`
-}
-
-function LiveTimer({ startedAt, finishedAt }: { startedAt: number; finishedAt?: number }) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (finishedAt != null) return
-    const id = setInterval(() => setNow(Date.now()), 100)
-    return () => clearInterval(id)
-  }, [finishedAt])
-  return <>{fmtMs((finishedAt ?? now) - startedAt)}</>
-}
+import { LiveTimer } from '../utils/timer'
 
 // topoLayers groups node IDs into layers (layer 0 = no deps, etc.)
 function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): string[][] {

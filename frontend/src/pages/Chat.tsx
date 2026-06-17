@@ -89,7 +89,7 @@ function executeDeliverMode(topRuns: AgentRun[]): boolean {
   return deliver
 }
 
-export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPrompt: string }) {
+export default function Chat() {
   const { chatId: urlChatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
 
@@ -101,7 +101,7 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
   const error = state.error
   const live = state.live
   const [input, setInput] = useState('')
-  const [systemPrompt, setSystemPrompt] = useState(globalSystemPrompt)
+  const [systemPrompt, setSystemPrompt] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
