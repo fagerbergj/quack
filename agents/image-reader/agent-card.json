@@ -1,0 +1,59 @@
+{
+  "name": "image-reader",
+  "description": "Specialist vision agent for difficult image reading: handwritten notes, dense multi-column documents, forms, receipts, technical diagrams with labels, and degraded or low-quality text. Produces Markdown output. Use when the user asks to transcribe handwriting, read small or unclear text, or extract text from a complex document layout. For general image description, simple screenshots, or audio transcription, use media-reader instead.",
+  "version": "0.1.0",
+  "defaultInputModes": ["text/plain", "image/jpeg", "image/png", "image/webp", "image/gif"],
+  "defaultOutputModes": ["text/plain"],
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "skills": [
+    {
+      "id": "transcribe-handwriting",
+      "name": "Handwriting transcription",
+      "description": "Transcribes handwritten text from an attached image — cursive, printed, mixed, or messy handwriting. Preserves structure and layout as Markdown. Triggers on requests to read or transcribe a handwritten note, letter, journal, form, or annotation.",
+      "tags": ["handwriting", "ocr", "transcription", "image"],
+      "examples": [
+        "Transcribe this handwritten note",
+        "What does this handwriting say?",
+        "Can you read the writing in this photo?",
+        "Type out what's written on this piece of paper",
+        "Convert this handwritten journal entry to text"
+      ],
+      "inputModes": ["image/jpeg", "image/png", "image/webp"],
+      "outputModes": ["text/plain"]
+    },
+    {
+      "id": "dense-ocr",
+      "name": "Dense document OCR",
+      "description": "Extracts all text from images with dense or complex layouts — multi-column documents, forms with many fields, receipts, invoices, technical diagrams with labels, or images with small print. Preserves structure as Markdown. Triggers on requests to extract, read, or transcribe text from a complex or information-dense document image.",
+      "tags": ["ocr", "document", "image", "extraction"],
+      "examples": [
+        "Extract all text from this document scan",
+        "Read the fine print in this image",
+        "Transcribe this multi-column article",
+        "Pull all the text out of this form",
+        "What do the labels say on this diagram?"
+      ],
+      "inputModes": ["image/jpeg", "image/png", "image/webp"],
+      "outputModes": ["text/plain"]
+    },
+    {
+      "id": "degraded-text-recovery",
+      "name": "Degraded or low-quality text recovery",
+      "description": "Recovers text from low-resolution, blurry, faded, partially obscured, or otherwise degraded images. Makes best-guess reconstructions for unclear characters and marks uncertainty inline. Triggers on requests to read text from a poor-quality, damaged, or hard-to-read image.",
+      "tags": ["ocr", "image", "restoration", "text-recovery"],
+      "examples": [
+        "The image is blurry but can you read it?",
+        "Try to make out the text in this faded photo",
+        "What does this low-quality scan say?",
+        "Read the partially obscured text in this image",
+        "Best guess at what this damaged document says?"
+      ],
+      "inputModes": ["image/jpeg", "image/png", "image/webp", "image/gif"],
+      "outputModes": ["text/plain"]
+    }
+  ]
+}

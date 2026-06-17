@@ -61,6 +61,7 @@ services:
       ORCH_MODEL: ${ORCH_MODEL:-qwen3.6-35b}
       RESEARCHER_MODEL: ${RESEARCHER_MODEL:-qwen3.6-35b}
       MEDIA_MODEL: ${MEDIA_MODEL:-qwen3-omni-30b}
+      IMAGE_MODEL: ${IMAGE_MODEL:-qwen3-vl-32b}
       # Independent judge model for the trust gate (empty disables vetting).
       JUDGE_MODEL: ${JUDGE_MODEL:-gemma4-26b-a4b}
       # The agent's tool backends. Default to the compose services above;

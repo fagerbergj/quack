@@ -5,6 +5,7 @@ import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
 import { DagView } from '../components/DagView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
+import type { AgentRun } from '../components/messageParts'
 import type { Turn, DagOutputItem } from '../generated'
 
 import { AttachmentPreviews, AttachmentStrip, type AttachmentItem } from '../components/AttachmentUI'
@@ -68,6 +69,24 @@ function liveDagFinalText(dag: DagTurnState): string {
   const finalNode = dag.nodes.find(n => !hasSuccessor.has(n.id))
   if (!finalNode) return ''
   return dag.nodeAnswer[finalNode.id] ?? ''
+}
+
+// executeDeliverMode reports whether the orchestrator's most recent execute call
+// used end_turn=true (deliver). In deliver mode the terminal node's answer IS the
+// user-facing answer; otherwise the orchestrator composes it (synthesize) and its
+// own text is the answer. Read off the execute tool call(s) in the orchestrator's
+// own (top-level) runs — the LAST call wins, since the model may call execute
+// twice (e.g. once to read the result, then again with end_turn=true).
+function executeDeliverMode(topRuns: AgentRun[]): boolean {
+  let deliver = false
+  for (const run of topRuns) {
+    for (const a of run.activity) {
+      if (a.kind === 'tool' && a.tool.name === 'execute') {
+        deliver = a.tool.args?.end_turn === true
+      }
+    }
+  }
+  return deliver
 }
 
 export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPrompt: string }) {
@@ -388,11 +407,19 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
             const liveTopText = live!.text ?? ''
             const liveTopRuns = live!.runs ?? []
             const liveDone = !streaming
-            // When a DAG is present (streaming or done) the terminal node's answer
-            // is the response — it streams token-by-token via nodeAnswer. Ignore any
-            // top-level orchestrator text (pre-plan preamble). Only use liveTopText
-            // when no DAG exists (orchestrator answered directly).
-            const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
+            const deliverMode = liveDag ? executeDeliverMode(liveTopRuns) : false
+            // Which text is the user-facing answer:
+            //  - deliver (execute end_turn=true): the terminal node's answer IS the
+            //    response, streaming token-by-token via nodeAnswer.
+            //  - synthesize: the orchestrator composes the final answer (its own
+            //    top-level text); fall back to the terminal node's answer if it
+            //    produced none — so a missed deliver-detection never blanks the reply.
+            //  - no DAG: the orchestrator answered directly.
+            const liveText = liveDag
+              ? (deliverMode ? liveDagFinalText(liveDag) : (liveTopText || liveDagFinalText(liveDag)))
+              : liveTopText
+            // The orchestrator's own activity (deciding to research, plan/execute calls).
+            const orchActivity = liveTopRuns.flatMap(r => r.activity)
             // Show spinner only when streaming and there's nothing to show yet.
             const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
             const copyKey = `live-${live!.userText.slice(0, 20)}`
@@ -417,26 +444,34 @@ export default function Chat({ systemPrompt: globalSystemPrompt }: { systemPromp
                           <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
                           <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
                         </span>
-                      ) : liveDag && !liveDone ? (
+                      ) : liveDag ? (
                         <>
-                          <DagView dag={liveDag} />
+                          {/* The orchestrator agent wraps the DAG: show its own
+                              activity (deciding to research, the plan/execute calls)
+                              alongside the DAG. While running both are visible; once
+                              done they collapse into "Research steps" so only the
+                              final answer remains. */}
+                          {liveDone ? (
+                            <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                              <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                ▸ Research steps
+                              </summary>
+                              <div className="p-2 space-y-3">
+                                {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
+                                <DagView dag={liveDag} />
+                              </div>
+                            </details>
+                          ) : (
+                            <div className="space-y-3">
+                              {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
+                              <DagView dag={liveDag} />
+                            </div>
+                          )}
                           {liveText && (
-                            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                            <div className={liveDone ? '' : 'mt-4 pt-4 border-t border-gray-100 dark:border-gray-700'}>
                               <AssistantText text={liveText} />
                             </div>
                           )}
-                        </>
-                      ) : liveDag && liveDone ? (
-                        <>
-                          <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                              ▸ Research steps
-                            </summary>
-                            <div className="p-2">
-                              <DagView dag={liveDag} />
-                            </div>
-                          </details>
-                          {liveText && <AssistantText text={liveText} />}
                         </>
                       ) : (
                         // No DAG: orchestrator answered directly (conversational or

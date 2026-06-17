@@ -18,6 +18,36 @@ func TestNewExecuteToolMetadata(t *testing.T) {
 	if !strings.Contains(tl.Description(), "plan") {
 		t.Errorf("Description() = %q, want mention of plan", tl.Description())
 	}
+	if !strings.Contains(tl.Description(), "end_turn") {
+		t.Errorf("Description() = %q, want mention of end_turn flag", tl.Description())
+	}
+}
+
+func TestPlanCacheDelivered(t *testing.T) {
+	c := NewPlanCache()
+	if got := c.Delivered(); got != "" {
+		t.Errorf("fresh cache Delivered() = %q, want empty", got)
+	}
+	c.SetDelivered("the verbatim answer")
+	if got := c.Delivered(); got != "the verbatim answer" {
+		t.Errorf("Delivered() = %q, want %q", got, "the verbatim answer")
+	}
+}
+
+func TestPlanCacheResult(t *testing.T) {
+	c := NewPlanCache()
+	if _, ok := c.Result("p1"); ok {
+		t.Error("Result() on fresh cache returned ok=true, want false")
+	}
+	c.SetResult("p1", "memoised answer")
+	got, ok := c.Result("p1")
+	if !ok || got != "memoised answer" {
+		t.Errorf("Result(p1) = (%q, %v), want (%q, true)", got, ok, "memoised answer")
+	}
+	// Distinct plan IDs don't collide.
+	if _, ok := c.Result("p2"); ok {
+		t.Error("Result(p2) returned ok=true, want false")
+	}
 }
 
 func TestTerminalOutput(t *testing.T) {
