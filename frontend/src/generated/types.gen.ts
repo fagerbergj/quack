@@ -50,7 +50,9 @@ export type OutputItem = ({
     type: 'message';
 } & MessageOutputItem) | ({
     type: 'quack:dag';
-} & DagOutputItem);
+} & DagOutputItem) | ({
+    type: 'quack:activity';
+} & AgentActivityOutputItem);
 
 export type ItemStatus = 'in_progress' | 'completed' | 'incomplete';
 
@@ -75,6 +77,24 @@ export type OutputTextPart = {
 export type ReasoningPart = {
     type: 'reasoning';
     text: string;
+};
+
+export type AgentActivityOutputItem = {
+    id: string;
+    type: 'quack:activity';
+    status: ItemStatus;
+    tool_calls: Array<ToolCallItem>;
+};
+
+export type ToolCallItem = {
+    call_id: string;
+    name: string;
+    args?: {
+        [key: string]: unknown;
+    };
+    result?: {
+        [key: string]: unknown;
+    };
 };
 
 export type DagOutputItem = {

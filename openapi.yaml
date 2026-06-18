@@ -297,11 +297,13 @@ components:
       oneOf:
         - $ref: "#/components/schemas/MessageOutputItem"
         - $ref: "#/components/schemas/DagOutputItem"
+        - $ref: "#/components/schemas/AgentActivityOutputItem"
       discriminator:
         propertyName: type
         mapping:
           message: "#/components/schemas/MessageOutputItem"
           "quack:dag": "#/components/schemas/DagOutputItem"
+          "quack:activity": "#/components/schemas/AgentActivityOutputItem"
 
     ItemStatus:
       type: string
@@ -352,6 +354,43 @@ components:
           enum: [reasoning]
         text:
           type: string
+
+    # -------------------------------------------------------------------------
+    # quack:activity output item — the orchestrator's own tool calls, recovered
+    # from session events so chat history (incl. a pending clarification) survives
+    # a reload. Discriminated by type "quack:activity".
+    # -------------------------------------------------------------------------
+
+    AgentActivityOutputItem:
+      type: object
+      required: [id, type, status, tool_calls]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: ["quack:activity"]
+        status:
+          $ref: "#/components/schemas/ItemStatus"
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCallItem"
+
+    ToolCallItem:
+      type: object
+      required: [call_id, name]
+      properties:
+        call_id:
+          type: string
+        name:
+          type: string
+        args:
+          type: object
+          additionalProperties: true
+        result:
+          type: object
+          additionalProperties: true
 
     # -------------------------------------------------------------------------
     # quack:dag output item — DAG execution as a first-class output type

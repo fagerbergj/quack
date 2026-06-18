@@ -5,7 +5,7 @@ import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
 import { ChoicePrompt } from '../components/ChoicePrompt'
 import { DagView } from '../components/DagView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
+import { dagFromTurn, textFromTurn, activityFromTurn, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, type AgentRun, type Activity } from '../components/messageParts'
 import type { Turn, DagOutputItem } from '../generated'
 
@@ -375,6 +375,12 @@ export default function Chat() {
               const dagItem = dagFromTurn(turn)
               const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
               const text = textFromTurn(turn)
+              const turnRuns = activityFromTurn(turn)
+              const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
+              // A still-pending clarification only stays answerable on the final turn
+              // (an older one was already answered by a later turn).
+              const isLast = idx === displayItems.length - 1
+              const turnChoice = isLast ? pendingChoice(turnRuns) : null
               const copyKey = `turn-${turn.id}`
               return (
                 <div key={turn.id}>
@@ -396,16 +402,27 @@ export default function Chat() {
                               <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                                 ▸ Research steps
                               </summary>
-                              <div className="p-2">
+                              <div className="p-2 space-y-3">
+                                {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
                                 <DagView dag={dagState} />
                               </div>
                             </details>
                             {text && <AssistantText text={text} />}
                           </>
                         ) : (
-                          <AssistantText text={text} />
+                          <>
+                            {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
+                            {text && <AssistantText text={text} />}
+                          </>
                         )}
                       </div>
+                      {turnChoice && (
+                        <ChoicePrompt
+                          options={turnChoice.options}
+                          disabled={submittingChoice}
+                          onSelect={handleChoice}
+                        />
+                      )}
                       {text && (
                         <div className="flex items-center gap-3 mt-1.5 px-1">
                           <button
