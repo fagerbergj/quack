@@ -73,7 +73,7 @@ func fakeAgent(t *testing.T, name, output string, rec *recorder, fail bool) adka
 // waitingAgent builds a custom ADK agent that pauses: it yields a request_input
 // FunctionCall with its ID listed in LongRunningToolIDs (what ADK + the A2A v2
 // bridge produce for a long-running call), so the executor detects it as waiting.
-func waitingAgent(t *testing.T, name, question string, rec *recorder) adkagent.Agent {
+func waitingAgent(t *testing.T, name string, questions []string, rec *recorder) adkagent.Agent {
 	t.Helper()
 	ag, err := adkagent.New(adkagent.Config{
 		Name:        name,
@@ -83,8 +83,12 @@ func waitingAgent(t *testing.T, name, question string, rec *recorder) adkagent.A
 				rec.record(name, "")
 				ev := session.NewEvent(ic.InvocationID())
 				ev.Author = name
+				qs := make([]any, len(questions))
+				for i, q := range questions {
+					qs[i] = q
+				}
 				ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{
-					FunctionCall: &genai.FunctionCall{ID: name + "-call", Name: "request_input", Args: map[string]any{"question": question}},
+					FunctionCall: &genai.FunctionCall{ID: name + "-call", Name: "request_input", Args: map[string]any{"questions": qs}},
 				}}}
 				ev.LongRunningToolIDs = []string{name + "-call"}
 				ev.TurnComplete = true
@@ -213,9 +217,9 @@ func TestExecuteSuspendOnWaiting(t *testing.T) {
 	rec := newRecorder()
 	clients := map[string]adkagent.Agent{
 		"agA": fakeAgent(t, "agA", "out-A", rec, false),
-		"agB": waitingAgent(t, "agB", "Which region?", rec), // pauses
-		"agC": fakeAgent(t, "agC", "out-C", rec, false),     // independent branch
-		"agD": fakeAgent(t, "agD", "out-D", rec, false),     // depends on the paused B
+		"agB": waitingAgent(t, "agB", []string{"Which region?", "What budget?"}, rec), // pauses with two questions
+		"agC": fakeAgent(t, "agC", "out-C", rec, false),                               // independent branch
+		"agD": fakeAgent(t, "agD", "out-D", rec, false),                               // depends on the paused B
 	}
 	exec := NewExecutor(session.InMemoryService(), clients, nil, 4)
 	plan := Plan{
@@ -242,8 +246,8 @@ func TestExecuteSuspendOnWaiting(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected node_waiting for B, got %v", waiting)
 	}
-	if w.Question != "Which region?" || w.CallID == "" {
-		t.Errorf("waiting payload = %+v, want question + call id", w)
+	if len(w.Questions) != 2 || w.Questions[0] != "Which region?" || w.Questions[1] != "What budget?" || w.CallID == "" {
+		t.Errorf("waiting payload = %+v, want two questions + call id", w)
 	}
 	if rec.order["agC"] == 0 {
 		t.Errorf("independent node C should have run while B waited: order=%v", rec.order)

@@ -326,14 +326,14 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 		// LongRunningToolIDs). Report it as waiting — terminal for this goroutine —
 		// carrying any partial text streamed before the question.
 		if call := findWaitingCall(ev); call != nil {
-			question, _ := call.Args["question"].(string)
-			slog.Info("node waiting for input", "component", "dag", "node", node.ID, "call", call.ID)
+			questions := questionsFromArgs(call.Args)
+			slog.Info("node waiting for input", "component", "dag", "node", node.ID, "call", call.ID, "questions", len(questions))
 			send(nodeMsg{
 				nodeID:  node.ID,
 				waiting: true,
 				output:  stream.StripThinking(answer.String()),
 				waitData: stream.NodeWaitingData{
-					NodeID: node.ID, CallID: call.ID, Question: question,
+					NodeID: node.ID, CallID: call.ID, Questions: questions,
 					Output: stream.StripThinking(answer.String()),
 				},
 			})
@@ -392,6 +392,28 @@ func findWaitingCall(ev *session.Event) *genai.FunctionCall {
 		if p != nil && p.FunctionCall != nil && slices.Contains(ev.LongRunningToolIDs, p.FunctionCall.ID) {
 			return p.FunctionCall
 		}
+	}
+	return nil
+}
+
+// questionsFromArgs pulls the request_input "questions" list out of a function
+// call's args. JSON decoding yields []any, so each element is asserted to string.
+func questionsFromArgs(args map[string]any) []string {
+	raw, ok := args["questions"]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
 	}
 	return nil
 }

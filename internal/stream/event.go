@@ -243,13 +243,13 @@ type NodeFailedData struct {
 
 // NodeWaitingData is the `node_waiting` event payload: a node paused mid-DAG on a
 // request_input call. CallID is the open long-running call (answered on resume);
-// Question is the open question to show the user. Output carries any partial text
-// the worker streamed before pausing.
+// Questions are the open questions to show the user (a node may ask several at
+// once). Output carries any partial text the worker streamed before pausing.
 type NodeWaitingData struct {
-	NodeID   string `json:"node_id"`
-	CallID   string `json:"call_id"`
-	Question string `json:"question"`
-	Output   string `json:"output,omitempty"`
+	NodeID    string   `json:"node_id"`
+	CallID    string   `json:"call_id"`
+	Questions []string `json:"questions"`
+	Output    string   `json:"output,omitempty"`
 }
 
 // ChatTitleData is the `chat_title` event payload.

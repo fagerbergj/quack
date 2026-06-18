@@ -197,12 +197,12 @@ type DagNodeState struct {
 	OutputPreview    *string  `json:"output_preview,omitempty"`
 	PromptTokens     *int     `json:"prompt_tokens,omitempty"`
 
-	// Question When status is "waiting", the open question the node is paused on.
-	Question         *string `json:"question,omitempty"`
-	ReasoningTokens  *int    `json:"reasoning_tokens,omitempty"`
-	SelfRefined      *bool   `json:"self_refined,omitempty"`
-	ServerDurationMs *int    `json:"server_duration_ms,omitempty"`
-	StartedAtMs      *int    `json:"started_at_ms,omitempty"`
+	// Questions When status is "waiting", the open questions the node is paused on.
+	Questions        *[]string `json:"questions,omitempty"`
+	ReasoningTokens  *int      `json:"reasoning_tokens,omitempty"`
+	SelfRefined      *bool     `json:"self_refined,omitempty"`
+	ServerDurationMs *int      `json:"server_duration_ms,omitempty"`
+	StartedAtMs      *int      `json:"started_at_ms,omitempty"`
 
 	// Status queued | running | done | failed | waiting
 	Status      string `json:"status"`

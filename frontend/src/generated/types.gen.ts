@@ -128,9 +128,9 @@ export type DagNodeState = {
     status: string;
     output_preview?: string;
     /**
-     * When status is "waiting", the open question the node is paused on.
+     * When status is "waiting", the open questions the node is paused on.
      */
-    question?: string;
+    questions?: Array<string>;
     /**
      * When status is "waiting", the request_input call ID to answer on resume.
      */

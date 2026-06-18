@@ -703,26 +703,30 @@ func TestFilteredSessionDoesNotDuplicateExistingPrompt(t *testing.T) {
 	}
 }
 
-// riArgs/riResult are the request_input tool's shapes (free-form question →
+// riArgs/riResult are the request_input tool's shapes (free-form questions →
 // pending placeholder); duplicated here so the test doesn't import the tools pkg.
 type riArgs struct {
-	Question string `json:"question"`
+	Questions []string `json:"questions"`
 }
 type riResult struct {
 	Status string `json:"status"`
 }
 
-// requestInputModel emits a single long-running request_input FunctionCall, the
-// way a worker pauses for human input mid-DAG.
-type requestInputModel struct{ question string }
+// requestInputModel emits a single long-running request_input FunctionCall with
+// one or more questions, the way a worker pauses for human input mid-DAG.
+type requestInputModel struct{ questions []string }
 
 func (requestInputModel) Name() string { return "req-input-model" }
 
 func (m requestInputModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
+		qs := make([]any, len(m.questions))
+		for i, q := range m.questions {
+			qs[i] = q
+		}
 		yield(&model.LLMResponse{
 			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{
-				FunctionCall: &genai.FunctionCall{ID: "ri1", Name: "request_input", Args: map[string]any{"question": m.question}},
+				FunctionCall: &genai.FunctionCall{ID: "ri1", Name: "request_input", Args: map[string]any{"questions": qs}},
 			}}},
 			TurnComplete: true,
 		}, nil)
@@ -747,7 +751,7 @@ func TestGatePausesOnRequestInput(t *testing.T) {
 	worker, err := llmagent.New(llmagent.Config{
 		Name:        "web-researcher",
 		Description: "researches the web",
-		Model:       requestInputModel{question: "Which city?"},
+		Model:       requestInputModel{questions: []string{"Which city?", "What dates?"}},
 		Instruction: "research",
 		Tools:       []tool.Tool{riTool},
 	})
@@ -806,8 +810,8 @@ func TestGatePausesOnRequestInput(t *testing.T) {
 	if pausedCalls[0].Name != "request_input" {
 		t.Errorf("paused call name = %q, want request_input", pausedCalls[0].Name)
 	}
-	if q, _ := pausedCalls[0].Args["question"].(string); q != "Which city?" {
-		t.Errorf("paused question = %q, want %q", q, "Which city?")
+	if qs, _ := pausedCalls[0].Args["questions"].([]any); len(qs) != 2 || qs[0] != "Which city?" {
+		t.Errorf("paused questions = %v, want [Which city?, What dates?]", pausedCalls[0].Args["questions"])
 	}
 	if sawAnswer {
 		t.Errorf("gate emitted an answer for a paused node — it must not vet")

@@ -312,7 +312,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 					_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
 						NodeID: d.NodeID, PlanID: pid, Status: "waiting",
 						OutputPreview: outputPreview(d.Output), Output: d.Output,
-						WaitingCallID: d.CallID, Question: d.Question, FinishedAt: now(),
+						WaitingCallID: d.CallID, Questions: d.Questions, FinishedAt: now(),
 					})
 				}()
 			}
@@ -394,7 +394,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 					Model:            strPtr(n.Model),
 					FinishReason:     strPtr(n.FinishReason),
 					OutputPreview:    strPtr(n.OutputPreview),
-					Question:         strPtr(n.Question),
+					Questions:        slicePtr(n.Questions),
 					WaitingCallId:    strPtr(n.WaitingCallID),
 					Error:            strPtr(n.Error),
 					PromptTokens:     intPtr(int(n.PromptTokens)),
@@ -485,6 +485,13 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 
 func strPtr(s string) *string {
 	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func slicePtr(s []string) *[]string {
+	if len(s) == 0 {
 		return nil
 	}
 	return &s

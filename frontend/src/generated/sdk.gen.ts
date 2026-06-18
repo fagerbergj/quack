@@ -80,7 +80,7 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * output item has been added; `node_queued` ({"node_id"}), `node_start`
  * ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
  * `node_failed` ({"node_id","error"}), and `node_waiting`
- * ({"node_id","call_id","question"}, emitted when a node pauses on
+ * ({"node_id","call_id","questions"}, emitted when a node pauses on
  * request_input — answer it via the resume endpoint) track node lifecycle.
  *
  * Lifecycle: `chat_title` ({"title"}) is sent once the title is generated;
