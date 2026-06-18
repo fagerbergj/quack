@@ -8,11 +8,12 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,29 +42,31 @@ import (
 var webDist embed.FS
 
 func main() {
+	setupLogging()
+
 	cfgPath := os.Getenv("QUACK_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "config/quack.yaml"
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		fatal("config load failed", "err", err)
 	}
 
 	st, err := store.Open(cfg.Stores.Relational.URL)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		fatal("store open failed", "err", err)
 	}
 	if n, err := st.FailStaleDagNodes(context.Background()); err != nil {
-		log.Printf("store: fail stale dag nodes: %v", err)
+		slog.Error("fail stale dag nodes", "component", "store", "err", err)
 	} else if n > 0 {
-		log.Printf("store: marked %d orphaned dag node(s) failed (previous process killed mid-run)", n)
+		slog.Info("marked orphaned dag nodes failed (previous process killed mid-run)", "component", "store", "count", n)
 	}
 
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
 	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model)
 	if err != nil {
-		log.Fatalf("inference: %v", err)
+		fatal("inference model init failed", "err", err)
 	}
 
 	// Load skills once at startup; pass the toolset to every specialist agent so
@@ -71,14 +74,14 @@ func main() {
 	skillSrc := skill.NewFileSystemSource(os.DirFS("skills/"))
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
-		log.Fatalf("skills: %v", err)
+		fatal("skills toolset init failed", "err", err)
 	}
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
 	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS)
 	if err != nil {
-		log.Fatalf("agents: %v", err)
+		fatal("agent build failed", "err", err)
 	}
 	defer func() {
 		for _, s := range servers {
@@ -105,14 +108,14 @@ func main() {
 	// Load orchestrator bundle for its system prompt.
 	orchBundle, err := agent.LoadBundle("agents/orchestrator")
 	if err != nil {
-		log.Fatalf("orchestrator bundle: %v", err)
+		fatal("orchestrator bundle load failed", "err", err)
 	}
 	// Load the format-markdown skill frontmatter so the orchestrator's prompt
 	// lists it and the model knows to call load_skill("format-markdown") for
 	// direct-answer responses.
 	fmFm, err := skillSrc.LoadFrontmatter(context.Background(), "format-markdown")
 	if err != nil {
-		log.Fatalf("skills: format-markdown: %v", err)
+		fatal("format-markdown skill load failed", "err", err)
 	}
 	orchSysPrompt := promptbuilder.Orchestrator([]*skill.Frontmatter{fmFm}, orchBundle.Prompt)
 
@@ -122,7 +125,7 @@ func main() {
 
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
-		log.Fatalf("embed: %v", err)
+		fatal("embed SPA fs failed", "err", err)
 	}
 
 	handler := server.New(server.Options{
@@ -133,20 +136,45 @@ func main() {
 
 	srv := &http.Server{Addr: cfg.Server.Addr, Handler: handler}
 	go func() {
-		log.Printf("quack listening on %s", cfg.Server.Addr)
+		slog.Info("quack listening", "addr", cfg.Server.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("serve: %v", err)
+			fatal("http serve failed", "err", err)
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("shutting down...")
+	slog.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
-	log.Println("stopped")
+	slog.Info("stopped")
+}
+
+// setupLogging installs the process-wide slog handler from LOG_LEVEL
+// (debug|info|warn|error, default info) and LOG_FORMAT (text|json, default
+// text). SetDefault also reroutes any stray stdlib log.* through this handler.
+// ponytail: env-driven; add a LevelVar when runtime re-leveling is actually needed.
+func setupLogging() {
+	// slog.Level implements TextUnmarshaler: "" and unknown values error out,
+	// leaving the zero value LevelInfo — our intended default.
+	var lvl slog.Level
+	_ = lvl.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
+	opts := &slog.HandlerOptions{Level: lvl}
+	// stdout (not stderr): logs are the program's output for a server; let the
+	// container/orchestration layer collect and ship them.
+	var h slog.Handler = slog.NewTextHandler(os.Stdout, opts)
+	if strings.EqualFold(os.Getenv("LOG_FORMAT"), "json") {
+		h = slog.NewJSONHandler(os.Stdout, opts)
+	}
+	slog.SetDefault(slog.New(h))
+}
+
+// fatal logs at Error and exits — slog has no Fatal of its own.
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }
 
 // buildAgents loads each configured agent bundle, builds its model and built-in
@@ -185,8 +213,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, nil)
 		}
-		log.Printf("trust gate enabled: deterministic_rounds=%d self_critique_rounds=%d judge=%q judge_rounds=%d threshold=%.2f",
-			gateCfg.DeterministicRounds, gateCfg.SelfCritiqueRounds, cfg.Gates.Judge.Model, gateCfg.JudgeRounds, gateCfg.Threshold)
+		slog.Info("trust gate enabled", "component", "startup",
+			"deterministic_rounds", gateCfg.DeterministicRounds, "self_critique_rounds", gateCfg.SelfCritiqueRounds,
+			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
 	}
 
 	// Build the compaction summariser once and share it across every gated agent.
@@ -202,14 +231,14 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if summarizer, err = inference.NewModel(cprov, cfg.Compaction.Model); err != nil {
 			return nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
-		log.Printf("context compaction enabled: summariser=%q prune=%t", cfg.Compaction.Model, cfg.Compaction.PruneEnabled())
+		slog.Info("context compaction enabled", "component", "startup", "summariser", cfg.Compaction.Model, "prune", cfg.Compaction.PruneEnabled())
 	}
 	compactionFor := func(ac config.AgentConfig) agent.Compaction {
 		if !cfg.Compaction.Enabled {
 			return agent.Compaction{}
 		}
 		if ac.ContextWindow == 0 {
-			log.Printf("context compaction: agent model %q has no context_window configured; not compacting it", ac.Model)
+			slog.Warn("context compaction: agent has no context_window configured; not compacting it", "component", "startup", "model", ac.Model)
 			return agent.Compaction{}
 		}
 		return agent.Compaction{
@@ -265,7 +294,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, servers, fmtErr(name, "rubric: %v", err)
 			} else if override != "" {
 				agentGateCfg.Rubric = override
-				log.Printf("agent %q: using per-agent rubric from bundle", name)
+				slog.Info("using per-agent rubric from bundle", "component", "startup", "agent", name)
 			}
 			// A tool-less twin of the worker (same model + prompt, no tools) for the
 			// finalize write-up: when the worker keeps researching instead of writing,
@@ -291,7 +320,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, servers, fmtErr(name, "a2a client: %v", err)
 		}
 		clientMap[name] = client
-		log.Printf("agent %q serving over A2A at %s", name, srv.Card.SupportedInterfaces[0].URL)
+		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL)
 	}
 	return clientMap, servers, nil
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"log"
+	"log/slog"
 	"strings"
 	"time" //nolint:godot
 
@@ -199,7 +199,7 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 				filled++
 			}
 		}
-		log.Printf("dag: node %s built task from %d/%d upstream outputs (task_len=%d)", node.ID, filled, len(node.DependsOn), len(task))
+		slog.Debug("node built task from upstream outputs", "component", "dag", "node", node.ID, "filled", filled, "deps", len(node.DependsOn), "task_len", len(task))
 	}
 
 	r, err := runner.New(runner.Config{
@@ -226,7 +226,7 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	parts := []*genai.Part{{Text: task}}
 	if e.mediaAgents[node.AgentName] && len(plan.Attachments) > 0 {
 		parts = append(plan.Attachments, parts...)
-		log.Printf("dag: node %s sending %d attachment(s) to media agent %q", node.ID, len(plan.Attachments), node.AgentName)
+		slog.Debug("node sending attachments to media agent", "component", "dag", "node", node.ID, "attachments", len(plan.Attachments), "agent", node.AgentName)
 	}
 	content := &genai.Content{Role: "user", Parts: parts}
 	var answer strings.Builder
@@ -276,7 +276,7 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	}
 	stats.DurationMs = time.Since(startedAt).Milliseconds()
 	out := stream.StripThinking(answer.String())
-	log.Printf("dag: node %s done output_len=%d judge_passed=%v judge_rounds=%d", node.ID, len(out), stats.JudgePassed, stats.JudgeRounds)
+	slog.Info("node done", "component", "dag", "node", node.ID, "output_len", len(out), "judge_passed", stats.JudgePassed, "judge_rounds", stats.JudgeRounds)
 	send(nodeMsg{nodeID: node.ID, done: true, output: out, stats: stats})
 }
 

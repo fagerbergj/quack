@@ -2,7 +2,7 @@ package tools
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/tool"
@@ -56,7 +56,7 @@ func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (to
 			// (cheap) end_turn handling below re-runs.
 			answer, cached := cache.Result(a.PlanID)
 			if cached {
-				log.Printf("execute: plan %s reusing cached answer (end_turn=%v)", a.PlanID, a.EndTurn)
+				slog.Info("plan reusing cached answer", "component", "execute", "plan", a.PlanID, "end_turn", a.EndTurn)
 			} else {
 				yieldFn, hasYield := stream.YieldFromContext(tc)
 				nodeOutputs := make(map[string]string)
@@ -73,7 +73,7 @@ func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (to
 					return executeResult{}, fmt.Errorf("execute: all nodes completed but produced no output")
 				}
 				cache.SetResult(a.PlanID, answer)
-				log.Printf("execute: plan %s end_turn=%v answer_len=%d", a.PlanID, a.EndTurn, len(answer))
+				slog.Info("plan executed", "component", "execute", "plan", a.PlanID, "end_turn", a.EndTurn, "answer_len", len(answer))
 			}
 			if a.EndTurn {
 				// Deliver: the answer already streamed to the user. End the
