@@ -17,6 +17,9 @@ const ChoiceToolName = "get_user_choice"
 const ChoiceAnswerKey = "choice"
 
 type getUserChoiceArgs struct {
+	// Question is the clarifying question shown to the user above the options
+	// (e.g. "Which Springfield do you mean?"). Without it the options lack context.
+	Question string `json:"question"`
 	// Options are the choices to present to the user.
 	Options []string `json:"options"`
 }
@@ -55,10 +58,11 @@ func NewGetUserChoiceTool() (tool.Tool, error) {
 	return functiontool.New[getUserChoiceArgs, getUserChoiceResult](
 		functiontool.Config{
 			Name: ChoiceToolName,
-			Description: "Provides a set of options to the user and asks them to choose one. " +
+			Description: "Asks the user a clarifying question with a set of options to choose from. " +
 				"Use when a request is genuinely ambiguous and the resolution is one of a few discrete choices " +
 				"(e.g. which 'Springfield', which interpretation) — the answer must materially change the work. " +
-				"Pass the candidate options; the user's selection is returned to you and you continue. " +
+				"Pass the `question` (so the options have context) and the candidate `options`; " +
+				"the user's selection is returned to you and you continue. " +
 				"Do NOT use when a sensible default exists or the task is already clear.",
 			IsLongRunning: true,
 		},

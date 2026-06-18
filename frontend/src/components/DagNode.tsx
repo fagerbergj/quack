@@ -52,38 +52,40 @@ function agentLabel(name: string): string {
 
 // ── per-run stage cards ──────────────────────────────────────────────────────
 
-// ResearchCard renders the worker stage (draft + finalize): its activity, plus
-// the node's answer expanded when this is the final node.
-function ResearchCard({ run, running, answer, isFinal }: { run: AgentRun; running: boolean; answer: string; isFinal: boolean }) {
+// ResearchCard renders the worker stage (draft + finalize): its activity. The
+// node's vetted answer is rendered separately at the foot of the node (NodeAnswer),
+// so it sits below the judge rather than inside the worker card.
+function ResearchCard({ run, running }: { run: AgentRun; running: boolean }) {
   const empty = run.activity.length === 0
+  if (empty) {
+    return running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
+  }
   return (
-    <div>
-      {empty ? (
-        running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
-      ) : (
-        <details open={running} className="not-prose">
-          <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-            {running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
-          </summary>
-          <div className="px-4 pb-3">
-            <ActivityList activity={run.activity} />
-          </div>
-        </details>
-      )}
-      {isFinal && answer && (
-        // The terminal node's answer is the user-facing reply (shown in the main
-        // message bubble), so keep it collapsed here to avoid a duplicate render —
-        // expandable for anyone who wants to inspect the raw specialist output.
-        <details className="not-prose border-t border-gray-100 dark:border-gray-700">
-          <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-            answer
-          </summary>
-          <div className="px-4 pb-3">
-            <AssistantText text={answer} />
-          </div>
-        </details>
-      )}
-    </div>
+    <details open={running} className="not-prose">
+      <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+        {running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
+      </summary>
+      <div className="px-4 pb-3">
+        <ActivityList activity={run.activity} />
+      </div>
+    </details>
+  )
+}
+
+// NodeAnswer renders a node's vetted output as a collapsible at the foot of the
+// node. Shown for every node so each specialist's answer is inspectable — not just
+// the final one (whose answer also appears in the main message bubble).
+function NodeAnswer({ answer }: { answer: string }) {
+  if (!answer) return null
+  return (
+    <details className="not-prose border-t border-gray-100 dark:border-gray-700">
+      <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+        answer
+      </summary>
+      <div className="px-4 pb-3">
+        <AssistantText text={answer} />
+      </div>
+    </details>
   )
 }
 
@@ -239,9 +241,12 @@ export function DagNode({ node, state, runs, answer, isFinal }: Props) {
           case 'self_refine': return <SelfCritiqueCard key={run.runId} run={run} running={runRunning} />
           case 'judge':       return <JudgeCard key={run.runId} run={run} running={runRunning} />
           case 'revise':      return <RevisionCard key={run.runId} run={run} running={runRunning} />
-          default:            return <ResearchCard key={run.runId} run={run} running={runRunning} answer={answer} isFinal={isFinal} />
+          default:            return <ResearchCard key={run.runId} run={run} running={runRunning} />
         }
       })}
+
+      {/* Vetted answer (below the stage cards, for every node) */}
+      <NodeAnswer answer={answer} />
 
       {/* Failed state */}
       {state.status === 'failed' && state.error && (

@@ -10,12 +10,19 @@ export default meta
 
 type Story = StoryObj<typeof ChoicePrompt>
 
+const SPRINGFIELDS = ['Springfield, Illinois', 'Springfield, Missouri', 'Springfield, Massachusetts']
+
 // A clarification with a few discrete options (e.g. which "Springfield").
 export const Basic: Story = {
-  args: { options: ['Springfield, Illinois', 'Springfield, Missouri', 'Springfield, Massachusetts'] },
+  args: { question: 'Which Springfield do you mean?', options: SPRINGFIELDS },
 }
 
 // Disabled while the chosen answer is being sent.
 export const Disabled: Story = {
-  args: { options: ['Yes', 'No'], disabled: true },
+  args: { question: 'Which Springfield do you mean?', options: SPRINGFIELDS, disabled: true },
+}
+
+// Resolved: the user has answered; read-only view with the chosen answer.
+export const Answered: Story = {
+  args: { question: 'Which Springfield do you mean?', options: SPRINGFIELDS, answered: 'Springfield, Missouri' },
 }
