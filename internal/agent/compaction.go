@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 
 	adkagent "google.golang.org/adk/agent"
@@ -80,7 +80,7 @@ func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 		}
 		if c.Prune {
 			if freed := prune(req.Contents); freed > 0 {
-				log.Printf("agent: compaction pruned ~%d tokens (session %s)", freed, ctx.SessionID())
+				slog.Debug("compaction pruned tokens", "component", "agent", "freed", freed, "session", ctx.SessionID())
 			}
 			if estimateTokens(req.Contents) <= budget {
 				return nil, nil
@@ -94,14 +94,14 @@ func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 			reused := append([]*genai.Content{mergeTaskSummary(req.Contents[0], prev)}, req.Contents[n:]...)
 			if estimateTokens(reused) <= budget {
 				req.Contents = reused
-				log.Printf("agent: compaction reused anchored summary (covers %d msgs); no summariser call (session %s)", n, ctx.SessionID())
+				slog.Debug("compaction reused anchored summary; no summariser call", "component", "agent", "covers_msgs", n, "session", ctx.SessionID())
 				return nil, nil
 			}
 		}
 		preserve := min(max(budget/4, minPreserveTokens), maxPreserveTokens)
 		if out, ok := compact(ctx, c.Summarizer, req.Contents, preserve); ok {
 			req.Contents = out
-			log.Printf("agent: compaction summarised head; ~%d tokens now (session %s)", estimateTokens(req.Contents), ctx.SessionID())
+			slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
 		}
 		return nil, nil
 	}
@@ -163,7 +163,7 @@ func compact(ctx adkagent.CallbackContext, summarizer model.LLM, contents []*gen
 	prev, _ := readSummary(ctx)
 	summary, err := summarizeHead(ctx, summarizer, buildPrompt(prev, serializeHead(head)))
 	if err != nil || strings.TrimSpace(summary) == "" {
-		log.Printf("agent: compaction summarise failed: %v", err)
+		slog.Warn("compaction summarise failed; continuing uncompacted", "component", "agent", "err", err)
 		return contents, false
 	}
 	writeSummary(ctx, summary, tailStart)
@@ -305,7 +305,7 @@ func recordUsage() llmagent.AfterModelCallback {
 	return func(ctx adkagent.CallbackContext, resp *model.LLMResponse, err error) (*model.LLMResponse, error) {
 		if err == nil && resp != nil && resp.UsageMetadata != nil && resp.UsageMetadata.PromptTokenCount > 0 {
 			if e := ctx.State().Set(measuredInputKey, int(resp.UsageMetadata.PromptTokenCount)); e != nil {
-				log.Printf("agent: compaction: record usage: %v", e)
+				slog.Warn("compaction: record usage", "component", "agent", "err", e)
 			}
 		}
 		return nil, nil
@@ -327,10 +327,10 @@ func readSummary(ctx adkagent.CallbackContext) (string, int) {
 
 func writeSummary(ctx adkagent.CallbackContext, s string, coversN int) {
 	if err := ctx.State().Set(summaryStateKey, s); err != nil {
-		log.Printf("agent: compaction: persist summary: %v", err)
+		slog.Warn("compaction: persist summary", "component", "agent", "err", err)
 	}
 	if err := ctx.State().Set(summaryCoversKey, coversN); err != nil {
-		log.Printf("agent: compaction: persist summary coverage: %v", err)
+		slog.Warn("compaction: persist summary coverage", "component", "agent", "err", err)
 	}
 }
 

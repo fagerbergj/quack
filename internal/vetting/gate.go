@@ -21,7 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -60,6 +60,7 @@ type gate struct {
 	newJudge JudgeFactory
 	cfg      Config
 	name     string
+	log      *slog.Logger // pre-tagged with component=vetting + agent name
 }
 
 // GatedAgent is the public handle for a trust-gated worker. It embeds the ADK
@@ -91,6 +92,7 @@ func NewGatedAgent(worker, writer adkagent.Agent, judge JudgeFactory, cfg Config
 		writer = worker
 	}
 	g := &gate{worker: worker, writer: writer, newJudge: judge, cfg: cfg, name: worker.Name()}
+	g.log = slog.With("component", "vetting", "agent", g.name)
 	// The worker is invoked directly (g.worker.Run), not registered as a SubAgent:
 	// the gate echoes the worker's name so A2A dispatch resolves it, and a SubAgent
 	// of the same name would collide in the runner's agent-tree uniqueness check.
@@ -122,7 +124,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		if !g.emit(ctx, yield, stream.AgentStartPart(workerRun, g.name, stream.StageWorker, 0)) {
 			return
 		}
-		log.Printf("vetting[%s]: worker start (run=%s)", g.name, workerRun)
+		g.log.Debug("worker start", "run", workerRun)
 		// Run the worker against a gate-marker-filtered session view: the agent_start
 		// marker just emitted is an orphan FunctionResponse that ADK would otherwise
 		// choke on when the worker's llmagent rebuilds its request from the session.
@@ -130,7 +132,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		if !ok {
 			return
 		}
-		log.Printf("vetting[%s]: worker done in %s answer_len=%d", g.name, time.Since(t0).Round(time.Second), len(answer))
+		g.log.Debug("worker done", "dur", time.Since(t0), "answer_len", len(answer))
 
 		// Empty-answer recovery: the worker sometimes ends a turn with no answer
 		// content — it tries to call another tool, or (on a long context) thinks into
@@ -156,13 +158,13 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// fetched URLs but the judge still says "not fetched", it's a citation/URL
 		// mismatch, not a missing fetch; if it shows 0 fetched, the worker (model)
 		// genuinely didn't fetch.
-		log.Printf("vetting[%s]: retrieval: fetched=%d %v · seen-via-search=%d", g.name, len(act.fetched), fetchedKeys(act.fetched), len(act.seen))
+		g.log.Debug("retrieval", "fetched", len(act.fetched), "fetched_keys", fetchedKeys(act.fetched), "seen_via_search", len(act.seen))
 
 		// If the worker produced nothing even after the finalize pass, don't burn a
 		// (slow, agentic) judge round scoring an empty answer 0 — surface it directly
 		// so the node reads as "no answer" rather than a confusing failed verdict.
 		if strings.TrimSpace(answer) == "" {
-			log.Printf("vetting[%s]: still no answer after finalize; emitting fallback (worker_err=%v), skipping judge", g.name, workerErr)
+			g.log.Warn("still no answer after finalize; emitting fallback, skipping judge", "worker_err", workerErr)
 			g.emitAnswer(ctx, yield, emptyAnswerFallback(workerErr))
 			return
 		}
@@ -189,7 +191,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				}
 				refined, mergedAct, ok := g.runSelfCritique(ctx, yield, answer, act)
 				if !ok {
-					log.Printf("vetting[%s]: self-critique %d stopped early (worker stream ended); keeping current answer (len=%d)", g.name, round, len(answer))
+					g.log.Warn("self-critique stopped early (worker stream ended); keeping current answer", "round", round, "answer_len", len(answer))
 					return
 				}
 				act = mergedAct
@@ -197,7 +199,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				if changed {
 					answer = refined
 				}
-				log.Printf("vetting[%s]: self-critique %d done in %s changed=%v", g.name, round, time.Since(tsr).Round(time.Millisecond), changed)
+				g.log.Debug("self-critique done", "round", round, "dur", time.Since(tsr), "changed", changed)
 				if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: srRun, Stage: stream.StageSelfRefine, Round: round, Changed: changed})) {
 					return
 				}
@@ -238,7 +240,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				// session (which then overflows and fails a later stage). The remaining
 				// unbacked citations still fold into the judge's verdict.
 				if prevUnbacked >= 0 && len(unbacked) >= prevUnbacked {
-					log.Printf("vetting[%s]: deterministic revise made no progress (%d unbacked); stopping", g.name, len(unbacked))
+					g.log.Warn("deterministic revise made no progress; stopping", "unbacked", len(unbacked))
 					break
 				}
 				prevUnbacked = len(unbacked)
@@ -250,7 +252,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				fb := "These cited URLs were never retrieved this session — drop them (and any claim relying only on them) or cite a page you actually fetched: " + strings.Join(unbacked, ", ")
 				revised, mergedAct, ok := g.runAgenticRevision(ctx, yield, answer, fb, act)
 				if !ok {
-					log.Printf("vetting[%s]: deterministic revise %d stopped early (worker stream ended); keeping current answer (len=%d)", g.name, round, len(answer))
+					g.log.Warn("deterministic revise stopped early (worker stream ended); keeping current answer", "round", round, "answer_len", len(answer))
 					return
 				}
 				act = mergedAct
@@ -258,7 +260,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				if changed {
 					answer = revised
 				}
-				log.Printf("vetting[%s]: deterministic revise %d done in %s changed=%v revised_len=%d (%d unbacked citation(s))", g.name, round, time.Since(td).Round(time.Millisecond), changed, len(strings.TrimSpace(revised)), len(unbacked))
+				g.log.Debug("deterministic revise done", "round", round, "dur", time.Since(td), "changed", changed, "revised_len", len(strings.TrimSpace(revised)), "unbacked", len(unbacked))
 				if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: detRun, Stage: stream.StageRevise, Round: round})) {
 					return
 				}
@@ -289,7 +291,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					if errors.Is(err, context.Canceled) {
 						return // consumer stopped mid-judge; exit cleanly
 					}
-					log.Printf("vetting[%s]: judge round %d error after %s: %v (surfacing answer unvetted)", g.name, round, time.Since(tj).Round(time.Millisecond), err)
+					g.log.Error("judge round error; surfacing answer unvetted", "round", round, "dur", time.Since(tj), "err", err)
 					if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: judgeRun, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: err.Error()})) {
 						return
 					}
@@ -319,7 +321,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited URL(s), mean backing %.2f", len(details), det)}
 				}
 				v = aggregateVerdict(v)
-				log.Printf("vetting[%s]: deterministic gates: length=%.2f (%d chars) citations=%.2f hasCites=%v %v", g.name, ls, trimmedLen, det, hasCites, details)
+				g.log.Debug("deterministic gates", "length", ls, "chars", trimmedLen, "citations", det, "has_cites", hasCites, "details", details)
 				var notes []string
 				if ls < 1.0 {
 					notes = append(notes, "the answer is empty — produce a complete answer")
@@ -331,7 +333,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					v.Feedback = strings.TrimSpace(v.Feedback + "\n\n" + strings.Join(notes, "; "))
 				}
 				passed := v.Score >= g.cfg.Threshold
-				log.Printf("vetting[%s]: judge round %d done in %s score=%.2f passed=%v | %s", g.name, round, time.Since(tj).Round(time.Millisecond), v.Score, passed, verdictScores(v))
+				g.log.Info("judge round done", "round", round, "dur", time.Since(tj), "score", v.Score, "passed", passed, "scores", verdictScores(v))
 				if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: judgeRun, Stage: stream.StageJudge, Round: round, Score: v.Score, Passed: passed, Feedback: v.Feedback})) {
 					return
 				}
@@ -358,7 +360,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 				if changed {
 					answer = revised
 				}
-				log.Printf("vetting[%s]: revise round %d done in %s changed=%v revised_len=%d", g.name, round, time.Since(tr).Round(time.Millisecond), changed, len(strings.TrimSpace(revised)))
+				g.log.Debug("revise round done", "round", round, "dur", time.Since(tr), "changed", changed, "revised_len", len(strings.TrimSpace(revised)))
 				if !g.emit(ctx, yield, stream.AgentCompletePart(stream.AgentCompleteData{RunID: reviseRun, Stage: stream.StageRevise, Round: round})) {
 					return
 				}
@@ -367,7 +369,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 
 		// Surface the trusted answer as the node's final output (node-level token —
 		// no run is open, so the Translator emits it with an empty run_id).
-		log.Printf("vetting[%s]: vetted answer ready total=%s len=%d", g.name, time.Since(t0).Round(time.Second), len(answer))
+		g.log.Info("vetted answer ready", "total", time.Since(t0), "len", len(answer))
 		g.emitAnswer(ctx, yield, answer)
 	}
 }
@@ -554,7 +556,7 @@ func (g *gate) runAgenticRevision(ctx adkagent.InvocationContext, yield func(*se
 		// The revision's worker call failed (commonly a context-overflow 400 on the
 		// largest request the node makes). Log it so a silent no-op revision — which
 		// keeps the prior answer unchanged — is visible rather than mysteriously fast.
-		log.Printf("vetting[%s]: revision worker errored (%v); answer unchanged unless finalize recovers", g.name, werr)
+		g.log.Warn("revision worker errored; answer unchanged unless finalize recovers", "err", werr)
 	}
 	merged := mergeActivity(act, revisedAct)
 
@@ -597,18 +599,18 @@ const maxToolCalls = 100
 func (g *gate) finalizeUntilNonEmpty(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, act workerActivity) (string, workerActivity, bool) {
 	for attempt := 1; attempt <= maxEmptyRetries; attempt++ {
 		tf := time.Now()
-		log.Printf("vetting[%s]: empty answer; finalize retry %d/%d start", g.name, attempt, maxEmptyRetries)
+		g.log.Debug("empty answer; finalize retry start", "attempt", attempt, "max", maxEmptyRetries)
 		finalized, mergedAct, ok := g.runFinalize(ctx, yield, act)
 		if !ok {
 			return "", workerActivity{}, false
 		}
 		act = mergedAct
-		log.Printf("vetting[%s]: finalize retry %d/%d done in %s answer_len=%d", g.name, attempt, maxEmptyRetries, time.Since(tf).Round(time.Millisecond), len(finalized))
+		g.log.Debug("finalize retry done", "attempt", attempt, "max", maxEmptyRetries, "dur", time.Since(tf), "answer_len", len(finalized))
 		if strings.TrimSpace(finalized) != "" {
 			return finalized, act, true
 		}
 	}
-	log.Printf("vetting[%s]: finalize exhausted %d retries, still empty", g.name, maxEmptyRetries)
+	g.log.Warn("finalize exhausted retries, still empty", "retries", maxEmptyRetries)
 	return "", act, true
 }
 
@@ -806,7 +808,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 			// then runs empty-answer recovery (finalize) and, failing that, emits an
 			// explicit non-empty placeholder. A node must never go out silently empty.
 			workerErr = err
-			log.Printf("vetting[%s]: worker stream error after %d tool-steps: %v", g.name, steps, err)
+			g.log.Error("worker stream error", "tool_steps", steps, "err", err)
 			break
 		}
 		if ev == nil {
@@ -863,7 +865,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 		}
 		if toolCalls >= maxToolCalls && !capped {
 			capped = true
-			log.Printf("vetting[%s]: tool-call cap reached (%d); stopping the worker so it writes its answer from what it has", g.name, toolCalls)
+			g.log.Warn("tool-call cap reached; stopping the worker so it writes its answer from what it has", "tool_calls", toolCalls)
 			cancel()
 		}
 		// The answer is the text that follows the worker's LAST tool activity.
@@ -898,8 +900,8 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 	// arrived as <think> content that got stripped; raw_len=0 ⇒ the final turn
 	// carried no plain text at all (e.g. answer emitted as reasoning parts).
 	if strings.TrimSpace(ans) == "" {
-		log.Printf("vetting[%s]: EMPTY answer after %d tool-steps (finish_reason=%q partial=%v think_stripped=%v raw_len=%d) — worker ended its turn with no answer text",
-			g.name, steps, string(lastFinish), lastPartial, stripped, rawLen)
+		g.log.Warn("EMPTY answer — worker ended its turn with no answer text",
+			"tool_steps", steps, "finish_reason", string(lastFinish), "partial", lastPartial, "think_stripped", stripped, "raw_len", rawLen)
 	}
 	return ans, act, true, workerErr
 }
@@ -1007,7 +1009,7 @@ func emptyAnswerFallback(workerErr error) string {
 // but this is the last guard).
 func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer string) bool {
 	if strings.TrimSpace(answer) == "" {
-		log.Printf("vetting[%s]: empty final answer reached emit — substituting fallback placeholder", g.name)
+		g.log.Warn("empty final answer reached emit — substituting fallback placeholder")
 		answer = emptyAnswerFallback(nil)
 	}
 	ev := session.NewEvent(ctx.InvocationID())

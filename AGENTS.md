@@ -163,6 +163,8 @@ Components under `src/components/` have co-located Storybook stories (`.stories.
 | `DATABASE_URL` | Postgres DSN |
 | `QDRANT_URL` | qdrant endpoint |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` / `OIDC_JWKS_URL` | Inbound OIDC auth |
+| `LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error`. `debug` surfaces per-round hot-path trace (vetting/compaction). |
+| `LOG_FORMAT` | slog output: `text` (default, human-readable) or `json` (one object per line, for log aggregators). |
 
 ## Spec-Driven Development
 

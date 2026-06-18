@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -55,7 +55,7 @@ func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string
 	var candidates, total int32
 	for resp, err := range h.titler.GenerateContent(ctx, req, false) {
 		if err != nil {
-			log.Printf("title: generation failed: %v", err)
+			slog.Warn("title generation failed; using empty title", "component", "title", "err", err)
 			return ""
 		}
 		if resp.UsageMetadata != nil {
@@ -75,7 +75,7 @@ func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string
 	// it sometimes emits a <think> block into content anyway (often UNCLOSED when
 	// it runs to the token limit), which would otherwise become the "title".
 	title := stream.StripThinking(out.String())
-	log.Printf("title: %q (candidates=%d total=%d)", title, candidates, total)
+	slog.Info("title generated", "component", "title", "title", title, "candidates", candidates, "total", total)
 	return title
 }
 

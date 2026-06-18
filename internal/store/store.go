@@ -8,8 +8,7 @@ import (
 	"context"
 	"errors"
 	"iter"
-	"log"
-	"os"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -191,8 +190,10 @@ type Store struct {
 // Open connects to Postgres, runs migrations for both the app table and the ADK
 // session/event tables, and returns the store.
 func Open(dsn string) (*Store, error) {
+	// Route GORM's slow-query warnings through the same slog handler as the rest
+	// of the app. NewLogLogger adapts slog into the *log.Logger gorm/logger wants.
 	gormCfg := &gorm.Config{Logger: logger.New(
-		log.New(os.Stdout, "", log.LstdFlags),
+		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
 		logger.Config{
 			SlowThreshold:             200 * time.Millisecond,
 			LogLevel:                  logger.Warn,
