@@ -15,7 +15,6 @@ export type NodeStatus = 'queued' | 'running' | 'done' | 'failed' | 'waiting'
 export interface NodeState {
   status: NodeStatus
   outputPreview?: string
-  questions?: string[]
   error?: string
   startedAt?: number
   finishedAt?: number
@@ -300,7 +299,7 @@ export class ChatStore {
         },
         // The node paused for input; the orchestrator answers it (itself or via a
         // get_user_choice prompt) and the node resumes (back to running → done).
-        onNodeWaiting: (nodeId, questions) => updateNodeState(nodeId, { status: 'waiting', questions }),
+        onNodeWaiting: nodeId => updateNodeState(nodeId, { status: 'waiting' }),
       })
       if (streamError) throw new Error(streamError)
     } catch (err: unknown) {

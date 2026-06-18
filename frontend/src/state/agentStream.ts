@@ -92,7 +92,7 @@ export interface AgentStreamHandlers {
   onNodeStart?: (nodeId: string, agent: string) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
-  onNodeWaiting?: (nodeId: string, questions: string[]) => void
+  onNodeWaiting?: (nodeId: string) => void
 }
 
 // Wire-level event names. Mirrors internal/stream/event.go.
@@ -248,14 +248,9 @@ export function dispatchAgentEvent(
       }
       return true
     }
-    case 'node_waiting': {
-      const p = parsed as { node_id?: string; questions?: unknown }
-      if (typeof p.node_id === 'string') {
-        const questions = Array.isArray(p.questions) ? p.questions.filter((q): q is string => typeof q === 'string') : []
-        handlers.onNodeWaiting?.(p.node_id, questions)
-      }
+    case 'node_waiting':
+      if (hasStringField(parsed, 'node_id')) handlers.onNodeWaiting?.(parsed.node_id)
       return true
-    }
   }
   return false
 }
