@@ -1,7 +1,18 @@
+# Trims the build context. Do NOT add `*.md`, `docs/`, or `config/` here: the
+# runtime image COPYs agents/**/prompt.md, skills/**/SKILL.md, rubric.md, and
+# config/constitution.md straight from the context — excluding markdown would
+# silently ship a broken image.
 .git
+.github
+.vscode
+.idea
 **/node_modules
 frontend/dist
 cmd/server/web/dist/assets
 /quack
+*.test
+*.out
 .env
 *.log
+.DS_Store
+Thumbs.db

@@ -6,6 +6,7 @@
 services:
   db:
     image: postgres:18
+    restart: unless-stopped
     environment:
       POSTGRES_USER: quack
       POSTGRES_PASSWORD: quack
@@ -26,6 +27,7 @@ services:
   # enables the JSON API that the tool calls.
   searxng:
     image: searxng/searxng:latest
+    restart: unless-stopped
     volumes:
       - ./deploy/searxng:/etc/searxng:ro
     environment:
@@ -39,12 +41,14 @@ services:
   # the browser pool.
   crawl4ai:
     image: unclecode/crawl4ai:latest
+    restart: unless-stopped
     shm_size: "1g"
     ports:
       - "11235:11235"
 
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
