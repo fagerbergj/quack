@@ -16,10 +16,12 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// Executor runs a Plan in topological order, concurrently within each layer.
-// Each node is dispatched to its A2A client via a dedicated runner. Activity
-// events stream live as they are produced; the node_id field routes each event
-// to the correct node card in the frontend DAG view.
+// Executor runs a Plan by readiness: each node fires as soon as all its
+// dependencies are done, so independent branches make progress concurrently
+// rather than waiting on a per-layer barrier (bounded by the max-active
+// semaphore). Each node is dispatched to its A2A client via a dedicated runner.
+// Activity events stream live as they are produced; the node_id field routes
+// each event to the correct node card in the frontend DAG view.
 type Executor struct {
 	sessions    session.Service
 	clients     map[string]adkagent.Agent // keyed by agent name
@@ -59,102 +61,149 @@ type nodeMsg struct {
 // Events are streamed live as they are produced — not buffered until completion.
 // nodeOutputs accumulates the final text output of each node so the caller
 // can extract the last node's text as the conversation's final answer.
+//
+// Scheduling is readiness-driven: a node is launched the instant all its
+// dependencies are done, not at a layer boundary. Every launched goroutine
+// self-limits on the max-active semaphore (staying "queued" in the UI until a
+// slot frees), so launching the whole ready frontier at once is safe.
 func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		layers, err := TopoSort(plan)
-		if err != nil {
+		// TopoSort is used only to validate the plan (cycles, unknown deps); the
+		// scheduler below runs by readiness, not by the returned layers.
+		if _, err := TopoSort(plan); err != nil {
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return
 		}
 
+		// remainingDeps[id] = how many of node id's dependencies are not yet done;
+		// a node is runnable at 0. Counts occurrences, matching TopoSort's in-degree.
+		remainingDeps := make(map[string]int, len(plan.Nodes))
+		for _, n := range plan.Nodes {
+			remainingDeps[n.ID] = len(n.DependsOn)
+		}
+
 		// Nodes whose judge gate exhausted all rounds without passing. The DAG
 		// continues (policy: continue-but-warn), but downstream nodes are told
-		// their input failed vetting so they treat it skeptically.
+		// their input failed vetting so they treat it skeptically. A gate failure
+		// does NOT block downstream — the node is still "done" with a warning flag.
 		gateFailed := make(map[string]bool)
+		launched := make(map[string]bool)
 
-		for _, layer := range layers {
-			// Announce all nodes in this layer as queued. node_start is emitted later,
-			// by each goroutine once it actually acquires a concurrency slot — so a
-			// node capped behind the semaphore correctly shows "queued", not "running".
-			for _, node := range layer {
-				if !yield(stream.NodeQueued(node.ID), nil) {
-					return
+		// One cancellable context for every node goroutine: cancelling stops the
+		// whole run when the consumer disconnects or a node fails.
+		ctx, cancelAll := context.WithCancel(ctx)
+		defer cancelAll()
+
+		// Buffered enough to absorb a burst so goroutines rarely block.
+		ch := make(chan nodeMsg, 256)
+
+		// launchReady starts goroutines for every not-yet-launched node whose deps
+		// are all done. node_start is emitted later, by each goroutine once it
+		// acquires a concurrency slot. Returns false if the consumer disconnected.
+		launchReady := func() bool {
+			for _, node := range plan.Nodes {
+				if launched[node.ID] || remainingDeps[node.ID] != 0 {
+					continue
 				}
-			}
-
-			// Derive a cancellable child context. Cancelling it stops all node
-			// goroutines in the layer when the consumer disconnects or a node fails.
-			layerCtx, cancelLayer := context.WithCancel(ctx)
-			defer cancelLayer()
-
-			// Snapshot upstream outputs and gate failures for the goroutines
-			// (immutable read).
-			upstream := make(map[string]string, len(nodeOutputs))
-			for k, v := range nodeOutputs {
-				upstream[k] = v
-			}
-			failedSnap := make(map[string]bool, len(gateFailed))
-			for k, v := range gateFailed {
-				failedSnap[k] = v
-			}
-
-			// Buffered enough to absorb a burst so goroutines rarely block.
-			ch := make(chan nodeMsg, 256)
-			for _, node := range layer {
+				if !yield(stream.NodeQueued(node.ID), nil) {
+					return false
+				}
+				launched[node.ID] = true
+				// Immutable per-goroutine snapshot of upstream outputs + gate
+				// failures. All of this node's deps are done, so their outputs are
+				// present; the maps are mutated only here in the main loop.
+				upstream := make(map[string]string, len(nodeOutputs))
+				for k, v := range nodeOutputs {
+					upstream[k] = v
+				}
+				failedSnap := make(map[string]bool, len(gateFailed))
+				for k, v := range gateFailed {
+					failedSnap[k] = v
+				}
 				go func(n Node) {
-					e.streamNode(layerCtx, plan, n, userID, upstream, failedSnap, ch)
+					e.streamNode(ctx, plan, n, userID, upstream, failedSnap, ch)
 				}(node)
 			}
+			return true
+		}
 
-			// Relay events from the channel to the consumer.
-			completed := 0
-			for completed < len(layer) {
-				select {
-				case msg := <-ch:
-					if msg.start {
-						if !yield(msg.ev, nil) {
-							cancelLayer()
-							return
-						}
-						continue
-					}
-					if msg.done {
-						completed++
-						if msg.err != nil {
-							cancelLayer()
-							yield(stream.NodeFailed(msg.nodeID, msg.err.Error()), nil)
-							// Drain remaining completions so goroutines can exit.
-							for completed < len(layer) {
-								if m := <-ch; m.done {
-									completed++
-								}
-							}
-							return
-						}
-						nodeOutputs[msg.nodeID] = msg.output
-						if msg.stats.JudgeRounds > 0 && !msg.stats.JudgePassed {
-							gateFailed[msg.nodeID] = true
-						}
-						nd := msg.stats
-						nd.OutputPreview = msg.output
-						if len(nd.OutputPreview) > 250 {
-							nd.OutputPreview = nd.OutputPreview[:250] + "…"
-						}
-						if !yield(stream.NodeDone(msg.nodeID, nd), nil) {
-							cancelLayer()
-							return
-						}
-					} else {
-						if !yield(msg.ev, nil) {
-							cancelLayer()
-							return
-						}
-					}
-				case <-ctx.Done():
-					return
+		// drain waits for every launched-but-unfinished goroutine to send its
+		// terminal (done) message, so cancelled goroutines exit cleanly before we
+		// return. len(launched) is stable once we stop calling launchReady.
+		drain := func(completed int) {
+			for completed < len(launched) {
+				if (<-ch).done {
+					completed++
 				}
 			}
-			cancelLayer()
+		}
+
+		if !launchReady() {
+			cancelAll()
+			drain(0)
+			return
+		}
+
+		completed := 0
+		for completed < len(plan.Nodes) {
+			select {
+			case msg := <-ch:
+				if msg.start {
+					if !yield(msg.ev, nil) {
+						cancelAll()
+						drain(completed)
+						return
+					}
+					continue
+				}
+				if !msg.done {
+					if !yield(msg.ev, nil) {
+						cancelAll()
+						drain(completed)
+						return
+					}
+					continue
+				}
+				// Terminal message for this node.
+				completed++
+				if msg.err != nil {
+					cancelAll()
+					yield(stream.NodeFailed(msg.nodeID, msg.err.Error()), nil)
+					drain(completed)
+					return
+				}
+				nodeOutputs[msg.nodeID] = msg.output
+				if msg.stats.JudgeRounds > 0 && !msg.stats.JudgePassed {
+					gateFailed[msg.nodeID] = true
+				}
+				nd := msg.stats
+				nd.OutputPreview = msg.output
+				if len(nd.OutputPreview) > 250 {
+					nd.OutputPreview = nd.OutputPreview[:250] + "…"
+				}
+				if !yield(stream.NodeDone(msg.nodeID, nd), nil) {
+					cancelAll()
+					drain(completed)
+					return
+				}
+				// This node finished: decrement its dependents and launch any that
+				// just became runnable.
+				for _, n := range plan.Nodes {
+					for _, dep := range n.DependsOn {
+						if dep == msg.nodeID {
+							remainingDeps[n.ID]--
+						}
+					}
+				}
+				if !launchReady() {
+					cancelAll()
+					drain(completed)
+					return
+				}
+			case <-ctx.Done():
+				drain(completed)
+				return
+			}
 		}
 	}
 }
