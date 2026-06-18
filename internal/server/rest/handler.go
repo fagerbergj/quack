@@ -424,7 +424,34 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		}
 	}
 
-	output := make([]schema.OutputItem, 0, 2)
+	// Agent-activity output item — the orchestrator's own tool calls (plan, execute,
+	// get_user_choice), recovered from session events so chat history (incl. a
+	// pending clarification) survives a reload.
+	var activityItem *schema.OutputItem
+	if len(tc.ToolCalls) > 0 {
+		calls := make([]schema.ToolCallItem, len(tc.ToolCalls))
+		for i, c := range tc.ToolCalls {
+			calls[i] = schema.ToolCallItem{CallId: c.CallID, Name: c.Name}
+			if c.Args != nil {
+				calls[i].Args = &c.Args
+			}
+			if c.Result != nil {
+				calls[i].Result = &c.Result
+			}
+		}
+		oi := new(schema.OutputItem)
+		_ = oi.FromAgentActivityOutputItem(schema.AgentActivityOutputItem{
+			Id:        tc.ID + ":activity",
+			Status:    schema.Completed,
+			ToolCalls: calls,
+		})
+		activityItem = oi
+	}
+
+	output := make([]schema.OutputItem, 0, 3)
+	if activityItem != nil {
+		output = append(output, *activityItem)
+	}
 	if dagItem != nil {
 		output = append(output, *dagItem)
 	}

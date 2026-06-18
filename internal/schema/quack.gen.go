@@ -14,6 +14,21 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AgentActivityOutputItemType.
+const (
+	QuackActivity AgentActivityOutputItemType = "quack:activity"
+)
+
+// Valid indicates whether the value is a known member of the AgentActivityOutputItemType enum.
+func (e AgentActivityOutputItemType) Valid() bool {
+	switch e {
+	case QuackActivity:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DagOutputItemType.
 const (
 	QuackDag DagOutputItemType = "quack:dag"
@@ -109,6 +124,17 @@ func (e TurnInputRole) Valid() bool {
 		return false
 	}
 }
+
+// AgentActivityOutputItem defines model for AgentActivityOutputItem.
+type AgentActivityOutputItem struct {
+	Id        string                      `json:"id"`
+	Status    ItemStatus                  `json:"status"`
+	ToolCalls []ToolCallItem              `json:"tool_calls"`
+	Type      AgentActivityOutputItemType `json:"type"`
+}
+
+// AgentActivityOutputItemType defines model for AgentActivityOutputItem.Type.
+type AgentActivityOutputItemType string
 
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
@@ -232,6 +258,14 @@ type ReasoningPartType string
 // SendMessageBody defines model for SendMessageBody.
 type SendMessageBody struct {
 	Content string `json:"content"`
+}
+
+// ToolCallItem defines model for ToolCallItem.
+type ToolCallItem struct {
+	Args   *map[string]interface{} `json:"args,omitempty"`
+	CallId string                  `json:"call_id"`
+	Name   string                  `json:"name"`
+	Result *map[string]interface{} `json:"result,omitempty"`
 }
 
 // Turn defines model for Turn.
@@ -415,6 +449,34 @@ func (t *OutputItem) MergeDagOutputItem(v DagOutputItem) error {
 	return err
 }
 
+// AsAgentActivityOutputItem returns the union data inside the OutputItem as a AgentActivityOutputItem
+func (t OutputItem) AsAgentActivityOutputItem() (AgentActivityOutputItem, error) {
+	var body AgentActivityOutputItem
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentActivityOutputItem overwrites any union data inside the OutputItem as the provided AgentActivityOutputItem
+func (t *OutputItem) FromAgentActivityOutputItem(v AgentActivityOutputItem) error {
+	v.Type = "quack:activity"
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentActivityOutputItem performs a merge with any union data inside the OutputItem, using the provided AgentActivityOutputItem
+func (t *OutputItem) MergeAgentActivityOutputItem(v AgentActivityOutputItem) error {
+	v.Type = "quack:activity"
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t OutputItem) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -431,6 +493,8 @@ func (t OutputItem) ValueByDiscriminator() (interface{}, error) {
 	switch discriminator {
 	case "message":
 		return t.AsMessageOutputItem()
+	case "quack:activity":
+		return t.AsAgentActivityOutputItem()
 	case "quack:dag":
 		return t.AsDagOutputItem()
 	default:

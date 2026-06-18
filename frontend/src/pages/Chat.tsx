@@ -2,13 +2,21 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
 import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
+import { ChoicePrompt } from '../components/ChoicePrompt'
 import { DagView } from '../components/DagView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { dagFromTurn, textFromTurn, type DagTurnState } from '../state/chatStore'
-import type { AgentRun } from '../components/messageParts'
+import { dagFromTurn, textFromTurn, activityFromTurn, type DagTurnState } from '../state/chatStore'
+import { pendingChoice, type AgentRun, type Activity } from '../components/messageParts'
 import type { Turn, DagOutputItem } from '../generated'
 
 import { AttachmentPreviews, AttachmentStrip, type AttachmentItem } from '../components/AttachmentUI'
+
+// visibleActivity hides get_user_choice tool calls from the activity log — they are
+// surfaced separately as a ChoicePrompt button group, so showing the raw tool block
+// too would be redundant.
+function visibleActivity(activity: Activity[]): Activity[] {
+  return activity.filter(a => !(a.kind === 'tool' && a.tool.name === 'get_user_choice'))
+}
 
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -105,6 +113,7 @@ export default function Chat() {
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
+  const [submittingChoice, setSubmittingChoice] = useState(false)
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -214,6 +223,23 @@ export default function Chat() {
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
     })
     await loadChats().then(data => setChats(data))
+  }
+
+  // handleChoice answers a get_user_choice clarification by sending the chosen
+  // option as the next message (the backend resumes it as the tool's answer).
+  // Reuses the normal send path. The local guard prevents a double-send during
+  // the brief window before store.submit flips the streaming flag.
+  async function handleChoice(option: string) {
+    if (!activeChatId || submittingChoice) return
+    setSubmittingChoice(true)
+    try {
+      await store.submit(activeChatId, option, undefined, title => {
+        setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
+      })
+      await loadChats().then(data => setChats(data))
+    } finally {
+      setSubmittingChoice(false)
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -349,6 +375,12 @@ export default function Chat() {
               const dagItem = dagFromTurn(turn)
               const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
               const text = textFromTurn(turn)
+              const turnRuns = activityFromTurn(turn)
+              const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
+              // A still-pending clarification only stays answerable on the final turn
+              // (an older one was already answered by a later turn).
+              const isLast = idx === displayItems.length - 1
+              const turnChoice = isLast ? pendingChoice(turnRuns) : null
               const copyKey = `turn-${turn.id}`
               return (
                 <div key={turn.id}>
@@ -370,16 +402,27 @@ export default function Chat() {
                               <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                                 ▸ Research steps
                               </summary>
-                              <div className="p-2">
+                              <div className="p-2 space-y-3">
+                                {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
                                 <DagView dag={dagState} />
                               </div>
                             </details>
                             {text && <AssistantText text={text} />}
                           </>
                         ) : (
-                          <AssistantText text={text} />
+                          <>
+                            {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
+                            {text && <AssistantText text={text} />}
+                          </>
                         )}
                       </div>
+                      {turnChoice && (
+                        <ChoicePrompt
+                          options={turnChoice.options}
+                          disabled={submittingChoice}
+                          onSelect={handleChoice}
+                        />
+                      )}
                       {text && (
                         <div className="flex items-center gap-3 mt-1.5 px-1">
                           <button
@@ -419,7 +462,10 @@ export default function Chat() {
               ? (deliverMode ? liveDagFinalText(liveDag) : (liveTopText || liveDagFinalText(liveDag)))
               : liveTopText
             // The orchestrator's own activity (deciding to research, plan/execute calls).
-            const orchActivity = liveTopRuns.flatMap(r => r.activity)
+            // get_user_choice is surfaced as the ChoicePrompt below, not as a raw tool block.
+            const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
+            // A get_user_choice clarification awaiting an answer on the (paused) live turn.
+            const choice = liveDone ? pendingChoice(liveTopRuns) : null
             // Show spinner only when streaming and there's nothing to show yet.
             const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
             const copyKey = `live-${live!.userText.slice(0, 20)}`
@@ -477,8 +523,8 @@ export default function Chat() {
                         // No DAG: orchestrator answered directly (conversational or
                         // tool-based research where DAG events don't reach the frontend).
                         <div>
-                          {liveTopRuns.length > 0 && (
-                            <ActivityList activity={liveTopRuns.flatMap(r => r.activity)} />
+                          {orchActivity.length > 0 && (
+                            <ActivityList activity={orchActivity} />
                           )}
                           {liveTopText
                             ? <AssistantText text={liveTopText} />
@@ -487,6 +533,13 @@ export default function Chat() {
                         </div>
                       )}
                     </div>
+                    {choice && (
+                      <ChoicePrompt
+                        options={choice.options}
+                        disabled={submittingChoice}
+                        onSelect={handleChoice}
+                      />
+                    )}
                     {liveText && (!streaming) && (
                       <div className="flex items-center gap-3 mt-1.5 px-1">
                         <button

@@ -341,6 +341,27 @@ export function dagFromTurn(turn: Turn): DagOutputItem | undefined {
   return undefined
 }
 
+// activityFromTurn reconstructs the orchestrator's persisted tool calls (the
+// 'quack:activity' output item) as a single synthetic AgentRun, so chat history
+// renders the same ActivityList the live stream uses. Empty array if none.
+export function activityFromTurn(turn: Turn): AgentRun[] {
+  for (const item of turn.output) {
+    if (item.type !== 'quack:activity') continue
+    const activity: AgentRun['activity'] = item.tool_calls.map(tc => ({
+      kind: 'tool' as const,
+      tool: {
+        callId: tc.call_id,
+        name: tc.name,
+        args: (tc.args ?? {}) as Record<string, unknown>,
+        result: tc.result,
+        done: true,
+      },
+    }))
+    return [{ runId: 'orchestrator', agent: 'orchestrator', stage: 'worker', activity, done: true }]
+  }
+  return []
+}
+
 // textFromTurn extracts the final answer text from a completed Turn.
 export function textFromTurn(turn: Turn): string {
   for (const item of turn.output) {

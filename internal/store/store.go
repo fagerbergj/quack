@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"errors"
+	"iter"
 	"log"
 	"os"
 	"time"
@@ -76,8 +77,109 @@ type TurnContent struct {
 	UserText  string
 	AsstText  string
 	AsstThink string
+	ToolCalls []ToolCallRecord // orchestrator-level tool calls, in event order
 	Plan      *DagPlan
 	Nodes     []DagNode
+}
+
+// ToolCallRecord is one orchestrator tool call recovered from the session events,
+// with its result paired in by call ID. Surfaced so chat history can render the
+// orchestrator's activity (plan/execute/get_user_choice) after a reload.
+type ToolCallRecord struct {
+	CallID string
+	Name   string
+	Args   map[string]any
+	Result map[string]any
+}
+
+// transferTool is ADK's internal agent-transfer tool; it is noise in the activity
+// log, so it is excluded (mirrors the live stream translator).
+const transferTool = "transfer_to_agent"
+
+// choiceToolName / choiceAnswerKey mirror tools.ChoiceToolName / ChoiceAnswerKey:
+// a clarification answer is resumed as a get_user_choice FunctionResponse on a
+// user-authored event, carrying the chosen option under the answer key. We surface
+// that option as the turn's user text (otherwise the answer turn looks empty).
+const (
+	choiceToolName  = "get_user_choice"
+	choiceAnswerKey = "choice"
+)
+
+// turnGroup is the per-turn content extracted from a session's events.
+type turnGroup struct {
+	userText, asstText, asstThink string
+	toolCalls                     []ToolCallRecord
+}
+
+// groupSessionEvents buckets a session's events into per-turn groups, split on
+// user-authored events. For assistant events it separates text from thinking and
+// collects tool calls (pairing each FunctionResponse to its earlier FunctionCall
+// by call ID); transfer_to_agent is excluded as activity-log noise. Pure (no DB)
+// so the extraction is unit-testable.
+func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
+	var groups []turnGroup
+	var cur *turnGroup
+	for ev := range events {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		if ev.Author == "user" {
+			groups = append(groups, turnGroup{})
+			cur = &groups[len(groups)-1]
+			for _, p := range ev.Content.Parts {
+				if p == nil {
+					continue
+				}
+				// A clarification answer arrives as a get_user_choice FunctionResponse
+				// (Role:user); surface the chosen option as the user's message text.
+				if p.FunctionResponse != nil {
+					if p.FunctionResponse.Name == choiceToolName {
+						if c, ok := p.FunctionResponse.Response[choiceAnswerKey].(string); ok {
+							cur.userText += c
+						}
+					}
+					continue
+				}
+				if !p.Thought && p.FunctionCall == nil {
+					cur.userText += p.Text
+				}
+			}
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p == nil {
+				continue
+			}
+			switch {
+			case p.FunctionCall != nil:
+				if p.FunctionCall.Name == transferTool {
+					continue
+				}
+				cur.toolCalls = append(cur.toolCalls, ToolCallRecord{
+					CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
+				})
+			case p.FunctionResponse != nil:
+				if p.FunctionResponse.Name == transferTool {
+					continue
+				}
+				// Pair to the earlier call by ID (a call always precedes its response).
+				for i := range cur.toolCalls {
+					if cur.toolCalls[i].CallID == p.FunctionResponse.ID {
+						cur.toolCalls[i].Result = p.FunctionResponse.Response
+						break
+					}
+				}
+			case p.Thought:
+				cur.asstThink += p.Text
+			default:
+				cur.asstText += p.Text
+			}
+		}
+	}
+	return groups
 }
 
 // Store wraps the relational DB (chat metadata) and the ADK session service.
@@ -228,37 +330,10 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	}
 
 	// Group ADK events into per-turn buckets separated by user-authored events.
-	type group struct{ userText, asstText, asstThink string }
-	var groups []group
-	var cur *group
-
+	var groups []turnGroup
 	resp, err := s.Sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: chatID})
 	if err == nil && resp != nil {
-		for ev := range resp.Session.Events().All() {
-			if ev == nil || ev.Content == nil {
-				continue
-			}
-			if ev.Author == "user" {
-				groups = append(groups, group{})
-				cur = &groups[len(groups)-1]
-				for _, p := range ev.Content.Parts {
-					if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
-						cur.userText += p.Text
-					}
-				}
-			} else if cur != nil {
-				for _, p := range ev.Content.Parts {
-					if p == nil || p.FunctionCall != nil || p.FunctionResponse != nil {
-						continue
-					}
-					if p.Thought {
-						cur.asstThink += p.Text
-					} else {
-						cur.asstText += p.Text
-					}
-				}
-			}
-		}
+		groups = groupSessionEvents(resp.Session.Events().All())
 	}
 
 	// Index DAG plans by turn ID.
@@ -276,6 +351,7 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 			tc.UserText = groups[i].userText
 			tc.AsstText = groups[i].asstText
 			tc.AsstThink = groups[i].asstThink
+			tc.ToolCalls = groups[i].toolCalls
 		}
 		if plan := planByTurn[t.ID]; plan != nil {
 			tc.Plan = plan
