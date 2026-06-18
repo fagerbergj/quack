@@ -289,6 +289,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 						PlanID:           pid,
 						Status:           "done",
 						OutputPreview:    d.OutputPreview,
+						Output:           d.Output,
 						FinishedAt:       now(),
 						Model:            d.Model,
 						PromptTokens:     d.PromptTokens,
@@ -301,6 +302,17 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 						JudgeRounds:      d.JudgeRounds,
 						JudgeFinalScore:  d.JudgeFinalScore,
 						JudgePassed:      d.JudgePassed,
+					})
+				}()
+			}
+		case stream.EventNodeWaiting:
+			if d, ok := ev.Data.(stream.NodeWaitingData); ok && activePlanID != "" {
+				pid := activePlanID
+				go func() {
+					_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
+						NodeID: d.NodeID, PlanID: pid, Status: "waiting",
+						OutputPreview: outputPreview(d.Output), Output: d.Output,
+						WaitingCallID: d.CallID, Question: d.Question, FinishedAt: now(),
 					})
 				}()
 			}
@@ -382,6 +394,8 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 					Model:            strPtr(n.Model),
 					FinishReason:     strPtr(n.FinishReason),
 					OutputPreview:    strPtr(n.OutputPreview),
+					Question:         strPtr(n.Question),
+					WaitingCallId:    strPtr(n.WaitingCallID),
 					Error:            strPtr(n.Error),
 					PromptTokens:     intPtr(int(n.PromptTokens)),
 					CompletionTokens: intPtr(int(n.CompletionTokens)),
@@ -403,10 +417,11 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 				}
 				nodeStates[n.NodeID] = ns
 			}
-			// DAG is completed if all nodes are done/failed, in_progress otherwise.
+			// DAG is completed if all nodes are done/failed, in_progress otherwise
+			// (a "waiting" node means the run is paused awaiting input — not done).
 			dagStatus := schema.Completed
 			for _, ns := range nodeStates {
-				if ns.Status == "running" || ns.Status == "queued" {
+				if ns.Status == "running" || ns.Status == "queued" || ns.Status == "waiting" {
 					dagStatus = schema.InProgress
 					break
 				}
@@ -521,4 +536,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func httpError(w http.ResponseWriter, status int, err error) {
 	http.Error(w, err.Error(), status)
+}
+
+// outputPreview truncates a node's output for the display-only OutputPreview
+// column, matching the executor's node_done preview (250 chars + ellipsis).
+func outputPreview(s string) string {
+	if len(s) > 250 {
+		return s[:250] + "…"
+	}
+	return s
 }

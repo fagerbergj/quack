@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -128,8 +129,16 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// Run the worker against a gate-marker-filtered session view: the agent_start
 		// marker just emitted is an orphan FunctionResponse that ADK would otherwise
 		// choke on when the worker's llmagent rebuilds its request from the session.
-		answer, act, ok, workerErr := g.runWorker(newCritiqueContext(ctx, ctx.UserContent()), yield, g.worker, false)
+		answer, act, ok, workerErr, pending := g.runWorker(newCritiqueContext(ctx, ctx.UserContent()), yield, g.worker, false)
 		if !ok {
+			return
+		}
+		// The worker called request_input: suspend the node. Re-yield the pending
+		// call (with LongRunningToolIDs) so the A2A v2 bridge surfaces input-required,
+		// and return WITHOUT vetting — there is no answer to judge yet.
+		if pending != nil {
+			g.log.Info("node pausing for human input", "call", pending.call.ID)
+			g.emitPendingInput(ctx, yield, pending)
 			return
 		}
 		g.log.Debug("worker done", "dur", time.Since(t0), "answer_len", len(answer))
@@ -533,7 +542,9 @@ func (g *gate) runSelfCritique(ctx adkagent.InvocationContext, yield func(*sessi
 	// the user sees activity inside the self-critique container. The local model
 	// outputs reasoning as plain text (not Thought parts), so without this the
 	// self-critique phase is a silent blank for the user.
-	refined, refinedAct, ok, _ := g.runWorker(cctx, yield, g.worker, true)
+	// pending (request_input) is ignored here: the worker pauses on its round-0
+	// draft, before any self-critique/revision runs, so this path can't observe it.
+	refined, refinedAct, ok, _, _ := g.runWorker(cctx, yield, g.worker, true)
 	if !ok {
 		return "", workerActivity{}, false
 	}
@@ -548,7 +559,7 @@ func (g *gate) runSelfCritique(ctx adkagent.InvocationContext, yield func(*sessi
 func (g *gate) runAgenticRevision(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, answer, feedback string, act workerActivity) (string, workerActivity, bool) {
 	content := buildRevisionContent(g.cfg.Constitution, ctx.UserContent(), answer, feedback, act)
 	cctx := newCritiqueContext(ctx, content)
-	revised, revisedAct, ok, werr := g.runWorker(cctx, yield, g.worker, true)
+	revised, revisedAct, ok, werr, _ := g.runWorker(cctx, yield, g.worker, true)
 	if !ok {
 		return "", workerActivity{}, false
 	}
@@ -623,7 +634,7 @@ func (g *gate) runFinalize(ctx adkagent.InvocationContext, yield func(*session.E
 	cctx := newCritiqueContext(ctx, content)
 	// textAsThinking=false: this pass produces the primary answer (like round 0),
 	// so its text is buffered as the answer rather than streamed as thinking.
-	finalized, finalAct, ok, _ := g.runWorker(cctx, yield, g.writer, false)
+	finalized, finalAct, ok, _, _ := g.runWorker(cctx, yield, g.writer, false)
 	if !ok {
 		return "", workerActivity{}, false
 	}
@@ -770,13 +781,18 @@ type workerActivity struct {
 // When textAsThinking is true, plain text parts are converted to thought parts
 // so they stream as thinking events — used during agentic self-refine so the
 // user sees the model working instead of a silent blank.
-func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, ag adkagent.Agent, textAsThinking bool) (string, workerActivity, bool, error) {
+func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, ag adkagent.Agent, textAsThinking bool) (string, workerActivity, bool, error, *pendingInput) {
 	var answer strings.Builder
 	var act workerActivity
 	act.fetched = make(map[string]fetchRecord)
 	act.seen = make(map[string]string)
 	// pendingCalls maps call-ID → URL for in-flight web_fetch calls.
 	pendingCalls := make(map[string]string)
+	// pending is set when the worker calls a long-running tool (request_input):
+	// ADK ends the turn with the call unresolved (ev.LongRunningToolIDs). The gate
+	// must NOT vet — it short-circuits and re-yields the call so the A2A bridge
+	// surfaces input-required. See run().
+	var pending *pendingInput
 
 	// Diagnostics for empty-answer post-mortem: the last finish reason and whether
 	// the final streamed event was partial (ADK marks the last chunk Partial when
@@ -828,6 +844,12 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 					evHasTool = true
 				}
 				if p.FunctionCall != nil {
+					// A long-running call (request_input) leaves the turn paused: ADK
+					// lists its ID in ev.LongRunningToolIDs. Capture it so the gate can
+					// suspend the node instead of vetting an answer-less draft.
+					if slices.Contains(ev.LongRunningToolIDs, p.FunctionCall.ID) {
+						pending = &pendingInput{call: p.FunctionCall}
+					}
 					toolCalls++
 					switch p.FunctionCall.Name {
 					case "web_search":
@@ -863,6 +885,12 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 				}
 			}
 		}
+		// Paused: stop before splitAnswer (which would drop LongRunningToolIDs and
+		// leak the open call as a normal tool event) and before answer.Reset. The
+		// buffered answer holds any pre-question narration; run() yields the call.
+		if pending != nil {
+			break
+		}
 		if toolCalls >= maxToolCalls && !capped {
 			capped = true
 			g.log.Warn("tool-call cap reached; stopping the worker so it writes its answer from what it has", "tool_calls", toolCalls)
@@ -880,7 +908,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 		answer.WriteString(ans)
 		if passthrough != nil {
 			if !yield(passthrough, nil) {
-				return "", workerActivity{}, false, nil
+				return "", workerActivity{}, false, nil, nil
 			}
 		}
 	}
@@ -903,7 +931,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 		g.log.Warn("EMPTY answer — worker ended its turn with no answer text",
 			"tool_steps", steps, "finish_reason", string(lastFinish), "partial", lastPartial, "think_stripped", stripped, "raw_len", rawLen)
 	}
-	return ans, act, true, workerErr
+	return ans, act, true, workerErr, pending
 }
 
 // splitAnswer separates a worker event's answer text (plain non-thought text)
@@ -1015,6 +1043,26 @@ func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Ev
 	ev := session.NewEvent(ctx.InvocationID())
 	ev.Author = g.name
 	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
+	ev.TurnComplete = true
+	return yield(ev, nil)
+}
+
+// pendingInput is a long-running tool call (request_input) the worker left open
+// to pause for human input. The gate re-yields it so the node suspends.
+type pendingInput struct {
+	call *genai.FunctionCall
+}
+
+// emitPendingInput yields the worker's open long-running call as the node's
+// turn-completing event, carrying the FunctionCall part AND LongRunningToolIDs so
+// the A2A v2 bridge converts it to TaskStateInputRequired. This is the one path
+// that must bypass splitAnswer (which drops LongRunningToolIDs). NOTHING may be
+// emitted after it — the final task status must be input-required, not completed.
+func (g *gate) emitPendingInput(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, p *pendingInput) bool {
+	ev := session.NewEvent(ctx.InvocationID())
+	ev.Author = g.name
+	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: p.call}}}
+	ev.LongRunningToolIDs = []string{p.call.ID}
 	ev.TurnComplete = true
 	return yield(ev, nil)
 }

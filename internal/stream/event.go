@@ -60,11 +60,12 @@ const (
 	EventDone      = "done"
 
 	// DAG / static structure.
-	EventDagPlan    = "dag_plan"
-	EventNodeQueued = "node_queued"
-	EventNodeStart  = "node_start"
-	EventNodeDone   = "node_done"
-	EventNodeFailed = "node_failed"
+	EventDagPlan     = "dag_plan"
+	EventNodeQueued  = "node_queued"
+	EventNodeStart   = "node_start"
+	EventNodeDone    = "node_done"
+	EventNodeFailed  = "node_failed"
+	EventNodeWaiting = "node_waiting"
 )
 
 // SSEEvent is one server-sent event: a name plus a JSON-serializable payload.
@@ -214,8 +215,13 @@ type NodeStartData struct {
 // NodeDoneData is the `node_done` event payload. Completion stats are the sum
 // across all runs made during the node's execution; omitted when zero.
 type NodeDoneData struct {
-	NodeID           string  `json:"node_id"`
-	OutputPreview    string  `json:"output_preview,omitempty"`
+	NodeID        string `json:"node_id"`
+	OutputPreview string `json:"output_preview,omitempty"`
+	// Output is the node's FULL vetted text. Carried so the store can persist it
+	// (downstream rehydration on M5b resume needs the whole output, not just the
+	// 250-char preview). The frontend streams the answer via agent_token and
+	// ignores this field.
+	Output           string  `json:"output,omitempty"`
 	Model            string  `json:"model,omitempty"`
 	PromptTokens     int32   `json:"prompt_tokens,omitempty"`
 	CompletionTokens int32   `json:"completion_tokens,omitempty"`
@@ -233,6 +239,17 @@ type NodeDoneData struct {
 type NodeFailedData struct {
 	NodeID string `json:"node_id"`
 	Error  string `json:"error"`
+}
+
+// NodeWaitingData is the `node_waiting` event payload: a node paused mid-DAG on a
+// request_input call. CallID is the open long-running call (answered on resume);
+// Question is the open question to show the user. Output carries any partial text
+// the worker streamed before pausing.
+type NodeWaitingData struct {
+	NodeID   string `json:"node_id"`
+	CallID   string `json:"call_id"`
+	Question string `json:"question"`
+	Output   string `json:"output,omitempty"`
 }
 
 // ChatTitleData is the `chat_title` event payload.
@@ -266,6 +283,11 @@ func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 // NodeFailed builds a node_failed event.
 func NodeFailed(nodeID, errMsg string) SSEEvent {
 	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
+}
+
+// NodeWaiting builds a node_waiting event.
+func NodeWaiting(data NodeWaitingData) SSEEvent {
+	return SSEEvent{Name: EventNodeWaiting, Data: data}
 }
 
 // ChatTitle builds a chat_title event.

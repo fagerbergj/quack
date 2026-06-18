@@ -106,8 +106,10 @@ paths:
 
         DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
         output item has been added; `node_queued` ({"node_id"}), `node_start`
-        ({"node_id","agent"}), `node_done` ({"node_id",...metadata}), and
-        `node_failed` ({"node_id","error"}) track node lifecycle.
+        ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
+        `node_failed` ({"node_id","error"}), and `node_waiting`
+        ({"node_id","call_id","question"}, emitted when a node pauses on
+        request_input — answer it via the resume endpoint) track node lifecycle.
 
         Lifecycle: `chat_title` ({"title"}) is sent once the title is generated;
         `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
@@ -131,6 +133,7 @@ paths:
         - node_start
         - node_done
         - node_failed
+        - node_waiting
         - chat_title
         - done
         - error
@@ -452,8 +455,15 @@ components:
       properties:
         status:
           type: string
+          description: queued | running | done | failed | waiting
         output_preview:
           type: string
+        question:
+          type: string
+          description: When status is "waiting", the open question the node is paused on.
+        waiting_call_id:
+          type: string
+          description: When status is "waiting", the request_input call ID to answer on resume.
         error:
           type: string
         started_at_ms:

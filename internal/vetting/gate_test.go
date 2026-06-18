@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"slices"
 	"strings"
 	"testing"
 
@@ -699,5 +700,119 @@ func TestFilteredSessionDoesNotDuplicateExistingPrompt(t *testing.T) {
 
 	if got := fs.Events().Len(); got != 1 {
 		t.Fatalf("want 1 event (no duplicate), got %d", got)
+	}
+}
+
+// riArgs/riResult are the request_input tool's shapes (free-form question →
+// pending placeholder); duplicated here so the test doesn't import the tools pkg.
+type riArgs struct {
+	Question string `json:"question"`
+}
+type riResult struct {
+	Status string `json:"status"`
+}
+
+// requestInputModel emits a single long-running request_input FunctionCall, the
+// way a worker pauses for human input mid-DAG.
+type requestInputModel struct{ question string }
+
+func (requestInputModel) Name() string { return "req-input-model" }
+
+func (m requestInputModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{
+				FunctionCall: &genai.FunctionCall{ID: "ri1", Name: "request_input", Args: map[string]any{"question": m.question}},
+			}}},
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// TestGatePausesOnRequestInput is the crux of M5b: when the worker calls a
+// long-running request_input tool, the gate must re-yield the open call (with
+// LongRunningToolIDs, so the A2A bridge converts it to input-required) and must
+// NOT vet — no answer token, no judge verdict.
+func TestGatePausesOnRequestInput(t *testing.T) {
+	riTool, err := functiontool.New[riArgs, riResult](
+		functiontool.Config{Name: "request_input", Description: "ask the user a question", IsLongRunning: true},
+		func(tc agent.ToolContext, _ riArgs) (riResult, error) {
+			tc.Actions().SkipSummarization = true
+			return riResult{Status: "pending"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := llmagent.New(llmagent.Config{
+		Name:        "web-researcher",
+		Description: "researches the web",
+		Model:       requestInputModel{question: "Which city?"},
+		Instruction: "research",
+		Tools:       []tool.Tool{riTool},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The judge must never run for a paused node; a scripted verdict is provided
+	// only so a regression (gate vetting a paused node) would surface here.
+	judge := scriptedJudge(judgeTurn{score: 0.9, feedback: "unused"})
+	gated, err := NewGatedAgent(worker, nil, judge, Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName:           "test",
+		Agent:             gated,
+		SessionService:    session.InMemoryService(),
+		AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var pausedCalls []*genai.FunctionCall
+	var sawAnswer, sawJudge bool
+	translator := stream.NewTranslator()
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}
+	for ev, err := range r.Run(context.Background(), "u", "s1", content, agent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run error: %v", err)
+		}
+		if ev != nil && len(ev.LongRunningToolIDs) > 0 && ev.Content != nil {
+			for _, p := range ev.Content.Parts {
+				if p != nil && p.FunctionCall != nil && slices.Contains(ev.LongRunningToolIDs, p.FunctionCall.ID) {
+					pausedCalls = append(pausedCalls, p.FunctionCall)
+				}
+			}
+		}
+		for _, se := range translator.Event(ev) {
+			switch d := se.Data.(type) {
+			case stream.AgentTokenData:
+				if strings.TrimSpace(d.Text) != "" {
+					sawAnswer = true
+				}
+			case stream.AgentCompleteData:
+				if d.Stage == stream.StageJudge && d.Status == "" {
+					sawJudge = true
+				}
+			}
+		}
+	}
+
+	if len(pausedCalls) != 1 {
+		t.Fatalf("want exactly 1 open request_input call yielded, got %d", len(pausedCalls))
+	}
+	if pausedCalls[0].Name != "request_input" {
+		t.Errorf("paused call name = %q, want request_input", pausedCalls[0].Name)
+	}
+	if q, _ := pausedCalls[0].Args["question"].(string); q != "Which city?" {
+		t.Errorf("paused question = %q, want %q", q, "Which city?")
+	}
+	if sawAnswer {
+		t.Errorf("gate emitted an answer for a paused node — it must not vet")
+	}
+	if sawJudge {
+		t.Errorf("gate ran the judge for a paused node — it must short-circuit before vetting")
 	}
 }
