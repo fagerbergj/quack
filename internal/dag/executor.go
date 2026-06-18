@@ -154,6 +154,16 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 		}
 
 		completed := 0
+		// suspended reports whether the runnable frontier is empty while nodes
+		// remain — the rest all depend on a node waiting for input — so the DAG
+		// suspends (the request ends; resume via the answer endpoint).
+		suspended := func() bool {
+			if completed == len(launched) && completed < len(plan.Nodes) {
+				slog.Info("dag suspended for input", "component", "dag", "waiting", len(waitingNodes), "settled", completed, "total", len(plan.Nodes))
+				return true
+			}
+			return false
+		}
 		for completed < len(plan.Nodes) {
 			select {
 			case msg := <-ch:
@@ -177,8 +187,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 						drain(completed)
 						return
 					}
-					if completed == len(launched) && completed < len(plan.Nodes) {
-						slog.Info("dag suspended for input", "component", "dag", "waiting", len(waitingNodes), "settled", completed, "total", len(plan.Nodes))
+					if suspended() {
 						return
 					}
 					continue
@@ -228,10 +237,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 					drain(completed)
 					return
 				}
-				// No goroutine left in flight but not every node ran: the remainder
-				// all depend (transitively) on a waiting node. Suspend the DAG.
-				if completed == len(launched) && completed < len(plan.Nodes) {
-					slog.Info("dag suspended for input", "component", "dag", "waiting", len(waitingNodes), "settled", completed, "total", len(plan.Nodes))
+				if suspended() {
 					return
 				}
 			case <-ctx.Done():
@@ -245,12 +251,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 // streamNode runs one node against its A2A client and sends all activity events
 // to ch as they arrive, followed by a done message.
 func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
-	send := func(m nodeMsg) {
-		select {
-		case ch <- m:
-		case <-ctx.Done():
-		}
-	}
+	// send blocks rather than racing ctx.Done: Execute always drains every
+	// launched goroutine before returning, so the receiver is guaranteed and a
+	// terminal (done/waiting) message can't be lost to a cancel race — which would
+	// hang drain's completion count.
+	send := func(m nodeMsg) { ch <- m }
 
 	// Acquire a concurrency slot: the node's deps are met, but it waits here behind
 	// the max-active cap (it stays "queued" in the UI). Once a slot frees, emit
@@ -327,15 +332,13 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 		// carrying any partial text streamed before the question.
 		if call := findWaitingCall(ev); call != nil {
 			questions := questionsFromArgs(call.Args)
+			partial := stream.StripThinking(answer.String())
 			slog.Info("node waiting for input", "component", "dag", "node", node.ID, "call", call.ID, "questions", len(questions))
 			send(nodeMsg{
-				nodeID:  node.ID,
-				waiting: true,
-				output:  stream.StripThinking(answer.String()),
-				waitData: stream.NodeWaitingData{
-					NodeID: node.ID, CallID: call.ID, Questions: questions,
-					Output: stream.StripThinking(answer.String()),
-				},
+				nodeID:   node.ID,
+				waiting:  true,
+				output:   partial,
+				waitData: stream.NodeWaitingData{NodeID: node.ID, CallID: call.ID, Questions: questions, Output: partial},
 			})
 			return
 		}
@@ -399,23 +402,17 @@ func findWaitingCall(ev *session.Event) *genai.FunctionCall {
 // questionsFromArgs pulls the request_input "questions" list out of a function
 // call's args. JSON decoding yields []any, so each element is asserted to string.
 func questionsFromArgs(args map[string]any) []string {
-	raw, ok := args["questions"]
+	raw, ok := args["questions"].([]any)
 	if !ok {
 		return nil
 	}
-	switch v := raw.(type) {
-	case []string:
-		return v
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, x := range v {
-			if s, ok := x.(string); ok {
-				out = append(out, s)
-			}
+	out := make([]string, 0, len(raw))
+	for _, x := range raw {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
 		}
-		return out
 	}
-	return nil
+	return out
 }
 
 // buildTask constructs the message for a node: the user's verbatim request

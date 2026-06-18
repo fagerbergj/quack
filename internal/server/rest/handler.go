@@ -310,8 +310,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 				pid := activePlanID
 				go func() {
 					_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
-						NodeID: d.NodeID, PlanID: pid, Status: "waiting",
-						OutputPreview: outputPreview(d.Output), Output: d.Output,
+						NodeID: d.NodeID, PlanID: pid, Status: "waiting", Output: d.Output,
 						WaitingCallID: d.CallID, Questions: d.Questions, FinishedAt: now(),
 					})
 				}()
@@ -543,13 +542,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func httpError(w http.ResponseWriter, status int, err error) {
 	http.Error(w, err.Error(), status)
-}
-
-// outputPreview truncates a node's output for the display-only OutputPreview
-// column, matching the executor's node_done preview (250 chars + ellipsis).
-func outputPreview(s string) string {
-	if len(s) > 250 {
-		return s[:250] + "…"
-	}
-	return s
 }

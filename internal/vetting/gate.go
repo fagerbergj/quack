@@ -137,7 +137,7 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 		// call (with LongRunningToolIDs) so the A2A v2 bridge surfaces input-required,
 		// and return WITHOUT vetting — there is no answer to judge yet.
 		if pending != nil {
-			g.log.Info("node pausing for human input", "call", pending.call.ID)
+			g.log.Info("node pausing for human input", "call", pending.ID)
 			g.emitPendingInput(ctx, yield, pending)
 			return
 		}
@@ -781,18 +781,18 @@ type workerActivity struct {
 // When textAsThinking is true, plain text parts are converted to thought parts
 // so they stream as thinking events — used during agentic self-refine so the
 // user sees the model working instead of a silent blank.
-func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, ag adkagent.Agent, textAsThinking bool) (string, workerActivity, bool, error, *pendingInput) {
+func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, ag adkagent.Agent, textAsThinking bool) (string, workerActivity, bool, error, *genai.FunctionCall) {
 	var answer strings.Builder
 	var act workerActivity
 	act.fetched = make(map[string]fetchRecord)
 	act.seen = make(map[string]string)
 	// pendingCalls maps call-ID → URL for in-flight web_fetch calls.
 	pendingCalls := make(map[string]string)
-	// pending is set when the worker calls a long-running tool (request_input):
-	// ADK ends the turn with the call unresolved (ev.LongRunningToolIDs). The gate
-	// must NOT vet — it short-circuits and re-yields the call so the A2A bridge
-	// surfaces input-required. See run().
-	var pending *pendingInput
+	// pending is set to the worker's open long-running call (request_input): ADK
+	// ends the turn with it unresolved (ev.LongRunningToolIDs). The gate must NOT
+	// vet — it short-circuits and re-yields the call so the A2A bridge surfaces
+	// input-required. See run().
+	var pending *genai.FunctionCall
 
 	// Diagnostics for empty-answer post-mortem: the last finish reason and whether
 	// the final streamed event was partial (ADK marks the last chunk Partial when
@@ -848,7 +848,7 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 					// lists its ID in ev.LongRunningToolIDs. Capture it so the gate can
 					// suspend the node instead of vetting an answer-less draft.
 					if slices.Contains(ev.LongRunningToolIDs, p.FunctionCall.ID) {
-						pending = &pendingInput{call: p.FunctionCall}
+						pending = p.FunctionCall
 					}
 					toolCalls++
 					switch p.FunctionCall.Name {
@@ -1047,22 +1047,16 @@ func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Ev
 	return yield(ev, nil)
 }
 
-// pendingInput is a long-running tool call (request_input) the worker left open
-// to pause for human input. The gate re-yields it so the node suspends.
-type pendingInput struct {
-	call *genai.FunctionCall
-}
-
 // emitPendingInput yields the worker's open long-running call as the node's
 // turn-completing event, carrying the FunctionCall part AND LongRunningToolIDs so
 // the A2A v2 bridge converts it to TaskStateInputRequired. This is the one path
 // that must bypass splitAnswer (which drops LongRunningToolIDs). NOTHING may be
 // emitted after it — the final task status must be input-required, not completed.
-func (g *gate) emitPendingInput(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, p *pendingInput) bool {
+func (g *gate) emitPendingInput(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, call *genai.FunctionCall) bool {
 	ev := session.NewEvent(ctx.InvocationID())
 	ev.Author = g.name
-	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: p.call}}}
-	ev.LongRunningToolIDs = []string{p.call.ID}
+	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: call}}}
+	ev.LongRunningToolIDs = []string{call.ID}
 	ev.TurnComplete = true
 	return yield(ev, nil)
 }
