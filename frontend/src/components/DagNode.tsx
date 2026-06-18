@@ -10,9 +10,10 @@ function StatusBadge({ status }: { status: NodeStatus }) {
     running: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400',
     done:    'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
     failed:  'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400',
+    waiting: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
   }
   const labels: Record<NodeStatus, string> = {
-    queued: 'queued', running: 'running…', done: 'done', failed: 'failed',
+    queued: 'queued', running: 'running…', done: 'done', failed: 'failed', waiting: 'waiting…',
   }
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${styles[status]}`}>

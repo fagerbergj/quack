@@ -121,7 +121,7 @@ func main() {
 
 	planner := dag.NewPlanner(llm, agentInfos)
 	executor := dag.NewExecutor(st.Sessions, clientMap, mediaAgents, cfg.Dag.MaxActiveNodes)
-	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS)
+	orch := orchestrator.New(st.Sessions, st, llm, orchSysPrompt, planner, executor, skillTS)
 
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {

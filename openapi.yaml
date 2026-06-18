@@ -109,7 +109,8 @@ paths:
         ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
         `node_failed` ({"node_id","error"}), and `node_waiting`
         ({"node_id","call_id","questions"}, emitted when a node pauses on
-        request_input — answer it via the resume endpoint) track node lifecycle.
+        request_input — the orchestrator answers it and resumes) track node
+        lifecycle.
 
         Lifecycle: `chat_title` ({"title"}) is sent once the title is generated;
         `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
@@ -178,47 +179,6 @@ paths:
       responses:
         "204":
           description: Cancelled (or no active run)
-
-  /api/v1/chats/{chat_id}/dag/{plan_id}/nodes/{node_id}/answer:
-    post:
-      operationId: resumeDagNode
-      summary: Answer a paused DAG node and resume the run
-      description: |
-        Resumes a DAG node that paused on a `request_input` call (node status
-        "waiting"). The body carries one answer per question the node asked, in
-        order. The node continues from its pause, downstream nodes run, and the
-        response streams the same Server-Sent Events as `sendChatMessage`
-        (node_* lifecycle + agent activity). Other still-paused nodes stay
-        waiting. Returns 409 if the node is not currently waiting.
-      parameters:
-        - $ref: "#/components/parameters/ChatID"
-        - name: plan_id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: node_id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ResumeNodeBody"
-      responses:
-        "200":
-          description: SSE event stream (same vocabulary as sendChatMessage)
-          content:
-            text/event-stream:
-              schema:
-                type: string
-        "404":
-          description: Plan or node not found
-        "409":
-          description: Node is not waiting for input
 
 components:
   parameters:
@@ -291,16 +251,6 @@ components:
       properties:
         content:
           type: string
-
-    ResumeNodeBody:
-      type: object
-      required: [answers]
-      properties:
-        answers:
-          type: array
-          items:
-            type: string
-          description: One answer per question the node asked, in order.
 
     # -------------------------------------------------------------------------
     # Turn (one user→assistant exchange, modelled after OpenResponses Response)

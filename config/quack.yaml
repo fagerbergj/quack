@@ -24,7 +24,7 @@ agents:
     provider: default
     model: ${RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
-    tools: [web_search, web_fetch, summarize, current_date]
+    tools: [web_search, web_fetch, summarize, current_date, request_input]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

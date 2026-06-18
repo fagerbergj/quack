@@ -10,11 +10,12 @@ import {
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem } from '../generated'
 
-export type NodeStatus = 'queued' | 'running' | 'done' | 'failed'
+export type NodeStatus = 'queued' | 'running' | 'done' | 'failed' | 'waiting'
 
 export interface NodeState {
   status: NodeStatus
   outputPreview?: string
+  questions?: string[]
   error?: string
   startedAt?: number
   finishedAt?: number
@@ -297,6 +298,9 @@ export class ChatStore {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
         },
+        // The node paused for input; the orchestrator answers it (itself or via a
+        // get_user_choice prompt) and the node resumes (back to running → done).
+        onNodeWaiting: (nodeId, questions) => updateNodeState(nodeId, { status: 'waiting', questions }),
       })
       if (streamError) throw new Error(streamError)
     } catch (err: unknown) {

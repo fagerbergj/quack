@@ -19,6 +19,7 @@ import (
 
 	internalagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 )
@@ -36,6 +37,7 @@ const orchestratorName = "orchestrator"
 // from session context or to call plan → execute for web research.
 type Orchestrator struct {
 	sessions  session.Service
+	store     *store.Store
 	model     model.LLM
 	sysPrompt string
 	planner   *dag.Planner
@@ -44,10 +46,12 @@ type Orchestrator struct {
 }
 
 // New builds the orchestrator. sysPrompt is assembled from agents/orchestrator/
-// via promptbuilder.Orchestrator at startup. skillTS may be nil.
-func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset) *Orchestrator {
+// via promptbuilder.Orchestrator at startup. The store backs answer_node's
+// cross-turn plan reconstruction when resuming a paused node. skillTS may be nil.
+func New(sessions session.Service, st *store.Store, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset) *Orchestrator {
 	return &Orchestrator{
 		sessions:  sessions,
+		store:     st,
 		model:     m,
 		sysPrompt: sysPrompt,
 		planner:   planner,
@@ -86,6 +90,15 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return
 		}
+		// answer_node resumes a node that paused on request_input. The orchestrator
+		// answers from context or escalates to the user via get_user_choice, then
+		// calls this. Built per-Run with the session id so a cross-turn resume
+		// (after a get_user_choice pause) reconstructs the plan from the store.
+		answerTool, err := tools.NewAnswerNodeTool(o.executor, planCache, o.store, AppName, userID, sessionID)
+		if err != nil {
+			yield(stream.Errorf("orchestrator: answer_node tool: "+err.Error()), nil)
+			return
+		}
 		// Clarification tool: a long-running ask that pauses the turn until the
 		// user picks an option (its answer is resumed below).
 		choiceTool, err := tools.NewGetUserChoiceTool()
@@ -104,7 +117,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Description: "Routes research requests to specialist agents and answers conversational queries directly.",
 			Model:       o.model,
 			Instruction: o.sysPrompt,
-			Tools:       []tool.Tool{planTool, execTool, choiceTool},
+			Tools:       []tool.Tool{planTool, execTool, answerTool, choiceTool},
 			Toolsets:    toolsets,
 			GenerateContentConfig: &genai.GenerateContentConfig{
 				MaxOutputTokens: internalagent.MaxOutputTokens,
@@ -202,49 +215,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			}
 		}
 		yield(stream.Done(), nil)
-	}
-}
-
-// ResumeDag continues a suspended DAG by answering a node that paused on a
-// request_input call. The caller (the REST handler) reconstructs the plan and the
-// done / still-waiting node maps from storage; this builds the answer
-// FunctionResponse, drives executor.Resume, streams its events, and — if the DAG
-// runs to completion — persists the terminal answer as the chat's assistant
-// message so a reload shows it (mirroring Run's deliver-mode persistence). answers
-// are in question order; callID is the node's open request_input call.
-func (o *Orchestrator) ResumeDag(ctx context.Context, userID, sessionID string, plan dag.Plan, done map[string]string, waiting map[string]bool, nodeID, callID string, answers []string) iter.Seq2[stream.SSEEvent, error] {
-	return func(yield func(stream.SSEEvent, error) bool) {
-		content := &genai.Content{Role: "user", Parts: []*genai.Part{{
-			FunctionResponse: &genai.FunctionResponse{
-				ID:       callID,
-				Name:     tools.RequestInputToolName,
-				Response: map[string]any{tools.RequestInputAnswerKey: answers},
-			},
-		}}}
-		nodeOutputs := make(map[string]string)
-		for ev, err := range o.executor.Resume(ctx, plan, userID, nodeOutputs, done, waiting, nodeID, content) {
-			if err != nil {
-				yield(stream.Errorf("resume: "+err.Error()), nil)
-				return
-			}
-			if !yield(ev, nil) {
-				return
-			}
-		}
-		// If the DAG completed, persist the terminal node's answer as the assistant
-		// message. If it re-suspended on another pause, the terminal node didn't run
-		// and TerminalOutput is empty — skip (the run is still incomplete).
-		answer := tools.TerminalOutput(plan, nodeOutputs)
-		if answer == "" {
-			return
-		}
-		persistCtx := context.WithoutCancel(ctx)
-		if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
-			aev := session.NewEvent("")
-			aev.Author = orchestratorName
-			aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
-			_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
-		}
 	}
 }
 

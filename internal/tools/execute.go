@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"iter"
 	"log/slog"
 
 	"google.golang.org/adk/agent"
@@ -21,11 +22,15 @@ type executeArgs struct {
 }
 
 // executeResult.Status is a bare enum: "delivered" (end_turn=true, answer shown
-// to the user, caller outputs nothing) or "complete" (answer returned for the
-// caller to use). All guidance lives in the tool Description, not this payload.
+// to the user, caller outputs nothing), "complete" (answer returned for the
+// caller to use), or "input_required" (a node paused on request_input and needs
+// answers before the DAG can continue — see NodeID/Questions). All guidance lives
+// in the tool Description, not this payload. Shared by execute and answer_node.
 type executeResult struct {
-	Status string `json:"status"`           // "delivered" | "complete"
-	Answer string `json:"answer,omitempty"` // set only when Status == "complete"
+	Status    string   `json:"status"`              // "delivered" | "complete" | "input_required"
+	Answer    string   `json:"answer,omitempty"`    // set only when Status == "complete"
+	NodeID    string   `json:"node_id,omitempty"`   // set only when Status == "input_required"
+	Questions []string `json:"questions,omitempty"` // set only when Status == "input_required"
 }
 
 // NewExecuteTool returns a tool that runs a DAG plan produced by the plan tool.
@@ -44,51 +49,29 @@ func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (to
 				"the answer is shown to the user directly, this tool returns status=\"delivered\" with no answer text, " +
 				"and you must then output nothing further — no acknowledgement, no restatement, and never say a specialist will respond (the work is already done). " +
 				"Set end_turn=false (or omit it) only when you still have work to do after the plan runs — combining its result with other information or reshaping it yourself: " +
-				"this tool then returns status=\"complete\" with the result in `answer` for you to fold into your reply.",
+				"this tool then returns status=\"complete\" with the result in `answer` for you to fold into your reply. " +
+				"If a node needs information before it can continue, this returns status=\"input_required\" with `node_id` and `questions`; " +
+				"resolve them and call the answer_node tool to resume (see your instructions for how to answer).",
 		},
 		func(tc agent.ToolContext, a executeArgs) (executeResult, error) {
 			plan, ok := cache.Get(a.PlanID)
 			if !ok {
 				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q — call plan first and pass the plan_id it returns", a.PlanID)
 			}
-			// Memoised: a repeat execute of the same plan reuses the first run's
-			// answer instead of re-running the DAG (minutes + tokens). Only the
-			// (cheap) end_turn handling below re-runs.
-			answer, cached := cache.Result(a.PlanID)
-			if cached {
+			// Memoised: a repeat execute of a COMPLETED plan reuses the first run's
+			// answer instead of re-running the DAG. (A plan that suspended is not
+			// cached — the orchestrator resumes it via answer_node, not execute.)
+			if answer, cached := cache.Result(a.PlanID); cached {
 				slog.Info("plan reusing cached answer", "component", "execute", "plan", a.PlanID, "end_turn", a.EndTurn)
-			} else {
-				yieldFn, hasYield := stream.YieldFromContext(tc)
-				nodeOutputs := make(map[string]string)
-				for ev, err := range executor.Execute(tc, plan, userID, nodeOutputs) {
-					if hasYield {
-						yieldFn(ev)
-					}
-					if err != nil {
-						return executeResult{}, fmt.Errorf("execute: %w", err)
-					}
-				}
-				answer = TerminalOutput(plan, nodeOutputs)
-				if answer == "" {
-					return executeResult{}, fmt.Errorf("execute: all nodes completed but produced no output")
-				}
-				cache.SetResult(a.PlanID, answer)
-				slog.Info("plan executed", "component", "execute", "plan", a.PlanID, "end_turn", a.EndTurn, "answer_len", len(answer))
+				return deliverOrComplete(tc, a.EndTurn, answer, cache), nil
 			}
-			if a.EndTurn {
-				// Deliver: the answer already streamed to the user. End the
-				// orchestrator's turn STRUCTURALLY — SkipSummarization makes this tool
-				// response the final response, so the runner never calls the model
-				// again and it cannot emit a chatty acknowledgement (relying on the
-				// prompt to stay silent proved unreliable). Withhold the answer text so
-				// it can't echo, and stash it so the orchestrator persists it as the
-				// turn's (only) assistant message.
-				tc.Actions().SkipSummarization = true
-				cache.SetDelivered(answer)
-				return executeResult{Status: "delivered"}, nil
+			nodeOutputs := make(map[string]string)
+			res, err := runDAG(tc, executor.Execute(tc, plan, userID, nodeOutputs), plan, nodeOutputs, a.EndTurn, cache)
+			if err != nil {
+				return executeResult{}, fmt.Errorf("execute: %w", err)
 			}
-			// Caller still has work to do: hand the answer back to fold into its reply.
-			return executeResult{Status: "complete", Answer: answer}, nil
+			slog.Info("plan executed", "component", "execute", "plan", a.PlanID, "status", res.Status)
+			return res, nil
 		},
 	)
 }
@@ -115,4 +98,64 @@ func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// runDAG drives a DAG event stream (from Execute or Resume): it forwards events to
+// the SSE yield seam and classifies the outcome. If a node paused for input it
+// returns input_required + that node's questions (the orchestrator answers them and
+// resumes via answer_node); otherwise it finalizes via the terminal output, caches
+// the answer, and applies end_turn (deliver vs complete). Shared by execute and
+// answer_node. Returns an unwrapped error for the caller to prefix.
+func runDAG(tc agent.ToolContext, seq iter.Seq2[stream.SSEEvent, error], plan dag.Plan, nodeOutputs map[string]string, endTurn bool, cache *PlanCache) (executeResult, error) {
+	yieldFn, hasYield := stream.YieldFromContext(tc)
+	waitingNode, questions, err := drainDAG(seq, func(ev stream.SSEEvent) {
+		if hasYield {
+			yieldFn(ev)
+		}
+	})
+	if err != nil {
+		return executeResult{}, err
+	}
+	if waitingNode != "" {
+		return executeResult{Status: "input_required", NodeID: waitingNode, Questions: questions}, nil
+	}
+	answer := TerminalOutput(plan, nodeOutputs)
+	if answer == "" {
+		return executeResult{}, fmt.Errorf("all nodes completed but produced no output")
+	}
+	cache.SetResult(plan.ID, answer)
+	return deliverOrComplete(tc, endTurn, answer, cache), nil
+}
+
+// drainDAG consumes a DAG event stream, forwarding each event to emit, and returns
+// the first node that paused for input (its id + questions; empty if the DAG ran to
+// completion). Free of ToolContext so the classification is unit-testable.
+func drainDAG(seq iter.Seq2[stream.SSEEvent, error], emit func(stream.SSEEvent)) (string, []string, error) {
+	var waitingNode string
+	var questions []string
+	for ev, err := range seq {
+		emit(ev)
+		if err != nil {
+			return "", nil, err
+		}
+		if d, ok := ev.Data.(stream.NodeWaitingData); ok && waitingNode == "" {
+			waitingNode = d.NodeID
+			questions = d.Questions
+		}
+	}
+	return waitingNode, questions, nil
+}
+
+// deliverOrComplete applies end_turn to a finished DAG answer. Deliver (end_turn)
+// ends the orchestrator's turn STRUCTURALLY — SkipSummarization makes this tool
+// response the final response so the model can't emit a chatty acknowledgement —
+// and stashes the answer for the orchestrator to persist as the turn's only
+// assistant message. Complete hands the answer back for the caller to fold in.
+func deliverOrComplete(tc agent.ToolContext, endTurn bool, answer string, cache *PlanCache) executeResult {
+	if endTurn {
+		tc.Actions().SkipSummarization = true
+		cache.SetDelivered(answer)
+		return executeResult{Status: "delivered"}
+	}
+	return executeResult{Status: "complete", Answer: answer}
 }
