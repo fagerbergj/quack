@@ -23,22 +23,26 @@ agents:
     bundle: agents/web-researcher
     provider: default
     model: ${RESEARCHER_MODEL}
+    context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
     tools: [web_search, web_fetch, summarize, current_date]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
     model: ${RESEARCHER_MODEL}
+    context_window: 65536       # same model as web-researcher
     tools: []
   media-reader:
     bundle: agents/media-reader
     provider: default
     model: ${MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); falls back to RESEARCHER_MODEL if unset
+    context_window: 32768       # qwen3-omni-30b served -c 32768 --parallel 1
     tools: []
     inputs: [text, image, audio]
   image-reader:
     bundle: agents/image-reader
     provider: default
     model: ${IMAGE_MODEL}       # Qwen3-VL-32B (vision llm-swap group); specialist for hard image reading
+    context_window: 32768       # qwen3-vl-32b served -c 32768
     tools: []
     inputs: [text, image]
 
@@ -81,6 +85,21 @@ dag:
                         # the GPU judge (gemma4-26b-a4b, co-resident with the worker)
                         # is also --parallel 2. Raising this past the worker's slot
                         # count just queues requests at the model.
+
+# Automatic context compaction (ports sst/opencode's prune + compaction). When
+# enabled, every gated agent gets a callback that, before each model call, blanks
+# old tool outputs and — if the turn's measured usage exceeds the agent's
+# per-agent context_window (set above) minus the output reserve — summarises the
+# older turns via the summariser model. Unset ${COMPACTION_ENABLED} ⇒ null ⇒ false.
+compaction:
+  enabled: ${COMPACTION_ENABLED}
+  provider: default
+  # Summariser model (required when enabled). Pick one CO-RESIDENT with the
+  # workers so a mid-run summary doesn't evict+reload a worker: the judge
+  # (gemma4-26b-a4b) is always warm alongside every worker (llm-swap set
+  # "(g|q|v) & j"), so it's the cheap default. COMPACTION_MODEL defaults to it.
+  model: ${COMPACTION_MODEL}
+  prune: true                  # blank old tool outputs before summarising (cheap, no model call)
 
 server:
   addr: ":8080"

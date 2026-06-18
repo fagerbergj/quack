@@ -1,0 +1,294 @@
+package agent
+
+import (
+	"context"
+	"iter"
+	"strings"
+	"testing"
+
+	adkagent "google.golang.org/adk/agent"
+	"google.golang.org/adk/model"
+	"google.golang.org/adk/session"
+	"google.golang.org/genai"
+)
+
+// --- fakes -----------------------------------------------------------------
+
+type fakeState struct{ m map[string]any }
+
+func (s *fakeState) Get(k string) (any, error) {
+	v, ok := s.m[k]
+	if !ok {
+		return nil, session.ErrStateKeyNotExist
+	}
+	return v, nil
+}
+func (s *fakeState) Set(k string, v any) error { s.m[k] = v; return nil }
+func (s *fakeState) All() iter.Seq2[string, any] {
+	return func(yield func(string, any) bool) {
+		for k, v := range s.m {
+			if !yield(k, v) {
+				return
+			}
+		}
+	}
+}
+
+type fakeCtx struct {
+	context.Context
+	state *fakeState
+}
+
+func newFakeCtx() *fakeCtx {
+	return &fakeCtx{Context: context.Background(), state: &fakeState{m: map[string]any{}}}
+}
+
+func (c *fakeCtx) UserContent() *genai.Content          { return nil }
+func (c *fakeCtx) InvocationID() string                 { return "inv" }
+func (c *fakeCtx) AgentName() string                    { return "test" }
+func (c *fakeCtx) ReadonlyState() session.ReadonlyState { return c.state }
+func (c *fakeCtx) UserID() string                       { return "u" }
+func (c *fakeCtx) AppName() string                      { return "app" }
+func (c *fakeCtx) SessionID() string                    { return "sess" }
+func (c *fakeCtx) Branch() string                       { return "" }
+func (c *fakeCtx) Artifacts() adkagent.Artifacts        { return nil }
+func (c *fakeCtx) State() session.State                 { return c.state }
+
+type fakeLLM struct {
+	text       string
+	calls      int
+	lastPrompt string
+}
+
+func (f *fakeLLM) Name() string { return "fake" }
+func (f *fakeLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		f.calls++
+		if len(req.Contents) > 0 && len(req.Contents[0].Parts) > 0 {
+			f.lastPrompt = req.Contents[0].Parts[0].Text
+		}
+		yield(&model.LLMResponse{Content: &genai.Content{
+			Role:  genai.RoleModel,
+			Parts: []*genai.Part{{Text: f.text}},
+		}}, nil)
+	}
+}
+
+// --- builders --------------------------------------------------------------
+
+func textContent(role, s string) *genai.Content {
+	return &genai.Content{Role: role, Parts: []*genai.Part{{Text: s}}}
+}
+
+func toolCall(name, id string) *genai.Content {
+	return &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
+		FunctionCall: &genai.FunctionCall{Name: name, ID: id, Args: map[string]any{"q": "x"}},
+	}}}
+}
+
+func toolResult(name, id string, n int) *genai.Content {
+	return &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{
+		FunctionResponse: &genai.FunctionResponse{Name: name, ID: id, Response: map[string]any{"result": strings.Repeat("x", n)}},
+	}}}
+}
+
+// --- tests -----------------------------------------------------------------
+
+// Under budget: callback is a pure no-op and the summariser is never called.
+func TestCompactionNoOpUnderBudget(t *testing.T) {
+	llm := &fakeLLM{text: "S"}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 1_000_000, Prune: true, Enabled: true})
+	req := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, "task"), textContent(genai.RoleModel, "small answer")}}
+	before := len(req.Contents)
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("summariser called %d times under budget; want 0", llm.calls)
+	}
+	if len(req.Contents) != before {
+		t.Fatalf("contents changed under budget: %d → %d", before, len(req.Contents))
+	}
+}
+
+// prune blanks old tool outputs, preserves the recent ones + call/response
+// pairing (Name/ID), and is skipped when it wouldn't free enough.
+func TestPrune(t *testing.T) {
+	// 12 fetches of 40k chars (=10k tokens) each: 120k tokens total tool output.
+	// Recent 40k tokens + last 2 messages protected; the rest (well over the 20k
+	// minimum) gets blanked.
+	const each = 40_000
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 12; i++ {
+		contents = append(contents, toolCall("web_fetch", "c"))
+		contents = append(contents, toolResult("web_fetch", "c", each))
+	}
+	freed := prune(contents)
+	if freed <= 0 {
+		t.Fatalf("prune freed %d tokens; expected it to engage", freed)
+	}
+
+	var blanked, intact int
+	for _, c := range contents {
+		for _, p := range c.Parts {
+			fr := p.FunctionResponse
+			if fr == nil {
+				continue
+			}
+			if fr.Name == "" || fr.ID == "" {
+				t.Fatalf("prune dropped Name/ID, breaking call/response pairing: %+v", fr)
+			}
+			if r, _ := fr.Response["result"].(string); r == prunedStub {
+				blanked++
+			} else {
+				intact++
+			}
+		}
+	}
+	if blanked == 0 {
+		t.Fatal("prune blanked nothing")
+	}
+	if intact == 0 {
+		t.Fatal("prune blanked everything; recent output must be protected")
+	}
+
+	// Below the minimum: a single small old fetch shouldn't trigger a prune.
+	small := []*genai.Content{
+		textContent(genai.RoleUser, "task"),
+		toolResult("web_fetch", "c", 1_000),
+		textContent(genai.RoleModel, "a"),
+		textContent(genai.RoleUser, "b"),
+	}
+	if freed := prune(small); freed != 0 {
+		t.Fatalf("prune engaged on a sub-minimum gain: freed %d", freed)
+	}
+}
+
+// Over budget after prune (all-text history): the head is summarised and the
+// request is rebuilt as [task, summary, ...tail] within budget.
+func TestCompactSummarises(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	// context_window 10k tokens, reserve 8k ⇒ usable 2k tokens (8k chars).
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 10_000, Prune: true, Enabled: true})
+
+	task := textContent(genai.RoleUser, "the self-contained task")
+	contents := []*genai.Content{task}
+	for i := 0; i < 20; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("summariser called %d times; want 1", llm.calls)
+	}
+	// The summary is merged into the task content (no separate inserted turn).
+	parts := req.Contents[0].Parts
+	if parts[0].Text != task.Parts[0].Text {
+		t.Fatalf("task text not preserved as first part: %q", parts[0].Text)
+	}
+	if got := parts[len(parts)-1].Text; !strings.Contains(got, "compacted") {
+		t.Fatalf("summary not appended to task content: %q", got)
+	}
+	if len(req.Contents) >= len(contents) {
+		t.Fatalf("compaction did not shrink contents: %d → %d", len(contents), len(req.Contents))
+	}
+}
+
+// splitHead never empties the tail or starts it on a dangling FunctionResponse:
+// a recent oversized tool result is kept verbatim together with its call.
+func TestSplitHeadKeepsTrailingToolResult(t *testing.T) {
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 8; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	contents = append(contents, toolCall("web_fetch", "c"))
+	contents = append(contents, toolResult("web_fetch", "c", 40_000)) // bigger than preserve
+
+	ts := splitHead(contents, 2_000)
+	if ts <= 1 || ts >= len(contents) {
+		t.Fatalf("tail empty or whole-history kept: ts=%d len=%d", ts, len(contents))
+	}
+	if hasFunctionResponse(contents[ts]) {
+		t.Fatalf("tail starts with a dangling FunctionResponse at %d", ts)
+	}
+	if contents[ts].Parts[0].FunctionCall == nil {
+		t.Fatal("tail should start at the FunctionCall matching the trailing result")
+	}
+	if contents[len(contents)-1].Parts[0].FunctionResponse == nil {
+		t.Fatal("trailing tool result must remain in the verbatim tail")
+	}
+}
+
+// Media bytes are not counted as tokens (so an image can't spuriously trigger
+// compaction via the estimate).
+func TestEstimateExcludesMedia(t *testing.T) {
+	img := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{
+		InlineData: &genai.Blob{MIMEType: "image/png", Data: make([]byte, 4_000_000)},
+	}}}
+	if got := estimateTokens([]*genai.Content{img}); got > 10 {
+		t.Fatalf("4MB image estimated at %d tokens; media bytes must be excluded", got)
+	}
+}
+
+// recordUsage stores the provider's measured prompt tokens, and the callback
+// triggers on that even when the chars/4 estimate is well under budget.
+func TestMeasuredUsageTriggers(t *testing.T) {
+	ctx := newFakeCtx()
+	recordUsage()(ctx, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 195_000},
+	}, nil)
+	if got := measuredInput(ctx); got != 195_000 {
+		t.Fatalf("measuredInput = %d; want 195000", got)
+	}
+
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	// budget = 200000 - 8192 = 191808. Estimate stays far under; measured (195000) is over.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Prune: false, Enabled: true})
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 20; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if est := estimateTokens(contents); est >= 191_808 {
+		t.Fatalf("test precondition broken: estimate %d not under budget", est)
+	}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("measured-usage trigger did not compact: summariser calls=%d", llm.calls)
+	}
+}
+
+// The anchored summary is persisted to state and fed back as <previous-summary>
+// on the next compaction.
+func TestAnchoredSummaryFedBack(t *testing.T) {
+	llm := &fakeLLM{text: "FIRST-SUMMARY"}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 10_000, Prune: false, Enabled: true})
+	ctx := newFakeCtx()
+
+	oversized := func() *model.LLMRequest {
+		c := []*genai.Content{textContent(genai.RoleUser, "task")}
+		for i := 0; i < 20; i++ {
+			c = append(c, textContent(genai.RoleModel, strings.Repeat("z", 2_000)))
+		}
+		return &model.LLMRequest{Contents: c}
+	}
+
+	if _, err := cb(ctx, oversized()); err != nil {
+		t.Fatalf("first callback err: %v", err)
+	}
+	if got, _ := ctx.state.Get(summaryStateKey); got != "FIRST-SUMMARY" {
+		t.Fatalf("summary not anchored to state: %v", got)
+	}
+
+	llm.text = "SECOND-SUMMARY"
+	if _, err := cb(ctx, oversized()); err != nil {
+		t.Fatalf("second callback err: %v", err)
+	}
+	if !strings.Contains(llm.lastPrompt, "<previous-summary>") || !strings.Contains(llm.lastPrompt, "FIRST-SUMMARY") {
+		t.Fatalf("second summarise did not receive the anchored previous summary; prompt:\n%s", llm.lastPrompt)
+	}
+}

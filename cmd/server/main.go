@@ -17,6 +17,7 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/agent"
+	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/skilltoolset"
@@ -188,6 +189,37 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			gateCfg.DeterministicRounds, gateCfg.SelfCritiqueRounds, cfg.Gates.Judge.Model, gateCfg.JudgeRounds, gateCfg.Threshold)
 	}
 
+	// Build the compaction summariser once and share it across every gated agent.
+	// An agent with no context_window configured is left uncompacted; see
+	// compactionFor below.
+	var summarizer model.LLM
+	if cfg.Compaction.Enabled {
+		cprov, ok := cfg.Provider(cfg.Compaction.Provider)
+		if !ok {
+			return nil, nil, fmt.Errorf("compaction: provider %q not found", cfg.Compaction.Provider)
+		}
+		var err error
+		if summarizer, err = inference.NewModel(cprov, cfg.Compaction.Model); err != nil {
+			return nil, nil, fmt.Errorf("compaction: model: %w", err)
+		}
+		log.Printf("context compaction enabled: summariser=%q prune=%t", cfg.Compaction.Model, cfg.Compaction.PruneEnabled())
+	}
+	compactionFor := func(ac config.AgentConfig) agent.Compaction {
+		if !cfg.Compaction.Enabled {
+			return agent.Compaction{}
+		}
+		if ac.ContextWindow == 0 {
+			log.Printf("context compaction: agent model %q has no context_window configured; not compacting it", ac.Model)
+			return agent.Compaction{}
+		}
+		return agent.Compaction{
+			Summarizer:    summarizer,
+			ContextWindow: ac.ContextWindow,
+			Prune:         cfg.Compaction.PruneEnabled(),
+			Enabled:       true,
+		}
+	}
+
 	clientMap := make(map[string]adkagent.Agent, len(cfg.Agents))
 	var servers []*agent.A2AServer
 
@@ -220,7 +252,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if err != nil {
 			return nil, servers, fmtErr(name, "bundle: %v", err)
 		}
-		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS})
+		comp := compactionFor(ac)
+		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS}, comp)
 		if err != nil {
 			return nil, servers, fmtErr(name, "build: %v", err)
 		}
@@ -238,7 +271,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// finalize write-up: when the worker keeps researching instead of writing,
 			// a tool-having re-invoke ignores "stop and write" — a tool-less one can't,
 			// so it produces the answer from context in one pass.
-			writer, err := agent.Build(bundle, m, nil, nil)
+			writer, err := agent.Build(bundle, m, nil, nil, comp)
 			if err != nil {
 				return nil, servers, fmtErr(name, "writer: %v", err)
 			}
