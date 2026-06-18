@@ -200,6 +200,49 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 	}
 }
 
+// ResumeDag continues a suspended DAG by answering a node that paused on a
+// request_input call. The caller (the REST handler) reconstructs the plan and the
+// done / still-waiting node maps from storage; this builds the answer
+// FunctionResponse, drives executor.Resume, streams its events, and — if the DAG
+// runs to completion — persists the terminal answer as the chat's assistant
+// message so a reload shows it (mirroring Run's deliver-mode persistence). answers
+// are in question order; callID is the node's open request_input call.
+func (o *Orchestrator) ResumeDag(ctx context.Context, userID, sessionID string, plan dag.Plan, done map[string]string, waiting map[string]stream.NodeWaitingData, nodeID, callID string, answers []string) iter.Seq2[stream.SSEEvent, error] {
+	return func(yield func(stream.SSEEvent, error) bool) {
+		content := &genai.Content{Role: "user", Parts: []*genai.Part{{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       callID,
+				Name:     tools.RequestInputToolName,
+				Response: map[string]any{tools.RequestInputAnswerKey: answers},
+			},
+		}}}
+		nodeOutputs := make(map[string]string)
+		for ev, err := range o.executor.Resume(ctx, plan, userID, nodeOutputs, done, waiting, nodeID, content) {
+			if err != nil {
+				yield(stream.Errorf("resume: "+err.Error()), nil)
+				return
+			}
+			if !yield(ev, nil) {
+				return
+			}
+		}
+		// If the DAG completed, persist the terminal node's answer as the assistant
+		// message. If it re-suspended on another pause, the terminal node didn't run
+		// and TerminalOutput is empty — skip (the run is still incomplete).
+		answer := tools.TerminalOutput(plan, nodeOutputs)
+		if answer == "" {
+			return
+		}
+		persistCtx := context.WithoutCancel(ctx)
+		if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
+			aev := session.NewEvent("")
+			aev.Author = "orchestrator"
+			aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
+			_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
+		}
+	}
+}
+
 // priorEvents reads the persisted session's events (nil if the session is
 // missing). Called BEFORE the runner appends the current turn, so it holds only
 // earlier turns; shared by buildHistory and pendingChoiceCallID so one Run reads

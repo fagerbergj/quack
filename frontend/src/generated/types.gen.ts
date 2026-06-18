@@ -28,6 +28,13 @@ export type SendMessageBody = {
     content: string;
 };
 
+export type ResumeNodeBody = {
+    /**
+     * One answer per question the node asked, in order.
+     */
+    answers: Array<string>;
+};
+
 export type Turn = {
     id: string;
     created_at: string;
@@ -307,3 +314,34 @@ export type CancelChatStreamResponses = {
 };
 
 export type CancelChatStreamResponse = CancelChatStreamResponses[keyof CancelChatStreamResponses];
+
+export type ResumeDagNodeData = {
+    body: ResumeNodeBody;
+    path: {
+        chat_id: string;
+        plan_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/dag/{plan_id}/nodes/{node_id}/answer';
+};
+
+export type ResumeDagNodeErrors = {
+    /**
+     * Plan or node not found
+     */
+    404: unknown;
+    /**
+     * Node is not waiting for input
+     */
+    409: unknown;
+};
+
+export type ResumeDagNodeResponses = {
+    /**
+     * SSE event stream (same vocabulary as sendChatMessage)
+     */
+    200: string;
+};
+
+export type ResumeDagNodeResponse = ResumeDagNodeResponses[keyof ResumeDagNodeResponses];

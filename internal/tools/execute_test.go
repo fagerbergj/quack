@@ -55,7 +55,7 @@ func TestTerminalOutput(t *testing.T) {
 	single := dag.Plan{
 		Nodes: []dag.Node{{ID: "n1"}},
 	}
-	if got := terminalOutput(single, map[string]string{"n1": "answer"}); got != "answer" {
+	if got := TerminalOutput(single, map[string]string{"n1": "answer"}); got != "answer" {
 		t.Errorf("single node: got %q, want %q", got, "answer")
 	}
 
@@ -66,12 +66,12 @@ func TestTerminalOutput(t *testing.T) {
 			{ID: "n2", DependsOn: []string{"n1"}},
 		},
 	}
-	if got := terminalOutput(seq, map[string]string{"n1": "intermediate", "n2": "final"}); got != "final" {
+	if got := TerminalOutput(seq, map[string]string{"n1": "intermediate", "n2": "final"}); got != "final" {
 		t.Errorf("sequential: got %q, want %q", got, "final")
 	}
 
 	// Empty outputs — returns empty string (callers check for this).
-	if got := terminalOutput(single, map[string]string{}); got != "" {
+	if got := TerminalOutput(single, map[string]string{}); got != "" {
 		t.Errorf("empty outputs: got %q, want empty", got)
 	}
 }
