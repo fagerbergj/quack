@@ -262,6 +262,52 @@ func TestMeasuredUsageTriggers(t *testing.T) {
 	}
 }
 
+// Once the anchored summary covers the older prefix, a later over-budget turn
+// whose live tail still fits is served from the stored summary with NO new
+// summariser call (fixes the "re-summarise every turn" cost).
+func TestReuseSkipsSummariser(t *testing.T) {
+	ctx := newFakeCtx()
+	// budget = 200000 - 8192 = 191808; measured (195000) keeps the trigger firing.
+	recordUsage()(ctx, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 195_000},
+	}, nil)
+
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Prune: false, Enabled: true})
+
+	build := func() *model.LLMRequest {
+		c := []*genai.Content{textContent(genai.RoleUser, "task")}
+		for i := 0; i < 30; i++ {
+			c = append(c, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
+		}
+		return &model.LLMRequest{Contents: c}
+	}
+
+	// First turn summarises once and records the coverage boundary.
+	if _, err := cb(ctx, build()); err != nil {
+		t.Fatalf("first callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("first turn: summariser calls=%d; want 1", llm.calls)
+	}
+
+	// Second turn (same grown session re-fed by ADK): reuse, no summariser call.
+	req := build()
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("second callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("second turn re-summarised (calls=%d); should have reused the anchored summary", llm.calls)
+	}
+	parts := req.Contents[0].Parts
+	if got := parts[len(parts)-1].Text; !strings.Contains(got, "compacted") {
+		t.Fatalf("reuse did not reapply the summary to the task content: %q", got)
+	}
+	if len(req.Contents) >= len(build().Contents) {
+		t.Fatalf("reuse did not shrink contents: %d", len(req.Contents))
+	}
+}
+
 // The anchored summary is persisted to state and fed back as <previous-summary>
 // on the next compaction.
 func TestAnchoredSummaryFedBack(t *testing.T) {

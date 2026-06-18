@@ -42,6 +42,7 @@ const (
 	maxHeadChars = 120_000 // cap on serialised head fed to the summariser (~30k tokens; safe for a ≥40k-context summariser)
 
 	summaryStateKey  = "quack.compaction.summary"
+	summaryCoversKey = "quack.compaction.summary_covers" // # leading messages the summary folds in
 	measuredInputKey = "quack.compaction.measured_input" // last provider-reported prompt tokens
 	prunedStub       = "[earlier tool output elided to fit the context window]"
 )
@@ -82,6 +83,18 @@ func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 				log.Printf("agent: compaction pruned ~%d tokens (session %s)", freed, ctx.SessionID())
 			}
 			if estimateTokens(req.Contents) <= budget {
+				return nil, nil
+			}
+		}
+		// Reuse fast-path: session events are append-only, so the summary's
+		// coverage boundary is a stable index. If the anchored summary plus the
+		// live tail since it still fits, reapply it with NO summariser call — only
+		// re-summarise when that tail has itself grown past budget.
+		if prev, n := readSummary(ctx); prev != "" && n > 1 && n <= len(req.Contents) {
+			reused := append([]*genai.Content{mergeTaskSummary(req.Contents[0], prev)}, req.Contents[n:]...)
+			if estimateTokens(reused) <= budget {
+				req.Contents = reused
+				log.Printf("agent: compaction reused anchored summary (covers %d msgs); no summariser call (session %s)", n, ctx.SessionID())
 				return nil, nil
 			}
 		}
@@ -147,26 +160,27 @@ func compact(ctx adkagent.CallbackContext, summarizer model.LLM, contents []*gen
 	}
 	head, tail := contents[1:tailStart], contents[tailStart:]
 
-	prompt := buildPrompt(readSummary(ctx), serializeHead(head))
-	summary, err := summarizeHead(ctx, summarizer, prompt)
+	prev, _ := readSummary(ctx)
+	summary, err := summarizeHead(ctx, summarizer, buildPrompt(prev, serializeHead(head)))
 	if err != nil || strings.TrimSpace(summary) == "" {
 		log.Printf("agent: compaction summarise failed: %v", err)
 		return contents, false
 	}
-	writeSummary(ctx, summary)
+	writeSummary(ctx, summary, tailStart)
 
-	// Append the summary to the task content rather than inserting a new message:
-	// a separate summary turn could sit adjacent to another same-role turn and
-	// trip strict chat templates. The task stays Parts[0]; the summary rides with
-	// it as added context.
-	task := contents[0]
-	merged := &genai.Content{
+	out := make([]*genai.Content, 0, 1+len(tail))
+	out = append(out, mergeTaskSummary(contents[0], summary))
+	return append(out, tail...), true
+}
+
+// mergeTaskSummary appends the anchored summary to the task content rather than
+// inserting a separate turn: a standalone summary message could sit adjacent to
+// another same-role turn and trip strict chat templates. The task stays Parts[0].
+func mergeTaskSummary(task *genai.Content, summary string) *genai.Content {
+	return &genai.Content{
 		Role:  task.Role,
 		Parts: append(append([]*genai.Part{}, task.Parts...), &genai.Part{Text: "\n\nSummary of earlier work (older turns were compacted):\n" + summary}),
 	}
-	out := make([]*genai.Content, 0, 1+len(tail))
-	out = append(out, merged)
-	return append(out, tail...), true
 }
 
 // splitHead returns the index where the verbatim tail begins. contents[0] is
@@ -298,36 +312,42 @@ func recordUsage() llmagent.AfterModelCallback {
 	}
 }
 
-// measuredInput returns the last provider-reported prompt-token count, or 0 if
-// none yet. State may round-trip through JSON (DB-backed sessions), so accept the
-// numeric types it can deserialise to.
-func measuredInput(ctx adkagent.CallbackContext) int {
-	v, err := ctx.State().Get(measuredInputKey)
+// measuredInput returns the last provider-reported prompt-token count, or 0.
+func measuredInput(ctx adkagent.CallbackContext) int { return intState(ctx, measuredInputKey) }
+
+// readSummary returns the anchored summary and how many leading messages it folds
+// in (0 if none yet).
+func readSummary(ctx adkagent.CallbackContext) (string, int) {
+	s := ""
+	if v, err := ctx.State().Get(summaryStateKey); err == nil {
+		s, _ = v.(string)
+	}
+	return s, intState(ctx, summaryCoversKey)
+}
+
+func writeSummary(ctx adkagent.CallbackContext, s string, coversN int) {
+	if err := ctx.State().Set(summaryStateKey, s); err != nil {
+		log.Printf("agent: compaction: persist summary: %v", err)
+	}
+	if err := ctx.State().Set(summaryCoversKey, coversN); err != nil {
+		log.Printf("agent: compaction: persist summary coverage: %v", err)
+	}
+}
+
+// intState reads an int from session state, tolerating the float64 a JSON-backed
+// (DB) session round-trips through.
+func intState(ctx adkagent.CallbackContext, key string) int {
+	v, err := ctx.State().Get(key)
 	if err != nil {
 		return 0
 	}
 	switch n := v.(type) {
 	case int:
 		return n
-	case float64: // DB-backed sessions round-trip through JSON
+	case float64:
 		return int(n)
 	default:
 		return 0
-	}
-}
-
-func readSummary(ctx adkagent.CallbackContext) string {
-	v, err := ctx.State().Get(summaryStateKey)
-	if err != nil {
-		return ""
-	}
-	s, _ := v.(string)
-	return s
-}
-
-func writeSummary(ctx adkagent.CallbackContext, s string) {
-	if err := ctx.State().Set(summaryStateKey, s); err != nil {
-		log.Printf("agent: compaction: persist summary: %v", err)
 	}
 }
 
