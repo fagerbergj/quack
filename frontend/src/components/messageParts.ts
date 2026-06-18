@@ -46,6 +46,31 @@ export interface AgentRun {
   totalTokens?: number
 }
 
+// PendingChoice is an unanswered get_user_choice clarification surfaced for the UI.
+export interface PendingChoice {
+  callId: string
+  options: string[]
+}
+
+// pendingChoice finds a get_user_choice clarification awaiting the user's answer in
+// a run list. The tool returns a `{status:"pending"}` placeholder, so the call is
+// `done` with that result; the real answer arrives as a separate later turn and
+// never overwrites it. So a get_user_choice whose result is still the pending
+// placeholder is awaiting input. Returns the first such call, or null.
+export function pendingChoice(runs: AgentRun[]): PendingChoice | null {
+  for (const r of runs) {
+    for (const a of r.activity) {
+      if (a.kind !== 'tool' || a.tool.name !== 'get_user_choice') continue
+      const status = (a.tool.result as { status?: string } | undefined)?.status
+      const options = a.tool.args.options
+      if (status === 'pending' && Array.isArray(options)) {
+        return { callId: a.tool.callId, options: options.filter((o): o is string => typeof o === 'string') }
+      }
+    }
+  }
+  return null
+}
+
 // startRun appends a new run. Idempotent on run_id (a duplicate start is ignored).
 export function startRun(runs: AgentRun[], r: { runId: string; agent: string; stage: Stage; round?: number; startedAt?: number }): AgentRun[] {
   if (runs.some(x => x.runId === r.runId)) return runs
