@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { ActivityList } from './AgentParts'
+import { ActivityList, AssistantText } from './AgentParts'
 import type { Activity } from './messageParts'
 
 const meta: Meta<typeof ActivityList> = {
@@ -42,4 +42,24 @@ export const Windowed: Story = {
       { kind: 'thinking', text: 'now compiling the answer' },
     ],
   },
+}
+
+const CODE_ANSWER = `Here's a debounce helper:
+
+\`\`\`ts
+function debounce<T extends (...a: never[]) => void>(fn: T, ms: number) {
+  let t: ReturnType<typeof setTimeout>
+  return (...args: Parameters<T>) => {
+    clearTimeout(t)
+    t = setTimeout(() => fn(...args), ms)
+  }
+}
+\`\`\`
+
+It coalesces rapid calls into the trailing one.`
+
+// AssistantText with a fenced code block: syntax-highlighted (rehype-highlight)
+// with a hover Copy button (CopyablePre). Hover the block to reveal Copy.
+export const WithCodeBlock: Story = {
+  render: () => <AssistantText text={CODE_ANSWER} />,
 }

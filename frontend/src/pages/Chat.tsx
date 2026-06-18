@@ -1,71 +1,16 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
 import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
 import { ChoicePrompt } from '../components/ChoicePrompt'
 import { DagView } from '../components/DagView'
+import { Composer } from '../components/Composer'
+import { ChatList } from '../components/ChatList'
+import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { dagFromTurn, textFromTurn, activityFromTurn, type DagTurnState } from '../state/chatStore'
-import { pendingChoice, type AgentRun, type Activity } from '../components/messageParts'
-import type { Turn, DagOutputItem } from '../generated'
-
-import { AttachmentPreviews, AttachmentStrip, type AttachmentItem } from '../components/AttachmentUI'
-
-// visibleActivity hides get_user_choice tool calls from the activity log — they are
-// surfaced separately as a ChoicePrompt button group, so showing the raw tool block
-// too would be redundant.
-function visibleActivity(activity: Activity[]): Activity[] {
-  return activity.filter(a => !(a.kind === 'tool' && a.tool.name === 'get_user_choice'))
-}
-
-function relativeDate(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
-}
-
-// dagTurnStateFromItem converts a persisted DagOutputItem into a DagTurnState
-// suitable for DagView. Runs/answers are empty (streaming content isn't persisted).
-function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
-  const nodeStates: DagTurnState['nodeStates'] = {}
-  let startedAt: number | undefined
-  let finishedAt: number | undefined
-  for (const [id, ns] of Object.entries(item.node_states)) {
-    nodeStates[id] = {
-      status: ns.status as DagTurnState['nodeStates'][string]['status'],
-      outputPreview: ns.output_preview,
-      error: ns.error,
-      startedAt: ns.started_at_ms,
-      finishedAt: ns.finished_at_ms,
-      model: ns.model,
-      promptTokens: ns.prompt_tokens,
-      completionTokens: ns.completion_tokens,
-      totalTokens: ns.total_tokens,
-      finishReason: ns.finish_reason,
-      serverDurationMs: ns.server_duration_ms,
-    }
-    if (ns.started_at_ms != null)
-      startedAt = startedAt == null ? ns.started_at_ms : Math.min(startedAt, ns.started_at_ms)
-    if (ns.finished_at_ms != null)
-      finishedAt = finishedAt == null ? ns.finished_at_ms : Math.max(finishedAt, ns.finished_at_ms)
-  }
-  return {
-    planId: item.plan_id,
-    nodes: item.nodes,
-    edges: item.edges,
-    nodeStates,
-    nodeRuns: {},
-    nodeAnswer: {},
-    startedAt,
-    finishedAt,
-  }
-}
+import { activityFromTurn, type DagTurnState } from '../state/chatStore'
+import { pendingChoice, type AgentRun } from '../components/messageParts'
+import { AttachmentPreviews } from '../components/AttachmentUI'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
 // Used as a fallback when the orchestrator presents no top-level text of its own —
@@ -108,15 +53,12 @@ export default function Chat() {
   const streaming = state.live?.streaming ?? false
   const error = state.error
   const live = state.live
-  const [input, setInput] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [submittingChoice, setSubmittingChoice] = useState(false)
-  const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const stored = localStorage.getItem('theme')
@@ -187,13 +129,15 @@ export default function Chat() {
     }
   }
 
-  function handleCopy(key: string, content: string) {
+  // useCallback so the handlers passed to memoized TurnViews keep a stable identity
+  // (otherwise every completed turn re-renders on each parent render).
+  const handleCopy = useCallback((key: string, content: string) => {
     navigator.clipboard.writeText(content)
     setCopied(key)
     setTimeout(() => setCopied(null), 2000)
-  }
+  }, [])
 
-  function handleDownload(content: string, idx: number) {
+  const handleDownload = useCallback((content: string, idx: number) => {
     const h1 = content.match(/^#\s+(.+)$/m)?.[1]?.trim()
     const slug = h1 ? h1.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') : `answer-${idx + 1}`
     const blob = new Blob([content], { type: 'text/markdown' })
@@ -203,33 +147,25 @@ export default function Chat() {
     a.download = `${slug}.md`
     a.click()
     URL.revokeObjectURL(url)
-  }
+  }, [])
 
-  function handleStop() {
+  const handleStop = useCallback(() => {
     if (activeChatId) store.stop(activeChatId)
-  }
+  }, [activeChatId, store])
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const trimmed = input.trim()
-    if (!trimmed || streaming) return
+  const submitMessage = useCallback((text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
     if (!activeChatId) return
-    setInput('')
-    const items = attachments.slice()
-    setAttachments([])
-    setLiveAttachmentPreviews(items.map(a => ({ url: a.url, mime: a.file.type, name: a.file.name })))
-    const files = items.map(a => a.file)
-    await store.submit(activeChatId, trimmed, files.length > 0 ? files : undefined, title => {
+    setLiveAttachmentPreviews(previews)
+    store.submit(activeChatId, text, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
-    })
-    await loadChats().then(data => setChats(data))
-  }
+    }).then(() => loadChats().then(data => setChats(data)))
+  }, [activeChatId, store, loadChats])
 
   // handleChoice answers a get_user_choice clarification by sending the chosen
   // option as the next message (the backend resumes it as the tool's answer).
   // Reuses the normal send path. The local guard prevents a double-send during
   // the brief window before store.submit flips the streaming flag.
-  async function handleChoice(option: string) {
+  const handleChoice = useCallback(async (option: string) => {
     if (!activeChatId || submittingChoice) return
     setSubmittingChoice(true)
     try {
@@ -240,22 +176,29 @@ export default function Chat() {
     } finally {
       setSubmittingChoice(false)
     }
-  }
+  }, [activeChatId, submittingChoice, store, loadChats])
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSubmit(e as unknown as React.FormEvent)
-    }
-  }
+  const selectChat = useCallback((id: string) => { activateChat(id); setChatListOpen(false) }, [])
 
-  // Build the display list: completed turns + the live turn if active.
-  type DisplayItem =
-    | { kind: 'turn'; turn: Turn; idx: number }
-    | { kind: 'live' }
+  // Per-turn props for the completed turns. Memoized on [turns, live.userText] so it
+  // is NOT recomputed on every streaming token (state.turns keeps a stable ref while
+  // only `live` changes) — the key to not re-parsing every turn's markdown mid-stream.
+  const liveUserText = live?.userText
+  const turnViews = useMemo(() => state.turns.map((turn, idx, arr) => {
+    const turnChoice = pendingChoice(activityFromTurn(turn))
+    // The answer to a clarification is the next turn's input, or — for the last
+    // turn — the live turn's input. Undefined means it's still answerable.
+    const next = arr[idx + 1]
+    const choiceAnswer = turnChoice ? (next ? next.input.content : liveUserText) : undefined
+    // This turn's input is itself the answer to the previous turn's clarification.
+    const prev = arr[idx - 1]
+    const isChoiceAnswer = prev ? pendingChoice(activityFromTurn(prev)) != null : false
+    return { turn, idx, choiceAnswer, isChoiceAnswer }
+  }), [state.turns, liveUserText])
 
-  const displayItems: DisplayItem[] = state.turns.map((turn, idx) => ({ kind: 'turn', turn, idx }))
-  if (live) displayItems.push({ kind: 'live' })
+  // The live turn is a clarification answer when the last completed turn asked one.
+  const lastTurn = state.turns[state.turns.length - 1]
+  const liveIsChoiceAnswer = lastTurn ? pendingChoice(activityFromTurn(lastTurn)) != null : false
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
@@ -267,54 +210,15 @@ export default function Chat() {
         />
       )}
 
-      <div className={`
-        fixed md:static inset-y-0 left-0 z-40
-        w-[250px] flex-shrink-0 flex flex-col
-        border-r border-gray-200 dark:border-gray-700
-        bg-white dark:bg-gray-800
-        transition-transform duration-200
-        md:translate-x-0
-        ${chatListOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-      `}>
-        <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
-          <button
-            onClick={handleNewChat}
-            className="flex-1 text-sm px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
-          >
-            New Chat
-          </button>
-          <button
-            onClick={() => setChatListOpen(false)}
-            className="md:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded transition-colors"
-            aria-label="Close chat list"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {chats.length === 0 && (
-            <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No conversations yet</div>
-          )}
-          {chats.map(s => (
-            <div
-              key={s.id}
-              onClick={() => { activateChat(s.id); setChatListOpen(false) }}
-              className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
-            >
-              <span className={`text-sm truncate pr-6 ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-                {s.title || 'New chat'}
-              </span>
-              <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
-              <button
-                onClick={e => handleDeleteChat(s.id, e)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
+      <ChatList
+        chats={chats}
+        activeChatId={activeChatId}
+        open={chatListOpen}
+        onSelect={selectChat}
+        onNewChat={handleNewChat}
+        onDelete={handleDeleteChat}
+        onCloseMobile={() => setChatListOpen(false)}
+      />
 
       <div className="flex flex-col flex-1 min-w-0">
         <div className="flex items-center justify-between px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
@@ -363,112 +267,31 @@ export default function Chat() {
               Select or start a chat
             </div>
           )}
-          {activeChatId && displayItems.length === 0 && !streaming && (
+          {activeChatId && state.turns.length === 0 && !live && !state.submitting && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Ask a question
             </div>
           )}
 
-          {displayItems.map((item, idx) => {
-            if (item.kind === 'turn') {
-              const { turn } = item
-              const dagItem = dagFromTurn(turn)
-              const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
-              const text = textFromTurn(turn)
-              const turnRuns = activityFromTurn(turn)
-              const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
-              // get_user_choice's result stays the {status:pending} placeholder even
-              // after it's answered, so pendingChoice matches past turns too. On the
-              // final turn it's still answerable; on an earlier turn the answer was the
-              // next user message — render it as a resolved (answered) card.
-              const isLast = idx === displayItems.length - 1
-              const turnChoice = pendingChoice(turnRuns)
-              const nextItem = displayItems[idx + 1]
-              const choiceAnswer = turnChoice && !isLast
-                ? (nextItem?.kind === 'turn' ? nextItem.turn.input.content : live?.userText)
-                : undefined
-              // Skip the assistant bubble when the turn produced no visible content
-              // (e.g. it only held the get_user_choice call) — avoids a blank box.
-              const hasBubbleContent = !!dagState || turnActivity.length > 0 || !!text
-              // If the previous turn asked a clarification, this turn's input IS the
-              // answer — already shown in that turn's "Answered" card, so hide the
-              // duplicate user bubble here.
-              const prevItem = displayItems[idx - 1]
-              const isChoiceAnswer = prevItem?.kind === 'turn' && pendingChoice(activityFromTurn(prevItem.turn)) != null
-              const copyKey = `turn-${turn.id}`
-              return (
-                <div key={turn.id}>
-                  {/* User message (hidden when it's a clarification answer) */}
-                  {!isChoiceAnswer && (
-                    <div className="flex justify-end mb-3">
-                      <div className="max-w-2xl ml-auto">
-                        <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                          {turn.input.content}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {/* Assistant response */}
-                  <div className="flex justify-start">
-                    <div className="w-full">
-                      {hasBubbleContent && (
-                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-                        {dagState ? (
-                          <>
-                            <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                              <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                                ▸ Research steps
-                              </summary>
-                              <div className="p-2 space-y-3">
-                                {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
-                                <DagView dag={dagState} />
-                              </div>
-                            </details>
-                            {text && <AssistantText text={text} />}
-                          </>
-                        ) : (
-                          <>
-                            {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
-                            {text && <AssistantText text={text} />}
-                          </>
-                        )}
-                      </div>
-                      )}
-                      {turnChoice && (
-                        <ChoicePrompt
-                          question={turnChoice.question}
-                          options={turnChoice.options}
-                          disabled={submittingChoice}
-                          answered={choiceAnswer}
-                          onSelect={handleChoice}
-                        />
-                      )}
-                      {text && (
-                        <div className="flex items-center gap-3 mt-1.5 px-1">
-                          <button
-                            onClick={() => handleCopy(copyKey, text)}
-                            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                          >
-                            {copied === copyKey ? 'Copied!' : 'Copy'}
-                          </button>
-                          <button
-                            onClick={() => handleDownload(text, idx)}
-                            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                          >
-                            Download
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )
-            }
+          {turnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer }) => (
+            <TurnView
+              key={turn.id}
+              turn={turn}
+              idx={idx}
+              choiceAnswer={choiceAnswer}
+              isChoiceAnswer={isChoiceAnswer}
+              submittingChoice={submittingChoice}
+              isCopied={copied === `turn-${turn.id}`}
+              onChoice={handleChoice}
+              onCopy={handleCopy}
+              onDownload={handleDownload}
+            />
+          ))}
 
-            // Live turn
-            const liveDag = live!.dag
-            const liveTopText = live!.text ?? ''
-            const liveTopRuns = live!.runs ?? []
+          {live && (() => {
+            const liveDag = live.dag
+            const liveTopText = live.text ?? ''
+            const liveTopRuns = live.runs ?? []
             const liveDone = !streaming
             const deliverMode = liveDag ? executeDeliverMode(liveTopRuns) : false
             // Which text is the user-facing answer:
@@ -491,20 +314,19 @@ export default function Chat() {
             // Skip the bubble when there's nothing in it (e.g. a pending clarification
             // at rest) — the ChoicePrompt renders on its own below.
             const hasLiveBubbleContent = showSpinner || !!liveDag || !!liveText || orchActivity.length > 0
-            // If the last completed turn asked a clarification, this live turn's input
-            // is the answer (shown in that turn's "Answered" card) — hide the dup bubble.
-            const prevItem = displayItems[displayItems.length - 2]
-            const isChoiceAnswer = prevItem?.kind === 'turn' && pendingChoice(activityFromTurn(prevItem.turn)) != null
-            const copyKey = `live-${live!.userText.slice(0, 20)}`
+            const isChoiceAnswer = liveIsChoiceAnswer
+            const copyKey = `live-${live.userText.slice(0, 20)}`
             return (
-              <div key="live">
+              // role="log" + aria-live: screen readers announce streamed tokens as they
+              // arrive (aria-atomic=false → only the new text, not the whole region).
+              <div key="live" role="log" aria-live="polite" aria-atomic="false">
                 {/* User message (hidden when it's a clarification answer) */}
                 {!isChoiceAnswer && (
                   <div className="flex justify-end mb-3">
                     <div className="max-w-2xl ml-auto">
                       <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
                         <AttachmentPreviews previews={liveAttachmentPreviews} />
-                        {live!.userText}
+                        {live.userText}
                       </div>
                     </div>
                   </div>
@@ -515,11 +337,7 @@ export default function Chat() {
                     {hasLiveBubbleContent && (
                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
                       {showSpinner ? (
-                        <span className="flex items-center gap-1 h-5">
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
-                          <span className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" />
-                        </span>
+                        <Dots className="h-5" size="w-2 h-2" />
                       ) : liveDag ? (
                         <>
                           {/* The orchestrator agent wraps the DAG: show its own
@@ -581,7 +399,7 @@ export default function Chat() {
                           {copied === copyKey ? 'Copied!' : 'Copy'}
                         </button>
                         <button
-                          onClick={() => handleDownload(liveText, displayItems.length)}
+                          onClick={() => handleDownload(liveText, state.turns.length)}
                           className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                         >
                           Download
@@ -592,7 +410,29 @@ export default function Chat() {
                 </div>
               </div>
             )
-          })}
+          })()}
+
+          {/* Pending indicator: shown the instant a follow-up is submitted, while the
+              previous turn is archived (the old `live` above still renders it, so it
+              doesn't blink out). Replaced by the live turn once streaming starts. */}
+          {state.submitting && state.pendingUserText != null && (
+            <div>
+              <div className="flex justify-end mb-3">
+                <div className="max-w-2xl ml-auto">
+                  <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                    {state.pendingUserText}
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-start">
+                <div className="w-auto">
+                  <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4" role="status" aria-label="Thinking">
+                    <Dots className="h-5" size="w-2 h-2" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
@@ -601,72 +441,12 @@ export default function Chat() {
           )}
         </div>
 
-        <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
-          <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-            <AttachmentStrip
-              attachments={attachments}
-              onRemove={i => setAttachments(prev => {
-                if (prev[i].url) URL.revokeObjectURL(prev[i].url)
-                return prev.filter((_, j) => j !== i)
-              })}
-            />
-            <div className="flex gap-2 items-end">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,audio/*"
-                multiple
-                className="hidden"
-                onChange={e => {
-                  if (e.target.files) {
-                    const items: AttachmentItem[] = Array.from(e.target.files).map(f => ({
-                      file: f,
-                      url: URL.createObjectURL(f),
-                    }))
-                    setAttachments(prev => [...prev, ...items])
-                  }
-                  e.target.value = ''
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={streaming || !activeChatId}
-                className="p-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                aria-label="Attach file"
-                title="Attach image or audio"
-              >
-                📎
-              </button>
-              <textarea
-                className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
-                rows={1}
-                placeholder={activeChatId ? 'Ask something… (Enter to send, Shift+Enter for newline)' : 'Select or start a chat first'}
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={streaming || !activeChatId}
-              />
-              {streaming ? (
-                <button
-                  type="button"
-                  onClick={handleStop}
-                  className="px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
-                >
-                  Stop
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={(!input.trim() && attachments.length === 0) || !activeChatId}
-                  className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                >
-                  Send
-                </button>
-              )}
-            </div>
-          </form>
-        </div>
+        <Composer
+          disabled={!activeChatId}
+          streaming={streaming}
+          onSubmit={submitMessage}
+          onStop={handleStop}
+        />
       </div>
     </div>
   )
