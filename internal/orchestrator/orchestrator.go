@@ -27,6 +27,11 @@ import (
 // session (the quack namespace, separate from each specialist node's session).
 const AppName = "quack"
 
+// orchestratorName is the ADK agent name + the author stamped on the
+// orchestrator's persisted assistant messages (Run's deliver-persist and
+// ResumeDag), kept in one place so the two can't drift.
+const orchestratorName = "orchestrator"
+
 // Orchestrator is a real ADK llmagent that decides whether to answer directly
 // from session context or to call plan → execute for web research.
 type Orchestrator struct {
@@ -95,7 +100,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		}
 
 		ag, err := llmagent.New(llmagent.Config{
-			Name:        "orchestrator",
+			Name:        orchestratorName,
 			Description: "Routes research requests to specialist agents and answers conversational queries directly.",
 			Model:       o.model,
 			Instruction: o.sysPrompt,
@@ -207,7 +212,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 // runs to completion — persists the terminal answer as the chat's assistant
 // message so a reload shows it (mirroring Run's deliver-mode persistence). answers
 // are in question order; callID is the node's open request_input call.
-func (o *Orchestrator) ResumeDag(ctx context.Context, userID, sessionID string, plan dag.Plan, done map[string]string, waiting map[string]stream.NodeWaitingData, nodeID, callID string, answers []string) iter.Seq2[stream.SSEEvent, error] {
+func (o *Orchestrator) ResumeDag(ctx context.Context, userID, sessionID string, plan dag.Plan, done map[string]string, waiting map[string]bool, nodeID, callID string, answers []string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{
 			FunctionResponse: &genai.FunctionResponse{
@@ -236,7 +241,7 @@ func (o *Orchestrator) ResumeDag(ctx context.Context, userID, sessionID string, 
 		persistCtx := context.WithoutCancel(ctx)
 		if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
 			aev := session.NewEvent("")
-			aev.Author = "orchestrator"
+			aev.Author = orchestratorName
 			aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
 			_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
 		}

@@ -5,6 +5,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -497,37 +498,26 @@ func httpError(w http.ResponseWriter, status int, err error) {
 // non-node events.
 func (h *Handler) persistNodeEvent(planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
+	up := func(n store.DagNode) { go func() { _ = h.store.UpsertDagNode(context.Background(), n) }() }
 	switch d := ev.Data.(type) {
 	case stream.NodeStartData:
-		go func() {
-			_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
-				NodeID: d.NodeID, PlanID: planID, Status: "running", StartedAt: &t,
-			})
-		}()
+		up(store.DagNode{NodeID: d.NodeID, PlanID: planID, Status: "running", StartedAt: &t})
 	case stream.NodeDoneData:
-		go func() {
-			_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
-				NodeID: d.NodeID, PlanID: planID, Status: "done",
-				OutputPreview: d.OutputPreview, Output: d.Output, FinishedAt: &t,
-				Model: d.Model, PromptTokens: d.PromptTokens, CompletionTokens: d.CompletionTokens,
-				ReasoningTokens: d.ReasoningTokens, TotalTokens: d.TotalTokens,
-				FinishReason: d.FinishReason, DurationMs: d.DurationMs, SelfRefined: d.SelfRefined,
-				JudgeRounds: d.JudgeRounds, JudgeFinalScore: d.JudgeFinalScore, JudgePassed: d.JudgePassed,
-			})
-		}()
+		up(store.DagNode{
+			NodeID: d.NodeID, PlanID: planID, Status: "done",
+			OutputPreview: d.OutputPreview, Output: d.Output, FinishedAt: &t,
+			Model: d.Model, PromptTokens: d.PromptTokens, CompletionTokens: d.CompletionTokens,
+			ReasoningTokens: d.ReasoningTokens, TotalTokens: d.TotalTokens,
+			FinishReason: d.FinishReason, DurationMs: d.DurationMs, SelfRefined: d.SelfRefined,
+			JudgeRounds: d.JudgeRounds, JudgeFinalScore: d.JudgeFinalScore, JudgePassed: d.JudgePassed,
+		})
 	case stream.NodeWaitingData:
-		go func() {
-			_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
-				NodeID: d.NodeID, PlanID: planID, Status: "waiting", Output: d.Output,
-				WaitingCallID: d.CallID, Questions: d.Questions, FinishedAt: &t,
-			})
-		}()
+		up(store.DagNode{
+			NodeID: d.NodeID, PlanID: planID, Status: "waiting", Output: d.Output,
+			WaitingCallID: d.CallID, Questions: d.Questions, FinishedAt: &t,
+		})
 	case stream.NodeFailedData:
-		go func() {
-			_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
-				NodeID: d.NodeID, PlanID: planID, Status: "failed", Error: d.Error, FinishedAt: &t,
-			})
-		}()
+		up(store.DagNode{NodeID: d.NodeID, PlanID: planID, Status: "failed", Error: d.Error, FinishedAt: &t})
 	}
 }
 
@@ -564,7 +554,7 @@ func (h *Handler) ResumeDagNode(w http.ResponseWriter, r *http.Request, chatID s
 	// (rehydrated downstream) and OTHER still-waiting nodes (kept blocked).
 	var target *store.DagNode
 	done := map[string]string{}
-	waiting := map[string]stream.NodeWaitingData{}
+	waiting := map[string]bool{}
 	for i := range tc.Nodes {
 		n := &tc.Nodes[i]
 		switch {
@@ -573,7 +563,7 @@ func (h *Handler) ResumeDagNode(w http.ResponseWriter, r *http.Request, chatID s
 		case n.Status == "done":
 			done[n.NodeID] = n.Output
 		case n.Status == "waiting":
-			waiting[n.NodeID] = stream.NodeWaitingData{NodeID: n.NodeID, CallID: n.WaitingCallID, Questions: n.Questions, Output: n.Output}
+			waiting[n.NodeID] = true
 		}
 	}
 	if target == nil {
@@ -585,7 +575,11 @@ func (h *Handler) ResumeDagNode(w http.ResponseWriter, r *http.Request, chatID s
 		return
 	}
 
-	plan := reconstructPlan(planID, tc)
+	plan, err := reconstructPlan(planID, nodeID, tc)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	sse, ok := newSSEWriter(w)
 	if !ok {
@@ -625,13 +619,24 @@ func (h *Handler) ResumeDagNode(w http.ResponseWriter, r *http.Request, chatID s
 // reconstructPlan rebuilds an executable dag.Plan from persisted state: the wire
 // DagPlanData (node id/agent/task/deps) plus the turn's user text. Rubric and
 // History are unused at execution; attachments are not re-threaded (resuming a
-// media node downstream of a pause is out of scope).
-func reconstructPlan(planID string, tc *store.TurnContent) dag.Plan {
+// media node downstream of a pause is out of scope). Errors if the stored plan
+// JSON can't be parsed or doesn't contain the node being resumed — otherwise a
+// bad plan would silently resume nothing.
+func reconstructPlan(planID, nodeID string, tc *store.TurnContent) (dag.Plan, error) {
 	var wire stream.DagPlanData
-	_ = json.Unmarshal([]byte(tc.Plan.PlanJSON), &wire)
+	if err := json.Unmarshal([]byte(tc.Plan.PlanJSON), &wire); err != nil {
+		return dag.Plan{}, fmt.Errorf("reconstruct plan %s: %w", planID, err)
+	}
 	nodes := make([]dag.Node, len(wire.Nodes))
+	found := false
 	for i, n := range wire.Nodes {
 		nodes[i] = dag.Node{ID: n.ID, AgentName: n.Agent, Task: n.Task, DependsOn: n.DependsOn}
+		if n.ID == nodeID {
+			found = true
+		}
 	}
-	return dag.Plan{ID: planID, UserMessage: tc.UserText, Nodes: nodes}
+	if !found {
+		return dag.Plan{}, fmt.Errorf("reconstruct plan %s: node %q not in stored plan", planID, nodeID)
+	}
+	return dag.Plan{ID: planID, UserMessage: tc.UserText, Nodes: nodes}, nil
 }

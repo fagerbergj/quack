@@ -62,13 +62,13 @@ type nodeMsg struct {
 }
 
 // resumePreset carries the pre-run state for a resumed DAG (see Resume): nodes
-// already done (skipped; their outputs rehydrate downstream), nodes still paused
-// on OTHER request_input calls (skipped; kept blocked), and the one node being
-// resumed (nodeID) with the FunctionResponse content answering its open call. The
-// resumed node must NOT appear in waiting.
+// already done (skipped; their outputs rehydrate downstream), the set of nodes
+// still paused on OTHER request_input calls (skipped; kept blocked), and the one
+// node being resumed (nodeID) with the FunctionResponse content answering its open
+// call. The resumed node must NOT appear in waiting.
 type resumePreset struct {
 	done    map[string]string
-	waiting map[string]stream.NodeWaitingData
+	waiting map[string]bool
 	nodeID  string
 	content *genai.Content
 }
@@ -93,7 +93,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 // resumeNodeID is re-run with resumeContent (a FunctionResponse answering its open
 // call) so it continues from the pause on its persisted session. The resumed node
 // and everything transitively downstream run; the rest stays as-is.
-func (e *Executor) Resume(ctx context.Context, plan Plan, userID string, nodeOutputs map[string]string, done map[string]string, waiting map[string]stream.NodeWaitingData, resumeNodeID string, resumeContent *genai.Content) iter.Seq2[stream.SSEEvent, error] {
+func (e *Executor) Resume(ctx context.Context, plan Plan, userID string, nodeOutputs map[string]string, done map[string]string, waiting map[string]bool, resumeNodeID string, resumeContent *genai.Content) iter.Seq2[stream.SSEEvent, error] {
 	return e.run(ctx, plan, userID, nodeOutputs, &resumePreset{done: done, waiting: waiting, nodeID: resumeNodeID, content: resumeContent})
 }
 
@@ -154,10 +154,12 @@ func (e *Executor) run(ctx context.Context, plan Plan, userID string, nodeOutput
 				completed++
 				decrementDependents(id) // unblock the resumed node + downstream
 			}
-			for id, wd := range preset.waiting {
+			for id := range preset.waiting {
 				launched[id] = true
 				completed++
-				waitingNodes[id] = wd // still paused — dependents stay blocked
+				// Still paused — dependents stay blocked. The value only feeds
+				// suspended()'s count, so a placeholder is enough.
+				waitingNodes[id] = stream.NodeWaitingData{NodeID: id}
 			}
 		}
 
