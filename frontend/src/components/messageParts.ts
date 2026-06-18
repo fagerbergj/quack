@@ -49,6 +49,7 @@ export interface AgentRun {
 // PendingChoice is an unanswered get_user_choice clarification surfaced for the UI.
 export interface PendingChoice {
   callId: string
+  question: string
   options: string[]
 }
 
@@ -64,7 +65,8 @@ export function pendingChoice(runs: AgentRun[]): PendingChoice | null {
       const status = (a.tool.result as { status?: string } | undefined)?.status
       const options = a.tool.args.options
       if (status === 'pending' && Array.isArray(options)) {
-        return { callId: a.tool.callId, options: options.filter((o): o is string => typeof o === 'string') }
+        const question = typeof a.tool.args.question === 'string' ? a.tool.args.question : ''
+        return { callId: a.tool.callId, question, options: options.filter((o): o is string => typeof o === 'string') }
       }
     }
   }

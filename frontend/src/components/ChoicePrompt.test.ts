@@ -9,20 +9,24 @@ import {
 
 // Build the run state the store holds after a get_user_choice call streams: the
 // call, then its {status:"pending"} placeholder result (which marks it done).
-function choiceRuns(options: unknown): AgentRun[] {
+function choiceRuns(options: unknown, question?: unknown): AgentRun[] {
   let runs = startRun([], { runId: 'orchestrator', agent: 'orchestrator', stage: 'worker' })
-  runs = appendRunToolCall(runs, 'orchestrator', 'c1', 'get_user_choice', { options })
+  runs = appendRunToolCall(runs, 'orchestrator', 'c1', 'get_user_choice', { options, question })
   runs = fillRunToolResult(runs, 'orchestrator', 'c1', 'get_user_choice', { status: 'pending' })
   return runs
 }
 
 describe('pendingChoice', () => {
-  it('returns options + callId for a pending get_user_choice', () => {
-    expect(pendingChoice(choiceRuns(['A', 'B']))).toEqual({ callId: 'c1', options: ['A', 'B'] })
+  it('returns question + options + callId for a pending get_user_choice', () => {
+    expect(pendingChoice(choiceRuns(['A', 'B'], 'Which one?'))).toEqual({ callId: 'c1', question: 'Which one?', options: ['A', 'B'] })
+  })
+
+  it('defaults question to empty string when absent', () => {
+    expect(pendingChoice(choiceRuns(['A', 'B']))).toEqual({ callId: 'c1', question: '', options: ['A', 'B'] })
   })
 
   it('filters non-string options out', () => {
-    expect(pendingChoice(choiceRuns(['A', 3, null, 'B']))).toEqual({ callId: 'c1', options: ['A', 'B'] })
+    expect(pendingChoice(choiceRuns(['A', 3, null, 'B']))).toEqual({ callId: 'c1', question: '', options: ['A', 'B'] })
   })
 
   it('returns null when the result is not the pending placeholder (answered)', () => {

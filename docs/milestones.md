@@ -176,7 +176,15 @@ fetch its structure + node states via REST and MCP.
 
 ---
 
-## M4 — Multi-modal input (photo + audio)
+## M4 — Multi-modal input (photo + audio) ✅
+
+<details>
+<summary><strong>✅ Complete.</strong> Image and audio attachments flow end to end as A2A-native
+multi-modal parts: a photo routes to <code>media-reader</code>, a handwritten note to the
+<code>image-reader</code> specialist (<code>qwen3-vl-32b</code>), and an audio clip transcribes via
+<code>media-reader</code> — each producing understanding text in one turn that persists in history for a
+follow-up turn to act on. Native <code>image_url</code> / <code>input_audio</code> throughout; cleaned
+output renders with the raw transcript in a collapsible <code>&lt;details&gt;</code> block.</summary>
 
 **Goal.** Accept **image and audio input** end to end and route it to the right media agent — a general **`media-reader`** or
 the **`image-reader`** specialist — that consumes the payload via **native multi-modal parts** (OpenAI `image_url` / `input_audio`, carried as
@@ -252,6 +260,8 @@ turn can act on it. The orchestrator does **not** plan a content-dependent DAG o
 
 **Out of scope (later).** Content-dependent / adaptive DAG planning on media (**M11**); **video** (a
 later group + agent); the document-ingestion pipeline (**M8**); embedding / indexing.
+
+</details>
 
 ---
 
@@ -531,6 +541,48 @@ not know up front — transcribe an audio clip, *then* plan the work the transcr
 orchestrator **plans + runs** the requested work, with no second turn needed.
 
 **Out of scope (later).** Anything not about re-planning.
+
+---
+
+## M12 — Observability (OTel → Prometheus + Grafana)
+
+**Goal.** Make a running Quack **observable**: emit OpenTelemetry **traces + metrics** following the
+GenAI semantic conventions and ship them to the **existing home-server monitoring stack** (Prometheus +
+Grafana on `jason-server`), so agent latency, tool calls, token usage, and errors are visible per
+node / per agent. The DAG already streams to the UI for *live* watching; this is the **durable,
+queryable** view across runs.
+
+**Scope.**
+
+- **OTel SDK wiring**: configure trace + metric providers in `cmd/server/main.go`, exporting **OTLP/gRPC**
+  to an OTel Collector endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT`). Prefer ADK Go's `telemetry` package
+  (`telemetry.New` + custom `SpanProcessors`, `WithOtelToCloud(false)`) so ADK's built-in agent/tool
+  spans flow through; fall back to standard `OTEL_EXPORTER_OTLP_*` env vars if the package's seam is
+  awkward. `service.name = quack`.
+- **What we emit**: ADK's native GenAI spans (`invoke_agent`, `execute_tool`, `generate_content {model}`
+  with `gen_ai.usage.*_tokens`, `error.type`) and metrics (`gen_ai.agent.invocation.duration`,
+  `gen_ai.tool.execution.duration`, request/response size, workflow steps). **Reuse ADK's
+  instrumentation**; only add Quack-specific spans where the pipeline isn't ADK-native (planner DAG
+  decompose, the trust gate / judge stage) — one span each, not a re-instrumentation of everything.
+- **Collector (home-server)**: add an **`otel-collector`** service to `home-server/monitoring/` — OTLP
+  receiver on `:4317`/`:4318`, `batch` + `memory_limiter` processors, **`prometheus` exporter** on
+  `:8889` (namespace `quack`). Add a scrape job for `otel-collector:8889` to
+  `monitoring/prometheus/config.yaml`. Traces export to `debug` for now (a Tempo sink is future work).
+- **Grafana dashboard**: drop a `quack-observability.json` into `monitoring/grafana-dashboards/`
+  (invocation p50/p90/p99, tool latency by tool, error rate, tokens) — provisioned the same way as the
+  existing dashboards.
+- **Config + ports**: OTel endpoint is config-driven and **off by default** (no collector → no-op
+  exporter, no startup failure). Document the env var in `configuration.md` and the new container in the
+  monitoring README.
+
+**Done when.** With the collector running, driving a Quack request produces traces (agent → tool →
+model spans) and metrics scraped into Prometheus, and the Grafana dashboard shows per-agent invocation
+latency, tool-call latency, token usage, and error rate. With no collector configured, Quack starts and
+runs unchanged.
+
+**Out of scope (later).** A **Tempo** (or Jaeger) trace sink + trace UI in Grafana (collector exports
+traces to `debug` only for now); Grafana's first-party **AI Observability** plugin / generation
+analytics; **alerting / SLOs** on the new metrics; log aggregation (Loki).
 
 ---
 

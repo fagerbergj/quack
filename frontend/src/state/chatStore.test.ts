@@ -25,7 +25,7 @@ describe('activityFromTurn', () => {
       tool: { callId: 'c1', name: 'web_search', args: { query: 'x' }, result: { hits: 2 }, done: true },
     })
     // The reconstructed run feeds pendingChoice the same way the live path does.
-    expect(pendingChoice(runs)).toEqual({ callId: 'c2', options: ['A', 'B'] })
+    expect(pendingChoice(runs)).toEqual({ callId: 'c2', question: '', options: ['A', 'B'] })
   })
 
   it('returns [] when the turn has no activity item', () => {

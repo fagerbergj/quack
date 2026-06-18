@@ -377,24 +377,41 @@ export default function Chat() {
               const text = textFromTurn(turn)
               const turnRuns = activityFromTurn(turn)
               const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
-              // A still-pending clarification only stays answerable on the final turn
-              // (an older one was already answered by a later turn).
+              // get_user_choice's result stays the {status:pending} placeholder even
+              // after it's answered, so pendingChoice matches past turns too. On the
+              // final turn it's still answerable; on an earlier turn the answer was the
+              // next user message — render it as a resolved (answered) card.
               const isLast = idx === displayItems.length - 1
-              const turnChoice = isLast ? pendingChoice(turnRuns) : null
+              const turnChoice = pendingChoice(turnRuns)
+              const nextItem = displayItems[idx + 1]
+              const choiceAnswer = turnChoice && !isLast
+                ? (nextItem?.kind === 'turn' ? nextItem.turn.input.content : live?.userText)
+                : undefined
+              // Skip the assistant bubble when the turn produced no visible content
+              // (e.g. it only held the get_user_choice call) — avoids a blank box.
+              const hasBubbleContent = !!dagState || turnActivity.length > 0 || !!text
+              // If the previous turn asked a clarification, this turn's input IS the
+              // answer — already shown in that turn's "Answered" card, so hide the
+              // duplicate user bubble here.
+              const prevItem = displayItems[idx - 1]
+              const isChoiceAnswer = prevItem?.kind === 'turn' && pendingChoice(activityFromTurn(prevItem.turn)) != null
               const copyKey = `turn-${turn.id}`
               return (
                 <div key={turn.id}>
-                  {/* User message */}
-                  <div className="flex justify-end mb-3">
-                    <div className="max-w-2xl ml-auto">
-                      <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                        {turn.input.content}
+                  {/* User message (hidden when it's a clarification answer) */}
+                  {!isChoiceAnswer && (
+                    <div className="flex justify-end mb-3">
+                      <div className="max-w-2xl ml-auto">
+                        <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                          {turn.input.content}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                   {/* Assistant response */}
                   <div className="flex justify-start">
                     <div className="w-full">
+                      {hasBubbleContent && (
                       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
                         {dagState ? (
                           <>
@@ -416,10 +433,13 @@ export default function Chat() {
                           </>
                         )}
                       </div>
+                      )}
                       {turnChoice && (
                         <ChoicePrompt
+                          question={turnChoice.question}
                           options={turnChoice.options}
                           disabled={submittingChoice}
+                          answered={choiceAnswer}
                           onSelect={handleChoice}
                         />
                       )}
@@ -468,21 +488,31 @@ export default function Chat() {
             const choice = liveDone ? pendingChoice(liveTopRuns) : null
             // Show spinner only when streaming and there's nothing to show yet.
             const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
+            // Skip the bubble when there's nothing in it (e.g. a pending clarification
+            // at rest) — the ChoicePrompt renders on its own below.
+            const hasLiveBubbleContent = showSpinner || !!liveDag || !!liveText || orchActivity.length > 0
+            // If the last completed turn asked a clarification, this live turn's input
+            // is the answer (shown in that turn's "Answered" card) — hide the dup bubble.
+            const prevItem = displayItems[displayItems.length - 2]
+            const isChoiceAnswer = prevItem?.kind === 'turn' && pendingChoice(activityFromTurn(prevItem.turn)) != null
             const copyKey = `live-${live!.userText.slice(0, 20)}`
             return (
               <div key="live">
-                {/* User message */}
-                <div className="flex justify-end mb-3">
-                  <div className="max-w-2xl ml-auto">
-                    <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                      <AttachmentPreviews previews={liveAttachmentPreviews} />
-                      {live!.userText}
+                {/* User message (hidden when it's a clarification answer) */}
+                {!isChoiceAnswer && (
+                  <div className="flex justify-end mb-3">
+                    <div className="max-w-2xl ml-auto">
+                      <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                        <AttachmentPreviews previews={liveAttachmentPreviews} />
+                        {live!.userText}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
                 {/* Assistant response */}
                 <div className="flex justify-start">
                   <div className={liveDag ? 'w-full' : 'w-auto'}>
+                    {hasLiveBubbleContent && (
                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
                       {showSpinner ? (
                         <span className="flex items-center gap-1 h-5">
@@ -533,8 +563,10 @@ export default function Chat() {
                         </div>
                       )}
                     </div>
+                    )}
                     {choice && (
                       <ChoicePrompt
+                        question={choice.question}
                         options={choice.options}
                         disabled={submittingChoice}
                         onSelect={handleChoice}
