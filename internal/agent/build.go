@@ -16,10 +16,13 @@ import (
 const MaxOutputTokens = 8192
 
 // Build turns a loaded bundle into a runnable ADK llmagent, given its model,
-// its selected built-in tools, and optional ADK toolsets (e.g. SkillToolset).
-func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset) (adkagent.Agent, error) {
+// its selected built-in tools, optional ADK toolsets (e.g. SkillToolset), and
+// optional context-compaction settings. When compaction is enabled and the
+// model's context window is known, a BeforeModelCallback prunes/summarises the
+// session before each model call so long runs can't overflow the window.
+func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction) (adkagent.Agent, error) {
 	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
-	return llmagent.New(llmagent.Config{
+	cfg := llmagent.Config{
 		Name:        name,
 		Description: desc,
 		Model:       m,
@@ -31,5 +34,10 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset) (
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			MaxOutputTokens: MaxOutputTokens,
 		},
-	})
+	}
+	if comp.Enabled && comp.ContextWindow > 0 && comp.Summarizer != nil {
+		cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{compactionCallback(comp)}
+		cfg.AfterModelCallbacks = []llmagent.AfterModelCallback{recordUsage()}
+	}
+	return llmagent.New(cfg)
 }

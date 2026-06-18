@@ -20,8 +20,23 @@ type Config struct {
 	Tools        ToolsConfig               `yaml:"tools"`
 	Gates        GatesConfig               `yaml:"gates"`
 	Dag          DagConfig                 `yaml:"dag"`
+	Compaction   CompactionConfig          `yaml:"compaction"`
 	Server       ServerConfig              `yaml:"server"`
 }
+
+// CompactionConfig configures automatic context compaction. When enabled, every
+// gated agent gets a BeforeModelCallback that prunes old tool outputs and, if a
+// request is still over budget, summarises the older conversation via the named
+// summariser model (ports sst/opencode's prune + compaction).
+type CompactionConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Provider string `yaml:"provider"` // inference provider for the summariser model
+	Model    string `yaml:"model"`    // summariser model
+	Prune    *bool  `yaml:"prune"`    // blank old tool outputs before summarising (default true)
+}
+
+// PruneEnabled reports whether the cheap tool-output prune pass runs (default true).
+func (c CompactionConfig) PruneEnabled() bool { return c.Prune == nil || *c.Prune }
 
 // DagConfig tunes how the orchestrator's DAG is executed.
 type DagConfig struct {
@@ -80,11 +95,12 @@ func (g GatesConfig) Enabled() bool {
 // agent-card.json + prompt.md) to a provider/model and a selection of built-in
 // tools. Defining a new agent is adding a bundle directory plus one of these.
 type AgentConfig struct {
-	Bundle   string   `yaml:"bundle"`   // path to the agent bundle directory
-	Provider string   `yaml:"provider"` // inference provider name
-	Model    string   `yaml:"model"`    // model served to this agent
-	Tools    []string `yaml:"tools"`    // built-in tool names (kind: builtin)
-	Inputs   []string `yaml:"inputs"`   // accepted input modalities: "text", "image", "audio" (text assumed if empty)
+	Bundle        string   `yaml:"bundle"`         // path to the agent bundle directory
+	Provider      string   `yaml:"provider"`       // inference provider name
+	Model         string   `yaml:"model"`          // model served to this agent
+	ContextWindow int      `yaml:"context_window"` // model's per-request context window in tokens (0 ⇒ no compaction)
+	Tools         []string `yaml:"tools"`          // built-in tool names (kind: builtin)
+	Inputs        []string `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
 }
 
 // ToolsConfig holds backend bindings for the built-in tools that need them.
@@ -216,6 +232,14 @@ func (c *Config) validate() error {
 			if g.Judge.MaxIterations < 1 {
 				return fmt.Errorf("config: gates.judge.max_iterations must be >= 1")
 			}
+		}
+	}
+	if c.Compaction.Enabled {
+		if _, ok := c.Providers[c.Compaction.Provider]; !ok {
+			return fmt.Errorf("config: compaction.provider %q is not defined under providers", c.Compaction.Provider)
+		}
+		if c.Compaction.Model == "" {
+			return fmt.Errorf("config: compaction.enabled is true but compaction.model is empty")
 		}
 	}
 	if c.Dag.MaxActiveNodes == 0 {
