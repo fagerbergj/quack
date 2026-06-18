@@ -196,12 +196,20 @@ type DagNodeState struct {
 	Model            *string  `json:"model,omitempty"`
 	OutputPreview    *string  `json:"output_preview,omitempty"`
 	PromptTokens     *int     `json:"prompt_tokens,omitempty"`
-	ReasoningTokens  *int     `json:"reasoning_tokens,omitempty"`
-	SelfRefined      *bool    `json:"self_refined,omitempty"`
-	ServerDurationMs *int     `json:"server_duration_ms,omitempty"`
-	StartedAtMs      *int     `json:"started_at_ms,omitempty"`
-	Status           string   `json:"status"`
-	TotalTokens      *int     `json:"total_tokens,omitempty"`
+
+	// Questions When status is "waiting", the open questions the node is paused on.
+	Questions        *[]string `json:"questions,omitempty"`
+	ReasoningTokens  *int      `json:"reasoning_tokens,omitempty"`
+	SelfRefined      *bool     `json:"self_refined,omitempty"`
+	ServerDurationMs *int      `json:"server_duration_ms,omitempty"`
+	StartedAtMs      *int      `json:"started_at_ms,omitempty"`
+
+	// Status queued | running | done | failed | waiting
+	Status      string `json:"status"`
+	TotalTokens *int   `json:"total_tokens,omitempty"`
+
+	// WaitingCallId When status is "waiting", the request_input call ID to answer on resume.
+	WaitingCallId *string `json:"waiting_call_id,omitempty"`
 }
 
 // DagOutputItem defines model for DagOutputItem.

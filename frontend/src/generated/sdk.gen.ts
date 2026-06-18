@@ -78,8 +78,10 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  *
  * DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
  * output item has been added; `node_queued` ({"node_id"}), `node_start`
- * ({"node_id","agent"}), `node_done` ({"node_id",...metadata}), and
- * `node_failed` ({"node_id","error"}) track node lifecycle.
+ * ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
+ * `node_failed` ({"node_id","error"}), and `node_waiting`
+ * ({"node_id","call_id","questions"}, emitted when a node pauses on
+ * request_input — answer it via the resume endpoint) track node lifecycle.
  *
  * Lifecycle: `chat_title` ({"title"}) is sent once the title is generated;
  * `done` ({}) terminates the stream; `error` ({"error"}) signals failure.

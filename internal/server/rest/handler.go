@@ -289,6 +289,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 						PlanID:           pid,
 						Status:           "done",
 						OutputPreview:    d.OutputPreview,
+						Output:           d.Output,
 						FinishedAt:       now(),
 						Model:            d.Model,
 						PromptTokens:     d.PromptTokens,
@@ -301,6 +302,16 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 						JudgeRounds:      d.JudgeRounds,
 						JudgeFinalScore:  d.JudgeFinalScore,
 						JudgePassed:      d.JudgePassed,
+					})
+				}()
+			}
+		case stream.EventNodeWaiting:
+			if d, ok := ev.Data.(stream.NodeWaitingData); ok && activePlanID != "" {
+				pid := activePlanID
+				go func() {
+					_ = h.store.UpsertDagNode(context.Background(), store.DagNode{
+						NodeID: d.NodeID, PlanID: pid, Status: "waiting", Output: d.Output,
+						WaitingCallID: d.CallID, Questions: d.Questions, FinishedAt: now(),
 					})
 				}()
 			}
@@ -382,6 +393,8 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 					Model:            strPtr(n.Model),
 					FinishReason:     strPtr(n.FinishReason),
 					OutputPreview:    strPtr(n.OutputPreview),
+					Questions:        slicePtr(n.Questions),
+					WaitingCallId:    strPtr(n.WaitingCallID),
 					Error:            strPtr(n.Error),
 					PromptTokens:     intPtr(int(n.PromptTokens)),
 					CompletionTokens: intPtr(int(n.CompletionTokens)),
@@ -403,10 +416,11 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 				}
 				nodeStates[n.NodeID] = ns
 			}
-			// DAG is completed if all nodes are done/failed, in_progress otherwise.
+			// DAG is completed if all nodes are done/failed, in_progress otherwise
+			// (a "waiting" node means the run is paused awaiting input — not done).
 			dagStatus := schema.Completed
 			for _, ns := range nodeStates {
-				if ns.Status == "running" || ns.Status == "queued" {
+				if ns.Status == "running" || ns.Status == "queued" || ns.Status == "waiting" {
 					dagStatus = schema.InProgress
 					break
 				}
@@ -470,6 +484,13 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 
 func strPtr(s string) *string {
 	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func slicePtr(s []string) *[]string {
+	if len(s) == 0 {
 		return nil
 	}
 	return &s

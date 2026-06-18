@@ -122,8 +122,19 @@ export type DagEdge = {
 };
 
 export type DagNodeState = {
+    /**
+     * queued | running | done | failed | waiting
+     */
     status: string;
     output_preview?: string;
+    /**
+     * When status is "waiting", the open questions the node is paused on.
+     */
+    questions?: Array<string>;
+    /**
+     * When status is "waiting", the request_input call ID to answer on resume.
+     */
+    waiting_call_id?: string;
     error?: string;
     started_at_ms?: number;
     finished_at_ms?: number;

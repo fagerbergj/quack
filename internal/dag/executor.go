@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"slices"
 	"strings"
 	"time" //nolint:godot
 
@@ -44,16 +45,20 @@ func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent, me
 
 // nodeMsg is one message sent from a node goroutine to the Execute main loop.
 // start=true announces the node actually began (after acquiring a concurrency
-// slot); done=false carries a live activity event; done=true signals the
-// goroutine finished (output, err, and stats are set accordingly).
+// slot); done=false/waiting=false carries a live activity event; done=true
+// signals the goroutine finished (output, err, and stats are set accordingly);
+// waiting=true signals the node paused on a request_input call (waitData set).
+// Both done and waiting are terminal for the goroutine.
 type nodeMsg struct {
-	nodeID string
-	ev     stream.SSEEvent
-	output string
-	err    error
-	start  bool
-	done   bool
-	stats  stream.NodeDoneData // only meaningful when done=true
+	nodeID   string
+	ev       stream.SSEEvent
+	output   string
+	err      error
+	start    bool
+	done     bool
+	stats    stream.NodeDoneData // only meaningful when done=true
+	waiting  bool
+	waitData stream.NodeWaitingData // only meaningful when waiting=true
 }
 
 // Execute runs the plan and yields SSE events: DAG lifecycle events
@@ -88,6 +93,10 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 		// does NOT block downstream — the node is still "done" with a warning flag.
 		gateFailed := make(map[string]bool)
 		launched := make(map[string]bool)
+		// waitingNodes holds nodes paused on a request_input call. Their dependents
+		// stay blocked; when no goroutine is in flight and ≥1 node is waiting, the
+		// whole DAG suspends (the request ends; resume via the answer endpoint).
+		waitingNodes := make(map[string]stream.NodeWaitingData)
 
 		// One cancellable context for every node goroutine: cancelling stops the
 		// whole run when the consumer disconnects or a node fails.
@@ -128,11 +137,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 		}
 
 		// drain waits for every launched-but-unfinished goroutine to send its
-		// terminal (done) message, so cancelled goroutines exit cleanly before we
-		// return. len(launched) is stable once we stop calling launchReady.
+		// terminal message (done or waiting), so cancelled goroutines exit cleanly
+		// before we return. len(launched) is stable once we stop calling launchReady.
 		drain := func(completed int) {
 			for completed < len(launched) {
-				if (<-ch).done {
+				if m := <-ch; m.done || m.waiting {
 					completed++
 				}
 			}
@@ -145,6 +154,16 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 		}
 
 		completed := 0
+		// suspended reports whether the runnable frontier is empty while nodes
+		// remain — the rest all depend on a node waiting for input — so the DAG
+		// suspends (the request ends; resume via the answer endpoint).
+		suspended := func() bool {
+			if completed == len(launched) && completed < len(plan.Nodes) {
+				slog.Info("dag suspended for input", "component", "dag", "waiting", len(waitingNodes), "settled", completed, "total", len(plan.Nodes))
+				return true
+			}
+			return false
+		}
 		for completed < len(plan.Nodes) {
 			select {
 			case msg := <-ch:
@@ -152,6 +171,23 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 					if !yield(msg.ev, nil) {
 						cancelAll()
 						drain(completed)
+						return
+					}
+					continue
+				}
+				if msg.waiting {
+					// Terminal: the node paused for human input. Record its partial
+					// output and the open question; do NOT decrement dependents — they
+					// stay blocked until the node resumes.
+					completed++
+					nodeOutputs[msg.nodeID] = msg.output
+					waitingNodes[msg.nodeID] = msg.waitData
+					if !yield(stream.NodeWaiting(msg.waitData), nil) {
+						cancelAll()
+						drain(completed)
+						return
+					}
+					if suspended() {
 						return
 					}
 					continue
@@ -181,6 +217,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 				if len(nd.OutputPreview) > 250 {
 					nd.OutputPreview = nd.OutputPreview[:250] + "…"
 				}
+				nd.Output = msg.output
 				if !yield(stream.NodeDone(msg.nodeID, nd), nil) {
 					cancelAll()
 					drain(completed)
@@ -200,6 +237,9 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 					drain(completed)
 					return
 				}
+				if suspended() {
+					return
+				}
 			case <-ctx.Done():
 				drain(completed)
 				return
@@ -211,12 +251,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 // streamNode runs one node against its A2A client and sends all activity events
 // to ch as they arrive, followed by a done message.
 func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
-	send := func(m nodeMsg) {
-		select {
-		case ch <- m:
-		case <-ctx.Done():
-		}
-	}
+	// send blocks rather than racing ctx.Done: Execute always drains every
+	// launched goroutine before returning, so the receiver is guaranteed and a
+	// terminal (done/waiting) message can't be lost to a cancel race — which would
+	// hang drain's completion count.
+	send := func(m nodeMsg) { ch <- m }
 
 	// Acquire a concurrency slot: the node's deps are met, but it waits here behind
 	// the max-active cap (it stays "queued" in the UI). Once a slot frees, emit
@@ -288,6 +327,21 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 			send(nodeMsg{nodeID: node.ID, done: true, err: fmt.Errorf("node %q: %w", node.ID, err)})
 			return
 		}
+		// The node paused on a request_input call (the gate re-yields it with
+		// LongRunningToolIDs). Report it as waiting — terminal for this goroutine —
+		// carrying any partial text streamed before the question.
+		if call := findWaitingCall(ev); call != nil {
+			questions := questionsFromArgs(call.Args)
+			partial := stream.StripThinking(answer.String())
+			slog.Info("node waiting for input", "component", "dag", "node", node.ID, "call", call.ID, "questions", len(questions))
+			send(nodeMsg{
+				nodeID:   node.ID,
+				waiting:  true,
+				output:   partial,
+				waitData: stream.NodeWaitingData{NodeID: node.ID, CallID: call.ID, Questions: questions, Output: partial},
+			})
+			return
+		}
 		for _, se := range translator.Event(ev) {
 			// agent_complete carries each run's stats; summarise into NodeDoneData
 			// (the store persists these; the worker run drives model/finish/usage).
@@ -327,6 +381,38 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	out := stream.StripThinking(answer.String())
 	slog.Info("node done", "component", "dag", "node", node.ID, "output_len", len(out), "judge_passed", stats.JudgePassed, "judge_rounds", stats.JudgeRounds)
 	send(nodeMsg{nodeID: node.ID, done: true, output: out, stats: stats})
+}
+
+// findWaitingCall returns the open long-running FunctionCall (request_input) on an
+// event, or nil. ADK lists a paused call's ID in LongRunningToolIDs and the A2A v2
+// bridge reconstructs the matching FunctionCall part; its presence means the node
+// paused for human input.
+func findWaitingCall(ev *session.Event) *genai.FunctionCall {
+	if ev == nil || len(ev.LongRunningToolIDs) == 0 || ev.Content == nil {
+		return nil
+	}
+	for _, p := range ev.Content.Parts {
+		if p != nil && p.FunctionCall != nil && slices.Contains(ev.LongRunningToolIDs, p.FunctionCall.ID) {
+			return p.FunctionCall
+		}
+	}
+	return nil
+}
+
+// questionsFromArgs pulls the request_input "questions" list out of a function
+// call's args. JSON decoding yields []any, so each element is asserted to string.
+func questionsFromArgs(args map[string]any) []string {
+	raw, ok := args["questions"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, x := range raw {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // buildTask constructs the message for a node: the user's verbatim request

@@ -38,10 +38,11 @@ type Deps struct {
 type constructor func(Deps) (tool.Tool, error)
 
 var registry = map[string]constructor{
-	"web_search":   newWebSearch,
-	"web_fetch":    newFetch,
-	"summarize":    newSummarize,
-	"current_date": newCurrentDate,
+	"web_search":    newWebSearch,
+	"web_fetch":     newFetch,
+	"summarize":     newSummarize,
+	"current_date":  newCurrentDate,
+	"request_input": newRequestInput,
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an

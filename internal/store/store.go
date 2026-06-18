@@ -49,10 +49,20 @@ type DagPlan struct {
 
 // DagNode stores the execution state of one DAG node.
 type DagNode struct {
-	NodeID           string     `gorm:"primaryKey;column:node_id" json:"node_id"`
-	PlanID           string     `gorm:"primaryKey;column:plan_id" json:"plan_id"`
-	Status           string     `json:"status"`
-	OutputPreview    string     `json:"output_preview"`
+	NodeID        string `gorm:"primaryKey;column:node_id" json:"node_id"`
+	PlanID        string `gorm:"primaryKey;column:plan_id" json:"plan_id"`
+	Status        string `json:"status"` // queued | running | done | failed | waiting
+	OutputPreview string `json:"output_preview"`
+	// Output is the node's FULL vetted text (OutputPreview is truncated to 250
+	// chars for display). Persisted so a paused DAG can rehydrate downstream
+	// nodes from upstream outputs on resume without re-running them (M5b).
+	Output string `json:"output,omitempty"`
+	// WaitingCallID and Questions are set when Status == "waiting": the open
+	// request_input call to answer on resume, and the questions shown to the user
+	// (a node may ask several at once). Questions is JSON-serialized into a text
+	// column by GORM.
+	WaitingCallID    string     `json:"waiting_call_id,omitempty"`
+	Questions        []string   `gorm:"serializer:json" json:"questions,omitempty"`
 	Error            string     `json:"error"`
 	StartedAt        *time.Time `json:"started_at,omitempty"`
 	FinishedAt       *time.Time `json:"finished_at,omitempty"`
