@@ -4,7 +4,8 @@
 FROM node:24-alpine AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+# Cache mount: npm's download cache persists across builds, never lands in a layer.
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -12,13 +13,20 @@ RUN npm run build
 FROM golang:1.25-alpine AS backend
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 COPY --from=frontend /app/frontend/dist ./cmd/server/web/dist
-RUN CGO_ENABLED=0 go build -o /quack ./cmd/server
+# -trimpath + -ldflags="-s -w": strip local paths and the symbol/DWARF tables
+# (smaller, reproducible binary). Module + build caches are mounted, not embedded.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack ./cmd/server
 
-# 3) Minimal runtime.
-FROM gcr.io/distroless/static-debian12
+# 3) Minimal runtime. The :nonroot variant runs as UID 65532 — safe here because
+# the server makes no runtime filesystem writes (all state goes to Postgres) and
+# binds the unprivileged port 8080. ponytail: mutable tag is fine for a
+# locally/self-hosted build; pin to a digest only once a release image is published.
+FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /
 COPY --from=backend /quack /quack
 # The config directory: quack.yaml plus files it references by relative path
