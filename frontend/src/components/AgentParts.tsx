@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import type { ReactNode } from 'react'
+import rehypeHighlight from 'rehype-highlight'
+import 'highlight.js/styles/github-dark.css'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import type { Activity, ToolCall } from './messageParts'
 import { summarizeArgs, prettyJSON } from './toolFormat'
 
@@ -26,11 +28,43 @@ export * from './messageParts'
 // ones fold into a "⋯ N earlier" toggle so a long run stays scannable.
 const RECENT = 3
 
-// AssistantText renders model text as markdown.
+// CopyablePre wraps a fenced code block in a relative container with a one-click
+// copy button. rehype-highlight runs AFTER sanitize (see AssistantText), so the
+// hljs token markup is intact by the time this renders.
+function CopyablePre({ children, ...props }: ComponentPropsWithoutRef<'pre'>) {
+  const ref = useRef<HTMLPreElement>(null)
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(ref.current?.textContent ?? '')
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+  return (
+    <div className="relative group not-prose">
+      <button
+        type="button"
+        onClick={copy}
+        aria-label="Copy code"
+        className="absolute right-2 top-2 z-10 rounded border border-gray-600 bg-gray-800/80 px-2 py-0.5 text-[11px] text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-gray-700"
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      <pre ref={ref} {...props}>{children}</pre>
+    </div>
+  )
+}
+
+// AssistantText renders model text as markdown. rehype-highlight is placed LAST
+// so its hljs classes/spans aren't stripped by rehype-sanitize (the code's
+// `language-*` class survives sanitize, so highlight still detects the language).
 export function AssistantText({ text }: { text: string }) {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema]]}>{text}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
+        components={{ pre: CopyablePre }}
+      >{text}</ReactMarkdown>
     </div>
   )
 }
@@ -109,13 +143,14 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-// Dots is the three-dot "working" indicator shared by tool calls and run cards.
-export function Dots({ className = '' }: { className?: string }) {
+// Dots is the three-dot "working" indicator shared by tool calls, run cards, and
+// the live/pending answer bubbles. `size` is a Tailwind w/h class pair.
+export function Dots({ className = '', size = 'w-1.5 h-1.5' }: { className?: string; size?: string }) {
   return (
     <span className={`flex items-center gap-1 text-gray-400 ${className}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" />
+      <span className={`${size} rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]`} />
+      <span className={`${size} rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]`} />
+      <span className={`${size} rounded-full bg-gray-400 animate-bounce`} />
     </span>
   )
 }

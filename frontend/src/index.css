@@ -5,6 +5,34 @@
    defaults `dark:` to prefers-color-scheme, so override it to the class. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ponytail: global tone via the color scale — softer, slightly warm neutrals
+   and a calmer accent. Overriding the built-in gray and blue scale here recolors
+   every existing gray/blue utility (backgrounds, borders, text) across the app at
+   once, so no per-component edits. A component that needs a different colour can
+   still use an explicit one. */
+@theme {
+  --color-gray-50:  #f7f7f6;
+  --color-gray-100: #efefed;
+  --color-gray-200: #e3e3e0;
+  --color-gray-300: #d2d2ce;
+  --color-gray-400: #909089;  /* 3:1 on light — decorative/metadata */
+  --color-gray-500: #6b6b63;  /* ≥4.5:1 on light — secondary text (WCAG AA) */
+  --color-gray-600: #565651;
+  --color-gray-700: #3c3c38;
+  --color-gray-800: #2a2a27;
+  --color-gray-900: #1d1d1b;
+  --color-gray-950: #131312;
+
+  /* Muted indigo-leaning accent — less vivid than default blue-600. */
+  --color-blue-50:  #eef0fb;
+  --color-blue-400: #8b96ec;
+  --color-blue-500: #5d6ce0;
+  --color-blue-600: #4a5bd4;
+  --color-blue-700: #3d4eb6;
+  --color-blue-900: #262d63;
+  --color-blue-950: #1a1f45;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

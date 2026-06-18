@@ -61,6 +61,10 @@ export interface ChatState {
   // The turn currently streaming (or most recently completed, until next submit)
   live?: LiveTurn
   error: string
+  // True between submit and the first stream event, so the UI can show a
+  // loading indicator instantly instead of waiting on the archive round-trip.
+  submitting?: boolean
+  pendingUserText?: string
 }
 
 type Listener = () => void
@@ -114,20 +118,21 @@ export class ChatStore {
     // the streaming flag). Replacing `live` would drop it from the UI, so first
     // archive it into `turns` by re-fetching from the server, where it is fully
     // persisted. Fetch BEFORE posting so the new turn's row isn't included yet.
+    // Show the `submitting` indicator immediately so the spinner doesn't wait on
+    // this round-trip; the old `live` stays rendered until `turns` is repopulated,
+    // so the previous answer never blinks out.
     if (cur.live) {
+      this.write(chatId, { ...cur, submitting: true, pendingUserText: trimmed, error: '' })
+      let turns = cur.turns
       try {
         const res = await fetch(`/api/v1/chats/${chatId}`)
-        if (res.ok) {
-          const detail = (await res.json()) as { turns?: Turn[] }
-          const s = this.get(chatId)
-          if (!s.live?.streaming) this.write(chatId, { ...s, turns: detail.turns ?? s.turns })
-        }
+        if (res.ok) turns = ((await res.json()) as { turns?: Turn[] }).turns ?? turns
       } catch { /* keep local state; worst case the previous turn drops until refresh */ }
-      cur = this.get(chatId)
+      cur = { ...this.get(chatId), turns }
     }
 
     const live: LiveTurn = { id: '', userText: trimmed, streaming: true, error: '', text: '', runs: [] }
-    this.write(chatId, { ...cur, live, error: '' })
+    this.write(chatId, { ...cur, live, submitting: false, pendingUserText: undefined, error: '' })
 
     await this.runStream(
       chatId,
