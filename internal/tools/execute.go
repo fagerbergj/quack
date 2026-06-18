@@ -68,7 +68,7 @@ func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (to
 						return executeResult{}, fmt.Errorf("execute: %w", err)
 					}
 				}
-				answer = terminalOutput(plan, nodeOutputs)
+				answer = TerminalOutput(plan, nodeOutputs)
 				if answer == "" {
 					return executeResult{}, fmt.Errorf("execute: all nodes completed but produced no output")
 				}
@@ -93,9 +93,9 @@ func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (to
 	)
 }
 
-// terminalOutput returns the output of the plan's terminal node (the one with
-// no successors). Falls back to the last node in slice order.
-func terminalOutput(plan dag.Plan, outputs map[string]string) string {
+// TerminalOutput returns the output of the plan's terminal node (the one with
+// no successors). Exported for the resume path. Falls back to the last node in slice order.
+func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
 	hasSuccessor := make(map[string]bool, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		for _, dep := range n.DependsOn {

@@ -61,17 +61,43 @@ type nodeMsg struct {
 	waitData stream.NodeWaitingData // only meaningful when waiting=true
 }
 
-// Execute runs the plan and yields SSE events: DAG lifecycle events
-// (node_queued/start/done/failed) plus activity events scoped to each node.
-// Events are streamed live as they are produced — not buffered until completion.
-// nodeOutputs accumulates the final text output of each node so the caller
-// can extract the last node's text as the conversation's final answer.
+// resumePreset carries the pre-run state for a resumed DAG (see Resume): nodes
+// already done (skipped; their outputs rehydrate downstream), the set of nodes
+// still paused on OTHER request_input calls (skipped; kept blocked), and the one
+// node being resumed (nodeID) with the FunctionResponse content answering its open
+// call. The resumed node must NOT appear in waiting.
+type resumePreset struct {
+	done    map[string]string
+	waiting map[string]bool
+	nodeID  string
+	content *genai.Content
+}
+
+// Execute runs the plan from scratch and yields SSE events: DAG lifecycle events
+// (node_queued/start/done/failed/waiting) plus activity events scoped to each
+// node. Events stream live as produced — not buffered until completion.
+// nodeOutputs accumulates the final text output of each node so the caller can
+// extract the terminal node's text as the conversation's final answer.
 //
 // Scheduling is readiness-driven: a node is launched the instant all its
 // dependencies are done, not at a layer boundary. Every launched goroutine
 // self-limits on the max-active semaphore (staying "queued" in the UI until a
 // slot frees), so launching the whole ready frontier at once is safe.
 func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
+	return e.run(ctx, plan, userID, nodeOutputs, nil)
+}
+
+// Resume continues a suspended DAG. done rehydrates already-completed nodes'
+// outputs (so downstream nodes get real input without re-running upstream),
+// waiting are nodes still paused on other request_input calls (kept blocked), and
+// resumeNodeID is re-run with resumeContent (a FunctionResponse answering its open
+// call) so it continues from the pause on its persisted session. The resumed node
+// and everything transitively downstream run; the rest stays as-is.
+func (e *Executor) Resume(ctx context.Context, plan Plan, userID string, nodeOutputs map[string]string, done map[string]string, waiting map[string]bool, resumeNodeID string, resumeContent *genai.Content) iter.Seq2[stream.SSEEvent, error] {
+	return e.run(ctx, plan, userID, nodeOutputs, &resumePreset{done: done, waiting: waiting, nodeID: resumeNodeID, content: resumeContent})
+}
+
+func (e *Executor) run(ctx context.Context, plan Plan, userID string, nodeOutputs map[string]string, preset *resumePreset) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// TopoSort is used only to validate the plan (cycles, unknown deps); the
 		// scheduler below runs by readiness, not by the returned layers.
@@ -106,6 +132,37 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 		// Buffered enough to absorb a burst so goroutines rarely block.
 		ch := make(chan nodeMsg, 256)
 
+		// decrementDependents lowers the remaining-dep count of every node that
+		// depends on id — called when id becomes (or is pre-seeded as) done.
+		decrementDependents := func(id string) {
+			for _, n := range plan.Nodes {
+				for _, dep := range n.DependsOn {
+					if dep == id {
+						remainingDeps[n.ID]--
+					}
+				}
+			}
+		}
+
+		completed := 0
+		// Resume pre-seed: mark already-settled nodes as launched+completed so they
+		// are never re-run; only the resumed node and its downstream remain.
+		if preset != nil {
+			for id, out := range preset.done {
+				nodeOutputs[id] = out
+				launched[id] = true
+				completed++
+				decrementDependents(id) // unblock the resumed node + downstream
+			}
+			for id := range preset.waiting {
+				launched[id] = true
+				completed++
+				// Still paused — dependents stay blocked. The value only feeds
+				// suspended()'s count, so a placeholder is enough.
+				waitingNodes[id] = stream.NodeWaitingData{NodeID: id}
+			}
+		}
+
 		// launchReady starts goroutines for every not-yet-launched node whose deps
 		// are all done. node_start is emitted later, by each goroutine once it
 		// acquires a concurrency slot. Returns false if the consumer disconnected.
@@ -129,8 +186,14 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 				for k, v := range gateFailed {
 					failedSnap[k] = v
 				}
+				// On resume, the one node being resumed gets the FunctionResponse
+				// content (continuing its session); everyone else builds a fresh task.
+				var rc *genai.Content
+				if preset != nil && node.ID == preset.nodeID {
+					rc = preset.content
+				}
 				go func(n Node) {
-					e.streamNode(ctx, plan, n, userID, upstream, failedSnap, ch)
+					e.streamNode(ctx, plan, n, userID, upstream, failedSnap, ch, rc)
 				}(node)
 			}
 			return true
@@ -147,13 +210,6 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			}
 		}
 
-		if !launchReady() {
-			cancelAll()
-			drain(0)
-			return
-		}
-
-		completed := 0
 		// suspended reports whether the runnable frontier is empty while nodes
 		// remain — the rest all depend on a node waiting for input — so the DAG
 		// suspends (the request ends; resume via the answer endpoint).
@@ -164,6 +220,13 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			}
 			return false
 		}
+
+		if !launchReady() {
+			cancelAll()
+			drain(completed)
+			return
+		}
+
 		for completed < len(plan.Nodes) {
 			select {
 			case msg := <-ch:
@@ -223,15 +286,8 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 					drain(completed)
 					return
 				}
-				// This node finished: decrement its dependents and launch any that
-				// just became runnable.
-				for _, n := range plan.Nodes {
-					for _, dep := range n.DependsOn {
-						if dep == msg.nodeID {
-							remainingDeps[n.ID]--
-						}
-					}
-				}
+				// This node finished: launch any dependents that just became runnable.
+				decrementDependents(msg.nodeID)
 				if !launchReady() {
 					cancelAll()
 					drain(completed)
@@ -249,8 +305,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 }
 
 // streamNode runs one node against its A2A client and sends all activity events
-// to ch as they arrive, followed by a done message.
-func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
+// to ch as they arrive, followed by a done message. When resumeContent is
+// non-nil the node is being resumed: that content (a FunctionResponse answering
+// its request_input pause) is delivered to its existing session instead of a
+// freshly-built task.
+func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg, resumeContent *genai.Content) {
 	// send blocks rather than racing ctx.Done: Execute always drains every
 	// launched goroutine before returning, so the receiver is guaranteed and a
 	// terminal (done/waiting) message can't be lost to a cancel race — which would
@@ -276,20 +335,6 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 		return
 	}
 
-	task := buildTask(plan, node, upstream, gateFailed)
-	// Diagnostic: how many of this node's upstream deps actually contributed a
-	// non-empty output. 0/N on a node with deps means upstream produced nothing —
-	// the input the synthesizer (or any dependent) is missing.
-	if len(node.DependsOn) > 0 {
-		filled := 0
-		for _, dep := range node.DependsOn {
-			if strings.TrimSpace(upstream[dep]) != "" {
-				filled++
-			}
-		}
-		slog.Debug("node built task from upstream outputs", "component", "dag", "node", node.ID, "filled", filled, "deps", len(node.DependsOn), "task_len", len(task))
-	}
-
 	r, err := runner.New(runner.Config{
 		AppName:           "quack-nodes",
 		Agent:             client,
@@ -308,15 +353,33 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	// nodes lean and avoids dumping the whole transcript into every node.
 	nodeSessionID := plan.ID + ":" + node.ID
 
-	// Media-capable agents (image/audio inputs) receive the attachment parts
-	// prepended before the text task so the model sees the file before the
-	// instruction — the standard layout for multimodal VLMs.
-	parts := []*genai.Part{{Text: task}}
-	if e.mediaAgents[node.AgentName] && len(plan.Attachments) > 0 {
-		parts = append(plan.Attachments, parts...)
-		slog.Debug("node sending attachments to media agent", "component", "dag", "node", node.ID, "attachments", len(plan.Attachments), "agent", node.AgentName)
+	// Build the content to send. On resume, deliver the human's answer (a
+	// FunctionResponse) to the node's existing session so the worker continues
+	// from its request_input pause. Otherwise build the node's task.
+	content := resumeContent
+	if content == nil {
+		task := buildTask(plan, node, upstream, gateFailed)
+		// Diagnostic: how many of this node's upstream deps actually contributed a
+		// non-empty output. 0/N on a node with deps means upstream produced nothing.
+		if len(node.DependsOn) > 0 {
+			filled := 0
+			for _, dep := range node.DependsOn {
+				if strings.TrimSpace(upstream[dep]) != "" {
+					filled++
+				}
+			}
+			slog.Debug("node built task from upstream outputs", "component", "dag", "node", node.ID, "filled", filled, "deps", len(node.DependsOn), "task_len", len(task))
+		}
+		// Media-capable agents (image/audio inputs) receive the attachment parts
+		// prepended before the text task so the model sees the file before the
+		// instruction — the standard layout for multimodal VLMs.
+		parts := []*genai.Part{{Text: task}}
+		if e.mediaAgents[node.AgentName] && len(plan.Attachments) > 0 {
+			parts = append(plan.Attachments, parts...)
+			slog.Debug("node sending attachments to media agent", "component", "dag", "node", node.ID, "attachments", len(plan.Attachments), "agent", node.AgentName)
+		}
+		content = &genai.Content{Role: "user", Parts: parts}
 	}
-	content := &genai.Content{Role: "user", Parts: parts}
 	var answer strings.Builder
 	var stats stream.NodeDoneData
 	startedAt := time.Now()

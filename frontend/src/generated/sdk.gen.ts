@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses } from './types.gen';
+import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, ResumeDagNodeData, ResumeDagNodeErrors, ResumeDagNodeResponse, ResumeDagNodeResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -114,3 +114,23 @@ export const getResponse = <ThrowOnError extends boolean = false>(options: Optio
  *
  */
 export const cancelChatStream = <ThrowOnError extends boolean = false>(options: Options<CancelChatStreamData, ThrowOnError>): RequestResult<CancelChatStreamResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
+
+/**
+ * Answer a paused DAG node and resume the run
+ *
+ * Resumes a DAG node that paused on a `request_input` call (node status
+ * "waiting"). The body carries one answer per question the node asked, in
+ * order. The node continues from its pause, downstream nodes run, and the
+ * response streams the same Server-Sent Events as `sendChatMessage`
+ * (node_* lifecycle + agent activity). Other still-paused nodes stay
+ * waiting. Returns 409 if the node is not currently waiting.
+ *
+ */
+export const resumeDagNode = <ThrowOnError extends boolean = false>(options: Options<ResumeDagNodeData, ThrowOnError, ResumeDagNodeResponse>): Promise<ServerSentEventsResult<ResumeDagNodeResponses>> => (options.client ?? client).sse.post<ResumeDagNodeResponses, ResumeDagNodeErrors, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/dag/{plan_id}/nodes/{node_id}/answer',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
