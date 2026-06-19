@@ -72,3 +72,24 @@ func TestLoadBundleErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadBundleMemory(t *testing.T) {
+	dir := writeBundle(t, `{"name":"x","description":"d"}`, "prompt")
+
+	// Absent → "".
+	if got, err := LoadBundleMemory(dir); err != nil || got != "" {
+		t.Fatalf("absent memory.md = (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	// Present → trimmed content.
+	if err := os.WriteFile(filepath.Join(dir, memoryFile), []byte("  ## What to remember\nstuff\n  "), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadBundleMemory(dir)
+	if err != nil {
+		t.Fatalf("LoadBundleMemory: %v", err)
+	}
+	if got != "## What to remember\nstuff" {
+		t.Fatalf("memory.md content = %q", got)
+	}
+}
