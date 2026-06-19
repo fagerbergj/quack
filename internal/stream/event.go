@@ -60,12 +60,11 @@ const (
 	EventDone      = "done"
 
 	// DAG / static structure.
-	EventDagPlan     = "dag_plan"
-	EventNodeQueued  = "node_queued"
-	EventNodeStart   = "node_start"
-	EventNodeDone    = "node_done"
-	EventNodeFailed  = "node_failed"
-	EventNodeWaiting = "node_waiting"
+	EventDagPlan    = "dag_plan"
+	EventNodeQueued = "node_queued"
+	EventNodeStart  = "node_start"
+	EventNodeDone   = "node_done"
+	EventNodeFailed = "node_failed"
 )
 
 // SSEEvent is one server-sent event: a name plus a JSON-serializable payload.
@@ -241,17 +240,6 @@ type NodeFailedData struct {
 	Error  string `json:"error"`
 }
 
-// NodeWaitingData is the `node_waiting` event payload: a node paused mid-DAG on a
-// request_input call. CallID is the open long-running call (answered on resume);
-// Questions are the open questions to show the user (a node may ask several at
-// once). Output carries any partial text the worker streamed before pausing.
-type NodeWaitingData struct {
-	NodeID    string   `json:"node_id"`
-	CallID    string   `json:"call_id"`
-	Questions []string `json:"questions"`
-	Output    string   `json:"output,omitempty"`
-}
-
 // ChatTitleData is the `chat_title` event payload.
 type ChatTitleData struct {
 	Title string `json:"title"`
@@ -283,11 +271,6 @@ func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 // NodeFailed builds a node_failed event.
 func NodeFailed(nodeID, errMsg string) SSEEvent {
 	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
-}
-
-// NodeWaiting builds a node_waiting event.
-func NodeWaiting(data NodeWaitingData) SSEEvent {
-	return SSEEvent{Name: EventNodeWaiting, Data: data}
 }
 
 // ChatTitle builds a chat_title event.
