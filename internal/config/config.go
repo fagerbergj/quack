@@ -31,9 +31,10 @@ type Config struct {
 // memory is fully off. Recall is ambient (ADK preload_memory) + deliberate
 // (load_memory); the gated, consolidating write path arrives in later PRs.
 type MemoryConfig struct {
-	URL      string        `yaml:"url"`      // Qdrant gRPC address host:port (typically ${QDRANT_URL})
-	Embedder ProviderModel `yaml:"embedder"` // provider+model for embeddings (e.g. qwen3-embed)
-	TopK     int           `yaml:"top_k"`    // neighbours fetched per recall (default 5)
+	URL           string        `yaml:"url"`           // Qdrant gRPC address host:port (typically ${QDRANT_URL})
+	Embedder      ProviderModel `yaml:"embedder"`      // provider+model for embeddings (e.g. qwen3-embed)
+	Consolidation ProviderModel `yaml:"consolidation"` // provider+model for extract/vet/consolidate (e.g. gemma)
+	TopK          int           `yaml:"top_k"`         // neighbours fetched per recall/consolidation (default 5)
 }
 
 // ProviderModel binds a named provider to a model — used by memory's embedder
@@ -275,6 +276,12 @@ func (c *Config) validate() error {
 		}
 		if m.Embedder.Model == "" {
 			return fmt.Errorf("config: memory.embedder.model is empty")
+		}
+		if _, ok := c.Providers[m.Consolidation.Provider]; !ok {
+			return fmt.Errorf("config: memory.consolidation.provider %q is not defined under providers", m.Consolidation.Provider)
+		}
+		if m.Consolidation.Model == "" {
+			return fmt.Errorf("config: memory.consolidation.model is empty")
 		}
 		if m.TopK == 0 {
 			m.TopK = 5

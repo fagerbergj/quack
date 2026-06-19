@@ -1,0 +1,302 @@
+package memory
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/qdrant/go-client/qdrant"
+	"google.golang.org/adk/model"
+	"google.golang.org/genai"
+)
+
+// Candidate is a memory the agent staged (or that the orchestrator wants written
+// directly). Metadata is free-form (e.g. {"kind": "source"}); the schema carries
+// no use-case vocabulary.
+type Candidate struct {
+	Content  string
+	Metadata map[string]string
+}
+
+// nowRFC3339 lets tests stamp deterministically; defaults to time.Now.
+var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// Commit vets, extracts, and consolidates memories into this collection for
+// userID, returning the number of points written or updated. It is the single
+// gated writer: the gate calls it on a judge pass (staged tradecraft + the
+// accepted answer); the orchestrator calls it directly for user facts.
+//
+// One consolidation pass (the consolidator LLM, e.g. gemma) does it all: given
+// the staged candidates, the source text, and the user's most similar existing
+// memories, it returns ADD / UPDATE / DELETE / NOOP operations — dropping junk
+// or non-durable items (the vetting step) and reconciling against neighbours
+// (mem0-style consolidation) so a superseding fact updates rather than duplicates.
+//
+// ponytail: per-(user, collection) commits can race — two parallel commits of
+// the same fact both ADD. Best-effort: the next commit's consolidation reconciles
+// the dup. Add a per-key lock only if duplicate churn proves real.
+func (s *Store) Commit(ctx context.Context, userID, author string, staged []Candidate, sourceText string) (int, error) {
+	if s.consolidator == nil {
+		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
+	}
+	staged = dedupCandidates(staged) // collapse the same sentence staged across passes
+	if len(staged) == 0 && strings.TrimSpace(sourceText) == "" {
+		return 0, nil
+	}
+
+	// Fetch existing memories near the work (answer-relevant) to reconcile against.
+	neighbours, err := s.neighbours(ctx, userID, sourceText, staged)
+	if err != nil {
+		return 0, err
+	}
+
+	ops, err := s.decide(ctx, staged, sourceText, neighbours)
+	if err != nil {
+		return 0, err
+	}
+	if len(ops) == 0 {
+		return 0, nil
+	}
+
+	// Only honour an UPDATE/DELETE id the consolidator was actually shown — a
+	// hallucinated id would otherwise upsert an orphan point at an arbitrary id.
+	valid := make(map[string]bool, len(neighbours))
+	for _, n := range neighbours {
+		valid[n.ID] = true
+	}
+	return s.apply(ctx, userID, author, ops, valid)
+}
+
+// dedupCandidates drops candidates with duplicate trimmed content (cheap; saves
+// the consolidator embedding/reasoning over the same sentence twice).
+func dedupCandidates(in []Candidate) []Candidate {
+	seen := make(map[string]bool, len(in))
+	out := make([]Candidate, 0, len(in))
+	for _, c := range in {
+		key := strings.TrimSpace(c.Content)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+type neighbour struct {
+	ID      string
+	Content string
+}
+
+// op is one consolidation decision from the LLM.
+type op struct {
+	Action  string `json:"action"`  // ADD | UPDATE | DELETE | NOOP
+	ID      string `json:"id"`      // existing memory id (UPDATE / DELETE)
+	Content string `json:"content"` // memory text (ADD / UPDATE)
+	Kind    string `json:"kind"`    // free-form tag stored in metadata
+}
+
+func (s *Store) neighbours(ctx context.Context, userID, sourceText string, staged []Candidate) ([]neighbour, error) {
+	probe := sourceText
+	for _, c := range staged {
+		probe += "\n" + c.Content
+	}
+	if strings.TrimSpace(probe) == "" {
+		return nil, nil
+	}
+	vecs, err := s.embedder.Embed(ctx, []string{probe})
+	if err != nil {
+		return nil, fmt.Errorf("memory: embed for neighbours: %w", err)
+	}
+	if len(vecs) == 0 {
+		return nil, nil
+	}
+	var flt *qdrant.Filter
+	if userID != "" {
+		flt = &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadUserID, userID)}}
+	}
+	limit := s.topK
+	pts, err := s.client.Query(ctx, &qdrant.QueryPoints{
+		CollectionName: s.coll,
+		Query:          qdrant.NewQueryDense(vecs[0]),
+		Limit:          &limit,
+		Filter:         flt,
+		WithPayload:    qdrant.NewWithPayload(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("memory: neighbour query: %w", err)
+	}
+	out := make([]neighbour, 0, len(pts))
+	for _, p := range pts {
+		if c := payloadString(p.GetPayload(), payloadContent); c != "" {
+			out = append(out, neighbour{ID: pointID(p.GetId()), Content: c})
+		}
+	}
+	return out, nil
+}
+
+// decide runs the single consolidation pass and returns the operations to apply.
+func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText string, neighbours []neighbour) ([]op, error) {
+	var user strings.Builder
+	if len(staged) > 0 {
+		user.WriteString("STAGED CANDIDATES:\n")
+		for _, c := range staged {
+			if k := c.Metadata["kind"]; k != "" {
+				fmt.Fprintf(&user, "- [%s] %s\n", k, c.Content) // pass the agent's kind hint through
+			} else {
+				fmt.Fprintf(&user, "- %s\n", c.Content)
+			}
+		}
+	}
+	if strings.TrimSpace(sourceText) != "" {
+		user.WriteString("\nFINAL ANSWER (extract additional durable tradecraft from it):\n")
+		user.WriteString(sourceText)
+		user.WriteString("\n")
+	}
+	user.WriteString("\nEXISTING MEMORIES (reconcile against these):\n")
+	if len(neighbours) == 0 {
+		user.WriteString("(none)\n")
+	} else {
+		for _, n := range neighbours {
+			fmt.Fprintf(&user, "- id=%s: %s\n", n.ID, n.Content)
+		}
+	}
+
+	// /no_think disables reasoning on qwen/gemma-class models (the configured
+	// consolidation model); harmless to others.
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + user.String()}}}},
+		Config:   &genai.GenerateContentConfig{SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: consolidatePrompt}}}},
+	}
+	var sb strings.Builder
+	for resp, err := range s.consolidator.GenerateContent(ctx, req, false) {
+		if err != nil {
+			return nil, fmt.Errorf("memory: consolidation model: %w", err)
+		}
+		if resp.Content != nil {
+			for _, part := range resp.Content.Parts {
+				if !part.Thought && part.Text != "" {
+					sb.WriteString(part.Text)
+				}
+			}
+		}
+	}
+	var parsed struct {
+		Ops []op `json:"ops"`
+	}
+	if err := json.Unmarshal([]byte(stripFences(sb.String())), &parsed); err != nil {
+		return nil, fmt.Errorf("memory: parse consolidation output: %w", err)
+	}
+	return parsed.Ops, nil
+}
+
+// apply writes the operations to Qdrant: ADD/UPDATE upsert a point (UPDATE keeps
+// the existing id), DELETE removes one, NOOP is skipped. valid is the set of ids
+// the consolidator was shown; an UPDATE/DELETE naming any other id is treated as
+// a hallucination (UPDATE → fresh ADD, DELETE → dropped). Returns writes applied.
+func (s *Store) apply(ctx context.Context, userID, author string, ops []op, valid map[string]bool) (int, error) {
+	var dels []*qdrant.PointId
+	var writes []op
+	for _, o := range ops {
+		switch strings.ToUpper(strings.TrimSpace(o.Action)) {
+		case "ADD", "UPDATE":
+			if strings.TrimSpace(o.Content) != "" {
+				if !valid[o.ID] {
+					o.ID = "" // hallucinated/absent id → fresh ADD, not an orphan upsert
+				}
+				writes = append(writes, o)
+			}
+		case "DELETE":
+			if o.ID != "" && valid[o.ID] {
+				dels = append(dels, qdrant.NewID(o.ID))
+			}
+		}
+	}
+
+	count := 0
+	if len(writes) > 0 {
+		texts := make([]string, len(writes))
+		for i, o := range writes {
+			texts[i] = o.Content
+		}
+		vecs, err := s.embedder.Embed(ctx, texts)
+		if err != nil {
+			return 0, fmt.Errorf("memory: embed writes: %w", err)
+		}
+		ts := nowRFC3339()
+		points := make([]*qdrant.PointStruct, 0, len(writes))
+		for i, o := range writes {
+			id := o.ID
+			if strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == "" {
+				id = uuid.NewString()
+			}
+			payload := map[string]any{
+				payloadContent:   o.Content,
+				payloadUserID:    userID,
+				payloadAuthor:    author,
+				payloadTimestamp: ts,
+			}
+			if o.Kind != "" {
+				payload["kind"] = o.Kind
+			}
+			points = append(points, &qdrant.PointStruct{
+				Id:      qdrant.NewID(id),
+				Vectors: qdrant.NewVectorsDense(vecs[i]),
+				Payload: qdrant.NewValueMap(payload),
+			})
+		}
+		wait := true
+		if _, err := s.client.Upsert(ctx, &qdrant.UpsertPoints{CollectionName: s.coll, Wait: &wait, Points: points}); err != nil {
+			return 0, fmt.Errorf("memory: upsert: %w", err)
+		}
+		count += len(points)
+	}
+
+	if len(dels) > 0 {
+		wait := true
+		if _, err := s.client.Delete(ctx, &qdrant.DeletePoints{
+			CollectionName: s.coll,
+			Wait:           &wait,
+			Points:         &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: dels}}},
+		}); err != nil {
+			return 0, fmt.Errorf("memory: delete: %w", err)
+		}
+		count += len(dels)
+	}
+
+	s.log.Debug("commit", "user", userID, "author", author, "ops", len(ops), "writes", count)
+	return count, nil
+}
+
+const consolidatePrompt = "You maintain an agent's long-term memory of durable, reusable research " +
+	"tradecraft — which sources proved authoritative (and for what), which were junk, search/fetch " +
+	"tactics that worked, and availability dead-ends. You are given STAGED candidates, the agent's " +
+	"FINAL ANSWER, and the most similar EXISTING MEMORIES.\n\n" +
+	"Produce a set of operations. First VET: keep only durable, generally-useful tradecraft worth " +
+	"recalling in future unrelated tasks; drop anything volatile (prices, hours), request-specific, " +
+	"speculative, or not clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
+	"- ADD: genuinely new — provide content (one atomic sentence) and a kind (source|search|fetch|deadend).\n" +
+	"- UPDATE: refines/supersedes an existing memory — provide its id plus the new content and kind.\n" +
+	"- DELETE: an existing memory is now contradicted or obsolete — provide its id.\n" +
+	"- NOOP: already covered — skip it.\n\n" +
+	"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
+	"Empty ops list if nothing is worth keeping."
+
+// stripFences removes a leading ```json / ``` fence and trailing ``` if present,
+// so a model that wraps its JSON still parses.
+func stripFences(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimPrefix(s, "json")
+	s = strings.TrimPrefix(s, "JSON")
+	if i := strings.LastIndex(s, "```"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}

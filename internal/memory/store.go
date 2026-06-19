@@ -17,6 +17,7 @@ import (
 
 	"github.com/qdrant/go-client/qdrant"
 	adkmemory "google.golang.org/adk/memory"
+	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
@@ -33,22 +34,25 @@ const (
 )
 
 // Store is a Qdrant collection serving one memory scope (e.g. "task_memory").
-// It implements adkmemory.Service.
+// It implements adkmemory.Service. The consolidator (a gemma-class LLM) drives
+// the gated commit path's extract/vet/consolidate step; it may be nil for a
+// read-only store (Commit then errors).
 type Store struct {
-	client   *qdrant.Client
-	embedder inference.Embedder
-	coll     string
-	topK     uint64
-	log      *slog.Logger
+	client       *qdrant.Client
+	embedder     inference.Embedder
+	consolidator model.LLM
+	coll         string
+	topK         uint64
+	log          *slog.Logger
 }
 
 var _ adkmemory.Service = (*Store)(nil)
 
-// Open connects to Qdrant at addr (host:port gRPC; scheme and default port 6334
-// are tolerated), and ensures the scope's collection exists — creating it on
-// first use with a vector size probed from the embedder, so the embedding model's
-// dimension need not be configured.
-func Open(ctx context.Context, addr string, embedder inference.Embedder, collection string, topK int) (*Store, error) {
+// Open connects to Qdrant at addr (host:port gRPC), and ensures the scope's
+// collection exists — creating it on first use with a vector size probed from
+// the embedder, so the embedding model's dimension need not be configured. The
+// consolidator LLM drives Commit; pass nil for a recall-only store.
+func Open(ctx context.Context, addr string, embedder inference.Embedder, consolidator model.LLM, collection string, topK int) (*Store, error) {
 	host, port, err := parseAddr(addr)
 	if err != nil {
 		return nil, err
@@ -58,11 +62,12 @@ func Open(ctx context.Context, addr string, embedder inference.Embedder, collect
 		return nil, fmt.Errorf("memory: qdrant client: %w", err)
 	}
 	s := &Store{
-		client:   client,
-		embedder: embedder,
-		coll:     collection,
-		topK:     uint64(topK),
-		log:      slog.Default().With("component", "memory", "collection", collection),
+		client:       client,
+		embedder:     embedder,
+		consolidator: consolidator,
+		coll:         collection,
+		topK:         uint64(topK),
+		log:          slog.Default().With("component", "memory", "collection", collection),
 	}
 	if err := s.ensureCollection(ctx); err != nil {
 		return nil, err

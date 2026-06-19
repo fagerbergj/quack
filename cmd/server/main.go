@@ -82,26 +82,33 @@ func main() {
 	}
 
 	// Semantic memory (M6): present-and-configured memory block ⇒ open the
-	// task-scoped Qdrant store; every served agent gets it (ambient recall via
-	// preload_memory). nil when the feature is off.
-	var taskMem adkmemory.Service
+	// task-scoped Qdrant store. Every served agent gets it for ambient recall
+	// (preload_memory); the trust gate uses it to commit vetted tradecraft. nil
+	// when the feature is off.
+	var taskStore *memory.Store
 	if cfg.Memory != nil {
 		eprov, _ := cfg.Provider(cfg.Memory.Embedder.Provider)
 		embedder, err := inference.NewEmbedder(eprov, cfg.Memory.Embedder.Model)
 		if err != nil {
 			fatal("memory embedder init failed", "err", err)
 		}
-		taskStore, err := memory.Open(context.Background(), cfg.Memory.URL, embedder, "task_memory", cfg.Memory.TopK)
+		cprov, _ := cfg.Provider(cfg.Memory.Consolidation.Provider)
+		consolidator, err := inference.NewModel(cprov, cfg.Memory.Consolidation.Model)
+		if err != nil {
+			fatal("memory consolidation model init failed", "err", err)
+		}
+		store, err := memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "task_memory", cfg.Memory.TopK)
 		if err != nil {
 			fatal("memory open failed", "err", err)
 		}
-		taskMem = taskStore
-		slog.Info("semantic memory enabled", "component", "startup", "collection", "task_memory", "embedder", cfg.Memory.Embedder.Model)
+		taskStore = store
+		slog.Info("semantic memory enabled", "component", "startup", "collection", "task_memory",
+			"embedder", cfg.Memory.Embedder.Model, "consolidation", cfg.Memory.Consolidation.Model)
 	}
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskMem)
+	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskStore)
 	if err != nil {
 		fatal("agent build failed", "err", err)
 	}
@@ -203,7 +210,14 @@ func fatal(msg string, args ...any) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskMem adkmemory.Service) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
+	// Derive the recall service, leaving it nil (not a non-nil interface wrapping
+	// a nil pointer) when memory is off. The gate takes the concrete *memory.Store
+	// directly (taskStore), so it has no such typed-nil hazard.
+	var taskMem adkmemory.Service
+	if taskStore != nil {
+		taskMem = taskStore
+	}
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)
@@ -219,6 +233,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if gateCfg, err = vetting.FromConfig(cfg.Gates); err != nil {
 			return nil, nil, err
 		}
+		// The trust gate commits vetted tradecraft on a judge pass (M6). nil
+		// *memory.Store when memory is off — the gate's nil check handles it.
+		gateCfg.Memory = taskStore
 		// The judge model is only built when the judge stage is active; the
 		// deterministic + self-critique stages run without it. One-shot judge (no
 		// web tools): citation backing is now checked deterministically in code, so
@@ -294,9 +311,14 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		toolNames := make([]string, 0, len(ac.Tools))
 		wantLoadMemory := false
 		for _, t := range ac.Tools {
-			if t == "load_memory" {
-				wantLoadMemory = true
+			switch t {
+			case "load_memory":
+				wantLoadMemory = true // ADK-native; added below when memory is on
 				continue
+			case "stage_memory":
+				if taskMem == nil {
+					continue // memory off: don't build a sink that never commits
+				}
 			}
 			toolNames = append(toolNames, t)
 		}
