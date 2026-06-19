@@ -50,6 +50,39 @@ func (o *OpenAIModel) Name() string {
 	return o.ModelName
 }
 
+// Embed returns one embedding vector per input text, in input order, from the
+// OpenAI-compatible /embeddings endpoint. It uses o.ModelName as the embedding
+// model, so an OpenAIModel constructed with an embedding model name doubles as an
+// embedder (the same client/endpoint serves both).
+func (o *OpenAIModel) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	resp, err := o.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
+		Model: openai.EmbeddingModel(o.ModelName),
+		Input: openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: texts},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Data) != len(texts) {
+		return nil, fmt.Errorf("openaimodel: embeddings returned %d vectors for %d inputs", len(resp.Data), len(texts))
+	}
+	// Place each vector by its declared index — the API need not return them in order.
+	out := make([][]float32, len(texts))
+	for _, e := range resp.Data {
+		if e.Index < 0 || int(e.Index) >= len(out) {
+			return nil, fmt.Errorf("openaimodel: embedding index %d out of range for %d inputs", e.Index, len(texts))
+		}
+		v := make([]float32, len(e.Embedding))
+		for i, f := range e.Embedding {
+			v[i] = float32(f)
+		}
+		out[e.Index] = v
+	}
+	return out, nil
+}
+
 // GenerateContent implements model.LLM.
 func (o *OpenAIModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	if stream {
