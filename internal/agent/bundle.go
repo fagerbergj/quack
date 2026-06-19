@@ -36,6 +36,7 @@ type Skill struct {
 const (
 	cardFile   = "agent-card.json"
 	promptFile = "prompt.md"
+	memoryFile = "memory.md"
 )
 
 // LoadBundle reads and validates the agent bundle in dir.
@@ -62,4 +63,20 @@ func LoadBundle(dir string) (*Bundle, error) {
 	}
 
 	return &Bundle{Card: card, Prompt: prompt}, nil
+}
+
+// LoadBundleMemory reads an optional memory.md from the bundle directory — the
+// agent's "what to remember" guidance (M6). Returns "" if absent or empty. It is
+// appended to the agent's behaviour only when the memory feature is on, so the
+// guidance never dangles (and references no tools) when memory is disabled. This
+// is the second optional bundle file alongside rubric.md.
+func LoadBundleMemory(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, memoryFile))
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("agent bundle %q: read %s: %w", dir, memoryFile, err)
+	}
+	return strings.TrimSpace(string(raw)), nil
 }

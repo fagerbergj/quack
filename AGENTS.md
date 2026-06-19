@@ -7,7 +7,7 @@ This file provides guidance to AI coding agents working in this repository.
 Never:
 
 - Edit `internal/schema/quack.gen.go` or anything under `frontend/src/generated/` — these are generated; changes will be overwritten and CI will fail.
-- Add a third file to an `agents/<name>/` bundle. Each bundle contains exactly `agent-card.json` and `prompt.md` (plus optional `rubric.md`).
+- Add an unrecognised file to an `agents/<name>/` bundle. Each bundle contains exactly `agent-card.json` and `prompt.md`, plus the optional `rubric.md` (judge rubric) and `memory.md` ("what to remember" guidance, M6).
 - Edit `openapi.yaml` without running `make generate` and committing the regenerated files.
 
 Always:
@@ -100,13 +100,17 @@ Every node's output passes three cheapest-first stages before the DAG propagates
 
 ### Agent bundles (`internal/agent/`, `agents/`)
 
-An agent bundle is a directory with exactly two required files (plus optional `rubric.md`):
+An agent bundle is a directory with exactly two required files (plus two optional ones):
 
 ```
 agents/<name>/
   agent-card.json   # A2A AgentCard: identity + skills
   prompt.md         # system prompt
   rubric.md         # optional: per-agent judge rubric (falls back to config/rubric.md)
+  memory.md         # optional: "what to remember" guidance (M6); appended to the
+                    #   prompt only when the memory feature is on (agent.LoadBundleMemory).
+                    #   Assumes the agent's tool list includes the memory tools
+                    #   (load_memory / stage_memory) it refers to.
 ```
 
 `agent.LoadBundle` reads the bundle; `agent.Build` turns it into an LLM agent. The config (`config/quack.yaml`) binds a model and tool list to each bundle. No code changes are needed to add or modify an agent.

@@ -348,8 +348,16 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if err != nil {
 			return nil, servers, fmtErr(name, "bundle: %v", err)
 		}
+		// Memory guidance (M6): the bundle's optional memory.md, appended to the
+		// agent's behaviour only when memory is on — so it never dangles otherwise.
+		var memGuidance string
+		if taskStore != nil {
+			if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
+				return nil, servers, fmtErr(name, "memory.md: %v", err)
+			}
+		}
 		comp := compactionFor(ac)
-		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS}, comp)
+		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS}, comp, memGuidance)
 		if err != nil {
 			return nil, servers, fmtErr(name, "build: %v", err)
 		}
@@ -367,7 +375,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// finalize write-up: when the worker keeps researching instead of writing,
 			// a tool-having re-invoke ignores "stop and write" — a tool-less one can't,
 			// so it produces the answer from context in one pass.
-			writer, err := agent.Build(bundle, m, nil, nil, comp)
+			writer, err := agent.Build(bundle, m, nil, nil, comp, "")
 			if err != nil {
 				return nil, servers, fmtErr(name, "writer: %v", err)
 			}

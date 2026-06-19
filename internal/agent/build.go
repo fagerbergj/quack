@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"strings"
+
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
@@ -20,8 +22,14 @@ const MaxOutputTokens = 8192
 // optional context-compaction settings. When compaction is enabled and the
 // model's context window is known, a BeforeModelCallback prunes/summarises the
 // session before each model call so long runs can't overflow the window.
-func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction) (adkagent.Agent, error) {
+// memoryGuidance, when non-empty, is the bundle's memory.md appended to the
+// behaviour layer (M6) — passed only for memory-participating agents when the
+// feature is on, so it never dangles otherwise.
+func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string) (adkagent.Agent, error) {
 	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
+	if g := strings.TrimSpace(memoryGuidance); g != "" {
+		behaviour = behaviour + "\n\n" + g
+	}
 	cfg := llmagent.Config{
 		Name:        name,
 		Description: desc,
