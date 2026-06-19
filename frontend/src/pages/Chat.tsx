@@ -9,7 +9,7 @@ import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { activityFromTurn, type DagTurnState } from '../state/chatStore'
-import { pendingChoice, type AgentRun } from '../components/messageParts'
+import { pendingChoice, showLiveSpinner, type AgentRun } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -309,8 +309,16 @@ export default function Chat() {
             const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
             // A get_user_choice clarification awaiting an answer on the (paused) live turn.
             const choice = liveDone ? pendingChoice(liveTopRuns) : null
-            // Show spinner only when streaming and there's nothing to show yet.
-            const showSpinner = streaming && !liveDag && !liveTopText && liveTopRuns.length === 0
+            // Show spinner while streaming until something VISIBLE arrives (DAG,
+            // answer text, or visible activity). Keyed on orchActivity, not run
+            // count — the orchestrator's top-level run is created empty on the
+            // first event, so a run-count check blanks the dots before the plan.
+            const showSpinner = showLiveSpinner({
+              streaming,
+              hasDag: !!liveDag,
+              answerText: liveTopText,
+              visibleActivityCount: orchActivity.length,
+            })
             // Skip the bubble when there's nothing in it (e.g. a pending clarification
             // at rest) — the ChoicePrompt renders on its own below.
             const hasLiveBubbleContent = showSpinner || !!liveDag || !!liveText || orchActivity.length > 0

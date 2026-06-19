@@ -303,10 +303,13 @@ M10's GitHub writes); the `doc-ingest` / `code-review` skills; automatic confide
 ## M6 — Memory (explicit recall + gated, consolidating commit)
 
 <details>
-<summary><strong>🚧 Largely complete</strong> — embedder, Qdrant-backed recall, the gated/consolidating
+<summary><strong>✅ Complete.</strong> Embedder, Qdrant-backed recall, the gated/consolidating
 task-memory write path, the optional <code>memory.md</code> bundle guidance, and config-gated user
-memory are all merged; only <strong>UI surfacing</strong> of recall/commit activity remains.
-The design diverged from the original M6 sketch during planning — recorded as-built below.</summary>
+memory are merged. Model-driven memory ops (<code>stage_memory</code> / <code>commit_memory</code> /
+<code>load_memory</code>) already surface as tool activity in the UI; dedicated events for the two
+silent platform paths (ambient <code>preload_memory</code>, the gate's background commit) are deferred
+as future polish. The design diverged from the original M6 sketch during planning — recorded
+as-built below.</summary>
 
 **Goal.** Give agents **durable, semantic memory**: recall prior knowledge and commit new knowledge.
 Memory is **explicit** (deliberate writes, never background auto-capture) and **semantic only** —
@@ -349,8 +352,11 @@ Two kinds, by role:
   alongside `rubric.md`), appended to the agent's prompt **only when memory is on and the agent has its
   memory tools** — so it never dangles. web-researcher's is research tradecraft; the orchestrator's is
   the user profile.
-- **Remaining:** recall/commit **surfacing** to the UI + APIs (the backend stream event + frontend
-  rendering) — deferred to a dedicated frontend PR alongside the rendering.
+- **Surfacing.** Model-driven memory ops (`stage_memory`, `commit_memory`, `load_memory`) stream as
+  ordinary `agent_tool_call` / `agent_tool_result` activity, so they already render in the chat. The
+  two **silent platform paths** — ambient `preload_memory` (a request processor, not a tool call) and
+  the gate's **background** task-commit — emit no dedicated event; surfacing those would need custom
+  events plumbed through the A2A → Translator boundary, deferred as **future polish**.
 - No auth, no deploy.
 
 **Done when.** A request recalls prior tradecraft (ambient via `preload_memory`) and it shapes the
@@ -594,6 +600,7 @@ Everything below is intentionally outside the M0–M11 plan, captured so it is n
 | Memory | **Store-wide consolidation** | M6 consolidates **per-commit** against nearest neighbours (mem0-style ADD/UPDATE/DELETE/NOOP); later, RecMem-style recurrence-triggered consolidation + dedup / merge **across the whole store**. |
 | Memory | **Reflexion-style memory** | Store language reflections on failures, not just vetted findings. |
 | Memory | **Metadata-filtered recall** | ADK's `SearchRequest` is query-only; later, filter recall by source / date / score (needs a custom search path beyond the ADK interface). |
+| Memory | **Dedicated surfacing** | Model-driven memory tools render as tool activity, but ambient `preload_memory` recall + the gate's background commit are invisible (platform paths, not tool calls). Add `memory_recall` / `memory_commit` events through the A2A → Translator boundary + chat rendering if the silent paths need showing. |
 | Research | **Researcher build-out** | `rag-researcher` + RAG, more agents/tools, and the second example use case ("latest local LLM models for my hardware"). |
 | Documents | **Semantic RAG over docs** | doc-ingest ships FTS-only (M8); revisit Qdrant embeddings + an ask-and-cite chat over the corpus if keyword / FTS proves insufficient. |
 | Documents | **Contextual chunking** | The small-LLM per-chunk context blurb from doc-pipeline — only relevant if semantic RAG returns. |
