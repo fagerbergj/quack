@@ -31,6 +31,7 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -45,6 +46,10 @@ type Config struct {
 	JudgeMaxIterations  int     // cap on the agentic judge's model turns per round (0 ⇒ default)
 	Constitution        string  // global principles; used for self-critique + prefixed in judge prompt
 	Rubric              string  // scoring guide; global default or per-agent override
+
+	// Memory, when set, receives the agent's staged tradecraft on a judge pass
+	// (M6). nil disables the gated commit path.
+	Memory *memory.Store
 }
 
 // judgeAuthor is the ADK author the gate stamps on the judge's streamed display
@@ -338,6 +343,10 @@ func (g *gate) run(ctx adkagent.InvocationContext) iter.Seq2[*session.Event, err
 					return
 				}
 				if passed {
+					// Commit the agent's staged tradecraft (vetted + consolidated) now
+					// that its answer cleared the judge. Fire-and-forget so the user's
+					// answer never waits on the memory write.
+					g.commitMemory(ctx, act.staged, answer)
 					break
 				}
 				// Revise stage (runs on every failed round, including the last — so one
@@ -711,6 +720,32 @@ func verdictScores(v verdict) string {
 	return fmt.Sprintf("%s | lowest=%s(%.2f) mean=%.2f", strings.Join(parts, " "), lowestName, lowest, sum/float64(len(names)))
 }
 
+// commitMemory writes the agent's staged tradecraft to memory in the background
+// (the user's answer must not wait on it). userID is read synchronously from the
+// session before the goroutine, since the invocation context may be torn down
+// once the answer is emitted; the commit then runs on its own bounded context.
+func (g *gate) commitMemory(ctx adkagent.InvocationContext, staged []memory.Candidate, answer string) {
+	if g.cfg.Memory == nil || len(staged) == 0 {
+		return
+	}
+	userID := ""
+	if s := ctx.Session(); s != nil {
+		userID = s.UserID()
+	}
+	go func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		n, err := g.cfg.Memory.Commit(cctx, userID, g.name, staged, answer)
+		if err != nil {
+			g.log.Warn("memory commit failed", "err", err, "staged", len(staged))
+			return
+		}
+		if n > 0 {
+			g.log.Info("memory committed", "count", n, "user", userID)
+		}
+	}()
+}
+
 // mergeActivity unions two workerActivity records. Entries in b (the
 // self-refine pass) override same-URL entries in a so fresh content wins.
 func mergeActivity(a, b workerActivity) workerActivity {
@@ -718,6 +753,7 @@ func mergeActivity(a, b workerActivity) workerActivity {
 		searches: append(append([]string(nil), a.searches...), b.searches...),
 		fetched:  make(map[string]fetchRecord, len(a.fetched)+len(b.fetched)),
 		seen:     make(map[string]string, len(a.seen)+len(b.seen)),
+		staged:   append(append([]memory.Candidate(nil), a.staged...), b.staged...),
 	}
 	for u, r := range a.fetched {
 		merged.fetched[u] = r
@@ -764,6 +800,9 @@ type workerActivity struct {
 	// fabrication — so the source check treats it as a weaker-but-valid source
 	// rather than lumping it in with hallucinated/guessed URLs.
 	seen map[string]string
+	// staged holds memory candidates the worker proposed via stage_memory (M6),
+	// committed only if the answer passes the judge.
+	staged []memory.Candidate
 }
 
 // Returns the buffered answer, retrieval activity, and false on early stop.
@@ -840,6 +879,16 @@ func (g *gate) runWorker(ctx adkagent.InvocationContext, yield func(*session.Eve
 						// the response arrives (different event, matched by call ID).
 						if u, ok := p.FunctionCall.Args["url"].(string); ok && u != "" {
 							pendingCalls[p.FunctionCall.ID] = strings.TrimSpace(u)
+						}
+					case "stage_memory":
+						// Collect the proposed memory; the gate commits it (vetted) only
+						// if the judge passes.
+						if c, ok := p.FunctionCall.Args["content"].(string); ok && strings.TrimSpace(c) != "" {
+							cand := memory.Candidate{Content: strings.TrimSpace(c)}
+							if k, ok := p.FunctionCall.Args["kind"].(string); ok && k != "" {
+								cand.Metadata = map[string]string{"kind": k}
+							}
+							act.staged = append(act.staged, cand)
 						}
 					}
 				}
