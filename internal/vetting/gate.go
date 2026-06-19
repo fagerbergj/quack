@@ -50,6 +50,12 @@ type Config struct {
 	// Memory, when set, receives the agent's staged tradecraft on a judge pass
 	// (M6). nil disables the gated commit path.
 	Memory *memory.Store
+	// CommitMemory marks this agent as a task-memory participant (it has a
+	// memory.md / the memory tools). When true, a judge pass commits even if the
+	// agent staged nothing — so the judge-extraction path (Commit pulls tradecraft
+	// from the accepted answer) still runs. False for agents that don't author
+	// task memory (synthesizer, media), so they don't burn a consolidation call.
+	CommitMemory bool
 }
 
 // judgeAuthor is the ADK author the gate stamps on the judge's streamed display
@@ -725,7 +731,10 @@ func verdictScores(v verdict) string {
 // session before the goroutine, since the invocation context may be torn down
 // once the answer is emitted; the commit then runs on its own bounded context.
 func (g *gate) commitMemory(ctx adkagent.InvocationContext, staged []memory.Candidate, answer string) {
-	if g.cfg.Memory == nil || len(staged) == 0 {
+	// Commit on a pass for memory-participating agents even with nothing staged —
+	// Commit's consolidation step also extracts tradecraft from the accepted
+	// answer, so requiring staged candidates here would silently disable that.
+	if g.cfg.Memory == nil || !g.cfg.CommitMemory || strings.TrimSpace(answer) == "" {
 		return
 	}
 	userID := ""

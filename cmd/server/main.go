@@ -386,6 +386,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		served := ag
 		if cfg.Gates.Enabled() {
 			agentGateCfg := gateCfg
+			// An agent participates in task memory iff it has a memory.md (loaded as
+			// memGuidance above). Such agents commit on a judge pass even when they
+			// staged nothing, so Commit's answer-extraction still runs.
+			agentGateCfg.CommitMemory = taskStore != nil && memGuidance != ""
 			if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
 				return nil, servers, fmtErr(name, "rubric: %v", err)
 			} else if override != "" {
