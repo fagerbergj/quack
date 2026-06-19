@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"os"
+	"strings"
 	"testing"
 
 	adkmemory "google.golang.org/adk/memory"
@@ -86,5 +87,27 @@ func TestCommit_NoConsolidator(t *testing.T) {
 	s := &Store{} // no consolidator
 	if _, err := s.Commit(context.Background(), "u1", "a", []Candidate{{Content: "x"}}, ""); err == nil {
 		t.Fatal("Commit with nil consolidator should error")
+	}
+}
+
+func TestNeighbourProbe(t *testing.T) {
+	// Short input passes through untouched.
+	if got := neighbourProbe("hello", nil); got != "hello" {
+		t.Fatalf("short probe = %q, want hello", got)
+	}
+
+	// A long source answer is capped to maxProbeRunes.
+	long := strings.Repeat("x", maxProbeRunes*3)
+	if got := neighbourProbe(long, nil); len([]rune(got)) != maxProbeRunes {
+		t.Fatalf("probe len = %d, want %d", len([]rune(got)), maxProbeRunes)
+	}
+
+	// Staged content leads, so it survives truncation even with a huge answer.
+	got := neighbourProbe(strings.Repeat("y", maxProbeRunes*3), []Candidate{{Content: "STAGED-FACT"}})
+	if !strings.HasPrefix(got, "STAGED-FACT") {
+		t.Fatalf("probe must lead with staged content, got %q...", got[:20])
+	}
+	if len([]rune(got)) != maxProbeRunes {
+		t.Fatalf("capped probe len = %d, want %d", len([]rune(got)), maxProbeRunes)
 	}
 }

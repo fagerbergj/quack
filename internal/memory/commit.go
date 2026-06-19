@@ -99,12 +99,33 @@ type op struct {
 	Kind    string `json:"kind"`    // free-form tag stored in metadata
 }
 
-func (s *Store) neighbours(ctx context.Context, userID, sourceText string, staged []Candidate) ([]neighbour, error) {
-	probe := sourceText
+// maxProbeRunes caps the text embedded to find dedup neighbours. The probe only
+// needs to be representative of the work, not complete — a research answer can be
+// 10k+ chars, and embedding all of it on a CPU model costs seconds for no extra
+// dedup value. The memories actually written are short atomic facts embedded in
+// full.
+const maxProbeRunes = 2000
+
+// neighbourProbe builds the (capped) text whose nearest existing memories we
+// reconcile against. Staged candidates go first (they're closest to what we'll
+// write, so they survive truncation), followed by a prefix of the source answer.
+func neighbourProbe(sourceText string, staged []Candidate) string {
+	var b strings.Builder
 	for _, c := range staged {
-		probe += "\n" + c.Content
+		b.WriteString(strings.TrimSpace(c.Content))
+		b.WriteByte('\n')
 	}
-	if strings.TrimSpace(probe) == "" {
+	b.WriteString(sourceText)
+	probe := strings.TrimSpace(b.String())
+	if r := []rune(probe); len(r) > maxProbeRunes {
+		probe = string(r[:maxProbeRunes])
+	}
+	return probe
+}
+
+func (s *Store) neighbours(ctx context.Context, userID, sourceText string, staged []Candidate) ([]neighbour, error) {
+	probe := neighbourProbe(sourceText, staged)
+	if probe == "" {
 		return nil, nil
 	}
 	vecs, err := s.embedder.Embed(ctx, []string{probe})
