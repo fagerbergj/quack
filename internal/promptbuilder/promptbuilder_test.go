@@ -5,9 +5,13 @@ import (
 	"testing"
 
 	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/loadmemorytool"
+	"google.golang.org/adk/tool/preloadmemorytool"
 	"google.golang.org/adk/tool/skilltoolset/skill"
 
+	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
+	"github.com/fagerbergj/quack/internal/tools"
 )
 
 // fakeTool satisfies tool.Tool for testing.
@@ -61,6 +65,74 @@ func TestAgentNoBehaviour(t *testing.T) {
 	out := promptbuilder.Agent("helper", "helps", nil, "")
 	if !strings.Contains(out, "## Environment") {
 		t.Error("Agent() must include ## Environment even with empty behaviour")
+	}
+}
+
+// toolLine is how promptbuilder renders a tool in the ## Tools section
+// ("- `name` — desc"). Asserting this exact prefix proves the tool is in the
+// Tools list, distinct from a tool name merely mentioned in the behaviour/guidance.
+func toolLine(name string) string { return "- `" + name + "` —" }
+
+// TestAgentMemoryToolsAndGuidance verifies the M6 memory tools AND the memory.md
+// guidance both reach the assembled prompt — the way agent.Build wires them
+// (memory tools in the tool list; memory.md appended to the behaviour).
+func TestAgentMemoryToolsAndGuidance(t *testing.T) {
+	memTools := []tool.Tool{
+		fakeTool{"web_search", "searches the web"},
+		fakeTool{"stage_memory", "stage tradecraft"},
+		fakeTool{"load_memory", "deliberate recall"},
+		fakeTool{"preload_memory", "ambient recall"},
+	}
+	// Build sets behaviour = prompt.md + "\n\n" + memory.md; mirror that here.
+	behaviour := "## Steps\n1. Plan." + "\n\n" + "## What to remember\n\nStage durable tradecraft."
+	out := promptbuilder.Agent("web-researcher", "researches the web", memTools, behaviour)
+
+	for _, name := range []string{"stage_memory", "load_memory", "preload_memory"} {
+		if !strings.Contains(out, toolLine(name)) {
+			t.Errorf("Agent() Tools section missing memory tool %q", name)
+		}
+	}
+	if !strings.Contains(out, "## What to remember") {
+		t.Error("Agent() missing memory.md guidance (## What to remember)")
+	}
+}
+
+// TestAgentMemoryRealBundle is an end-to-end check that the REAL web-researcher
+// memory.md and the REAL memory tools both render in its prompt — using the same
+// loader (agent.LoadBundleMemory) and tools (stage_memory builtin + ADK
+// load/preload) that buildAgents wires when memory is enabled.
+func TestAgentMemoryRealBundle(t *testing.T) {
+	const dir = "../../agents/web-researcher"
+	bundle, err := agent.LoadBundle(dir)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	mem, err := agent.LoadBundleMemory(dir)
+	if err != nil {
+		t.Fatalf("LoadBundleMemory: %v", err)
+	}
+	if strings.TrimSpace(mem) == "" {
+		t.Fatal("web-researcher has no memory.md — memory guidance would never load")
+	}
+
+	builtins, err := tools.Build([]string{"stage_memory"}, tools.Deps{})
+	if err != nil {
+		t.Fatalf("tools.Build(stage_memory): %v", err)
+	}
+	memTools := append(builtins, loadmemorytool.New(), preloadmemorytool.New())
+
+	behaviour := bundle.Prompt + "\n\n" + mem // exactly what agent.Build assembles
+	out := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, memTools, behaviour)
+
+	// Both deliberate memory tools must appear in the Tools section.
+	for _, name := range []string{"stage_memory", "load_memory", "preload_memory"} {
+		if !strings.Contains(out, toolLine(name)) {
+			t.Errorf("web-researcher prompt missing memory tool %q in the Tools section", name)
+		}
+	}
+	// The memory.md guidance must be present (heading is unique to the file).
+	if !strings.Contains(out, "## What to remember") {
+		t.Error("web-researcher prompt missing memory.md guidance")
 	}
 }
 
