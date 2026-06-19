@@ -19,24 +19,22 @@ import (
 // each received, so a test can assert dependency ordering and downstream
 // rehydration (an upstream node's output reaching a dependent's task).
 type recorder struct {
-	mu       sync.Mutex
-	seq      int
-	order    map[string]int    // node agent name → run sequence number (1-based)
-	tasks    map[string]string // node agent name → task text it received
-	funcResp map[string]bool   // node agent name → received a FunctionResponse (resume)
+	mu    sync.Mutex
+	seq   int
+	order map[string]int    // node agent name → run sequence number (1-based)
+	tasks map[string]string // node agent name → task text it received
 }
 
 func newRecorder() *recorder {
-	return &recorder{order: map[string]int{}, tasks: map[string]string{}, funcResp: map[string]bool{}}
+	return &recorder{order: map[string]int{}, tasks: map[string]string{}}
 }
 
-func (r *recorder) record(name, task string, funcResp bool) {
+func (r *recorder) record(name, task string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.seq++
 	r.order[name] = r.seq
 	r.tasks[name] = task
-	r.funcResp[name] = funcResp
 }
 
 // fakeAgent builds a custom ADK agent that records its run and yields `output`
@@ -49,12 +47,11 @@ func fakeAgent(t *testing.T, name, output string, rec *recorder, fail bool) adka
 		Description: "fake test agent",
 		Run: func(ic adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
 			return func(yield func(*session.Event, error) bool) {
-				task, funcResp := "", false
+				task := ""
 				if uc := ic.UserContent(); uc != nil && len(uc.Parts) > 0 {
 					task = uc.Parts[0].Text
-					funcResp = uc.Parts[0].FunctionResponse != nil
 				}
-				rec.record(name, task, funcResp)
+				rec.record(name, task)
 				if fail {
 					yield(nil, fmt.Errorf("node agent %q boom", name))
 					return
@@ -73,55 +70,19 @@ func fakeAgent(t *testing.T, name, output string, rec *recorder, fail bool) adka
 	return ag
 }
 
-// waitingAgent builds a custom ADK agent that pauses: it yields a request_input
-// FunctionCall with its ID listed in LongRunningToolIDs (what ADK + the A2A v2
-// bridge produce for a long-running call), so the executor detects it as waiting.
-func waitingAgent(t *testing.T, name string, questions []string, rec *recorder) adkagent.Agent {
-	t.Helper()
-	ag, err := adkagent.New(adkagent.Config{
-		Name:        name,
-		Description: "fake waiting agent",
-		Run: func(ic adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
-			return func(yield func(*session.Event, error) bool) {
-				rec.record(name, "", false)
-				ev := session.NewEvent(ic.InvocationID())
-				ev.Author = name
-				qs := make([]any, len(questions))
-				for i, q := range questions {
-					qs[i] = q
-				}
-				ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{
-					FunctionCall: &genai.FunctionCall{ID: name + "-call", Name: "request_input", Args: map[string]any{"questions": qs}},
-				}}}
-				ev.LongRunningToolIDs = []string{name + "-call"}
-				ev.TurnComplete = true
-				yield(ev, nil)
-			}
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ag
-}
-
-// collectExec drains an Execute stream into event-name counts, per-node failure
-// messages, and per-node waiting payloads, failing on an unexpected stream error.
-func collectExec(t *testing.T, seq iter.Seq2[stream.SSEEvent, error]) (counts map[string]int, failed map[string]string, waiting map[string]stream.NodeWaitingData) {
+// collectExec drains an Execute stream into event-name counts and per-node
+// failure messages, failing on an unexpected stream error.
+func collectExec(t *testing.T, seq iter.Seq2[stream.SSEEvent, error]) (counts map[string]int, failed map[string]string) {
 	t.Helper()
 	counts = map[string]int{}
 	failed = map[string]string{}
-	waiting = map[string]stream.NodeWaitingData{}
 	for ev, err := range seq {
 		if err != nil {
 			t.Fatalf("stream error: %v", err)
 		}
 		counts[ev.Name]++
-		switch d := ev.Data.(type) {
-		case stream.NodeFailedData:
+		if d, ok := ev.Data.(stream.NodeFailedData); ok {
 			failed[d.NodeID] = d.Error
-		case stream.NodeWaitingData:
-			waiting[d.NodeID] = d
 		}
 	}
 	return
@@ -151,7 +112,7 @@ func TestExecuteReadinessDiamond(t *testing.T) {
 	}
 
 	nodeOutputs := map[string]string{}
-	counts, failed, _ := collectExec(t, exec.Execute(context.Background(), plan, "user", nodeOutputs))
+	counts, failed := collectExec(t, exec.Execute(context.Background(), plan, "user", nodeOutputs))
 
 	if len(failed) != 0 {
 		t.Fatalf("unexpected node failures: %v", failed)
@@ -200,7 +161,7 @@ func TestExecuteFailureStopsDownstream(t *testing.T) {
 	}
 
 	nodeOutputs := map[string]string{}
-	_, failed, _ := collectExec(t, exec.Execute(context.Background(), plan, "user", nodeOutputs))
+	_, failed := collectExec(t, exec.Execute(context.Background(), plan, "user", nodeOutputs))
 
 	if _, ok := failed["B"]; !ok {
 		t.Errorf("expected node_failed for B, got failures=%v", failed)
@@ -210,105 +171,5 @@ func TestExecuteFailureStopsDownstream(t *testing.T) {
 	}
 	if rec.order["agA"] == 0 {
 		t.Errorf("A should have run before B failed: order=%v", rec.order)
-	}
-}
-
-// TestExecuteSuspendOnWaiting asserts a node that pauses on request_input emits
-// node_waiting, an independent branch still completes, the blocked dependent
-// never runs, and Execute returns (the DAG suspends without hanging).
-func TestExecuteSuspendOnWaiting(t *testing.T) {
-	rec := newRecorder()
-	clients := map[string]adkagent.Agent{
-		"agA": fakeAgent(t, "agA", "out-A", rec, false),
-		"agB": waitingAgent(t, "agB", []string{"Which region?", "What budget?"}, rec), // pauses with two questions
-		"agC": fakeAgent(t, "agC", "out-C", rec, false),                               // independent branch
-		"agD": fakeAgent(t, "agD", "out-D", rec, false),                               // depends on the paused B
-	}
-	exec := NewExecutor(session.InMemoryService(), clients, nil, 4)
-	plan := Plan{
-		ID:          "p3",
-		UserMessage: "hi",
-		Nodes: []Node{
-			{ID: "A", AgentName: "agA", Task: "do A"},
-			{ID: "B", AgentName: "agB", Task: "do B", DependsOn: []string{"A"}},
-			{ID: "C", AgentName: "agC", Task: "do C"}, // independent of B
-			{ID: "D", AgentName: "agD", Task: "do D", DependsOn: []string{"B"}},
-		},
-	}
-
-	nodeOutputs := map[string]string{}
-	counts, failed, waiting := collectExec(t, exec.Execute(context.Background(), plan, "user", nodeOutputs))
-
-	if len(failed) != 0 {
-		t.Fatalf("unexpected node failures: %v", failed)
-	}
-	if counts[stream.EventNodeWaiting] != 1 {
-		t.Errorf("node_waiting count = %d, want 1", counts[stream.EventNodeWaiting])
-	}
-	w, ok := waiting["B"]
-	if !ok {
-		t.Fatalf("expected node_waiting for B, got %v", waiting)
-	}
-	if len(w.Questions) != 2 || w.Questions[0] != "Which region?" || w.Questions[1] != "What budget?" || w.CallID == "" {
-		t.Errorf("waiting payload = %+v, want two questions + call id", w)
-	}
-	if rec.order["agC"] == 0 {
-		t.Errorf("independent node C should have run while B waited: order=%v", rec.order)
-	}
-	if rec.order["agD"] != 0 {
-		t.Errorf("D must not run while its dependency B is waiting: order=%v", rec.order)
-	}
-}
-
-// TestExecuteResume asserts a resumed DAG: the already-done upstream is NOT
-// re-run (its output is rehydrated), the resumed node receives the answer
-// FunctionResponse on its session, and downstream runs with the resumed output.
-func TestExecuteResume(t *testing.T) {
-	rec := newRecorder()
-	clients := map[string]adkagent.Agent{
-		"agA": fakeAgent(t, "agA", "out-A", rec, false), // already done — must NOT re-run
-		"agB": fakeAgent(t, "agB", "out-B", rec, false), // the resumed node
-		"agC": fakeAgent(t, "agC", "out-C", rec, false), // downstream of B
-	}
-	exec := NewExecutor(session.InMemoryService(), clients, nil, 4)
-	plan := Plan{
-		ID:          "p4",
-		UserMessage: "hi",
-		Nodes: []Node{
-			{ID: "A", AgentName: "agA", Task: "do A"},
-			{ID: "B", AgentName: "agB", Task: "do B", DependsOn: []string{"A"}},
-			{ID: "C", AgentName: "agC", Task: "do C", DependsOn: []string{"B"}},
-		},
-	}
-
-	// A is already done; B is being resumed with the user's answer.
-	answer := &genai.Content{Role: "user", Parts: []*genai.Part{{
-		FunctionResponse: &genai.FunctionResponse{ID: "b-call", Name: "request_input", Response: map[string]any{"answers": []any{"north", "$2k"}}},
-	}}}
-	nodeOutputs := map[string]string{}
-	counts, failed, _ := collectExec(t, exec.Resume(context.Background(), plan, "user", nodeOutputs,
-		map[string]string{"A": "out-A"}, nil, "B", answer))
-
-	if len(failed) != 0 {
-		t.Fatalf("unexpected node failures: %v", failed)
-	}
-	if rec.order["agA"] != 0 {
-		t.Errorf("A is already done; it must NOT be re-run on resume: order=%v", rec.order)
-	}
-	if !rec.funcResp["agB"] {
-		t.Errorf("resumed node B must receive the answer FunctionResponse, not a fresh task")
-	}
-	if rec.order["agB"] == 0 || rec.order["agC"] == 0 || rec.order["agB"] >= rec.order["agC"] {
-		t.Errorf("B should resume then C run after it: order=%v", rec.order)
-	}
-	// C is rehydrated with B's resumed output; A's output came from the preset.
-	if td := rec.tasks["agC"]; !strings.Contains(td, "out-B") {
-		t.Errorf("C task missing resumed upstream B output: %q", td)
-	}
-	if counts[stream.EventNodeDone] != 2 { // B and C only — A is not re-emitted
-		t.Errorf("node_done count = %d, want 2 (B, C; A pre-done)", counts[stream.EventNodeDone])
-	}
-	if nodeOutputs["A"] != "out-A" || nodeOutputs["B"] != "out-B" || nodeOutputs["C"] != "out-C" {
-		t.Errorf("nodeOutputs = %v, want A/B/C rehydrated+run", nodeOutputs)
 	}
 }

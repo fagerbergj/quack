@@ -5,7 +5,6 @@ package rest
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,7 +16,6 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 
-	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -342,8 +340,6 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 					Model:            strPtr(n.Model),
 					FinishReason:     strPtr(n.FinishReason),
 					OutputPreview:    strPtr(n.OutputPreview),
-					Questions:        slicePtr(n.Questions),
-					WaitingCallId:    strPtr(n.WaitingCallID),
 					Error:            strPtr(n.Error),
 					PromptTokens:     intPtr(int(n.PromptTokens)),
 					CompletionTokens: intPtr(int(n.CompletionTokens)),
@@ -365,11 +361,10 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 				}
 				nodeStates[n.NodeID] = ns
 			}
-			// DAG is completed if all nodes are done/failed, in_progress otherwise
-			// (a "waiting" node means the run is paused awaiting input — not done).
+			// DAG is completed if all nodes are done/failed, in_progress otherwise.
 			dagStatus := schema.Completed
 			for _, ns := range nodeStates {
-				if ns.Status == "running" || ns.Status == "queued" || ns.Status == "waiting" {
+				if ns.Status == "running" || ns.Status == "queued" {
 					dagStatus = schema.InProgress
 					break
 				}
@@ -438,13 +433,6 @@ func strPtr(s string) *string {
 	return &s
 }
 
-func slicePtr(s []string) *[]string {
-	if len(s) == 0 {
-		return nil
-	}
-	return &s
-}
-
 func intPtr(n int) *int {
 	if n == 0 {
 		return nil
@@ -494,8 +482,7 @@ func httpError(w http.ResponseWriter, status int, err error) {
 }
 
 // persistNodeEvent upserts the persisted DagNode state for a node-lifecycle event
-// (running / done / waiting / failed). Shared by the live run and resume; ignores
-// non-node events.
+// (running / done / failed). Ignores non-node events.
 func (h *Handler) persistNodeEvent(planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
 	up := func(n store.DagNode) { go func() { _ = h.store.UpsertDagNode(context.Background(), n) }() }
@@ -511,132 +498,7 @@ func (h *Handler) persistNodeEvent(planID string, ev stream.SSEEvent) {
 			FinishReason: d.FinishReason, DurationMs: d.DurationMs, SelfRefined: d.SelfRefined,
 			JudgeRounds: d.JudgeRounds, JudgeFinalScore: d.JudgeFinalScore, JudgePassed: d.JudgePassed,
 		})
-	case stream.NodeWaitingData:
-		up(store.DagNode{
-			NodeID: d.NodeID, PlanID: planID, Status: "waiting", Output: d.Output,
-			WaitingCallID: d.CallID, Questions: d.Questions, FinishedAt: &t,
-		})
 	case stream.NodeFailedData:
 		up(store.DagNode{NodeID: d.NodeID, PlanID: planID, Status: "failed", Error: d.Error, FinishedAt: &t})
 	}
-}
-
-// ResumeDagNode answers a node that paused on a request_input call and resumes the
-// DAG, streaming the same SSE vocabulary as SendChatMessage. The plan is
-// reconstructed from storage (the in-memory plan cache is gone by now); the
-// resumed node and everything downstream run, other paused nodes stay waiting.
-func (h *Handler) ResumeDagNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, planID string, nodeID string) {
-	var body schema.ResumeNodeBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Find the turn that owns this plan, with its persisted nodes + user text.
-	turns, err := h.store.GetTurnsWithContent(r.Context(), orchestrator.AppName, userID, chatID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	var tc *store.TurnContent
-	for i := range turns {
-		if turns[i].Plan != nil && turns[i].Plan.ID == planID {
-			tc = &turns[i]
-			break
-		}
-	}
-	if tc == nil {
-		http.Error(w, "plan not found", http.StatusNotFound)
-		return
-	}
-
-	// Validate the target node is waiting, and split the nodes into done outputs
-	// (rehydrated downstream) and OTHER still-waiting nodes (kept blocked).
-	var target *store.DagNode
-	done := map[string]string{}
-	waiting := map[string]bool{}
-	for i := range tc.Nodes {
-		n := &tc.Nodes[i]
-		switch {
-		case n.NodeID == nodeID:
-			target = n
-		case n.Status == "done":
-			done[n.NodeID] = n.Output
-		case n.Status == "waiting":
-			waiting[n.NodeID] = true
-		}
-	}
-	if target == nil {
-		http.Error(w, "node not found", http.StatusNotFound)
-		return
-	}
-	if target.Status != "waiting" {
-		http.Error(w, "node is not waiting for input", http.StatusConflict)
-		return
-	}
-
-	plan, err := reconstructPlan(planID, nodeID, tc)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	sse, ok := newSSEWriter(w)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
-	h.activeCancels.Store(chatID, cancelRun)
-	defer func() {
-		cancelRun()
-		h.activeCancels.Delete(chatID)
-	}()
-
-	clientGone := false
-	for ev, err := range h.orch.ResumeDag(runCtx, userID, chatID, plan, done, waiting, nodeID, target.WaitingCallID, body.Answers) {
-		if err != nil {
-			if !clientGone {
-				_ = sse.send(stream.Errorf(err.Error()))
-				_ = sse.send(stream.Done())
-			}
-			return
-		}
-		h.persistNodeEvent(planID, ev)
-		if clientGone {
-			continue
-		}
-		if sendErr := sse.send(ev); sendErr != nil {
-			clientGone = true
-		}
-	}
-	if !clientGone {
-		_ = sse.send(stream.Done())
-	}
-	_ = h.store.Touch(runCtx, chatID)
-}
-
-// reconstructPlan rebuilds an executable dag.Plan from persisted state: the wire
-// DagPlanData (node id/agent/task/deps) plus the turn's user text. Rubric and
-// History are unused at execution; attachments are not re-threaded (resuming a
-// media node downstream of a pause is out of scope). Errors if the stored plan
-// JSON can't be parsed or doesn't contain the node being resumed — otherwise a
-// bad plan would silently resume nothing.
-func reconstructPlan(planID, nodeID string, tc *store.TurnContent) (dag.Plan, error) {
-	var wire stream.DagPlanData
-	if err := json.Unmarshal([]byte(tc.Plan.PlanJSON), &wire); err != nil {
-		return dag.Plan{}, fmt.Errorf("reconstruct plan %s: %w", planID, err)
-	}
-	nodes := make([]dag.Node, len(wire.Nodes))
-	found := false
-	for i, n := range wire.Nodes {
-		nodes[i] = dag.Node{ID: n.ID, AgentName: n.Agent, Task: n.Task, DependsOn: n.DependsOn}
-		if n.ID == nodeID {
-			found = true
-		}
-	}
-	if !found {
-		return dag.Plan{}, fmt.Errorf("reconstruct plan %s: node %q not in stored plan", planID, nodeID)
-	}
-	return dag.Plan{ID: planID, UserMessage: tc.UserText, Nodes: nodes}, nil
 }

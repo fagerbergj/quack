@@ -196,20 +196,14 @@ type DagNodeState struct {
 	Model            *string  `json:"model,omitempty"`
 	OutputPreview    *string  `json:"output_preview,omitempty"`
 	PromptTokens     *int     `json:"prompt_tokens,omitempty"`
+	ReasoningTokens  *int     `json:"reasoning_tokens,omitempty"`
+	SelfRefined      *bool    `json:"self_refined,omitempty"`
+	ServerDurationMs *int     `json:"server_duration_ms,omitempty"`
+	StartedAtMs      *int     `json:"started_at_ms,omitempty"`
 
-	// Questions When status is "waiting", the open questions the node is paused on.
-	Questions        *[]string `json:"questions,omitempty"`
-	ReasoningTokens  *int      `json:"reasoning_tokens,omitempty"`
-	SelfRefined      *bool     `json:"self_refined,omitempty"`
-	ServerDurationMs *int      `json:"server_duration_ms,omitempty"`
-	StartedAtMs      *int      `json:"started_at_ms,omitempty"`
-
-	// Status queued | running | done | failed | waiting
+	// Status queued | running | done | failed
 	Status      string `json:"status"`
 	TotalTokens *int   `json:"total_tokens,omitempty"`
-
-	// WaitingCallId When status is "waiting", the request_input call ID to answer on resume.
-	WaitingCallId *string `json:"waiting_call_id,omitempty"`
 }
 
 // DagOutputItem defines model for DagOutputItem.
@@ -263,12 +257,6 @@ type ReasoningPart struct {
 // ReasoningPartType defines model for ReasoningPart.Type.
 type ReasoningPartType string
 
-// ResumeNodeBody defines model for ResumeNodeBody.
-type ResumeNodeBody struct {
-	// Answers One answer per question the node asked, in order.
-	Answers []string `json:"answers"`
-}
-
 // SendMessageBody defines model for SendMessageBody.
 type SendMessageBody struct {
 	Content string `json:"content"`
@@ -314,9 +302,6 @@ type ResponseID = string
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
-
-// ResumeDagNodeJSONRequestBody defines body for ResumeDagNode for application/json ContentType.
-type ResumeDagNodeJSONRequestBody = ResumeNodeBody
 
 // SendChatMessageJSONRequestBody defines body for SendChatMessage for application/json ContentType.
 type SendChatMessageJSONRequestBody = SendMessageBody
@@ -543,9 +528,6 @@ type ServerInterface interface {
 	// Get a chat with its turns
 	// (GET /api/v1/chats/{chat_id})
 	GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
-	// Answer a paused DAG node and resume the run
-	// (POST /api/v1/chats/{chat_id}/dag/{plan_id}/nodes/{node_id}/answer)
-	ResumeDagNode(w http.ResponseWriter, r *http.Request, chatId ChatID, planId string, nodeId string)
 	// Send a message and stream the response
 	// (POST /api/v1/chats/{chat_id}/responses)
 	SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID)
@@ -585,12 +567,6 @@ func (_ Unimplemented) DeleteChat(w http.ResponseWriter, r *http.Request, chatId
 // Get a chat with its turns
 // (GET /api/v1/chats/{chat_id})
 func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Answer a paused DAG node and resume the run
-// (POST /api/v1/chats/{chat_id}/dag/{plan_id}/nodes/{node_id}/answer)
-func (_ Unimplemented) ResumeDagNode(w http.ResponseWriter, r *http.Request, chatId ChatID, planId string, nodeId string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -698,50 +674,6 @@ func (siw *ServerInterfaceWrapper) GetChat(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChat(w, r, chatId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ResumeDagNode operation middleware
-func (siw *ServerInterfaceWrapper) ResumeDagNode(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "chat_id" -------------
-	var chatId ChatID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "plan_id" -------------
-	var planId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "plan_id", chi.URLParam(r, "plan_id"), &planId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "plan_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "node_id" -------------
-	var nodeId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ResumeDagNode(w, r, chatId, planId, nodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -976,9 +908,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.GetChat)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/dag/{plan_id}/nodes/{node_id}/answer", wrapper.ResumeDagNode)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/responses", wrapper.SendChatMessage)

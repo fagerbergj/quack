@@ -245,8 +245,8 @@ follow-up turn acts on it); a content-dependent DAG is **M11**.
   fidelity, so it scores **plausibility + coherence** ("is this reasonably something a person said /
   does it make sense?") plus instruction-following (cleaned per spec, right language, no boilerplate)
   and hallucination signatures. When the media-reader genuinely can't resolve the audio / image, it
-  **calls `request_input` (M5)** to ask the human — agent-driven, not an automatic confidence gate; a
-  consensus-ASR fidelity tool is optional future hardening.
+  **flags the uncertainty in its output** (mid-DAG node parking was removed from M5; reviving it would
+  let a node ask the human instead); a consensus-ASR fidelity tool is optional future hardening.
 - **Capability tags**: providers / agents gain **`text` / `vision` / `audio`** tags so the factory
   routes parts to a capable model and rejects a mismatch at dispatch.
 - **Surfacing**: attachments render in the chat UI; the agent's answer streams as usual.
@@ -265,69 +265,38 @@ later group + agent); the document-ingestion pipeline (**M8**); embedding / inde
 
 ---
 
-## M5 — Human-in-the-loop (clarify + suspend/resume)
+## M5 — Human-in-the-loop (clarify) ✅
 
-**Goal.** Two HITL capabilities: **(a)** the orchestrator **clarifies an ambiguous ask before
-launching a DAG**, and **(b)** a running node **pauses for human input and the DAG resumes** once
-answered — built on Go ADK's **native long-running-tool seam** surfacing as A2A's non-terminal
-**`input-required`** task state, so a paused run **survives restarts**. The pause is always
-**agent-driven** (an agent decides it needs a human); there is **no automatic confidence gate** — the
-M2 judge keeps its continue-but-warn behavior.
+**Goal.** The orchestrator **clarifies an ambiguous ask before launching a DAG** — agent-driven, not an
+automatic confidence gate (the M2 judge keeps its continue-but-warn behavior).
 
 **Scope.**
 
-- **Upfront clarification — no suspend machinery.** Before planning, the orchestrator may return a
-  **clarifying question instead of a DAG** — an ordinary conversational turn. The user's reply is the
-  next message; the planner re-plans with the clarification in history (`buildHistory` already carries
-  it), asking again if still ambiguous. No parked state, no resume API — the existing chat loop covers
-  this case entirely.
-- **Mid-DAG pause = ADK long-running tool → A2A `input-required`.** Reuse Go ADK's built-in
-  pause/resume seam rather than reinventing it: an agent calls a **long-running function tool**, whose
-  call ID lands in `event.LongRunningToolIDs`, ending the agent turn cleanly with the call unresolved;
-  `server/adka2a` converts that into the non-terminal **`TaskStateInputRequired`** status carrying the
-  pending `FunctionCall`. `remoteagent` keeps the task alive (it does not cancel `input-required`).
-  Two tool shapes, both **opt-in per agent** (declared in the agent's tool selection — only agents
-  meant to pause get them):
-  - **`request_input`** — an **authored** free-form tool (Go ADK lacks Python's `get_user_choice`):
-    the agent poses an open question ("which Dublin?", "is this word 'meet' or 'meat'?").
-  - **`RequireConfirmation`** — ADK's **native typed** approve/deny + payload gate, for
-    **side-effecting tools** (the seam M10's GitHub writes will use). Same long-running plumbing — built
-    once here, so the Future-work "confirmation gate" item folds into M5.
-- **Agents signal, the orchestrator asks.** Agents never address the user directly; they only emit the
-  pending call. The **orchestrator** (the A2A client, the sole user-facing component) surfaces the
-  question and collects the answer — A2A-native, so it works identically once agents become standalone
-  services (the Distributed-A2A future item).
-- **Resume = stateful continuation, not re-run.** Each node already runs in a **persisted** ADK
-  session (`plan.ID + ":" + node.ID`, Postgres-backed). Resume appends the human answer as the matching
-  **`FunctionResponse`** to that same session and re-runs on the same `TaskID` / `ContextID`; ADK
-  replays from persisted events, so the agent keeps the reasoning it did **before** asking. Survives
-  restarts.
-- **Readiness-driven executor — replaces the layer barrier.** M3's strict per-layer barrier becomes a
-  scheduler that runs a node **as soon as its `DependsOn` are all `done`**. A node that calls a
-  long-running tool enters a new **`waiting`** state (detected by a non-empty `LongRunningToolIDs` on
-  the run's final event); its descendants block, but **independent branches keep running**. The whole
-  DAG **suspends and the request ends only when the runnable frontier is empty *and* ≥1 node is
-  `waiting`**.
-- **Persistence + resume API.** Extend the existing `dag_plans` / `dag_nodes` tables: persist **full
-  node outputs** (today only a 250-char `output_preview` is stored) so a fresh process can feed
-  downstream nodes, plus each parked node's **`waiting` status, `TaskID` / `ContextID`, and question /
-  confirmation prompt**. (The node's own conversation is already persisted by ADK's SessionService — not
-  duplicated.) A **resume endpoint** `(planID, nodeID, answer)` appends the `FunctionResponse`,
-  rehydrates the scheduler from persisted outputs, and **reopens an SSE stream** to run to completion
-  (or the next pause).
-- **API + events.** A new **`node_waiting`** lifecycle event carries the question / approve-deny prompt;
-  the UI surfaces parked nodes with an answer / approve control. A paused turn leaves the orchestrator
-  turn **incomplete** until resume writes the final answer (`buildHistory` tolerates the half-finished
-  turn).
+- **Upfront clarification — no suspend machinery.** Before planning, the orchestrator may ask a
+  **clarifying question instead of launching a DAG**, via the long-running **`get_user_choice`** tool
+  (a port of Python ADK's; Go ADK lacks a native one). It poses a question + discrete options; the turn
+  pauses, the UI surfaces a choice prompt, and the user's reply resumes the orchestrator's **own
+  session** as the tool's `FunctionResponse`. The planner then plans with the clarification in history
+  (`buildHistory` carries it), asking again if still ambiguous. No parked DAG state, no resume API — the
+  orchestrator is the top-level session, so the existing chat loop covers this entirely.
+- **Readiness-driven executor (kept).** M3's strict per-layer barrier was replaced by a scheduler that
+  runs a node **as soon as its `DependsOn` are all `done`**, so independent branches make progress
+  concurrently. This landed alongside M5b and stays even though the pause path was removed.
 
-**Done when.** An ambiguous request triggers an **upfront** clarifying question before any DAG runs.
-Separately, a node calls `request_input` mid-DAG → it enters `input-required`, **independent branches
-keep running**, the run **persists and the request ends**; submitting an answer **resumes the same
-node statefully** and the DAG completes. A side-effecting tool guarded by `RequireConfirmation` pauses
-for **approve / deny** the same way. All visible in the stream and **across a restart**.
+**Done when.** An ambiguous request triggers an **upfront** clarifying question (a choice prompt) before
+any DAG runs; the user's answer flows back into the same turn and planning proceeds.
 
-**Out of scope (later).** The `doc-ingest` / `code-review` skills that consume parking (M8 / M10);
-automatic confidence-based parking (parking is always agent-driven).
+**Removed (was M5b — mid-DAG node pause/resume).** A prototype let a *node* pause mid-DAG on a
+long-running `request_input` call (gate pause → `node_waiting` → persisted `waiting` state → a
+`resumeDagNode` endpoint that reconstructed the DAG from storage and re-entered `executor.Resume`). It
+was **removed**: unlike the orchestrator (the top-level session, trivially resumed on the next chat
+reply), a node is a nested sub-session, so resuming it requires reconstructing the whole DAG from
+storage — inherent complexity for a flow with no concrete need yet. A throttled tool (e.g. rate-limited
+`web_search`) wants backoff/retry inside the tool, not a human pause, so that case doesn't justify the
+plumbing either. Recoverable from git history if a real need appears.
+
+**Out of scope (later).** `RequireConfirmation` approve/deny gate for side-effecting tools (folds into
+M10's GitHub writes); the `doc-ingest` / `code-review` skills; automatic confidence-based parking.
 
 ---
 
@@ -415,7 +384,7 @@ the **same skill** can be invoked **explicitly** by name + args; an unmatched re
 back** to dynamic planning. Every node is vetted against its **agent's own** rubric.
 
 **Out of scope (later).** The `doc-ingest` and `code-review` skills themselves (M8 / M10); mid-DAG
-human parking (M5).
+human parking (removed from M5; would need reviving).
 
 ---
 
@@ -424,7 +393,7 @@ human parking (M5).
 **Goal.** Replace **document-pipeline** with a **`doc-ingest` skill** — a hand-authored DAG that
 **ports doc-pipeline's stages as quack agents / tools**, ingesting images / audio / text into an
 **OpenSearch full-text index** you can query. Builds on M4 (vision / audio), M7 (skills), and M5
-(clarify / classify parking).
+(upfront clarify).
 
 **Scope.**
 
@@ -437,8 +406,8 @@ human parking (M5).
   mechanical **tool logic** (image encoding, chunking, OpenSearch indexing) ports **as-is as builtin
   tools** those agents call.
 - **`doc-ingest` skill**: a hand-authored DAG — *ingest → (OCR | transcribe) → summarize → clarify →
-  classify → index* — auto-selected or explicitly invoked (M7), where the **clarify / classify agents
-  call `request_input` (M5) when unsure** — agent-driven parking, not an automatic gate.
+  classify → index* — auto-selected or explicitly invoked (M7). Mid-DAG node parking for an unsure
+  clarify / classify step was removed from M5; reviving it would let those steps ask the human.
 - **Retrieval = OpenSearch FTS only**: index documents (title, tags, summary, content, series, date)
   into **OpenSearch** for keyword / Lucene search. **No** Qdrant / embeddings / contextual chunking for
   docs. **`series` kept as a metadata grouping / filter** (no concatenate-and-embed).
@@ -613,7 +582,7 @@ Everything below is intentionally outside the M0–M11 plan, captured so it is n
 | Code review | **Check-run / merge gating** | M10 posts inline comments; later, a GitHub Check Run with pass / fail that can gate merge. |
 | Multi-modal | **Audio / image generation** | Input-only for now (vision + STT); later, TTS / image output. |
 | Skills | **Self-authored skills** | Agent self-improvement: the orchestrator promotes a **successful dynamic DAG (M3)** into a **saved skill (M7)** — crystallizing proven plans into the reusable catalog so the system grows its own repertoire instead of re-planning from scratch. Needs a quality bar (only promote vetted / repeated wins) + a review/approval step before a skill goes live. |
-| Email | **Email agents + tools** | An inbox assistant (agentive role, e.g. `inbox-manager`) with builtin tools to **read, summarize, reply, and clean** a mailbox. Reads are straightforward; **sends / deletes are side-effecting**, so they route through M5's `RequireConfirmation` gate, and the whole integration needs **delegated (act-as-user) outbound auth** (the Auth row). |
+| Email | **Email agents + tools** | An inbox assistant (agentive role, e.g. `inbox-manager`) with builtin tools to **read, summarize, reply, and clean** a mailbox. Reads are straightforward; **sends / deletes are side-effecting**, so they route through a `RequireConfirmation` gate (M10), and the whole integration needs **delegated (act-as-user) outbound auth** (the Auth row). |
 | Frontend / UX | **Virtual scrolling** | The chat renders all turns with a plain `.map()`. The 2025-06 UX pass isolated re-renders (extracted `Composer`/`ChatList`, memoized `TurnView`) so completed turns no longer recompute mid-stream — which closes the typing-lag complaint without windowing. Add `react-virtuoso` only if very long chats still lag at the DOM-node count. |
 | Frontend / UX | **Structured citations** | Sources are currently model-authored `<details><summary>Sources</summary>` blocks inside the answer markdown. A real citation model (cites as data on the turn, inline superscript links → source cards) needs an output-contract change in the agents + `openapi.yaml`, so it's not UI-only. |
 | Frontend / UX | **Edit / retry messages** | Edit & resubmit a past user message; retry a response. Needs new turn-state handling (truncate-and-resubmit) beyond the current append-only chat. |
