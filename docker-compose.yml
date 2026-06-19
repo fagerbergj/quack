@@ -46,6 +46,16 @@ services:
     ports:
       - "11235:11235"
 
+  # Vector store for semantic memory (M6). Keyless + internal; gRPC on 6334.
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - quack-qdrant:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+
   app:
     build: .
     restart: unless-stopped
@@ -55,6 +65,8 @@ services:
       searxng:
         condition: service_started
       crawl4ai:
+        condition: service_started
+      qdrant:
         condition: service_started
     environment:
       DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
@@ -78,6 +90,10 @@ services:
       # override to point at existing instances (e.g. on a home server).
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       CRAWL4AI_URL: ${CRAWL4AI_URL:-http://crawl4ai:11235}
+      # Semantic memory (M6). gRPC address of the qdrant service above; empty
+      # disables memory. The embedding model is served by the LLM endpoint.
+      QDRANT_URL: ${QDRANT_URL:-qdrant:6334}
+      EMBED_MODEL: ${EMBED_MODEL:-qwen3-embed}
     # Host 8080 is taken by SearXNG above, so the app is published on 8081.
     ports:
       - "8081:8080"
@@ -86,3 +102,4 @@ services:
 
 volumes:
   quack-pgdata:
+  quack-qdrant:

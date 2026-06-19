@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,24 @@ type Config struct {
 	Dag          DagConfig                 `yaml:"dag"`
 	Compaction   CompactionConfig          `yaml:"compaction"`
 	Server       ServerConfig              `yaml:"server"`
+	Memory       *MemoryConfig             `yaml:"memory"`
+}
+
+// MemoryConfig configures the M6 semantic-memory layer. Its presence is the
+// master switch — omit the block (or leave url empty / QDRANT_URL unset) and
+// memory is fully off. Recall is ambient (ADK preload_memory) + deliberate
+// (load_memory); the gated, consolidating write path arrives in later PRs.
+type MemoryConfig struct {
+	URL      string        `yaml:"url"`      // Qdrant gRPC address host:port (typically ${QDRANT_URL})
+	Embedder ProviderModel `yaml:"embedder"` // provider+model for embeddings (e.g. qwen3-embed)
+	TopK     int           `yaml:"top_k"`    // neighbours fetched per recall (default 5)
+}
+
+// ProviderModel binds a named provider to a model — used by memory's embedder
+// (and later its consolidation model).
+type ProviderModel struct {
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
 }
 
 // CompactionConfig configures automatic context compaction. When enabled, every
@@ -240,6 +259,28 @@ func (c *Config) validate() error {
 		}
 		if c.Compaction.Model == "" {
 			return fmt.Errorf("config: compaction.enabled is true but compaction.model is empty")
+		}
+	}
+	// Memory is gated on a usable Qdrant address: a present-but-unconfigured block
+	// (QDRANT_URL unset ⇒ url expands to "") disables memory rather than failing,
+	// so qdrant-less dev/CI runs keep working with the block left in the config.
+	if c.Memory != nil && c.Memory.URL == "" {
+		slog.Warn("memory block present but url is empty (QDRANT_URL unset); semantic memory disabled", "component", "config")
+		c.Memory = nil
+	}
+	if c.Memory != nil {
+		m := c.Memory
+		if _, ok := c.Providers[m.Embedder.Provider]; !ok {
+			return fmt.Errorf("config: memory.embedder.provider %q is not defined under providers", m.Embedder.Provider)
+		}
+		if m.Embedder.Model == "" {
+			return fmt.Errorf("config: memory.embedder.model is empty")
+		}
+		if m.TopK == 0 {
+			m.TopK = 5
+		}
+		if m.TopK < 1 {
+			return fmt.Errorf("config: memory.top_k must be >= 1")
 		}
 	}
 	if c.Dag.MaxActiveNodes == 0 {
