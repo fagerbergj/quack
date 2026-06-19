@@ -70,6 +70,10 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
+      # Logging. debug surfaces hot-path trace (per-embed timing, vetting rounds).
+      # Empty ⇒ the app defaults to info / text.
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      LOG_FORMAT: ${LOG_FORMAT:-}
       # Reachable from inside the container. Override in .env for your setup;
       # host.docker.internal points at an LLM server running on the host.
       LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11436/v1}
