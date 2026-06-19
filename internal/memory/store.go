@@ -42,6 +42,7 @@ type Store struct {
 	embedder     inference.Embedder
 	consolidator model.LLM
 	coll         string
+	domain       string // selects the consolidation prompt ("task" | "user")
 	topK         uint64
 	log          *slog.Logger
 }
@@ -51,8 +52,9 @@ var _ adkmemory.Service = (*Store)(nil)
 // Open connects to Qdrant at addr (host:port gRPC), and ensures the scope's
 // collection exists — creating it on first use with a vector size probed from
 // the embedder, so the embedding model's dimension need not be configured. The
-// consolidator LLM drives Commit; pass nil for a recall-only store.
-func Open(ctx context.Context, addr string, embedder inference.Embedder, consolidator model.LLM, collection string, topK int) (*Store, error) {
+// consolidator LLM drives Commit; pass nil for a recall-only store. domain
+// ("task" | "user") selects the consolidation prompt.
+func Open(ctx context.Context, addr string, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int) (*Store, error) {
 	host, port, err := parseAddr(addr)
 	if err != nil {
 		return nil, err
@@ -66,6 +68,7 @@ func Open(ctx context.Context, addr string, embedder inference.Embedder, consoli
 		embedder:     embedder,
 		consolidator: consolidator,
 		coll:         collection,
+		domain:       domain,
 		topK:         uint64(topK),
 		log:          slog.Default().With("component", "memory", "collection", collection),
 	}

@@ -11,14 +11,17 @@ import (
 
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
+	adkmemory "google.golang.org/adk/memory"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/preloadmemorytool"
 	"google.golang.org/genai"
 
 	internalagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 )
@@ -40,12 +43,15 @@ type Orchestrator struct {
 	sysPrompt string
 	planner   *dag.Planner
 	executor  *dag.Executor
-	skillTS   tool.Toolset // optional; nil = no skill tools
+	skillTS   tool.Toolset  // optional; nil = no skill tools
+	userMem   *memory.Store // optional user-memory store (M6); nil = user memory off
 }
 
 // New builds the orchestrator. sysPrompt is assembled from agents/orchestrator/
-// via promptbuilder.Orchestrator at startup. skillTS may be nil.
-func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset) *Orchestrator {
+// via promptbuilder.Orchestrator at startup. skillTS may be nil. userMem, when
+// non-nil, enables personal memory: ambient recall (preload_memory) + an explicit
+// commit_memory tool, both scoped to the user_memory collection.
+func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset, userMem *memory.Store) *Orchestrator {
 	return &Orchestrator{
 		sessions:  sessions,
 		model:     m,
@@ -53,6 +59,7 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 		planner:   planner,
 		executor:  executor,
 		skillTS:   skillTS,
+		userMem:   userMem,
 	}
 }
 
@@ -99,12 +106,27 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			toolsets = []tool.Toolset{o.skillTS}
 		}
 
+		// User memory (M6, off by default): ambient recall via preload_memory plus
+		// an explicit commit_memory tool, both scoped to this user's store. memSvc
+		// stays a true nil interface when memory is off (no typed-nil hazard).
+		toolList := []tool.Tool{planTool, execTool, choiceTool}
+		var memSvc adkmemory.Service
+		if o.userMem != nil {
+			commitTool, err := tools.NewCommitMemoryTool(o.userMem, userID)
+			if err != nil {
+				yield(stream.Errorf("orchestrator: commit_memory tool: "+err.Error()), nil)
+				return
+			}
+			toolList = append(toolList, preloadmemorytool.New(), commitTool)
+			memSvc = o.userMem
+		}
+
 		ag, err := llmagent.New(llmagent.Config{
 			Name:        orchestratorName,
 			Description: "Routes research requests to specialist agents and answers conversational queries directly.",
 			Model:       o.model,
 			Instruction: o.sysPrompt,
-			Tools:       []tool.Tool{planTool, execTool, choiceTool},
+			Tools:       toolList,
 			Toolsets:    toolsets,
 			GenerateContentConfig: &genai.GenerateContentConfig{
 				MaxOutputTokens: internalagent.MaxOutputTokens,
@@ -119,6 +141,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			AppName:           AppName,
 			Agent:             ag,
 			SessionService:    o.sessions,
+			MemoryService:     memSvc,
 			AutoCreateSession: true,
 		})
 		if err != nil {

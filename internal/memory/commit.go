@@ -165,11 +165,15 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 		}
 	}
 
+	sysPrompt, ok := consolidatePrompts[s.domain]
+	if !ok {
+		sysPrompt = consolidatePrompts["task"]
+	}
 	// /no_think disables reasoning on qwen/gemma-class models (the configured
 	// consolidation model); harmless to others.
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + user.String()}}}},
-		Config:   &genai.GenerateContentConfig{SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: consolidatePrompt}}}},
+		Config:   &genai.GenerateContentConfig{SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}}},
 	}
 	var sb strings.Builder
 	for resp, err := range s.consolidator.GenerateContent(ctx, req, false) {
@@ -271,19 +275,37 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 	return count, nil
 }
 
-const consolidatePrompt = "You maintain an agent's long-term memory of durable, reusable research " +
-	"tradecraft — which sources proved authoritative (and for what), which were junk, search/fetch " +
-	"tactics that worked, and availability dead-ends. You are given STAGED candidates, the agent's " +
-	"FINAL ANSWER, and the most similar EXISTING MEMORIES.\n\n" +
-	"Produce a set of operations. First VET: keep only durable, generally-useful tradecraft worth " +
-	"recalling in future unrelated tasks; drop anything volatile (prices, hours), request-specific, " +
-	"speculative, or not clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
-	"- ADD: genuinely new — provide content (one atomic sentence) and a kind (source|search|fetch|deadend).\n" +
-	"- UPDATE: refines/supersedes an existing memory — provide its id plus the new content and kind.\n" +
-	"- DELETE: an existing memory is now contradicted or obsolete — provide its id.\n" +
-	"- NOOP: already covered — skip it.\n\n" +
-	"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
-	"Empty ops list if nothing is worth keeping."
+// consolidatePrompts holds the domain-specific consolidation system prompt. The
+// reconcile mechanics (ADD/UPDATE/DELETE/NOOP + JSON shape) are identical; only
+// the "what's worth keeping" framing differs by scope.
+var consolidatePrompts = map[string]string{
+	"task": "You maintain an agent's long-term memory of durable, reusable research " +
+		"tradecraft — which sources proved authoritative (and for what), which were junk, search/fetch " +
+		"tactics that worked, and availability dead-ends. You are given STAGED candidates, the agent's " +
+		"FINAL ANSWER, and the most similar EXISTING MEMORIES.\n\n" +
+		"Produce a set of operations. First VET: keep only durable, generally-useful tradecraft worth " +
+		"recalling in future unrelated tasks; drop anything volatile (prices, hours), request-specific, " +
+		"speculative, or not clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
+		"- ADD: genuinely new — provide content (one atomic sentence) and a kind (source|search|fetch|deadend).\n" +
+		"- UPDATE: refines/supersedes an existing memory — provide its id plus the new content and kind.\n" +
+		"- DELETE: an existing memory is now contradicted or obsolete — provide its id.\n" +
+		"- NOOP: already covered — skip it.\n\n" +
+		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
+		"Empty ops list if nothing is worth keeping.",
+
+	"user": "You maintain durable facts ABOUT THE USER — who they are, their preferences, relationships, " +
+		"possessions, goals, and hard limits — so the assistant can personalize. You are given STAGED " +
+		"candidates (things the user revealed about themselves) and the most similar EXISTING MEMORIES.\n\n" +
+		"Produce a set of operations. First VET: keep only durable facts the user actually stated about " +
+		"themselves; drop transient/request-specific details and anything sensitive they did not ask to be " +
+		"kept. Then RECONCILE each kept fact against the existing ones:\n" +
+		"- ADD: genuinely new — provide content (one atomic sentence) and a kind (identity|preference|relationship|possession|goal|limit).\n" +
+		"- UPDATE: the fact changed (moved, switched jobs, new preference) — provide the existing id plus new content and kind.\n" +
+		"- DELETE: an existing fact is now contradicted — provide its id.\n" +
+		"- NOOP: already known — skip it.\n\n" +
+		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
+		"Empty ops list if nothing is worth keeping.",
+}
 
 // stripFences removes a leading ```json / ``` fence and trailing ``` if present,
 // so a model that wraps its JSON still parses.
