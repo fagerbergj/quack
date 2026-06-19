@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/tool"
@@ -41,7 +43,11 @@ func NewCommitMemoryTool(store *memory.Store, userID string) (tool.Tool, error) 
 			if a.Kind != "" {
 				cand.Metadata = map[string]string{"kind": a.Kind}
 			}
-			if _, err := store.Commit(ctx, userID, "orchestrator", []memory.Candidate{cand}, ""); err != nil {
+			// Bound the consolidation round-trip so a stalled model can't hang the
+			// orchestrator's turn (this write is synchronous — the model awaits it).
+			cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			defer cancel()
+			if _, err := store.Commit(cctx, userID, "orchestrator", []memory.Candidate{cand}, ""); err != nil {
 				return "", fmt.Errorf("commit_memory: %w", err)
 			}
 			return "Remembered.", nil
