@@ -108,7 +108,7 @@ func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
 // answer_node. Returns an unwrapped error for the caller to prefix.
 func runDAG(tc agent.ToolContext, seq iter.Seq2[stream.SSEEvent, error], plan dag.Plan, nodeOutputs map[string]string, endTurn bool, cache *PlanCache) (executeResult, error) {
 	yieldFn, hasYield := stream.YieldFromContext(tc)
-	waitingNode, questions, err := drainDAG(seq, func(ev stream.SSEEvent) {
+	waiting, err := drainDAG(seq, func(ev stream.SSEEvent) {
 		if hasYield {
 			yieldFn(ev)
 		}
@@ -116,9 +116,13 @@ func runDAG(tc agent.ToolContext, seq iter.Seq2[stream.SSEEvent, error], plan da
 	if err != nil {
 		return executeResult{}, err
 	}
-	if waitingNode != "" {
-		return executeResult{Status: "input_required", NodeID: waitingNode, Questions: questions}, nil
+	if len(waiting) > 0 {
+		// Snapshot the pause so the orchestrator's end-of-turn backstop can resume
+		// it deterministically if the model drops the input_required result.
+		cache.SetPending(buildPending(plan, nodeOutputs, waiting))
+		return executeResult{Status: "input_required", NodeID: waiting[0].NodeID, Questions: waiting[0].Questions}, nil
 	}
+	cache.ClearPending() // the DAG ran to completion — nothing pending
 	answer := TerminalOutput(plan, nodeOutputs)
 	if answer == "" {
 		return executeResult{}, fmt.Errorf("all nodes completed but produced no output")
@@ -128,22 +132,44 @@ func runDAG(tc agent.ToolContext, seq iter.Seq2[stream.SSEEvent, error], plan da
 }
 
 // drainDAG consumes a DAG event stream, forwarding each event to emit, and returns
-// the first node that paused for input (its id + questions; empty if the DAG ran to
-// completion). Free of ToolContext so the classification is unit-testable.
-func drainDAG(seq iter.Seq2[stream.SSEEvent, error], emit func(stream.SSEEvent)) (string, []string, error) {
-	var waitingNode string
-	var questions []string
+// every node that paused for input (empty if the DAG ran to completion). Free of
+// ToolContext so the classification is unit-testable.
+func drainDAG(seq iter.Seq2[stream.SSEEvent, error], emit func(stream.SSEEvent)) ([]stream.NodeWaitingData, error) {
+	var waiting []stream.NodeWaitingData
 	for ev, err := range seq {
 		emit(ev)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
-		if d, ok := ev.Data.(stream.NodeWaitingData); ok && waitingNode == "" {
-			waitingNode = d.NodeID
-			questions = d.Questions
+		if d, ok := ev.Data.(stream.NodeWaitingData); ok {
+			waiting = append(waiting, d)
 		}
 	}
-	return waitingNode, questions, nil
+	return waiting, nil
+}
+
+// buildPending turns a suspended run into a resume snapshot: the first waiting node
+// is the resume target, the rest stay blocked, and every non-waiting output is a
+// completed node to rehydrate downstream.
+func buildPending(plan dag.Plan, nodeOutputs map[string]string, waiting []stream.NodeWaitingData) *PendingInput {
+	waitingIDs := make(map[string]bool, len(waiting))
+	for _, w := range waiting {
+		waitingIDs[w.NodeID] = true
+	}
+	done := make(map[string]string)
+	for id, out := range nodeOutputs {
+		if !waitingIDs[id] {
+			done[id] = out
+		}
+	}
+	primary := waiting[0]
+	others := make(map[string]bool)
+	for id := range waitingIDs {
+		if id != primary.NodeID {
+			others[id] = true
+		}
+	}
+	return &PendingInput{Plan: plan, Done: done, Waiting: others, NodeID: primary.NodeID, CallID: primary.CallID}
 }
 
 // deliverOrComplete applies end_turn to a finished DAG answer. Deliver (end_turn)

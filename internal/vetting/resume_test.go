@@ -16,6 +16,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 )
 
 // resumeWorkerModel pauses on the first turn (a request_input call) and, once it
@@ -124,5 +125,58 @@ func TestResumeContinuesPausedWorker(t *testing.T) {
 	}
 	if !strings.Contains(outputs["n1"], "Final answer") {
 		t.Errorf("resumed node output = %q, want the post-answer text", outputs["n1"])
+	}
+}
+
+// TestBackstopResumeCompletesPausedWorker proves the deterministic backstop: a real
+// gated worker pauses on request_input, then tools.BackstopResume drives it to a
+// vetted answer with the meta-answer — no model, no user.
+func TestBackstopResumeCompletesPausedWorker(t *testing.T) {
+	riTool, err := functiontool.New[riArgs, riResult](
+		functiontool.Config{Name: "request_input", Description: "ask the user a question", IsLongRunning: true},
+		func(tc adkagent.ToolContext, _ riArgs) (riResult, error) {
+			tc.Actions().SkipSummarization = true
+			return riResult{Status: "pending"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Description: "researches the web",
+		Model: resumeWorkerModel{}, Instruction: "research", Tools: []tool.Tool{riTool},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated, err := NewGatedAgent(worker, nil, scriptedJudge(judgeTurn{score: 0.9, feedback: "ok"}), Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.InMemoryService()
+	exec := dag.NewExecutor(sessions, map[string]adkagent.Agent{"web-researcher": gated}, nil, 1)
+	plan := dag.Plan{ID: "p1", UserMessage: "plan a trip", Nodes: []dag.Node{
+		{ID: "n1", AgentName: "web-researcher", Task: "recommend a region and season"},
+	}}
+
+	// Phase 1: the node pauses on request_input.
+	var callID string
+	for ev, err := range exec.Execute(context.Background(), plan, "u", map[string]string{}) {
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if d, ok := ev.Data.(stream.NodeWaitingData); ok {
+			callID = d.CallID
+		}
+	}
+	if callID == "" {
+		t.Fatal("expected the node to pause")
+	}
+
+	// Phase 2: the backstop completes it deterministically (no model, no user).
+	pending := &tools.PendingInput{Plan: plan, Done: map[string]string{}, Waiting: map[string]bool{}, NodeID: "n1", CallID: callID}
+	answer := tools.BackstopResume(context.Background(), exec, "u", pending, func(stream.SSEEvent) {})
+	if !strings.Contains(answer, "Final answer") {
+		t.Errorf("backstop answer = %q, want the worker's post-answer text", answer)
 	}
 }

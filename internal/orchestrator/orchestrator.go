@@ -7,6 +7,7 @@ package orchestrator
 import (
 	"context"
 	"iter"
+	"log/slog"
 	"strings"
 
 	adkagent "google.golang.org/adk/agent"
@@ -73,6 +74,10 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()
+		// Seed the pending-input snapshot from the store: if a prior turn left a node
+		// paused on request_input, the end-of-turn backstop can catch a CROSS-turn drop
+		// (the model escalated, the user replied, but the model never resumed it).
+		tools.HydratePending(ctx, planCache, o.store, AppName, userID, sessionID)
 		// Persisted session, read BEFORE the runner appends this turn's user
 		// message — so it holds only earlier turns. Used for both the planner's
 		// history and pending-clarification detection below.
@@ -199,6 +204,20 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
 			RunID: orchRunID, Stage: stream.StageWorker,
 		}}, nil)
+
+		// Deterministic backstop: if the turn ended with a node still paused on
+		// request_input that the model neither answered (answer_node) nor escalated to
+		// the user (get_user_choice), the SYSTEM resumes it with a meta-answer so the
+		// DAG completes instead of hanging. Skip when the model legitimately escalated
+		// this turn (an unanswered get_user_choice in the session) — give it the turn;
+		// if it later drops the answer, the next turn's HydratePending re-arms this.
+		if pending := planCache.Pending(); pending != nil && pendingChoiceCallID(o.priorEvents(ctx, userID, sessionID)) == "" {
+			slog.Warn("orchestrator dropped node input; backstop resuming",
+				"component", "orchestrator", "node", pending.NodeID, "plan", pending.Plan.ID)
+			if answer := tools.BackstopResume(ctx, o.executor, userID, pending, func(ev stream.SSEEvent) { yield(ev, nil) }); answer != "" {
+				planCache.SetDelivered(answer)
+			}
+		}
 
 		// Deliver mode (execute end_turn=true): the specialist's answer streamed
 		// straight to the user and the orchestrator stayed silent, so its session
