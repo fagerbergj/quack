@@ -87,7 +87,7 @@ func (s *Store) ensureCollection(ctx context.Context) error {
 		return nil
 	}
 	// Probe the embedder for the vector dimension rather than hardcoding the model's.
-	vecs, err := s.embedder.Embed(ctx, []string{"dimension probe"})
+	vecs, err := s.embed(ctx, []string{"dimension probe"}, "dim-probe")
 	if err != nil {
 		return fmt.Errorf("memory: embed probe: %w", err)
 	}
@@ -115,7 +115,7 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 	if req == nil || strings.TrimSpace(req.Query) == "" {
 		return &adkmemory.SearchResponse{}, nil
 	}
-	vecs, err := s.embedder.Embed(ctx, []string{req.Query})
+	vecs, err := s.embed(ctx, []string{req.Query}, "recall")
 	if err != nil {
 		return nil, fmt.Errorf("memory: embed query: %w", err)
 	}
@@ -156,6 +156,21 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 	}
 	s.log.Debug("recall", "user", req.UserID, "hits", len(entries))
 	return &adkmemory.SearchResponse{Memories: entries}, nil
+}
+
+// embed wraps the embedder with hot-path timing (Debug): which call site (path),
+// how many inputs, total input chars, and how long the call took — so a slow
+// embed in the llm-swap logs can be attributed to recall vs commit and to input
+// size. Enable with LOG_LEVEL=debug.
+func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]float32, error) {
+	chars := 0
+	for _, t := range texts {
+		chars += len(t)
+	}
+	t0 := time.Now()
+	vecs, err := s.embedder.Embed(ctx, texts)
+	s.log.Debug("embed", "path", path, "inputs", len(texts), "chars", chars, "dur", time.Since(t0), "err", err != nil)
+	return vecs, err
 }
 
 func payloadString(payload map[string]*qdrant.Value, key string) string {

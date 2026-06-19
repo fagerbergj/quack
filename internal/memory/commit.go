@@ -128,7 +128,7 @@ func (s *Store) neighbours(ctx context.Context, userID, sourceText string, stage
 	if probe == "" {
 		return nil, nil
 	}
-	vecs, err := s.embedder.Embed(ctx, []string{probe})
+	vecs, err := s.embed(ctx, []string{probe}, "commit-neighbours")
 	if err != nil {
 		return nil, fmt.Errorf("memory: embed for neighbours: %w", err)
 	}
@@ -247,7 +247,7 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 		for i, o := range writes {
 			texts[i] = o.Content
 		}
-		vecs, err := s.embedder.Embed(ctx, texts)
+		vecs, err := s.embed(ctx, texts, "commit-write")
 		if err != nil {
 			return 0, fmt.Errorf("memory: embed writes: %w", err)
 		}
