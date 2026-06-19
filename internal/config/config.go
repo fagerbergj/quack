@@ -35,6 +35,7 @@ type MemoryConfig struct {
 	Embedder      ProviderModel `yaml:"embedder"`      // provider+model for embeddings (e.g. qwen3-embed)
 	Consolidation ProviderModel `yaml:"consolidation"` // provider+model for extract/vet/consolidate (e.g. gemma)
 	TopK          int           `yaml:"top_k"`         // neighbours fetched per recall/consolidation (default 5)
+	UserMemory    bool          `yaml:"user_memory"`   // personal facts about the user (orchestrator); off by default (privacy)
 }
 
 // ProviderModel binds a named provider to a model — used by memory's embedder

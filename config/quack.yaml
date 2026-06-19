@@ -20,7 +20,11 @@ memory:
   embedder:
     provider: default
     model: ${EMBED_MODEL}
+  consolidation:
+    provider: default
+    model: ${JUDGE_MODEL}       # reuse the always-warm judge model (gemma) for extract/vet/consolidate
   top_k: 5
+  user_memory: ${USER_MEMORY}   # personal facts about the user; off by default (unset ⇒ false)
 
 orchestrator:
   provider: default

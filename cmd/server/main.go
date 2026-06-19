@@ -85,7 +85,7 @@ func main() {
 	// task-scoped Qdrant store. Every served agent gets it for ambient recall
 	// (preload_memory); the trust gate uses it to commit vetted tradecraft. nil
 	// when the feature is off.
-	var taskStore *memory.Store
+	var taskStore, userStore *memory.Store
 	if cfg.Memory != nil {
 		eprov, _ := cfg.Provider(cfg.Memory.Embedder.Provider)
 		embedder, err := inference.NewEmbedder(eprov, cfg.Memory.Embedder.Model)
@@ -97,13 +97,21 @@ func main() {
 		if err != nil {
 			fatal("memory consolidation model init failed", "err", err)
 		}
-		store, err := memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "task_memory", cfg.Memory.TopK)
+		taskStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "task_memory", "task", cfg.Memory.TopK)
 		if err != nil {
 			fatal("memory open failed", "err", err)
 		}
-		taskStore = store
 		slog.Info("semantic memory enabled", "component", "startup", "collection", "task_memory",
 			"embedder", cfg.Memory.Embedder.Model, "consolidation", cfg.Memory.Consolidation.Model)
+
+		// User memory (personal facts about the user) is off by default — privacy.
+		if cfg.Memory.UserMemory {
+			userStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "user_memory", "user", cfg.Memory.TopK)
+			if err != nil {
+				fatal("user memory open failed", "err", err)
+			}
+			slog.Info("user memory enabled", "component", "startup", "collection", "user_memory")
+		}
 	}
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
@@ -146,11 +154,24 @@ func main() {
 	if err != nil {
 		fatal("format-markdown skill load failed", "err", err)
 	}
-	orchSysPrompt := promptbuilder.Orchestrator([]*skill.Frontmatter{fmFm}, orchBundle.Prompt)
+	// When user memory is on, append the orchestrator's memory.md guidance (its
+	// "what to remember about the user" section) to its behaviour — gated the same
+	// way agent bundles are.
+	orchBehaviour := orchBundle.Prompt
+	if userStore != nil {
+		mem, err := agent.LoadBundleMemory("agents/orchestrator")
+		if err != nil {
+			fatal("orchestrator memory.md load failed", "err", err)
+		}
+		if mem != "" {
+			orchBehaviour += "\n\n" + mem
+		}
+	}
+	orchSysPrompt := promptbuilder.Orchestrator([]*skill.Frontmatter{fmFm}, orchBehaviour)
 
 	planner := dag.NewPlanner(llm, agentInfos)
 	executor := dag.NewExecutor(st.Sessions, clientMap, mediaAgents, cfg.Dag.MaxActiveNodes)
-	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS)
+	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS, userStore)
 
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {

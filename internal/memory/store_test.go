@@ -33,7 +33,7 @@ func TestStore_RecallRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	const coll = "quack_test_memory"
 
-	s, err := Open(ctx, addr, fakeEmbedder{}, nil, coll, 5)
+	s, err := Open(ctx, addr, fakeEmbedder{}, nil, coll, "task", 5)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

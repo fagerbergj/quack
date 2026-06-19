@@ -300,51 +300,70 @@ M10's GitHub writes); the `doc-ingest` / `code-review` skills; automatic confide
 
 ---
 
-## M6 — Memory (recall + vetted commit)
+## M6 — Memory (explicit recall + gated, consolidating commit)
 
-**Goal.** Give agents **durable, semantic memory**: recall prior **vetted findings** to inform new
-work and commit new ones — gated by M2's trust gate so **only judge-passed output is ever written**.
-Go ADK ships only a 2-method `memory.Service` interface + `load_memory` / `preload_memory` tools and
-**no self-hostable backend** (just in-memory keyword + GCP Vertex), so M6 **authors a Qdrant-backed
-`memory.Service` + an embedder**, with writes driven explicitly from the post-judge hook (ADK never
-auto-writes).
+<details>
+<summary><strong>🚧 Largely complete</strong> — embedder, Qdrant-backed recall, the gated/consolidating
+task-memory write path, the optional <code>memory.md</code> bundle guidance, and config-gated user
+memory are all merged; only <strong>UI surfacing</strong> of recall/commit activity remains.
+The design diverged from the original M6 sketch during planning — recorded as-built below.</summary>
 
-**Scope.**
+**Goal.** Give agents **durable, semantic memory**: recall prior knowledge and commit new knowledge.
+Memory is **explicit** (deliberate writes, never background auto-capture) and **semantic only** —
+*episodic* memory is the existing ADK session/Postgres history and *procedural* memory is Skills (M7).
+Two kinds, by role:
 
-- **Custom `memory.Service` over Qdrant.** Implement ADK's `memory.Service` (`AddSessionToMemory` +
-  `SearchMemory`) backed by a **Qdrant** collection (new `docker-compose` service — the vector store
-  the architecture already names in M9 / the Stores row). Set it on the same `runner.Config`'s
-  `MemoryService` the executor's runners already build, so recall is wired wherever a node or the
-  planner runs. Memories are **keyed per-user** (ADK's `SearchRequest.UserID`).
-- **Embedder — already running, no new model.** llama-swap already serves **`qwen3-embed`**
-  (`Qwen3-Embedding-8B` Q8_0, `--embedding --pooling last`, OpenAI `/v1/embeddings`) in a
-  **`persistent`, CPU-only** group (`-ngl 0`, GPUs hidden) that **stays warm regardless of GPU swaps**
-  at **zero VRAM cost** — exactly the no-swap-churn property recall / commit need. So M6 stands up
-  **no embedding model**: a new `embedding` config block points the `openaimodel` adapter's new
-  **`Embed` path** at the existing endpoint.
-- **Commit = distilled facts, gated by the judge.** When the **terminal (answer) node passes vetting**
-  (`internal/vetting/gate.go`, on `passed` only), a platform **distillation step** — reusing the
-  already-warm **judge model (gemma)** — condenses the vetted answer into **atomic fact(s)**, each
-  stored with **provenance** (source turn, citations, judge score, timestamp) so a recalled fact stays
-  citable. The trust gate is the literal gatekeeper; unvetted output is never written. This post-judge
-  hook is the **only** writer (ADK's runner does not auto-call `AddSessionToMemory`).
-- **Recall = preload + tool (both).** The **planner preloads** relevant facts (an automatic
-  `SearchMemory` on the request) so the **DAG is memory-aware** from the start; **research agents
-  additionally carry the `load_memory` tool** for deliberate, deeper recall mid-task. Both reach the
-  same per-user Qdrant store via the runner's `MemoryService`.
-- **Surfacing.** Recall (which facts were pulled) and commit (which facts were distilled + written)
-  **stream to the UI and over the APIs** as activity, like thinking / tool events.
+- **Task memory** — research **tradecraft** (which sources are authoritative and for what, which are
+  junk, search/fetch tactics that work, availability dead-ends), owned by **web-researcher**. *Not*
+  world-facts — those go stale and must be re-fetched to cite. **Gated**: the agent stages, the judge
+  pass commits.
+- **User memory** — facts *about the user* (identity, preferences, relationships, possessions, goals,
+  limits), owned by the **orchestrator**. **Ungated** (grounded in what the user said) but **off by
+  default** (`memory.user_memory`, a privacy choice).
+
+**Scope (as built).**
+
+- **Qdrant-backed `memory.Service`.** Implements ADK's `memory.Service` (`SearchMemory` live;
+  `AddSessionToMemory` a deliberate no-op — Quack never auto-ingests). A new keyless `qdrant`
+  `docker-compose` service. Two collections (`task_memory`, `user_memory`), **per-user** keyed; the
+  collection (not a metadata filter) is the scope, which sidesteps ADK's filter-less `SearchRequest`.
+- **Recall = ADK-native + ambient.** ADK ships `preloadmemorytool` (auto-injects `SearchMemory`
+  results into the system prompt every request — ambient, no model call) + `loadmemorytool`
+  (model-callable). Both route through the runner's `MemoryService`, so recall needs **zero custom
+  tools** and spreads by attaching the native tool. Scope = which `MemoryService` instance a runner
+  holds: node runners (set in `agent.Serve`) get the task store; the orchestrator runner gets the user
+  store. The plan's "wire into the executor runner" was corrected — behind A2A the agent executes in
+  `agent.Serve`'s runner, which is where the tools' `ctx.SearchMemory` resolves.
+- **Embedder — no new model.** Reuses the always-warm CPU `qwen3-embed` group via a new `Embed` path
+  on the `openaimodel` adapter; the collection's vector size is **probed** from the embedder on first
+  use (no hardcoded dimension).
+- **Commit = gated, consolidating (mem0-style).** Agents stage tradecraft via a **`stage_memory`**
+  sink tool (its calls land in the worker session); the **trust gate harvests** staged candidates and,
+  **only on a judge pass**, fires `memory.Commit` in the **background** (the answer never waits). One
+  consolidation pass (the warm **gemma**) **vets** each candidate (drops volatile/junk), **extracts**
+  more tradecraft from the accepted answer, and **reconciles** against neighbours →
+  **ADD / UPDATE / DELETE / NOOP** with provenance — so a superseding fact updates rather than
+  duplicates. The orchestrator writes **user** facts directly via a **`commit_memory`** tool (same
+  consolidating `Commit`, scoped to the user collection); user-stated facts are grounded, so ungated.
+- **Per-agent guidance** lives in an optional **`memory.md`** bundle file (the second optional file
+  alongside `rubric.md`), appended to the agent's prompt **only when memory is on and the agent has its
+  memory tools** — so it never dangles. web-researcher's is research tradecraft; the orchestrator's is
+  the user profile.
+- **Remaining:** recall/commit **surfacing** to the UI + APIs (the backend stream event + frontend
+  rendering) — deferred to a dedicated frontend PR alongside the rendering.
 - No auth, no deploy.
 
-**Done when.** A request **recalls** prior vetted facts from Qdrant (visible in the stream) and they
-shape the answer; the new vetted answer is **distilled into atomic facts and committed**; a later
-request **recalls one of those facts** and cites it. Judge-failed output is provably **not** written.
+**Done when.** A request recalls prior tradecraft (ambient via `preload_memory`) and it shapes the
+research; the agent stages tradecraft, the judge pass commits it (vetted + consolidated), and a later
+request recalls it. With `user_memory` on, the orchestrator remembers a stated preference and recalls
+it next turn. Judge-failed output is provably **not** written.
 
-**Out of scope (later).** Memory **consolidation / dedup** (append-only for now — RecMem-style
-recurrence consolidation + Reflexion-style failure memory stay in Future work); **metadata-filtered**
-search (ADK's `SearchRequest` is query-only — no filter param); the **doc-corpus** index (that's M8's
-OpenSearch FTS / the future `rag-researcher` — a separate store from this findings memory); auth,
-deployment.
+**Out of scope (later).** **Consolidation across the whole store** (M6 consolidates per-commit against
+neighbours; RecMem-style recurrence-triggered consolidation + Reflexion-style failure memory stay in
+Future work); the **doc-corpus** index (M8's OpenSearch FTS / the future `rag-researcher` — a separate
+store); auth, deployment.
+
+</details>
 
 ---
 
@@ -572,7 +591,7 @@ Everything below is intentionally outside the M0–M11 plan, captured so it is n
 | Vetting | **Per-agent adversarial overrides** | Global adversarial policy only for now; later, per-agent judge / threshold / rounds overrides. |
 | Agents | **Distributed A2A** | Promote agents from co-located to standalone A2A services (the design is already A2A-ready). |
 | Agents | **Orchestrator A2A face** | Expose the orchestrator as an A2A server to external agent clients (M1's A2A is internal orchestrator to agent dispatch). |
-| Memory | **Consolidation / dedup** | M6 commits facts append-only; later, RecMem-style recurrence-triggered consolidation + dedup / merge of overlapping facts. |
+| Memory | **Store-wide consolidation** | M6 consolidates **per-commit** against nearest neighbours (mem0-style ADD/UPDATE/DELETE/NOOP); later, RecMem-style recurrence-triggered consolidation + dedup / merge **across the whole store**. |
 | Memory | **Reflexion-style memory** | Store language reflections on failures, not just vetted findings. |
 | Memory | **Metadata-filtered recall** | ADK's `SearchRequest` is query-only; later, filter recall by source / date / score (needs a custom search path beyond the ADK interface). |
 | Research | **Researcher build-out** | `rag-researcher` + RAG, more agents/tools, and the second example use case ("latest local LLM models for my hardware"). |

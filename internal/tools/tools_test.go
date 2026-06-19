@@ -301,3 +301,13 @@ func TestSummarizeText(t *testing.T) {
 		t.Error("summarizeText(empty) should error")
 	}
 }
+
+func TestNewCommitMemoryTool(t *testing.T) {
+	tl, err := NewCommitMemoryTool(nil, "u1") // construction only; handler not invoked
+	if err != nil {
+		t.Fatalf("NewCommitMemoryTool: %v", err)
+	}
+	if tl.Name() != "commit_memory" {
+		t.Fatalf("name = %q, want commit_memory", tl.Name())
+	}
+}
