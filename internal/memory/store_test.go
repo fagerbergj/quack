@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -89,5 +90,48 @@ func TestStore_RecallRoundTrip(t *testing.T) {
 	}
 	if len(resp.Memories) != 0 {
 		t.Fatalf("u2 got %d memories, want 0 (user filter leaked)", len(resp.Memories))
+	}
+}
+
+// countingEmbedder records how many times Embed was actually invoked.
+type countingEmbedder struct{ calls int }
+
+func (c *countingEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	c.calls++
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = []float32{1, 2, 3}
+	}
+	return out, nil
+}
+
+func TestEmbedMemoizesSingleInputs(t *testing.T) {
+	ce := &countingEmbedder{}
+	s := &Store{embedder: ce, embCache: newEmbedCache(512), log: slog.Default()}
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ { // same query re-embedded (mimics preload per turn)
+		if _, err := s.embed(ctx, []string{"node task"}, "recall"); err != nil {
+			t.Fatalf("embed: %v", err)
+		}
+	}
+	if _, err := s.embed(ctx, []string{"different task"}, "recall"); err != nil {
+		t.Fatalf("embed: %v", err)
+	}
+	if ce.calls != 2 {
+		t.Fatalf("embedder invoked %d times, want 2 (one per distinct text; the rest cached)", ce.calls)
+	}
+}
+
+func TestEmbedCacheBoundedClears(t *testing.T) {
+	c := newEmbedCache(2)
+	c.put("a", []float32{1})
+	c.put("b", []float32{2})
+	c.put("c", []float32{3}) // exceeds cap → clear, then store c
+	if _, ok := c.get("a"); ok {
+		t.Fatal("expected clear-on-full to drop old entries")
+	}
+	if _, ok := c.get("c"); !ok {
+		t.Fatal("newest entry should be present after clear")
 	}
 }

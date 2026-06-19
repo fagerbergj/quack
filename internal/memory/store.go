@@ -13,6 +13,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qdrant/go-client/qdrant"
@@ -45,6 +46,7 @@ type Store struct {
 	domain       string // selects the consolidation prompt ("task" | "user")
 	topK         uint64
 	log          *slog.Logger
+	embCache     *embedCache // memoizes text→vector (deterministic for a fixed model)
 }
 
 var _ adkmemory.Service = (*Store)(nil)
@@ -71,6 +73,7 @@ func Open(ctx context.Context, addr string, embedder inference.Embedder, consoli
 		domain:       domain,
 		topK:         uint64(topK),
 		log:          slog.Default().With("component", "memory", "collection", collection),
+		embCache:     newEmbedCache(512),
 	}
 	if err := s.ensureCollection(ctx); err != nil {
 		return nil, err
@@ -163,6 +166,16 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 // embed in the llm-swap logs can be attributed to recall vs commit and to input
 // size. Enable with LOG_LEVEL=debug.
 func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]float32, error) {
+	// Single-input calls (recall, neighbour probe) are memoized: preload_memory
+	// re-embeds the same node-task query on every model turn, and that embed is
+	// synchronous + CPU-bound, so caching collapses the repeats (and the resulting
+	// cross-node contention). Batch writes are unique facts — not worth caching.
+	if len(texts) == 1 && s.embCache != nil {
+		if v, ok := s.embCache.get(texts[0]); ok {
+			s.log.Debug("embed", "path", path, "inputs", 1, "chars", len(texts[0]), "cached", true)
+			return [][]float32{v}, nil
+		}
+	}
 	chars := 0
 	for _, t := range texts {
 		chars += len(t)
@@ -170,7 +183,40 @@ func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]flo
 	t0 := time.Now()
 	vecs, err := s.embedder.Embed(ctx, texts)
 	s.log.Debug("embed", "path", path, "inputs", len(texts), "chars", chars, "dur", time.Since(t0), "err", err != nil)
+	if err == nil && len(texts) == 1 && len(vecs) == 1 && s.embCache != nil {
+		s.embCache.put(texts[0], vecs[0])
+	}
 	return vecs, err
+}
+
+// embedCache memoizes text→embedding. Embeddings are deterministic for a fixed
+// model (stable for the process lifetime), so no TTL is needed; it's bounded by a
+// size cap. ponytail: clear-on-full, not LRU — distinct queries per request are
+// few, so a 512-entry cap rarely fills; switch to an LRU only if real churn shows.
+type embedCache struct {
+	mu  sync.Mutex
+	m   map[string][]float32
+	cap int
+}
+
+func newEmbedCache(cap int) *embedCache {
+	return &embedCache{m: make(map[string][]float32, cap), cap: cap}
+}
+
+func (c *embedCache) get(k string) ([]float32, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.m[k]
+	return v, ok
+}
+
+func (c *embedCache) put(k string, v []float32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) >= c.cap {
+		c.m = make(map[string][]float32, c.cap)
+	}
+	c.m[k] = v
 }
 
 func payloadString(payload map[string]*qdrant.Value, key string) string {
