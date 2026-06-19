@@ -4,6 +4,7 @@
 package inference
 
 import (
+	"context"
 	"fmt"
 
 	"google.golang.org/adk/model"
@@ -22,4 +23,22 @@ func NewModel(p config.ProviderConfig, modelName string) (model.LLM, error) {
 	default:
 		return nil, fmt.Errorf("inference: unsupported provider kind %q", p.Kind)
 	}
+}
+
+// Embedder turns text into embedding vectors. It is a distinct capability from
+// model.LLM (a different endpoint), used by the semantic-memory layer (M6).
+type Embedder interface {
+	// Embed returns one vector per input text, in input order.
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+// NewEmbedder constructs an Embedder for the given provider and embedding model.
+// It reuses NewModel's provider switch — the openai adapter serves /embeddings
+// too, so the same model.LLM doubles as an Embedder.
+func NewEmbedder(p config.ProviderConfig, modelName string) (Embedder, error) {
+	m, err := NewModel(p, modelName)
+	if err != nil {
+		return nil, err
+	}
+	return m.(Embedder), nil
 }
