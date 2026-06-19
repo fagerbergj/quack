@@ -151,3 +151,18 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
   })
   return found ? next : runs
 }
+
+// showLiveSpinner decides whether the live (streaming) turn shows the "thinking"
+// dots: it's streaming and nothing visible has arrived yet. Keyed on VISIBLE
+// content (DAG, answer text, or visible activity) — NOT run count: the
+// orchestrator's top-level run is created empty on the first stream event (to
+// hold its plan/execute tool calls), so a run-count check hides the dots during
+// the gap before the plan appears (regression fixed 2026-06).
+export function showLiveSpinner(args: {
+  streaming: boolean
+  hasDag: boolean
+  answerText: string
+  visibleActivityCount: number
+}): boolean {
+  return args.streaming && !args.hasDag && !args.answerText && args.visibleActivityCount === 0
+}
