@@ -167,15 +167,44 @@ sha256:abc123…
 FROM searxng/searxng:latest@sha256:abc123…
 ```
 
-## 5. Registry build cache — *add only if CI starts building the image*
+## 5. CI/CD build (live) — `.github/workflows/ci.yaml` + `cd.yaml`
 
-Shares the build cache across CI runners (local cache is wiped between runs):
+CI builds the image on every PR (no push); CD publishes to GHCR on a `v*.*.*` tag. Both use the
+GitHub Actions BuildKit cache (`type=gha`), which is wiped-per-run-proof and zero-config:
 
-```console
-docker buildx build --push -t myreg/quack \
-  --cache-to   type=registry,ref=myreg/quack-cache:build \
-  --cache-from type=registry,ref=myreg/quack-cache:build .
+```yaml
+# ci.yaml — validate the build, don't push
+- uses: docker/setup-buildx-action@v3
+- uses: docker/build-push-action@v6
+  with: { context: ., push: false, cache-from: type=gha, cache-to: "type=gha,mode=max" }
+
+# cd.yaml — tag-derived publish with attestations
+- uses: docker/metadata-action@v5
+  id: meta
+  with:
+    images: ghcr.io/${{ github.repository }}
+    tags: |
+      type=semver,pattern={{version}}
+      type=semver,pattern={{major}}.{{minor}}
+      type=sha
+- uses: docker/build-push-action@v6
+  with:
+    context: .
+    push: true
+    tags: ${{ steps.meta.outputs.tags }}
+    labels: ${{ steps.meta.outputs.labels }}
+    provenance: mode=max
+    sbom: true
+    cache-from: type=gha
+    cache-to: type=gha,mode=max
 ```
+
+Cut a release: `git tag v1.2.3 && git push origin v1.2.3`. `latest` moves only on tags, never on a
+push to main. Next steps if needed: a Trivy scan job (`aquasecurity/trivy-action`, upload SARIF) and
+cosign keyless signing (`sigstore/cosign-installer` + `id-token: write`).
+
+For a non-GitHub runner, `type=registry` cache is the portable equivalent:
+`--cache-to type=registry,ref=<reg>/quack-cache:build --cache-from type=registry,ref=<reg>/quack-cache:build`.
 
 ## 6. Build secrets — *add when a build step needs a credential*
 

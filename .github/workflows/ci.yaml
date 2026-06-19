@@ -85,3 +85,17 @@ jobs:
       - run: ./scripts/generate.sh
       - name: fail on uncommitted codegen drift
         run: git diff --exit-code -- internal/schema frontend/src/generated
+
+  # Build the image (no push) so a broken Dockerfile or go:embed path fails the
+  # PR instead of only surfacing at `make docker-up`. gha cache makes reruns fast.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

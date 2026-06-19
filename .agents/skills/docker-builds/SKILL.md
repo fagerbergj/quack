@@ -69,13 +69,15 @@ Match pinning to the image's release maturity, not to a blanket "always pin dige
 
 | Stage | Tag style | Why |
 |---|---|---|
-| **Local / self-hosted, no registry** (quack today) | **mutable minor tags** (`golang:1.25-alpine`, `postgres:18`) | Auto-pick patch fixes; nothing to babysit. The research's own "dev minor tags are safe" exception. |
-| **Published release image** | **digest-pinned** (`…@sha256:…`) | Reproducible + immune to tag-mutation. Add when, and only when, an image actually ships somewhere. |
+| **Dev / local build** (Dockerfile base images) | **mutable minor tags** (`golang:1.25-alpine`, `postgres:18`) | Auto-pick patch fixes; nothing to babysit. The research's own "dev minor tags are safe" exception. |
+| **Published release image** (the quack image itself) | **immutable tag/digest** | `cd.yaml` tags each release `1.2.3` / `1.2` / `latest` / `sha-<sha>` via metadata-action; consumers pull a fixed version or its `@sha256` digest. |
 
-Quack has no CI image build and no registry, so it stays on mutable tags by design — including the
-two `:latest` backends (`searxng`, `crawl4ai`). `:latest` *is* a known reproducibility hazard; pin
-those first (to a digest or a dated/semver tag) if an overnight upstream change ever breaks a build.
-See `references/recipes.md` for the digest-resolution command.
+Quack's *published* image is the reproducibility unit — it's pinned at publish time, so the
+Dockerfile's **base** images stay on mutable minor tags by design (one less thing to bump). Pin the
+base images to digests too only if you need byte-reproducible rebuilds of a given release. The two
+`:latest` backends (`searxng`, `crawl4ai`) in compose are still a mild reproducibility hazard — pin
+those first if an overnight upstream change ever breaks a build. See `references/recipes.md` for the
+digest-resolution command.
 
 ## Quack conventions (match these)
 
@@ -83,8 +85,10 @@ See `references/recipes.md` for the digest-resolution command.
   into `cmd/server/web/dist` and `go build` *embeds* it into the binary → stage 3 (distroless) gets
   just the binary plus the read-only `config/`, `agents/`, `skills/` dirs. Don't try to serve the SPA
   as separate static files; it lives inside the binary.
-- **Build path is `make docker-up`** (`docker compose up --build`). There is no separate image
-  build/publish step.
+- **Build paths**: local dev/self-host via `make docker-up` (`docker compose up --build`); CI builds
+  the image on every PR (`docker-build` job in `ci.yaml`, no push) so a broken Dockerfile fails the PR;
+  `cd.yaml` builds + pushes to `ghcr.io/fagerbergj/quack` on a `v*.*.*` tag (with SBOM + provenance).
+  Both CI/CD use the `type=gha` BuildKit cache.
 - **Logs go to stdout** (see the `go-logging` skill) — let `docker compose logs` / the orchestration
   layer collect them; don't add log files or volumes for logs.
 - **`config/`, `agents/`, `skills/` are read-only startup inputs**, copied into the image and never
