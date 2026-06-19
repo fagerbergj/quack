@@ -10,6 +10,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/openai/openai-go/v3 v3.41.0
+	github.com/qdrant/go-client v1.18.2
 	google.golang.org/adk v1.4.0
 	google.golang.org/genai v1.61.0
 	gopkg.in/yaml.v3 v3.0.1

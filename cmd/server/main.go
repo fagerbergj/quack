@@ -18,9 +18,12 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/agent"
+	adkmemory "google.golang.org/adk/memory"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
+	"google.golang.org/adk/tool/loadmemorytool"
+	"google.golang.org/adk/tool/preloadmemorytool"
 	"google.golang.org/adk/tool/skilltoolset"
 	"google.golang.org/adk/tool/skilltoolset/skill"
 
@@ -28,6 +31,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/server"
@@ -77,9 +81,27 @@ func main() {
 		fatal("skills toolset init failed", "err", err)
 	}
 
+	// Semantic memory (M6): present-and-configured memory block ⇒ open the
+	// task-scoped Qdrant store; every served agent gets it (ambient recall via
+	// preload_memory). nil when the feature is off.
+	var taskMem adkmemory.Service
+	if cfg.Memory != nil {
+		eprov, _ := cfg.Provider(cfg.Memory.Embedder.Provider)
+		embedder, err := inference.NewEmbedder(eprov, cfg.Memory.Embedder.Model)
+		if err != nil {
+			fatal("memory embedder init failed", "err", err)
+		}
+		taskStore, err := memory.Open(context.Background(), cfg.Memory.URL, embedder, "task_memory", cfg.Memory.TopK)
+		if err != nil {
+			fatal("memory open failed", "err", err)
+		}
+		taskMem = taskStore
+		slog.Info("semantic memory enabled", "component", "startup", "collection", "task_memory", "embedder", cfg.Memory.Embedder.Model)
+	}
+
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS)
+	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskMem)
 	if err != nil {
 		fatal("agent build failed", "err", err)
 	}
@@ -181,7 +203,7 @@ func fatal(msg string, args ...any) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskMem adkmemory.Service) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
 		names = append(names, name)
@@ -264,9 +286,31 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, servers, fmtErr(name, "model: %v", err)
 		}
 
+		// Memory tools (M6) are ADK-native and route through the runner's
+		// MemoryService (set in agent.Serve). preload_memory is ambient recall
+		// (added to every agent when memory is on); load_memory is deliberate recall
+		// (opt-in via the agent's tools list). Strip load_memory from the builtin
+		// names regardless, so tools.Build never sees an unknown tool.
+		toolNames := make([]string, 0, len(ac.Tools))
+		wantLoadMemory := false
+		for _, t := range ac.Tools {
+			if t == "load_memory" {
+				wantLoadMemory = true
+				continue
+			}
+			toolNames = append(toolNames, t)
+		}
+		var memTools []tool.Tool
+		if taskMem != nil {
+			memTools = append(memTools, preloadmemorytool.New())
+			if wantLoadMemory {
+				memTools = append(memTools, loadmemorytool.New())
+			}
+		}
+
 		var builtins []tool.Tool
-		if len(ac.Tools) > 0 {
-			builtins, err = tools.Build(ac.Tools, tools.Deps{
+		if len(toolNames) > 0 {
+			builtins, err = tools.Build(toolNames, tools.Deps{
 				SearXNG:    cfg.Tools.WebSearch.Backend,
 				Crawl4AI:   cfg.Tools.Fetch.RenderBackend,
 				Summarizer: m,
@@ -276,6 +320,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, servers, fmtErr(name, "tools: %v", err)
 			}
 		}
+		builtins = append(builtins, memTools...)
 
 		bundle, err := agent.LoadBundle(ac.Bundle)
 		if err != nil {
@@ -309,7 +354,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 		}
 
-		srv, err := agent.Serve(served, sessions)
+		srv, err := agent.Serve(served, sessions, taskMem)
 		if err != nil {
 			return nil, servers, fmtErr(name, "a2a serve: %v", err)
 		}

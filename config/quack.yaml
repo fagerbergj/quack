@@ -11,6 +11,17 @@ stores:
     kind: postgres
     url: ${DATABASE_URL}
 
+# Semantic memory (M6). Presence of this block enables it; if QDRANT_URL is unset
+# the block self-disables (recall/commit off) so qdrant-less runs still work.
+# Recall is ambient (preload_memory) + deliberate (load_memory). Embeddings use
+# the always-warm qwen3-embed group.
+memory:
+  url: ${QDRANT_URL}
+  embedder:
+    provider: default
+    model: ${EMBED_MODEL}
+  top_k: 5
+
 orchestrator:
   provider: default
   model: ${ORCH_MODEL}          # the thin dispatcher: routes requests to agents
@@ -24,7 +35,7 @@ agents:
     provider: default
     model: ${RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
-    tools: [web_search, web_fetch, summarize, current_date]
+    tools: [web_search, web_fetch, summarize, current_date, load_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
