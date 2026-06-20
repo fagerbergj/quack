@@ -13,6 +13,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qdrant/go-client/qdrant"
@@ -33,6 +34,15 @@ const (
 	payloadTimestamp = "timestamp"
 )
 
+const (
+	// maxRecallRunes bounds the recall query sent to the embedder (a topic, not a
+	// document) so one oversized input can't become a minutes-long CPU embed.
+	maxRecallRunes = 2000
+	// recallEmbedTimeout bounds how long recall waits on the embedder before
+	// degrading to no-recall — recall is best-effort and must not block a node.
+	recallEmbedTimeout = 30 * time.Second
+)
+
 // Store is a Qdrant collection serving one memory scope (e.g. "task_memory").
 // It implements adkmemory.Service. The consolidator (a gemma-class LLM) drives
 // the gated commit path's extract/vet/consolidate step; it may be nil for a
@@ -44,7 +54,9 @@ type Store struct {
 	coll         string
 	domain       string // selects the consolidation prompt ("task" | "user")
 	topK         uint64
+	minScore     float32 // recall hits below this cosine score are dropped (0 = no threshold)
 	log          *slog.Logger
+	embCache     *embedCache // memoizes text→vector (deterministic for a fixed model)
 }
 
 var _ adkmemory.Service = (*Store)(nil)
@@ -53,8 +65,9 @@ var _ adkmemory.Service = (*Store)(nil)
 // collection exists — creating it on first use with a vector size probed from
 // the embedder, so the embedding model's dimension need not be configured. The
 // consolidator LLM drives Commit; pass nil for a recall-only store. domain
-// ("task" | "user") selects the consolidation prompt.
-func Open(ctx context.Context, addr string, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int) (*Store, error) {
+// ("task" | "user") selects the consolidation prompt. minScore drops recall hits
+// below that cosine similarity (0 = no threshold).
+func Open(ctx context.Context, addr string, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
 	host, port, err := parseAddr(addr)
 	if err != nil {
 		return nil, err
@@ -70,7 +83,9 @@ func Open(ctx context.Context, addr string, embedder inference.Embedder, consoli
 		coll:         collection,
 		domain:       domain,
 		topK:         uint64(topK),
+		minScore:     minScore,
 		log:          slog.Default().With("component", "memory", "collection", collection),
+		embCache:     newEmbedCache(512),
 	}
 	if err := s.ensureCollection(ctx); err != nil {
 		return nil, err
@@ -87,7 +102,7 @@ func (s *Store) ensureCollection(ctx context.Context) error {
 		return nil
 	}
 	// Probe the embedder for the vector dimension rather than hardcoding the model's.
-	vecs, err := s.embedder.Embed(ctx, []string{"dimension probe"})
+	vecs, err := s.embed(ctx, []string{"dimension probe"}, "dim-probe")
 	if err != nil {
 		return fmt.Errorf("memory: embed probe: %w", err)
 	}
@@ -115,17 +130,36 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 	if req == nil || strings.TrimSpace(req.Query) == "" {
 		return &adkmemory.SearchResponse{}, nil
 	}
-	vecs, err := s.embedder.Embed(ctx, []string{req.Query})
+	// Cap the query before embedding: a recall query is a topic, not a document.
+	// Without this an agent whose input is huge (e.g. a combiner fed all upstream
+	// findings) would embed tens of KB on the CPU embedder — a 10-min job that
+	// head-of-line-blocks llama.cpp and stalls the DAG.
+	query := req.Query
+	if r := []rune(query); len(r) > maxRecallRunes {
+		query = string(r[:maxRecallRunes])
+	}
+	// Bounded + best-effort: recall must never hang or fail a node. A slow/wedged
+	// embedder times out here and we proceed with no recall rather than blocking.
+	ectx, cancel := context.WithTimeout(ctx, recallEmbedTimeout)
+	defer cancel()
+	vecs, err := s.embed(ectx, []string{query}, "recall")
 	if err != nil {
-		return nil, fmt.Errorf("memory: embed query: %w", err)
+		s.log.Warn("recall embed failed; proceeding without recall", "err", err)
+		return &adkmemory.SearchResponse{}, nil
 	}
 	if len(vecs) == 0 {
 		return &adkmemory.SearchResponse{}, nil
 	}
+	scopeID := s.scope(req.AppName, req.UserID)
 	var flt *qdrant.Filter
-	if req.UserID != "" {
-		flt = &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadUserID, req.UserID)}}
+	if scopeID != "" {
+		flt = &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadUserID, scopeID)}}
 	}
+	// Fetch top-K by similarity within the scope, then apply minScore in Go so the
+	// threshold decision is observable (raw match count + top score in the debug log)
+	// — qdrant's ScoreThreshold would silently drop everything and look identical to a
+	// scope mismatch. Dropping weak matches keeps low-relevance hits out of the prompt
+	// as the collection grows (context rot).
 	pts, err := s.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: s.coll,
 		Query:          qdrant.NewQueryDense(vecs[0]),
@@ -137,11 +171,22 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 		return nil, fmt.Errorf("memory: query %q: %w", s.coll, err)
 	}
 	entries := make([]adkmemory.Entry, 0, len(pts))
+	previews := make([]string, 0, len(pts))
+	var topScore float32
+	dropped := 0
 	for _, p := range pts {
+		if sc := p.GetScore(); sc > topScore {
+			topScore = sc
+		}
+		if s.minScore > 0 && p.GetScore() < s.minScore {
+			dropped++
+			continue
+		}
 		content := payloadString(p.GetPayload(), payloadContent)
 		if content == "" {
 			continue
 		}
+		previews = append(previews, preview(content))
 		e := adkmemory.Entry{
 			ID:      pointID(p.GetId()),
 			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: content}}},
@@ -154,8 +199,96 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 		}
 		entries = append(entries, e)
 	}
-	s.log.Debug("recall", "user", req.UserID, "hits", len(entries))
+	// Logs what preload_memory / load_memory pulled in (both route here). Enable with
+	// LOG_LEVEL=debug. scope = the partition key actually queried (agent name for task,
+	// userID for user); raw = matches in scope before minScore; top_score = best cosine;
+	// dropped = filtered by minScore. This pinpoints hits=0: scope mismatch (raw=0) vs
+	// threshold too high (raw>0, dropped=raw).
+	s.log.Debug("recall", "user", req.UserID, "scope", scopeID, "app", req.AppName,
+		"query", preview(req.Query), "raw", len(pts), "top_score", topScore,
+		"min_score", s.minScore, "dropped", dropped, "hits", len(entries), "memories", previews)
 	return &adkmemory.SearchResponse{Memories: entries}, nil
+}
+
+// embed wraps the embedder with hot-path timing (Debug): which call site (path),
+// how many inputs, total input chars, and how long the call took — so a slow
+// embed in the llm-swap logs can be attributed to recall vs commit and to input
+// size. Enable with LOG_LEVEL=debug.
+func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]float32, error) {
+	// Single-input calls (recall, neighbour probe) are memoized: preload_memory
+	// re-embeds the same node-task query on every model turn, and that embed is
+	// synchronous + CPU-bound, so caching collapses the repeats (and the resulting
+	// cross-node contention). Batch writes are unique facts — not worth caching.
+	if len(texts) == 1 && s.embCache != nil {
+		if v, ok := s.embCache.get(texts[0]); ok {
+			s.log.Debug("embed", "path", path, "inputs", 1, "chars", len(texts[0]), "cached", true)
+			return [][]float32{v}, nil
+		}
+	}
+	chars := 0
+	for _, t := range texts {
+		chars += len(t)
+	}
+	t0 := time.Now()
+	vecs, err := s.embedder.Embed(ctx, texts)
+	s.log.Debug("embed", "path", path, "inputs", len(texts), "chars", chars, "dur", time.Since(t0), "err", err != nil)
+	if err == nil && len(texts) == 1 && len(vecs) == 1 && s.embCache != nil {
+		s.embCache.put(texts[0], vecs[0])
+	}
+	return vecs, err
+}
+
+// embedCache memoizes text→embedding. Embeddings are deterministic for a fixed
+// model (stable for the process lifetime), so no TTL is needed; it's bounded by a
+// size cap. ponytail: clear-on-full, not LRU — distinct queries per request are
+// few, so a 512-entry cap rarely fills; switch to an LRU only if real churn shows.
+type embedCache struct {
+	mu  sync.Mutex
+	m   map[string][]float32
+	cap int
+}
+
+func newEmbedCache(cap int) *embedCache {
+	return &embedCache{m: make(map[string][]float32, cap), cap: cap}
+}
+
+func (c *embedCache) get(k string) ([]float32, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.m[k]
+	return v, ok
+}
+
+func (c *embedCache) put(k string, v []float32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) >= c.cap {
+		c.m = make(map[string][]float32, c.cap)
+	}
+	c.m[k] = v
+}
+
+// preview truncates a string to ~100 runes for debug logging (memories are short
+// facts, but a stray long one shouldn't flood the log).
+func preview(s string) string {
+	const max = 100
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
+// scope returns the partition key for this store's domain, stored in/queried from
+// the payloadUserID field. Task memory is per-agent *tradecraft*, so it is keyed by
+// the agent name (recall: req.AppName; commit: the author) — stable across requests,
+// unlike the per-invocation "A2A_USER_<ctxid>" the A2A server mints. User memory is
+// personal, so it stays keyed by the real userID.
+func (s *Store) scope(agentName, userID string) string {
+	if s.domain == "task" {
+		return agentName
+	}
+	return userID
 }
 
 func payloadString(payload map[string]*qdrant.Value, key string) string {

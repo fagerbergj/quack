@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"os"
+	"strings"
 	"testing"
 
 	adkmemory "google.golang.org/adk/memory"
@@ -31,7 +32,7 @@ func TestCommit_AddThenRecall(t *testing.T) {
 	const coll = "quack_test_commit"
 
 	consolidator := fakeModel{reply: "```json\n{\"ops\":[{\"action\":\"ADD\",\"content\":\"transportforireland.ie is authoritative for Irish transit\",\"kind\":\"source\"}]}\n```"}
-	s, err := Open(ctx, addr, fakeEmbedder{}, consolidator, coll, "task", 5)
+	s, err := Open(ctx, addr, fakeEmbedder{}, consolidator, coll, "task", 5, 0.5)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestCommit_Noop(t *testing.T) {
 	ctx := context.Background()
 	const coll = "quack_test_commit_noop"
 
-	s, err := Open(ctx, addr, fakeEmbedder{}, fakeModel{reply: `{"ops":[]}`}, coll, "task", 5)
+	s, err := Open(ctx, addr, fakeEmbedder{}, fakeModel{reply: `{"ops":[]}`}, coll, "task", 5, 0.5)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -86,5 +87,27 @@ func TestCommit_NoConsolidator(t *testing.T) {
 	s := &Store{} // no consolidator
 	if _, err := s.Commit(context.Background(), "u1", "a", []Candidate{{Content: "x"}}, ""); err == nil {
 		t.Fatal("Commit with nil consolidator should error")
+	}
+}
+
+func TestNeighbourProbe(t *testing.T) {
+	// Short input passes through untouched.
+	if got := neighbourProbe("hello", nil); got != "hello" {
+		t.Fatalf("short probe = %q, want hello", got)
+	}
+
+	// A long source answer is capped to maxProbeRunes.
+	long := strings.Repeat("x", maxProbeRunes*3)
+	if got := neighbourProbe(long, nil); len([]rune(got)) != maxProbeRunes {
+		t.Fatalf("probe len = %d, want %d", len([]rune(got)), maxProbeRunes)
+	}
+
+	// Staged content leads, so it survives truncation even with a huge answer.
+	got := neighbourProbe(strings.Repeat("y", maxProbeRunes*3), []Candidate{{Content: "STAGED-FACT"}})
+	if !strings.HasPrefix(got, "STAGED-FACT") {
+		t.Fatalf("probe must lead with staged content, got %q...", got[:20])
+	}
+	if len([]rune(got)) != maxProbeRunes {
+		t.Fatalf("capped probe len = %d, want %d", len([]rune(got)), maxProbeRunes)
 	}
 }

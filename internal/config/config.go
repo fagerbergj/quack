@@ -35,6 +35,7 @@ type MemoryConfig struct {
 	Embedder      ProviderModel `yaml:"embedder"`      // provider+model for embeddings (e.g. qwen3-embed)
 	Consolidation ProviderModel `yaml:"consolidation"` // provider+model for extract/vet/consolidate (e.g. gemma)
 	TopK          int           `yaml:"top_k"`         // neighbours fetched per recall/consolidation (default 5)
+	MinScore      *float32      `yaml:"min_score"`     // min cosine similarity for a recall hit to be returned (default 0.5; set 0 to disable)
 	UserMemory    bool          `yaml:"user_memory"`   // personal facts about the user (orchestrator); off by default (privacy)
 }
 
@@ -289,6 +290,13 @@ func (c *Config) validate() error {
 		}
 		if m.TopK < 1 {
 			return fmt.Errorf("config: memory.top_k must be >= 1")
+		}
+		if m.MinScore == nil {
+			d := float32(0.5)
+			m.MinScore = &d
+		}
+		if *m.MinScore < 0 || *m.MinScore > 1 {
+			return fmt.Errorf("config: memory.min_score must be in [0,1]")
 		}
 	}
 	if c.Dag.MaxActiveNodes == 0 {

@@ -42,6 +42,9 @@ func (s *Store) Commit(ctx context.Context, userID, author string, staged []Cand
 	if s.consolidator == nil {
 		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
 	}
+	// Partition key: task tradecraft is keyed by the agent (author), user memory by
+	// the real userID — see Store.scope. Keeps writes and recall on the same key.
+	userID = s.scope(author, userID)
 	staged = dedupCandidates(staged) // collapse the same sentence staged across passes
 	if len(staged) == 0 && strings.TrimSpace(sourceText) == "" {
 		return 0, nil
@@ -99,15 +102,36 @@ type op struct {
 	Kind    string `json:"kind"`    // free-form tag stored in metadata
 }
 
-func (s *Store) neighbours(ctx context.Context, userID, sourceText string, staged []Candidate) ([]neighbour, error) {
-	probe := sourceText
+// maxProbeRunes caps the text embedded to find dedup neighbours. The probe only
+// needs to be representative of the work, not complete — a research answer can be
+// 10k+ chars, and embedding all of it on a CPU model costs seconds for no extra
+// dedup value. The memories actually written are short atomic facts embedded in
+// full.
+const maxProbeRunes = 2000
+
+// neighbourProbe builds the (capped) text whose nearest existing memories we
+// reconcile against. Staged candidates go first (they're closest to what we'll
+// write, so they survive truncation), followed by a prefix of the source answer.
+func neighbourProbe(sourceText string, staged []Candidate) string {
+	var b strings.Builder
 	for _, c := range staged {
-		probe += "\n" + c.Content
+		b.WriteString(strings.TrimSpace(c.Content))
+		b.WriteByte('\n')
 	}
-	if strings.TrimSpace(probe) == "" {
+	b.WriteString(sourceText)
+	probe := strings.TrimSpace(b.String())
+	if r := []rune(probe); len(r) > maxProbeRunes {
+		probe = string(r[:maxProbeRunes])
+	}
+	return probe
+}
+
+func (s *Store) neighbours(ctx context.Context, userID, sourceText string, staged []Candidate) ([]neighbour, error) {
+	probe := neighbourProbe(sourceText, staged)
+	if probe == "" {
 		return nil, nil
 	}
-	vecs, err := s.embedder.Embed(ctx, []string{probe})
+	vecs, err := s.embed(ctx, []string{probe}, "commit-neighbours")
 	if err != nil {
 		return nil, fmt.Errorf("memory: embed for neighbours: %w", err)
 	}
@@ -226,7 +250,7 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 		for i, o := range writes {
 			texts[i] = o.Content
 		}
-		vecs, err := s.embedder.Embed(ctx, texts)
+		vecs, err := s.embed(ctx, texts, "commit-write")
 		if err != nil {
 			return 0, fmt.Errorf("memory: embed writes: %w", err)
 		}
