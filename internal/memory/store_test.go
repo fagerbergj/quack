@@ -23,25 +23,50 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 	return out, nil
 }
 
-// TestStore_RecallRoundTrip needs a live Qdrant (QDRANT_URL). It creates a throwaway
-// collection, upserts a point, and checks SearchMemory recalls it and honours the
-// per-user filter.
-func TestStore_RecallRoundTrip(t *testing.T) {
+// upsertScoped writes one fixed-vector point whose scope key (payloadUserID) is
+// scope, so the fakeEmbedder makes any query match and only the filter decides.
+func upsertScoped(t *testing.T, s *Store, coll, scope, content string) {
+	t.Helper()
+	wait := true
+	if _, err := s.client.Upsert(context.Background(), &qdrant.UpsertPoints{
+		CollectionName: coll,
+		Wait:           &wait,
+		Points: []*qdrant.PointStruct{{
+			Id:      qdrant.NewIDNum(1),
+			Vectors: qdrant.NewVectorsDense([]float32{1, 0, 0, 0}),
+			Payload: qdrant.NewValueMap(map[string]any{
+				payloadContent: content,
+				payloadUserID:  scope,
+				payloadAuthor:  "web-researcher",
+			}),
+		}},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+}
+
+// TestStore_TaskScopedByAgent needs a live Qdrant (QDRANT_URL). It proves task
+// memory is keyed by the AGENT (req.AppName), not the per-request A2A UserID — so a
+// memory written in one request is recalled in another despite a different
+// "A2A_USER_<ctxid>", and a different agent can't see it. This is the regression
+// guard for the bug where every invocation got its own user ID and recall was
+// always empty.
+func TestStore_TaskScopedByAgent(t *testing.T) {
 	addr := os.Getenv("QDRANT_URL")
 	if addr == "" {
 		t.Skip("QDRANT_URL not set; skipping qdrant integration test")
 	}
 	ctx := context.Background()
-	const coll = "quack_test_memory"
+	const coll = "quack_test_task_memory"
 
-	s, err := Open(ctx, addr, fakeEmbedder{}, nil, coll, "task", 5)
+	s, err := Open(ctx, addr, fakeEmbedder{}, nil, coll, "task", 5, 0.5)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.client.DeleteCollection(ctx, coll) })
 
 	// Empty collection → no hits, no error.
-	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "anything", UserID: "u1"})
+	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "anything", AppName: "web-researcher"})
 	if err != nil {
 		t.Fatalf("SearchMemory (empty): %v", err)
 	}
@@ -49,47 +74,71 @@ func TestStore_RecallRoundTrip(t *testing.T) {
 		t.Fatalf("empty collection returned %d memories, want 0", len(resp.Memories))
 	}
 
-	// Upsert one point for user u1.
-	wait := true
-	if _, err := s.client.Upsert(ctx, &qdrant.UpsertPoints{
-		CollectionName: coll,
-		Wait:           &wait,
-		Points: []*qdrant.PointStruct{{
-			Id:      qdrant.NewIDNum(1),
-			Vectors: qdrant.NewVectorsDense([]float32{1, 0, 0, 0}),
-			Payload: qdrant.NewValueMap(map[string]any{
-				payloadContent: "transportforireland.ie is authoritative for Irish transit",
-				payloadUserID:  "u1",
-				payloadAuthor:  "web-researcher",
-			}),
-		}},
-	}); err != nil {
-		t.Fatalf("upsert: %v", err)
+	// Stored under the agent-name scope (what Commit writes for the task domain).
+	upsertScoped(t, s, coll, "web-researcher", "transportforireland.ie is authoritative for Irish transit")
+
+	// The SAME agent, across two DIFFERENT per-request A2A users, both recall it.
+	for _, volatileUser := range []string{"A2A_USER_req1", "A2A_USER_req2"} {
+		resp, err = s.SearchMemory(ctx, &adkmemory.SearchRequest{
+			Query: "irish transit sources", AppName: "web-researcher", UserID: volatileUser,
+		})
+		if err != nil {
+			t.Fatalf("SearchMemory (%s): %v", volatileUser, err)
+		}
+		if len(resp.Memories) != 1 {
+			t.Fatalf("agent recall with user %s got %d memories, want 1 (recall must not depend on the A2A user)", volatileUser, len(resp.Memories))
+		}
+		if got := resp.Memories[0]; got.Content == nil || len(got.Content.Parts) == 0 || got.Content.Parts[0].Text == "" {
+			t.Fatalf("recalled memory has no content text")
+		}
 	}
 
-	// u1 recalls it.
-	resp, err = s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "irish transit sources", UserID: "u1"})
+	// A DIFFERENT agent sees nothing — tradecraft is partitioned per agent.
+	resp, err = s.SearchMemory(ctx, &adkmemory.SearchRequest{
+		Query: "irish transit sources", AppName: "synthesizer", UserID: "A2A_USER_req1",
+	})
 	if err != nil {
-		t.Fatalf("SearchMemory (u1): %v", err)
-	}
-	if len(resp.Memories) != 1 {
-		t.Fatalf("u1 got %d memories, want 1", len(resp.Memories))
-	}
-	got := resp.Memories[0]
-	if got.Content == nil || len(got.Content.Parts) == 0 || got.Content.Parts[0].Text == "" {
-		t.Fatalf("recalled memory has no content text")
-	}
-	if got.Author != "web-researcher" {
-		t.Fatalf("author = %q, want web-researcher", got.Author)
-	}
-
-	// u2 sees nothing — per-user isolation.
-	resp, err = s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "irish transit sources", UserID: "u2"})
-	if err != nil {
-		t.Fatalf("SearchMemory (u2): %v", err)
+		t.Fatalf("SearchMemory (other agent): %v", err)
 	}
 	if len(resp.Memories) != 0 {
-		t.Fatalf("u2 got %d memories, want 0 (user filter leaked)", len(resp.Memories))
+		t.Fatalf("other agent got %d memories, want 0 (agent partition leaked)", len(resp.Memories))
+	}
+}
+
+// TestStore_UserScopedByUserID proves user memory still keys by the real userID
+// (the orchestrator isn't behind A2A, so its userID is stable), and ignores AppName.
+func TestStore_UserScopedByUserID(t *testing.T) {
+	addr := os.Getenv("QDRANT_URL")
+	if addr == "" {
+		t.Skip("QDRANT_URL not set; skipping qdrant integration test")
+	}
+	ctx := context.Background()
+	const coll = "quack_test_user_memory"
+
+	s, err := Open(ctx, addr, fakeEmbedder{}, nil, coll, "user", 5, 0.5)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.client.DeleteCollection(ctx, coll) })
+
+	upsertScoped(t, s, coll, "local", "the user keeps bees")
+
+	// Right user recalls it (AppName is irrelevant for the user domain).
+	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "about the user", UserID: "local", AppName: "orchestrator"})
+	if err != nil {
+		t.Fatalf("SearchMemory (local): %v", err)
+	}
+	if len(resp.Memories) != 1 {
+		t.Fatalf("user local got %d memories, want 1", len(resp.Memories))
+	}
+
+	// A different user sees nothing — personal memory stays isolated.
+	resp, err = s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "about the user", UserID: "someone-else"})
+	if err != nil {
+		t.Fatalf("SearchMemory (other user): %v", err)
+	}
+	if len(resp.Memories) != 0 {
+		t.Fatalf("other user got %d memories, want 0 (user isolation leaked)", len(resp.Memories))
 	}
 }
 

@@ -23,7 +23,6 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/loadmemorytool"
-	"google.golang.org/adk/tool/preloadmemorytool"
 	"google.golang.org/adk/tool/skilltoolset"
 	"google.golang.org/adk/tool/skilltoolset/skill"
 
@@ -97,7 +96,7 @@ func main() {
 		if err != nil {
 			fatal("memory consolidation model init failed", "err", err)
 		}
-		taskStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "task_memory", "task", cfg.Memory.TopK)
+		taskStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "task_memory", "task", cfg.Memory.TopK, *cfg.Memory.MinScore)
 		if err != nil {
 			fatal("memory open failed", "err", err)
 		}
@@ -106,7 +105,7 @@ func main() {
 
 		// User memory (personal facts about the user) is off by default — privacy.
 		if cfg.Memory.UserMemory {
-			userStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "user_memory", "user", cfg.Memory.TopK)
+			userStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "user_memory", "user", cfg.Memory.TopK, *cfg.Memory.MinScore)
 			if err != nil {
 				fatal("user memory open failed", "err", err)
 			}
@@ -343,14 +342,6 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			toolNames = append(toolNames, t)
 		}
-		var memTools []tool.Tool
-		if taskMem != nil {
-			memTools = append(memTools, preloadmemorytool.New())
-			if wantLoadMemory {
-				memTools = append(memTools, loadmemorytool.New())
-			}
-		}
-
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
@@ -363,18 +354,28 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, servers, fmtErr(name, "tools: %v", err)
 			}
 		}
-		builtins = append(builtins, memTools...)
 
 		bundle, err := agent.LoadBundle(ac.Bundle)
 		if err != nil {
 			return nil, servers, fmtErr(name, "bundle: %v", err)
 		}
-		// Memory guidance (M6): the bundle's optional memory.md, appended to the
-		// agent's behaviour only when memory is on — so it never dangles otherwise.
+		// Memory guidance (M6): the bundle's optional memory.md. Its presence marks the
+		// agent as a memory participant — ONLY such agents get recall (preload/load_memory).
+		// Tool-less combiners (synthesizer) and media/image readers have no memory.md, so
+		// they never touch the embedder. That matters: the synthesizer's input is all
+		// upstream findings concatenated (tens of KB), and embedding that on the CPU
+		// embedder is a large, useless job that head-of-line-blocks the queue and stalls
+		// the whole DAG. Recall belongs only to agents that research.
 		var memGuidance string
 		if taskStore != nil {
 			if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
 				return nil, servers, fmtErr(name, "memory.md: %v", err)
+			}
+		}
+		if taskMem != nil && memGuidance != "" {
+			builtins = append(builtins, memory.NewPreload())
+			if wantLoadMemory {
+				builtins = append(builtins, loadmemorytool.New())
 			}
 		}
 		comp := compactionFor(ac)

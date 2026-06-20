@@ -42,6 +42,9 @@ func (s *Store) Commit(ctx context.Context, userID, author string, staged []Cand
 	if s.consolidator == nil {
 		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
 	}
+	// Partition key: task tradecraft is keyed by the agent (author), user memory by
+	// the real userID — see Store.scope. Keeps writes and recall on the same key.
+	userID = s.scope(author, userID)
 	staged = dedupCandidates(staged) // collapse the same sentence staged across passes
 	if len(staged) == 0 && strings.TrimSpace(sourceText) == "" {
 		return 0, nil

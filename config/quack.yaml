@@ -24,6 +24,7 @@ memory:
     provider: default
     model: ${JUDGE_MODEL}       # reuse the always-warm judge model (gemma) for extract/vet/consolidate
   top_k: 5
+  min_score: 0.5                # drop recall hits below this cosine similarity (0 disables; keeps weak matches out of the prompt)
   user_memory: ${USER_MEMORY}   # personal facts about the user; off by default (unset ⇒ false)
 
 orchestrator:

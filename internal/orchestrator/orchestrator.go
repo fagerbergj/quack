@@ -16,7 +16,6 @@ import (
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/preloadmemorytool"
 	"google.golang.org/genai"
 
 	internalagent "github.com/fagerbergj/quack/internal/agent"
@@ -117,7 +116,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 				yield(stream.Errorf("orchestrator: commit_memory tool: "+err.Error()), nil)
 				return
 			}
-			toolList = append(toolList, preloadmemorytool.New(), commitTool)
+			toolList = append(toolList, memory.NewPreload(), commitTool)
 			memSvc = o.userMem
 		}
 

@@ -2,8 +2,10 @@ package dag
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +13,12 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 )
+
+// plannerPromptTemplate is the planner's system prompt. {{DATE}}, {{YEAR}},
+// {{AGENTS}}, and {{MEDIA}} are filled in by buildSystemPrompt.
+//
+//go:embed planner_prompt.md
+var plannerPromptTemplate string
 
 // AgentInfo describes one available agent to the planner.
 type AgentInfo struct {
@@ -160,7 +168,7 @@ func (p *Planner) buildSystemPrompt() string {
 	if p.hasAgentNamed("media-reader") || p.hasAgentNamed("image-reader") {
 		if p.hasAgentNamed("image-reader") {
 			mediaRule = `
-9. MEDIA ROUTING — when the user message contains "[User attached: ...]", pick ONE media agent:
+MEDIA ROUTING — when the user message contains "[User attached: ...]", pick ONE media agent:
    - audio/* attachment → always use media-reader (image-reader cannot process audio).
    - image/* + request involves handwriting, cursive, messy writing, dense text, small print, multi-column layout, degraded/blurry/faded image, or "transcribe" → use image-reader.
    - image/* + request is a general description, identification, simple screenshot, or anything not covered above → use media-reader.
@@ -168,52 +176,19 @@ func (p *Planner) buildSystemPrompt() string {
    If the user also asks a factual question, chain: media-agent → web-researcher → synthesizer.`
 		} else {
 			mediaRule = `
-9. MEDIA ROUTING — when the user message contains "[User attached: ...]":
+MEDIA ROUTING — when the user message contains "[User attached: ...]":
    - Use ONE media-reader node (no web-researcher needed unless the user also asks a factual question).
    - The media-reader node receives the actual file bytes; write its task as a clear instruction about what to do with the file.
    - If the user asks a factual question AND has an attachment, use media-reader first, then web-researcher (serial chain), then synthesizer.`
 		}
 	}
 
-	return fmt.Sprintf(`Today's date is %s. The query may be time-sensitive: when it mentions "recent", "latest", "new", "current", or "this year", scope the tasks you write to the PRESENT — name the current year explicitly (e.g. "in %d") rather than defaulting to dates from your training data, which are in the past.
-
-You are a task decomposition specialist. Decompose the user's query into a minimal DAG of research tasks.
-
-Available agents:
-%s
-Rules:
-1. Use web-researcher nodes for factual research subtasks.
-2. Use a synthesizer node ONLY when there are 2+ research nodes to combine.
-3. For a simple single-topic query, use ONE web-researcher node (no synthesizer needed).
-4. For multi-part queries, use 2–4 web-researcher nodes + ONE synthesizer as the final node.
-5. Maximum 5 nodes total.
-6. Each node runs as a STATELESS worker: it sees ONLY the task you write — not
-   this conversation, not your plan, not the other nodes' work. So write
-   SELF-CONTAINED tasks. Resolve every reference ("this", "that", "the above",
-   "your previous answer", "it") into explicit content. For a follow-up that
-   transforms a prior answer (clean up, reformat, shorten, expand, correct,
-   translate), QUOTE the relevant prior answer (or the exact part to change)
-   inside the task — the worker has no other way to see it.
-7. synthesizer depends_on ALL web-researcher nodes.
-8. CRITICAL — serial vs parallel researchers:
-   - Run researchers IN PARALLEL (depends_on: []) only when they are TRULY independent
-     and each can answer its sub-question without knowing the other's results.
-     Example: "climate in Dublin" and "things to do in Dublin" are independent.
-   - Run researchers SERIALLY (depends_on: [prev_id]) when one task requires the
-     SPECIFIC OUTPUT of another — e.g., first find which models exist, then look up
-     specs for those exact models. The second researcher receives the first's answer
-     as context, so it can search for the right things.
-   - Ask yourself: "Could a researcher answer this task without seeing the previous
-     researcher's output?" If NO, set depends_on.%s
-
-Output ONLY valid JSON (no markdown fences, no explanation):
-{
-  "nodes": [
-    {"id": "n1", "agent": "web-researcher", "task": "...", "depends_on": []},
-    {"id": "n2", "agent": "web-researcher", "task": "...", "depends_on": ["n1"]},
-    {"id": "n3", "agent": "synthesizer", "task": "Combine findings into a comprehensive answer", "depends_on": ["n1","n2"]}
-  ]
-}`, now.Format("Monday, January 2, 2006"), now.Year(), agentList.String(), mediaRule)
+	return strings.NewReplacer(
+		"{{DATE}}", now.Format("Monday, January 2, 2006"),
+		"{{YEAR}}", strconv.Itoa(now.Year()),
+		"{{AGENTS}}", agentList.String(),
+		"{{MEDIA}}", mediaRule,
+	).Replace(plannerPromptTemplate)
 }
 
 // rawNode is the JSON shape the planner LLM is asked to emit.

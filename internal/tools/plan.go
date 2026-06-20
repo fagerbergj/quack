@@ -43,7 +43,10 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			Description: "Tool to decompose a task into a DAG plan for specialist agents to execute. " +
 				"Use when the task is too large, too complex, or requires capabilities you cannot perform directly. " +
 				"Do NOT call for tasks you can complete in a single response. " +
-				"Returns a plan_id; pass it to the execute tool to run the plan.",
+				"Returns a plan_id plus the planned DAG (each node's agent, dependencies, and task). " +
+				"Review it before executing: if a researcher is overloaded with unrelated topics, shared work is " +
+				"duplicated across nodes instead of extracted into an upstream node, or dependencies are wrong, " +
+				"call plan again to refine. When the plan looks right, pass plan_id to the execute tool.",
 		},
 		func(tc agent.ToolContext, a planArgs) (planResult, error) {
 			p, err := planner.Plan(tc, history, a.Query, attachments)
@@ -81,16 +84,20 @@ func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
 	return edges
 }
 
-// summarizePlan renders a one-line-per-node overview of the plan for the model.
-// It is informational only — execution uses the cached plan, not this text.
+// summarizePlan renders the plan for the model to review before executing: each
+// node's id, agent, dependencies, AND its full task text, so the model can judge
+// the decomposition (Is any researcher overloaded? Is shared work duplicated
+// instead of extracted into an upstream node? Are the dependencies right?) and
+// re-plan if it isn't good. Informational only — execution uses the cached plan.
 func summarizePlan(p *dag.Plan) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
+	fmt.Fprintf(&sb, "Planned DAG (%d node(s)) — review before executing:", len(p.Nodes))
 	for _, n := range p.Nodes {
 		fmt.Fprintf(&sb, "\n- %s (%s)", n.ID, n.AgentName)
 		if len(n.DependsOn) > 0 {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
+		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
 	}
 	return sb.String()
 }
