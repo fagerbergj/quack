@@ -1,9 +1,7 @@
 package tools
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -74,9 +72,13 @@ type fetchArgs struct {
 }
 
 // newFetch builds the fetch tool: SSRF-guard the URL, GET it with the guarded
-// client, and fall back to the crawl4ai render backend for pages a bare GET
-// can't read (JS-heavy or thin).
+// client, and fall back to a config-selected render backend (crawl4ai today, via
+// the PageRenderer port) for pages a bare GET can't read (JS-heavy or thin).
 func newFetch(d Deps) (tool.Tool, error) {
+	renderer, err := newPageRenderer(d.Fetch.Kind, d.Fetch.URL, d.Client)
+	if err != nil {
+		return nil, err
+	}
 	return functiontool.New[fetchArgs, string](
 		functiontool.Config{
 			Name:        "web_fetch",
@@ -98,7 +100,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 				}
 			}
 			if full == "" {
-				fetched, ferr := fetchBest(tc, d, u, target)
+				fetched, ferr := fetchBest(tc, d, renderer, u, target)
 				if ferr != nil {
 					return "", ferr
 				}
@@ -198,24 +200,25 @@ func capFetchReturn(s string) string {
 }
 
 // fetchBest tries to get the best readable text for target. It first tries a
-// direct GET; if that is thin, failed, or bot-walled, it falls back to crawl4ai.
-func fetchBest(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error) {
+// direct GET; if that is thin, failed, or bot-walled, it falls back to the render
+// backend (renderer may be nil when none is configured).
+func fetchBest(tc agent.ToolContext, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
 	text, derr := fetchReadable(tc, d.Guarded, target)
 	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
 		return text, nil
 	}
 
 	// The direct GET was thin (likely JS-rendered), failed, or hit an
-	// anti-bot wall; try the crawl4ai render backend, which renders with a
-	// real browser and returns clean Markdown. crawl4ai fetches the URL
-	// itself with no SSRF guard, so re-check that the host doesn't resolve
+	// anti-bot wall; try the render backend, which renders with a real browser
+	// and returns clean Markdown. The render backend fetches the URL itself
+	// server-side with no SSRF guard, so re-check that the host doesn't resolve
 	// into a blocked range before handing it over — ValidateURL above only
 	// catches literal IPs, not hostnames pointing at private/metadata IPs.
 	var rendered string
 	var rerr error
-	if d.Crawl4AI != "" {
+	if renderer != nil {
 		if rerr = validateResolvedHost(tc, u.Hostname()); rerr == nil {
-			rendered, rerr = crawl4aiMarkdown(tc, d.Client, d.Crawl4AI, target)
+			rendered, rerr = renderer.Render(tc, target)
 			if rerr == nil && strings.TrimSpace(rendered) != "" && !looksLikeBotWall(rendered) {
 				return rendered, nil
 			}
@@ -327,58 +330,6 @@ func fetchReadable(ctx context.Context, client *http.Client, target string) (str
 		return "", fmt.Errorf("web_fetch: got %s", resp.Status)
 	}
 	return readableBody(resp.Header.Get("Content-Type"), resp.Body)
-}
-
-// crawl4aiMarkdown asks the crawl4ai backend to fetch + render the page (real
-// browser) and return it as Markdown. crawl4ai is a trusted internal host (plain
-// client); the URL was already SSRF-validated by the caller. It uses the "fit"
-// content filter (Readability-based, drops chrome) and falls back to the raw DOM
-// markdown if fit prunes the page to nothing.
-func crawl4aiMarkdown(ctx context.Context, client *http.Client, backend, target string) (string, error) {
-	md, err := crawl4aiMD(ctx, client, backend, target, "fit")
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(md) == "" {
-		if md, err = crawl4aiMD(ctx, client, backend, target, "raw"); err != nil {
-			return "", err
-		}
-	}
-	return strings.TrimSpace(md), nil
-}
-
-// crawl4aiMD calls crawl4ai's POST /md endpoint with the given content filter and
-// returns the Markdown it produced.
-func crawl4aiMD(ctx context.Context, client *http.Client, backend, target, filter string) (string, error) {
-	body, err := json.Marshal(map[string]any{"url": target, "f": filter})
-	if err != nil {
-		return "", err
-	}
-	endpoint := strings.TrimRight(backend, "/") + "/md"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("crawl4ai: build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("crawl4ai: request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("crawl4ai: got %s", resp.Status)
-	}
-	var parsed struct {
-		Markdown string `json:"markdown"`
-		Success  bool   `json:"success"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", fmt.Errorf("crawl4ai: decode response: %w", err)
-	}
-	if !parsed.Success {
-		return "", fmt.Errorf("crawl4ai: backend reported failure for %s", target)
-	}
-	return parsed.Markdown, nil
 }
 
 // readableBody extracts content from an HTTP body: HTML is converted to Markdown

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,9 +28,8 @@ providers:
     endpoint: ${LLM_ENDPOINT}
     api_key: ${LLM_API_KEY}
 stores:
-  relational:
-    kind: postgres
-    url: ${DATABASE_URL}
+  main: { kind: postgres, url: ${DATABASE_URL} }
+session: { store: main }
 orchestrator:
   provider: default
   model: ${ORCH_MODEL}
@@ -45,6 +45,9 @@ server:
 	if got := c.Providers["default"].APIKey; got != "secret" {
 		t.Errorf("api_key = %q, want interpolated", got)
 	}
+	if got, _ := c.Store("main"); got.URL != "postgres://localhost/db" {
+		t.Errorf("store url = %q, want interpolated", got.URL)
+	}
 	if c.Orchestrator.Model != "m" {
 		t.Errorf("model = %q", c.Orchestrator.Model)
 	}
@@ -54,13 +57,7 @@ server:
 }
 
 func TestLoadDefaultsServerAddr(t *testing.T) {
-	c, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: http://x }
-stores:
-  relational: { kind: postgres, url: u }
-orchestrator: { provider: default, model: m }
-`))
+	c, err := Load(writeTemp(t, baseConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +71,8 @@ func TestLoadRejectsUnknownProviderKind(t *testing.T) {
 providers:
   default: { kind: anthropic, endpoint: http://x }
 stores:
-  relational: { kind: postgres, url: u }
+  main: { kind: postgres, url: u }
+session: { store: main }
 orchestrator: { provider: default, model: m }
 `))
 	if err == nil {
@@ -87,7 +85,8 @@ func TestLoadRejectsMissingOrchestratorProvider(t *testing.T) {
 providers:
   default: { kind: openai, endpoint: http://x }
 stores:
-  relational: { kind: postgres, url: u }
+  main: { kind: postgres, url: u }
+session: { store: main }
 orchestrator: { provider: nope, model: m }
 `))
 	if err == nil {
@@ -100,11 +99,26 @@ func TestLoadRejectsUnknownStoreKind(t *testing.T) {
 providers:
   default: { kind: openai, endpoint: http://x }
 stores:
-  relational: { kind: mysql, url: u }
+  bad: { kind: mysql, url: u }
+session: { store: bad }
 orchestrator: { provider: default, model: m }
 `))
 	if err == nil {
 		t.Fatal("expected error for unknown store kind")
+	}
+}
+
+func TestLoadRejectsUnknownSessionStore(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: nope }
+orchestrator: { provider: default, model: m }
+`))
+	if err == nil {
+		t.Fatal("expected error for session referencing an unknown store")
 	}
 }
 
@@ -115,7 +129,8 @@ func TestLoadParsesAgentsAndTools(t *testing.T) {
 providers:
   default: { kind: openai, endpoint: http://x }
 stores:
-  relational: { kind: postgres, url: u }
+  main: { kind: postgres, url: u }
+session: { store: main }
 orchestrator: { provider: default, model: m }
 agents:
   web-researcher:
@@ -124,8 +139,8 @@ agents:
     model: r-model
     tools: [web_search, web_fetch, summarize]
 tools:
-  web_search: { backend: ${SEARXNG_URL} }
-  web_fetch: { render_backend: ${CRAWL4AI_URL} }
+  web_search: { kind: searxng, url: ${SEARXNG_URL} }
+  web_fetch: { kind: crawl4ai, url: ${CRAWL4AI_URL} }
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -137,21 +152,93 @@ tools:
 	if a.Model != "r-model" || a.Provider != "default" || len(a.Tools) != 3 {
 		t.Errorf("agent = %+v, want model/provider/3 tools", a)
 	}
-	if c.Tools.WebSearch.Backend != "http://searxng:8080" {
-		t.Errorf("web_search backend = %q, want interpolated", c.Tools.WebSearch.Backend)
+	if c.Tools["web_search"].URL != "http://searxng:8080" {
+		t.Errorf("web_search url = %q, want interpolated", c.Tools["web_search"].URL)
 	}
-	if c.Tools.Fetch.RenderBackend != "http://crawl4ai:11235" {
-		t.Errorf("fetch render_backend = %q, want interpolated", c.Tools.Fetch.RenderBackend)
+	if c.Tools["web_fetch"].URL != "http://crawl4ai:11235" {
+		t.Errorf("web_fetch url = %q, want interpolated", c.Tools["web_fetch"].URL)
+	}
+}
+
+func TestLoadRejectsToolWithUnknownStore(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+tools:
+  load_document: { store: nope }
+`))
+	if err == nil {
+		t.Fatal("expected error for tool referencing an unknown store")
+	}
+}
+
+// TestStoreExtends checks a child store inherits the parent's connection and
+// overrides only the fields it sets.
+func TestStoreExtends(t *testing.T) {
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  base: { kind: postgres, url: pg }
+  doc:  { extends: base, schema: documents }
+session: { store: base }
+orchestrator: { provider: default, model: m }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, ok := c.Store("doc")
+	if !ok {
+		t.Fatal("doc store did not resolve")
+	}
+	if doc.Kind != "postgres" || doc.URL != "pg" {
+		t.Errorf("doc did not inherit connection: %+v", doc)
+	}
+	if doc.Schema != "documents" {
+		t.Errorf("doc.Schema = %q, want override", doc.Schema)
+	}
+}
+
+// TestMemoryStore checks task/user memory resolution from tool bindings and the
+// QDRANT-unset self-disable.
+func TestMemoryStore(t *testing.T) {
+	const cfg = `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+  vec:
+    kind: qdrant
+    url: %s
+    embedder: { provider: default, model: e }
+    consolidation: { provider: default, model: c }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+tools:
+  stage_memory: { store: vec, collection: task_memory }
+`
+	// With a URL, the stage_memory binding resolves to a usable vector store.
+	c, err := Load(writeTemp(t, fmt.Sprintf(cfg, "qdrant:6334")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rm, ok := c.MemoryStore("stage_memory")
+	if !ok {
+		t.Fatal("stage_memory store should resolve")
+	}
+	if rm.Collection != "task_memory" || rm.TopK != 5 || rm.MinScore != 0.5 {
+		t.Errorf("resolved = %+v, want collection/top_k/min_score defaults", rm)
+	}
+	// Empty URL (QDRANT_URL unset) ⇒ memory self-disables.
+	c, err = Load(writeTemp(t, fmt.Sprintf(cfg, "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.MemoryStore("stage_memory"); ok {
+		t.Error("empty store URL should self-disable memory")
 	}
 }
 
 func TestLoadRejectsAgentWithUnknownProvider(t *testing.T) {
-	_, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: http://x }
-stores:
-  relational: { kind: postgres, url: u }
-orchestrator: { provider: default, model: m }
+	_, err := Load(writeTemp(t, baseConfig+`
 agents:
   bad: { bundle: agents/bad, provider: nope, model: m, tools: [web_fetch] }
 `))
@@ -165,9 +252,34 @@ const baseConfig = `
 providers:
   default: { kind: openai, endpoint: http://x }
 stores:
-  relational: { kind: postgres, url: u }
+  main: { kind: postgres, url: u }
+session: { store: main }
 orchestrator: { provider: default, model: m }
 `
+
+// TestRealConfigLoads is a smoke test that the shipped config/quack.yaml parses
+// and validates against the current structs (guards against config drift). Env
+// is set so required URLs are non-empty; QDRANT_URL left unset exercises the
+// memory self-disable path.
+func TestRealConfigLoads(t *testing.T) {
+	for _, kv := range [][2]string{
+		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"}, {"DATABASE_URL", "postgres://localhost/db"},
+		{"ORCH_MODEL", "m"}, {"RESEARCHER_MODEL", "r"}, {"MEDIA_MODEL", "md"}, {"IMAGE_MODEL", "im"},
+		{"JUDGE_MODEL", "j"}, {"EMBED_MODEL", "e"}, {"SEARXNG_URL", "http://s"}, {"CRAWL4AI_URL", "http://c"},
+	} {
+		t.Setenv(kv[0], kv[1])
+	}
+	c, err := Load("../../config/quack.yaml")
+	if err != nil {
+		t.Fatalf("shipped config/quack.yaml failed to load: %v", err)
+	}
+	if s, ok := c.Store(c.Session.Store); !ok || s.Kind != "postgres" {
+		t.Errorf("session store %q did not resolve to postgres: %+v ok=%v", c.Session.Store, s, ok)
+	}
+	if doc, ok := c.Store("document"); !ok || doc.Kind != "postgres" || doc.Schema != "documents" {
+		t.Errorf("document store (extends) wrong: %+v ok=%v", doc, ok)
+	}
+}
 
 func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// No gates block ⇒ vetting disabled, config still valid.

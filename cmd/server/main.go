@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -56,7 +57,11 @@ func main() {
 		fatal("config load failed", "err", err)
 	}
 
-	st, err := store.Open(cfg.Stores.Relational.URL)
+	sessionStore, ok := cfg.Store(cfg.Session.Store)
+	if !ok {
+		fatal("session store not found in stores registry", "store", cfg.Session.Store)
+	}
+	st, err := store.Open(sessionStore.URL)
 	if err != nil {
 		fatal("store open failed", "err", err)
 	}
@@ -80,36 +85,49 @@ func main() {
 		fatal("skills toolset init failed", "err", err)
 	}
 
-	// Semantic memory (M6): present-and-configured memory block ⇒ open the
-	// task-scoped Qdrant store. Every served agent gets it for ambient recall
-	// (preload_memory); the trust gate uses it to commit vetted tradecraft. nil
-	// when the feature is off.
+	// Semantic memory (M6): a memory tool bound to a vector store (with QDRANT_URL
+	// set) turns it on — config composes it, no dedicated block. Task memory
+	// follows `stage_memory` (researchers' recall + the trust gate's vetted
+	// commit); user memory follows `commit_memory` bound to the orchestrator. A
+	// store with no URL self-disables, so qdrant-less runs keep working.
+	openMemory := func(rm config.ResolvedMemory, domain string) (*memory.Store, error) {
+		eprov, ok := cfg.Provider(rm.Embedder.Provider)
+		if !ok {
+			return nil, fmt.Errorf("embedder provider %q not found", rm.Embedder.Provider)
+		}
+		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model)
+		if err != nil {
+			return nil, fmt.Errorf("embedder: %w", err)
+		}
+		cprov, ok := cfg.Provider(rm.Consolidation.Provider)
+		if !ok {
+			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
+		}
+		consolidator, err := inference.NewModel(cprov, rm.Consolidation.Model)
+		if err != nil {
+			return nil, fmt.Errorf("consolidation model: %w", err)
+		}
+		return memory.New(context.Background(), rm.Kind, rm.URL, embedder, consolidator, rm.Collection, domain, rm.TopK, rm.MinScore)
+	}
 	var taskStore, userStore *memory.Store
-	if cfg.Memory != nil {
-		eprov, _ := cfg.Provider(cfg.Memory.Embedder.Provider)
-		embedder, err := inference.NewEmbedder(eprov, cfg.Memory.Embedder.Model)
+	if rm, ok := cfg.MemoryStore("stage_memory"); ok {
+		s, err := openMemory(rm, "task")
 		if err != nil {
-			fatal("memory embedder init failed", "err", err)
+			fatal("task memory init failed", "err", err)
 		}
-		cprov, _ := cfg.Provider(cfg.Memory.Consolidation.Provider)
-		consolidator, err := inference.NewModel(cprov, cfg.Memory.Consolidation.Model)
-		if err != nil {
-			fatal("memory consolidation model init failed", "err", err)
-		}
-		taskStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "task_memory", "task", cfg.Memory.TopK, *cfg.Memory.MinScore)
-		if err != nil {
-			fatal("memory open failed", "err", err)
-		}
-		slog.Info("semantic memory enabled", "component", "startup", "collection", "task_memory",
-			"embedder", cfg.Memory.Embedder.Model, "consolidation", cfg.Memory.Consolidation.Model)
-
-		// User memory (personal facts about the user) is off by default — privacy.
-		if cfg.Memory.UserMemory {
-			userStore, err = memory.Open(context.Background(), cfg.Memory.URL, embedder, consolidator, "user_memory", "user", cfg.Memory.TopK, *cfg.Memory.MinScore)
+		taskStore = s
+		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
+			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
+	}
+	// User memory: presence of commit_memory on the orchestrator is the switch.
+	if slices.Contains(cfg.Orchestrator.Tools, "commit_memory") {
+		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
+			s, err := openMemory(rm, "user")
 			if err != nil {
-				fatal("user memory open failed", "err", err)
+				fatal("user memory init failed", "err", err)
 			}
-			slog.Info("user memory enabled", "component", "startup", "collection", "user_memory")
+			userStore = s
+			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
 		}
 	}
 
@@ -281,19 +299,20 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	// An agent with no context_window configured is left uncompacted; see
 	// compactionFor below.
 	var summarizer model.LLM
-	if cfg.Compaction.Enabled {
-		cprov, ok := cfg.Provider(cfg.Compaction.Provider)
+	compCfg := cfg.Session.Compaction
+	if compCfg.Enabled {
+		cprov, ok := cfg.Provider(compCfg.Provider)
 		if !ok {
-			return nil, nil, fmt.Errorf("compaction: provider %q not found", cfg.Compaction.Provider)
+			return nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
 		}
 		var err error
-		if summarizer, err = inference.NewModel(cprov, cfg.Compaction.Model); err != nil {
+		if summarizer, err = inference.NewModel(cprov, compCfg.Model); err != nil {
 			return nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
-		slog.Info("context compaction enabled", "component", "startup", "summariser", cfg.Compaction.Model, "prune", cfg.Compaction.PruneEnabled())
+		slog.Info("context compaction enabled", "component", "startup", "summariser", compCfg.Model, "prune", compCfg.PruneEnabled())
 	}
 	compactionFor := func(ac config.AgentConfig) agent.Compaction {
-		if !cfg.Compaction.Enabled {
+		if !compCfg.Enabled {
 			return agent.Compaction{}
 		}
 		if ac.ContextWindow == 0 {
@@ -303,7 +322,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		return agent.Compaction{
 			Summarizer:    summarizer,
 			ContextWindow: ac.ContextWindow,
-			Prune:         cfg.Compaction.PruneEnabled(),
+			Prune:         compCfg.PruneEnabled(),
 			Enabled:       true,
 		}
 	}
@@ -345,8 +364,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
-				SearXNG:    cfg.Tools.WebSearch.Backend,
-				Crawl4AI:   cfg.Tools.Fetch.RenderBackend,
+				WebSearch:  tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL},
+				Fetch:      tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
 				Summarizer: m,
 				Cache:      urlCache,
 			})

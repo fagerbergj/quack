@@ -15,18 +15,17 @@ import (
 
 // Deps are the shared dependencies injected into built-in tools.
 type Deps struct {
-	// Client is a plain HTTP client for trusted internal backends (SearXNG,
-	// crawl4ai) that live on private network addresses.
+	// Client is a plain HTTP client for trusted internal backends that live on
+	// private network addresses.
 	Client *http.Client
 	// Guarded is an SSRF-protected HTTP client for fetching untrusted,
 	// agent-chosen URLs. Defaults to GuardedClient().
 	Guarded *http.Client
-	// SearXNG is the base URL of the SearXNG search backend (keyless).
-	SearXNG string
-	// Crawl4AI is the base URL of the crawl4ai render backend (keyless), called
-	// for its Markdown /md endpoint. Optional; when empty, fetch skips the render
-	// fallback.
-	Crawl4AI string
+	// WebSearch binds the web_search tool's backend (kind + endpoint).
+	WebSearch Backend
+	// Fetch binds the web_fetch tool's render backend (kind + endpoint).
+	// Optional; an empty URL means fetch skips the render fallback.
+	Fetch Backend
 	// Summarizer is the model the summarize tool uses to condense text.
 	Summarizer model.LLM
 	// Cache is a shared response cache used by web_fetch and web_search to avoid

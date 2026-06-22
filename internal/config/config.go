@@ -6,7 +6,6 @@ package config
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -15,32 +14,26 @@ import (
 // Config is the top-level declarative configuration.
 type Config struct {
 	Providers    map[string]ProviderConfig `yaml:"providers"`
-	Stores       StoresConfig              `yaml:"stores"`
+	Stores       map[string]StoreConfig    `yaml:"stores"`  // named backend registry (like providers)
+	Session      SessionConfig             `yaml:"session"` // ADK session/chat store + compaction
 	Orchestrator OrchestratorConfig        `yaml:"orchestrator"`
 	Agents       map[string]AgentConfig    `yaml:"agents"`
-	Tools        ToolsConfig               `yaml:"tools"`
+	Tools        map[string]ToolConfig     `yaml:"tools"`
 	Gates        GatesConfig               `yaml:"gates"`
 	Dag          DagConfig                 `yaml:"dag"`
-	Compaction   CompactionConfig          `yaml:"compaction"`
 	Server       ServerConfig              `yaml:"server"`
-	Memory       *MemoryConfig             `yaml:"memory"`
 }
 
-// MemoryConfig configures the M6 semantic-memory layer. Its presence is the
-// master switch — omit the block (or leave url empty / QDRANT_URL unset) and
-// memory is fully off. Recall is ambient (ADK preload_memory) + deliberate
-// (load_memory); the gated, consolidating write path arrives in later PRs.
-type MemoryConfig struct {
-	URL           string        `yaml:"url"`           // Qdrant gRPC address host:port (typically ${QDRANT_URL})
-	Embedder      ProviderModel `yaml:"embedder"`      // provider+model for embeddings (e.g. qwen3-embed)
-	Consolidation ProviderModel `yaml:"consolidation"` // provider+model for extract/vet/consolidate (e.g. gemma)
-	TopK          int           `yaml:"top_k"`         // neighbours fetched per recall/consolidation (default 5)
-	MinScore      *float32      `yaml:"min_score"`     // min cosine similarity for a recall hit to be returned (default 0.5; set 0 to disable)
-	UserMemory    bool          `yaml:"user_memory"`   // personal facts about the user (orchestrator); off by default (privacy)
+// SessionConfig binds the ADK session + chat persistence to a named store and
+// holds context-compaction settings (compaction operates over session history).
+type SessionConfig struct {
+	Store      string           `yaml:"store"`      // name of a stores[] entry (a relational store)
+	Schema     string           `yaml:"schema"`     // reserved: ADK's session service exposes no schema param yet
+	Compaction CompactionConfig `yaml:"compaction"` // automatic context compaction
 }
 
-// ProviderModel binds a named provider to a model — used by memory's embedder
-// (and later its consolidation model).
+// ProviderModel binds a named provider to a model — used by a vector store's
+// embedder and consolidation model.
 type ProviderModel struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
@@ -125,17 +118,19 @@ type AgentConfig struct {
 	Inputs        []string `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
 }
 
-// ToolsConfig holds backend bindings for the built-in tools that need them.
-type ToolsConfig struct {
-	WebSearch ToolBackend `yaml:"web_search"`
-	Fetch     ToolBackend `yaml:"web_fetch"`
-}
-
-// ToolBackend is the backend endpoints a built-in tool talks to. Both are
-// keyless, internal services in M1.
-type ToolBackend struct {
-	Backend       string `yaml:"backend"`        // web_search: SearXNG base URL
-	RenderBackend string `yaml:"render_backend"` // web_fetch: crawl4ai base URL
+// ToolConfig configures one built-in tool. A tool with a dedicated external
+// service declares it inline (`kind` + `url`, e.g. web_search→searxng). A tool
+// backed by shared infrastructure references a named store (`store`) and may
+// override its namespace/tuning (`collection`/`schema`/`top_k`/`min_score`) — the
+// store provides the connection + adapter `kind`, so the tool needs no `kind`.
+type ToolConfig struct {
+	Kind       string   `yaml:"kind"`       // store-less tool: adapter selector (empty = default)
+	URL        string   `yaml:"url"`        // store-less tool: backend endpoint
+	Store      string   `yaml:"store"`      // store-backed tool: name of a stores[] entry
+	Collection string   `yaml:"collection"` // vector namespace override
+	Schema     string   `yaml:"schema"`     // relational namespace override
+	TopK       int      `yaml:"top_k"`      // recall override
+	MinScore   *float32 `yaml:"min_score"`  // recall override
 }
 
 // ProviderConfig is one named inference provider. `kind` selects the adapter
@@ -146,21 +141,143 @@ type ProviderConfig struct {
 	APIKey   string `yaml:"api_key"`
 }
 
-// StoresConfig groups the store roles. M0 needs only the relational store.
-type StoresConfig struct {
-	Relational StoreConfig `yaml:"relational"`
-}
-
-// StoreConfig is one store backend; `kind` selects it (postgres in M0).
+// StoreConfig is one named backend in the stores registry. `kind` selects the
+// adapter (the portability seam, like providers); `url` is its endpoint.
+// `extends` inherits another store's fields (child overrides), so e.g. a document
+// store can reuse a base postgres connection. The remaining fields are
+// store-type-specific: a vector store carries an embedder + consolidation model
+// and recall defaults; relational/search stores ignore them.
 type StoreConfig struct {
-	Kind string `yaml:"kind"`
-	URL  string `yaml:"url"`
+	Kind          string         `yaml:"kind"`
+	URL           string         `yaml:"url"`
+	Extends       string         `yaml:"extends"`       // inherit fields from another named store
+	Embedder      *ProviderModel `yaml:"embedder"`      // vector store: how text is vectorized
+	Consolidation *ProviderModel `yaml:"consolidation"` // vector store: extract/vet/consolidate model
+	TopK          int            `yaml:"top_k"`         // vector store: neighbours per recall/consolidation
+	MinScore      *float32       `yaml:"min_score"`     // vector store: min cosine similarity for a recall hit
+	Schema        string         `yaml:"schema"`        // relational namespace default (overridable per tool)
+	Collection    string         `yaml:"collection"`    // vector namespace default (overridable per tool)
 }
 
-// OrchestratorConfig binds the orchestrator to a provider + model.
+// Store resolves a named store, applying `extends` inheritance (parent fields
+// first, child overrides). Returns false if the name (or an ancestor) is unknown
+// or the extends chain cycles.
+func (c *Config) Store(name string) (StoreConfig, bool) {
+	return c.resolveStore(name, nil)
+}
+
+func (c *Config) resolveStore(name string, seen []string) (StoreConfig, bool) {
+	s, ok := c.Stores[name]
+	if !ok {
+		return StoreConfig{}, false
+	}
+	if s.Extends == "" {
+		return s, true
+	}
+	for _, n := range seen {
+		if n == name {
+			return StoreConfig{}, false // cycle
+		}
+	}
+	parent, ok := c.resolveStore(s.Extends, append(seen, name))
+	if !ok {
+		return StoreConfig{}, false
+	}
+	return mergeStore(parent, s), true
+}
+
+// ResolvedMemory is a vector store resolved for a memory tool binding:
+// connection + models + namespace, ready to pass to memory.New.
+type ResolvedMemory struct {
+	Kind          string
+	URL           string
+	Embedder      ProviderModel
+	Consolidation ProviderModel
+	Collection    string
+	TopK          int
+	MinScore      float32
+}
+
+// MemoryStore resolves the vector store bound to a memory tool (e.g.
+// "stage_memory" → task memory, "commit_memory" → user memory). It returns false
+// when the tool is unconfigured, its store is missing embedder/consolidation, or
+// the store URL is empty (QDRANT_URL unset ⇒ memory self-disables) — so a
+// qdrant-less run keeps working. Per-tool collection/top_k/min_score override the
+// store defaults.
+func (c *Config) MemoryStore(toolName string) (ResolvedMemory, bool) {
+	t, ok := c.Tools[toolName]
+	if !ok || t.Store == "" {
+		return ResolvedMemory{}, false
+	}
+	s, ok := c.Store(t.Store)
+	if !ok || s.URL == "" || s.Embedder == nil || s.Consolidation == nil {
+		return ResolvedMemory{}, false
+	}
+	coll := s.Collection
+	if t.Collection != "" {
+		coll = t.Collection
+	}
+	if coll == "" {
+		return ResolvedMemory{}, false // a memory tool needs a collection
+	}
+	topK := s.TopK
+	if t.TopK != 0 {
+		topK = t.TopK
+	}
+	minScore := float32(0.5)
+	if s.MinScore != nil {
+		minScore = *s.MinScore
+	}
+	if t.MinScore != nil {
+		minScore = *t.MinScore
+	}
+	return ResolvedMemory{
+		Kind: s.Kind, URL: s.URL,
+		Embedder: *s.Embedder, Consolidation: *s.Consolidation,
+		Collection: coll, TopK: topK, MinScore: minScore,
+	}, true
+}
+
+// mergeStore overlays child's set (non-zero) fields onto parent.
+func mergeStore(parent, child StoreConfig) StoreConfig {
+	out := parent
+	out.Extends = ""
+	if child.Kind != "" {
+		out.Kind = child.Kind
+	}
+	if child.URL != "" {
+		out.URL = child.URL
+	}
+	if child.Embedder != nil {
+		out.Embedder = child.Embedder
+	}
+	if child.Consolidation != nil {
+		out.Consolidation = child.Consolidation
+	}
+	if child.TopK != 0 {
+		out.TopK = child.TopK
+	}
+	if child.MinScore != nil {
+		out.MinScore = child.MinScore
+	}
+	if child.Schema != "" {
+		out.Schema = child.Schema
+	}
+	if child.Collection != "" {
+		out.Collection = child.Collection
+	}
+	return out
+}
+
+// OrchestratorConfig binds the orchestrator to a provider + model and lists its
+// optional tools. The orchestrator's core tools (plan/execute/clarify) are
+// intrinsic; this list adds opt-in capabilities — notably, including
+// `commit_memory` turns on user memory (the orchestrator then recalls + commits
+// personal facts).
 type OrchestratorConfig struct {
-	Provider string `yaml:"provider"`
-	Model    string `yaml:"model"`
+	Provider string   `yaml:"provider"`
+	Model    string   `yaml:"model"`
+	Tools    []string `yaml:"tools"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -204,11 +321,46 @@ func (c *Config) validate() error {
 	if c.Orchestrator.Model == "" {
 		return fmt.Errorf("config: orchestrator.model is empty")
 	}
-	if c.Stores.Relational.Kind != "postgres" {
-		return fmt.Errorf("config: stores.relational.kind %q unsupported (only %q is implemented)", c.Stores.Relational.Kind, "postgres")
+	// Stores registry: every entry must resolve (extends acyclic) and use a
+	// supported kind.
+	for name := range c.Stores {
+		s, ok := c.Store(name)
+		if !ok {
+			return fmt.Errorf("config: store %q has an unknown or cyclic extends", name)
+		}
+		switch s.Kind {
+		case "postgres", "qdrant", "opensearch":
+		default:
+			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, opensearch)", name, s.Kind)
+		}
 	}
-	if c.Stores.Relational.URL == "" {
-		return fmt.Errorf("config: stores.relational.url is empty")
+	// Default + range-check vector-store recall tuning so consumers don't repeat it.
+	for name, s := range c.Stores {
+		if s.Kind != "qdrant" || s.URL == "" {
+			continue
+		}
+		if s.TopK == 0 {
+			s.TopK = 5
+		}
+		if s.TopK < 1 {
+			return fmt.Errorf("config: store %q top_k must be >= 1", name)
+		}
+		if s.MinScore == nil {
+			d := float32(0.5)
+			s.MinScore = &d
+		}
+		if *s.MinScore < 0 || *s.MinScore > 1 {
+			return fmt.Errorf("config: store %q min_score must be in [0,1]", name)
+		}
+		c.Stores[name] = s
+	}
+	// Session: must reference a postgres store with a URL.
+	if ss, ok := c.Store(c.Session.Store); !ok {
+		return fmt.Errorf("config: session.store %q is not defined under stores", c.Session.Store)
+	} else if ss.Kind != "postgres" {
+		return fmt.Errorf("config: session.store %q must be a postgres store, got kind %q", c.Session.Store, ss.Kind)
+	} else if ss.URL == "" {
+		return fmt.Errorf("config: session.store %q has empty url", c.Session.Store)
 	}
 	for name, a := range c.Agents {
 		if _, ok := c.Providers[a.Provider]; !ok {
@@ -256,47 +408,23 @@ func (c *Config) validate() error {
 			}
 		}
 	}
-	if c.Compaction.Enabled {
-		if _, ok := c.Providers[c.Compaction.Provider]; !ok {
-			return fmt.Errorf("config: compaction.provider %q is not defined under providers", c.Compaction.Provider)
+	if c.Session.Compaction.Enabled {
+		cc := c.Session.Compaction
+		if _, ok := c.Providers[cc.Provider]; !ok {
+			return fmt.Errorf("config: session.compaction.provider %q is not defined under providers", cc.Provider)
 		}
-		if c.Compaction.Model == "" {
-			return fmt.Errorf("config: compaction.enabled is true but compaction.model is empty")
+		if cc.Model == "" {
+			return fmt.Errorf("config: session.compaction.enabled is true but session.compaction.model is empty")
 		}
 	}
-	// Memory is gated on a usable Qdrant address: a present-but-unconfigured block
-	// (QDRANT_URL unset ⇒ url expands to "") disables memory rather than failing,
-	// so qdrant-less dev/CI runs keep working with the block left in the config.
-	if c.Memory != nil && c.Memory.URL == "" {
-		slog.Warn("memory block present but url is empty (QDRANT_URL unset); semantic memory disabled", "component", "config")
-		c.Memory = nil
-	}
-	if c.Memory != nil {
-		m := c.Memory
-		if _, ok := c.Providers[m.Embedder.Provider]; !ok {
-			return fmt.Errorf("config: memory.embedder.provider %q is not defined under providers", m.Embedder.Provider)
-		}
-		if m.Embedder.Model == "" {
-			return fmt.Errorf("config: memory.embedder.model is empty")
-		}
-		if _, ok := c.Providers[m.Consolidation.Provider]; !ok {
-			return fmt.Errorf("config: memory.consolidation.provider %q is not defined under providers", m.Consolidation.Provider)
-		}
-		if m.Consolidation.Model == "" {
-			return fmt.Errorf("config: memory.consolidation.model is empty")
-		}
-		if m.TopK == 0 {
-			m.TopK = 5
-		}
-		if m.TopK < 1 {
-			return fmt.Errorf("config: memory.top_k must be >= 1")
-		}
-		if m.MinScore == nil {
-			d := float32(0.5)
-			m.MinScore = &d
-		}
-		if *m.MinScore < 0 || *m.MinScore > 1 {
-			return fmt.Errorf("config: memory.min_score must be in [0,1]")
+	// Tools: a store-backed tool must reference a defined store. (Embedder /
+	// consolidation on the referenced vector store are validated at wiring time,
+	// where memory is actually built — a store with QDRANT_URL unset self-disables.)
+	for name, t := range c.Tools {
+		if t.Store != "" {
+			if _, ok := c.Store(t.Store); !ok {
+				return fmt.Errorf("config: tool %q references unknown store %q", name, t.Store)
+			}
 		}
 	}
 	if c.Dag.MaxActiveNodes == 0 {

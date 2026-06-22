@@ -16,14 +16,14 @@ import (
 )
 
 func TestRegistryBuild(t *testing.T) {
-	if _, err := Build([]string{"web_fetch"}, Deps{Crawl4AI: "http://x"}); err != nil {
+	if _, err := Build([]string{"web_fetch"}, Deps{Fetch: Backend{URL: "http://x"}}); err != nil {
 		t.Fatalf("Build(fetch) error: %v", err)
 	}
 	if _, err := Build([]string{"bogus"}, Deps{}); err == nil {
 		t.Fatal("Build(bogus) should error")
 	}
 	if _, err := Build([]string{"web_search"}, Deps{}); err == nil {
-		t.Fatal("web_search without SearXNG should error")
+		t.Fatal("web_search without a backend URL should error")
 	}
 	if _, err := Build([]string{"summarize"}, Deps{}); err == nil {
 		t.Fatal("summarize without a model should error")

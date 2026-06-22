@@ -98,8 +98,8 @@ services:
       # disables memory. The embedding model is served by the LLM endpoint.
       QDRANT_URL: ${QDRANT_URL:-qdrant:6334}
       EMBED_MODEL: ${EMBED_MODEL:-qwen3-embed}
-      # Personal memory about the user (off by default for privacy).
-      USER_MEMORY: ${USER_MEMORY:-}
+      # User memory is enabled by binding commit_memory to the orchestrator in
+      # config/quack.yaml (no env toggle).
     # Host 8080 is taken by SearXNG above, so the app is published on 8081.
     ports:
       - "8081:8080"

@@ -28,6 +28,7 @@ If you need to teach the agent *how to approach* a domain — workflows, convent
 - [ ] Response returns only what the agent needs for its next decision — nothing extra
 - [ ] Side-effecting tools (writes, deletes, sends) require explicit user confirmation in the agent's constraints
 - [ ] Tool is scoped to least privilege — cannot be coerced into actions beyond its declared scope
+- [ ] **Portable by design**: a tool backed by external software talks to it through a port (interface) with a config-selected adapter — never a hardcoded backend
 - [ ] Evaluation tasks written before shipping (multi-step, real-world prompts)
 
 ---
@@ -114,6 +115,23 @@ Builtin tools live in `internal/tools/`. To add one:
 5. Add tests in `internal/tools/<name>_test.go`.
 
 Side-effecting tools should set the appropriate flag so the orchestrator can route confirmation requests through the `confirmation_request` SSE event before execution.
+
+### Portability rule (mandatory for external-backed tools)
+
+A builtin tool that talks to external software (a search engine, a render service,
+a vector store, a full-text index, a blob store) **must not** hardcode that
+backend. Define a small **port** (interface) the tool depends on, put each
+concrete backend in its own **adapter**, and select the adapter with a **kind**
+factory driven by config — so swapping the backend is a config change plus one new
+adapter, never a rewrite of the tool. Empty kind defaults to the one implemented
+adapter, so existing config keeps working.
+
+The web tools are the reference implementation: `WebSearcher` / `PageRenderer`
+ports + `newWebSearcher` / `newPageRenderer` factories in
+`internal/tools/backends.go`, with the SearXNG and crawl4ai adapters in
+`internal/tools/{searxng,crawl4ai}.go`. The pattern mirrors `inference.NewModel`
+(provider `kind` → adapter). This keeps the generic logic (SSRF guard, result
+shaping, html→markdown) in the tool and the swappable part behind the port.
 
 ---
 
