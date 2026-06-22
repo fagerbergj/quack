@@ -6,30 +6,49 @@ providers:
     endpoint: ${LLM_ENDPOINT}
     api_key: ${LLM_API_KEY}
 
+# Named backend registry (like providers): consumers reference a store by name.
+# `kind` selects the adapter (the portability seam). A vector store also carries
+# how it vectorizes (embedder), its consolidation model, and recall defaults. A
+# store may `extends` another to reuse its connection (child fields override).
 stores:
-  relational:
+  default_postgres:
     kind: postgres
     url: ${DATABASE_URL}
+  default_vector:
+    kind: qdrant                  # vector adapter; pgvector/sqlite are future adapters
+    url: ${QDRANT_URL}            # empty (QDRANT_URL unset) ⇒ memory self-disables
+    embedder:
+      provider: default
+      model: ${EMBED_MODEL}
+    consolidation:
+      provider: default
+      model: ${JUDGE_MODEL}       # reuse the always-warm judge (gemma) for extract/vet/consolidate
+    top_k: 5
+    min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
+  # Document stores (M8): records in postgres, full-text index in opensearch.
+  # Declared targets — wired when their adapters land.
+  document:
+    extends: default_postgres     # reuse the postgres connection
+    schema: documents
+  document_search:
+    kind: opensearch
+    url: ${OPENSEARCH_URL}
 
-# Semantic memory (M6). Presence of this block enables it; if QDRANT_URL is unset
-# the block self-disables (recall/commit off) so qdrant-less runs still work.
-# Recall is ambient (preload_memory) + deliberate (load_memory). Embeddings use
-# the always-warm qwen3-embed group.
-memory:
-  url: ${QDRANT_URL}
-  embedder:
+# ADK session + chat persistence (references a store) plus context compaction,
+# which operates over that session history.
+session:
+  store: default_postgres
+  schema: sessions                # reserved: ADK's session service exposes no schema param yet
+  compaction:
+    enabled: ${COMPACTION_ENABLED}  # unset ⇒ false
     provider: default
-    model: ${EMBED_MODEL}
-  consolidation:
-    provider: default
-    model: ${JUDGE_MODEL}       # reuse the always-warm judge model (gemma) for extract/vet/consolidate
-  top_k: 5
-  min_score: 0.5                # drop recall hits below this cosine similarity (0 disables; keeps weak matches out of the prompt)
-  user_memory: ${USER_MEMORY}   # personal facts about the user; off by default (unset ⇒ false)
+    model: ${COMPACTION_MODEL}      # required when enabled; pick a worker-co-resident model (gemma)
+    prune: true                     # blank old tool outputs before summarising (cheap, no model call)
 
 orchestrator:
   provider: default
-  model: ${ORCH_MODEL}          # the thin dispatcher: routes requests to agents
+  model: ${ORCH_MODEL}            # the thin dispatcher: routes requests to agents
+  # tools: [commit_memory]        # bind commit_memory to enable user memory (recall + commit of personal facts)
 
 # Declarative agents. Each is an agent-card.json + prompt.md bundle on disk,
 # bound here to a model and a selection of built-in tools. Add an agent by
@@ -62,12 +81,30 @@ agents:
     tools: []
     inputs: [text, image]
 
-# Backend bindings for the built-in tools (keyless, internal services in M1).
+# Built-in tools. A tool with a dedicated external service sets kind + url. A
+# store-backed tool references a stores[] entry (the store supplies the adapter +
+# connection) and may override its namespace (collection/schema). See
+# internal/tools/backends.go.
 tools:
   web_search:
-    backend: ${SEARXNG_URL}        # SearXNG JSON API, e.g. http://searxng:8080
+    kind: searxng                 # search adapter; empty ⇒ default (searxng)
+    url: ${SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080
   web_fetch:
-    render_backend: ${CRAWL4AI_URL}  # crawl4ai /md backend, e.g. http://crawl4ai:11235
+    kind: crawl4ai                # render adapter; empty ⇒ default (crawl4ai)
+    url: ${CRAWL4AI_URL}          # crawl4ai backend, e.g. http://crawl4ai:11235
+  # Memory tools (M6) — store-backed; binding one to an agent enables that memory.
+  stage_memory:                   # task memory: researchers stage tradecraft, the gate commits it
+    store: default_vector
+    collection: task_memory
+  commit_memory:                  # user memory: bind on the orchestrator to enable
+    store: default_vector
+    collection: user_memory
+  # Document tools (M8) — store-backed; declared targets, wired when adapters land.
+  load_document:            { store: document }
+  create_document:          { store: document }
+  update_document:          { store: document }
+  search_document:          { store: document_search }
+  semantic_search_document: { store: default_vector, collection: documents }
 
 # The trust gate wraps every agent and runs three stages cheapest-first, each
 # with its own round budget (a stage with max_rounds:0 is skipped):
@@ -101,21 +138,6 @@ dag:
                         # the GPU judge (gemma4-26b-a4b, co-resident with the worker)
                         # is also --parallel 2. Raising this past the worker's slot
                         # count just queues requests at the model.
-
-# Automatic context compaction (ports sst/opencode's prune + compaction). When
-# enabled, every gated agent gets a callback that, before each model call, blanks
-# old tool outputs and — if the turn's measured usage exceeds the agent's
-# per-agent context_window (set above) minus the output reserve — summarises the
-# older turns via the summariser model. Unset ${COMPACTION_ENABLED} ⇒ null ⇒ false.
-compaction:
-  enabled: ${COMPACTION_ENABLED}
-  provider: default
-  # Summariser model (required when enabled). Pick one CO-RESIDENT with the
-  # workers so a mid-run summary doesn't evict+reload a worker: the judge
-  # (gemma4-26b-a4b) is always warm alongside every worker (llm-swap set
-  # "(g|q|v) & j"), so it's the cheap default. COMPACTION_MODEL defaults to it.
-  model: ${COMPACTION_MODEL}
-  prune: true                  # blank old tool outputs before summarising (cheap, no model call)
 
 server:
   addr: ":8080"
