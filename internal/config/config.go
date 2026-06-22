@@ -267,9 +267,46 @@ func (c *Config) DocRecordStore() (StoreConfig, bool) {
 	return c.toolStore("create_document")
 }
 
+// UsesVector reports whether the document vector index is needed:
+// semantic_search_document reads it, create_document writes into it.
+func (c *Config) UsesVector() bool {
+	return c.bindsTool("semantic_search_document")
+}
+
 // FTSStore resolves the full-text-index store (search_document's binding).
 func (c *Config) FTSStore() (StoreConfig, bool) {
 	return c.toolStore("search_document")
+}
+
+// DocVectorStore resolves the vector index for documents from
+// semantic_search_document's binding (the store carries the embedder; the tool
+// may override the collection). Returns false when unconfigured or url/embedder
+// is missing (so a qdrant-less run self-disables).
+func (c *Config) DocVectorStore() (ResolvedVector, bool) {
+	t, ok := c.Tools["semantic_search_document"]
+	if !ok || t.Store == "" {
+		return ResolvedVector{}, false
+	}
+	s, ok := c.Store(t.Store)
+	if !ok || s.URL == "" || s.Embedder == nil {
+		return ResolvedVector{}, false
+	}
+	coll := s.Collection
+	if t.Collection != "" {
+		coll = t.Collection
+	}
+	if coll == "" {
+		return ResolvedVector{}, false // a doc collection (distinct from memory) is required
+	}
+	return ResolvedVector{Kind: s.Kind, URL: s.URL, Collection: coll, Embedder: *s.Embedder}, true
+}
+
+// ResolvedVector is a vector store resolved for the document index.
+type ResolvedVector struct {
+	Kind       string
+	URL        string
+	Collection string
+	Embedder   ProviderModel
 }
 
 // toolStore resolves the store a tool references, false if unbound/unconfigured.
