@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -236,6 +237,48 @@ func (c *Config) MemoryStore(toolName string) (ResolvedMemory, bool) {
 		Embedder: *s.Embedder, Consolidation: *s.Consolidation,
 		Collection: coll, TopK: topK, MinScore: minScore,
 	}, true
+}
+
+// bindsTool reports whether any agent or the orchestrator binds the named tool.
+func (c *Config) bindsTool(name string) bool {
+	for _, a := range c.Agents {
+		if slices.Contains(a.Tools, name) {
+			return true
+		}
+	}
+	return slices.Contains(c.Orchestrator.Tools, name)
+}
+
+// UsesDocStore reports whether a document record tool is bound — i.e. whether the
+// record store must be opened at startup.
+func (c *Config) UsesDocStore() bool {
+	return c.bindsTool("load_document") || c.bindsTool("create_document") || c.bindsTool("update_document")
+}
+
+// UsesFTS reports whether the full-text index is needed: search_document reads it,
+// create_document writes into it.
+func (c *Config) UsesFTS() bool {
+	return c.bindsTool("search_document") || c.bindsTool("create_document")
+}
+
+// DocRecordStore resolves the store backing the document record tools (all three
+// share one store; read from create_document's binding).
+func (c *Config) DocRecordStore() (StoreConfig, bool) {
+	return c.toolStore("create_document")
+}
+
+// FTSStore resolves the full-text-index store (search_document's binding).
+func (c *Config) FTSStore() (StoreConfig, bool) {
+	return c.toolStore("search_document")
+}
+
+// toolStore resolves the store a tool references, false if unbound/unconfigured.
+func (c *Config) toolStore(name string) (StoreConfig, bool) {
+	t, ok := c.Tools[name]
+	if !ok || t.Store == "" {
+		return StoreConfig{}, false
+	}
+	return c.Store(t.Store)
 }
 
 // mergeStore overlays child's set (non-zero) fields onto parent.

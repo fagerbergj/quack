@@ -56,6 +56,25 @@ services:
       - "6333:6333"
       - "6334:6334"
 
+  # Full-text index for documents (M8). Single-node, security disabled — keyless
+  # internal HTTP on :9200, same trust model as searxng/qdrant.
+  opensearch:
+    image: opensearchproject/opensearch:2
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - quack-opensearch:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+
   app:
     build: .
     restart: unless-stopped
@@ -67,6 +86,8 @@ services:
       crawl4ai:
         condition: service_started
       qdrant:
+        condition: service_started
+      opensearch:
         condition: service_started
     environment:
       DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
@@ -98,6 +119,9 @@ services:
       # disables memory. The embedding model is served by the LLM endpoint.
       QDRANT_URL: ${QDRANT_URL:-qdrant:6334}
       EMBED_MODEL: ${EMBED_MODEL:-qwen3-embed}
+      # Document full-text index (M8). Used only when a doc tool is bound; empty
+      # disables it.
+      OPENSEARCH_URL: ${OPENSEARCH_URL:-http://opensearch:9200}
       # User memory is enabled by binding commit_memory to the orchestrator in
       # config/quack.yaml (no env toggle).
     # Host 8080 is taken by SearXNG above, so the app is published on 8081.
@@ -109,3 +133,4 @@ services:
 volumes:
   quack-pgdata:
   quack-qdrant:
+  quack-opensearch:
