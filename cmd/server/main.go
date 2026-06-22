@@ -30,6 +30,7 @@ import (
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/docstore"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -131,9 +132,36 @@ func main() {
 		}
 	}
 
+	// Document record store: opened only when an agent binds a doc tool, so an
+	// unconfigured deployment never holds an idle connection. A bound doc tool
+	// without a configured store is a startup error (misconfiguration).
+	var docStore docstore.DocStore
+	if cfg.UsesDocStore() {
+		sc, ok := cfg.DocRecordStore()
+		if !ok || sc.URL == "" {
+			fatal("a document tool is bound but its store is not configured", "tool", "create_document")
+		}
+		if docStore, err = docstore.New(sc.Kind, sc.URL); err != nil {
+			fatal("document store init failed", "err", err)
+		}
+		slog.Info("document store enabled", "component", "startup", "kind", sc.Kind)
+	}
+
+	// Full-text index: opened when search_document or create_document is bound and
+	// an FTS store is configured (empty url ⇒ skip, like memory's self-disable).
+	var docFTS docstore.FTSIndex
+	if cfg.UsesFTS() {
+		if sc, ok := cfg.FTSStore(); ok && sc.URL != "" {
+			if docFTS, err = docstore.NewFTS(sc.Kind, sc.URL, sc.Collection); err != nil {
+				fatal("document full-text index init failed", "err", err)
+			}
+			slog.Info("document full-text index enabled", "component", "startup", "kind", sc.Kind)
+		}
+	}
+
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskStore)
+	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, docStore, docFTS)
 	if err != nil {
 		fatal("agent build failed", "err", err)
 	}
@@ -248,7 +276,7 @@ func fatal(msg string, args ...any) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, docStore docstore.DocStore, docFTS docstore.FTSIndex) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
 	// Derive the recall service, leaving it nil (not a non-nil interface wrapping
 	// a nil pointer) when memory is off. The gate takes the concrete *memory.Store
 	// directly (taskStore), so it has no such typed-nil hazard.
@@ -368,6 +396,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Fetch:      tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
 				Summarizer: m,
 				Cache:      urlCache,
+				DocStore:   docStore,
+				FTS:        docFTS,
 			})
 			if err != nil {
 				return nil, servers, fmtErr(name, "tools: %v", err)

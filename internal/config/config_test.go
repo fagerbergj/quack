@@ -237,6 +237,41 @@ tools:
 	}
 }
 
+// TestDocStoreResolution checks UsesDocStore (gated on an agent binding a doc
+// tool) and DocRecordStore (resolves the create_document binding, with extends).
+func TestDocStoreResolution(t *testing.T) {
+	withTool := `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main:     { kind: postgres, url: u }
+  document: { extends: main, schema: documents }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  doc-writer: { bundle: agents/x, provider: default, model: m, tools: [create_document] }
+tools:
+  create_document: { store: document }
+`
+	c, err := Load(writeTemp(t, withTool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.UsesDocStore() {
+		t.Error("UsesDocStore should be true when an agent binds create_document")
+	}
+	if sc, ok := c.DocRecordStore(); !ok || sc.Kind != "postgres" || sc.Schema != "documents" {
+		t.Errorf("DocRecordStore = %+v ok=%v, want postgres + schema documents (via extends)", sc, ok)
+	}
+
+	// No agent binds a doc tool ⇒ not used (the store may still be declared).
+	if c2, err := Load(writeTemp(t, baseConfig)); err != nil {
+		t.Fatal(err)
+	} else if c2.UsesDocStore() {
+		t.Error("UsesDocStore should be false when no agent binds a doc tool")
+	}
+}
+
 func TestLoadRejectsAgentWithUnknownProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 agents:
