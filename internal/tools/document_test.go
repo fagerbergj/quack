@@ -58,6 +58,25 @@ func (f *fakeFTS) Search(_ context.Context, query string, _ int) ([]docstore.FTS
 	return out, nil
 }
 
+// fakeVector is an in-memory VectorIndex: stores content per doc, substring match.
+type fakeVector struct{ byDoc map[string]string }
+
+func newFakeVector() *fakeVector { return &fakeVector{byDoc: map[string]string{}} }
+
+func (f *fakeVector) Index(_ context.Context, docID, content string) error {
+	f.byDoc[docID] = content
+	return nil
+}
+func (f *fakeVector) Search(_ context.Context, query string, _ int) ([]docstore.VectorHit, error) {
+	var out []docstore.VectorHit
+	for id, c := range f.byDoc {
+		if strings.Contains(c, query) {
+			out = append(out, docstore.VectorHit{DocID: id, Chunk: c, Score: 1})
+		}
+	}
+	return out, nil
+}
+
 func TestDocToolsRequireStore(t *testing.T) {
 	for _, name := range []string{"load_document", "create_document", "update_document"} {
 		if _, err := Build([]string{name}, Deps{}); err == nil {
@@ -73,7 +92,7 @@ func TestCreateAndLoadDocument(t *testing.T) {
 	store := newFakeDocStore()
 	ctx := context.Background()
 
-	res, err := createDoc(ctx, store, nil, createDocArgs{Title: "T", Content: "body", Summary: "s", Tags: []string{"a"}, ContentHash: "h1"})
+	res, err := createDoc(ctx, store, nil, nil, createDocArgs{Title: "T", Content: "body", Summary: "s", Tags: []string{"a"}, ContentHash: "h1"})
 	if err != nil || res.ID == "" {
 		t.Fatalf("create: id=%q err=%v", res.ID, err)
 	}
@@ -83,13 +102,13 @@ func TestCreateAndLoadDocument(t *testing.T) {
 	}
 
 	// Dedup: same content_hash returns the existing id, no new record.
-	res2, err := createDoc(ctx, store, nil, createDocArgs{Title: "other", Content: "body2", ContentHash: "h1"})
+	res2, err := createDoc(ctx, store, nil, nil, createDocArgs{Title: "other", Content: "body2", ContentHash: "h1"})
 	if err != nil || res2.ID != res.ID {
 		t.Errorf("dedup: got id=%q err=%v, want existing %q", res2.ID, err, res.ID)
 	}
 
 	// Empty content is rejected.
-	if _, err := createDoc(ctx, store, nil, createDocArgs{Content: "  "}); err == nil {
+	if _, err := createDoc(ctx, store, nil, nil, createDocArgs{Content: "  "}); err == nil {
 		t.Error("empty content should error")
 	}
 	// Missing id load errors.
@@ -102,7 +121,7 @@ func TestCreateAndLoadDocument(t *testing.T) {
 func TestCreateIndexesToFTSAndSearch(t *testing.T) {
 	store, fts := newFakeDocStore(), newFakeFTS()
 	ctx := context.Background()
-	res, err := createDoc(ctx, store, fts, createDocArgs{Title: "Mistral release notes", Content: "body", ContentHash: "h"})
+	res, err := createDoc(ctx, store, fts, nil, createDocArgs{Title: "Mistral release notes", Content: "body", ContentHash: "h"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,10 +143,36 @@ func TestSearchDocumentRequiresFTS(t *testing.T) {
 	}
 }
 
+// create_document also indexes into the vector index, and semantic search finds it.
+func TestCreateIndexesToVector(t *testing.T) {
+	store, vec := newFakeDocStore(), newFakeVector()
+	ctx := context.Background()
+	res, err := createDoc(ctx, store, nil, vec, createDocArgs{Title: "t", Content: "qwen release notes", ContentHash: "h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := vec.byDoc[res.ID]; !ok {
+		t.Fatal("create_document did not index into the vector index")
+	}
+	hits, err := vec.Search(ctx, "qwen", 5)
+	if err != nil || len(hits) != 1 || hits[0].DocID != res.ID {
+		t.Errorf("semantic search: hits=%+v err=%v", hits, err)
+	}
+}
+
+func TestSemanticSearchRequiresVector(t *testing.T) {
+	if _, err := Build([]string{"semantic_search_document"}, Deps{}); err == nil {
+		t.Error("semantic_search_document should refuse to build without a vector index")
+	}
+	if _, err := Build([]string{"semantic_search_document"}, Deps{Vector: newFakeVector()}); err != nil {
+		t.Errorf("semantic_search_document should build with a vector index: %v", err)
+	}
+}
+
 func TestUpdateDocumentOverlays(t *testing.T) {
 	store := newFakeDocStore()
 	ctx := context.Background()
-	res, _ := createDoc(ctx, store, nil, createDocArgs{Title: "old", Content: "body", Summary: "keep", ContentHash: "h"})
+	res, _ := createDoc(ctx, store, nil, nil, createDocArgs{Title: "old", Content: "body", Summary: "keep", ContentHash: "h"})
 
 	// Only Title provided ⇒ Summary/Content unchanged.
 	if _, err := updateDoc(ctx, store, updateDocArgs{ID: res.ID, Title: "new"}); err != nil {

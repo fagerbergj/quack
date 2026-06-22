@@ -75,14 +75,15 @@ func newCreateDocument(d Deps) (tool.Tool, error) {
 				"exists, its id is returned instead of creating a duplicate.",
 		},
 		func(tc agent.ToolContext, a createDocArgs) (docIDResult, error) {
-			return createDoc(tc, d.DocStore, d.FTS, a)
+			return createDoc(tc, d.DocStore, d.FTS, d.Vector, a)
 		},
 	)
 }
 
-// createDoc persists the record and, when a full-text index is configured, mirrors
-// it there so search_document can find it. fts may be nil (no FTS backend).
-func createDoc(ctx context.Context, store docstore.DocStore, fts docstore.FTSIndex, a createDocArgs) (docIDResult, error) {
+// createDoc persists the record, then mirrors it into the full-text index and the
+// vector index when each is configured (so search_document / semantic_search_
+// document can find it). fts and vec may be nil.
+func createDoc(ctx context.Context, store docstore.DocStore, fts docstore.FTSIndex, vec docstore.VectorIndex, a createDocArgs) (docIDResult, error) {
 	if strings.TrimSpace(a.Content) == "" {
 		return docIDResult{}, fmt.Errorf("create_document: content is empty")
 	}
@@ -104,6 +105,11 @@ func createDoc(ctx context.Context, store docstore.DocStore, fts docstore.FTSInd
 	if fts != nil {
 		if err := fts.Index(ctx, doc); err != nil {
 			return docIDResult{}, fmt.Errorf("create_document: indexed record but FTS failed: %w", err)
+		}
+	}
+	if vec != nil {
+		if err := vec.Index(ctx, doc.ID, doc.Content); err != nil {
+			return docIDResult{}, fmt.Errorf("create_document: indexed record but vector index failed: %w", err)
 		}
 	}
 	return docIDResult{ID: doc.ID}, nil
@@ -135,6 +141,31 @@ func newSearchDocument(d Deps) (tool.Tool, error) {
 				return searchDocResult{}, err
 			}
 			return searchDocResult{Results: hits}, nil
+		},
+	)
+}
+
+type semanticSearchResult struct {
+	Results []docstore.VectorHit `json:"results"`
+}
+
+func newSemanticSearchDocument(d Deps) (tool.Tool, error) {
+	if d.Vector == nil {
+		return nil, fmt.Errorf("semantic_search_document requires a vector index")
+	}
+	return functiontool.New[searchDocArgs, semanticSearchResult](
+		functiontool.Config{
+			Name: "semantic_search_document",
+			Description: "Tool to search stored documents by meaning (semantic/vector search over chunks). " +
+				"Returns {results: [{doc_id, chunk, score}]}, most similar first; use load_document with a " +
+				"doc_id to read the full record. For exact words or tags use search_document instead.",
+		},
+		func(tc agent.ToolContext, a searchDocArgs) (semanticSearchResult, error) {
+			hits, err := d.Vector.Search(tc, strings.TrimSpace(a.Query), a.Size)
+			if err != nil {
+				return semanticSearchResult{}, err
+			}
+			return semanticSearchResult{Results: hits}, nil
 		},
 	)
 }

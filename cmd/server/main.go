@@ -159,9 +159,29 @@ func main() {
 		}
 	}
 
+	// Vector index for documents: opened when semantic_search_document is bound and
+	// its vector store (carrying the embedder) is configured.
+	var docVector docstore.VectorIndex
+	if cfg.UsesVector() {
+		if rv, ok := cfg.DocVectorStore(); ok {
+			eprov, ok := cfg.Provider(rv.Embedder.Provider)
+			if !ok {
+				fatal("document vector embedder provider not found", "provider", rv.Embedder.Provider)
+			}
+			embedder, eerr := inference.NewEmbedder(eprov, rv.Embedder.Model)
+			if eerr != nil {
+				fatal("document vector embedder init failed", "err", eerr)
+			}
+			if docVector, err = docstore.NewVector(rv.Kind, rv.URL, rv.Collection, embedder); err != nil {
+				fatal("document vector index init failed", "err", err)
+			}
+			slog.Info("document vector index enabled", "component", "startup", "collection", rv.Collection)
+		}
+	}
+
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, docStore, docFTS)
+	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, docStore, docFTS, docVector)
 	if err != nil {
 		fatal("agent build failed", "err", err)
 	}
@@ -276,7 +296,7 @@ func fatal(msg string, args ...any) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, docStore docstore.DocStore, docFTS docstore.FTSIndex) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, docStore docstore.DocStore, docFTS docstore.FTSIndex, docVector docstore.VectorIndex) (map[string]adkagent.Agent, []*agent.A2AServer, error) {
 	// Derive the recall service, leaving it nil (not a non-nil interface wrapping
 	// a nil pointer) when memory is off. The gate takes the concrete *memory.Store
 	// directly (taskStore), so it has no such typed-nil hazard.
@@ -398,6 +418,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Cache:      urlCache,
 				DocStore:   docStore,
 				FTS:        docFTS,
+				Vector:     docVector,
 			})
 			if err != nil {
 				return nil, servers, fmtErr(name, "tools: %v", err)
