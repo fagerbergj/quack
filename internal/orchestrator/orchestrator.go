@@ -82,7 +82,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// Threaded to the planner so a re-plan after a clarifying exchange (or any
 		// follow-up) resolves references against what was already said.
 		history := buildHistory(prior)
-		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history)
+		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return

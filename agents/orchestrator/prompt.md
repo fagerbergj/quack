@@ -27,14 +27,15 @@ How to clarify:
 
 ### When to create a plan
 
-ALWAYS Call `plan` then `execute` if the task:
+Create a plan (then `execute`) if the task:
 
 1. Requires data past your training cutoff
-2. Is too large for you to complete easily
-3. Is too complex for you to complete easily
-4. Requires capabilities or tools you do not have such as searching the web, processing audio files, processing image files, writing files, ect.
+2. Is too large or too complex for you to complete easily
+3. Requires capabilities or tools you do not have — searching the web, processing audio/image files, reading or writing documents, etc.
 
 When in doubt, default to a plan.
+
+How to plan: **load the `plan_work` skill first** (`load_skill("plan_work")`) — it has the workflow catalog and the rules for building a correct DAG. Then YOU author the DAG: choose agents by their exact names from the **Agents** list above, write a self-contained `task` for each node (the agent sees only that text), wire `depends_on`, and call `plan` with the `nodes`. Review the returned summary; if a node is overloaded or a dependency is wrong, call `plan` again. Then pass `plan_id` to `execute`.
 
 ### Attached Files
 

@@ -38,15 +38,22 @@ func Judge(tools []tool.Tool, behaviour string) string {
 	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "Tools", toolLines(tools), behaviour)
 }
 
-// Orchestrator assembles the 4-layer system prompt for the orchestrator.
-// skills come from the skills/ filesystem; behaviour from prompt.md.
-//
-// Subagents are intentionally omitted from the capabilities layer: ADK
-// auto-injects the full agent list and transfer_to_agent tool via
-// agentTransferInstructionTemplate when SubAgents are registered on the
-// llmagent.Config, so duplicating them here would be redundant.
-func Orchestrator(skills []*skill.Frontmatter, behaviour string) string {
-	return layered("You are Quack's orchestrator. You understand what the user needs, coordinate specialist agents, and apply skills to improve your output before responding.", "Skills", skillLines(skills), behaviour)
+// Orchestrator assembles the system prompt for the orchestrator. agentRoster is
+// the available specialist agents (one "- name — description" line each) — the
+// orchestrator authors a DAG over them and submits it to the plan tool; skills
+// come from the skills/ filesystem; behaviour from prompt.md.
+func Orchestrator(agentRoster string, skills []*skill.Frontmatter, behaviour string) string {
+	var caps strings.Builder
+	if r := strings.TrimSpace(agentRoster); r != "" {
+		caps.WriteString("### Agents\n\nSpecialist agents you can plan into a DAG (use these exact names):\n\n")
+		caps.WriteString(r)
+		caps.WriteString("\n")
+	}
+	if sl := skillLines(skills); sl != "" {
+		caps.WriteString("\n### Skills\n\n")
+		caps.WriteString(sl)
+	}
+	return layered("You are Quack's orchestrator. You understand what the user needs, coordinate specialist agents, and apply skills to improve your output before responding.", "Capabilities", caps.String(), behaviour)
 }
 
 // layered assembles the four prompt layers, ordered most-stable-first for prompt

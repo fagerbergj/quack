@@ -206,6 +206,13 @@ func main() {
 			}
 		}
 	}
+	// Sort for a stable prompt (map iteration order is random) and render the
+	// roster the orchestrator authors its DAG over.
+	sort.Slice(agentInfos, func(i, j int) bool { return agentInfos[i].Name < agentInfos[j].Name })
+	var rosterSB strings.Builder
+	for _, a := range agentInfos {
+		fmt.Fprintf(&rosterSB, "- `%s` — %s\n", a.Name, a.Description)
+	}
 
 	// Load orchestrator bundle for its system prompt.
 	orchBundle, err := agent.LoadBundle("agents/orchestrator")
@@ -218,6 +225,11 @@ func main() {
 	fmFm, err := skillSrc.LoadFrontmatter(context.Background(), "format-markdown")
 	if err != nil {
 		fatal("format-markdown skill load failed", "err", err)
+	}
+	// plan_work is the DAG-authoring playbook the orchestrator loads before planning.
+	planWorkFm, err := skillSrc.LoadFrontmatter(context.Background(), "plan_work")
+	if err != nil {
+		fatal("plan_work skill load failed", "err", err)
 	}
 	// When user memory is on, append the orchestrator's memory.md guidance (its
 	// "what to remember about the user" section) to its behaviour — gated the same
@@ -232,9 +244,9 @@ func main() {
 			orchBehaviour += "\n\n" + mem
 		}
 	}
-	orchSysPrompt := promptbuilder.Orchestrator([]*skill.Frontmatter{fmFm}, orchBehaviour)
+	orchSysPrompt := promptbuilder.Orchestrator(rosterSB.String(), []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
 
-	planner := dag.NewPlanner(llm, agentInfos)
+	planner := dag.NewPlanner(agentInfos)
 	executor := dag.NewExecutor(st.Sessions, clientMap, mediaAgents, cfg.Dag.MaxActiveNodes)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS, userStore)
 
