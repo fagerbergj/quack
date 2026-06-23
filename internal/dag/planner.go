@@ -1,90 +1,59 @@
 package dag
 
 import (
-	"context"
-	_ "embed"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 )
 
-// plannerPromptTemplate is the planner's system prompt. {{DATE}}, {{YEAR}},
-// {{AGENTS}}, and {{MEDIA}} are filled in by buildSystemPrompt.
-//
-//go:embed planner_prompt.md
-var plannerPromptTemplate string
-
-// AgentInfo describes one available agent to the planner.
+// AgentInfo describes one available agent (name + description) — the roster the
+// orchestrator authors a DAG from.
 type AgentInfo struct {
 	Name        string
 	Description string
 }
 
-// Planner calls an LLM to decompose a user query into a DAG plan.
+// Planner validates an orchestrator-authored DAG and stamps the turn's context
+// (verbatim message, history, attachments) onto it for the executor. There is no
+// LLM here: the orchestrator authors the DAG itself, guided by the plan_work
+// skill. This checks it — known agents, unique ids, acyclic — and hardens the
+// synthesizer's dependencies.
 type Planner struct {
-	model  model.LLM
 	agents []AgentInfo
 }
 
-// NewPlanner returns a Planner that uses the given model and agent roster.
-func NewPlanner(m model.LLM, agents []AgentInfo) *Planner {
-	return &Planner{model: m, agents: agents}
+// NewPlanner returns a Planner over the available agent roster.
+func NewPlanner(agents []AgentInfo) *Planner { return &Planner{agents: agents} }
+
+// RawNode is one DAG node the orchestrator submits to the plan tool.
+type RawNode struct {
+	ID        string   `json:"id"`
+	Agent     string   `json:"agent"`
+	Task      string   `json:"task"`
+	Rubric    string   `json:"rubric,omitempty"`
+	DependsOn []string `json:"depends_on"`
 }
 
-// Plan calls the model to produce a DAG for the given user message. history is
-// the prior conversation (empty for a fresh chat); it is shown to the planner
-// so follow-up requests resolve correctly, and stamped on the plan so every
-// node receives it. attachments are media parts (images, audio) from the current
-// turn; their MIME types are described as text so the text-only planner can route
-// to a media-capable agent. On any failure it falls back to a single web-researcher node.
-func (p *Planner) Plan(ctx context.Context, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
-	sysPrompt := p.buildSystemPrompt()
-	userText := message
-	if len(history) > 0 {
-		userText = "Conversation so far:\n" + flattenHistory(history) + "\n\nNew user request:\n" + message
-	}
-	if desc := AttachmentDesc(attachments); desc != "" {
-		userText += "\n\n" + desc
-	}
-	req := &model.LLMRequest{
-		Contents: []*genai.Content{{
-			Role:  "user",
-			Parts: []*genai.Part{{Text: "/no_think " + userText}},
-		}},
-		Config: &genai.GenerateContentConfig{
-			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}},
-		},
-	}
-
-	var sb strings.Builder
-	for resp, err := range p.model.GenerateContent(ctx, req, false) {
-		if err != nil {
-			return p.stamp(p.fallback(message), history, message, attachments), nil // degrade gracefully
-		}
-		if resp.Content != nil {
-			for _, part := range resp.Content.Parts {
-				if !part.Thought && part.Text != "" {
-					sb.WriteString(part.Text)
-				}
-			}
-		}
-	}
-
-	plan, err := parsePlan(sb.String(), p.agents)
+// Build validates the submitted nodes into a Plan and stamps the turn context.
+// message is the verbatim user request, history the prior turns, attachments the
+// current media — all threaded to every node by the executor. Returns an error
+// (no silent fallback) so the orchestrator can fix and re-submit.
+func (p *Planner) Build(nodes []RawNode, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
+	plan, err := assemble(nodes, p.agents)
 	if err != nil {
-		return p.stamp(p.fallback(message), history, message, attachments), nil // degrade gracefully
+		return nil, err
 	}
-	return p.stamp(plan, history, message, attachments), nil
+	plan.History = history
+	plan.UserMessage = message
+	plan.Attachments = attachments
+	return plan, nil
 }
 
-// AttachmentDesc returns a human-readable description of the attachment list for
-// the text-only planner prompt (e.g. "[User attached: 2 file(s): image/jpeg, audio/mp3]").
+// AttachmentDesc returns a human-readable description of the attachment list
+// (e.g. "[User attached: 2 file(s): image/jpeg, audio/mp3]") so the text-only
+// orchestrator knows media is present and routes to a media-capable agent.
 func AttachmentDesc(parts []*genai.Part) string {
 	if len(parts) == 0 {
 		return ""
@@ -101,138 +70,29 @@ func AttachmentDesc(parts []*genai.Part) string {
 	return fmt.Sprintf("[User attached: %d file(s): %s]", len(mimes), strings.Join(mimes, ", "))
 }
 
-// stamp records the verbatim user message, conversation history, and attachments
-// on the plan so the executor can pass them to every node.
-func (p *Planner) stamp(plan *Plan, history []HistoryTurn, message string, attachments []*genai.Part) *Plan {
-	plan.History = history
-	plan.UserMessage = message
-	plan.Attachments = attachments
-	return plan
-}
-
-// flattenHistory renders history as a User:/Assistant: transcript for the
-// planner prompt. The planner is a raw LLM call (not an ADK agent), so it
-// takes history as text; nodes receive the same turns as native session events.
-func flattenHistory(history []HistoryTurn) string {
-	var sb strings.Builder
-	for i, t := range history {
-		if i > 0 {
-			sb.WriteString("\n\n")
-		}
-		role := "Assistant"
-		if t.Role == "user" {
-			role = "User"
-		}
-		sb.WriteString(role + ": " + t.Text)
-	}
-	return sb.String()
-}
-
-// fallback returns a single-node plan using the first available web-researcher.
-func (p *Planner) fallback(message string) *Plan {
-	agentName := "web-researcher"
-	for _, a := range p.agents {
-		if strings.Contains(a.Name, "web-researcher") || strings.Contains(a.Name, "researcher") {
-			agentName = a.Name
-			break
-		}
-	}
-	return &Plan{
-		ID: uuid.NewString(),
-		Nodes: []Node{{
-			ID:        "n1",
-			AgentName: agentName,
-			Task:      message,
-		}},
-	}
-}
-
-// hasAgentNamed reports whether any configured agent's name contains sub.
-func (p *Planner) hasAgentNamed(sub string) bool {
-	for _, a := range p.agents {
-		if strings.Contains(a.Name, sub) {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *Planner) buildSystemPrompt() string {
-	var agentList strings.Builder
-	for _, a := range p.agents {
-		agentList.WriteString(fmt.Sprintf("- %s: %s\n", a.Name, a.Description))
-	}
-
-	now := time.Now()
-	mediaRule := ""
-	if p.hasAgentNamed("media-reader") || p.hasAgentNamed("image-reader") {
-		if p.hasAgentNamed("image-reader") {
-			mediaRule = `
-MEDIA ROUTING — when the user message contains "[User attached: ...]", pick ONE media agent:
-   - audio/* attachment → always use media-reader (image-reader cannot process audio).
-   - image/* + request involves handwriting, cursive, messy writing, dense text, small print, multi-column layout, degraded/blurry/faded image, or "transcribe" → use image-reader.
-   - image/* + request is a general description, identification, simple screenshot, or anything not covered above → use media-reader.
-   The chosen node receives the actual file bytes. Write its task as a specific instruction.
-   If the user also asks a factual question, chain: media-agent → web-researcher → synthesizer.`
-		} else {
-			mediaRule = `
-MEDIA ROUTING — when the user message contains "[User attached: ...]":
-   - Use ONE media-reader node (no web-researcher needed unless the user also asks a factual question).
-   - The media-reader node receives the actual file bytes; write its task as a clear instruction about what to do with the file.
-   - If the user asks a factual question AND has an attachment, use media-reader first, then web-researcher (serial chain), then synthesizer.`
-		}
-	}
-
-	return strings.NewReplacer(
-		"{{DATE}}", now.Format("Monday, January 2, 2006"),
-		"{{YEAR}}", strconv.Itoa(now.Year()),
-		"{{AGENTS}}", agentList.String(),
-		"{{MEDIA}}", mediaRule,
-	).Replace(plannerPromptTemplate)
-}
-
-// rawNode is the JSON shape the planner LLM is asked to emit.
-type rawNode struct {
-	ID        string   `json:"id"`
-	Agent     string   `json:"agent"`
-	Task      string   `json:"task"`
-	Rubric    string   `json:"rubric,omitempty"`
-	DependsOn []string `json:"depends_on"`
-}
-
-type rawPlan struct {
-	Nodes []rawNode `json:"nodes"`
-}
-
-func parsePlan(text string, agents []AgentInfo) (*Plan, error) {
-	text = extractJSON(text)
-
-	var raw rawPlan
-	if err := json.Unmarshal([]byte(text), &raw); err != nil {
-		return nil, fmt.Errorf("parse json: %w", err)
-	}
-	if len(raw.Nodes) == 0 {
+// assemble validates nodes against the agent roster, hardens the synthesizer's
+// dependencies, and checks acyclicity.
+func assemble(nodes []RawNode, agents []AgentInfo) (*Plan, error) {
+	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
 	}
-
-	knownAgents := make(map[string]bool, len(agents))
+	known := make(map[string]bool, len(agents))
 	for _, a := range agents {
-		knownAgents[a.Name] = true
+		known[a.Name] = true
 	}
-
-	nodeIDs := make(map[string]bool, len(raw.Nodes))
+	ids := make(map[string]bool, len(nodes))
 	plan := &Plan{ID: uuid.NewString()}
-	for _, n := range raw.Nodes {
+	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")
 		}
-		if nodeIDs[n.ID] {
+		if ids[n.ID] {
 			return nil, fmt.Errorf("duplicate node id %q", n.ID)
 		}
-		if !knownAgents[n.Agent] {
+		if !known[n.Agent] {
 			return nil, fmt.Errorf("unknown agent %q for node %q", n.Agent, n.ID)
 		}
-		nodeIDs[n.ID] = true
+		ids[n.ID] = true
 		plan.Nodes = append(plan.Nodes, Node{
 			ID:        n.ID,
 			AgentName: n.Agent,
@@ -242,49 +102,26 @@ func parsePlan(text string, agents []AgentInfo) (*Plan, error) {
 		})
 	}
 
-	// Harden: every synthesizer node must depend on ALL non-synthesizer nodes.
-	// LLMs frequently omit some predecessors, causing the synthesizer to miss
-	// research output. We compute the full transitive closure of non-synthesizer
-	// nodes and replace the synthesizer's depends_on with that complete set.
-	// This preserves serial researcher chains: if n2 depends_on n1, the synthesizer
-	// still lists both, which is redundant but harmless (TopoSort handles it).
+	// Harden: every synthesizer node depends on ALL non-synthesizer nodes. The
+	// orchestrator frequently omits some predecessors, which would let the
+	// synthesizer run before research finishes; replace its depends_on with the
+	// complete set (redundant serial edges are harmless — TopoSort dedups).
 	if len(plan.Nodes) > 1 {
-		var nonSynthIDs []string
+		var nonSynth []string
 		for _, n := range plan.Nodes {
 			if n.AgentName != "synthesizer" {
-				nonSynthIDs = append(nonSynthIDs, n.ID)
+				nonSynth = append(nonSynth, n.ID)
 			}
 		}
 		for i, n := range plan.Nodes {
 			if n.AgentName == "synthesizer" {
-				plan.Nodes[i].DependsOn = nonSynthIDs
+				plan.Nodes[i].DependsOn = nonSynth
 			}
 		}
 	}
 
-	// Validate: must be acyclic.
 	if _, err := TopoSort(*plan); err != nil {
 		return nil, err
 	}
 	return plan, nil
-}
-
-// extractJSON finds the outermost {...} JSON object in text (strips markdown fences).
-func extractJSON(text string) string {
-	text = strings.TrimSpace(text)
-	// Strip markdown code fences.
-	for _, prefix := range []string{"```json", "```"} {
-		if strings.HasPrefix(text, prefix) {
-			text = strings.TrimPrefix(text, prefix)
-			text = strings.TrimSuffix(strings.TrimSpace(text), "```")
-			return strings.TrimSpace(text)
-		}
-	}
-	// Find the first '{' and last '}'.
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start >= 0 && end > start {
-		return text[start : end+1]
-	}
-	return text
 }

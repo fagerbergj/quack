@@ -14,7 +14,7 @@ import (
 )
 
 type planArgs struct {
-	Query string `json:"query"`
+	Nodes []dag.RawNode `json:"nodes"`
 }
 
 type planResult struct {
@@ -22,34 +22,28 @@ type planResult struct {
 	Summary string `json:"summary"` // human-readable node list for the model
 }
 
-// NewPlanTool returns a tool that decomposes a request into a DAG plan. The full
-// plan is stored in cache keyed by a plan ID; the tool returns only that ID plus
-// a short summary. The execute tool runs the plan by ID — the model never has to
-// copy the (large) plan JSON between calls, which is where nodes were being
-// dropped. A dag_plan SSE event is emitted immediately via the yield context so
-// the frontend can render the DAG structure before execution begins.
+// NewPlanTool returns the plan tool. YOU (the orchestrator) author the DAG and
+// submit it as `nodes`; this tool validates it (known agents, unique ids,
+// acyclic, synthesizer hardened), caches it under a plan ID, and emits a dag_plan
+// SSE event so the frontend can render the graph before execution. The execute
+// tool then runs it by ID — the plan JSON is never copied between calls.
 //
-// attachments are the current turn's media parts; they are passed to the planner
-// (which describes them for routing and stamps them on the plan) so the executor
-// can deliver the raw bytes to a media-capable node.
-//
-// history is the prior conversation (nil for a fresh chat); it is passed to the
-// planner so follow-up requests — including a re-plan after an upfront clarifying
-// exchange — resolve references against what was already said.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn) (tool.Tool, error) {
+// attachments are the current turn's media parts and history the prior turns;
+// both are stamped on the plan so every node sees them. message is the verbatim
+// user request, stamped so nodes get the full ask (not the orchestrator's
+// paraphrase).
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string) (tool.Tool, error) {
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
 			Name: "plan",
-			Description: "Tool to decompose a task into a DAG plan for specialist agents to execute. " +
-				"Use when the task is too large, too complex, or requires capabilities you cannot perform directly. " +
-				"Do NOT call for tasks you can complete in a single response. " +
-				"Returns a plan_id plus the planned DAG (each node's agent, dependencies, and task). " +
-				"Review it before executing: if a researcher is overloaded with unrelated topics, shared work is " +
-				"duplicated across nodes instead of extracted into an upstream node, or dependencies are wrong, " +
-				"call plan again to refine. When the plan looks right, pass plan_id to the execute tool.",
+			Description: "Tool to run a DAG of specialist agents. Load the plan_work skill first, then YOU author " +
+				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained — the " +
+				"agent sees only this text), depends_on: [ids it needs output from]}. Optionally a `rubric`. " +
+				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
+				"directly. If validation fails, fix the nodes and call again.",
 		},
 		func(tc agent.ToolContext, a planArgs) (planResult, error) {
-			p, err := planner.Plan(tc, history, a.Query, attachments)
+			p, err := planner.Build(a.Nodes, history, message, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}

@@ -141,14 +141,17 @@ func TestOrchestratorLayers(t *testing.T) {
 	frontmatters := []*skill.Frontmatter{
 		{Name: "format-markdown", Description: "reformats markdown"},
 	}
-	out := promptbuilder.Orchestrator(frontmatters, "## Steps\n1. Understand.")
+	roster := "- `web-researcher` — searches the web\n"
+	out := promptbuilder.Orchestrator(roster, frontmatters, "## Steps\n1. Understand.")
 
 	cases := []struct {
 		layer string
 		want  string
 	}{
 		{"identity", "orchestrator"},
-		{"skills header", "## Skills"},
+		{"agents header", "### Agents"},
+		{"agent name", "web-researcher"},
+		{"skills header", "### Skills"},
 		{"skill name", "format-markdown"},
 		{"skill description", "reformats markdown"},
 		{"load_skill hint", "load_skill"},
@@ -164,8 +167,8 @@ func TestOrchestratorLayers(t *testing.T) {
 }
 
 func TestOrchestratorNoSkills(t *testing.T) {
-	out := promptbuilder.Orchestrator(nil, "do stuff")
-	if strings.Contains(out, "## Skills") {
-		t.Error("Orchestrator() should not emit ## Skills section when no skills provided")
+	out := promptbuilder.Orchestrator("", nil, "do stuff")
+	if strings.Contains(out, "### Skills") {
+		t.Error("Orchestrator() should not emit a Skills section when no skills provided")
 	}
 }
