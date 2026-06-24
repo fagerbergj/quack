@@ -71,18 +71,66 @@ type fetchArgs struct {
 	Offset int `json:"offset,omitempty"`
 }
 
-// newFetch builds the fetch tool: SSRF-guard the URL, GET it with the guarded
-// client, and fall back to a config-selected render backend (crawl4ai today, via
-// the PageRenderer port) for pages a bare GET can't read (JS-heavy or thin).
+// fetcher retrieves readable text for an already-validated URL. The two impls are
+// directFetcher (a plain SSRF-guarded GET, no external service — the no-docker
+// path) and crawl4aiFetcher (the same GET plus a real-browser render fallback for
+// JS-heavy / bot-walled pages). newFetcher selects one from config.
+type fetcher interface {
+	fetch(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error)
+}
+
+// directFetcher does a plain guarded GET and nothing more — no render fallback,
+// so it needs no external service.
+type directFetcher struct{}
+
+func (directFetcher) fetch(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error) {
+	return fetchVia(tc, d, nil, u, target)
+}
+
+// crawl4aiFetcher tries the direct GET first (cheap) and falls back to crawl4ai's
+// real-browser render for pages a bare GET can't read.
+type crawl4aiFetcher struct{ renderer PageRenderer }
+
+func (f crawl4aiFetcher) fetch(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error) {
+	return fetchVia(tc, d, f.renderer, u, target)
+}
+
+// newFetcher selects the web_fetch implementation. "direct" (or empty) is a plain
+// GET with no backend — the no-docker default. "crawl4ai" adds the render fallback
+// and requires a URL.
+func newFetcher(kind, base string, client *http.Client) (fetcher, error) {
+	switch kind {
+	case "", backendDirect:
+		return directFetcher{}, nil
+	case backendCrawl4AI:
+		if base == "" {
+			return nil, fmt.Errorf("web_fetch: kind crawl4ai requires a URL (use kind: direct for a plain GET with no backend)")
+		}
+		return crawl4aiFetcher{renderer: &crawl4aiRenderer{client: client, base: strings.TrimRight(base, "/")}}, nil
+	default:
+		return nil, fmt.Errorf("web_fetch: unknown backend kind %q", kind)
+	}
+}
+
+// newFetch builds the fetch tool over a config-selected fetcher (direct GET, or
+// crawl4ai GET-plus-render). The caching + result-shaping wrapper is the same
+// regardless of which impl retrieves the page.
 func newFetch(d Deps) (tool.Tool, error) {
-	renderer, err := newPageRenderer(d.Fetch.Kind, d.Fetch.URL, d.Client)
+	f, err := newFetcher(d.Fetch.Kind, d.Fetch.URL, d.Client)
 	if err != nil {
 		return nil, err
 	}
+	// Only advertise the headless-browser fallback when the crawl4ai impl is active.
+	desc := "Fetch a web page by URL and return its readable text. "
+	if _, ok := f.(crawl4aiFetcher); ok {
+		desc += "Falls back to a headless browser for JavaScript-rendered pages. "
+	}
+	desc += "Long pages return only a head by default; the FULL page is retained, so pass `pattern` (a regex) to return just the matching lines, or `offset` (a line number) to read a window further down. Re-call the same URL with pattern/offset to drill in without re-paying the fetch."
+
 	return functiontool.New[fetchArgs, string](
 		functiontool.Config{
 			Name:        "web_fetch",
-			Description: "Fetch a web page by URL and return its readable text. Falls back to a headless browser for JavaScript-rendered pages. Long pages return only a head by default; the FULL page is retained, so pass `pattern` (a regex) to return just the matching lines, or `offset` (a line number) to read a window further down. Re-call the same URL with pattern/offset to drill in without re-paying the fetch.",
+			Description: desc,
 		},
 		func(tc agent.ToolContext, a fetchArgs) (string, error) {
 			u, err := ValidateURL(strings.TrimSpace(a.URL))
@@ -100,7 +148,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 				}
 			}
 			if full == "" {
-				fetched, ferr := fetchBest(tc, d, renderer, u, target)
+				fetched, ferr := f.fetch(tc, d, u, target)
 				if ferr != nil {
 					return "", ferr
 				}
@@ -199,10 +247,10 @@ func capFetchReturn(s string) string {
 	return strings.ToValidUTF8(s[:fetchReturnMaxBytes], "") + "\n[…truncated; narrow your grep or use offset=N]"
 }
 
-// fetchBest tries to get the best readable text for target. It first tries a
-// direct GET; if that is thin, failed, or bot-walled, it falls back to the render
-// backend (renderer may be nil when none is configured).
-func fetchBest(tc agent.ToolContext, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
+// fetchVia is the shared fetch engine for both impls. It first tries a direct
+// GET; if that is thin, failed, or bot-walled, it falls back to the render backend
+// (renderer is nil for the basic impl, which therefore stops after the direct GET).
+func fetchVia(tc agent.ToolContext, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
 	text, derr := fetchReadable(tc, d.Guarded, target)
 	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
 		return text, nil

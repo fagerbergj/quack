@@ -82,8 +82,8 @@ tools:
     kind: searxng                 # search adapter; empty ⇒ default (searxng)
     url: ${SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080
   web_fetch:
-    kind: crawl4ai                # render adapter; empty ⇒ default (crawl4ai)
-    url: ${CRAWL4AI_URL}          # crawl4ai backend, e.g. http://crawl4ai:11235
+    kind: crawl4ai                # direct (plain GET, no service) | crawl4ai (GET + browser render). empty ⇒ direct
+    url: ${CRAWL4AI_URL}          # required for crawl4ai (e.g. http://crawl4ai:11235); unused by kind: direct
   # Memory tools (M6) — store-backed; binding one to an agent enables that memory.
   stage_memory:                   # task memory: researchers stage tradecraft, the gate commits it
     store: default_vector

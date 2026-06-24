@@ -23,17 +23,32 @@ func TestNewWebSearcher(t *testing.T) {
 	}
 }
 
-func TestNewPageRenderer(t *testing.T) {
+func TestNewFetcher(t *testing.T) {
 	c := &http.Client{}
-	r, err := newPageRenderer("", "http://crawl", c)
-	if err != nil || r == nil {
-		t.Errorf("default kind: r=%v err=%v", r, err)
+
+	// Empty kind defaults to direct (plain GET, no backend needed).
+	if f, err := newFetcher("", "", c); err != nil {
+		t.Errorf("empty kind: err=%v", err)
+	} else if _, ok := f.(directFetcher); !ok {
+		t.Errorf("empty kind should give directFetcher, got %T", f)
 	}
-	// An empty render backend is valid: no fallback renderer, not an error.
-	if r, err := newPageRenderer("", "", c); err != nil || r != nil {
-		t.Errorf("empty backend should yield (nil, nil); got r=%v err=%v", r, err)
+	if f, err := newFetcher("direct", "", c); err != nil {
+		t.Errorf("direct: err=%v", err)
+	} else if _, ok := f.(directFetcher); !ok {
+		t.Errorf("kind direct should give directFetcher, got %T", f)
 	}
-	if _, err := newPageRenderer("bogus", "http://x", c); err == nil {
-		t.Error("unknown render kind should error")
+
+	// crawl4ai needs a URL; with one it yields the render-capable impl.
+	if _, err := newFetcher("crawl4ai", "", c); err == nil {
+		t.Error("crawl4ai without a url should error")
+	}
+	if f, err := newFetcher("crawl4ai", "http://crawl", c); err != nil {
+		t.Errorf("crawl4ai with url: err=%v", err)
+	} else if _, ok := f.(crawl4aiFetcher); !ok {
+		t.Errorf("kind crawl4ai should give crawl4aiFetcher, got %T", f)
+	}
+
+	if _, err := newFetcher("bogus", "http://x", c); err == nil {
+		t.Error("unknown fetch kind should error")
 	}
 }

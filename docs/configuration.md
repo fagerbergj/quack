@@ -20,8 +20,8 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `agents[rag-researcher].tools` | `rag_search` | Tool binding for the RAG researcher. |
 | `tools.web_search.kind` | `searxng` (default) | Adapter for the dedicated search backend; empty ⇒ default. Swap with a new adapter + config, no tool rewrite (`internal/tools/backends.go`). |
 | `tools.web_search.url` (env `SEARXNG_URL`) | _internal URL_ | Search backend endpoint (e.g. `http://searxng:8080`). |
-| `tools.web_fetch.kind` | `crawl4ai` (default) | Adapter for the render backend; empty ⇒ default. |
-| `tools.web_fetch.url` (env `CRAWL4AI_URL`) | _internal URL_ | Render backend for JS-heavy / bot-walled pages; empty ⇒ render fallback disabled. |
+| `tools.web_fetch.kind` | `direct` (default) / `crawl4ai` | Fetch implementation. `direct` = a plain SSRF-guarded GET, no external service (the no-docker path). `crawl4ai` = the same GET plus a headless-browser render fallback for JS-heavy / bot-walled pages (needs a URL). Empty ⇒ `direct`. |
+| `tools.web_fetch.url` (env `CRAWL4AI_URL`) | _internal URL_ | crawl4ai render backend (e.g. `http://crawl4ai:11235`); **required** for `kind: crawl4ai`, unused by `kind: direct`. |
 | `tools.<store-backed>.store` | a `stores[]` name | A tool backed by *shared* infra (e.g. memory) references a store instead of `kind`+`url`; the store supplies the adapter + connection. May override `collection` / `schema` / `top_k` / `min_score`. |
 | `budget.max_nodes` | `12` | Per-request DAG size cap. |
 | `budget.max_depth` | `4` | Per-request DAG depth cap. |

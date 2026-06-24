@@ -38,10 +38,11 @@ type Backend struct {
 	URL  string
 }
 
-// Backend kinds. Empty kind defaults to the only implemented adapter, so existing
-// config keeps working without naming a kind.
+// Backend kinds. web_search defaults to searxng (its only adapter); web_fetch
+// defaults to direct (a plain GET, no external service) and opts into crawl4ai.
 const (
 	backendSearXNG  = "searxng"
+	backendDirect   = "direct"
 	backendCrawl4AI = "crawl4ai"
 )
 
@@ -61,20 +62,5 @@ func newWebSearcher(kind, base string, client *http.Client) (WebSearcher, error)
 	}
 }
 
-// newPageRenderer selects the render adapter for kind (default: crawl4ai). An
-// empty base means no render backend is configured: returns a nil renderer and
-// the fetch tool simply skips the render fallback.
-func newPageRenderer(kind, base string, client *http.Client) (PageRenderer, error) {
-	if kind == "" {
-		kind = backendCrawl4AI
-	}
-	switch kind {
-	case backendCrawl4AI:
-		if base == "" {
-			return nil, nil // optional: no render fallback
-		}
-		return &crawl4aiRenderer{client: client, base: strings.TrimRight(base, "/")}, nil
-	default:
-		return nil, fmt.Errorf("web_fetch: unknown render backend kind %q", kind)
-	}
-}
+// (web_fetch's adapter is selected by newFetcher in fetch.go, since both impls
+// share that file's fetch engine.)
