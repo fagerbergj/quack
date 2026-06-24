@@ -80,6 +80,26 @@ agents:
     context_window: 32768       # qwen3-vl-32b served -c 32768
     tools: []
     inputs: [text, image]
+  # Document-ingest agents (M8). Binding the doc tools here opens their stores at
+  # startup (postgres records always; opensearch/qdrant self-disable if unset).
+  general-purpose:
+    bundle: agents/general-purpose
+    provider: default
+    model: ${RESEARCHER_MODEL}
+    context_window: 65536
+    tools: [load_document, search_document, semantic_search_document]   # read the corpus to ground cleanup/clarify
+  classifier:
+    bundle: agents/classifier
+    provider: default
+    model: ${RESEARCHER_MODEL}
+    context_window: 65536
+    tools: []                   # emits tags + summary as strict JSON text
+  document-writer:
+    bundle: agents/document-writer
+    provider: default
+    model: ${RESEARCHER_MODEL}
+    context_window: 65536
+    tools: [create_document, update_document]   # persist the final record
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
