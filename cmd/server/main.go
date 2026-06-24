@@ -276,6 +276,18 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 
 	urlCache := tools.NewURLCache()
 
+	// Outbound MCP servers (config.mcp): build one client toolset each and share
+	// it with the agents it's scoped to, alongside the skill toolset. Lazy — no
+	// network until an agent first lists tools. This is the no-docker search path
+	// (e.g. Exa's keyless hosted MCP).
+	mcpSets, err := tools.BuildMCPToolsets(cfg.MCP)
+	if err != nil {
+		return nil, nil, fmt.Errorf("mcp toolsets: %w", err)
+	}
+	for _, s := range mcpSets {
+		slog.Info("mcp server registered", "component", "startup", "name", s.Name)
+	}
+
 	var judgeFactory vetting.JudgeFactory
 	var gateCfg vetting.Config
 	if cfg.Gates.Enabled() {
@@ -410,7 +422,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 		}
 		comp := compactionFor(ac)
-		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS}, comp, memGuidance)
+		agentToolsets := append([]tool.Toolset{skillTS}, tools.MCPToolsetsFor(mcpSets, name)...)
+		ag, err := agent.Build(bundle, m, builtins, agentToolsets, comp, memGuidance)
 		if err != nil {
 			return nil, servers, fmtErr(name, "build: %v", err)
 		}

@@ -27,6 +27,8 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `budget.max_depth` | `4` | Per-request DAG depth cap. |
 | `budget.max_tokens` | `400000` | Per-request token ceiling. |
 | `budget.max_wall_clock` | `10m` | Per-request time ceiling. |
+| `mcp[].name` / `.url` | e.g. `exa` / `https://mcp.exa.ai/mcp` | Outbound MCP server quack connects to as a client; its tools are discovered at runtime and handed to agents as a toolset (lazy — no startup network). The **no-docker web-search path**: Exa's hosted MCP is keyless (no API key, no container), serving `web_search_exa` + `web_fetch_exa`. |
+| `mcp[].agents` / `.tools` | agent names / tool names | Optional: scope the toolset to specific agents (empty ⇒ all worker agents); allowlist which of the server's tools to expose (empty ⇒ all). |
 | `stores.<name>.kind` | `postgres` / `qdrant` | **Named backend registry** (like `providers`): consumers reference a store by name. `kind` selects the adapter (the portability seam). Implemented: postgres, qdrant. |
 | `stores.<name>.url` (env, e.g. `DATABASE_URL` / `QDRANT_URL`) | _secret_ | Connection endpoint. A vector store with an empty URL self-disables memory (qdrant-less runs keep working). |
 | `stores.<name>.extends` | another store name | Inherit a store's fields (child overrides) — reuse one store's connection with a different schema/collection. |

@@ -170,6 +170,31 @@ tools:
 	}
 }
 
+func TestLoadParsesMCPServers(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+mcp:
+  - name: exa
+    url: https://mcp.exa.ai/mcp
+    agents: [web-researcher]
+    tools: [web_search_exa]
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.MCP) != 1 || c.MCP[0].Name != "exa" || c.MCP[0].URL != "https://mcp.exa.ai/mcp" {
+		t.Fatalf("mcp not parsed: %+v", c.MCP)
+	}
+	if len(c.MCP[0].Agents) != 1 || c.MCP[0].Agents[0] != "web-researcher" {
+		t.Errorf("mcp agents scope not parsed: %+v", c.MCP[0].Agents)
+	}
+}
+
+func TestLoadRejectsMCPServerWithoutURL(t *testing.T) {
+	if _, err := Load(writeTemp(t, baseConfig+"\nmcp:\n  - name: broken\n")); err == nil {
+		t.Fatal("expected error for an mcp server with no url")
+	}
+}
+
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
