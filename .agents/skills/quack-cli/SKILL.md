@@ -97,6 +97,35 @@ Mirror the frontend's split (logic separate from rendering, client separate from
    map to the same client calls the `quack chat …` verbs use. One implementation per action in
    `internal/cli`; both the command and the slash-command call it. No duplicated logic.
 
+## CLI conventions (house style)
+
+Follow the cross-tool consensus (clig.dev, POSIX utility conventions, Heroku/Atlassian/Microsoft). The
+rulings that bind quack — most are already in the cobra wiring, so *preserve* them:
+
+- **Flags label options; a positional arg names the subject.** Options are named flags (`--server`,
+  `-p`); the *primary subject* (a chat id, a node id) is positional — `quack chat delete <id>`,
+  `quack chat node steer <node> <msg>`. This is the `gh`/`docker` balance, **not** "flags for
+  everything." Give every flag a short alias where one is idiomatic (`-p`).
+- **Names: lowercase, kebab-case, consistent number.** `chat node steer`, never `chatNodeSteer` or
+  `steer-chat`. Don't mix singular/plural across related flags (`--source` *and* `--sources`).
+- **Streams compose: content → stdout, everything else → stderr.** Results/tokens/JSON to stdout so
+  `| jq` and `> file` work; status, spinners, prompts, logs to stderr. (This is the print-mode gotcha,
+  generalized.) Offer `--json` where a verb has structured output; `quack api` is always raw JSON.
+- **Exit 0 = success, non-zero = error (POSIX).** `Execute()` error → `os.Exit(1)` already does this;
+  keep `SilenceUsage: true` so a runtime failure isn't buried under a usage dump (a failed `RunE` is an
+  error, not a misuse).
+- **Errors say *what* + *how to fix*.** Not `request failed` — `cannot reach server at <url>: is`
+  `quack serve` `running? pass --server or run` `quack server use`. The `notWired` stub is a
+  placeholder; real handlers name the recovery.
+- **Reaction for every action; suggest the next step.** Confirm success/failure plainly; after a
+  terminal verb point at the obvious follow-up (`server init` → "now run `quack serve`"; `chat new` →
+  print the chat id to `resume`).
+- **Long work shows progress and is interruptible.** Spinner (Bubbles) for streaming/long calls; `^C`
+  cancels cleanly — cancel the request *and* restore the terminal. Print mode shows a stderr status
+  line, not a spinner.
+- **`--help` is complete and discoverable** — cobra generates it from `Use`/`Short`, so write a real
+  `Short` for **every** command (no blank leaves) and a one-glance `Long` on the root.
+
 ## Testing strategy (three tiers)
 
 Mirror the frontend: logic tests cheap and many; render snapshots rare and integration-level.
@@ -117,9 +146,19 @@ Mirror the frontend: logic tests cheap and many; render snapshots rare and integ
 - **Tier 3 needs no terminal.** Point the client at an `httptest.Server` that replays a canned SSE
   stream; assert the printed/structured output. The wizard test asserts the emitted YAML round-trips
   through the real config loader.
+- **E2E the compiled binary sparingly** (the "test it the way users run it" level): a handful of
+  `os/exec` runs of the built `quack` asserting **exit code + stdout/stderr split** — `quack version`
+  prints to stdout exit 0; an unknown command exits non-zero; `quack -p … | cat` is ANSI-free. Use Go's
+  own `os/exec`, **not** a new harness — BATS/expect only if shell-level coverage is ever actually
+  wanted (it isn't yet). `cmd/quack/main_test.go` covers the in-process slice (tree shape + `version` to
+  stdout via `root.Execute()`); the exit-code and ANSI-free-pipe checks need the *built* binary.
 - **Rejected:** microsoft/tui-test (TypeScript — wrong language for Go CI), tui-driver (framework-agnostic
   PTY assertions — only if we leave Bubble Tea, which we won't), **VHS** is for **docs GIFs**, not CI —
   optionally add `.tape` files for the README, never as a test gate.
+
+> **Sources** (CLI design consensus, distilled into the rulings above): clig.dev · POSIX.1 §12 Utility
+> Conventions · Heroku CLI Style Guide · Atlassian "10 principles for delightful CLIs" · Microsoft
+> System.CommandLine design guidance. Testing levels: Smashing "Testing the CLI the way people use it".
 
 ## Gotchas
 
