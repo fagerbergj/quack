@@ -51,14 +51,15 @@ func loadDoc(ctx context.Context, store docstore.DocStore, a loadDocArgs) (docst
 }
 
 type createDocArgs struct {
-	Title       string   `json:"title"`
-	Content     string   `json:"content"`
-	Summary     string   `json:"summary"`
-	Tags        []string `json:"tags"`
-	Series      string   `json:"series"`
-	DateMonth   string   `json:"date_month"`
-	SourceRef   string   `json:"source_ref"`
-	ContentHash string   `json:"content_hash"`
+	Title     string   `json:"title"`
+	Content   string   `json:"content"`
+	Summary   string   `json:"summary"`
+	Tags      []string `json:"tags"`
+	Series    string   `json:"series"`
+	DateMonth string   `json:"date_month"`
+	SourceRef string   `json:"source_ref"`
+	// No content_hash: the dedup key is derived from content server-side, never
+	// supplied by the agent (which would hallucinate it and defeat dedup).
 }
 
 type docIDResult struct {
@@ -73,8 +74,8 @@ func newCreateDocument(d Deps) (tool.Tool, error) {
 		functiontool.Config{
 			Name: "create_document",
 			Description: "Tool to persist a new document record after extraction, cleanup, and classification. " +
-				"Returns {id}. Idempotent on content_hash: if a document with the same content_hash already " +
-				"exists, its id is returned instead of creating a duplicate.",
+				"Call it ONCE. Returns {id}. Idempotent on the content: saving the same content again returns the " +
+				"existing id rather than creating a duplicate (the store derives the dedup key — do not pass a hash).",
 		},
 		func(tc agent.ToolContext, a createDocArgs) (docIDResult, error) {
 			return createDoc(tc, d.DocStore, d.FTS, d.Vector, a)
@@ -89,15 +90,12 @@ func createDoc(ctx context.Context, store docstore.DocStore, fts docstore.FTSInd
 	if strings.TrimSpace(a.Content) == "" {
 		return docIDResult{}, fmt.Errorf("create_document: content is empty")
 	}
-	// Default the dedup key to a hash of the content when the caller didn't supply
-	// one (the chat path has no source-file hash). This makes create idempotent:
-	// the same content always resolves to one record — so a retried or re-invoked
-	// call returns the existing id instead of inserting a duplicate.
-	hash := a.ContentHash
-	if hash == "" {
-		sum := sha256.Sum256([]byte(a.Content))
-		hash = hex.EncodeToString(sum[:])
-	}
+	// The dedup key is a hash of the content, computed here — never supplied by the
+	// agent (which hallucinates hashes, defeating dedup). So saving the same content
+	// always resolves to one record: a re-invoked or repeated call returns the
+	// existing id, and the uniqueIndex on content_hash backstops any concurrent race.
+	sum := sha256.Sum256([]byte(a.Content))
+	hash := hex.EncodeToString(sum[:])
 	if existing, ok, err := store.GetByHash(ctx, hash); err != nil {
 		return docIDResult{}, err
 	} else if ok {

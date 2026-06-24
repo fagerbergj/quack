@@ -92,7 +92,7 @@ func TestCreateAndLoadDocument(t *testing.T) {
 	store := newFakeDocStore()
 	ctx := context.Background()
 
-	res, err := createDoc(ctx, store, nil, nil, createDocArgs{Title: "T", Content: "body", Summary: "s", Tags: []string{"a"}, ContentHash: "h1"})
+	res, err := createDoc(ctx, store, nil, nil, createDocArgs{Title: "T", Content: "body", Summary: "s", Tags: []string{"a"}})
 	if err != nil || res.ID == "" {
 		t.Fatalf("create: id=%q err=%v", res.ID, err)
 	}
@@ -101,8 +101,8 @@ func TestCreateAndLoadDocument(t *testing.T) {
 		t.Fatalf("load: %+v err=%v", got, err)
 	}
 
-	// Dedup: same content_hash returns the existing id, no new record.
-	res2, err := createDoc(ctx, store, nil, nil, createDocArgs{Title: "other", Content: "body2", ContentHash: "h1"})
+	// Dedup: identical content returns the existing id, no new record.
+	res2, err := createDoc(ctx, store, nil, nil, createDocArgs{Title: "other", Content: "body"})
 	if err != nil || res2.ID != res.ID {
 		t.Errorf("dedup: got id=%q err=%v, want existing %q", res2.ID, err, res.ID)
 	}
@@ -121,7 +121,7 @@ func TestCreateAndLoadDocument(t *testing.T) {
 func TestCreateIndexesToFTSAndSearch(t *testing.T) {
 	store, fts := newFakeDocStore(), newFakeFTS()
 	ctx := context.Background()
-	res, err := createDoc(ctx, store, fts, nil, createDocArgs{Title: "Mistral release notes", Content: "body", ContentHash: "h"})
+	res, err := createDoc(ctx, store, fts, nil, createDocArgs{Title: "Mistral release notes", Content: "body"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestSearchDocumentRequiresFTS(t *testing.T) {
 func TestCreateIndexesToVector(t *testing.T) {
 	store, vec := newFakeDocStore(), newFakeVector()
 	ctx := context.Background()
-	res, err := createDoc(ctx, store, nil, vec, createDocArgs{Title: "t", Content: "qwen release notes", ContentHash: "h"})
+	res, err := createDoc(ctx, store, nil, vec, createDocArgs{Title: "t", Content: "qwen release notes"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +169,8 @@ func TestSemanticSearchRequiresVector(t *testing.T) {
 	}
 }
 
-// With no content_hash supplied, create dedups on a hash of the content — so a
-// re-invoked write (e.g. a gate re-run) returns the same record, not a duplicate.
+// create dedups on a content hash derived server-side — so a re-invoked or
+// repeated write returns the same record, not a duplicate.
 func TestCreateDedupsOnContentByDefault(t *testing.T) {
 	store := newFakeDocStore()
 	ctx := context.Background()
@@ -190,7 +190,7 @@ func TestCreateDedupsOnContentByDefault(t *testing.T) {
 func TestUpdateDocumentOverlays(t *testing.T) {
 	store := newFakeDocStore()
 	ctx := context.Background()
-	res, _ := createDoc(ctx, store, nil, nil, createDocArgs{Title: "old", Content: "body", Summary: "keep", ContentHash: "h"})
+	res, _ := createDoc(ctx, store, nil, nil, createDocArgs{Title: "old", Content: "body", Summary: "keep"})
 
 	// Only Title provided ⇒ Summary/Content unchanged.
 	if _, err := updateDoc(ctx, store, updateDocArgs{ID: res.ID, Title: "new"}); err != nil {
