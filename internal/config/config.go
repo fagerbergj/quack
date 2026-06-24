@@ -339,8 +339,9 @@ func (c *Config) validate() error {
 		}
 	}
 	// Default + range-check vector-store recall tuning so consumers don't repeat it.
+	// Applies to any vector backend that carries an embedder (qdrant or sqlite).
 	for name, s := range c.Stores {
-		if s.Kind != "qdrant" || s.URL == "" {
+		if s.Embedder == nil || s.URL == "" {
 			continue
 		}
 		if s.TopK == 0 {

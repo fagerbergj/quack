@@ -3,7 +3,6 @@ package memory
 import (
 	"context"
 	"iter"
-	"os"
 	"strings"
 	"testing"
 
@@ -24,19 +23,9 @@ func (f fakeModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ boo
 }
 
 func TestCommit_AddThenRecall(t *testing.T) {
-	addr := os.Getenv("QDRANT_URL")
-	if addr == "" {
-		t.Skip("QDRANT_URL not set; skipping qdrant integration test")
-	}
 	ctx := context.Background()
-	const coll = "quack_test_commit"
-
 	consolidator := fakeModel{reply: "```json\n{\"ops\":[{\"action\":\"ADD\",\"content\":\"transportforireland.ie is authoritative for Irish transit\",\"kind\":\"source\"}]}\n```"}
-	s, err := Open(ctx, addr, fakeEmbedder{}, consolidator, coll, "task", 5, 0.5)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.client.DeleteCollection(ctx, coll) })
+	s := newSQLiteStore(t, "task", consolidator)
 
 	n, err := s.Commit(ctx, "u1", "web-researcher",
 		[]Candidate{{Content: "use the official transit site", Metadata: map[string]string{"kind": "source"}}},
@@ -48,7 +37,8 @@ func TestCommit_AddThenRecall(t *testing.T) {
 		t.Fatalf("Commit wrote %d, want 1", n)
 	}
 
-	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "irish transit", UserID: "u1"})
+	// Task memory is scoped to the agent (author), so recall passes AppName.
+	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "irish transit", AppName: "web-researcher", UserID: "u1"})
 	if err != nil {
 		t.Fatalf("SearchMemory: %v", err)
 	}
@@ -60,18 +50,8 @@ func TestCommit_AddThenRecall(t *testing.T) {
 // TestCommit_Noop verifies the gate's vetting drop: when the consolidator returns
 // no ops (nothing worth keeping), nothing is written.
 func TestCommit_Noop(t *testing.T) {
-	addr := os.Getenv("QDRANT_URL")
-	if addr == "" {
-		t.Skip("QDRANT_URL not set; skipping qdrant integration test")
-	}
 	ctx := context.Background()
-	const coll = "quack_test_commit_noop"
-
-	s, err := Open(ctx, addr, fakeEmbedder{}, fakeModel{reply: `{"ops":[]}`}, coll, "task", 5, 0.5)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.client.DeleteCollection(ctx, coll) })
+	s := newSQLiteStore(t, "task", fakeModel{reply: `{"ops":[]}`})
 
 	n, err := s.Commit(ctx, "u1", "web-researcher", []Candidate{{Content: "today's bus fare is 2 euro"}}, "")
 	if err != nil {

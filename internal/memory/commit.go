@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/qdrant/go-client/qdrant"
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 )
@@ -138,25 +137,14 @@ func (s *Store) neighbours(ctx context.Context, userID, sourceText string, stage
 	if len(vecs) == 0 {
 		return nil, nil
 	}
-	var flt *qdrant.Filter
-	if userID != "" {
-		flt = &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadUserID, userID)}}
-	}
-	limit := s.topK
-	pts, err := s.client.Query(ctx, &qdrant.QueryPoints{
-		CollectionName: s.coll,
-		Query:          qdrant.NewQueryDense(vecs[0]),
-		Limit:          &limit,
-		Filter:         flt,
-		WithPayload:    qdrant.NewWithPayload(true),
-	})
+	pts, err := s.idx.query(ctx, userID, vecs[0], s.topK)
 	if err != nil {
 		return nil, fmt.Errorf("memory: neighbour query: %w", err)
 	}
 	out := make([]neighbour, 0, len(pts))
 	for _, p := range pts {
-		if c := payloadString(p.GetPayload(), payloadContent); c != "" {
-			out = append(out, neighbour{ID: pointID(p.GetId()), Content: c})
+		if p.Content != "" {
+			out = append(out, neighbour{ID: p.ID, Content: p.Content})
 		}
 	}
 	return out, nil
@@ -226,7 +214,7 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 // the consolidator was shown; an UPDATE/DELETE naming any other id is treated as
 // a hallucination (UPDATE → fresh ADD, DELETE → dropped). Returns writes applied.
 func (s *Store) apply(ctx context.Context, userID, author string, ops []op, valid map[string]bool) (int, error) {
-	var dels []*qdrant.PointId
+	var dels []string
 	var writes []op
 	for _, o := range ops {
 		switch strings.ToUpper(strings.TrimSpace(o.Action)) {
@@ -239,7 +227,7 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 			}
 		case "DELETE":
 			if o.ID != "" && valid[o.ID] {
-				dels = append(dels, qdrant.NewID(o.ID))
+				dels = append(dels, o.ID)
 			}
 		}
 	}
@@ -255,42 +243,31 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 			return 0, fmt.Errorf("memory: embed writes: %w", err)
 		}
 		ts := nowRFC3339()
-		points := make([]*qdrant.PointStruct, 0, len(writes))
+		points := make([]point, 0, len(writes))
 		for i, o := range writes {
 			id := o.ID
 			if strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == "" {
 				id = uuid.NewString()
 			}
-			payload := map[string]any{
-				payloadContent:   o.Content,
-				payloadUserID:    userID,
-				payloadAuthor:    author,
-				payloadTimestamp: ts,
-			}
-			if o.Kind != "" {
-				payload["kind"] = o.Kind
-			}
-			points = append(points, &qdrant.PointStruct{
-				Id:      qdrant.NewID(id),
-				Vectors: qdrant.NewVectorsDense(vecs[i]),
-				Payload: qdrant.NewValueMap(payload),
+			points = append(points, point{
+				ID:        id,
+				Vector:    vecs[i],
+				Content:   o.Content,
+				Scope:     userID,
+				Author:    author,
+				Timestamp: ts,
+				Kind:      o.Kind,
 			})
 		}
-		wait := true
-		if _, err := s.client.Upsert(ctx, &qdrant.UpsertPoints{CollectionName: s.coll, Wait: &wait, Points: points}); err != nil {
-			return 0, fmt.Errorf("memory: upsert: %w", err)
+		if err := s.idx.upsert(ctx, points); err != nil {
+			return 0, err
 		}
 		count += len(points)
 	}
 
 	if len(dels) > 0 {
-		wait := true
-		if _, err := s.client.Delete(ctx, &qdrant.DeletePoints{
-			CollectionName: s.coll,
-			Wait:           &wait,
-			Points:         &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: dels}}},
-		}); err != nil {
-			return 0, fmt.Errorf("memory: delete: %w", err)
+		if err := s.idx.remove(ctx, dels); err != nil {
+			return 0, err
 		}
 		count += len(dels)
 	}
