@@ -1,5 +1,5 @@
 // Package store is Quack's persistence layer. The ADK database SessionService
-// (Postgres) is the source of truth for conversation events; a thin `chats`
+// (postgres or sqlite) is the source of truth for conversation events; a thin `chats`
 // table holds the REST resource surface. A chat's ID is also its ADK session ID,
 // so chat history is derived from the session's events (no duplicate table).
 package store
@@ -7,10 +7,13 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/session/database"
@@ -190,9 +193,16 @@ type Store struct {
 	Sessions session.Service
 }
 
-// Open connects to Postgres, runs migrations for both the app table and the ADK
-// session/event tables, and returns the store.
-func Open(dsn string) (*Store, error) {
+// New opens the persistence store for the given backend kind ("postgres" or
+// "sqlite"; empty defaults to postgres), runs migrations for both the app tables
+// and the ADK session/event tables, and returns it. The GORM dialector is the
+// portability seam: both the app handle and ADK's session service are built from
+// a fresh dialector for the same DSN.
+func New(kind, url string) (*Store, error) {
+	dialector, err := dialectorFor(kind, url)
+	if err != nil {
+		return nil, err
+	}
 	// Route GORM's slow-query warnings through the same slog handler as the rest
 	// of the app. NewLogLogger adapts slog into the *log.Logger gorm/logger wants.
 	gormCfg := &gorm.Config{Logger: logger.New(
@@ -203,14 +213,14 @@ func Open(dsn string) (*Store, error) {
 			IgnoreRecordNotFoundError: true,
 		},
 	)}
-	db, err := gorm.Open(postgres.Open(dsn), gormCfg)
+	db, err := gorm.Open(dialector(), gormCfg)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}); err != nil {
 		return nil, err
 	}
-	sessions, err := database.NewSessionService(postgres.Open(dsn), gormCfg)
+	sessions, err := database.NewSessionService(dialector(), gormCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +228,34 @@ func Open(dsn string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{db: db, Sessions: sessions}, nil
+}
+
+// dialectorFor returns a factory that yields a fresh GORM dialector for kind+url.
+// A factory (not a single instance) is returned because the dialector is consumed
+// twice — once for the app handle, once for ADK's session service — each opening
+// its own connection pool.
+func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
+	switch kind {
+	case "", "postgres":
+		return func() gorm.Dialector { return postgres.Open(url) }, nil
+	case "sqlite":
+		dsn := sqliteDSN(url)
+		return func() gorm.Dialector { return sqlite.Open(dsn) }, nil
+	default:
+		return nil, fmt.Errorf("store: unsupported kind %q (postgres or sqlite)", kind)
+	}
+}
+
+// sqliteDSN enables WAL + a busy timeout on every connection so the two pools on
+// one file (app + ADK session) coordinate instead of failing with SQLITE_BUSY
+// under the concurrent DAG / gate / memory writers. ponytail: single local file,
+// single instance — no-docker only; SQLite is not for multi-instance. A caller
+// who supplies their own query params is left untouched.
+func sqliteDSN(url string) string {
+	if strings.Contains(url, "?") {
+		return url
+	}
+	return url + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 }
 
 // CreateChat inserts a new chat and returns it.

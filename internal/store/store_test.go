@@ -1,12 +1,65 @@
 package store
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 )
+
+// TestSQLiteStoreRoundTrip proves the dialector swap: New("sqlite", path) migrates
+// both the app tables AND the ADK session/event tables on a pure-Go SQLite file,
+// and the app methods round-trip. Runs cgo-free (modernc driver).
+func TestSQLiteStoreRoundTrip(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "quack.db")
+	st, err := New("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	if st.Sessions == nil {
+		t.Fatal("ADK session service is nil (session tables did not migrate)")
+	}
+	ctx := context.Background()
+
+	c, err := st.CreateChat(ctx, "sys")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if got, err := st.GetChat(ctx, c.ID); err != nil || got.ID != c.ID || got.SystemPrompt != "sys" {
+		t.Fatalf("GetChat: %+v err=%v", got, err)
+	}
+	if chats, err := st.ListChats(ctx); err != nil || len(chats) != 1 {
+		t.Fatalf("ListChats: %d err=%v", len(chats), err)
+	}
+
+	// Turn + DAG plan + node round-trip.
+	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	if err := st.SaveDagPlan(ctx, c.ID, "p1", "t1", `{"nodes":[]}`); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: "done", Output: "hi"}); err != nil {
+		t.Fatalf("UpsertDagNode: %v", err)
+	}
+	if nodes, err := st.GetDagNodes(ctx, "p1"); err != nil || len(nodes) != 1 || nodes[0].Status != "done" {
+		t.Fatalf("GetDagNodes: %+v err=%v", nodes, err)
+	}
+
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("sqlite file not created on disk: %v", err)
+	}
+}
+
+func TestStoreUnknownKind(t *testing.T) {
+	if _, err := New("mysql", "x"); err == nil {
+		t.Error("New should reject an unknown store kind")
+	}
+}
 
 func userEvent(text string) *session.Event {
 	ev := session.NewEvent("test")
