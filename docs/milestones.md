@@ -190,7 +190,7 @@ output renders with the raw transcript in a collapsible <code>&lt;details&gt;</c
 the **`image-reader`** specialist — that consumes the payload via **native multi-modal parts** (OpenAI `image_url` / `input_audio`, carried as
 **A2A's native message parts**) — producing **understanding (text) in a single turn**. Acting on what
 the media *contains* is handled across **two turns** for now (the understanding lands in history; a
-follow-up turn acts on it); a content-dependent DAG is **M11**.
+follow-up turn acts on it); a content-dependent DAG is **M12**.
 
 **Scope.**
 
@@ -256,10 +256,10 @@ follow-up turn acts on it); a content-dependent DAG is **M11**.
 specialist (`qwen3-vl-32b`); attach an audio clip → **`media-reader`** transcribes it. Native
 `image_url` / `input_audio` throughout; the result **persists as text in history**, so a follow-up
 turn can act on it. The orchestrator does **not** plan a content-dependent DAG on unknown media
-(that's M11).
+(that's M12).
 
-**Out of scope (later).** Content-dependent / adaptive DAG planning on media (**M11**); **video** (a
-later group + agent); the document-ingestion pipeline (**M8**); embedding / indexing.
+**Out of scope (later).** Content-dependent / adaptive DAG planning on media (**M12**); **video** (a
+later group + agent); the document-ingestion pipeline (the paused Document milestone); embedding / indexing.
 
 </details>
 
@@ -296,7 +296,8 @@ storage — inherent complexity for a flow with no concrete need yet. A throttle
 plumbing either. Recoverable from git history if a real need appears.
 
 **Out of scope (later).** `RequireConfirmation` approve/deny gate for side-effecting tools (folds into
-M10's GitHub writes); the `doc-ingest` / `code-review` skills; automatic confidence-based parking.
+the paused Code-review milestone's GitHub writes — though M9's `bash` safety gate is a related
+approve/deny path); the `doc-ingest` / `code-review` skills; automatic confidence-based parking.
 
 ---
 
@@ -366,7 +367,7 @@ it next turn. Judge-failed output is provably **not** written.
 
 **Out of scope (later).** **Consolidation across the whole store** (M6 consolidates per-commit against
 neighbours; RecMem-style recurrence-triggered consolidation + Reflexion-style failure memory stay in
-Future work); the **doc-corpus** index (M8's OpenSearch FTS / the future `rag-researcher` — a separate
+Future work); the **doc-corpus** index (the paused Document milestone's OpenSearch FTS / the future `rag-researcher` — a separate
 store); auth, deployment.
 
 </details>
@@ -408,53 +409,111 @@ agents**; rubrics live on the **agents**, not the plan.
 the **same skill** can be invoked **explicitly** by name + args; an unmatched request still **falls
 back** to dynamic planning. Every node is vetted against its **agent's own** rubric.
 
-**Out of scope (later).** The `doc-ingest` and `code-review` skills themselves (M8 / M10); mid-DAG
+**Out of scope (later).** The `doc-ingest` and `code-review` skills themselves (the paused Document / Code-review milestones); mid-DAG
 human parking (removed from M5; would need reviving).
 
 ---
 
-## M8 — Document ingestion (retire document-pipeline)
+## M8 — Usability / interactive control & operability
 
-**Goal.** Replace **document-pipeline** with a **`doc-ingest` skill** — a hand-authored DAG that
-**ports doc-pipeline's stages as quack agents / tools**, ingesting images / audio / text into an
-**OpenSearch full-text index** you can query. Builds on M4 (vision / audio), M7 (skills), and M5
-(upfront clarify).
+**Goal.** Make runs **controllable and durable**: persist tool calls + node lifecycle, control
+runs/nodes (stop / start / cancel / **steer**), **queue + interrupt** requests, spread work via **HRW
+(rendezvous) routing**, and drive it all from a **Go CLI**. This is the operability layer — inspired
+by what Turnstone ships that Quack lacked.
 
 **Scope.**
 
-- **Steps select agents from the library (not 1:1)**: doc-pipeline's stages map onto **skill steps**,
-  each picking the right agent — printed-text OCR → **`media-reader`**; handwriting → the
-  **`image-reader`** specialist; transcribe → **`media-reader`**; clarify & summarize → the
-  **`general-purpose`** agent (or a specialist if a
-  step earns one); classify → a **`classifier`** agent; and a final **`document-organizer`** agent
-  gathers the artifacts (raw text, summary, tags) and writes them to persistent storage. doc-pipeline's
-  mechanical **tool logic** (image encoding, chunking, OpenSearch indexing) ports **as-is as builtin
-  tools** those agents call.
-- **`doc-ingest` skill**: a hand-authored DAG — *ingest → (OCR | transcribe) → summarize → clarify →
-  classify → index* — auto-selected or explicitly invoked (M7). Mid-DAG node parking for an unsure
-  clarify / classify step was removed from M5; reviving it would let those steps ask the human.
-- **Retrieval = OpenSearch FTS only**: index documents (title, tags, summary, content, series, date)
-  into **OpenSearch** for keyword / Lucene search. **No** Qdrant / embeddings / contextual chunking for
-  docs. **`series` kept as a metadata grouping / filter** (no concatenate-and-embed).
-- **Ingestion entry**: **explicit skill invocation** — a **file-upload** endpoint names `doc-ingest`
-  with the file as its arg; the **reMarkable webhook** (kept) delivers tablet pushes as explicit
-  invocations (validated once deployed, M9).
-- **Storage**: the **blob store** (M4) holds source media + artifacts; the relational store holds
-  document / job / stage records.
-- **Frontend**: a **documents / jobs** view to browse ingested docs + stage outputs and **answer
-  parked** clarify / classify prompts.
+- **Durable event log**: persist the run event stream (`dag_plan`, node lifecycle, `agent_tool_call` /
+  `agent_tool_result`, tokens) to Postgres, backing the SSE hub's replay (today in-memory, lost on
+  restart). Buys reconnect / multi-device / post-restart replay **and** a tool-call **audit trail**
+  (real provenance — Turnstone's auditability done better).
+- **Run + node lifecycle**: extend whole-run cancel (`DELETE /chats/{id}/stream`) to **per-node**
+  cancel + restart and run **stop / start**; each node's `context` (the executor already holds it) is
+  the cancel handle.
+- **Node steering (HITL)**: inject a steer message into a **running** node to redirect it mid-run —
+  **revives the M5b node pause/resume sub-session machinery** (removed, "recoverable from git
+  history"; see the M5 "Removed" note) and productionizes it (`node_waiting` → persisted `waiting` →
+  steer endpoint → `executor.Resume`). The hard part; once built it also unblocks node-level tool
+  approval used by M9's `bash`.
+- **Request queuing + interrupt**: a bounded **inter-request** run queue at the chat entry (at
+  capacity → queue, not reject) with **interrupt** of a queued or in-flight run. Distinct from
+  `dag.max_active_nodes` (intra-DAG node concurrency).
+- **HRW routing**: a Highest-Random-Weight router (FNV-1a of `node_id` × backend id) to spread
+  node/agent dispatch across worker backends with minimal reshuffle on join/leave — pulls the
+  Future-work *Distributed A2A* seam's routing primitive forward.
+- **Go CLI**: a `quack` CLI (`cmd/cli/`) over the REST API (new chat, stream, list, cancel, steer),
+  reusing the generated client — a terminal client à la Turnstone.
 
-**Done when.** Upload a photo of a handwritten note (or an audio clip, or text) → `doc-ingest` OCRs /
-transcribes it, summarizes, **parks for clarification** if low-confidence, classifies / tags, and
-**indexes it into OpenSearch**; you find it by keyword / tag / series query. **document-pipeline can be
-retired.**
+**Done when.** A run **replays fully after an app restart**; a node is **cancelled / restarted /
+steered** mid-run from the UI or CLI; requests past capacity **queue** and an in-flight one can be
+**interrupted**; node dispatch **spreads via HRW** across ≥2 backends; the **CLI** drives a chat end
+to end.
 
-**Out of scope (later).** Semantic / vector RAG over docs (intentionally dropped — revisit only if FTS
-proves insufficient); porting every doc-pipeline dashboard feature (iterative).
+**Out of scope (later).** Standalone distributed A2A services (M8 ships the HRW routing primitive
+only); multi-tenant scheduling / fairness; auth (M11).
 
 ---
 
-## M9 — Auth + deploy
+## M9 — Primitive file-system + shell tools
+
+**Goal.** Give agents a **portable primitive toolset** — sandboxed file read / write / edit / list +
+ripgrep search, plus a **judge-gated `bash`** — so "documents" are **files on disk** and search is
+**grep**, replacing the bespoke record / FTS / vector stack (the paused Document milestone). Direction
+validated by Turnstone (files + ripgrep + bash, no document DB).
+
+**Scope.**
+
+- **File tools** (`read_file` / `write_file` / `edit_file` / `list_dir` / `grep`) confined to a
+  configured **workspace root** (`workspace.root`), paths guarded against `..` traversal. `grep` is a
+  typed wrapper over **ripgrep**. Writes are bounded by the sandbox, so they need no gate.
+- **`bash` + 3-tier safety gate** (auto-allow polarity, Turnstone-shaped): (1) a deterministic
+  **allowlist** of read-only commands → auto-run + a **denylist** of foot-guns → force-ask; (2) a
+  cheap **safety judge** (reusing the warm gemma judge) for the gray zone → `allow | ask | deny`; (3)
+  on `ask`, **HITL approval** — via `get_user_choice` at the orchestrator and M8's node steering
+  inside a node — with the approval persisted (a matching command runs; mirrors Turnstone's
+  `intent_verdicts`).
+- **Documents become files**: "save this note" writes a markdown file (title / series / date as
+  front-matter or path convention); "find the note about X" greps the workspace. The
+  document-subsystem record store / FTS / doc-vector index is reverted; **Qdrant stays for M6 memory
+  only**.
+
+**Done when.** A chat **writes a note to a file** and **`grep` finds it**; a read-only `bash` (`ls`)
+**auto-runs**; a risky `bash` (`rm …`) **escalates to approve/deny** and only runs on approval; a
+`../` path is **rejected**.
+
+**Out of scope (later).** Container / namespace isolation of `bash` (it's cwd-confined + judge-governed
+for now); any document DB / FTS / semantic doc search (the paused Document milestone).
+
+---
+
+## M10 — CI/CD release automation
+
+**Goal.** Cut **versioned releases** automatically: publish the `quack` **CLI binaries** to GitHub
+Releases and the server **Docker image** to GHCR on a release tag — so the CLI (M8) and the server are
+distributable artifacts, not just a local build.
+
+**Scope.**
+
+- **Release workflow** (`.github/workflows/release.yml`), triggered on a **semver tag** (cut after a
+  merge to `main`). Builds the frontend first (the SPA is embedded), then runs **goreleaser**.
+- **CLI binaries**: cross-compile `cmd/cli` (`linux` / `darwin` × `amd64` / `arm64`) → a **GitHub
+  Release** with checksums.
+- **Docker image**: build the server image (existing `Dockerfile`) → push to **GHCR**
+  (`ghcr.io/fagerbergj/quack`), tagged version + `latest`.
+- **Version stamping**: inject the version via `-ldflags` so `quack version` and the server report it.
+- **Merge-driven versioning (optional)**: a `release-please` workflow opens a release PR on merge to
+  `main`; merging it tags the release, firing the workflow. Separate from the existing CI (the
+  *publish* path, not the *test* path).
+
+**Done when.** Tagging a release (or merging a release-please PR) yields a `docker pull`-able **GHCR
+image** and a **GitHub Release** with downloadable **CLI binaries**, both stamped with the version.
+
+**Out of scope (later).** Production deploy behind the gateway (M11); release signing / SBOM /
+provenance attestation; Homebrew tap / apt distribution.
+
+---
+
+## M11 — Auth + deploy
 
 **Goal.** Take the locally-tested system and make it a **deployed, authenticated service** behind the
 gateway. Inbound auth is wired (pluggable OIDC IdP); Quack runs in production on the real stores.
@@ -470,53 +529,22 @@ gateway. Inbound auth is wired (pluggable OIDC IdP); Quack runs in production on
   the container **behind the Traefik + Authentik gateway** (routed at `/api/v1/quack`, registered
   with the central `swagger-ui`), running on the **real Postgres + qdrant**. The pluggable stores
   swap from the local self-contained backends to production via config, with no code change.
-- **Public webhook ingress**: the deploy exposes the **public endpoints** the GitHub App (M10) and the
-  reMarkable webhook (M8) post to. General **outbound / delegated (act-as-user) tool auth** beyond the
-  GitHub App's installation token (M10) is still out of scope.
+- **Public webhook ingress**: the deploy exposes the **public endpoints** the GitHub App (the paused
+  Code-review milestone) and any reMarkable webhook (the paused Document milestone) would post to.
+  General **outbound / delegated (act-as-user) tool auth** beyond an installation token is still out of
+  scope.
 
 **Done when.** Quack runs deployed behind the gateway; an authenticated SPA user (via the IdP login)
 and a token-bearing MCP/A2A client can both drive it end to end; unauthenticated requests are
 rejected; the spec is live in the gateway docs.
 
-**Out of scope (later).** General outbound / delegated (act-as-user) tool auth beyond the GitHub App
-(M10); broader researcher build-out (more agents / tools, RAG / `rag-researcher`).
+**Out of scope (later).** General outbound / delegated (act-as-user) tool auth beyond a GitHub App
+installation token (the paused Code-review milestone); broader researcher build-out (more agents /
+tools, RAG / `rag-researcher`).
 
 ---
 
-## M10 — Code review (GitHub App)
-
-**Goal.** A **`code-review` skill** that reviews a PR via a **GitHub App** and posts **inline
-comments**. **One** reusable `code-reviewer` agent; the **skill encodes the strategy** (which instances
-to spawn and how to prompt them), so fan-out strategies are swappable without touching the agent. Needs
-M9's deploy + public endpoint.
-
-**Scope.**
-
-- **GitHub App**: a registered App receives webhooks; a **`/quack review` PR comment** (explicit
-  invocation) triggers the review. **Installation-token** auth (the outbound-auth seam) fetches the
-  diff and posts review comments.
-- **`code-reviewer` agent**: **one** agent (model + tools + its **own rubric**) that reviews a slice of
-  a diff, reused across nodes.
-- **`code-review` skill**: a hand-authored DAG that spawns **multiple `code-reviewer` instances**, each
-  prompted per a **strategy** (by-dimension: correctness / security / simplification — or
-  by-functionality) → a **synthesizer** node joins the findings. Strategy lives in the **skill**, so
-  it's swappable without touching the agent. Each node is vetted against the agent's rubric.
-- **Output**: **inline PR review comments** on specific lines, with **anchoring + dedup** on re-runs.
-- **Tools**: a **GitHub client** (fetch PR diff / files, post review comments) as builtin tools.
-- **Dogfooding**: install on your repos **including quack itself** — `/quack review` on a quack PR
-  posts inline findings.
-
-**Done when.** Commenting **`/quack review`** on a PR makes quack (via the App) fetch the diff, run the
-`code-review` skill (fanned-out `code-reviewer` instances → synthesizer, each vetted), and **post
-inline review comments**. Swapping the skill's **strategy** changes the fan-out without changing the
-agent.
-
-**Out of scope (later).** Auto-review on every PR open (explicit `/quack review` trigger only);
-check-run / merge-gating output; non-GitHub forges.
-
----
-
-## M11 — Adaptive / content-dependent re-planning
+## M12 — Adaptive / content-dependent re-planning
 
 **Goal.** Let the orchestrator **re-plan the DAG as results arrive**, so it can act on content it could
 not know up front — transcribe an audio clip, *then* plan the work the transcript asks for, in a
@@ -527,7 +555,7 @@ not know up front — transcribe an audio clip, *then* plan the work the transcr
 - **Adaptive executor**: after a node reveals content (a transcript, an OCR'd document, a search
   result), the orchestrator may **extend / revise the remaining DAG** instead of running a fixed plan.
 - **Re-plan triggers + budget caps**: bounded by **max re-plans / depth** so it can't loop.
-- **Supersedes M4's two-turn handling** for media, and lets **doc-ingest (M8)** re-route on what a
+- **Supersedes M4's two-turn handling** for media, and lets a file-ingest flow re-route on what a
   document actually contains.
 - Builds on **M3**'s planner and **M7** skills (a skill may declare explicit re-plan points).
 
@@ -538,7 +566,7 @@ orchestrator **plans + runs** the requested work, with no second turn needed.
 
 ---
 
-## M12 — Observability (OTel → Prometheus + Grafana)
+## M13 — Observability (OTel → Prometheus + Grafana)
 
 **Goal.** Make a running Quack **observable**: emit OpenTelemetry **traces + metrics** following the
 GenAI semantic conventions and ship them to the **existing home-server monitoring stack** (Prometheus +
@@ -580,9 +608,94 @@ analytics; **alerting / SLOs** on the new metrics; log aggregation (Loki).
 
 ---
 
-## Future work (beyond M11)
+## Paused (deferred)
 
-Everything below is intentionally outside the M0–M11 plan, captured so it is not lost. Most are
+Milestones taken **out of the active sequence**. Their bodies are kept as the historical rationale
+(like M5b's "Removed" note); pick them back up when priorities shift.
+
+### ⏸ Document ingestion (paused)
+
+> **Paused.** The early build (Postgres records + OpenSearch FTS + Qdrant doc-vectors + doc agents)
+> was **reverted** — too bespoke and not portable. The "save a note, find it later" goal is now served
+> by **M9**'s primitive file tools (documents = files on disk, search = grep). The original plan is
+> preserved below for if a heavier document pipeline is ever revived.
+
+**Goal.** Replace **document-pipeline** with a **`doc-ingest` skill** — a hand-authored DAG that
+**ports doc-pipeline's stages as quack agents / tools**, ingesting images / audio / text into an
+**OpenSearch full-text index** you can query. Builds on M4 (vision / audio), M7 (skills), and M5
+(upfront clarify).
+
+**Scope.**
+
+- **Steps select agents from the library (not 1:1)**: doc-pipeline's stages map onto **skill steps**,
+  each picking the right agent — printed-text OCR → **`media-reader`**; handwriting → the
+  **`image-reader`** specialist; transcribe → **`media-reader`**; clarify & summarize → a
+  **`general-purpose`** agent (or a specialist if a
+  step earns one); classify → a **`classifier`** agent; and a final **`document-organizer`** agent
+  gathers the artifacts (raw text, summary, tags) and writes them to persistent storage. doc-pipeline's
+  mechanical **tool logic** (image encoding, chunking, OpenSearch indexing) ports **as-is as builtin
+  tools** those agents call.
+- **`doc-ingest` skill**: a hand-authored DAG — *ingest → (OCR | transcribe) → summarize → clarify →
+  classify → index* — auto-selected or explicitly invoked (M7). Mid-DAG node parking for an unsure
+  clarify / classify step was removed from M5; reviving it would let those steps ask the human.
+- **Retrieval = OpenSearch FTS only**: index documents (title, tags, summary, content, series, date)
+  into **OpenSearch** for keyword / Lucene search. **No** Qdrant / embeddings / contextual chunking for
+  docs. **`series` kept as a metadata grouping / filter** (no concatenate-and-embed).
+- **Ingestion entry**: **explicit skill invocation** — a **file-upload** endpoint names `doc-ingest`
+  with the file as its arg; the **reMarkable webhook** delivers tablet pushes as explicit invocations
+  (validated once deployed, M11).
+- **Storage**: the **blob store** (M4) holds source media + artifacts; the relational store holds
+  document / job / stage records.
+- **Frontend**: a **documents / jobs** view to browse ingested docs + stage outputs and **answer
+  parked** clarify / classify prompts.
+
+**Done when.** Upload a photo of a handwritten note (or an audio clip, or text) → `doc-ingest` OCRs /
+transcribes it, summarizes, **parks for clarification** if low-confidence, classifies / tags, and
+**indexes it into OpenSearch**; you find it by keyword / tag / series query. **document-pipeline can be
+retired.**
+
+**Out of scope (later).** Semantic / vector RAG over docs (intentionally dropped — revisit only if FTS
+proves insufficient); porting every doc-pipeline dashboard feature (iterative).
+
+### ⏸ Code review — GitHub App (paused)
+
+> **Paused.** GitHub-review work is on hold; revisit after the active path. It still needs M11's deploy
+> + public endpoint.
+
+**Goal.** A **`code-review` skill** that reviews a PR via a **GitHub App** and posts **inline
+comments**. **One** reusable `code-reviewer` agent; the **skill encodes the strategy** (which instances
+to spawn and how to prompt them), so fan-out strategies are swappable without touching the agent. Needs
+M11's deploy + public endpoint.
+
+**Scope.**
+
+- **GitHub App**: a registered App receives webhooks; a **`/quack review` PR comment** (explicit
+  invocation) triggers the review. **Installation-token** auth (the outbound-auth seam) fetches the
+  diff and posts review comments.
+- **`code-reviewer` agent**: **one** agent (model + tools + its **own rubric**) that reviews a slice of
+  a diff, reused across nodes.
+- **`code-review` skill**: a hand-authored DAG that spawns **multiple `code-reviewer` instances**, each
+  prompted per a **strategy** (by-dimension: correctness / security / simplification — or
+  by-functionality) → a **synthesizer** node joins the findings. Strategy lives in the **skill**, so
+  it's swappable without touching the agent. Each node is vetted against the agent's rubric.
+- **Output**: **inline PR review comments** on specific lines, with **anchoring + dedup** on re-runs.
+- **Tools**: a **GitHub client** (fetch PR diff / files, post review comments) as builtin tools.
+- **Dogfooding**: install on your repos **including quack itself** — `/quack review` on a quack PR
+  posts inline findings.
+
+**Done when.** Commenting **`/quack review`** on a PR makes quack (via the App) fetch the diff, run the
+`code-review` skill (fanned-out `code-reviewer` instances → synthesizer, each vetted), and **post
+inline review comments**. Swapping the skill's **strategy** changes the fan-out without changing the
+agent.
+
+**Out of scope (later).** Auto-review on every PR open (explicit `/quack review` trigger only);
+check-run / merge-gating output; non-GitHub forges.
+
+---
+
+## Future work (beyond the active milestones)
+
+Everything below is intentionally outside the M0–M13 plan, captured so it is not lost. Most are
 "extensible in theory" seams we shaped but did not build.
 
 | Theme | Item | Notes |
@@ -602,13 +715,13 @@ Everything below is intentionally outside the M0–M11 plan, captured so it is n
 | Memory | **Metadata-filtered recall** | ADK's `SearchRequest` is query-only; later, filter recall by source / date / score (needs a custom search path beyond the ADK interface). |
 | Memory | **Dedicated surfacing** | Model-driven memory tools render as tool activity, but ambient `preload_memory` recall + the gate's background commit are invisible (platform paths, not tool calls). Add `memory_recall` / `memory_commit` events through the A2A → Translator boundary + chat rendering if the silent paths need showing. |
 | Research | **Researcher build-out** | `rag-researcher` + RAG, more agents/tools, and the second example use case ("latest local LLM models for my hardware"). |
-| Documents | **Semantic RAG over docs** | doc-ingest ships FTS-only (M8); revisit Qdrant embeddings + an ask-and-cite chat over the corpus if keyword / FTS proves insufficient. |
+| Documents | **Semantic RAG over docs** | only relevant if the paused Document milestone is revived; revisit Qdrant embeddings + an ask-and-cite chat over the corpus if M9's grep-over-files proves insufficient. |
 | Documents | **Contextual chunking** | The small-LLM per-chunk context blurb from doc-pipeline — only relevant if semantic RAG returns. |
-| Code review | **Auto-review on PR open** | M10 is explicit `/quack review` only; later, auto-trigger on PR open / sync via the App webhook. |
-| Code review | **Check-run / merge gating** | M10 posts inline comments; later, a GitHub Check Run with pass / fail that can gate merge. |
+| Code review | **Auto-review on PR open** | the paused Code-review milestone is explicit `/quack review` only; later, auto-trigger on PR open / sync via the App webhook. |
+| Code review | **Check-run / merge gating** | the paused Code-review milestone posts inline comments; later, a GitHub Check Run with pass / fail that can gate merge. |
 | Multi-modal | **Audio / image generation** | Input-only for now (vision + STT); later, TTS / image output. |
 | Skills | **Self-authored skills** | Agent self-improvement: the orchestrator promotes a **successful dynamic DAG (M3)** into a **saved skill (M7)** — crystallizing proven plans into the reusable catalog so the system grows its own repertoire instead of re-planning from scratch. Needs a quality bar (only promote vetted / repeated wins) + a review/approval step before a skill goes live. |
-| Email | **Email agents + tools** | An inbox assistant (agentive role, e.g. `inbox-manager`) with builtin tools to **read, summarize, reply, and clean** a mailbox. Reads are straightforward; **sends / deletes are side-effecting**, so they route through a `RequireConfirmation` gate (M10), and the whole integration needs **delegated (act-as-user) outbound auth** (the Auth row). |
+| Email | **Email agents + tools** | An inbox assistant (agentive role, e.g. `inbox-manager`) with builtin tools to **read, summarize, reply, and clean** a mailbox. Reads are straightforward; **sends / deletes are side-effecting**, so they route through a `RequireConfirmation` gate (the paused Code-review milestone), and the whole integration needs **delegated (act-as-user) outbound auth** (the Auth row). |
 | Frontend / UX | **Virtual scrolling** | The chat renders all turns with a plain `.map()`. The 2025-06 UX pass isolated re-renders (extracted `Composer`/`ChatList`, memoized `TurnView`) so completed turns no longer recompute mid-stream — which closes the typing-lag complaint without windowing. Add `react-virtuoso` only if very long chats still lag at the DOM-node count. |
 | Frontend / UX | **Structured citations** | Sources are currently model-authored `<details><summary>Sources</summary>` blocks inside the answer markdown. A real citation model (cites as data on the turn, inline superscript links → source cards) needs an output-contract change in the agents + `openapi.yaml`, so it's not UI-only. |
 | Frontend / UX | **Edit / retry messages** | Edit & resubmit a past user message; retry a response. Needs new turn-state handling (truncate-and-resubmit) beyond the current append-only chat. |

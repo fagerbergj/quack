@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 )
 
@@ -164,7 +163,7 @@ tools:
 func TestLoadRejectsToolWithUnknownStore(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 tools:
-  load_document: { store: nope }
+  stage_memory: { store: nope }
 `))
 	if err == nil {
 		t.Fatal("expected error for tool referencing an unknown store")
@@ -238,41 +237,6 @@ tools:
 	}
 }
 
-// TestDocStoreResolution checks UsesDocStore (gated on an agent binding a doc
-// tool) and DocRecordStore (resolves the create_document binding, with extends).
-func TestDocStoreResolution(t *testing.T) {
-	withTool := `
-providers:
-  default: { kind: openai, endpoint: http://x }
-stores:
-  main:     { kind: postgres, url: u }
-  document: { extends: main, schema: documents }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-agents:
-  doc-writer: { bundle: agents/x, provider: default, model: m, tools: [create_document] }
-tools:
-  create_document: { store: document }
-`
-	c, err := Load(writeTemp(t, withTool))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.UsesDocStore() {
-		t.Error("UsesDocStore should be true when an agent binds create_document")
-	}
-	if sc, ok := c.DocRecordStore(); !ok || sc.Kind != "postgres" || sc.Schema != "documents" {
-		t.Errorf("DocRecordStore = %+v ok=%v, want postgres + schema documents (via extends)", sc, ok)
-	}
-
-	// No agent binds a doc tool ⇒ not used (the store may still be declared).
-	if c2, err := Load(writeTemp(t, baseConfig)); err != nil {
-		t.Fatal(err)
-	} else if c2.UsesDocStore() {
-		t.Error("UsesDocStore should be false when no agent binds a doc tool")
-	}
-}
-
 func TestAgentConfigIsGated(t *testing.T) {
 	if !(AgentConfig{}).IsGated() {
 		t.Error("agents are gated by default")
@@ -321,16 +285,6 @@ func TestRealConfigLoads(t *testing.T) {
 	}
 	if s, ok := c.Store(c.Session.Store); !ok || s.Kind != "postgres" {
 		t.Errorf("session store %q did not resolve to postgres: %+v ok=%v", c.Session.Store, s, ok)
-	}
-	if doc, ok := c.Store("document"); !ok || doc.Kind != "postgres" || doc.Schema != "documents" {
-		t.Errorf("document store (extends) wrong: %+v ok=%v", doc, ok)
-	}
-	// The doc-ingest agents bind the doc tools, so the stores are in use.
-	if !c.UsesDocStore() || !c.UsesFTS() || !c.UsesVector() {
-		t.Errorf("doc stores not all in use: docStore=%v fts=%v vector=%v", c.UsesDocStore(), c.UsesFTS(), c.UsesVector())
-	}
-	if w := c.Agents["document-writer"]; !slices.Contains(w.Tools, "create_document") {
-		t.Errorf("document-writer not bound to create_document: %v", w.Tools)
 	}
 }
 

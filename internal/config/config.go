@@ -7,7 +7,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -241,85 +240,6 @@ func (c *Config) MemoryStore(toolName string) (ResolvedMemory, bool) {
 		Embedder: *s.Embedder, Consolidation: *s.Consolidation,
 		Collection: coll, TopK: topK, MinScore: minScore,
 	}, true
-}
-
-// bindsTool reports whether any agent or the orchestrator binds the named tool.
-func (c *Config) bindsTool(name string) bool {
-	for _, a := range c.Agents {
-		if slices.Contains(a.Tools, name) {
-			return true
-		}
-	}
-	return slices.Contains(c.Orchestrator.Tools, name)
-}
-
-// UsesDocStore reports whether a document record tool is bound — i.e. whether the
-// record store must be opened at startup.
-func (c *Config) UsesDocStore() bool {
-	return c.bindsTool("load_document") || c.bindsTool("create_document") || c.bindsTool("update_document")
-}
-
-// UsesFTS reports whether the full-text index is needed: search_document reads it,
-// create_document writes into it.
-func (c *Config) UsesFTS() bool {
-	return c.bindsTool("search_document") || c.bindsTool("create_document")
-}
-
-// DocRecordStore resolves the store backing the document record tools (all three
-// share one store; read from create_document's binding).
-func (c *Config) DocRecordStore() (StoreConfig, bool) {
-	return c.toolStore("create_document")
-}
-
-// UsesVector reports whether the document vector index is needed:
-// semantic_search_document reads it, create_document writes into it.
-func (c *Config) UsesVector() bool {
-	return c.bindsTool("semantic_search_document")
-}
-
-// FTSStore resolves the full-text-index store (search_document's binding).
-func (c *Config) FTSStore() (StoreConfig, bool) {
-	return c.toolStore("search_document")
-}
-
-// DocVectorStore resolves the vector index for documents from
-// semantic_search_document's binding (the store carries the embedder; the tool
-// may override the collection). Returns false when unconfigured or url/embedder
-// is missing (so a qdrant-less run self-disables).
-func (c *Config) DocVectorStore() (ResolvedVector, bool) {
-	t, ok := c.Tools["semantic_search_document"]
-	if !ok || t.Store == "" {
-		return ResolvedVector{}, false
-	}
-	s, ok := c.Store(t.Store)
-	if !ok || s.URL == "" || s.Embedder == nil {
-		return ResolvedVector{}, false
-	}
-	coll := s.Collection
-	if t.Collection != "" {
-		coll = t.Collection
-	}
-	if coll == "" {
-		return ResolvedVector{}, false // a doc collection (distinct from memory) is required
-	}
-	return ResolvedVector{Kind: s.Kind, URL: s.URL, Collection: coll, Embedder: *s.Embedder}, true
-}
-
-// ResolvedVector is a vector store resolved for the document index.
-type ResolvedVector struct {
-	Kind       string
-	URL        string
-	Collection string
-	Embedder   ProviderModel
-}
-
-// toolStore resolves the store a tool references, false if unbound/unconfigured.
-func (c *Config) toolStore(name string) (StoreConfig, bool) {
-	t, ok := c.Tools[name]
-	if !ok || t.Store == "" {
-		return StoreConfig{}, false
-	}
-	return c.Store(t.Store)
 }
 
 // mergeStore overlays child's set (non-zero) fields onto parent.
