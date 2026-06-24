@@ -1,5 +1,5 @@
 ---
-name: plan_work
+name: plan-work
 description: >
   How to decompose a request into a DAG of specialist agents and submit it to the
   plan tool. Load this BEFORE authoring any plan — it holds the common-workflow

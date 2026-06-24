@@ -36,7 +36,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
 			Name: "plan",
-			Description: "Tool to run a DAG of specialist agents. Load the plan_work skill first, then YOU author " +
+			Description: "Tool to run a DAG of specialist agents. Load the plan-work skill first, then YOU author " +
 				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained — the " +
 				"agent sees only this text), depends_on: [ids it needs output from]}. Optionally a `rubric`. " +
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +

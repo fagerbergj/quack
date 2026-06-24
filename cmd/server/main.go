@@ -226,10 +226,10 @@ func main() {
 	if err != nil {
 		fatal("format-markdown skill load failed", "err", err)
 	}
-	// plan_work is the DAG-authoring playbook the orchestrator loads before planning.
-	planWorkFm, err := skillSrc.LoadFrontmatter(context.Background(), "plan_work")
+	// plan-work is the DAG-authoring playbook the orchestrator loads before planning.
+	planWorkFm, err := skillSrc.LoadFrontmatter(context.Background(), "plan-work")
 	if err != nil {
-		fatal("plan_work skill load failed", "err", err)
+		fatal("plan-work skill load failed", "err", err)
 	}
 	// When user memory is on, append the orchestrator's memory.md guidance (its
 	// "what to remember about the user" section) to its behaviour — gated the same
