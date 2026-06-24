@@ -8,7 +8,7 @@
 .idea
 **/node_modules
 frontend/dist
-cmd/server/web/dist/assets
+internal/serve/web/dist/assets
 /quack
 *.test
 *.out
