@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,11 +30,17 @@ func stateDir() string {
 func pidPath() string { return filepath.Join(stateDir(), "server.pid") }
 func logPath() string { return filepath.Join(stateDir(), "server.log") }
 
-// Start launches `quack server run --config <configPath>` in the background,
-// detached from this terminal, and waits until it is listening.
-func Start(configPath string) error {
+// Start launches `quack server run` in the background, detached from this
+// terminal, and waits until it is listening. addrOverride wins over config; the
+// resolved address is passed to the child so the daemon and the wait agree.
+func Start(configPath, addrOverride string) error {
 	if pid, ok := runningPID(); ok {
 		return fmt.Errorf("quack server already running (pid %d); use `quack server stop` first", pid)
+	}
+	addr := resolveAddr(configPath, addrOverride)
+	// Catch a foreign listener (or a server we didn't start) before we fork.
+	if listening(addr) {
+		return fmt.Errorf("address %s is already in use — run `quack server status`, or pick another with --addr", addr)
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -48,26 +55,73 @@ func Start(configPath string) error {
 	}
 	defer logf.Close()
 
-	cmd := exec.Command(self, "server", "run", "--config", configPath)
+	cmd := exec.Command(self, "server", "run", "--config", configPath, "--addr", addr)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach into its own session
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start server: %w", err)
 	}
-	if err := os.WriteFile(pidPath(), []byte(fmt.Sprintf("%d\n", cmd.Process.Pid)), 0o644); err != nil {
+	if err := writeState(cmd.Process.Pid, addr); err != nil {
 		return fmt.Errorf("write pidfile: %w", err)
-	}
-
-	// Wait until it's actually listening (or it dies during startup).
-	addr := ":8080"
-	if cfg, err := config.Load(configPath); err == nil && cfg.Server.Addr != "" {
-		addr = cfg.Server.Addr
 	}
 	if err := waitListening(addr, cmd.Process.Pid, 15*time.Second); err != nil {
 		return fmt.Errorf("server did not come up: %w — see %s", err, logPath())
 	}
 	fmt.Printf("quack server started (pid %d), listening on %s\n", cmd.Process.Pid, addr)
 	return nil
+}
+
+// Status reports whether the server is running (our daemon or a foreign listener)
+// and whether its address is accepting connections. The daemon's address comes
+// from the recorded state, so it's correct even when started with --addr.
+func Status(configPath, addrOverride string) error {
+	pid, recAddr, have := readState()
+	ours := have && alive(pid)
+	addr := recAddr
+	if !ours || addr == "" {
+		addr = resolveAddr(configPath, addrOverride)
+	}
+	switch {
+	case ours && listening(addr):
+		fmt.Printf("running — pid %d, listening on %s\n", pid, addr)
+	case ours:
+		fmt.Printf("running — pid %d, but %s is not accepting connections yet\n", pid, addr)
+	case listening(addr):
+		fmt.Printf("a server is listening on %s but was not started by `quack server start` (no live pidfile)\n", addr)
+	default:
+		fmt.Printf("stopped — nothing running, %s is free\n", addr)
+	}
+	return nil
+}
+
+// resolveAddr picks the address: --addr override, else config's server.addr,
+// else the :8080 default.
+func resolveAddr(configPath, override string) string {
+	if override != "" {
+		return override
+	}
+	if cfg, err := config.Load(configPath); err == nil && cfg.Server.Addr != "" {
+		return cfg.Server.Addr
+	}
+	return ":8080"
+}
+
+// listening reports whether addr currently accepts a TCP connection.
+func listening(addr string) bool {
+	c, err := net.DialTimeout("tcp", dialAddr(addr), 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+// dialAddr makes a listen address (":8080") dialable ("127.0.0.1:8080").
+func dialAddr(addr string) string {
+	if len(addr) > 0 && addr[0] == ':' {
+		return "127.0.0.1" + addr
+	}
+	return addr
 }
 
 // Stop signals the recorded server PID and waits for it to exit.
@@ -88,17 +142,34 @@ func Stop() error {
 	return nil
 }
 
-// runningPID returns the pidfile's PID if it names a live process.
-func runningPID() (int, bool) {
+// writeState records the daemon's PID and listen address ("PID ADDR").
+func writeState(pid int, addr string) error {
+	return os.WriteFile(pidPath(), []byte(fmt.Sprintf("%d %s\n", pid, addr)), 0o644)
+}
+
+// readState parses the recorded PID and address. ok is false if absent/garbled.
+func readState() (pid int, addr string, ok bool) {
 	b, err := os.ReadFile(pidPath())
 	if err != nil {
-		return 0, false
+		return 0, "", false
 	}
-	var pid int
-	if _, err := fmt.Sscanf(string(b), "%d", &pid); err != nil || pid <= 0 {
-		return 0, false
+	fields := strings.Fields(string(b))
+	if len(fields) == 0 {
+		return 0, "", false
 	}
-	return pid, alive(pid)
+	if _, err := fmt.Sscanf(fields[0], "%d", &pid); err != nil || pid <= 0 {
+		return 0, "", false
+	}
+	if len(fields) > 1 {
+		addr = fields[1]
+	}
+	return pid, addr, true
+}
+
+// runningPID returns the recorded PID if it names a live process.
+func runningPID() (int, bool) {
+	pid, _, ok := readState()
+	return pid, ok && alive(pid)
 }
 
 // alive reports whether pid is a running process (signal 0 probes existence).
@@ -107,21 +178,15 @@ func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 // waitListening blocks until addr accepts a TCP connection, failing fast if the
 // process dies first.
 func waitListening(addr string, pid int, timeout time.Duration) error {
-	dialAddr := addr
-	if len(addr) > 0 && addr[0] == ':' {
-		dialAddr = "127.0.0.1" + addr
-	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if !alive(pid) {
 			return fmt.Errorf("process exited during startup")
 		}
-		c, err := net.DialTimeout("tcp", dialAddr, 500*time.Millisecond)
-		if err == nil {
-			_ = c.Close()
+		if listening(addr) {
 			return nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("timed out after %s waiting for %s", timeout, dialAddr)
+	return fmt.Errorf("timed out after %s waiting for %s", timeout, dialAddr(addr))
 }

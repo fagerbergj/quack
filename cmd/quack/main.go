@@ -92,20 +92,24 @@ func newServerCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 			cfgPath, _ := cmd.Flags().GetString("config")
-			return serve.Run(ctx, cfgPath)
+			addr, _ := cmd.Flags().GetString("addr")
+			return serve.Run(ctx, cfgPath, addr)
 		},
 	}
 	runCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
+	runCmd.Flags().String("addr", "", "listen address override, e.g. :8081 (default: config server.addr)")
 
 	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the server in the background (detached)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfgPath, _ := cmd.Flags().GetString("config")
-			return serve.Start(cfgPath)
+			addr, _ := cmd.Flags().GetString("addr")
+			return serve.Start(cfgPath, addr)
 		},
 	}
 	startCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
+	startCmd.Flags().String("addr", "", "listen address override, e.g. :8081 (default: config server.addr)")
 
 	stopCmd := &cobra.Command{
 		Use:   "stop",
@@ -113,10 +117,23 @@ func newServerCmd() *cobra.Command {
 		RunE:  func(*cobra.Command, []string) error { return serve.Stop() },
 	}
 
+	statusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Report whether a server is running and on what address",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfgPath, _ := cmd.Flags().GetString("config")
+			addr, _ := cmd.Flags().GetString("addr")
+			return serve.Status(cfgPath, addr)
+		},
+	}
+	statusCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
+	statusCmd.Flags().String("addr", "", "address to check (default: recorded daemon addr, else config server.addr)")
+
 	c.AddCommand(
 		runCmd,
 		startCmd,
 		stopCmd,
+		statusCmd,
 		stub("init", "Interactive setup wizard that writes quack.yaml", "server init"),
 		stub("use <name>", "Switch the active server", "server use"),
 		stub("add <name> <url>", "Register a server", "server add"),

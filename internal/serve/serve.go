@@ -44,14 +44,19 @@ import (
 var webDist embed.FS
 
 // Run loads configPath, builds the orchestrator + stores + agents, and serves
-// until ctx is cancelled (the caller wires SIGINT/SIGTERM to ctx). It returns an
+// until ctx is cancelled (the caller wires SIGINT/SIGTERM to ctx). addrOverride,
+// when non-empty, wins over config's server.addr (e.g. `--addr`). It returns an
 // error instead of exiting so the CLI owns the process exit code.
-func Run(ctx context.Context, configPath string) error {
+func Run(ctx context.Context, configPath, addrOverride string) error {
 	setupLogging()
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("config load failed: %w", err)
+	}
+	addr := cfg.Server.Addr
+	if addrOverride != "" {
+		addr = addrOverride
 	}
 
 	sessionStore, ok := cfg.Store(cfg.Session.Store)
@@ -210,10 +215,10 @@ func Run(ctx context.Context, configPath string) error {
 		SPA:  spa,
 	})
 
-	srv := &http.Server{Addr: cfg.Server.Addr, Handler: handler}
+	srv := &http.Server{Addr: addr, Handler: handler}
 	serveErr := make(chan error, 1)
 	go func() {
-		slog.Info("quack listening", "addr", cfg.Server.Addr)
+		slog.Info("quack listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serveErr <- err
 		}
