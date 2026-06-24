@@ -128,13 +128,34 @@ func (a AgentConfig) IsGated() bool { return a.Gated == nil || *a.Gated }
 // override its namespace/tuning (`collection`/`schema`/`top_k`/`min_score`) — the
 // store provides the connection + adapter `kind`, so the tool needs no `kind`.
 type ToolConfig struct {
-	Kind       string   `yaml:"kind"`       // store-less tool: adapter selector (empty = default)
-	URL        string   `yaml:"url"`        // store-less tool: backend endpoint
-	Store      string   `yaml:"store"`      // store-backed tool: name of a stores[] entry
-	Collection string   `yaml:"collection"` // vector namespace override
-	Schema     string   `yaml:"schema"`     // relational namespace override
-	TopK       int      `yaml:"top_k"`      // recall override
-	MinScore   *float32 `yaml:"min_score"`  // recall override
+	Kind       string      `yaml:"kind"`       // store-less tool: adapter selector (empty = default)
+	URL        string      `yaml:"url"`        // store-less tool: backend endpoint
+	Auth       *AuthConfig `yaml:"auth"`       // optional backend auth (e.g. web_search kind exa → Exa REST)
+	Store      string      `yaml:"store"`      // store-backed tool: name of a stores[] entry
+	Collection string      `yaml:"collection"` // vector namespace override
+	Schema     string      `yaml:"schema"`     // relational namespace override
+	TopK       int         `yaml:"top_k"`      // recall override
+	MinScore   *float32    `yaml:"min_score"`  // recall override
+}
+
+// AuthConfig is how a tool's backend authenticates. `kind` selects the scheme and
+// the remaining fields are scheme-specific. Only `api_key` is implemented today;
+// `oauth` (client credentials + token URL) is a planned kind, added here without
+// disturbing callers.
+type AuthConfig struct {
+	Kind   string `yaml:"kind"`    // api_key (oauth planned)
+	APIKey string `yaml:"api_key"` // kind: api_key — the key value (interpolate from env)
+}
+
+// authKindAPIKey is the only implemented auth scheme.
+const authKindAPIKey = "api_key"
+
+// APIKey returns the configured API key when the tool uses api_key auth, else "".
+func (t ToolConfig) APIKey() string {
+	if t.Auth != nil && t.Auth.Kind == authKindAPIKey {
+		return t.Auth.APIKey
+	}
+	return ""
 }
 
 // ProviderConfig is one named inference provider. `kind` selects the adapter
@@ -430,6 +451,9 @@ func (c *Config) validate() error {
 			if _, ok := c.Store(t.Store); !ok {
 				return fmt.Errorf("config: tool %q references unknown store %q", name, t.Store)
 			}
+		}
+		if t.Auth != nil && t.Auth.Kind != authKindAPIKey {
+			return fmt.Errorf("config: tool %q has unsupported auth kind %q (only %q is implemented)", name, t.Auth.Kind, authKindAPIKey)
 		}
 	}
 	if c.Dag.MaxActiveNodes == 0 {

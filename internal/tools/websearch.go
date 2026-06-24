@@ -35,7 +35,7 @@ type searchResponse struct {
 // backend (SearXNG today). The backend is a port (see backends.go) so it can be
 // swapped without touching this tool.
 func newWebSearch(d Deps) (tool.Tool, error) {
-	searcher, err := newWebSearcher(d.WebSearch.Kind, d.WebSearch.URL, d.Client)
+	searcher, err := newWebSearcher(d.WebSearch.Kind, d.WebSearch.URL, d.WebSearch.Key, d.Client)
 	if err != nil {
 		return nil, err
 	}

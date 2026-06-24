@@ -170,6 +170,36 @@ tools:
 	}
 }
 
+func TestToolAuthAPIKey(t *testing.T) {
+	t.Setenv("EXA_API_KEY", "sk-exa-123")
+	c, err := Load(writeTemp(t, baseConfig+`
+tools:
+  web_search:
+    kind: exa
+    auth: { kind: api_key, api_key: ${EXA_API_KEY} }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c.Tools["web_search"].APIKey(); got != "sk-exa-123" {
+		t.Errorf("APIKey() = %q, want the interpolated key", got)
+	}
+	// A tool with no auth yields no key.
+	if got := (ToolConfig{}).APIKey(); got != "" {
+		t.Errorf("APIKey() with no auth = %q, want empty", got)
+	}
+}
+
+func TestLoadRejectsUnknownAuthKind(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+tools:
+  web_search: { kind: exa, auth: { kind: oauth } }
+`))
+	if err == nil {
+		t.Fatal("expected error for an unsupported auth kind")
+	}
+}
+
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
