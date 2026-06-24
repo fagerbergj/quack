@@ -36,6 +36,7 @@ type PageRenderer interface {
 type Backend struct {
 	Kind string
 	URL  string
+	Key  string // optional API key (e.g. web_search kind exa → Exa REST)
 }
 
 // Backend kinds. web_search defaults to searxng (its only adapter); web_fetch
@@ -51,7 +52,7 @@ const (
 // adapters satisfy the same port, so the agent's web_search tool is identical
 // regardless of backend. exa is keyless (it speaks Exa's hosted MCP under the
 // hood) and needs no URL; searxng needs its instance URL.
-func newWebSearcher(kind, base string, client *http.Client) (WebSearcher, error) {
+func newWebSearcher(kind, base, key string, client *http.Client) (WebSearcher, error) {
 	if kind == "" {
 		kind = backendSearXNG
 	}
@@ -62,7 +63,9 @@ func newWebSearcher(kind, base string, client *http.Client) (WebSearcher, error)
 		}
 		return &searxngSearcher{client: client, base: strings.TrimRight(base, "/")}, nil
 	case backendExa:
-		return newExaSearcher(base), nil
+		// key set ⇒ Exa REST (JSON); empty ⇒ keyless hosted MCP. base (url) is
+		// unused — Exa's endpoints are fixed.
+		return newExaSearcher(key, client), nil
 	default:
 		return nil, fmt.Errorf("web_search: unknown backend kind %q", kind)
 	}

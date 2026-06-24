@@ -376,7 +376,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
-				WebSearch:  tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL},
+				WebSearch:  tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
 				Fetch:      tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
 				Summarizer: m,
 				Cache:      urlCache,

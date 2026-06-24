@@ -9,20 +9,23 @@ import (
 // error. This is what lets a backend be swapped via config alone.
 func TestNewWebSearcher(t *testing.T) {
 	c := &http.Client{}
-	if _, err := newWebSearcher("", "http://searx", c); err != nil {
+	if _, err := newWebSearcher("", "http://searx", "", c); err != nil {
 		t.Errorf("default kind: %v", err)
 	}
-	if _, err := newWebSearcher("searxng", "http://searx", c); err != nil {
+	if _, err := newWebSearcher("searxng", "http://searx", "", c); err != nil {
 		t.Errorf("searxng kind: %v", err)
 	}
-	if _, err := newWebSearcher("", "", c); err == nil {
+	if _, err := newWebSearcher("", "", "", c); err == nil {
 		t.Error("empty searxng URL should error")
 	}
-	// exa is keyless: no URL required (defaults to the hosted MCP endpoint).
-	if _, err := newWebSearcher("exa", "", c); err != nil {
-		t.Errorf("exa kind should not require a URL: %v", err)
+	// exa needs neither URL nor key (keyless MCP fallback); a key opts into REST.
+	if _, err := newWebSearcher("exa", "", "", c); err != nil {
+		t.Errorf("exa without key should not error: %v", err)
 	}
-	if _, err := newWebSearcher("bogus", "http://x", c); err == nil {
+	if _, err := newWebSearcher("exa", "", "exa-key", c); err != nil {
+		t.Errorf("exa with key should not error: %v", err)
+	}
+	if _, err := newWebSearcher("bogus", "http://x", "", c); err == nil {
 		t.Error("unknown kind should error")
 	}
 }

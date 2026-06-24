@@ -1,6 +1,11 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -52,5 +57,61 @@ func TestParseExaResults(t *testing.T) {
 func TestParseExaResults_SkipsNonResultBlocks(t *testing.T) {
 	if got := parseExaResults("Some preamble line with no fields\n"); len(got) != 0 {
 		t.Fatalf("expected 0 results from a fieldless block, got %d", len(got))
+	}
+}
+
+// TestParseExaREST covers the keyed JSON path: highlights become the snippet, and
+// a result with no highlights falls back to its text body.
+func TestParseExaREST(t *testing.T) {
+	const body = `{"results":[
+		{"title":"TFI Bus","url":"https://transportforireland.ie/","highlights":["Dublin Bus operates 130+ routes.","Wheelchair accessible."]},
+		{"title":"No Highlights","url":"https://example.com/x","text":"fallback body text"},
+		{"title":"Dropped","url":""}
+	]}`
+	got, _, err := parseExaREST(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parseExaREST: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want 2 (the url-less one is dropped)", len(got))
+	}
+	if got[0].URL != "https://transportforireland.ie/" || !strings.Contains(got[0].Snippet, "Dublin Bus operates 130+") {
+		t.Errorf("result[0] = %+v", got[0])
+	}
+	if got[1].Snippet != "fallback body text" {
+		t.Errorf("result[1] snippet should fall back to text, got %q", got[1].Snippet)
+	}
+}
+
+// TestExaSearchREST drives the keyed path end to end against a stub Exa: it must
+// POST with the x-api-key header and the query in the body, then parse the JSON.
+func TestExaSearchREST(t *testing.T) {
+	var gotKey, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("x-api-key")
+		var body struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotQuery = body.Query
+		_, _ = io.WriteString(w, `{"results":[{"title":"T","url":"https://e.com","highlights":["hi there"]}]}`)
+	}))
+	defer srv.Close()
+
+	e := newExaSearcher("secret-key", srv.Client())
+	e.restEndpoint = srv.URL
+
+	res, _, err := e.Search(context.Background(), "dublin bus")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if gotKey != "secret-key" {
+		t.Errorf("x-api-key header = %q, want secret-key", gotKey)
+	}
+	if gotQuery != "dublin bus" {
+		t.Errorf("posted query = %q, want dublin bus", gotQuery)
+	}
+	if len(res) != 1 || res[0].URL != "https://e.com" || res[0].Snippet != "hi there" {
+		t.Errorf("parsed result = %+v", res)
 	}
 }
