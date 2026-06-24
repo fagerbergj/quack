@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -313,6 +314,13 @@ func TestRealConfigLoads(t *testing.T) {
 	}
 	if doc, ok := c.Store("document"); !ok || doc.Kind != "postgres" || doc.Schema != "documents" {
 		t.Errorf("document store (extends) wrong: %+v ok=%v", doc, ok)
+	}
+	// The doc-ingest agents bind the doc tools, so the stores are in use.
+	if !c.UsesDocStore() || !c.UsesFTS() || !c.UsesVector() {
+		t.Errorf("doc stores not all in use: docStore=%v fts=%v vector=%v", c.UsesDocStore(), c.UsesFTS(), c.UsesVector())
+	}
+	if w := c.Agents["document-writer"]; !slices.Contains(w.Tools, "create_document") {
+		t.Errorf("document-writer not bound to create_document: %v", w.Tools)
 	}
 }
 

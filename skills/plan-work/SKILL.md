@@ -21,7 +21,11 @@ Match the request to a known shape first; fall back to the general rules below.
 | Single topic | ONE `web-researcher` node, no synthesizer |
 | Several distinct topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
-| "ingest / save this document" | (M8 — agents land in a later change) |
+| "ingest / save a document" (note, transcript, image, or text file) | extract (`media-reader`/`image-reader` by file type) → cleanup (`general-purpose`) → classify (`classifier`) → persist (`document-writer`) |
+| "find / look up a stored document" | ONE `general-purpose` node (it holds the document search + read tools) |
+
+When ingesting a document, first load the **`collect-document-metadata`** skill to
+gather its title / series / date, then pass those into the persist step.
 
 ## How to build the DAG
 
