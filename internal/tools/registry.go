@@ -11,8 +11,6 @@ import (
 
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
-
-	"github.com/fagerbergj/quack/internal/docstore"
 )
 
 // Deps are the shared dependencies injected into built-in tools.
@@ -33,31 +31,17 @@ type Deps struct {
 	// Cache is a shared response cache used by web_fetch and web_search to avoid
 	// redundant network requests. Optional; when nil, caching is disabled.
 	Cache *URLCache
-	// DocStore backs the document record tools (load/create/update_document).
-	// nil when documents aren't configured — those tools then refuse to build.
-	DocStore docstore.DocStore
-	// FTS is the full-text index for documents (search_document; create_document
-	// also indexes into it). nil when no FTS backend is configured.
-	FTS docstore.FTSIndex
-	// Vector is the semantic index for documents (semantic_search_document;
-	// create_document also indexes into it). nil when no vector backend is set.
-	Vector docstore.VectorIndex
 }
 
 // constructor builds one tool from the shared dependencies.
 type constructor func(Deps) (tool.Tool, error)
 
 var registry = map[string]constructor{
-	"web_search":               newWebSearch,
-	"web_fetch":                newFetch,
-	"summarize":                newSummarize,
-	"current_date":             newCurrentDate,
-	"stage_memory":             newStageMemory,
-	"load_document":            newLoadDocument,
-	"create_document":          newCreateDocument,
-	"update_document":          newUpdateDocument,
-	"search_document":          newSearchDocument,
-	"semantic_search_document": newSemanticSearchDocument,
+	"web_search":   newWebSearch,
+	"web_fetch":    newFetch,
+	"summarize":    newSummarize,
+	"current_date": newCurrentDate,
+	"stage_memory": newStageMemory,
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an
