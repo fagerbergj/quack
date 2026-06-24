@@ -17,7 +17,7 @@ type AgentInfo struct {
 
 // Planner validates an orchestrator-authored DAG and stamps the turn's context
 // (verbatim message, history, attachments) onto it for the executor. There is no
-// LLM here: the orchestrator authors the DAG itself, guided by the plan_work
+// LLM here: the orchestrator authors the DAG itself, guided by the plan-work
 // skill. This checks it — known agents, unique ids, acyclic — and hardens the
 // synthesizer's dependencies.
 type Planner struct {

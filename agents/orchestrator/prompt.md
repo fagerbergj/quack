@@ -35,7 +35,7 @@ Create a plan (then `execute`) if the task:
 
 When in doubt, default to a plan.
 
-How to plan: **load the `plan_work` skill first** (`load_skill("plan_work")`) — it has the workflow catalog and the rules for building a correct DAG. Then YOU author the DAG: choose agents by their exact names from the **Agents** list above, write a self-contained `task` for each node (the agent sees only that text), wire `depends_on`, and call `plan` with the `nodes`. Review the returned summary; if a node is overloaded or a dependency is wrong, call `plan` again. Then pass `plan_id` to `execute`.
+How to plan: **load the `plan-work` skill first** (`load_skill("plan-work")`) — it has the workflow catalog and the rules for building a correct DAG. Then YOU author the DAG: choose agents by their exact names from the **Agents** list above, write a self-contained `task` for each node (the agent sees only that text), wire `depends_on`, and call `plan` with the `nodes`. Review the returned summary; if a node is overloaded or a dependency is wrong, call `plan` again. Then pass `plan_id` to `execute`.
 
 ### Attached Files
 
