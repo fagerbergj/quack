@@ -467,7 +467,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 
 		served := ag
-		if cfg.Gates.Enabled() {
+		if cfg.Gates.Enabled() && !ac.IsGated() {
+			slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
+		}
+		if cfg.Gates.Enabled() && ac.IsGated() {
 			agentGateCfg := gateCfg
 			// An agent participates in task memory iff it has a memory.md (loaded as
 			// memGuidance above). Such agents commit on a judge pass even when they

@@ -100,6 +100,7 @@ agents:
     model: ${RESEARCHER_MODEL}
     context_window: 65536
     tools: [create_document, update_document]   # persist the final record
+    gated: false                # side-effecting write: no self-verify/judge (which would re-invoke it); create_document is idempotent on content
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +

@@ -117,7 +117,11 @@ type AgentConfig struct {
 	ContextWindow int      `yaml:"context_window"` // model's per-request context window in tokens (0 ⇒ no compaction)
 	Tools         []string `yaml:"tools"`          // built-in tool names (kind: builtin)
 	Inputs        []string `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
+	Gated         *bool    `yaml:"gated"`          // wrap in the trust gate? default true; set false for side-effecting/action agents
 }
+
+// IsGated reports whether the agent runs under the trust gate (default true).
+func (a AgentConfig) IsGated() bool { return a.Gated == nil || *a.Gated }
 
 // ToolConfig configures one built-in tool. A tool with a dedicated external
 // service declares it inline (`kind` + `url`, e.g. web_search→searxng). A tool
