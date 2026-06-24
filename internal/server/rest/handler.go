@@ -33,12 +33,13 @@ type Handler struct {
 	store         *store.Store
 	orch          *orchestrator.Orchestrator
 	titler        model.LLM
-	activeCancels sync.Map // chatID → context.CancelFunc
+	hub           *stream.Hub // fans a chat's run to extra subscribers (other devices)
+	activeCancels sync.Map    // chatID → context.CancelFunc
 }
 
 // NewHandler builds a REST handler.
 func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM) *Handler {
-	return &Handler{store: s, orch: o, titler: titler}
+	return &Handler{store: s, orch: o, titler: titler, hub: stream.NewHub()}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
@@ -219,6 +220,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		cancelRun()
 		h.activeCancels.Delete(chatID)
 	}()
+	// Mark the run finished for hub subscribers once this returns (after the final
+	// Done is published below). The run uses a detached context, so it — and the
+	// hub fan-out — continue even if this initiating client disconnects.
+	defer h.hub.Close(chatID)
 
 	// Generate a stable turn ID before the run so the DAG plan can reference it.
 	turnID := uuid.NewString()
@@ -243,8 +248,11 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	trySendTitle := func() {
 		select {
 		case title, ok := <-titleCh:
-			if ok && !clientGone {
-				_ = sse.send(stream.ChatTitle(title))
+			if ok {
+				h.hub.Publish(chatID, stream.ChatTitle(title))
+				if !clientGone {
+					_ = sse.send(stream.ChatTitle(title))
+				}
 			}
 		default:
 		}
@@ -255,6 +263,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content, attachments) {
 		trySendTitle()
 		if err != nil {
+			h.hub.Publish(chatID, stream.Errorf(err.Error()))
+			h.hub.Publish(chatID, stream.Done())
 			if !clientGone {
 				_ = sse.send(stream.Errorf(err.Error()))
 				_ = sse.send(stream.Done())
@@ -272,18 +282,22 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		} else if activePlanID != "" {
 			h.persistNodeEvent(activePlanID, ev)
 		}
-		if clientGone {
-			continue
-		}
-		if sendErr := sse.send(ev); sendErr != nil {
-			clientGone = true
+		// Fan out to any other subscribers regardless of whether THIS client is
+		// still connected; only the direct write is gated on clientGone.
+		h.hub.Publish(chatID, ev)
+		if !clientGone {
+			if sendErr := sse.send(ev); sendErr != nil {
+				clientGone = true
+			}
 		}
 	}
 	for title := range titleCh {
+		h.hub.Publish(chatID, stream.ChatTitle(title))
 		if !clientGone {
 			_ = sse.send(stream.ChatTitle(title))
 		}
 	}
+	h.hub.Publish(chatID, stream.Done())
 	if !clientGone {
 		_ = sse.send(stream.Done())
 	}
@@ -295,6 +309,41 @@ func (h *Handler) CancelChatStream(w http.ResponseWriter, r *http.Request, chatI
 		cancel.(context.CancelFunc)()
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SubscribeChatStream connects an additional client to a chat's live (or
+// just-completed) run: it replays the events so far, then streams live events
+// until the run ends — so a turn started on one device can be watched from
+// another. Reconnect-safe via the hub's replay buffer.
+func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	sse, ok := newSSEWriter(w)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	replay, live, cancel, done := h.hub.Subscribe(chatID)
+	defer cancel()
+	for _, ev := range replay {
+		if sse.send(ev) != nil {
+			return
+		}
+	}
+	if done {
+		return // run already finished; replay included its terminal Done event
+	}
+	for {
+		select {
+		case ev, ok := <-live:
+			if !ok {
+				return // run ended (its Done was delivered via the live channel)
+			}
+			if sse.send(ev) != nil {
+				return
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 // buildTurn converts a TurnContent (store layer) into a schema.Turn (API layer).

@@ -299,3 +299,21 @@ export type CancelChatStreamResponses = {
 };
 
 export type CancelChatStreamResponse = CancelChatStreamResponses[keyof CancelChatStreamResponses];
+
+export type SubscribeChatStreamData = {
+    body?: never;
+    path: {
+        chat_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/stream';
+};
+
+export type SubscribeChatStreamResponses = {
+    /**
+     * SSE event stream
+     */
+    200: string;
+};
+
+export type SubscribeChatStreamResponse = SubscribeChatStreamResponses[keyof SubscribeChatStreamResponses];
