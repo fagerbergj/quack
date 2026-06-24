@@ -4,13 +4,13 @@ BINARY := quack
 
 ## build: build the frontend, embed it, and compile the server
 build: frontend-build
-	go build -o $(BINARY) ./cmd/server
+	go build -o $(BINARY) ./cmd/quack
 
 ## frontend-build: build the SPA into the server's embed dir
 frontend-build:
 	cd frontend && npm ci && npm run build
-	rm -rf cmd/server/web/dist
-	cp -R frontend/dist cmd/server/web/dist
+	rm -rf internal/serve/web/dist
+	cp -R frontend/dist internal/serve/web/dist
 
 ## run: build and run locally (expects env: DATABASE_URL, LLM_ENDPOINT, ORCH_MODEL)
 run: build
@@ -43,4 +43,4 @@ docker-down:
 ## clean: remove build artifacts
 clean:
 	rm -rf frontend/dist $(BINARY)
-	git checkout -- cmd/server/web/dist 2>/dev/null || true
+	git checkout -- internal/serve/web/dist 2>/dev/null || true

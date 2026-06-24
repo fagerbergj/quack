@@ -1,4 +1,4 @@
-// Command quack is Quack's one-binary CLI and server. `quack serve` runs the
+// Command quack is Quack's one-binary CLI and server. `quack server run` runs the
 // REST + MCP API and the embedded SPA; the other verbs (`chat`, `api`, `server`)
 // drive a running server over HTTP + SSE. This file is the cobra wiring only —
 // command funcs stay thin and dispatch into internal/cli and internal/tui (see
@@ -8,8 +8,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/fagerbergj/quack/internal/serve"
 )
 
 // version is the build stamp, overridden at release time via
@@ -31,7 +35,7 @@ func newRootCmd() *cobra.Command {
 		Use:   "quack",
 		Short: "Quack — agentic research, one binary",
 		Long: "Quack is a one-binary CLI and server for agentic research.\n\n" +
-			"  quack serve            run the API + SPA server\n" +
+			"  quack server run       run the API + SPA server (foreground)\n" +
 			"  quack                  open the interactive chat TUI\n" +
 			"  quack -p \"<prompt>\"     one-shot prompt, print and exit (no TUI)\n" +
 			"  quack chat|server|api  manage chats, the server, and raw API calls",
@@ -81,19 +85,20 @@ func newChatCmd() *cobra.Command {
 func newServerCmd() *cobra.Command {
 	c := &cobra.Command{Use: "server", Short: "Run and manage the quack server"}
 
-	serve := &cobra.Command{
-		Use:   "serve",
-		Short: "Run the REST + MCP API and the embedded SPA",
-		// ponytail: stub until the bootstrap + SPA embed move from cmd/server into
-		// internal/serve (next commit in this PR). Run the server via ./server or
-		// `make docker-up` until then.
-		RunE: func(*cobra.Command, []string) error {
-			return notWired("server serve (use ./server or `make docker-up` for now)")
+	runCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run the server in the foreground (REST + MCP API + embedded SPA)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+			cfgPath, _ := cmd.Flags().GetString("config")
+			return serve.Run(ctx, cfgPath)
 		},
 	}
+	runCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
 
 	c.AddCommand(
-		serve,
+		runCmd,
 		stub("init", "Interactive setup wizard that writes quack.yaml", "server init"),
 		stub("stop", "Stop a server started by `serve`", "server stop"),
 		stub("use <name>", "Switch the active server", "server use"),
@@ -135,4 +140,13 @@ func stub(use, short, what string) *cobra.Command {
 
 func notWired(what string) error {
 	return fmt.Errorf("%s is not wired yet — coming in a later M8 commit", what)
+}
+
+// defaultConfigPath resolves the server config: $QUACK_CONFIG if set, else the
+// conventional repo path.
+func defaultConfigPath() string {
+	if p := os.Getenv("QUACK_CONFIG"); p != "" {
+		return p
+	}
+	return "config/quack.yaml"
 }

@@ -15,12 +15,12 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-COPY --from=frontend /app/frontend/dist ./cmd/server/web/dist
+COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
 # -trimpath + -ldflags="-s -w": strip local paths and the symbol/DWARF tables
 # (smaller, reproducible binary). Module + build caches are mounted, not embedded.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack ./cmd/server
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack ./cmd/quack
 
 # 3) Minimal runtime. The :nonroot variant runs as UID 65532 — safe here because
 # the server makes no runtime filesystem writes (all state goes to Postgres) and
