@@ -97,10 +97,27 @@ func newServerCmd() *cobra.Command {
 	}
 	runCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
 
+	startCmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the server in the background (detached)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfgPath, _ := cmd.Flags().GetString("config")
+			return serve.Start(cfgPath)
+		},
+	}
+	startCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
+
+	stopCmd := &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the background server started by `quack server start`",
+		RunE:  func(*cobra.Command, []string) error { return serve.Stop() },
+	}
+
 	c.AddCommand(
 		runCmd,
+		startCmd,
+		stopCmd,
 		stub("init", "Interactive setup wizard that writes quack.yaml", "server init"),
-		stub("stop", "Stop a server started by `serve`", "server stop"),
 		stub("use <name>", "Switch the active server", "server use"),
 		stub("add <name> <url>", "Register a server", "server add"),
 		stub("list", "List configured servers", "server list"),

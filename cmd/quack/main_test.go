@@ -14,7 +14,7 @@ func TestCommandTree(t *testing.T) {
 
 	want := map[string][]string{
 		"chat":   {"new", "resume", "list", "delete", "export", "stop", "node"},
-		"server": {"run", "init", "stop", "use", "add", "list"},
+		"server": {"run", "start", "stop", "init", "use", "add", "list"},
 		"api":    nil,
 	}
 	for name, subs := range want {
