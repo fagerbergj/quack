@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,16 +32,16 @@ func pidPath() string { return filepath.Join(stateDir(), "server.pid") }
 func logPath() string { return filepath.Join(stateDir(), "server.log") }
 
 // Start launches `quack server run` in the background, detached from this
-// terminal, and waits until it is listening. addrOverride wins over config; the
-// resolved address is passed to the child so the daemon and the wait agree.
-func Start(configPath, addrOverride string) error {
+// terminal, and waits until it is listening. port (non-zero) overrides config;
+// the same override is passed to the child so the daemon and the wait agree.
+func Start(configPath string, port int) error {
 	if pid, ok := runningPID(); ok {
 		return fmt.Errorf("quack server already running (pid %d); use `quack server stop` first", pid)
 	}
-	addr := resolveAddr(configPath, addrOverride)
+	addr := resolveAddr(configPath, port)
 	// Catch a foreign listener (or a server we didn't start) before we fork.
 	if listening(addr) {
-		return fmt.Errorf("address %s is already in use — run `quack server status`, or pick another with --addr", addr)
+		return fmt.Errorf("address %s is already in use — run `quack server status`, or pick another with --port", addr)
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -55,7 +56,11 @@ func Start(configPath, addrOverride string) error {
 	}
 	defer logf.Close()
 
-	cmd := exec.Command(self, "server", "run", "--config", configPath, "--addr", addr)
+	args := []string{"server", "run", "--config", configPath}
+	if port != 0 {
+		args = append(args, "--port", strconv.Itoa(port))
+	}
+	cmd := exec.Command(self, args...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach into its own session
 	if err := cmd.Start(); err != nil {
@@ -74,12 +79,12 @@ func Start(configPath, addrOverride string) error {
 // Status reports whether the server is running (our daemon or a foreign listener)
 // and whether its address is accepting connections. The daemon's address comes
 // from the recorded state, so it's correct even when started with --addr.
-func Status(configPath, addrOverride string) error {
+func Status(configPath string, port int) error {
 	pid, recAddr, have := readState()
 	ours := have && alive(pid)
 	addr := recAddr
 	if !ours || addr == "" {
-		addr = resolveAddr(configPath, addrOverride)
+		addr = resolveAddr(configPath, port)
 	}
 	switch {
 	case ours && listening(addr):
@@ -94,11 +99,11 @@ func Status(configPath, addrOverride string) error {
 	return nil
 }
 
-// resolveAddr picks the address: --addr override, else config's server.addr,
-// else the :8080 default.
-func resolveAddr(configPath, override string) string {
-	if override != "" {
-		return override
+// resolveAddr picks the listen address: a non-zero --port (":<port>"), else
+// config's server.addr, else the :8080 default.
+func resolveAddr(configPath string, port int) string {
+	if port != 0 {
+		return fmt.Sprintf(":%d", port)
 	}
 	if cfg, err := config.Load(configPath); err == nil && cfg.Server.Addr != "" {
 		return cfg.Server.Addr

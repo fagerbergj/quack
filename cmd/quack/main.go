@@ -92,24 +92,24 @@ func newServerCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 			cfgPath, _ := cmd.Flags().GetString("config")
-			addr, _ := cmd.Flags().GetString("addr")
-			return serve.Run(ctx, cfgPath, addr)
+			port, _ := cmd.Flags().GetInt("port")
+			return serve.Run(ctx, cfgPath, port)
 		},
 	}
 	runCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
-	runCmd.Flags().String("addr", "", "listen address override, e.g. :8081 (default: config server.addr)")
+	runCmd.Flags().Int("port", 0, "listen port override (default: config server.addr, else 8080)")
 
 	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the server in the background (detached)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfgPath, _ := cmd.Flags().GetString("config")
-			addr, _ := cmd.Flags().GetString("addr")
-			return serve.Start(cfgPath, addr)
+			port, _ := cmd.Flags().GetInt("port")
+			return serve.Start(cfgPath, port)
 		},
 	}
 	startCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
-	startCmd.Flags().String("addr", "", "listen address override, e.g. :8081 (default: config server.addr)")
+	startCmd.Flags().Int("port", 0, "listen port override (default: config server.addr, else 8080)")
 
 	stopCmd := &cobra.Command{
 		Use:   "stop",
@@ -122,12 +122,12 @@ func newServerCmd() *cobra.Command {
 		Short: "Report whether a server is running and on what address",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfgPath, _ := cmd.Flags().GetString("config")
-			addr, _ := cmd.Flags().GetString("addr")
-			return serve.Status(cfgPath, addr)
+			port, _ := cmd.Flags().GetInt("port")
+			return serve.Status(cfgPath, port)
 		},
 	}
 	statusCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
-	statusCmd.Flags().String("addr", "", "address to check (default: recorded daemon addr, else config server.addr)")
+	statusCmd.Flags().Int("port", 0, "port to check (default: recorded daemon addr, else config server.addr)")
 
 	c.AddCommand(
 		runCmd,

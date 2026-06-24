@@ -44,10 +44,10 @@ import (
 var webDist embed.FS
 
 // Run loads configPath, builds the orchestrator + stores + agents, and serves
-// until ctx is cancelled (the caller wires SIGINT/SIGTERM to ctx). addrOverride,
-// when non-empty, wins over config's server.addr (e.g. `--addr`). It returns an
-// error instead of exiting so the CLI owns the process exit code.
-func Run(ctx context.Context, configPath, addrOverride string) error {
+// until ctx is cancelled (the caller wires SIGINT/SIGTERM to ctx). port, when
+// non-zero, overrides config's server.addr (it becomes ":<port>", e.g. `--port`).
+// It returns an error instead of exiting so the CLI owns the process exit code.
+func Run(ctx context.Context, configPath string, port int) error {
 	setupLogging()
 
 	cfg, err := config.Load(configPath)
@@ -55,8 +55,8 @@ func Run(ctx context.Context, configPath, addrOverride string) error {
 		return fmt.Errorf("config load failed: %w", err)
 	}
 	addr := cfg.Server.Addr
-	if addrOverride != "" {
-		addr = addrOverride
+	if port != 0 {
+		addr = fmt.Sprintf(":%d", port)
 	}
 
 	sessionStore, ok := cfg.Store(cfg.Session.Store)
