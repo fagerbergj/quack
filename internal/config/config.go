@@ -22,7 +22,6 @@ type Config struct {
 	Gates        GatesConfig               `yaml:"gates"`
 	Dag          DagConfig                 `yaml:"dag"`
 	Server       ServerConfig              `yaml:"server"`
-	MCP          []MCPServerConfig         `yaml:"mcp"` // outbound MCP servers whose tools are exposed to agents
 }
 
 // SessionConfig binds the ADK session + chat persistence to a named store and
@@ -136,18 +135,6 @@ type ToolConfig struct {
 	Schema     string   `yaml:"schema"`     // relational namespace override
 	TopK       int      `yaml:"top_k"`      // recall override
 	MinScore   *float32 `yaml:"min_score"`  // recall override
-}
-
-// MCPServerConfig is one outbound MCP server quack connects to as a client. Its
-// tools are discovered at runtime (Streamable-HTTP transport) and exposed to
-// agents as an ADK toolset, the same way the skill toolset is. This is the
-// no-docker search path: point it at a hosted MCP (e.g. Exa's keyless
-// https://mcp.exa.ai/mcp) and web search works with no container and no API key.
-type MCPServerConfig struct {
-	Name   string   `yaml:"name"`   // identifier for logs/errors
-	URL    string   `yaml:"url"`    // Streamable-HTTP MCP endpoint
-	Tools  []string `yaml:"tools"`  // optional allowlist of tool names to expose (empty = all the server offers)
-	Agents []string `yaml:"agents"` // optional scope: only these agents get the toolset (empty = all worker agents)
 }
 
 // ProviderConfig is one named inference provider. `kind` selects the adapter
@@ -443,17 +430,6 @@ func (c *Config) validate() error {
 			if _, ok := c.Store(t.Store); !ok {
 				return fmt.Errorf("config: tool %q references unknown store %q", name, t.Store)
 			}
-		}
-	}
-	// MCP: each outbound server needs a name (for diagnostics) and a URL. The
-	// connection is lazy, so a bad URL surfaces when an agent first lists tools,
-	// not here.
-	for i, m := range c.MCP {
-		if m.Name == "" {
-			return fmt.Errorf("config: mcp[%d] has empty name", i)
-		}
-		if m.URL == "" {
-			return fmt.Errorf("config: mcp server %q has empty url", m.Name)
 		}
 	}
 	if c.Dag.MaxActiveNodes == 0 {

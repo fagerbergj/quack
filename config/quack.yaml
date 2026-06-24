@@ -79,8 +79,8 @@ agents:
 # internal/tools/backends.go.
 tools:
   web_search:
-    kind: searxng                 # search adapter; empty ⇒ default (searxng)
-    url: ${SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080
+    kind: searxng                 # searxng (needs url) | exa (keyless via Exa's hosted MCP — the no-docker path). empty ⇒ searxng
+    url: ${SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080; unused by kind: exa
   web_fetch:
     kind: crawl4ai                # direct (plain GET, no service) | crawl4ai (GET + browser render). empty ⇒ direct
     url: ${CRAWL4AI_URL}          # required for crawl4ai (e.g. http://crawl4ai:11235); unused by kind: direct
@@ -124,18 +124,6 @@ dag:
                         # the GPU judge (gemma4-26b-a4b, co-resident with the worker)
                         # is also --parallel 2. Raising this past the worker's slot
                         # count just queues requests at the model.
-
-# Outbound MCP servers (optional). quack connects as a client; their tools are
-# discovered at runtime and handed to agents as a toolset — the no-docker web
-# search path. Exa's hosted MCP is keyless (no API key, no container) and serves
-# web_search_exa + web_fetch_exa. Scope to an agent with `agents:`; allowlist
-# tool names with `tools:`. Left commented because the default stack uses the
-# SearXNG web_search backend; the embedded/no-docker preset turns this on.
-# mcp:
-#   - name: exa
-#     url: https://mcp.exa.ai/mcp
-#     agents: [web-researcher]
-#     tools: [web_search_exa]   # add web_fetch_exa for a bot-wall fetch fallback
 
 server:
   addr: ":8080"

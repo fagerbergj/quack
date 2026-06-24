@@ -18,8 +18,8 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `agents[web-researcher].tools` | `web_search, web_fetch, summarize, current_date, …` | Tool bindings (explicit; independent of the card's skills). |
 | `agents[rag-researcher].inference` | provider `local`, model `qwen3.5-9b` | Smaller/faster worker; RAG lookup is lighter work. |
 | `agents[rag-researcher].tools` | `rag_search` | Tool binding for the RAG researcher. |
-| `tools.web_search.kind` | `searxng` (default) | Adapter for the dedicated search backend; empty ⇒ default. Swap with a new adapter + config, no tool rewrite (`internal/tools/backends.go`). |
-| `tools.web_search.url` (env `SEARXNG_URL`) | _internal URL_ | Search backend endpoint (e.g. `http://searxng:8080`). |
+| `tools.web_search.kind` | `searxng` (default) / `exa` | Search backend. `searxng` needs an instance URL. `exa` is **keyless** — it speaks Exa's hosted MCP under the hood, so no URL and no container (the no-docker path). Either way the agent just calls `web_search`; swapping the backend is a config change, not a tool rewrite (`internal/tools/backends.go`). |
+| `tools.web_search.url` (env `SEARXNG_URL`) | _internal URL_ | SearXNG endpoint (e.g. `http://searxng:8080`); **required** for `kind: searxng`, unused by `kind: exa`. |
 | `tools.web_fetch.kind` | `direct` (default) / `crawl4ai` | Fetch implementation. `direct` = a plain SSRF-guarded GET, no external service (the no-docker path). `crawl4ai` = the same GET plus a headless-browser render fallback for JS-heavy / bot-walled pages (needs a URL). Empty ⇒ `direct`. |
 | `tools.web_fetch.url` (env `CRAWL4AI_URL`) | _internal URL_ | crawl4ai render backend (e.g. `http://crawl4ai:11235`); **required** for `kind: crawl4ai`, unused by `kind: direct`. |
 | `tools.<store-backed>.store` | a `stores[]` name | A tool backed by *shared* infra (e.g. memory) references a store instead of `kind`+`url`; the store supplies the adapter + connection. May override `collection` / `schema` / `top_k` / `min_score`. |
@@ -27,8 +27,6 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `budget.max_depth` | `4` | Per-request DAG depth cap. |
 | `budget.max_tokens` | `400000` | Per-request token ceiling. |
 | `budget.max_wall_clock` | `10m` | Per-request time ceiling. |
-| `mcp[].name` / `.url` | e.g. `exa` / `https://mcp.exa.ai/mcp` | Outbound MCP server quack connects to as a client; its tools are discovered at runtime and handed to agents as a toolset (lazy — no startup network). The **no-docker web-search path**: Exa's hosted MCP is keyless (no API key, no container), serving `web_search_exa` + `web_fetch_exa`. |
-| `mcp[].agents` / `.tools` | agent names / tool names | Optional: scope the toolset to specific agents (empty ⇒ all worker agents); allowlist which of the server's tools to expose (empty ⇒ all). |
 | `stores.<name>.kind` | `postgres` / `qdrant` | **Named backend registry** (like `providers`): consumers reference a store by name. `kind` selects the adapter (the portability seam). Implemented: postgres, qdrant. |
 | `stores.<name>.url` (env, e.g. `DATABASE_URL` / `QDRANT_URL`) | _secret_ | Connection endpoint. A vector store with an empty URL self-disables memory (qdrant-less runs keep working). |
 | `stores.<name>.extends` | another store name | Inherit a store's fields (child overrides) — reuse one store's connection with a different schema/collection. |

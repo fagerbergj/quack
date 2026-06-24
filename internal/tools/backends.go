@@ -42,11 +42,15 @@ type Backend struct {
 // defaults to direct (a plain GET, no external service) and opts into crawl4ai.
 const (
 	backendSearXNG  = "searxng"
+	backendExa      = "exa"
 	backendDirect   = "direct"
 	backendCrawl4AI = "crawl4ai"
 )
 
-// newWebSearcher selects the web-search adapter for kind (default: searxng).
+// newWebSearcher selects the web-search adapter for kind (default: searxng). Both
+// adapters satisfy the same port, so the agent's web_search tool is identical
+// regardless of backend. exa is keyless (it speaks Exa's hosted MCP under the
+// hood) and needs no URL; searxng needs its instance URL.
 func newWebSearcher(kind, base string, client *http.Client) (WebSearcher, error) {
 	if kind == "" {
 		kind = backendSearXNG
@@ -57,6 +61,8 @@ func newWebSearcher(kind, base string, client *http.Client) (WebSearcher, error)
 			return nil, fmt.Errorf("web_search requires a SearXNG backend URL")
 		}
 		return &searxngSearcher{client: client, base: strings.TrimRight(base, "/")}, nil
+	case backendExa:
+		return newExaSearcher(base), nil
 	default:
 		return nil, fmt.Errorf("web_search: unknown backend kind %q", kind)
 	}

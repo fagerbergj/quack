@@ -16,7 +16,11 @@ func TestNewWebSearcher(t *testing.T) {
 		t.Errorf("searxng kind: %v", err)
 	}
 	if _, err := newWebSearcher("", "", c); err == nil {
-		t.Error("empty backend URL should error")
+		t.Error("empty searxng URL should error")
+	}
+	// exa is keyless: no URL required (defaults to the hosted MCP endpoint).
+	if _, err := newWebSearcher("exa", "", c); err != nil {
+		t.Errorf("exa kind should not require a URL: %v", err)
 	}
 	if _, err := newWebSearcher("bogus", "http://x", c); err == nil {
 		t.Error("unknown kind should error")
