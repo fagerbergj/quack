@@ -1,0 +1,89 @@
+package stream
+
+import (
+	"testing"
+	"time"
+)
+
+func ev(name string) SSEEvent { return SSEEvent{Name: name} }
+
+func recv(t *testing.T, ch <-chan SSEEvent) SSEEvent {
+	t.Helper()
+	select {
+	case e := <-ch:
+		return e
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for live event")
+		return SSEEvent{}
+	}
+}
+
+// Events published before a subscriber joins are replayed; subsequent events
+// reach every live subscriber.
+func TestHubReplayAndFanout(t *testing.T) {
+	h := NewHub()
+	h.Publish("c", ev("a")) // before anyone subscribes
+
+	replay, l1, c1, done := h.Subscribe("c")
+	defer c1()
+	if done {
+		t.Fatal("topic should be active")
+	}
+	if len(replay) != 1 || replay[0].Name != "a" {
+		t.Fatalf("replay = %v, want [a]", replay)
+	}
+	_, l2, c2, _ := h.Subscribe("c")
+	defer c2()
+
+	h.Publish("c", ev("b"))
+	if e := recv(t, l1); e.Name != "b" {
+		t.Errorf("sub1 live = %q, want b", e.Name)
+	}
+	if e := recv(t, l2); e.Name != "b" {
+		t.Errorf("sub2 live = %q, want b", e.Name)
+	}
+}
+
+// Close delivers any buffered events then closes live channels; a late joiner
+// gets the whole run as replay with done=true.
+func TestHubClose(t *testing.T) {
+	h := NewHub()
+	h.Publish("c", ev("a"))
+	_, live, cancel, _ := h.Subscribe("c")
+	defer cancel()
+	h.Publish("c", Done())
+	h.Close("c")
+
+	var names []string
+	for e := range live { // ranges until Close closed the channel
+		names = append(names, e.Name)
+	}
+	if len(names) == 0 {
+		t.Error("expected the buffered Done before close")
+	}
+
+	replay, l, _, done := h.Subscribe("c")
+	if !done || l != nil {
+		t.Errorf("late join: done=%v live=%v, want done + nil live", done, l)
+	}
+	if len(replay) != 2 {
+		t.Errorf("late replay = %d events, want 2 (a + done)", len(replay))
+	}
+}
+
+// The first publish after a run ends starts a fresh stream.
+func TestHubNewRunResets(t *testing.T) {
+	h := NewHub()
+	h.Publish("c", ev("old"))
+	h.Close("c")
+	h.Publish("c", ev("new")) // new run
+
+	replay, _, cancel, done := h.Subscribe("c")
+	defer cancel()
+	if done {
+		t.Error("should be active after the new run's publish")
+	}
+	if len(replay) != 1 || replay[0].Name != "new" {
+		t.Errorf("reset replay = %v, want [new]", replay)
+	}
+}

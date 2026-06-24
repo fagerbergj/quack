@@ -164,6 +164,39 @@ paths:
           description: Not found
 
   /api/v1/chats/{chat_id}/stream:
+    get:
+      operationId: subscribeChatStream
+      summary: Subscribe to a chat's live response stream
+      description: |
+        Connect to the SSE stream of a chat's in-progress (or just-completed) run
+        — so a turn started on one device can be watched from another. Replays the
+        events so far, then streams live events until the run ends. If no run is
+        active, replays the most recent completed run. Reconnect-safe via the
+        replay buffer.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+      x-sse-events:
+        - agent_start
+        - agent_thinking
+        - agent_tool_call
+        - agent_tool_result
+        - agent_token
+        - agent_complete
+        - dag_plan
+        - node_queued
+        - node_start
+        - node_done
+        - node_failed
+        - chat_title
+        - done
+        - error
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
     delete:
       operationId: cancelChatStream
       summary: Cancel an in-progress stream

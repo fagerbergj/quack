@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses } from './types.gen';
+import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -112,3 +112,15 @@ export const getResponse = <ThrowOnError extends boolean = false>(options: Optio
  *
  */
 export const cancelChatStream = <ThrowOnError extends boolean = false>(options: Options<CancelChatStreamData, ThrowOnError>): RequestResult<CancelChatStreamResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
+
+/**
+ * Subscribe to a chat's live response stream
+ *
+ * Connect to the SSE stream of a chat's in-progress (or just-completed) run
+ * — so a turn started on one device can be watched from another. Replays the
+ * events so far, then streams live events until the run ends. If no run is
+ * active, replays the most recent completed run. Reconnect-safe via the
+ * replay buffer.
+ *
+ */
+export const subscribeChatStream = <ThrowOnError extends boolean = false>(options: Options<SubscribeChatStreamData, ThrowOnError, SubscribeChatStreamResponse>): Promise<ServerSentEventsResult<SubscribeChatStreamResponses>> => (options.client ?? client).sse.get<SubscribeChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });

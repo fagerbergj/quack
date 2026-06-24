@@ -537,6 +537,9 @@ type ServerInterface interface {
 	// Cancel an in-progress stream
 	// (DELETE /api/v1/chats/{chat_id}/stream)
 	CancelChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Subscribe to a chat's live response stream
+	// (GET /api/v1/chats/{chat_id}/stream)
+	SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
 	// Liveness check
 	// (GET /health)
 	HealthCheck(w http.ResponseWriter, r *http.Request)
@@ -585,6 +588,12 @@ func (_ Unimplemented) GetResponse(w http.ResponseWriter, r *http.Request, chatI
 // Cancel an in-progress stream
 // (DELETE /api/v1/chats/{chat_id}/stream)
 func (_ Unimplemented) CancelChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Subscribe to a chat's live response stream
+// (GET /api/v1/chats/{chat_id}/stream)
+func (_ Unimplemented) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -770,6 +779,32 @@ func (siw *ServerInterfaceWrapper) CancelChatStream(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// SubscribeChatStream operation middleware
+func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubscribeChatStream(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // HealthCheck operation middleware
 func (siw *ServerInterfaceWrapper) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
@@ -917,6 +952,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.CancelChatStream)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.SubscribeChatStream)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/health", wrapper.HealthCheck)
