@@ -273,6 +273,16 @@ tools:
 	}
 }
 
+func TestAgentConfigIsGated(t *testing.T) {
+	if !(AgentConfig{}).IsGated() {
+		t.Error("agents are gated by default")
+	}
+	f := false
+	if (AgentConfig{Gated: &f}).IsGated() {
+		t.Error("gated: false should opt out of the trust gate")
+	}
+}
+
 func TestLoadRejectsAgentWithUnknownProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 agents:

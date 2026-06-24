@@ -169,6 +169,24 @@ func TestSemanticSearchRequiresVector(t *testing.T) {
 	}
 }
 
+// With no content_hash supplied, create dedups on a hash of the content — so a
+// re-invoked write (e.g. a gate re-run) returns the same record, not a duplicate.
+func TestCreateDedupsOnContentByDefault(t *testing.T) {
+	store := newFakeDocStore()
+	ctx := context.Background()
+	r1, err := createDoc(ctx, store, nil, nil, createDocArgs{Content: "same body", Title: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, _ := createDoc(ctx, store, nil, nil, createDocArgs{Content: "same body", Title: "b"})
+	if r1.ID != r2.ID {
+		t.Errorf("identical content should dedup: %q vs %q", r1.ID, r2.ID)
+	}
+	if r3, _ := createDoc(ctx, store, nil, nil, createDocArgs{Content: "different body"}); r3.ID == r1.ID {
+		t.Error("different content should not dedup")
+	}
+}
+
 func TestUpdateDocumentOverlays(t *testing.T) {
 	store := newFakeDocStore()
 	ctx := context.Background()

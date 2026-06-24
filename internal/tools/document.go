@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -87,15 +89,22 @@ func createDoc(ctx context.Context, store docstore.DocStore, fts docstore.FTSInd
 	if strings.TrimSpace(a.Content) == "" {
 		return docIDResult{}, fmt.Errorf("create_document: content is empty")
 	}
-	if a.ContentHash != "" {
-		if existing, ok, err := store.GetByHash(ctx, a.ContentHash); err != nil {
-			return docIDResult{}, err
-		} else if ok {
-			return docIDResult{ID: existing.ID}, nil // dedup
-		}
+	// Default the dedup key to a hash of the content when the caller didn't supply
+	// one (the chat path has no source-file hash). This makes create idempotent:
+	// the same content always resolves to one record — so a retried or re-invoked
+	// call returns the existing id instead of inserting a duplicate.
+	hash := a.ContentHash
+	if hash == "" {
+		sum := sha256.Sum256([]byte(a.Content))
+		hash = hex.EncodeToString(sum[:])
+	}
+	if existing, ok, err := store.GetByHash(ctx, hash); err != nil {
+		return docIDResult{}, err
+	} else if ok {
+		return docIDResult{ID: existing.ID}, nil // dedup
 	}
 	doc := docstore.Document{
-		ID: uuid.NewString(), ContentHash: a.ContentHash,
+		ID: uuid.NewString(), ContentHash: hash,
 		Title: a.Title, Content: a.Content, Summary: a.Summary, Tags: a.Tags,
 		Series: a.Series, DateMonth: a.DateMonth, SourceRef: a.SourceRef,
 	}
