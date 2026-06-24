@@ -333,14 +333,15 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: store %q has an unknown or cyclic extends", name)
 		}
 		switch s.Kind {
-		case "postgres", "qdrant", "opensearch":
+		case "postgres", "qdrant", "sqlite":
 		default:
-			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, opensearch)", name, s.Kind)
+			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite)", name, s.Kind)
 		}
 	}
 	// Default + range-check vector-store recall tuning so consumers don't repeat it.
+	// Applies to any vector backend that carries an embedder (qdrant or sqlite).
 	for name, s := range c.Stores {
-		if s.Kind != "qdrant" || s.URL == "" {
+		if s.Embedder == nil || s.URL == "" {
 			continue
 		}
 		if s.TopK == 0 {
@@ -358,11 +359,11 @@ func (c *Config) validate() error {
 		}
 		c.Stores[name] = s
 	}
-	// Session: must reference a postgres store with a URL.
+	// Session: must reference a relational store (postgres or sqlite) with a URL.
 	if ss, ok := c.Store(c.Session.Store); !ok {
 		return fmt.Errorf("config: session.store %q is not defined under stores", c.Session.Store)
-	} else if ss.Kind != "postgres" {
-		return fmt.Errorf("config: session.store %q must be a postgres store, got kind %q", c.Session.Store, ss.Kind)
+	} else if ss.Kind != "postgres" && ss.Kind != "sqlite" {
+		return fmt.Errorf("config: session.store %q must be a postgres or sqlite store, got kind %q", c.Session.Store, ss.Kind)
 	} else if ss.URL == "" {
 		return fmt.Errorf("config: session.store %q has empty url", c.Session.Store)
 	}

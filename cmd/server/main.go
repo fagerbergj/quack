@@ -61,7 +61,7 @@ func main() {
 	if !ok {
 		fatal("session store not found in stores registry", "store", cfg.Session.Store)
 	}
-	st, err := store.Open(sessionStore.URL)
+	st, err := store.New(sessionStore.Kind, sessionStore.URL)
 	if err != nil {
 		fatal("store open failed", "err", err)
 	}

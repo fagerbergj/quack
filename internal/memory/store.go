@@ -1,22 +1,22 @@
-// Package memory is Quack's semantic-memory layer (M6): a Qdrant-backed
-// implementation of ADK's memory.Service. Recall (SearchMemory) is live here;
-// ADK's native preload_memory / load_memory tools route through it via the
-// runner's MemoryService. Whole-session auto-write (AddSessionToMemory) is a
-// deliberate no-op — writes go through the explicit, gated commit path (later
-// PRs), never ADK's automatic ingestion.
+// Package memory is Quack's semantic-memory layer (M6): an implementation of
+// ADK's memory.Service over a swappable vector index (Qdrant for a server, or an
+// embedded SQLite file for the no-docker path). All the embed / scope / recall /
+// mem0-style consolidation logic lives on Store; the backend is just storage,
+// behind the index interface. Recall (SearchMemory) is live here; ADK's native
+// preload_memory / load_memory tools route through it via the runner's
+// MemoryService. Whole-session auto-write (AddSessionToMemory) is a deliberate
+// no-op — writes go through the explicit, gated commit path, never ADK's
+// automatic ingestion.
 package memory
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/qdrant/go-client/qdrant"
 	adkmemory "google.golang.org/adk/memory"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
@@ -25,14 +25,42 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// Payload keys stored on each memory point. SearchMemory reads them; the commit
-// path (later PR) writes them.
-const (
-	payloadContent   = "content"
-	payloadUserID    = "user_id"
-	payloadAuthor    = "author"
-	payloadTimestamp = "timestamp"
-)
+// index is the vector-storage backend behind a Store. Qdrant and SQLite implement
+// it; Store holds the shared embed/scope/consolidation logic, so a backend is just
+// storage. Points are partitioned by a scope key (agent name or user id), set on
+// upsert and filtered on query.
+type index interface {
+	// ensure makes the backing collection/table ready. probeDim returns the
+	// embedding dimension, called only by a backend that needs a fixed vector size
+	// (Qdrant); SQLite stores variable-length blobs and ignores it.
+	ensure(ctx context.Context, probeDim func() (int, error)) error
+	// query returns up to k points whose scope matches, nearest to vec by cosine,
+	// best score first. An empty scope means no partition filter.
+	query(ctx context.Context, scope string, vec []float32, k int) ([]scored, error)
+	upsert(ctx context.Context, pts []point) error
+	remove(ctx context.Context, ids []string) error
+}
+
+// scored is one ranked memory returned by index.query.
+type scored struct {
+	ID        string
+	Content   string
+	Author    string
+	Timestamp string
+	Score     float32
+}
+
+// point is one memory to upsert. Scope is the partition key (stored so query can
+// filter by it).
+type point struct {
+	ID        string
+	Vector    []float32
+	Content   string
+	Scope     string
+	Author    string
+	Timestamp string
+	Kind      string
+}
 
 const (
 	// maxRecallRunes bounds the recall query sent to the embedder (a topic, not a
@@ -43,17 +71,17 @@ const (
 	recallEmbedTimeout = 30 * time.Second
 )
 
-// Store is a Qdrant collection serving one memory scope (e.g. "task_memory").
-// It implements adkmemory.Service. The consolidator (a gemma-class LLM) drives
-// the gated commit path's extract/vet/consolidate step; it may be nil for a
-// read-only store (Commit then errors).
+// Store serves one memory scope (e.g. "task_memory") over a vector index. It
+// implements adkmemory.Service. The consolidator (a gemma-class LLM) drives the
+// gated commit path's extract/vet/consolidate step; it may be nil for a read-only
+// store (Commit then errors).
 type Store struct {
-	client       *qdrant.Client
+	idx          index
 	embedder     inference.Embedder
 	consolidator model.LLM
 	coll         string
 	domain       string // selects the consolidation prompt ("task" | "user")
-	topK         uint64
+	topK         int
 	minScore     float32 // recall hits below this cosine score are dropped (0 = no threshold)
 	log          *slog.Logger
 	embCache     *embedCache // memoizes text→vector (deterministic for a fixed model)
@@ -61,63 +89,34 @@ type Store struct {
 
 var _ adkmemory.Service = (*Store)(nil)
 
-// Open connects to Qdrant at addr (host:port gRPC), and ensures the scope's
-// collection exists — creating it on first use with a vector size probed from
-// the embedder, so the embedding model's dimension need not be configured. The
-// consolidator LLM drives Commit; pass nil for a recall-only store. domain
-// ("task" | "user") selects the consolidation prompt. minScore drops recall hits
-// below that cosine similarity (0 = no threshold).
-func Open(ctx context.Context, addr string, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
-	host, port, err := parseAddr(addr)
-	if err != nil {
-		return nil, err
-	}
-	client, err := qdrant.NewClient(&qdrant.Config{Host: host, Port: port, SkipCompatibilityCheck: true})
-	if err != nil {
-		return nil, fmt.Errorf("memory: qdrant client: %w", err)
-	}
+// newStore wraps a backend index with the shared memory logic and ensures the
+// backing store is ready (probing the embedder for the vector dimension on first
+// use, so the model's dimension need not be configured).
+func newStore(ctx context.Context, idx index, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
 	s := &Store{
-		client:       client,
+		idx:          idx,
 		embedder:     embedder,
 		consolidator: consolidator,
 		coll:         collection,
 		domain:       domain,
-		topK:         uint64(topK),
+		topK:         topK,
 		minScore:     minScore,
 		log:          slog.Default().With("component", "memory", "collection", collection),
 		embCache:     newEmbedCache(512),
 	}
-	if err := s.ensureCollection(ctx); err != nil {
+	if err := idx.ensure(ctx, func() (int, error) {
+		vecs, err := s.embed(ctx, []string{"dimension probe"}, "dim-probe")
+		if err != nil {
+			return 0, fmt.Errorf("memory: embed probe: %w", err)
+		}
+		if len(vecs) == 0 || len(vecs[0]) == 0 {
+			return 0, fmt.Errorf("memory: embed probe returned no vector")
+		}
+		return len(vecs[0]), nil
+	}); err != nil {
 		return nil, err
 	}
 	return s, nil
-}
-
-func (s *Store) ensureCollection(ctx context.Context) error {
-	exists, err := s.client.CollectionExists(ctx, s.coll)
-	if err != nil {
-		return fmt.Errorf("memory: collection exists %q: %w", s.coll, err)
-	}
-	if exists {
-		return nil
-	}
-	// Probe the embedder for the vector dimension rather than hardcoding the model's.
-	vecs, err := s.embed(ctx, []string{"dimension probe"}, "dim-probe")
-	if err != nil {
-		return fmt.Errorf("memory: embed probe: %w", err)
-	}
-	if len(vecs) == 0 || len(vecs[0]) == 0 {
-		return fmt.Errorf("memory: embed probe returned no vector")
-	}
-	dim := uint64(len(vecs[0]))
-	if err := s.client.CreateCollection(ctx, &qdrant.CreateCollection{
-		CollectionName: s.coll,
-		VectorsConfig:  qdrant.NewVectorsConfig(&qdrant.VectorParams{Size: dim, Distance: qdrant.Distance_Cosine}),
-	}); err != nil {
-		return fmt.Errorf("memory: create collection %q: %w", s.coll, err)
-	}
-	s.log.Info("created qdrant collection", "dim", dim)
-	return nil
 }
 
 // AddSessionToMemory is a deliberate no-op (implements adkmemory.Service): Quack
@@ -151,22 +150,11 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 		return &adkmemory.SearchResponse{}, nil
 	}
 	scopeID := s.scope(req.AppName, req.UserID)
-	var flt *qdrant.Filter
-	if scopeID != "" {
-		flt = &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadUserID, scopeID)}}
-	}
 	// Fetch top-K by similarity within the scope, then apply minScore in Go so the
-	// threshold decision is observable (raw match count + top score in the debug log)
-	// — qdrant's ScoreThreshold would silently drop everything and look identical to a
-	// scope mismatch. Dropping weak matches keeps low-relevance hits out of the prompt
-	// as the collection grows (context rot).
-	pts, err := s.client.Query(ctx, &qdrant.QueryPoints{
-		CollectionName: s.coll,
-		Query:          qdrant.NewQueryDense(vecs[0]),
-		Limit:          &s.topK,
-		Filter:         flt,
-		WithPayload:    qdrant.NewWithPayload(true),
-	})
+	// threshold decision is observable (raw match count + top score in the debug log).
+	// Dropping weak matches keeps low-relevance hits out of the prompt as the
+	// collection grows (context rot).
+	pts, err := s.idx.query(ctx, scopeID, vecs[0], s.topK)
 	if err != nil {
 		return nil, fmt.Errorf("memory: query %q: %w", s.coll, err)
 	}
@@ -175,25 +163,24 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 	var topScore float32
 	dropped := 0
 	for _, p := range pts {
-		if sc := p.GetScore(); sc > topScore {
-			topScore = sc
+		if p.Score > topScore {
+			topScore = p.Score
 		}
-		if s.minScore > 0 && p.GetScore() < s.minScore {
+		if s.minScore > 0 && p.Score < s.minScore {
 			dropped++
 			continue
 		}
-		content := payloadString(p.GetPayload(), payloadContent)
-		if content == "" {
+		if p.Content == "" {
 			continue
 		}
-		previews = append(previews, preview(content))
+		previews = append(previews, preview(p.Content))
 		e := adkmemory.Entry{
-			ID:      pointID(p.GetId()),
-			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: content}}},
-			Author:  payloadString(p.GetPayload(), payloadAuthor),
+			ID:      p.ID,
+			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: p.Content}}},
+			Author:  p.Author,
 		}
-		if ts := payloadString(p.GetPayload(), payloadTimestamp); ts != "" {
-			if t, perr := time.Parse(time.RFC3339, ts); perr == nil {
+		if p.Timestamp != "" {
+			if t, perr := time.Parse(time.RFC3339, p.Timestamp); perr == nil {
 				e.Timestamp = t
 			}
 		}
@@ -279,44 +266,14 @@ func preview(s string) string {
 	return string(r[:max]) + "…"
 }
 
-// scope returns the partition key for this store's domain, stored in/queried from
-// the payloadUserID field. Task memory is per-agent *tradecraft*, so it is keyed by
-// the agent name (recall: req.AppName; commit: the author) — stable across requests,
-// unlike the per-invocation "A2A_USER_<ctxid>" the A2A server mints. User memory is
-// personal, so it stays keyed by the real userID.
+// scope returns the partition key for this store's domain. Task memory is
+// per-agent *tradecraft*, so it is keyed by the agent name (recall: req.AppName;
+// commit: the author) — stable across requests, unlike the per-invocation
+// "A2A_USER_<ctxid>" the A2A server mints. User memory is personal, so it stays
+// keyed by the real userID.
 func (s *Store) scope(agentName, userID string) string {
 	if s.domain == "task" {
 		return agentName
 	}
 	return userID
-}
-
-func payloadString(payload map[string]*qdrant.Value, key string) string {
-	if v, ok := payload[key]; ok {
-		return v.GetStringValue()
-	}
-	return ""
-}
-
-func pointID(id *qdrant.PointId) string {
-	if id == nil {
-		return ""
-	}
-	if u := id.GetUuid(); u != "" {
-		return u
-	}
-	return strconv.FormatUint(id.GetNum(), 10)
-}
-
-// parseAddr splits a Qdrant gRPC address (host:port) into host + port.
-func parseAddr(raw string) (string, int, error) {
-	host, p, err := net.SplitHostPort(strings.TrimSpace(raw))
-	if err != nil {
-		return "", 0, fmt.Errorf("memory: QDRANT_URL must be host:port: %w", err)
-	}
-	port, err := strconv.Atoi(p)
-	if err != nil {
-		return "", 0, fmt.Errorf("memory: bad port %q: %w", p, err)
-	}
-	return host, port, nil
 }

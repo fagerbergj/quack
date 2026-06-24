@@ -3,16 +3,16 @@ package memory
 import (
 	"context"
 	"log/slog"
-	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/qdrant/go-client/qdrant"
 	adkmemory "google.golang.org/adk/memory"
+	"google.golang.org/adk/model"
 )
 
 // fakeEmbedder returns a fixed unit vector for every text, so any query matches
-// any stored point (cosine = 1). Enough to exercise the round-trip + payload
-// mapping + per-user filter without a real embedding model.
+// any stored point (cosine = 1). Enough to exercise the round-trip + scope filter
+// without a real embedding model.
 type fakeEmbedder struct{}
 
 func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -23,47 +23,38 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 	return out, nil
 }
 
-// upsertScoped writes one fixed-vector point whose scope key (payloadUserID) is
-// scope, so the fakeEmbedder makes any query match and only the filter decides.
-func upsertScoped(t *testing.T, s *Store, coll, scope, content string) {
+// newSQLiteStore builds a Store backed by an embedded sqlite file in a temp dir —
+// the always-on backend for unit tests (no container). The shared Store logic
+// (scope, recall, consolidation) is identical to the qdrant backend.
+func newSQLiteStore(t *testing.T, domain string, consolidator model.LLM) *Store {
 	t.Helper()
-	wait := true
-	if _, err := s.client.Upsert(context.Background(), &qdrant.UpsertPoints{
-		CollectionName: coll,
-		Wait:           &wait,
-		Points: []*qdrant.PointStruct{{
-			Id:      qdrant.NewIDNum(1),
-			Vectors: qdrant.NewVectorsDense([]float32{1, 0, 0, 0}),
-			Payload: qdrant.NewValueMap(map[string]any{
-				payloadContent: content,
-				payloadUserID:  scope,
-				payloadAuthor:  "web-researcher",
-			}),
-		}},
-	}); err != nil {
+	path := filepath.Join(t.TempDir(), "mem.db")
+	s, err := OpenSQLite(context.Background(), path, fakeEmbedder{}, consolidator, "test_"+domain, domain, 5, 0.5)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	return s
+}
+
+// upsertScoped writes one fixed-vector point under the given scope, so the
+// fakeEmbedder makes any query match and only the scope filter decides.
+func upsertScoped(t *testing.T, s *Store, id, scope, content string) {
+	t.Helper()
+	if err := s.idx.upsert(context.Background(), []point{{
+		ID: id, Vector: []float32{1, 0, 0, 0}, Content: content, Scope: scope, Author: "web-researcher",
+	}}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 }
 
-// TestStore_TaskScopedByAgent needs a live Qdrant (QDRANT_URL). It proves task
-// memory is keyed by the AGENT (req.AppName), not the per-request A2A UserID — so a
-// memory written in one request is recalled in another despite a different
-// "A2A_USER_<ctxid>", and a different agent can't see it. This is the regression
-// guard for the bug where every invocation got its own user ID and recall was
-// always empty.
+// TestStore_TaskScopedByAgent proves task memory is keyed by the AGENT
+// (req.AppName), not the per-request A2A UserID — so a memory written in one
+// request is recalled in another despite a different "A2A_USER_<ctxid>", and a
+// different agent can't see it. Regression guard for the bug where every
+// invocation got its own user ID and recall was always empty.
 func TestStore_TaskScopedByAgent(t *testing.T) {
-	addr := os.Getenv("QDRANT_URL")
-	if addr == "" {
-		t.Skip("QDRANT_URL not set; skipping qdrant integration test")
-	}
 	ctx := context.Background()
-	const coll = "quack_test_task_memory"
-
-	s, err := Open(ctx, addr, fakeEmbedder{}, nil, coll, "task", 5, 0.5)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.client.DeleteCollection(ctx, coll) })
+	s := newSQLiteStore(t, "task", nil)
 
 	// Empty collection → no hits, no error.
 	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "anything", AppName: "web-researcher"})
@@ -75,7 +66,7 @@ func TestStore_TaskScopedByAgent(t *testing.T) {
 	}
 
 	// Stored under the agent-name scope (what Commit writes for the task domain).
-	upsertScoped(t, s, coll, "web-researcher", "transportforireland.ie is authoritative for Irish transit")
+	upsertScoped(t, s, "1", "web-researcher", "transportforireland.ie is authoritative for Irish transit")
 
 	// The SAME agent, across two DIFFERENT per-request A2A users, both recall it.
 	for _, volatileUser := range []string{"A2A_USER_req1", "A2A_USER_req2"} {
@@ -108,20 +99,10 @@ func TestStore_TaskScopedByAgent(t *testing.T) {
 // TestStore_UserScopedByUserID proves user memory still keys by the real userID
 // (the orchestrator isn't behind A2A, so its userID is stable), and ignores AppName.
 func TestStore_UserScopedByUserID(t *testing.T) {
-	addr := os.Getenv("QDRANT_URL")
-	if addr == "" {
-		t.Skip("QDRANT_URL not set; skipping qdrant integration test")
-	}
 	ctx := context.Background()
-	const coll = "quack_test_user_memory"
+	s := newSQLiteStore(t, "user", nil)
 
-	s, err := Open(ctx, addr, fakeEmbedder{}, nil, coll, "user", 5, 0.5)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.client.DeleteCollection(ctx, coll) })
-
-	upsertScoped(t, s, coll, "local", "the user keeps bees")
+	upsertScoped(t, s, "1", "local", "the user keeps bees")
 
 	// Right user recalls it (AppName is irrelevant for the user domain).
 	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "about the user", UserID: "local", AppName: "orchestrator"})
