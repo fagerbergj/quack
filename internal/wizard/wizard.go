@@ -10,7 +10,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 
@@ -27,7 +29,10 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 		}
 	}
 
-	a := cli.InitAnswers{}
+	a := cli.InitAnswers{
+		WebSearch: true, // optional features default on; the user can turn them off
+		WebFetch:  true,
+	}
 	if err := askProvider(ctx, &a); err != nil {
 		return err
 	}
@@ -41,6 +46,11 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 		return err
 	}
 
+	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
+	}
 	if err := os.WriteFile(outPath, []byte(cli.EmitServerConfig(a)), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
@@ -152,11 +162,30 @@ func askModels(ctx context.Context, a *cli.InitAnswers) error {
 	}
 
 	mainOpts := modelOptions(models, a.MainModel)
+	if a.MainModel == "" && !manual {
+		a.MainModel = suggestMain(models)
+	}
 	none := huh.NewOption("None — disable", "")
 	if err := huh.NewForm(huh.NewGroup(
 		selectOrInput(manual, "Main chat model (orchestrator + researcher)", mainOpts, &a.MainModel),
 	)).Run(); err != nil {
 		return err
+	}
+
+	// Heuristic pre-selections for specialist roles (overridable; None disables).
+	// The OpenAI /models response gives IDs only — no capability field — so we
+	// guess from the name. Fast in the common case, easy to change when wrong.
+	if a.JudgeModel == "" {
+		a.JudgeModel = suggestModel(models, "gemma", "judge")
+	}
+	if a.EmbedModel == "" {
+		a.EmbedModel = suggestModel(models, "embed")
+	}
+	if a.VisionModel == "" {
+		a.VisionModel = suggestModel(models, "vl", "vision", "omni")
+	}
+	if a.AudioModel == "" {
+		a.AudioModel = suggestModel(models, "omni", "audio", "ast", "whisper")
 	}
 
 	// Specialist picks, each with a None option.
@@ -191,6 +220,12 @@ func askModels(ctx context.Context, a *cli.InitAnswers) error {
 // whether their store questions appear in askStores.
 func askFeatures(a *cli.InitAnswers) error {
 	feats := []string{}
+	if a.WebSearch {
+		feats = append(feats, "search")
+	}
+	if a.WebFetch {
+		feats = append(feats, "fetch")
+	}
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewMultiSelect[string]().
 			Title("Optional features").
@@ -292,4 +327,35 @@ func specialistSelect(title string, models []string, val *string, none huh.Optio
 	}
 	opts := append([]huh.Option[string]{none}, modelOptions(models, *val)...)
 	return huh.NewSelect[string]().Title(title).Options(opts...).Value(val)
+}
+
+// suggestModel returns the first model whose name contains any of the keywords
+// (case-insensitive), or "" if none match. Used to pre-select specialist roles
+// so the common case is confirm-confirm-confirm.
+func suggestModel(models []string, keywords ...string) string {
+	for _, m := range models {
+		low := strings.ToLower(m)
+		for _, kw := range keywords {
+			if low != "" && kw != "" && strings.Contains(low, strings.ToLower(kw)) {
+				return m
+			}
+		}
+	}
+	return ""
+}
+
+// suggestMain picks a default main model: prefer something that looks like a
+// general chat model (not an embedder), else the first available.
+func suggestMain(models []string) string {
+	for _, m := range models {
+		low := strings.ToLower(m)
+		if strings.Contains(low, "embed") {
+			continue
+		}
+		return m
+	}
+	if len(models) > 0 {
+		return models[0]
+	}
+	return ""
 }

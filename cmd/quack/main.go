@@ -71,7 +71,7 @@ func newInitCmd() *cobra.Command {
 			return wizard.ClientInit(cmd.Context(), out, force)
 		},
 	}
-	c.Flags().StringP("output", "o", defaultConfigPath(), "path to write quack.yaml (local)")
+	c.Flags().StringP("output", "o", "quack.yaml", "path to write quack.yaml (local)")
 	c.Flags().Bool("force", false, "overwrite an existing quack.yaml")
 	return c
 }
@@ -179,7 +179,7 @@ func newServerInitCmd() *cobra.Command {
 			return wizard.ServerInit(cmd.Context(), out, force)
 		},
 	}
-	c.Flags().StringP("output", "o", defaultConfigPath(), "path to write quack.yaml")
+	c.Flags().StringP("output", "o", "quack.yaml", "path to write quack.yaml")
 	c.Flags().Bool("force", false, "overwrite an existing quack.yaml")
 	return c
 }
