@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -34,7 +35,8 @@ func logPath() string { return filepath.Join(stateDir(), "server.log") }
 // Start launches `quack server run` in the background, detached from this
 // terminal, and waits until it is listening. port (non-zero) overrides config;
 // the same override is passed to the child so the daemon and the wait agree.
-func Start(configPath string, port int) error {
+// Under server.topology: managed it also brings up the stores stack first.
+func Start(ctx context.Context, configPath string, port int) error {
 	if pid, ok := runningPID(); ok {
 		return fmt.Errorf("quack server already running (pid %d); use `quack server stop` first", pid)
 	}
@@ -42,6 +44,15 @@ func Start(configPath string, port int) error {
 	// Catch a foreign listener (or a server we didn't start) before we fork.
 	if listening(addr) {
 		return fmt.Errorf("address %s is already in use — run `quack server status`, or pick another with --port", addr)
+	}
+	// Load config to check the topology. managed ⇒ bring up stores before forking
+	// (the child `server run` re-runs upStores, which is idempotent).
+	var topology string
+	if cfg, err := config.Load(configPath); err == nil && cfg.Server.Managed() {
+		topology = config.TopologyManaged
+		if err := upStores(ctx); err != nil {
+			return err
+		}
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -66,10 +77,10 @@ func Start(configPath string, port int) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start server: %w", err)
 	}
-	if err := writeState(cmd.Process.Pid, addr); err != nil {
+	if err := writeState(cmd.Process.Pid, addr, topology); err != nil {
 		return fmt.Errorf("write pidfile: %w", err)
 	}
-	if err := waitListening(addr, cmd.Process.Pid, 15*time.Second); err != nil {
+	if err := waitListening(addr, cmd, 15*time.Second); err != nil {
 		return fmt.Errorf("server did not come up: %w — see %s", err, logPath())
 	}
 	fmt.Printf("quack server started (pid %d), listening on %s\n", cmd.Process.Pid, addr)
@@ -78,9 +89,9 @@ func Start(configPath string, port int) error {
 
 // Status reports whether the server is running (our daemon or a foreign listener)
 // and whether its address is accepting connections. The daemon's address comes
-// from the recorded state, so it's correct even when started with --addr.
+// from the recorded state, so it's correct even when started with --port.
 func Status(configPath string, port int) error {
-	pid, recAddr, have := readState()
+	pid, recAddr, topo, have := readState()
 	ours := have && alive(pid)
 	addr := recAddr
 	if !ours || addr == "" {
@@ -88,7 +99,11 @@ func Status(configPath string, port int) error {
 	}
 	switch {
 	case ours && listening(addr):
-		fmt.Printf("running — pid %d, listening on %s\n", pid, addr)
+		fmt.Printf("running — pid %d, listening on %s", pid, addr)
+		if topo == config.TopologyManaged {
+			fmt.Print(" (managed stores up)")
+		}
+		fmt.Println()
 	case ours:
 		fmt.Printf("running — pid %d, but %s is not accepting connections yet\n", pid, addr)
 	case listening(addr):
@@ -129,64 +144,114 @@ func dialAddr(addr string) string {
 	return addr
 }
 
-// Stop signals the recorded server PID and waits for it to exit.
-func Stop() error {
-	pid, ok := runningPID()
-	if !ok {
-		_ = os.Remove(pidPath()) // clear a stale pidfile if present
+// Stop signals the recorded server PID and waits for it to exit. Under the
+// managed topology it also tears down the stores stack (volumes persist). The
+// teardown covers both `server start` (topology recorded in state) and
+// `server run` (no state — config is checked) origins. Returns nil if it
+// stopped the app or tore down stores; errors only if nothing was running.
+func Stop(configPath string) error {
+	// Read state before removing the pidfile (we need the recorded topology).
+	pid, _, stateTopo, _ := readState()
+	haveApp := pid > 0 && alive(pid)
+	if haveApp {
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			return fmt.Errorf("signal pid %d: %w", pid, err)
+		}
+		for i := 0; i < 50 && alive(pid); i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+		fmt.Printf("quack server stopped (pid %d)\n", pid)
+	}
+	_ = os.Remove(pidPath()) // clear the pidfile (stale or fresh)
+	// Tear down managed stores if this run used them: either the state recorded
+	// managed (start origin) or the current config is managed (run origin, where
+	// no pidfile was written). Only act when the stack is actually up, so the
+	// "torn down" message and the success outcome are truthful.
+	cfgManaged := false
+	if cfg, err := config.Load(configPath); err == nil {
+		cfgManaged = cfg.Server.Managed()
+	}
+	managed := stateTopo == config.TopologyManaged || cfgManaged
+	toreDown := false
+	if managed && storesUp() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := downStores(ctx); err != nil {
+			// The app is already stopped; don't fail stop on a teardown hiccup,
+			// just report it so the user can `docker compose -p quack-stores down`.
+			fmt.Fprintf(os.Stderr, "warning: stores teardown failed: %v\n", err)
+		} else {
+			fmt.Println("managed stores torn down")
+			toreDown = true
+		}
+	}
+	if !haveApp && !toreDown {
 		return fmt.Errorf("no running quack server (no live pid at %s)", pidPath())
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		return fmt.Errorf("signal pid %d: %w", pid, err)
-	}
-	for i := 0; i < 50 && alive(pid); i++ {
-		time.Sleep(100 * time.Millisecond)
-	}
-	_ = os.Remove(pidPath())
-	fmt.Printf("quack server stopped (pid %d)\n", pid)
 	return nil
 }
 
-// writeState records the daemon's PID and listen address ("PID ADDR").
-func writeState(pid int, addr string) error {
-	return os.WriteFile(pidPath(), []byte(fmt.Sprintf("%d %s\n", pid, addr)), 0o644)
+// writeState records the daemon's PID, listen address, and topology
+// ("PID ADDR TOPOLOGY"). topology is empty for non-managed runs.
+func writeState(pid int, addr, topology string) error {
+	if err := os.MkdirAll(stateDir(), 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	return os.WriteFile(pidPath(), []byte(fmt.Sprintf("%d %s %s\n", pid, addr, topology)), 0o644)
 }
 
-// readState parses the recorded PID and address. ok is false if absent/garbled.
-func readState() (pid int, addr string, ok bool) {
+// readState parses the recorded PID, address, and topology. ok is false if
+// absent/garbled. The topology field is optional (older state files omit it).
+func readState() (pid int, addr, topology string, ok bool) {
 	b, err := os.ReadFile(pidPath())
 	if err != nil {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	fields := strings.Fields(string(b))
 	if len(fields) == 0 {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	if _, err := fmt.Sscanf(fields[0], "%d", &pid); err != nil || pid <= 0 {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	if len(fields) > 1 {
 		addr = fields[1]
 	}
-	return pid, addr, true
+	if len(fields) > 2 {
+		topology = fields[2]
+	}
+	return pid, addr, topology, true
 }
 
 // runningPID returns the recorded PID if it names a live process.
 func runningPID() (int, bool) {
-	pid, _, ok := readState()
+	pid, _, _, ok := readState()
 	return pid, ok && alive(pid)
 }
 
 // alive reports whether pid is a running process (signal 0 probes existence).
+// Note: a zombie (exited but not reaped) still answers signal 0, so alive is
+// only correct for processes we don't own. For a child we forked, use
+// waitListening which reaps via cmd.Wait.
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 
 // waitListening blocks until addr accepts a TCP connection, failing fast if the
-// process dies first.
-func waitListening(addr string, pid int, timeout time.Duration) error {
+// child exits first. A goroutine calls cmd.Wait — which reaps the child when it
+// exits — so a startup failure (e.g. a bad config) surfaces immediately as
+// "process exited" instead of waiting the full timeout on a zombie that signal-0
+// still reports as alive.
+func waitListening(addr string, cmd *exec.Cmd, timeout time.Duration) error {
+	exit := make(chan error, 1)
+	go func() { exit <- cmd.Wait() }()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !alive(pid) {
+		select {
+		case err := <-exit:
+			if err != nil {
+				return fmt.Errorf("process exited during startup: %w", err)
+			}
 			return fmt.Errorf("process exited during startup")
+		default:
 		}
 		if listening(addr) {
 			return nil

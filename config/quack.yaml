@@ -132,3 +132,12 @@ dag:
 
 server:
   addr: ":8080"
+  # topology: how the stores are provided. embedded (sqlite, no containers) and
+  # external (you run Postgres/Qdrant and point the stores above at them) just
+  # run the process — the default. managed makes `quack server` bring up
+  # Postgres + Qdrant via an embedded docker-compose stack (`quack-stores`),
+  # wait for them to be ready, then run; `quack server stop` tears them down
+  # (volumes persist). managed needs host ports 5432 + 6334 free and docker
+  # available. Tool backends (search/fetch) are NOT managed — set them via the
+  # tools below (kind: exa for keyless, kind: direct for fetch).
+  # topology: managed

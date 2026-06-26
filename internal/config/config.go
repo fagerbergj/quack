@@ -307,8 +307,23 @@ type OrchestratorConfig struct {
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	Addr string `yaml:"addr"`
+	Addr     string `yaml:"addr"`
+	Topology string `yaml:"topology"` // embedded | managed | external (empty ⇒ external)
 }
+
+// Topology values. Only "managed" changes serve's behaviour (it brings up the
+// Postgres + Qdrant stores via an embedded compose file, waits healthy, then
+// runs; `quack server stop` tears them down). "embedded" (sqlite, no containers)
+// and "external" (user-managed stores) just run the process — the label exists
+// for the `server init` wizard and docs; serve treats both as "just run".
+const (
+	TopologyEmbedded = "embedded"
+	TopologyManaged  = "managed"
+	TopologyExternal = "external"
+)
+
+// Managed reports whether serve should orchestrate the stores via docker compose.
+func (s ServerConfig) Managed() bool { return s.Topology == TopologyManaged }
 
 // Load reads the YAML at path, expands ${ENV} references, and validates it.
 func Load(path string) (*Config, error) {
@@ -464,6 +479,12 @@ func (c *Config) validate() error {
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"
+	}
+	switch c.Server.Topology {
+	case "", TopologyEmbedded, TopologyManaged, TopologyExternal:
+		// "" behaves as external (just run); only managed orchestrates.
+	default:
+		return fmt.Errorf("config: server.topology %q is unknown (use embedded, managed, or external)", c.Server.Topology)
 	}
 	return nil
 }
