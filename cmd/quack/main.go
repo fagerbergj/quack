@@ -310,11 +310,13 @@ func notWired(what string) error {
 	return fmt.Errorf("%s is not wired yet — coming in a later M8 commit", what)
 }
 
-// defaultConfigPath resolves the server config: $QUACK_CONFIG if set, else the
-// conventional repo path.
+// defaultConfigPath resolves the server config: $QUACK_CONFIG if set, else
+// ./quack.yaml in cwd — matching what `quack init` writes, so init→run just
+// works in a fresh dir. The repo's example config at config/quack.yaml is
+// reached via --config (the Makefile's run target does this) or QUACK_CONFIG.
 func defaultConfigPath() string {
 	if p := os.Getenv("QUACK_CONFIG"); p != "" {
 		return p
 	}
-	return "config/quack.yaml"
+	return "quack.yaml"
 }
