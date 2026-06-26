@@ -347,6 +347,36 @@ func TestRealConfigLoads(t *testing.T) {
 	}
 }
 
+// TestManagedConfigLoads guards config/managed.yaml drift: it must parse,
+// validate, and actually be the managed topology (the thing `quack server`
+// reads to decide whether to bring up the stores stack).
+func TestManagedConfigLoads(t *testing.T) {
+	for _, kv := range [][2]string{
+		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"},
+		{"ORCH_MODEL", "m"}, {"RESEARCHER_MODEL", "r"},
+		{"JUDGE_MODEL", "j"}, {"EMBED_MODEL", "e"},
+	} {
+		t.Setenv(kv[0], kv[1])
+	}
+	c, err := Load("../../config/managed.yaml")
+	if err != nil {
+		t.Fatalf("shipped config/managed.yaml failed to load: %v", err)
+	}
+	if !c.Server.Managed() {
+		t.Errorf("managed.yaml topology = %q, want managed", c.Server.Topology)
+	}
+	if _, ok := c.Store(c.Session.Store); !ok {
+		t.Errorf("session store %q not defined", c.Session.Store)
+	}
+	// The preset uses the keyless/no-container tool backends.
+	if got := c.Tools["web_search"].Kind; got != "exa" {
+		t.Errorf("managed.yaml web_search.kind = %q, want exa", got)
+	}
+	if got := c.Tools["web_fetch"].Kind; got != "direct" {
+		t.Errorf("managed.yaml web_fetch.kind = %q, want direct", got)
+	}
+}
+
 func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// No gates block ⇒ vetting disabled, config still valid.
 	c, err := Load(writeTemp(t, baseConfig))
