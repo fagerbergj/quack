@@ -26,6 +26,7 @@ import (
 	"google.golang.org/adk/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -91,8 +92,10 @@ func Run(ctx context.Context, configPath string, port int) error {
 	}
 
 	// Load skills once at startup; pass the toolset to every specialist agent so
-	// all agents can call load_skill / list_skills / load_skill_resource.
-	skillSrc := skill.NewFileSystemSource(os.DirFS("skills/"))
+	// all agents can call load_skill / list_skills / load_skill_resource. Skills
+	// resolve from disk in cwd first (live repo edits) then the embedded copy,
+	// so an installed binary works from any directory.
+	skillSrc := skill.NewFileSystemSource(bundledir.SubFS("skills"))
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
 		return fmt.Errorf("skills toolset init failed: %w", err)

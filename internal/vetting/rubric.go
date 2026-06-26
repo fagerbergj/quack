@@ -3,9 +3,9 @@ package vetting
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
+	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
 )
 
@@ -74,19 +74,25 @@ func loadRubricFile(path string) (string, error) {
 // global constitution). The convention is: global constitution = foundational
 // principles shared across all agents; per-agent rubric = domain-specific
 // scoring criteria for this agent's work. Drop a rubric.md into a bundle
-// directory to override the global constitution for that agent.
+// directory to override the global constitution for that agent. Resolved from
+// disk in cwd first, then the embedded copy (so an installed binary works).
 func LoadBundleRubric(bundleDir string) (string, error) {
-	candidate := filepath.Join(bundleDir, "rubric.md")
-	raw, err := os.ReadFile(candidate)
-	if os.IsNotExist(err) {
-		return "", nil
-	}
+	raw, err := bundledir.ReadFile(bundledir.PathJoin(bundleDir, "rubric.md"))
 	if err != nil {
-		return "", fmt.Errorf("vetting: read bundle rubric %q: %w", candidate, err)
+		// Absent on both disk and embedded ⇒ no per-agent rubric (not an error).
+		if isNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("vetting: read bundle rubric %q: %w", bundleDir, err)
 	}
 	r := strings.TrimSpace(string(raw))
 	if r == "" {
 		return "", nil // treat empty as absent
 	}
 	return r, nil
+}
+
+// isNotExist reports whether err is a not-exist error from either os or embed.
+func isNotExist(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "does not exist"))
 }
