@@ -16,7 +16,7 @@ func loadConfigForTest(path string) (*config.Config, error) {
 }
 
 func TestRegistryRoundTrip(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("QUACK_HOME", t.TempDir())
 	c, err := LoadClient()
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestRegistryAddDuplicate(t *testing.T) {
 }
 
 func TestLoadClientAbsent(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("QUACK_HOME", t.TempDir())
 	c, err := LoadClient()
 	if err != nil || c == nil || len(c.Servers) != 0 {
 		t.Fatalf("LoadClient absent = %+v err=%v, want empty non-nil", c, err)

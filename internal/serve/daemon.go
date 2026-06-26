@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 )
 
@@ -21,13 +22,7 @@ import (
 // ponytail: one server per machine — a single pidfile under the state dir. Add a
 // per-instance name if running several ever matters.
 
-func stateDir() string {
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "quack")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "quack")
-}
+func stateDir() string { return cli.Home() }
 
 func pidPath() string { return filepath.Join(stateDir(), "server.pid") }
 func logPath() string { return filepath.Join(stateDir(), "server.log") }

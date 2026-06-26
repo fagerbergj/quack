@@ -15,8 +15,8 @@ import (
 )
 
 // ClientConfig is the CLI's client-side state: which servers exist and which is
-// active. Lives at $XDG_CONFIG_HOME/quack/config.yaml — distinct from a server's
-// quack.yaml (its runtime config, in cwd). Two files, two concerns.
+// active. Lives at ~/.quack/servers.yaml ($QUACK_HOME) — distinct from a
+// server's quack.yaml (its runtime config, in cwd). Two files, two concerns.
 type ClientConfig struct {
 	Active  string               `yaml:"active,omitempty"`
 	Servers map[string]ServerRef `yaml:"servers"`
@@ -27,15 +27,8 @@ type ServerRef struct {
 	URL string `yaml:"url"`
 }
 
-// configPath is the client registry location. $XDG_CONFIG_HOME/quack/config.yaml,
-// falling back to ~/.config/quack/config.yaml.
-func configPath() string {
-	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
-		return filepath.Join(d, "quack", "config.yaml")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "quack", "config.yaml")
-}
+// configPath is the registry location: ~/.quack/servers.yaml ($QUACK_HOME).
+func configPath() string { return filepath.Join(Home(), "servers.yaml") }
 
 // LoadClient reads the registry, returning an empty (not nil) config when absent.
 func LoadClient() (*ClientConfig, error) {

@@ -11,7 +11,7 @@ import (
 // docker is the stores-only stack (db + qdrant), not the repo's dev
 // docker-compose.yml (which also has searxng/crawl4ai/app).
 func TestStoresComposeEmbedded(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("QUACK_HOME", t.TempDir())
 	if err := writeStoresCompose(); err != nil {
 		t.Fatalf("writeStoresCompose: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestStoresComposeEmbedded(t *testing.T) {
 // TOPOLOGY. The topology field is what lets `server stop` know it should tear
 // down the managed stores, and it's optional (older state files omit it).
 func TestStateTopologyRoundTrip(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("QUACK_HOME", t.TempDir())
 
 	if err := writeState(12345, ":8080", "managed"); err != nil {
 		t.Fatalf("writeState: %v", err)
