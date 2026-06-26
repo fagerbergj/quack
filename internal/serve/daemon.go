@@ -80,7 +80,7 @@ func Start(ctx context.Context, configPath string, port int) error {
 	if err := writeState(cmd.Process.Pid, addr, topology); err != nil {
 		return fmt.Errorf("write pidfile: %w", err)
 	}
-	if err := waitListening(addr, cmd.Process.Pid, 15*time.Second); err != nil {
+	if err := waitListening(addr, cmd, 15*time.Second); err != nil {
 		return fmt.Errorf("server did not come up: %w — see %s", err, logPath())
 	}
 	fmt.Printf("quack server started (pid %d), listening on %s\n", cmd.Process.Pid, addr)
@@ -230,15 +230,28 @@ func runningPID() (int, bool) {
 }
 
 // alive reports whether pid is a running process (signal 0 probes existence).
+// Note: a zombie (exited but not reaped) still answers signal 0, so alive is
+// only correct for processes we don't own. For a child we forked, use
+// waitListening which reaps via cmd.Wait.
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 
 // waitListening blocks until addr accepts a TCP connection, failing fast if the
-// process dies first.
-func waitListening(addr string, pid int, timeout time.Duration) error {
+// child exits first. A goroutine calls cmd.Wait — which reaps the child when it
+// exits — so a startup failure (e.g. a bad config) surfaces immediately as
+// "process exited" instead of waiting the full timeout on a zombie that signal-0
+// still reports as alive.
+func waitListening(addr string, cmd *exec.Cmd, timeout time.Duration) error {
+	exit := make(chan error, 1)
+	go func() { exit <- cmd.Wait() }()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !alive(pid) {
+		select {
+		case err := <-exit:
+			if err != nil {
+				return fmt.Errorf("process exited during startup: %w", err)
+			}
 			return fmt.Errorf("process exited during startup")
+		default:
 		}
 		if listening(addr) {
 			return nil
