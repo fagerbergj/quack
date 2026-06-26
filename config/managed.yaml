@@ -1,0 +1,81 @@
+# Managed-topology example: `quack server` brings up Postgres + Qdrant itself
+# via an embedded docker-compose stack, waits for them, then runs pointed at
+# them. The no-hand-setup full stack (needs docker + host ports 5432/6334 free).
+#
+#   export LLM_ENDPOINT="http://your-llm:11436/v1" LLM_API_KEY="unused"
+#   export ORCH_MODEL="qwen3.6-35b" RESEARCHER_MODEL="qwen3.6-35b"
+#   export JUDGE_MODEL="gemma4-26b-a4b" EMBED_MODEL="qwen3-embed"
+#   ./quack server start --config config/managed.yaml
+#   ./quack server status  --config config/managed.yaml
+#   ./quack server stop    --config config/managed.yaml   # tears down stores too
+#
+# Tool backends (search/fetch) are NOT managed. This preset uses Exa's keyless
+# hosted MCP for search (no API key, no container) and a direct GET for fetch —
+# so the whole stack is zero-config beyond the LLM endpoint.
+providers:
+  default:
+    kind: openai
+    endpoint: ${LLM_ENDPOINT}
+    api_key: ${LLM_API_KEY}
+
+stores:
+  # The managed stack publishes Postgres on localhost:5432 and Qdrant on :6334.
+  default_postgres:
+    kind: postgres
+    url: postgres://quack:quack@localhost:5432/quack?sslmode=disable
+  default_vector:
+    kind: qdrant
+    url: localhost:6334
+    embedder:
+      provider: default
+      model: ${EMBED_MODEL}
+    consolidation:
+      provider: default
+      model: ${JUDGE_MODEL}
+    top_k: 5
+    min_score: 0.5
+
+session:
+  store: default_postgres
+
+orchestrator:
+  provider: default
+  model: ${ORCH_MODEL}
+  tools: [web_search, web_fetch, summarize, current_date]
+
+agents:
+  web-researcher:
+    bundle: agents/web-researcher
+    provider: default
+    model: ${RESEARCHER_MODEL}
+    context_window: 65536
+    tools: [web_search, web_fetch, summarize, current_date, stage_memory]
+  synthesizer:
+    bundle: agents/synthesizer
+    provider: default
+    model: ${RESEARCHER_MODEL}
+    context_window: 65536
+    tools: []
+
+tools:
+  web_search:
+    kind: exa            # keyless via Exa's hosted MCP — no container, no API key
+  web_fetch:
+    kind: direct         # plain SSRF-guarded GET — no render backend needed
+
+gates:
+  enabled: true
+  deterministic_rounds: 1
+  self_critique_rounds: 1
+  judge:
+    provider: default
+    model: ${JUDGE_MODEL}
+    rounds: 1
+    threshold: 0.6
+
+dag:
+  max_active_nodes: 2
+
+server:
+  addr: ":8080"
+  topology: managed       # quack server brings up the stores + tears them down
