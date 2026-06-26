@@ -28,13 +28,15 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `budget.max_depth` | `4` | Per-request DAG depth cap. |
 | `budget.max_tokens` | `400000` | Per-request token ceiling. |
 | `budget.max_wall_clock` | `10m` | Per-request time ceiling. |
-| `stores.<name>.kind` | `postgres` / `qdrant` | **Named backend registry** (like `providers`): consumers reference a store by name. `kind` selects the adapter (the portability seam). Implemented: postgres, qdrant. |
+| `stores.<name>.kind` | `postgres` / `qdrant` / `sqlite` | **Named backend registry** (like `providers`): consumers reference a store by name. `kind` selects the adapter (the portability seam). sqlite backs both the session store and the memory vector index (pure-Go, no container — the no-docker path). |
 | `stores.<name>.url` (env, e.g. `DATABASE_URL` / `QDRANT_URL`) | _secret_ | Connection endpoint. A vector store with an empty URL self-disables memory (qdrant-less runs keep working). |
 | `stores.<name>.extends` | another store name | Inherit a store's fields (child overrides) — reuse one store's connection with a different schema/collection. |
 | `stores.<vector>.embedder` / `.consolidation` | provider+model | Vector store only: how text is vectorized, and the ADD/UPDATE/DELETE/NOOP consolidation model (reuses the warm judge, gemma). |
 | `stores.<vector>.top_k` / `.min_score` | `5` / `0.5` | Vector store recall defaults (neighbours fetched; min cosine for a hit, `0` disables). Overridable per tool. |
-| `session.store` | a `stores[]` name (postgres) | ADK session + chat persistence backend. |
+| `session.store` | a `stores[]` name (postgres or sqlite) | ADK session + chat persistence backend. |
 | `session.schema` | `sessions` | Reserved — ADK's session service exposes no schema param yet. |
+| `server.addr` | `:8080` | HTTP listen address. Override per-invocation with `quack server run --port <n>`. |
+| `server.topology` | `external` (default) / `embedded` / `managed` | How the stores are provided. `embedded` (sqlite) and `external` (you run Postgres/Qdrant) just run the process. `managed` makes `quack server` bring up Postgres + Qdrant via an embedded `docker compose` stack (`quack-stores`), wait for readiness, then run; `quack server stop` tears the stack down (named volumes persist). `managed` needs docker + host ports 5432 and 6334 free. Tool backends (search/fetch) are **not** managed — configure them via `tools.*`. |
 | `session.compaction.*` (env `COMPACTION_ENABLED` / `COMPACTION_MODEL`) | disabled | Automatic context compaction over session history (prune old tool outputs, then summarise). |
 | memory (no block) | — | Memory has **no config block — it's composed**. Task memory turns on when `stage_memory` binds a vector store (with `QDRANT_URL` set); user memory turns on when the **orchestrator** binds `commit_memory` (`orchestrator.tools: [commit_memory]`). The bound tool's store supplies embedder / consolidation / tuning. |
 | `auth.oidc.issuer` (env `OIDC_ISSUER`) | Authentik OIDC issuer URL | IdP that issues/verifies tokens. Any OIDC IdP works (Keycloak, Auth0, …). |

@@ -200,6 +200,35 @@ tools:
 	}
 }
 
+func TestServerTopology(t *testing.T) {
+	for _, tc := range []struct {
+		yaml      string
+		managed   bool
+		wantError bool
+	}{
+		{`server: { addr: ":8080" }`, false, false}, // absent ⇒ external
+		{`server: { topology: external }`, false, false},
+		{`server: { topology: embedded }`, false, false}, // label only; serve just runs
+		{`server: { topology: managed }`, true, false},   // the orchestration trigger
+		{`server: { topology: docker }`, false, true},    // typo ⇒ fail fast
+	} {
+		c, err := Load(writeTemp(t, baseConfig+tc.yaml))
+		if tc.wantError {
+			if err == nil {
+				t.Errorf("%q: expected error, got nil", tc.yaml)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: Load: %v", tc.yaml, err)
+			continue
+		}
+		if c.Server.Managed() != tc.managed {
+			t.Errorf("%q: Managed() = %v, want %v", tc.yaml, c.Server.Managed(), tc.managed)
+		}
+	}
+}
+
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
