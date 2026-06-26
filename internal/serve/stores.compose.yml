@@ -1,0 +1,39 @@
+# Quack managed stores — brought up by `quack server` when
+# server.topology: managed. Postgres (sessions/DAG/chat) + Qdrant (semantic
+# memory) only: tool backends (SearXNG/crawl4ai) are config-driven and stay
+# external (use kind: exa for keyless search, kind: direct for fetch). Run with
+# `docker compose -p quack-stores -f stores.compose.yml up -d --wait`; the
+# project name isolates this stack from the repo's dev docker-compose.yml.
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: quack
+      POSTGRES_PASSWORD: quack
+      POSTGRES_DB: quack
+    volumes:
+      # Postgres 18+ wants the mount at /var/lib/postgresql (data lives in a
+      # version subdir), not /var/lib/postgresql/data.
+      - quack-stores-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quack"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+
+  # Vector store for semantic memory (M6). gRPC on 6334 is what quack connects to.
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - quack-stores-qdrant:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+
+volumes:
+  quack-stores-pgdata:
+  quack-stores-qdrant:
