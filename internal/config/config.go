@@ -226,7 +226,7 @@ type ResolvedMemory struct {
 // MemoryStore resolves the vector store bound to a memory tool (e.g.
 // "stage_memory" → task memory, "commit_memory" → user memory). It returns false
 // when the tool is unconfigured, its store is missing embedder/consolidation, or
-// the store URL is empty (QDRANT_URL unset ⇒ memory self-disables) — so a
+// the store URL is empty (QUACK_QDRANT_URL unset ⇒ memory self-disables) — so a
 // qdrant-less run keeps working. Per-tool collection/top_k/min_score override the
 // store defaults.
 func (c *Config) MemoryStore(toolName string) (ResolvedMemory, bool) {
@@ -460,7 +460,7 @@ func (c *Config) validate() error {
 	}
 	// Tools: a store-backed tool must reference a defined store. (Embedder /
 	// consolidation on the referenced vector store are validated at wiring time,
-	// where memory is actually built — a store with QDRANT_URL unset self-disables.)
+	// where memory is actually built — a store with QUACK_QDRANT_URL unset self-disables.)
 	for name, t := range c.Tools {
 		if t.Store != "" {
 			if _, ok := c.Store(t.Store); !ok {

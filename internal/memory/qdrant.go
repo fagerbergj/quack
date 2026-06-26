@@ -158,7 +158,7 @@ func pointID(id *qdrant.PointId) string {
 func parseAddr(raw string) (string, int, error) {
 	host, p, err := net.SplitHostPort(strings.TrimSpace(raw))
 	if err != nil {
-		return "", 0, fmt.Errorf("memory: QDRANT_URL must be host:port: %w", err)
+		return "", 0, fmt.Errorf("memory: QUACK_QDRANT_URL must be host:port: %w", err)
 	}
 	port, err := strconv.Atoi(p)
 	if err != nil {

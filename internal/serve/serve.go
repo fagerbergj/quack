@@ -101,7 +101,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 		return fmt.Errorf("skills toolset init failed: %w", err)
 	}
 
-	// Semantic memory (M6): a memory tool bound to a vector store (with QDRANT_URL
+	// Semantic memory (M6): a memory tool bound to a vector store (with QUACK_QDRANT_URL
 	// set) turns it on — config composes it, no dedicated block. Task memory
 	// follows `stage_memory` (researchers' recall + the trust gate's vetted
 	// commit); user memory follows `commit_memory` bound to the orchestrator. A
@@ -252,20 +252,20 @@ func Run(ctx context.Context, configPath string, port int) error {
 	return nil
 }
 
-// setupLogging installs the process-wide slog handler from LOG_LEVEL
-// (debug|info|warn|error, default info) and LOG_FORMAT (text|json, default
+// setupLogging installs the process-wide slog handler from QUACK_LOG_LEVEL
+// (debug|info|warn|error, default info) and QUACK_LOG_FORMAT (text|json, default
 // text). SetDefault also reroutes any stray stdlib log.* through this handler.
 // ponytail: env-driven; add a LevelVar when runtime re-leveling is actually needed.
 func setupLogging() {
 	// slog.Level implements TextUnmarshaler: "" and unknown values error out,
 	// leaving the zero value LevelInfo — our intended default.
 	var lvl slog.Level
-	_ = lvl.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
+	_ = lvl.UnmarshalText([]byte(os.Getenv("QUACK_LOG_LEVEL")))
 	opts := &slog.HandlerOptions{Level: lvl}
 	// stdout (not stderr): logs are the program's output for a server; let the
 	// container/orchestration layer collect and ship them.
 	var h slog.Handler = slog.NewTextHandler(os.Stdout, opts)
-	if strings.EqualFold(os.Getenv("LOG_FORMAT"), "json") {
+	if strings.EqualFold(os.Getenv("QUACK_LOG_FORMAT"), "json") {
 		h = slog.NewJSONHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(h))

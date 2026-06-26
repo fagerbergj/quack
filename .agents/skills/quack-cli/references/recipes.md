@@ -157,7 +157,7 @@ func RunInit() (*config.File, error) {
 			Options(
 				huh.NewOption("Embedded — SQLite, no containers", "embedded"),
 				huh.NewOption("Managed — compose Postgres + Qdrant", "managed"),
-				huh.NewOption("External — BYO via DATABASE_URL/QDRANT_URL", "external"),
+				huh.NewOption("External — BYO via QUACK_DATABASE_URL/QUACK_QDRANT_URL", "external"),
 			).Value(&topology),
 	))
 	if err := form.Run(); err != nil {

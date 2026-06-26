@@ -126,9 +126,9 @@ func TestListModelsFailure(t *testing.T) {
 
 func TestPrefillFromEnv(t *testing.T) {
 	for _, kv := range [][2]string{
-		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"},
-		{"ORCH_MODEL", "orch"}, {"JUDGE_MODEL", "judge"}, {"EMBED_MODEL", "embed"},
-		{"IMAGE_MODEL", "vl"}, {"MEDIA_MODEL", "omni"},
+		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"},
+		{"QUACK_ORCH_MODEL", "orch"}, {"QUACK_JUDGE_MODEL", "judge"}, {"QUACK_EMBED_MODEL", "embed"},
+		{"QUACK_IMAGE_MODEL", "vl"}, {"QUACK_MEDIA_MODEL", "omni"},
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
@@ -138,10 +138,10 @@ func TestPrefillFromEnv(t *testing.T) {
 		a.JudgeModel != "judge" || a.EmbedModel != "embed" || a.VisionModel != "vl" || a.AudioModel != "omni" {
 		t.Errorf("PrefillFromEnv = %+v, want all fields from env", a)
 	}
-	// RESEARCHER_MODEL fallback when ORCH_MODEL is unset.
-	t.Setenv("ORCH_MODEL", "")
+	// QUACK_RESEARCHER_MODEL fallback when QUACK_ORCH_MODEL is unset.
+	t.Setenv("QUACK_ORCH_MODEL", "")
 	var b InitAnswers
-	t.Setenv("RESEARCHER_MODEL", "researcher")
+	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher")
 	PrefillFromEnv(&b)
 	if b.MainModel != "researcher" {
 		t.Errorf("MainModel fallback = %q, want researcher", b.MainModel)
@@ -176,7 +176,7 @@ func TestEmitServerConfigRoundTrip(t *testing.T) {
 		WebFetch:    true,
 	}
 	// Only the API key is an env-var ref now; endpoint + models are hardcoded.
-	t.Setenv("LLM_API_KEY", a.APIKey)
+	t.Setenv("QUACK_LLM_API_KEY", a.APIKey)
 
 	path := filepath.Join(t.TempDir(), "quack.yaml")
 	if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
@@ -211,7 +211,7 @@ func TestEmitServerConfigTextOnly(t *testing.T) {
 		Endpoint: "http://x/v1", MainModel: "m", SessionKind: "sqlite",
 		WebSearch: true, WebFetch: true, SearchKind: "exa", FetchKind: "direct",
 	}
-	t.Setenv("LLM_API_KEY", "k")
+	t.Setenv("QUACK_LLM_API_KEY", "k")
 	path := filepath.Join(t.TempDir(), "quack.yaml")
 	if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
 		t.Fatal(err)

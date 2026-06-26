@@ -265,7 +265,7 @@ providers:                       # pluggable; `kind` selects the adapter
   local:
     kind: openai                 # API protocol; e.g. openai | gemini | anthropic
     endpoint: ${LLM_BASE_URL}
-    api_key: ${LLM_API_KEY}
+    api_key: ${QUACK_LLM_API_KEY}
 
 orchestrator:
   planner:
@@ -326,10 +326,10 @@ auth:                            # INBOUND; OIDC, plug in any IdP (Authentik, Ke
 stores:                          # by role; `kind` selects the backend
   relational:
     kind: postgres               # e.g. postgres | sqlite
-    url: ${DATABASE_URL}
+    url: ${QUACK_DATABASE_URL}
   vector:
     kind: qdrant                 # e.g. qdrant | pgvector
-    url: ${QDRANT_URL}
+    url: ${QUACK_QDRANT_URL}
 ```
 
 The actual model assignments, thresholds, budgets, and env vars (with justifications) live in

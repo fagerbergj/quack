@@ -3,8 +3,8 @@
 providers:
   default:
     kind: openai            # API protocol; the endpoint picks the actual server
-    endpoint: ${LLM_ENDPOINT}
-    api_key: ${LLM_API_KEY}
+    endpoint: ${QUACK_LLM_ENDPOINT}
+    api_key: ${QUACK_LLM_API_KEY}
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries
@@ -13,16 +13,16 @@ providers:
 stores:
   default_postgres:
     kind: postgres
-    url: ${DATABASE_URL}
+    url: ${QUACK_DATABASE_URL}
   default_vector:
     kind: qdrant                  # vector adapter; pgvector/sqlite are future adapters
-    url: ${QDRANT_URL}            # empty (QDRANT_URL unset) ⇒ memory self-disables
+    url: ${QUACK_QDRANT_URL}            # empty (QUACK_QDRANT_URL unset) ⇒ memory self-disables
     embedder:
       provider: default
-      model: ${EMBED_MODEL}
+      model: ${QUACK_EMBED_MODEL}
     consolidation:
       provider: default
-      model: ${JUDGE_MODEL}       # reuse the always-warm judge (gemma) for extract/vet/consolidate
+      model: ${QUACK_JUDGE_MODEL}       # reuse the always-warm judge (gemma) for extract/vet/consolidate
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
 
@@ -32,14 +32,14 @@ session:
   store: default_postgres
   schema: sessions                # reserved: ADK's session service exposes no schema param yet
   compaction:
-    enabled: ${COMPACTION_ENABLED}  # unset ⇒ false
+    enabled: ${QUACK_COMPACTION_ENABLED}  # unset ⇒ false
     provider: default
-    model: ${COMPACTION_MODEL}      # required when enabled; pick a worker-co-resident model (gemma)
+    model: ${QUACK_COMPACTION_MODEL}      # required when enabled; pick a worker-co-resident model (gemma)
     prune: true                     # blank old tool outputs before summarising (cheap, no model call)
 
 orchestrator:
   provider: default
-  model: ${ORCH_MODEL}            # the thin dispatcher: routes requests to agents
+  model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
   # tools: [commit_memory]        # bind commit_memory to enable user memory (recall + commit of personal facts)
 
 # Declarative agents. Each is an agent-card.json + prompt.md bundle on disk,
@@ -49,26 +49,26 @@ agents:
   web-researcher:
     bundle: agents/web-researcher
     provider: default
-    model: ${RESEARCHER_MODEL}
+    model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
-    model: ${RESEARCHER_MODEL}
+    model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # same model as web-researcher
     tools: []
   media-reader:
     bundle: agents/media-reader
     provider: default
-    model: ${MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); falls back to RESEARCHER_MODEL if unset
+    model: ${QUACK_MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 32768       # qwen3-omni-30b served -c 32768 --parallel 1
     tools: []
     inputs: [text, image, audio]
   image-reader:
     bundle: agents/image-reader
     provider: default
-    model: ${IMAGE_MODEL}       # Qwen3-VL-32B (vision llm-swap group); specialist for hard image reading
+    model: ${QUACK_IMAGE_MODEL}       # Qwen3-VL-32B (vision llm-swap group); specialist for hard image reading
     context_window: 32768       # qwen3-vl-32b served -c 32768
     tools: []
     inputs: [text, image]
@@ -80,15 +80,15 @@ agents:
 tools:
   web_search:
     kind: searxng                 # searxng (needs url) | exa. empty ⇒ searxng
-    url: ${SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080; unused by kind: exa
+    url: ${QUACK_SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080; unused by kind: exa
     # exa is keyless via Exa's hosted MCP by default (the no-docker path). Add an
     # api_key to use Exa's REST API instead (structured JSON, more robust):
     # auth:
     #   kind: api_key
-    #   api_key: ${EXA_API_KEY}
+    #   api_key: ${QUACK_EXA_API_KEY}
   web_fetch:
     kind: crawl4ai                # direct (plain GET, no service) | crawl4ai (GET + browser render). empty ⇒ direct
-    url: ${CRAWL4AI_URL}          # required for crawl4ai (e.g. http://crawl4ai:11235); unused by kind: direct
+    url: ${QUACK_CRAWL4AI_URL}          # required for crawl4ai (e.g. http://crawl4ai:11235); unused by kind: direct
   # Memory tools (M6) — store-backed; binding one to an agent enables that memory.
   stage_memory:                   # task memory: researchers stage tradecraft, the gate commits it
     store: default_vector
@@ -114,7 +114,7 @@ gates:
     max_rounds: 1   # worker self-improvement passes before the judge
   judge:
     provider: default
-    model: ${JUDGE_MODEL}   # empty ⇒ judge disabled
+    model: ${QUACK_JUDGE_MODEL}   # empty ⇒ judge disabled
     max_rounds: 1           # expensive model-judge/revise rounds
     threshold: 0.7          # PER-CRITERION pass bar: every rubric criterion must clear it.
                             # On the rubric's 0-10 scale this is 7/10 ("met, with only
