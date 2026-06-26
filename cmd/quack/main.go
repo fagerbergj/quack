@@ -105,7 +105,7 @@ func newServerCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfgPath, _ := cmd.Flags().GetString("config")
 			port, _ := cmd.Flags().GetInt("port")
-			return serve.Start(cfgPath, port)
+			return serve.Start(cmd.Context(), cfgPath, port)
 		},
 	}
 	startCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
@@ -113,9 +113,13 @@ func newServerCmd() *cobra.Command {
 
 	stopCmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the background server started by `quack server start`",
-		RunE:  func(*cobra.Command, []string) error { return serve.Stop() },
+		Short: "Stop the background server (and tear down managed stores)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfgPath, _ := cmd.Flags().GetString("config")
+			return serve.Stop(cfgPath)
+		},
 	}
+	stopCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
 
 	statusCmd := &cobra.Command{
 		Use:   "status",

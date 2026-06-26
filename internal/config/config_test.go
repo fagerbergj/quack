@@ -200,6 +200,35 @@ tools:
 	}
 }
 
+func TestServerTopology(t *testing.T) {
+	for _, tc := range []struct {
+		yaml      string
+		managed   bool
+		wantError bool
+	}{
+		{`server: { addr: ":8080" }`, false, false}, // absent ⇒ external
+		{`server: { topology: external }`, false, false},
+		{`server: { topology: embedded }`, false, false}, // label only; serve just runs
+		{`server: { topology: managed }`, true, false},   // the orchestration trigger
+		{`server: { topology: docker }`, false, true},    // typo ⇒ fail fast
+	} {
+		c, err := Load(writeTemp(t, baseConfig+tc.yaml))
+		if tc.wantError {
+			if err == nil {
+				t.Errorf("%q: expected error, got nil", tc.yaml)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: Load: %v", tc.yaml, err)
+			continue
+		}
+		if c.Server.Managed() != tc.managed {
+			t.Errorf("%q: Managed() = %v, want %v", tc.yaml, c.Server.Managed(), tc.managed)
+		}
+	}
+}
+
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
@@ -315,6 +344,36 @@ func TestRealConfigLoads(t *testing.T) {
 	}
 	if s, ok := c.Store(c.Session.Store); !ok || s.Kind != "postgres" {
 		t.Errorf("session store %q did not resolve to postgres: %+v ok=%v", c.Session.Store, s, ok)
+	}
+}
+
+// TestManagedConfigLoads guards config/managed.yaml drift: it must parse,
+// validate, and actually be the managed topology (the thing `quack server`
+// reads to decide whether to bring up the stores stack).
+func TestManagedConfigLoads(t *testing.T) {
+	for _, kv := range [][2]string{
+		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"},
+		{"ORCH_MODEL", "m"}, {"RESEARCHER_MODEL", "r"},
+		{"JUDGE_MODEL", "j"}, {"EMBED_MODEL", "e"},
+	} {
+		t.Setenv(kv[0], kv[1])
+	}
+	c, err := Load("../../config/managed.yaml")
+	if err != nil {
+		t.Fatalf("shipped config/managed.yaml failed to load: %v", err)
+	}
+	if !c.Server.Managed() {
+		t.Errorf("managed.yaml topology = %q, want managed", c.Server.Topology)
+	}
+	if _, ok := c.Store(c.Session.Store); !ok {
+		t.Errorf("session store %q not defined", c.Session.Store)
+	}
+	// The preset uses the keyless/no-container tool backends.
+	if got := c.Tools["web_search"].Kind; got != "exa" {
+		t.Errorf("managed.yaml web_search.kind = %q, want exa", got)
+	}
+	if got := c.Tools["web_fetch"].Kind; got != "direct" {
+		t.Errorf("managed.yaml web_fetch.kind = %q, want direct", got)
 	}
 }
 
