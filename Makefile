@@ -11,6 +11,7 @@ frontend-build:
 	cd frontend && npm ci && npm run build
 	rm -rf internal/serve/web/dist
 	cp -R frontend/dist internal/serve/web/dist
+	touch internal/serve/web/dist/.gitkeep   # keep the embed placeholder tracked
 
 ## run: build and run locally (expects env: DATABASE_URL, LLM_ENDPOINT, ORCH_MODEL)
 run: build
@@ -43,4 +44,6 @@ docker-down:
 ## clean: remove build artifacts
 clean:
 	rm -rf frontend/dist $(BINARY)
-	git checkout -- internal/serve/web/dist 2>/dev/null || true
+	rm -rf internal/serve/web/dist
+	mkdir -p internal/serve/web/dist
+	touch internal/serve/web/dist/.gitkeep

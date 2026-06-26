@@ -2,7 +2,12 @@
 node_modules
 frontend/dist
 /quack
-cmd/server/web/dist/assets
+.test/
+# Embedded SPA is built into internal/serve/web/dist by `make build`. Ignore
+# the build output; only the .gitkeep placeholder is tracked so a fresh `go
+# build` (without building the frontend) still satisfies //go:embed.
+/internal/serve/web/dist/*
+!/internal/serve/web/dist/.gitkeep
 *.db
 *.log
 *.swp
