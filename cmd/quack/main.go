@@ -13,7 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/serve"
+	"github.com/fagerbergj/quack/internal/wizard"
 )
 
 // version is the build stamp, overridden at release time via
@@ -35,10 +37,11 @@ func newRootCmd() *cobra.Command {
 		Use:   "quack",
 		Short: "Quack — agentic research, one binary",
 		Long: "Quack is a one-binary CLI and server for agentic research.\n\n" +
-			"  quack server run       run the API + SPA server (foreground)\n" +
-			"  quack                  open the interactive chat TUI\n" +
-			"  quack -p \"<prompt>\"     one-shot prompt, print and exit (no TUI)\n" +
-			"  quack chat|server|api  manage chats, the server, and raw API calls",
+			"  quack init              get configured (run locally or connect to a server)\n" +
+			"  quack server run        run the API + SPA server (foreground)\n" +
+			"  quack                   open the interactive chat TUI\n" +
+			"  quack -p \"<prompt>\"      one-shot prompt, print and exit (no TUI)\n" +
+			"  quack chat|server|api   manage chats, the server, and raw API calls",
 		SilenceUsage: true, // a failing RunE is an error, not a usage mistake
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if printPrompt != "" {
@@ -52,8 +55,25 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().String("server", "", "quack server URL (default: active server from config, else http://localhost:8080)")
 	root.Flags().StringVarP(&printPrompt, "print", "p", "", "one-shot prompt; print the result and exit (no TUI)")
 
-	root.AddCommand(newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd())
+	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd())
 	return root
+}
+
+// newInitCmd: `quack init` — onboarding. Local (run quack here → server wizard
+// + register localhost) or Remote (register a server someone else runs).
+func newInitCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "init",
+		Short: "Get quack configured — run locally or connect to a hosted server",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out, _ := cmd.Flags().GetString("output")
+			force, _ := cmd.Flags().GetBool("force")
+			return wizard.ClientInit(cmd.Context(), out, force)
+		},
+	}
+	c.Flags().StringP("output", "o", defaultConfigPath(), "path to write quack.yaml (local)")
+	c.Flags().Bool("force", false, "overwrite an existing quack.yaml")
+	return c
 }
 
 // newChatCmd: create and drive chat sessions, plus per-node lifecycle control.
@@ -138,12 +158,122 @@ func newServerCmd() *cobra.Command {
 		startCmd,
 		stopCmd,
 		statusCmd,
-		stub("init", "Interactive setup wizard that writes quack.yaml", "server init"),
-		stub("use <name>", "Switch the active server", "server use"),
-		stub("add <name> <url>", "Register a server", "server add"),
-		stub("list", "List configured servers", "server list"),
+		newServerInitCmd(),
+		newServerUseCmd(),
+		newServerAddCmd(),
+		newServerListCmd(),
+		newServerRemoveCmd(),
 	)
 	return c
+}
+
+// newServerInitCmd: `quack server init` — the server-config wizard (LLM
+// provider, models, stores). Writes quack.yaml.
+func newServerInitCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "init",
+		Short: "Interactive setup wizard that writes quack.yaml",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out, _ := cmd.Flags().GetString("output")
+			force, _ := cmd.Flags().GetBool("force")
+			return wizard.ServerInit(cmd.Context(), out, force)
+		},
+	}
+	c.Flags().StringP("output", "o", defaultConfigPath(), "path to write quack.yaml")
+	c.Flags().Bool("force", false, "overwrite an existing quack.yaml")
+	return c
+}
+
+func newServerUseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "use <name>",
+		Short: "Switch the active server",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			c, err := cli.LoadClient()
+			if err != nil {
+				return err
+			}
+			if err := c.Use(args[0]); err != nil {
+				return err
+			}
+			if err := c.Save(); err != nil {
+				return err
+			}
+			fmt.Printf("active server: %s\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newServerAddCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <name> <url>",
+		Short: "Register a server",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			c, err := cli.LoadClient()
+			if err != nil {
+				return err
+			}
+			if err := c.AddServer(args[0], args[1]); err != nil {
+				return err
+			}
+			if err := c.Save(); err != nil {
+				return err
+			}
+			fmt.Printf("added %s (%s)\n", args[0], args[1])
+			return nil
+		},
+	}
+}
+
+func newServerListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List configured servers (* = active)",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			c, err := cli.LoadClient()
+			if err != nil {
+				return err
+			}
+			if len(c.Servers) == 0 {
+				fmt.Println("no servers registered — run `quack init` or `quack server add`")
+				return nil
+			}
+			for name, s := range c.Servers {
+				mark := " "
+				if name == c.Active {
+					mark = "*"
+				}
+				fmt.Printf("%s %-12s %s\n", mark, name, s.URL)
+			}
+			return nil
+		},
+	}
+}
+
+func newServerRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <name>",
+		Short: "Remove a registered server",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			c, err := cli.LoadClient()
+			if err != nil {
+				return err
+			}
+			if _, ok := c.Servers[args[0]]; !ok {
+				return fmt.Errorf("server %q is not registered", args[0])
+			}
+			c.RemoveServer(args[0])
+			if err := c.Save(); err != nil {
+				return err
+			}
+			fmt.Printf("removed %s\n", args[0])
+			return nil
+		},
+	}
 }
 
 // newAPICmd: raw authenticated REST passthrough, modeled on `gh api`.

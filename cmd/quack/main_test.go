@@ -14,8 +14,12 @@ func TestCommandTree(t *testing.T) {
 
 	want := map[string][]string{
 		"chat":   {"new", "resume", "list", "delete", "export", "stop", "node"},
-		"server": {"run", "start", "stop", "status", "init", "use", "add", "list"},
+		"server": {"run", "start", "stop", "status", "init", "use", "add", "list", "remove"},
 		"api":    nil,
+	}
+	// Top-level `init` is the onboarding entry (local/remote branch).
+	if c, _, err := root.Find([]string{"init"}); err != nil || c.Name() != "init" {
+		t.Errorf("top-level init not registered: %v", err)
 	}
 	for name, subs := range want {
 		cmd, _, err := root.Find([]string{name})
