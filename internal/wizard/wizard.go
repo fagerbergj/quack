@@ -46,6 +46,9 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	if err := askStores(&a); err != nil {
 		return err
 	}
+	if err := askConfirm(&a, outPath); err != nil {
+		return err
+	}
 
 	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -63,11 +66,39 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	return nil
 }
 
+// runForm runs a form with the duck theme applied.
+func runForm(f *huh.Form) error { return f.WithTheme(duckTheme()).Run() }
+
+// askConfirm is the final review gate: a summary note + a confirm. The user can
+// back up through the whole wizard and return here before anything is written.
+func askConfirm(a *cli.InitAnswers, outPath string) error {
+	summary := fmt.Sprintf(
+		"endpoint %s • main %s • judge %s • embed %s • session %s",
+		a.Endpoint, a.MainModel, noneLabel(a.JudgeModel), noneLabel(a.EmbedModel), a.SessionKind,
+	)
+	var ok bool
+	return runForm(huh.NewForm(
+		huh.NewGroup(
+			huh.NewNote().Title("Review").Description(summary),
+		),
+		huh.NewGroup(
+			huh.NewConfirm().Title(fmt.Sprintf("Write %s?", outPath)).Value(&ok),
+		),
+	))
+}
+
+func noneLabel(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
 // ClientInit is `quack init`: local (run quack here) or remote (connect to one).
 // Local runs ServerInit then registers localhost; remote just registers.
 func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 	var mode string
-	if err := huh.NewForm(huh.NewGroup(
+	if err := runForm(huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("How will you use quack?").
 			Options(
@@ -75,7 +106,7 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 				huh.NewOption("Remote — connect to a server someone else runs", "remote"),
 			).
 			Value(&mode),
-	)).Run(); err != nil {
+	).Title("Welcome"))); err != nil {
 		return err
 	}
 
@@ -106,10 +137,10 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 
 func registerRemote() error {
 	var name, url string
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewInput().Title("Server name").Value(&name),
-		huh.NewInput().Title("Server URL (e.g. https://quack.example.com)").Value(&url),
-	)).Run(); err != nil {
+	if err := runForm(huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title("Server name").Placeholder("prod").Value(&name),
+		huh.NewInput().Title("Server URL").Placeholder("https://quack.example.com").Value(&url),
+	).Title("Remote server"))); err != nil {
 		return err
 	}
 	c, err := cli.LoadClient()
@@ -130,17 +161,25 @@ func registerRemote() error {
 }
 
 // askProvider: the LLM provider (single-option, OpenAI-compatible today),
-// endpoint, and API key — one group so the three are navigable together.
+// endpoint, and API key — one group so the three are navigable together. The
+// API key is masked (EchoModePassword); endpoint has a placeholder hint.
 func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	var kind string
-	return huh.NewForm(huh.NewGroup(
+	return runForm(huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("LLM provider").
 			Options(huh.NewOption("OpenAI-compatible", "openai")).
 			Value(&kind),
-		huh.NewInput().Title("Endpoint (e.g. http://localhost:11436/v1)").Value(&a.Endpoint),
-		huh.NewInput().Title("API key (blank if none)").Value(&a.APIKey),
-	)).Run()
+		huh.NewInput().
+			Title("Endpoint").
+			Placeholder("http://localhost:11436/v1").
+			Value(&a.Endpoint),
+		huh.NewInput().
+			Title("API key").
+			Placeholder("blank if none").
+			EchoMode(huh.EchoModePassword).
+			Value(&a.APIKey),
+	).Title("LLM provider").Description("How quack reaches its model server")))
 }
 
 // askModels calls /models, then asks for the main model + specialist models as
@@ -173,13 +212,14 @@ func askModels(ctx context.Context, a *cli.InitAnswers) error {
 	}
 
 	none := huh.NewOption("None — disable", "")
-	return huh.NewForm(
-		huh.NewGroup(selectOrInput(manual, "Main chat model (orchestrator + researcher)", modelOptions(models, a.MainModel), &a.MainModel)),
+	return runForm(huh.NewForm(
+		huh.NewGroup(selectOrInput(manual, "Main chat model (orchestrator + researcher)", modelOptions(models, a.MainModel), &a.MainModel)).
+			Title("Models").Description("The model quack reasons and plans with"),
 		huh.NewGroup(specialistSelect("Judge model (trust gate)", models, &a.JudgeModel, none)),
 		huh.NewGroup(specialistSelect("Embedding model (semantic memory)", models, &a.EmbedModel, none)),
 		huh.NewGroup(specialistSelect("Vision model (image-reader)", models, &a.VisionModel, none)),
 		huh.NewGroup(specialistSelect("Audio model (media-reader)", models, &a.AudioModel, none)),
-	).Run()
+	))
 }
 
 // askFeatures: multi-select of optional tool features. Web search/fetch drive
@@ -200,8 +240,8 @@ func askFeatures(a *cli.InitAnswers) error {
 				huh.NewOption("Web fetch", "fetch"),
 			).
 			Value(&feats),
-	))
-	if err := form.Run(); err != nil {
+	).Title("Features").Description("Toggle the tool backends to configure"))
+	if err := runForm(form); err != nil {
 		return err
 	}
 	a.WebSearch = slices.Contains(feats, "search")
@@ -214,9 +254,9 @@ func askFeatures(a *cli.InitAnswers) error {
 // an earlier store. Each store is a group of kind-select + url-input; the url
 // is blank/ignored for kinds that need none (exa/direct).
 func askStores(a *cli.InitAnswers) error {
-	groups := []*huh.Group{
-		storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite", "quack.db"),
-	}
+	first := storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite", "quack.db").
+		Title("Stores").Description("Where quack keeps its state + tool backends")
+	groups := []*huh.Group{first}
 	if a.EmbedModel != "" {
 		groups = append(groups, storeGroup("Memory store", []string{"sqlite", "qdrant"}, &a.MemoryKind, &a.MemoryURL, "sqlite", "quack.db"))
 	}
@@ -226,7 +266,7 @@ func askStores(a *cli.InitAnswers) error {
 	if a.WebFetch {
 		groups = append(groups, storeGroup("Web fetch backend", []string{"direct", "crawl4ai"}, &a.FetchKind, &a.FetchURL, "direct", ""))
 	}
-	return huh.NewForm(groups...).Run()
+	return runForm(huh.NewForm(groups...))
 }
 
 // storeGroup builds one group: a kind select + a url input, pre-filled with the
@@ -241,7 +281,7 @@ func storeGroup(title string, kinds []string, kind, url *string, defKind, defURL
 	}
 	return huh.NewGroup(
 		huh.NewSelect[string]().Title(title).Options(opts...).Value(kind),
-		huh.NewInput().Title(title+" URL (blank if none)").Value(url),
+		huh.NewInput().Title(title+" URL").Placeholder("blank if none").Value(url),
 	)
 }
 
