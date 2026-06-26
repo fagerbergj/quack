@@ -130,31 +130,22 @@ func registerRemote() error {
 }
 
 // askProvider: the LLM provider (single-option, OpenAI-compatible today),
-// endpoint, and API key.
+// endpoint, and API key — one group so the three are navigable together.
 func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	var kind string
-	forms := []*huh.Form{
-		huh.NewForm(huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("LLM provider").
-				Options(huh.NewOption("OpenAI-compatible", "openai")).
-				Value(&kind),
-		)),
-		huh.NewForm(huh.NewGroup(
-			huh.NewInput().Title("Endpoint (e.g. http://localhost:11436/v1)").Value(&a.Endpoint),
-			huh.NewInput().Title("API key (blank if none)").Value(&a.APIKey),
-		)),
-	}
-	for _, f := range forms {
-		if err := f.Run(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("LLM provider").
+			Options(huh.NewOption("OpenAI-compatible", "openai")).
+			Value(&kind),
+		huh.NewInput().Title("Endpoint (e.g. http://localhost:11436/v1)").Value(&a.Endpoint),
+		huh.NewInput().Title("API key (blank if none)").Value(&a.APIKey),
+	)).Run()
 }
 
-// askModels calls /models, then asks for the main model + specialist models.
-// If /models fails, it falls back to manual text entry for each role.
+// askModels calls /models, then asks for the main model + specialist models as
+// one multi-group form — so shift+tab/left returns to an earlier role. If
+// /models fails, it falls back to manual text entry for each role.
 func askModels(ctx context.Context, a *cli.InitAnswers) error {
 	models, err := cli.ListModels(ctx, a.Endpoint, a.APIKey)
 	manual := err != nil
@@ -162,17 +153,9 @@ func askModels(ctx context.Context, a *cli.InitAnswers) error {
 		fmt.Fprintf(os.Stderr, "couldn't reach %s/models (%v) — entering model names manually.\n", a.Endpoint, err)
 	}
 
-	mainOpts := modelOptions(models, a.MainModel)
 	if a.MainModel == "" && !manual {
 		a.MainModel = suggestMain(models)
 	}
-	none := huh.NewOption("None — disable", "")
-	if err := huh.NewForm(huh.NewGroup(
-		selectOrInput(manual, "Main chat model (orchestrator + researcher)", mainOpts, &a.MainModel),
-	)).Run(); err != nil {
-		return err
-	}
-
 	// Heuristic pre-selections for specialist roles (overridable; None disables).
 	// The OpenAI /models response gives IDs only — no capability field — so we
 	// guess from the name. Fast in the common case, easy to change when wrong.
@@ -189,32 +172,14 @@ func askModels(ctx context.Context, a *cli.InitAnswers) error {
 		a.AudioModel = suggestModel(models, "omni", "audio", "ast", "whisper")
 	}
 
-	// Specialist picks, each with a None option.
-	specForm := huh.NewForm(huh.NewGroup(
-		specialistSelect("Judge model (trust gate)", models, &a.JudgeModel, none),
-	).Title("Optional model roles"))
-	if err := specForm.Run(); err != nil {
-		return err
-	}
-	memForm := huh.NewForm(huh.NewGroup(
-		specialistSelect("Embedding model (semantic memory)", models, &a.EmbedModel, none),
-	).Title("Optional model roles"))
-	if err := memForm.Run(); err != nil {
-		return err
-	}
-	visForm := huh.NewForm(huh.NewGroup(
-		specialistSelect("Vision model (image-reader)", models, &a.VisionModel, none),
-	).Title("Optional model roles"))
-	if err := visForm.Run(); err != nil {
-		return err
-	}
-	audForm := huh.NewForm(huh.NewGroup(
-		specialistSelect("Audio model (media-reader)", models, &a.AudioModel, none),
-	).Title("Optional model roles"))
-	if err := audForm.Run(); err != nil {
-		return err
-	}
-	return nil
+	none := huh.NewOption("None — disable", "")
+	return huh.NewForm(
+		huh.NewGroup(selectOrInput(manual, "Main chat model (orchestrator + researcher)", modelOptions(models, a.MainModel), &a.MainModel)),
+		huh.NewGroup(specialistSelect("Judge model (trust gate)", models, &a.JudgeModel, none)),
+		huh.NewGroup(specialistSelect("Embedding model (semantic memory)", models, &a.EmbedModel, none)),
+		huh.NewGroup(specialistSelect("Vision model (image-reader)", models, &a.VisionModel, none)),
+		huh.NewGroup(specialistSelect("Audio model (media-reader)", models, &a.AudioModel, none)),
+	).Run()
 }
 
 // askFeatures: multi-select of optional tool features. Web search/fetch drive
@@ -244,57 +209,40 @@ func askFeatures(a *cli.InitAnswers) error {
 	return nil
 }
 
-// askStores: session (always), memory (if embedder), search (if web search),
-// fetch (if web fetch). Defaults are the no-docker set.
+// askStores: one multi-group form — session (always), memory (if embedder),
+// search (if web search), fetch (if web fetch) — so shift+tab/left returns to
+// an earlier store. Each store is a group of kind-select + url-input; the url
+// is blank/ignored for kinds that need none (exa/direct).
 func askStores(a *cli.InitAnswers) error {
-	if err := askStore("Session storage", []string{"sqlite", "postgres"},
-		&a.SessionKind, &a.SessionURL, "sqlite", "quack.db"); err != nil {
-		return err
+	groups := []*huh.Group{
+		storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite", "quack.db"),
 	}
 	if a.EmbedModel != "" {
-		if err := askStore("Memory store", []string{"sqlite", "qdrant"},
-			&a.MemoryKind, &a.MemoryURL, "sqlite", "quack.db"); err != nil {
-			return err
-		}
+		groups = append(groups, storeGroup("Memory store", []string{"sqlite", "qdrant"}, &a.MemoryKind, &a.MemoryURL, "sqlite", "quack.db"))
 	}
 	if a.WebSearch {
-		if err := askStore("Web search backend", []string{"exa", "searxng"},
-			&a.SearchKind, &a.SearchURL, "exa", ""); err != nil {
-			return err
-		}
+		groups = append(groups, storeGroup("Web search backend", []string{"exa", "searxng"}, &a.SearchKind, &a.SearchURL, "exa", ""))
 	}
 	if a.WebFetch {
-		if err := askStore("Web fetch backend", []string{"direct", "crawl4ai"},
-			&a.FetchKind, &a.FetchURL, "direct", ""); err != nil {
-			return err
-		}
+		groups = append(groups, storeGroup("Web fetch backend", []string{"direct", "crawl4ai"}, &a.FetchKind, &a.FetchURL, "direct", ""))
 	}
-	return nil
+	return huh.NewForm(groups...).Run()
 }
 
-// askStore is one kind-select + optional url-input (url hidden for kinds that
-// need none, e.g. exa/direct/sqlite-with-default).
-func askStore(title string, kinds []string, kind, url *string, defKind, defURL string) error {
+// storeGroup builds one group: a kind select + a url input, pre-filled with the
+// defaults for the initial kind. The url is always shown (blank for kinds that
+// need none); the user edits it when they pick a url-needing kind.
+func storeGroup(title string, kinds []string, kind, url *string, defKind, defURL string) *huh.Group {
+	*kind = defKind
+	*url = defURL
 	opts := make([]huh.Option[string], 0, len(kinds))
 	for _, k := range kinds {
 		opts = append(opts, huh.NewOption(k, k))
 	}
-	*kind = defKind
-	form := huh.NewForm(huh.NewGroup(
+	return huh.NewGroup(
 		huh.NewSelect[string]().Title(title).Options(opts...).Value(kind),
-	))
-	if err := form.Run(); err != nil {
-		return err
-	}
-	needsURL := *kind == "postgres" || *kind == "qdrant" || *kind == "searxng" || *kind == "crawl4ai"
-	if needsURL {
-		*url = defURL
-		in := huh.NewInput().Title(title + " URL").Value(url)
-		if err := huh.NewForm(huh.NewGroup(in)).Run(); err != nil {
-			return err
-		}
-	}
-	return nil
+		huh.NewInput().Title(title+" URL (blank if none)").Value(url),
+	)
 }
 
 // modelOptions builds select options from a model list. If manual (no models),
