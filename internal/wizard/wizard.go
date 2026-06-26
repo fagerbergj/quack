@@ -33,6 +33,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 		WebSearch: true, // optional features default on; the user can turn them off
 		WebFetch:  true,
 	}
+	cli.PrefillFromEnv(&a) // don't re-ask what the environment already answers
 	if err := askProvider(ctx, &a); err != nil {
 		return err
 	}
@@ -326,6 +327,12 @@ func specialistSelect(title string, models []string, val *string, none huh.Optio
 		return huh.NewInput().Title(title + " (blank for none)").Value(val)
 	}
 	opts := append([]huh.Option[string]{none}, modelOptions(models, *val)...)
+	// If the prefilled value (from env/heuristic) isn't in the discovered list
+	// (stale env, or /models returned different IDs), add it as an explicit
+	// option so the select still pre-selects it instead of silently mismatching.
+	if *val != "" && !slices.Contains(models, *val) {
+		opts = append(opts, huh.NewOption(*val, *val))
+	}
 	return huh.NewSelect[string]().Title(title).Options(opts...).Value(val)
 }
 

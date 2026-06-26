@@ -124,6 +124,37 @@ func TestListModelsFailure(t *testing.T) {
 	}
 }
 
+func TestPrefillFromEnv(t *testing.T) {
+	for _, kv := range [][2]string{
+		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"},
+		{"ORCH_MODEL", "orch"}, {"JUDGE_MODEL", "judge"}, {"EMBED_MODEL", "embed"},
+		{"IMAGE_MODEL", "vl"}, {"MEDIA_MODEL", "omni"},
+	} {
+		t.Setenv(kv[0], kv[1])
+	}
+	var a InitAnswers
+	PrefillFromEnv(&a)
+	if a.Endpoint != "http://x/v1" || a.APIKey != "k" || a.MainModel != "orch" ||
+		a.JudgeModel != "judge" || a.EmbedModel != "embed" || a.VisionModel != "vl" || a.AudioModel != "omni" {
+		t.Errorf("PrefillFromEnv = %+v, want all fields from env", a)
+	}
+	// RESEARCHER_MODEL fallback when ORCH_MODEL is unset.
+	t.Setenv("ORCH_MODEL", "")
+	var b InitAnswers
+	t.Setenv("RESEARCHER_MODEL", "researcher")
+	PrefillFromEnv(&b)
+	if b.MainModel != "researcher" {
+		t.Errorf("MainModel fallback = %q, want researcher", b.MainModel)
+	}
+	// An already-set field isn't clobbered.
+	var c InitAnswers
+	c.MainModel = "preset"
+	PrefillFromEnv(&c)
+	if c.MainModel != "preset" {
+		t.Errorf("PrefillFromEnv clobbered a preset field: %q", c.MainModel)
+	}
+}
+
 // TestEmitServerConfigRoundTrip proves the generated quack.yaml is valid: it
 // round-trips through the real config loader. Guards the wizard's output
 // contract (the AGENTS.md spec-driven rule: behavioral drift becomes a failing
@@ -144,9 +175,8 @@ func TestEmitServerConfigRoundTrip(t *testing.T) {
 		WebSearch:   true,
 		WebFetch:    true,
 	}
-	t.Setenv("LLM_ENDPOINT", a.Endpoint)
+	// Only the API key is an env-var ref now; endpoint + models are hardcoded.
 	t.Setenv("LLM_API_KEY", a.APIKey)
-	t.Setenv("JUDGE_MODEL", a.JudgeModel)
 
 	path := filepath.Join(t.TempDir(), "quack.yaml")
 	if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
@@ -168,6 +198,10 @@ func TestEmitServerConfigRoundTrip(t *testing.T) {
 	if cfg.Tools["web_search"].Kind != "exa" || cfg.Tools["web_fetch"].Kind != "direct" {
 		t.Errorf("tool kinds = exa/direct? %+v %+v", cfg.Tools["web_search"], cfg.Tools["web_fetch"])
 	}
+	// Endpoint + models are hardcoded, not env refs.
+	if cfg.Providers["default"].Endpoint != a.Endpoint {
+		t.Errorf("endpoint = %q, want %q hardcoded", cfg.Providers["default"].Endpoint, a.Endpoint)
+	}
 }
 
 // TestEmitServerConfigTextOnly: a text-only setup (no vision/audio) gets a lean
@@ -177,7 +211,6 @@ func TestEmitServerConfigTextOnly(t *testing.T) {
 		Endpoint: "http://x/v1", MainModel: "m", SessionKind: "sqlite",
 		WebSearch: true, WebFetch: true, SearchKind: "exa", FetchKind: "direct",
 	}
-	t.Setenv("LLM_ENDPOINT", a.Endpoint)
 	t.Setenv("LLM_API_KEY", "k")
 	path := filepath.Join(t.TempDir(), "quack.yaml")
 	if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
