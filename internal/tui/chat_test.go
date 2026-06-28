@@ -279,6 +279,56 @@ func TestEnterBackslashInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestAltEnterKeepsFirstLine(t *testing.T) {
+	// Regression: alt+enter on the first line used to scroll the textarea's
+	// internal viewport, hiding line one until the box grew on the next keystroke.
+	m := sized(newTestModel())
+	m.input.SetValue("line one")
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	gm := got.(Model)
+	if gm.input.Value() != "line one\n" {
+		t.Fatalf("alt+enter should append a newline, got %q", gm.input.Value())
+	}
+	if !strings.Contains(gm.input.View(), "line one") {
+		t.Errorf("first line must stay visible after alt+enter, view=%q", gm.input.View())
+	}
+}
+
+func TestSteer_RedirectsAfterCancel(t *testing.T) {
+	// While streaming, /steer cancels then queues the guidance; once the run
+	// closes, the guidance is resubmitted (the two runs never overlap).
+	m := newTestModel()
+	m.streaming = true
+	m.cancelRun = func() {}
+	got, cmd := m.slash("/steer focus on cost")
+	gm := got.(Model)
+	if gm.pendingSteer != "focus on cost" || !gm.cancelling || cmd == nil {
+		t.Fatalf("/steer while streaming should cancel and queue, got steer=%q cancelling=%v", gm.pendingSteer, gm.cancelling)
+	}
+	// The cancel closes the stream → resubmit the guidance.
+	got2, cmd2 := gm.Update(streamClosedMsg{})
+	if got2.(Model).pendingSteer != "" {
+		t.Error("pendingSteer should be consumed after the run closes")
+	}
+	if cmd2 == nil {
+		t.Fatal("steer should resubmit after the run closes")
+	}
+	if sm, ok := cmd2().(submitMsg); !ok || sm.text != "focus on cost" {
+		t.Errorf("resubmit must carry the guidance, got %#v", cmd2())
+	}
+}
+
+func TestSteer_IdleSubmits(t *testing.T) {
+	m := newTestModel()
+	got, cmd := m.slash("/steer hello")
+	if got.(Model).pendingSteer != "" || cmd == nil {
+		t.Fatal("/steer when idle should submit immediately, not queue")
+	}
+	if sm, ok := cmd().(submitMsg); !ok || sm.text != "hello" {
+		t.Errorf("idle steer should submit the text, got %#v", cmd())
+	}
+}
+
 func TestSlash_NodeStopUsage(t *testing.T) {
 	m := newTestModel()
 	// Bad form → usage hint, no command.
