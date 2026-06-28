@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -45,10 +46,16 @@ func newRootCmd() *cobra.Command {
 			"  quack chat|server|api   manage chats, the server, and raw API calls",
 		SilenceUsage: true, // a failing RunE is an error, not a usage mistake
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if printPrompt != "" {
-				return notWired("print mode (-p)")
+			if printPrompt == "" {
+				return notWired("interactive TUI")
 			}
-			return notWired("interactive TUI")
+			server, _ := cmd.Flags().GetString("server")
+			target, stop, err := resolveTarget(cmd.Context(), server)
+			if err != nil {
+				return err
+			}
+			defer stop()
+			return cli.PrintPrompt(cmd.Context(), cmd.OutOrStdout(), target, printPrompt)
 		},
 	}
 	// Client context: which server to talk to. Resolution (flag → config → default)
@@ -286,4 +293,29 @@ func defaultConfigPath() string {
 		return p
 	}
 	return "quack.yaml"
+}
+
+// resolveTarget returns the server base URL a client command should talk to, plus
+// a stop func to call when done. If a remote is configured (--server override or
+// an active registry entry) it's used as-is and stop is a no-op. Otherwise the
+// duck is started in-process on a loopback port and stop tears it down — so the
+// CLI works locally with no separate `quack server run`.
+func resolveTarget(ctx context.Context, override string) (string, func(), error) {
+	noop := func() {}
+	cc, err := cli.LoadClient()
+	if err != nil {
+		return "", noop, err
+	}
+	if url := cc.ActiveURL(override); url != "" {
+		return url, noop, nil // remote
+	}
+	cfg := defaultConfigPath()
+	if _, err := os.Stat(cfg); err != nil {
+		return "", noop, fmt.Errorf("no %s found — run `quack init` first (or pass --server <url>)", cfg)
+	}
+	base, stop, err := serve.InProcess(ctx, cfg)
+	if err != nil {
+		return "", noop, err
+	}
+	return base, func() { _ = stop() }, nil
 }

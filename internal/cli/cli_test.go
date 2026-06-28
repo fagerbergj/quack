@@ -56,14 +56,15 @@ func TestRegistryRoundTrip(t *testing.T) {
 	if err := c2.Save(); err != nil {
 		t.Fatal(err)
 	}
-	// Empty registry (after removing the last server + saving) → localhost default.
+	// Empty registry (after removing the last server + saving) → "" — the signal
+	// to run the duck locally in-process rather than dial a remote.
 	c2.RemoveServer("local")
 	if err := c2.Save(); err != nil {
 		t.Fatal(err)
 	}
 	c3, _ := LoadClient()
-	if got := c3.ActiveURL(""); got != "http://localhost:8080" {
-		t.Errorf("empty registry ActiveURL = %q, want localhost default", got)
+	if got := c3.ActiveURL(""); got != "" {
+		t.Errorf("empty registry ActiveURL = %q, want \"\" (run-local signal)", got)
 	}
 }
 

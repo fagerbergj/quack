@@ -7,8 +7,10 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"slices"
@@ -44,18 +46,92 @@ import (
 //go:embed all:web/dist
 var webDist embed.FS
 
-// Run loads configPath, builds the orchestrator + stores + agents, and serves
-// until ctx is cancelled (the caller wires SIGINT/SIGTERM to ctx). port, when
-// non-zero, overrides config's server.addr (it becomes ":<port>", e.g. `--port`).
-// It returns an error instead of exiting so the CLI owns the process exit code.
+// Run builds the server and serves it on cfg.Server.Addr (or :port) until ctx is
+// cancelled (the caller wires SIGINT/SIGTERM). The standalone `quack server run`
+// path; logs to stdout so a container/supervisor collects them.
 func Run(ctx context.Context, configPath string, port int) error {
-	setupLogging()
+	setupLoggingTo(os.Stdout, slog.LevelInfo)
+	handler, cleanup, addr, err := build(ctx, configPath, port)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	srv := &http.Server{Addr: addr, Handler: handler}
+	serveErr := make(chan error, 1)
+	go func() {
+		slog.Info("quack listening", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+		}
+	}()
+	select {
+	case err := <-serveErr:
+		return fmt.Errorf("http serve failed: %w", err)
+	case <-ctx.Done():
+	}
+	slog.Info("shutting down")
+	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutCtx)
+	slog.Info("stopped")
+	return nil
+}
+
+// InProcess builds the server and serves it on an ephemeral loopback port,
+// returning its base URL and a stop func. This is how `quack` runs the duck
+// locally — co-hosted in the CLI process, no separate `quack server run`. Logs go
+// to stderr (default warn) so the client's stdout stays clean (e.g. `quack -p`).
+func InProcess(ctx context.Context, configPath string) (baseURL string, stop func() error, err error) {
+	setupLoggingTo(os.Stderr, slog.LevelWarn)
+	handler, cleanup, _, err := build(ctx, configPath, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("listen loopback: %w", err)
+	}
+	srv := &http.Server{Handler: handler}
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			slog.Error("in-process serve failed", "component", "serve", "err", err)
+		}
+	}()
+	stop = func() error {
+		sc, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		serr := srv.Shutdown(sc)
+		cleanup()
+		return serr
+	}
+	return "http://" + ln.Addr().String(), stop, nil
+}
+
+// build loads config and constructs the HTTP handler (orchestrator + stores +
+// agents + SPA), shared by Run and InProcess. It returns the handler, a cleanup
+// func (close A2A servers; note managed stores), and the listen addr. On any
+// error it runs the cleanups registered so far and returns the error.
+func build(ctx context.Context, configPath string, port int) (handler http.Handler, cleanup func(), addr string, err error) {
+	var cleanups []func()
+	runCleanups := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
+	defer func() {
+		if err != nil {
+			runCleanups()
+			handler = nil
+		}
+	}()
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		return fmt.Errorf("config load failed: %w", err)
+		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
 	}
-	addr := cfg.Server.Addr
+	addr = cfg.Server.Addr
 	if port != 0 {
 		addr = fmt.Sprintf(":%d", port)
 	}
@@ -65,19 +141,21 @@ func Run(ctx context.Context, configPath string, port int) error {
 	// stores. Stores are left running on exit (persistent infra — restart the app
 	// freely); tear them down with `docker compose -p quack-stores down`.
 	if cfg.Server.Managed() {
-		if err := upStores(ctx); err != nil {
-			return err
+		if err = upStores(ctx); err != nil {
+			return nil, nil, "", err
 		}
-		defer slog.Info("managed stores left running; tear down with `docker compose -p quack-stores down`", "component", "serve")
+		cleanups = append(cleanups, func() {
+			slog.Info("managed stores left running; tear down with `docker compose -p quack-stores down`", "component", "serve")
+		})
 	}
 
 	sessionStore, ok := cfg.Store(cfg.Session.Store)
 	if !ok {
-		return fmt.Errorf("session store %q not found in stores registry", cfg.Session.Store)
+		return nil, nil, "", fmt.Errorf("session store %q not found in stores registry", cfg.Session.Store)
 	}
 	st, err := store.New(sessionStore.Kind, sessionStore.URL)
 	if err != nil {
-		return fmt.Errorf("store open failed: %w", err)
+		return nil, nil, "", fmt.Errorf("store open failed: %w", err)
 	}
 	if n, err := st.FailStaleDagNodes(context.Background()); err != nil {
 		slog.Error("fail stale dag nodes", "component", "store", "err", err)
@@ -88,7 +166,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
 	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model)
 	if err != nil {
-		return fmt.Errorf("inference model init failed: %w", err)
+		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
 
 	// Load skills once at startup; pass the toolset to every specialist agent so
@@ -98,7 +176,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 	skillSrc := skill.NewFileSystemSource(bundledir.SubFS("skills"))
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
-		return fmt.Errorf("skills toolset init failed: %w", err)
+		return nil, nil, "", fmt.Errorf("skills toolset init failed: %w", err)
 	}
 
 	// Semantic memory (M6): a memory tool bound to a vector store (with QUACK_QDRANT_URL
@@ -129,7 +207,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 	if rm, ok := cfg.MemoryStore("stage_memory"); ok {
 		s, err := openMemory(rm, "task")
 		if err != nil {
-			return fmt.Errorf("task memory init failed: %w", err)
+			return nil, nil, "", fmt.Errorf("task memory init failed: %w", err)
 		}
 		taskStore = s
 		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
@@ -140,7 +218,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
 			s, err := openMemory(rm, "user")
 			if err != nil {
-				return fmt.Errorf("user memory init failed: %w", err)
+				return nil, nil, "", fmt.Errorf("user memory init failed: %w", err)
 			}
 			userStore = s
 			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
@@ -151,13 +229,13 @@ func Run(ctx context.Context, configPath string, port int) error {
 	// DAG executor can dispatch to. Servers run for the process lifetime.
 	clientMap, servers, err := buildAgents(cfg, st.Sessions, skillTS, taskStore)
 	if err != nil {
-		return fmt.Errorf("agent build failed: %w", err)
+		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
-	defer func() {
+	cleanups = append(cleanups, func() {
 		for _, s := range servers {
 			_ = s.Close()
 		}
-	}()
+	})
 
 	// Build agent info list for the planner (name + description) and a set of
 	// media-capable agents (those with "image" or "audio" in their Inputs config)
@@ -185,19 +263,19 @@ func Run(ctx context.Context, configPath string, port int) error {
 	// Load orchestrator bundle for its system prompt.
 	orchBundle, err := agent.LoadBundle("agents/orchestrator")
 	if err != nil {
-		return fmt.Errorf("orchestrator bundle load failed: %w", err)
+		return nil, nil, "", fmt.Errorf("orchestrator bundle load failed: %w", err)
 	}
 	// Load the format-markdown skill frontmatter so the orchestrator's prompt
 	// lists it and the model knows to call load_skill("format-markdown") for
 	// direct-answer responses.
 	fmFm, err := skillSrc.LoadFrontmatter(context.Background(), "format-markdown")
 	if err != nil {
-		return fmt.Errorf("format-markdown skill load failed: %w", err)
+		return nil, nil, "", fmt.Errorf("format-markdown skill load failed: %w", err)
 	}
 	// plan-work is the DAG-authoring playbook the orchestrator loads before planning.
 	planWorkFm, err := skillSrc.LoadFrontmatter(context.Background(), "plan-work")
 	if err != nil {
-		return fmt.Errorf("plan-work skill load failed: %w", err)
+		return nil, nil, "", fmt.Errorf("plan-work skill load failed: %w", err)
 	}
 	// When user memory is on, append the orchestrator's memory.md guidance (its
 	// "what to remember about the user" section) to its behaviour — gated the same
@@ -206,7 +284,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 	if userStore != nil {
 		mem, err := agent.LoadBundleMemory("agents/orchestrator")
 		if err != nil {
-			return fmt.Errorf("orchestrator memory.md load failed: %w", err)
+			return nil, nil, "", fmt.Errorf("orchestrator memory.md load failed: %w", err)
 		}
 		if mem != "" {
 			orchBehaviour += "\n\n" + mem
@@ -220,53 +298,31 @@ func Run(ctx context.Context, configPath string, port int) error {
 
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
-		return fmt.Errorf("embed SPA fs failed: %w", err)
+		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
 	}
 
-	handler := server.New(server.Options{
+	handler = server.New(server.Options{
 		REST: rest.NewHandler(st, orch, llm),
 		MCP:  mcpserver.Handler(orch),
 		SPA:  spa,
 	})
-
-	srv := &http.Server{Addr: addr, Handler: handler}
-	serveErr := make(chan error, 1)
-	go func() {
-		slog.Info("quack listening", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serveErr <- err
-		}
-	}()
-
-	// Run until the caller cancels ctx (SIGINT/SIGTERM) or the listener fails.
-	select {
-	case err := <-serveErr:
-		return fmt.Errorf("http serve failed: %w", err)
-	case <-ctx.Done():
-	}
-	slog.Info("shutting down")
-	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(shutCtx)
-	slog.Info("stopped")
-	return nil
+	return handler, runCleanups, addr, nil
 }
 
-// setupLogging installs the process-wide slog handler from QUACK_LOG_LEVEL
-// (debug|info|warn|error, default info) and QUACK_LOG_FORMAT (text|json, default
-// text). SetDefault also reroutes any stray stdlib log.* through this handler.
-// ponytail: env-driven; add a LevelVar when runtime re-leveling is actually needed.
-func setupLogging() {
-	// slog.Level implements TextUnmarshaler: "" and unknown values error out,
-	// leaving the zero value LevelInfo — our intended default.
-	var lvl slog.Level
-	_ = lvl.UnmarshalText([]byte(os.Getenv("QUACK_LOG_LEVEL")))
+// setupLoggingTo installs the process-wide slog handler writing to w, at
+// QUACK_LOG_LEVEL (debug|info|warn|error) or `fallback` when that env is unset,
+// in text or QUACK_LOG_FORMAT=json. SetDefault also reroutes stray stdlib log.*.
+// `quack server run` logs to stdout (a supervisor collects them); the in-process
+// duck logs to stderr at warn so the client's stdout stays clean.
+func setupLoggingTo(w io.Writer, fallback slog.Level) {
+	lvl := fallback
+	if s := os.Getenv("QUACK_LOG_LEVEL"); s != "" {
+		_ = lvl.UnmarshalText([]byte(s)) // unknown values leave fallback untouched
+	}
 	opts := &slog.HandlerOptions{Level: lvl}
-	// stdout (not stderr): logs are the program's output for a server; let the
-	// container/orchestration layer collect and ship them.
-	var h slog.Handler = slog.NewTextHandler(os.Stdout, opts)
+	var h slog.Handler = slog.NewTextHandler(w, opts)
 	if strings.EqualFold(os.Getenv("QUACK_LOG_FORMAT"), "json") {
-		h = slog.NewJSONHandler(os.Stdout, opts)
+		h = slog.NewJSONHandler(w, opts)
 	}
 	slog.SetDefault(slog.New(h))
 }
