@@ -14,7 +14,7 @@ func TestCommandTree(t *testing.T) {
 
 	want := map[string][]string{
 		"chat":   {"new", "resume", "list", "delete", "export", "stop", "node"},
-		"server": {"run", "start", "stop", "status", "init", "use", "add", "list", "remove"},
+		"server": {"run", "init", "use", "add", "list", "remove"},
 		"api":    nil,
 	}
 	// Top-level `init` is the onboarding entry (local/remote branch).

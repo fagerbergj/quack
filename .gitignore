@@ -16,6 +16,9 @@ frontend/dist
 # Local env (secrets)
 .env
 
+# Local-only scratch: design specs, notes, throwaway configs (never committed)
+.quack/
+
 # IDE
 .idea
 .vscode

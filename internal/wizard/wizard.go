@@ -8,6 +8,7 @@ package wizard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,13 +21,32 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 )
 
+// ErrAborted is returned when the user cancels the wizard at the existing-config
+// gate. Callers treat it as a clean stop (no error printed, nothing written).
+var ErrAborted = errors.New("init cancelled")
+
 // ServerInit runs the server-config wizard and writes quack.yaml at outPath.
 // It's `quack server init` (and the local branch of `quack init`): LLM provider
-// → endpoint → /models → model roles → optional features → stores.
+// → endpoint → /models → model roles → optional features → stores. When outPath
+// already exists (and --force wasn't passed) it asks up front whether to keep,
+// overwrite, or write elsewhere — before any wizard questions.
 func ServerInit(ctx context.Context, outPath string, force bool) error {
-	if !force {
-		if _, err := os.Stat(outPath); err == nil {
-			return fmt.Errorf("%s already exists (pass --force to overwrite)", outPath)
+	if !force && fileExists(outPath) {
+		switch askExisting(outPath) {
+		case existingUse:
+			fmt.Printf("Using existing %s — no changes.\n", outPath)
+			return nil
+		case existingNewPath:
+			p := askPath(outPath)
+			if p == "" {
+				return ErrAborted
+			}
+			outPath = p
+		case existingOverwrite:
+			// fall through: run the wizard and overwrite outPath.
+		default: // cancel or escape
+			fmt.Println("Cancelled — nothing changed.")
+			return ErrAborted
 		}
 	}
 
@@ -76,6 +96,52 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	}
 	fmt.Println("\nRun `quack server run` to start.")
 	return nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// Existing-config actions for the up-front gate when quack.yaml already exists.
+const (
+	existingUse       = "use"
+	existingOverwrite = "overwrite"
+	existingNewPath   = "newpath"
+	existingCancel    = "cancel"
+)
+
+// askExisting asks what to do about an existing config before running the wizard.
+// A form error/escape is treated as cancel.
+func askExisting(outPath string) string {
+	choice := existingCancel
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Options(
+				huh.NewOption("Use it as-is", existingUse),
+				huh.NewOption("Reconfigure — overwrite "+outPath, existingOverwrite),
+				huh.NewOption("Write a new config to a different path", existingNewPath),
+				huh.NewOption("Cancel", existingCancel),
+			).
+			Value(&choice),
+	).Title(outPath + " already exists").Description("What would you like to do?"))
+	if err := runForm(form); err != nil {
+		return existingCancel
+	}
+	return choice
+}
+
+// askPath prompts for an alternate config path (prefilled with the current one).
+// Returns "" on cancel/escape or an empty entry.
+func askPath(cur string) string {
+	p := cur
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title("Config path").Value(&p),
+	).Title("New config path").Description("Where to write the new quack.yaml"))
+	if err := runForm(form); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(p)
 }
 
 // runForm runs a form with the duck theme on a stable alt-screen. Without the
@@ -140,6 +206,9 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 	switch mode {
 	case "local":
 		if err := ServerInit(ctx, serverInitPath, force); err != nil {
+			if errors.Is(err, ErrAborted) {
+				return nil // user cancelled at the existing-config gate; don't register
+			}
 			return err
 		}
 		c, err := cli.LoadClient()

@@ -63,12 +63,12 @@ func Run(ctx context.Context, configPath string, port int) error {
 	// Managed topology: bring up the Postgres + Qdrant stores via docker compose
 	// before opening them. embedded/external just run against pre-configured
 	// stores. Stores are left running on exit (persistent infra — restart the app
-	// freely); `quack server stop` tears them down.
+	// freely); tear them down with `docker compose -p quack-stores down`.
 	if cfg.Server.Managed() {
 		if err := upStores(ctx); err != nil {
 			return err
 		}
-		defer slog.Info("managed stores left running; run `quack server stop` to tear them down", "component", "serve")
+		defer slog.Info("managed stores left running; tear down with `docker compose -p quack-stores down`", "component", "serve")
 	}
 
 	sessionStore, ok := cfg.Store(cfg.Session.Store)

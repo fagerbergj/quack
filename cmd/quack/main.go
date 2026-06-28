@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -119,45 +120,8 @@ func newServerCmd() *cobra.Command {
 	runCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
 	runCmd.Flags().Int("port", 0, "listen port override (default: config server.addr, else 8080)")
 
-	startCmd := &cobra.Command{
-		Use:   "start",
-		Short: "Start the server in the background (detached)",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfgPath, _ := cmd.Flags().GetString("config")
-			port, _ := cmd.Flags().GetInt("port")
-			return serve.Start(cmd.Context(), cfgPath, port)
-		},
-	}
-	startCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
-	startCmd.Flags().Int("port", 0, "listen port override (default: config server.addr, else 8080)")
-
-	stopCmd := &cobra.Command{
-		Use:   "stop",
-		Short: "Stop the background server (and tear down managed stores)",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfgPath, _ := cmd.Flags().GetString("config")
-			return serve.Stop(cfgPath)
-		},
-	}
-	stopCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
-
-	statusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Report whether a server is running and on what address",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfgPath, _ := cmd.Flags().GetString("config")
-			port, _ := cmd.Flags().GetInt("port")
-			return serve.Status(cfgPath, port)
-		},
-	}
-	statusCmd.Flags().String("config", defaultConfigPath(), "path to quack.yaml")
-	statusCmd.Flags().Int("port", 0, "port to check (default: recorded daemon addr, else config server.addr)")
-
 	c.AddCommand(
 		runCmd,
-		startCmd,
-		stopCmd,
-		statusCmd,
 		newServerInitCmd(),
 		newServerUseCmd(),
 		newServerAddCmd(),
@@ -176,7 +140,10 @@ func newServerInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out, _ := cmd.Flags().GetString("output")
 			force, _ := cmd.Flags().GetBool("force")
-			return wizard.ServerInit(cmd.Context(), out, force)
+			if err := wizard.ServerInit(cmd.Context(), out, force); err != nil && !errors.Is(err, wizard.ErrAborted) {
+				return err
+			}
+			return nil
 		},
 	}
 	c.Flags().StringP("output", "o", "quack.yaml", "path to write quack.yaml")
