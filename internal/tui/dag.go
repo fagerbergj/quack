@@ -21,13 +21,14 @@ const (
 )
 
 type dagNode struct {
-	id      string
-	agent   string
-	task    string
-	deps    []string
-	status  nodeStatus
-	failErr string
-	output  string // node's full vetted text (from node_done)
+	id       string
+	agent    string
+	task     string
+	deps     []string
+	status   nodeStatus
+	failErr  string
+	output   string   // node's full vetted text (from node_done)
+	activity []string // thinking / tool calls / results, in order (the drill-in)
 }
 
 // dagState is the live DAG for one run: the planned nodes plus their evolving
@@ -89,6 +90,29 @@ func (d *dagState) terminalOutput() string {
 		}
 	}
 	return ""
+}
+
+// addActivity appends one activity line to a node (bounded so a chatty node can't
+// grow without limit).
+func (d *dagState) addActivity(id, line string) {
+	i, ok := d.index[id]
+	if !ok {
+		return
+	}
+	a := append(d.nodes[i].activity, line)
+	const max = 500
+	if len(a) > max {
+		a = a[len(a)-max:]
+	}
+	d.nodes[i].activity = a
+}
+
+// node returns a node by id (nil if absent) — for the inspect overlay.
+func (d *dagState) node(id string) *dagNode {
+	if i, ok := d.index[id]; ok {
+		return &d.nodes[i]
+	}
+	return nil
 }
 
 func (d *dagState) counts() (done, failed, total int) {
@@ -159,6 +183,22 @@ func (d *dagState) render(spin string, width int) string {
 			line = ansi.Truncate(line, width, "…")
 		}
 		b.WriteString(line + "\n")
+
+		// Live tail: show what the running node is doing (its last few activity
+		// lines). Full history is in the inspect overlay (/inspect <id>).
+		if n.status == statusRunning && len(n.activity) > 0 {
+			tail := n.activity
+			if len(tail) > 3 {
+				tail = tail[len(tail)-3:]
+			}
+			for _, a := range tail {
+				al := indent + "    " + faintStyle.Render(a)
+				if width > 0 {
+					al = ansi.Truncate(al, width, "…")
+				}
+				b.WriteString(al + "\n")
+			}
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

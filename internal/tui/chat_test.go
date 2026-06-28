@@ -318,6 +318,71 @@ func TestApplyEvent_TokensAndDAG(t *testing.T) {
 	}
 }
 
+func TestApplyEvent_CapturesNodeActivity(t *testing.T) {
+	m := newTestModel()
+	m.applyEvent(ev("dag_plan", `{"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"do","depends_on":[]}],"edges":[]}`))
+	m.applyEvent(ev("agent_tool_call", `{"node_id":"a","name":"web_search","args":{"q":"ducks"}}`))
+	m.applyEvent(ev("agent_thinking", `{"node_id":"a","text":"let me search\nmore"}`))
+	m.applyEvent(ev("agent_tool_result", `{"node_id":"a","name":"web_search","result":"found 3"}`))
+	n := m.dag.node("a")
+	if n == nil || len(n.activity) != 3 {
+		t.Fatalf("expected 3 activity lines, got %+v", n)
+	}
+	if !strings.Contains(n.activity[0], "web_search") {
+		t.Errorf("tool call not captured: %q", n.activity[0])
+	}
+	if strings.Contains(n.activity[1], "\n") {
+		t.Errorf("thinking should be one line: %q", n.activity[1])
+	}
+}
+
+func TestSlash_InspectOverlay(t *testing.T) {
+	m := newTestModel()
+	m.applyEvent(ev("dag_plan", `{"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"search","depends_on":[]}],"edges":[]}`))
+	m.applyEvent(ev("agent_tool_call", `{"node_id":"a","name":"web_search","args":{"q":"x"}}`))
+
+	if got, _ := m.slash("/inspect zzz"); got.(Model).overlay == "node" {
+		t.Error("inspecting an unknown node should not open the overlay")
+	}
+	got, _ := m.slash("/inspect a")
+	gm := got.(Model)
+	if gm.overlay != "node" || gm.inspectNode != "a" {
+		t.Fatalf("inspect a should open the node overlay, got overlay=%q", gm.overlay)
+	}
+	if !strings.Contains(gm.nodeDetailText(), "web_search") {
+		t.Error("node detail should show the captured tool call")
+	}
+}
+
+func TestCtrlO_InspectAndNavigate(t *testing.T) {
+	m := newTestModel()
+	m.applyEvent(ev("dag_plan", `{"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]},{"id":"b","agent":"s","task":"u","depends_on":["a"]}],"edges":[]}`))
+	m.applyEvent(ev("node_start", `{"node_id":"a","agent":"r"}`))
+	// ctrl+o opens the inspector on the running node.
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	gm := got.(Model)
+	if gm.overlay != "node" || gm.inspectNode != "a" {
+		t.Fatalf("ctrl+o should inspect the running node, overlay=%q node=%q", gm.overlay, gm.inspectNode)
+	}
+	// down moves to the next node; up moves back.
+	d, _ := gm.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if d.(Model).inspectNode != "b" {
+		t.Errorf("down should move to node b, got %q", d.(Model).inspectNode)
+	}
+	u, _ := d.(Model).Update(tea.KeyMsg{Type: tea.KeyUp})
+	if u.(Model).inspectNode != "a" {
+		t.Errorf("up should move back to node a, got %q", u.(Model).inspectNode)
+	}
+}
+
+func TestCtrlO_NoRunNoop(t *testing.T) {
+	m := newTestModel()
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	if got.(Model).overlay == "node" {
+		t.Error("ctrl+o with no run should not open the inspector")
+	}
+}
+
 func TestUpdate_NewChatResets(t *testing.T) {
 	m := newTestModel()
 	m.turns = []turn{{user: "old"}}
