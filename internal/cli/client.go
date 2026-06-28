@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,65 @@ func NewClient(override string) (*Client, error) {
 		BaseURL: strings.TrimRight(cc.ActiveURL(override), "/"),
 		HTTP:    &http.Client{},
 	}, nil
+}
+
+// ErrNotFound is returned by client calls when the server responds 404.
+var ErrNotFound = errors.New("not found")
+
+// ListChats returns all chats (server orders most-recently-updated first).
+func (c *Client) ListChats(ctx context.Context) ([]schema.ChatSummary, error) {
+	var out schema.ChatList
+	if err := c.getJSON(ctx, "/api/v1/chats", &out); err != nil {
+		return nil, err
+	}
+	return out.Data, nil
+}
+
+// GetChat returns a chat with its turns.
+func (c *Client) GetChat(ctx context.Context, id string) (schema.ChatDetail, error) {
+	var out schema.ChatDetail
+	err := c.getJSON(ctx, "/api/v1/chats/"+id, &out)
+	return out, err
+}
+
+// DeleteChat deletes a chat.
+func (c *Client) DeleteChat(ctx context.Context, id string) error {
+	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id)
+}
+
+// CancelRun cancels the active orchestrator run for a chat (no-op if none).
+func (c *Client) CancelRun(ctx context.Context, id string) error {
+	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id+"/stream")
+}
+
+// getJSON GETs path and decodes a JSON response into out; 404 → ErrNotFound.
+func (c *Client) getJSON(ctx context.Context, path string, out any) error {
+	status, body, err := c.Request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if status >= 400 {
+		return fmt.Errorf("GET %s: HTTP %d", path, status)
+	}
+	return json.Unmarshal(body, out)
+}
+
+// send issues a bodiless request and discards the response; 404 → ErrNotFound.
+func (c *Client) send(ctx context.Context, method, path string) error {
+	status, _, err := c.Request(ctx, method, path, nil)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if status >= 400 {
+		return fmt.Errorf("%s %s: HTTP %d", method, path, status)
+	}
+	return nil
 }
 
 // CreateChat opens a new chat and returns its id. systemPrompt may be "".
