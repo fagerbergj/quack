@@ -33,8 +33,11 @@ type turn struct {
 
 type submitMsg struct{ text string }
 type streamStartedMsg struct{ sub <-chan cli.SSEEvent }
-type sseMsg struct{ ev cli.SSEEvent }
-type streamClosedMsg struct{}
+type sseMsg struct {
+	gen int // stream generation; stale events (gen != current) are dropped
+	ev  cli.SSEEvent
+}
+type streamClosedMsg struct{ gen int }
 type newChatMsg struct{ id string }
 type cmdErrMsg struct{ err error }
 
@@ -74,6 +77,7 @@ type Model struct {
 	initial     string
 	pendingQuit bool // esc-once when idle; esc again quits
 	tickN       int  // spinner ticks, drives pun rotation
+	streamGen   int  // bumped per run; the pump tags events so a stale stream's tail is ignored
 
 	sub       <-chan cli.SSEEvent
 	cancelRun context.CancelFunc
@@ -92,7 +96,7 @@ type Model struct {
 // header (e.g. "local (in-process)" or a URL).
 func New(ctx context.Context, c *cli.Client, chatID, title string, history []turn, initialPrompt, serverLabel string) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Ask the duck…  (enter to send · alt+enter newline · /help)"
+	ta.Placeholder = "Ask the duck…  (enter sends · \\ then enter for a newline · /help)"
 	ta.Prompt = promptStyle.Render("│ ")
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
@@ -149,13 +153,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamStartedMsg:
 		m.sub = msg.sub
-		return m, waitForEvent(m.sub)
+		return m, waitForEvent(m.sub, m.streamGen)
 
 	case sseMsg:
+		if msg.gen != m.streamGen {
+			return m, nil // stale tail of a previous run; drop it
+		}
 		return m.handleEvent(msg.ev)
 
 	case streamClosedMsg:
-		if m.streaming {
+		if msg.gen != m.streamGen {
+			return m, nil
+		}
+		if m.streaming { // closed without a `done` → cancel or connection loss
 			if m.runErr == "" && !m.cancelling {
 				m.runErr = "connection lost — is the server still running?"
 			}
@@ -222,6 +232,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.streaming {
 			m.status = "still thinking… ctrl+c or esc to stop"
+			return m, nil
+		}
+		// Backslash-continuation: a trailing "\" + enter inserts a newline. Works in
+		// every terminal (alt+enter/shift+enter aren't reliably delivered).
+		if val := m.input.Value(); strings.HasSuffix(val, "\\") {
+			m.input.SetValue(val[:len(val)-1] + "\n")
+			m.input.CursorEnd()
+			m.relayout()
 			return m, nil
 		}
 		text := strings.TrimSpace(m.input.Value())
@@ -336,6 +354,7 @@ func (m Model) startRun(text string) (tea.Model, tea.Cmd) {
 	m.cancelRun = cancel
 	m.streaming = true
 	m.cancelling = false
+	m.streamGen++ // new generation; the previous stream's late tail is now ignored
 	m.pending = text
 	m.runErr = ""
 	m.live.Reset()
@@ -363,20 +382,28 @@ func (m Model) cancelActive() (tea.Model, tea.Cmd) {
 func (m Model) handleEvent(ev cli.SSEEvent) (tea.Model, tea.Cmd) {
 	switch ev.Name {
 	case stream.EventDone:
-		m.finishRun()
+		// `done` ends the run, but the server may still send late events after it
+		// (the async chat_title is drained after the orchestrator's done). So
+		// finalize once, then KEEP reading until the stream actually closes — this
+		// is what lets the title land, and mirrors the React client (reads to EOF).
+		if m.streaming {
+			m.finishRun()
+		}
 		m.refreshViewport()
-		return m, nil
+		return m, waitForEvent(m.sub, m.streamGen)
 	case stream.EventError:
-		var d stream.ErrorData
-		_ = json.Unmarshal(ev.Data, &d)
-		m.runErr = d.Error
-		m.finishRun()
+		if m.streaming {
+			var d stream.ErrorData
+			_ = json.Unmarshal(ev.Data, &d)
+			m.runErr = d.Error
+			m.finishRun()
+		}
 		m.refreshViewport()
-		return m, nil
+		return m, waitForEvent(m.sub, m.streamGen)
 	default:
 		m.applyEvent(ev)
 		m.refreshViewport()
-		return m, waitForEvent(m.sub)
+		return m, waitForEvent(m.sub, m.streamGen)
 	}
 }
 
@@ -404,6 +431,9 @@ func (m *Model) applyEvent(ev cli.SSEEvent) {
 		var d stream.NodeDoneData
 		_ = json.Unmarshal(ev.Data, &d)
 		m.dagSet(d.NodeID, statusDone)
+		if m.dag != nil {
+			m.dag.setOutput(d.NodeID, d.Output) // for deliver-mode terminal answer
+		}
 	case stream.EventNodeFailed:
 		var d stream.NodeFailedData
 		_ = json.Unmarshal(ev.Data, &d)
@@ -425,7 +455,14 @@ func (m *Model) dagSet(id string, s nodeStatus) {
 }
 
 func (m *Model) finishRun() {
-	t := turn{user: m.pending, answer: strings.TrimSpace(m.live.String()), dag: m.dag, err: m.runErr, cancelled: m.cancelling}
+	answer := strings.TrimSpace(m.live.String())
+	// Deliver mode (execute end_turn=true) streams the answer as node tokens, not
+	// top-level ones, so the live buffer is empty — fall back to the terminal
+	// node's output (what the server delivered + persisted).
+	if answer == "" && m.dag != nil {
+		answer = strings.TrimSpace(m.dag.terminalOutput())
+	}
+	t := turn{user: m.pending, answer: answer, dag: m.dag, err: m.runErr, cancelled: m.cancelling}
 	m.turns = append(m.turns, t)
 	m.live.Reset()
 	m.dag = nil
@@ -433,18 +470,20 @@ func (m *Model) finishRun() {
 	m.streaming = false
 	m.cancelling = false
 	m.cancelRun = nil
-	m.sub = nil
+	// Keep m.sub: the pump keeps draining until the stream closes, so a late
+	// chat_title (sent after the orchestrator's done) still lands. The streamGen
+	// guard drops the tail if a new run has started meanwhile.
 	m.status = ""
 	m.runErr = ""
 }
 
-func waitForEvent(sub <-chan cli.SSEEvent) tea.Cmd {
+func waitForEvent(sub <-chan cli.SSEEvent, gen int) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-sub
 		if !ok {
-			return streamClosedMsg{}
+			return streamClosedMsg{gen: gen}
 		}
-		return sseMsg{ev}
+		return sseMsg{gen: gen, ev: ev}
 	}
 }
 
@@ -454,11 +493,12 @@ func (m *Model) relayout() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	// Full width; height grows with content — LineCount counts wrapped lines too,
-	// so a long single line (or a paste) expands the box, capped so it can't eat
-	// the transcript (beyond the cap the textarea scrolls internally).
+	// Full width; height grows with content. Stock textarea.LineCount() counts only
+	// logical lines (newlines), so a long wrapping line wouldn't expand the box —
+	// inputLines counts WRAPPED rows. Capped so it can't eat the transcript;
+	// beyond the cap the textarea scrolls internally.
 	m.input.SetWidth(m.width)
-	ih := m.input.LineCount()
+	ih := m.inputLines()
 	if ih < 1 {
 		ih = 1
 	}
@@ -493,6 +533,29 @@ func (m *Model) relayout() {
 
 const inputMaxLines = 12
 
+// inputLines counts the visual rows the input needs — logical lines plus soft
+// wrapping at the inner width — so a long line or a paste grows the box, not just
+// explicit newlines (stock textarea.LineCount only counts newlines).
+func (m *Model) inputLines() int {
+	innerW := m.width - lipgloss.Width(m.input.Prompt)
+	if innerW < 1 {
+		innerW = m.width
+	}
+	n := 0
+	for _, ln := range strings.Split(m.input.Value(), "\n") {
+		w := lipgloss.Width(ln)
+		rows := 1
+		if innerW > 0 && w > innerW {
+			rows = (w + innerW - 1) / innerW
+		}
+		n += rows
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 func (m *Model) buildMD() {
 	w := m.vp.Width
 	if w < 20 {
@@ -526,7 +589,7 @@ func (m Model) View() string {
 		header += "  " + faintStyle.Render("· "+m.serverLabel)
 	}
 
-	footer := faintStyle.Render("enter send · alt+enter newline · /help · ctrl+c quit")
+	footer := faintStyle.Render("enter send · \\+enter newline · /help · ctrl+c quit")
 	if m.streaming {
 		footer = faintStyle.Render("ctrl+c / esc stop · pgup/pgdn or wheel scroll")
 	}

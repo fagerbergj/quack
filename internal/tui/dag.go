@@ -27,6 +27,7 @@ type dagNode struct {
 	deps    []string
 	status  nodeStatus
 	failErr string
+	output  string // node's full vetted text (from node_done)
 }
 
 // dagState is the live DAG for one run: the planned nodes plus their evolving
@@ -56,6 +57,38 @@ func (d *dagState) fail(id, msg string) {
 		d.nodes[i].status = statusFailed
 		d.nodes[i].failErr = msg
 	}
+}
+
+func (d *dagState) setOutput(id, out string) {
+	if i, ok := d.index[id]; ok {
+		d.nodes[i].output = out
+	}
+}
+
+// terminalOutput returns the output of the terminal node (no successors) — the
+// run's answer in deliver mode (execute end_turn=true), where the orchestrator
+// streams no top-level tokens. Falls back to the last node that produced output.
+func (d *dagState) terminalOutput() string {
+	if d == nil {
+		return ""
+	}
+	hasSuccessor := make(map[string]bool, len(d.nodes))
+	for _, n := range d.nodes {
+		for _, dep := range n.deps {
+			hasSuccessor[dep] = true
+		}
+	}
+	for _, n := range d.nodes {
+		if !hasSuccessor[n.id] && strings.TrimSpace(n.output) != "" {
+			return n.output
+		}
+	}
+	for i := len(d.nodes) - 1; i >= 0; i-- {
+		if strings.TrimSpace(d.nodes[i].output) != "" {
+			return d.nodes[i].output
+		}
+	}
+	return ""
 }
 
 func (d *dagState) counts() (done, failed, total int) {
