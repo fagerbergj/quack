@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -105,6 +106,39 @@ func (d *dagState) addActivity(id, line string) {
 		a = a[len(a)-max:]
 	}
 	d.nodes[i].activity = a
+}
+
+// toJSON renders the DAG as indented JSON for /copy (parity with the React DAG's
+// "copy json"): each node's id, agent, task, deps, status, and output.
+func (d *dagState) toJSON() string {
+	if d == nil {
+		return ""
+	}
+	statusName := map[nodeStatus]string{
+		statusPending: "pending", statusQueued: "queued", statusRunning: "running",
+		statusDone: "done", statusFailed: "failed",
+	}
+	type jsonNode struct {
+		ID      string   `json:"id"`
+		Agent   string   `json:"agent"`
+		Task    string   `json:"task"`
+		Deps    []string `json:"depends_on"`
+		Status  string   `json:"status"`
+		Output  string   `json:"output,omitempty"`
+		FailErr string   `json:"error,omitempty"`
+	}
+	out := make([]jsonNode, 0, len(d.nodes))
+	for _, n := range d.nodes {
+		out = append(out, jsonNode{
+			ID: n.id, Agent: n.agent, Task: n.task, Deps: n.deps,
+			Status: statusName[n.status], Output: n.output, FailErr: n.failErr,
+		})
+	}
+	b, err := json.MarshalIndent(map[string]any{"nodes": out}, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // node returns a node by id (nil if absent) — for the inspect overlay.

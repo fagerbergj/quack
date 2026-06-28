@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -42,7 +44,7 @@ type newChatMsg struct{ id string }
 type cmdErrMsg struct{ err error }
 
 // slashCommands drive both autocomplete and the dispatcher.
-var slashCommands = []string{"/help", "/new", "/session", "/ui", "/inspect ", "/steer ", "/stop", "/node stop ", "/quit"}
+var slashCommands = []string{"/help", "/new", "/session", "/ui", "/inspect ", "/steer ", "/copy", "/stop", "/node stop ", "/quit"}
 
 // duckPuns rotate as the status line while the duck thinks — friendlier than a
 // flat "thinking…".
@@ -88,6 +90,11 @@ type Model struct {
 	vp    viewport.Model
 	spin  spinner.Model
 	md    *glamour.TermRenderer
+	// mdCache memoises rendered markdown per answer text. Finished turns never
+	// change, so their (expensive) glamour render is reused instead of re-run on
+	// every streaming token / spinner tick — the main transcript-render cost.
+	// Cleared on width change (buildMD), since the render is width-specific.
+	mdCache map[string]string
 
 	width, height int
 	ready         bool
@@ -113,6 +120,7 @@ func New(ctx context.Context, c *cli.Client, chatID, title string, history []tur
 	return Model{
 		ctx: ctx, client: c, chatID: chatID, title: title, serverLabel: serverLabel,
 		turns: history, initial: initialPrompt, input: ta, spin: sp,
+		mdCache: map[string]string{},
 	}
 }
 
@@ -391,6 +399,25 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 			return m.cancelActive()
 		}
 		return m, func() tea.Msg { return submitMsg{rest} }
+	case "/copy", "/yank":
+		// /copy        → copy the last Duck answer
+		// /copy dag    → copy the current/last DAG as JSON (parity with the web "copy json")
+		if len(fields) >= 2 && fields[1] == "dag" {
+			d := m.currentDAG()
+			if d == nil {
+				m.status = "no DAG to copy"
+				return m, nil
+			}
+			m.status = "copied DAG json to clipboard"
+			return m, copyToClipboard(d.toJSON())
+		}
+		ans := m.lastAnswer()
+		if strings.TrimSpace(ans) == "" {
+			m.status = "nothing to copy yet"
+			return m, nil
+		}
+		m.status = "copied answer to clipboard"
+		return m, copyToClipboard(ans)
 	case "/stop":
 		if m.streaming {
 			return m.cancelActive()
@@ -715,6 +742,7 @@ func (m *Model) buildMD() {
 	}
 	if r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(w-1)); err == nil {
 		m.md = r
+		m.mdCache = map[string]string{} // width changed → cached renders are stale
 	}
 }
 
@@ -835,11 +863,18 @@ func (m Model) markdown(s string) string {
 	if m.md == nil || strings.TrimSpace(s) == "" {
 		return s
 	}
+	if v, ok := m.mdCache[s]; ok {
+		return v
+	}
 	out, err := m.md.Render(s)
 	if err != nil {
 		return s
 	}
-	return strings.TrimRight(out, "\n")
+	res := strings.TrimRight(out, "\n")
+	if m.mdCache != nil {
+		m.mdCache[s] = res
+	}
+	return res
 }
 
 func (m Model) sessionText() string {
@@ -909,6 +944,36 @@ func (m Model) currentDAG() *dagState {
 	return nil
 }
 
+// lastAnswer returns the most recent Duck answer: the live answer while
+// streaming (or the terminal node's output in deliver mode), else the last turn.
+func (m Model) lastAnswer() string {
+	if m.streaming {
+		if a := strings.TrimSpace(m.live.String()); a != "" {
+			return a
+		}
+		if m.dag != nil {
+			return strings.TrimSpace(m.dag.terminalOutput())
+		}
+		return ""
+	}
+	if n := len(m.turns); n > 0 {
+		return m.turns[n-1].answer
+	}
+	return ""
+}
+
+// copyToClipboard copies text to the user's clipboard via an OSC 52 escape — it
+// reaches the terminal the TUI is attached to (so it works over SSH, even when
+// the duck server is remote) and needs no external clipboard tool. The escape
+// emits no visible glyphs; the next render repaints cleanly.
+func copyToClipboard(text string) tea.Cmd {
+	return func() tea.Msg {
+		enc := base64.StdEncoding.EncodeToString([]byte(text))
+		fmt.Fprintf(os.Stdout, "\x1b]52;c;%s\a", enc)
+		return nil
+	}
+}
+
 // nodeDetailText renders a node's full activity feed (thinking, tool calls,
 // results) — the drill-in, and the basis for steering.
 func (m Model) nodeDetailText() string {
@@ -952,6 +1017,7 @@ func helpText() string {
 		"  " + promptStyle.Render("ctrl+o") + "           inspect nodes (↑/↓ to move between them)",
 		"  " + promptStyle.Render("/steer <text>") + "    stop and redirect the whole run with new guidance",
 		"  " + promptStyle.Render("/steer <id> <text>") + " interrupt one node and re-run it with guidance (keeps its work)",
+		"  " + promptStyle.Render("/copy") + "            copy the last answer (/copy dag for the DAG json)",
 		"  " + promptStyle.Render("/stop") + "            cancel the running turn",
 		"  " + promptStyle.Render("/node stop <id>") + "  stop one running node",
 		"  " + promptStyle.Render("/quit") + "            exit",

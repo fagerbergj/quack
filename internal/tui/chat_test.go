@@ -497,3 +497,52 @@ func TestUpdate_NewChatResets(t *testing.T) {
 		t.Errorf("new chat must switch id and clear turns, got id=%s turns=%d", gm.chatID, len(gm.turns))
 	}
 }
+
+func TestCopyLastAnswer(t *testing.T) {
+	m := newTestModel()
+	m.turns = []turn{{user: "q", answer: "the answer"}}
+	got, cmd := m.slash("/copy")
+	if cmd == nil {
+		t.Fatal("/copy should return a clipboard cmd")
+	}
+	if !strings.Contains(got.(Model).status, "copied") {
+		t.Errorf("status should confirm the copy, got %q", got.(Model).status)
+	}
+}
+
+func TestCopyDagJSON(t *testing.T) {
+	m := newTestModel()
+	m.dag = sampleDAG()
+	got, cmd := m.slash("/copy dag")
+	if cmd == nil {
+		t.Fatal("/copy dag should return a clipboard cmd")
+	}
+	if !strings.Contains(got.(Model).status, "DAG") {
+		t.Errorf("status should mention the DAG, got %q", got.(Model).status)
+	}
+	// The DAG JSON should be well-formed and name a node.
+	js := m.dag.toJSON()
+	if !strings.Contains(js, `"id": "a"`) || !strings.Contains(js, `"status"`) {
+		t.Errorf("dag json missing expected fields: %s", js)
+	}
+}
+
+func TestCopyNothingToCopy(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.slash("/copy")
+	if cmd != nil {
+		t.Error("/copy with no answer should be a no-op")
+	}
+}
+
+func TestMarkdownCacheReused(t *testing.T) {
+	m := sized(newTestModel())
+	first := m.markdown("# Hello\n\nworld")
+	if _, ok := m.mdCache["# Hello\n\nworld"]; !ok {
+		t.Fatal("markdown render should be cached")
+	}
+	second := m.markdown("# Hello\n\nworld")
+	if first != second {
+		t.Error("cached markdown should match the first render")
+	}
+}
