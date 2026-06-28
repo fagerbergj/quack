@@ -42,7 +42,7 @@ type newChatMsg struct{ id string }
 type cmdErrMsg struct{ err error }
 
 // slashCommands drive both autocomplete and the dispatcher.
-var slashCommands = []string{"/help", "/new", "/session", "/ui", "/stop", "/node stop ", "/quit"}
+var slashCommands = []string{"/help", "/new", "/session", "/ui", "/inspect ", "/stop", "/node stop ", "/quit"}
 
 // duckPuns rotate as the status line while the duck thinks — friendlier than a
 // flat "thinking…".
@@ -73,7 +73,8 @@ type Model struct {
 	dag         *dagState
 	runErr      string
 	status      string
-	overlay     string // "" | "help" | "session"
+	overlay     string // "" | "help" | "session" | "node"
+	inspectNode string // node id shown when overlay == "node"
 	initial     string
 	pendingQuit bool // esc-once when idle; esc again quits
 	tickN       int  // spinner ticks, drives pun rotation
@@ -331,6 +332,18 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 		}
 		m.status = "nothing running"
 		return m, nil
+	case "/inspect":
+		if len(fields) < 2 {
+			m.status = "usage: /inspect <node-id>"
+			return m, nil
+		}
+		if d := m.currentDAG(); d == nil || d.node(fields[1]) == nil {
+			m.status = "no node " + fields[1] + " in this run"
+			return m, nil
+		}
+		m.overlay, m.inspectNode = "node", fields[1]
+		m.refreshViewport()
+		return m, nil
 	case "/node":
 		if len(fields) >= 3 && fields[1] == "stop" {
 			nodeID := fields[2]
@@ -445,7 +458,61 @@ func (m *Model) applyEvent(ev cli.SSEEvent) {
 		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID == "" {
 			m.live.WriteString(d.Text)
 		}
+	case stream.EventAgentThinking:
+		var d stream.AgentThinkingData
+		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" && strings.TrimSpace(d.Text) != "" {
+			m.dagActivity(d.NodeID, "💭 "+firstLine(d.Text))
+		}
+	case stream.EventAgentToolCall:
+		var d stream.AgentToolCallData
+		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
+			m.dagActivity(d.NodeID, "🔧 "+d.Name+"("+argsSummary(d.Args)+")")
+		}
+	case stream.EventAgentToolResult:
+		var d stream.AgentToolResultData
+		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
+			m.dagActivity(d.NodeID, "↳ "+resultSummary(d.Result))
+		}
 	}
+}
+
+func (m *Model) dagActivity(id, line string) {
+	if m.dag != nil {
+		m.dag.addActivity(id, line)
+	}
+}
+
+// argsSummary renders tool args as a short one-liner for the activity feed.
+func argsSummary(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return ""
+	}
+	return truncOneLine(string(b), 60)
+}
+
+func resultSummary(v any) string {
+	switch t := v.(type) {
+	case string:
+		return truncOneLine(t, 80)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return truncOneLine(string(b), 80)
+	}
+}
+
+func truncOneLine(s string, n int) string {
+	s = strings.TrimSpace(firstLine(s))
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 func (m *Model) dagSet(id string, s nodeStatus) {
@@ -622,6 +689,8 @@ func (m Model) transcript() string {
 		return helpText()
 	case "session":
 		return m.sessionText()
+	case "node":
+		return m.nodeDetailText()
 	}
 	width := m.vp.Width
 	var b strings.Builder
@@ -710,6 +779,51 @@ func (m Model) sessionText() string {
 	return strings.Join(lines, "\n")
 }
 
+// currentDAG returns the DAG to inspect: the in-flight run's, else the most
+// recent finished turn's.
+func (m Model) currentDAG() *dagState {
+	if m.dag != nil {
+		return m.dag
+	}
+	for i := len(m.turns) - 1; i >= 0; i-- {
+		if m.turns[i].dag != nil {
+			return m.turns[i].dag
+		}
+	}
+	return nil
+}
+
+// nodeDetailText renders a node's full activity feed (thinking, tool calls,
+// results) — the drill-in, and the basis for steering.
+func (m Model) nodeDetailText() string {
+	d := m.currentDAG()
+	if d == nil {
+		return mutedStyle.Render("no run to inspect")
+	}
+	n := d.node(m.inspectNode)
+	if n == nil {
+		return mutedStyle.Render("node " + m.inspectNode + " not found")
+	}
+	label := n.agent
+	if label == "" {
+		label = n.id
+	}
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("Node "+n.id) + "  " + mutedStyle.Render(label) + "\n")
+	if task := strings.TrimSpace(n.task); task != "" {
+		b.WriteString(mutedStyle.Render(task) + "\n")
+	}
+	b.WriteString("\n")
+	if len(n.activity) == 0 {
+		b.WriteString(mutedStyle.Render("(no activity yet)") + "\n")
+	}
+	for _, a := range n.activity {
+		b.WriteString(a + "\n")
+	}
+	b.WriteString("\n" + mutedStyle.Render("esc to close"))
+	return b.String()
+}
+
 func helpText() string {
 	lines := []string{
 		headerStyle.Render("Commands"),
@@ -718,6 +832,7 @@ func helpText() string {
 		"  " + promptStyle.Render("/session") + "         show session details",
 		"  " + promptStyle.Render("/ui") + "              open the web UI in your browser",
 		"  " + promptStyle.Render("/new") + "             start a new chat",
+		"  " + promptStyle.Render("/inspect <id>") + "    drill into a node's tool calls + thinking",
 		"  " + promptStyle.Render("/stop") + "            cancel the running turn",
 		"  " + promptStyle.Render("/node stop <id>") + "  stop one running node",
 		"  " + promptStyle.Render("/quit") + "            exit",

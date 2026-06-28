@@ -67,6 +67,21 @@ func TestDAG_RenderHasIconsAndLabels(t *testing.T) {
 	}
 }
 
+func TestDAG_ActivityAndRenderTail(t *testing.T) {
+	d := sampleDAG()
+	d.set("a", statusRunning)
+	d.addActivity("a", "🔧 web_search(q)")
+	d.addActivity("ghost", "ignored") // unknown node → no-op
+	n := d.node("a")
+	if n == nil || len(n.activity) != 1 {
+		t.Fatalf("addActivity should record on the node, got %+v", n)
+	}
+	out := d.render("•", 200)
+	if !strings.Contains(out, "web_search") {
+		t.Errorf("a running node's activity tail should render:\n%s", out)
+	}
+}
+
 func TestDAG_RenderUnknownNodeNoop(t *testing.T) {
 	d := sampleDAG()
 	d.set("ghost", statusDone) // not in the plan → ignored, no panic
