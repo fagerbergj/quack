@@ -199,7 +199,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k != "esc" {
 		m.pendingQuit = false
 	}
+	// In the node-inspect overlay, up/down move between nodes.
+	if m.overlay == "node" {
+		switch k {
+		case "up", "k":
+			m.inspectMove(-1)
+			m.refreshViewport()
+			return m, nil
+		case "down", "j":
+			m.inspectMove(1)
+			m.refreshViewport()
+			return m, nil
+		}
+	}
 	switch k {
+	case "ctrl+o":
+		d := m.currentDAG()
+		if d == nil || len(d.nodes) == 0 {
+			m.status = "no run to inspect"
+			return m, nil
+		}
+		m.overlay = "node"
+		m.inspectNode = defaultInspectNode(d)
+		m.refreshViewport()
+		return m, nil
 	case "ctrl+c":
 		if m.streaming {
 			return m.cancelActive()
@@ -779,6 +802,37 @@ func (m Model) sessionText() string {
 	return strings.Join(lines, "\n")
 }
 
+// inspectMove changes the inspected node to the prev/next in plan order.
+func (m *Model) inspectMove(delta int) {
+	d := m.currentDAG()
+	if d == nil {
+		return
+	}
+	i, ok := d.index[m.inspectNode]
+	if !ok {
+		i = 0
+	} else {
+		i += delta
+	}
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(d.nodes) {
+		i = len(d.nodes) - 1
+	}
+	m.inspectNode = d.nodes[i].id
+}
+
+// defaultInspectNode picks the node to open: the running one, else the first.
+func defaultInspectNode(d *dagState) string {
+	for _, n := range d.nodes {
+		if n.status == statusRunning {
+			return n.id
+		}
+	}
+	return d.nodes[0].id
+}
+
 // currentDAG returns the DAG to inspect: the in-flight run's, else the most
 // recent finished turn's.
 func (m Model) currentDAG() *dagState {
@@ -820,7 +874,7 @@ func (m Model) nodeDetailText() string {
 	for _, a := range n.activity {
 		b.WriteString(a + "\n")
 	}
-	b.WriteString("\n" + mutedStyle.Render("esc to close"))
+	b.WriteString("\n" + mutedStyle.Render("↑/↓ other nodes · esc to close"))
 	return b.String()
 }
 
@@ -833,6 +887,7 @@ func helpText() string {
 		"  " + promptStyle.Render("/ui") + "              open the web UI in your browser",
 		"  " + promptStyle.Render("/new") + "             start a new chat",
 		"  " + promptStyle.Render("/inspect <id>") + "    drill into a node's tool calls + thinking",
+		"  " + promptStyle.Render("ctrl+o") + "           inspect nodes (↑/↓ to move between them)",
 		"  " + promptStyle.Render("/stop") + "            cancel the running turn",
 		"  " + promptStyle.Render("/node stop <id>") + "  stop one running node",
 		"  " + promptStyle.Render("/quit") + "            exit",
