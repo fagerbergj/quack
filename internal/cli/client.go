@@ -159,6 +159,33 @@ type SSEEvent struct {
 	Data json.RawMessage
 }
 
+// Stream posts content to a chat and returns a channel of SSE events for the TUI
+// pump. The channel closes when the run ends (done) or ctx is cancelled. A
+// transport/HTTP error is delivered as a final SSEEvent{Name:"error"} so the UI
+// renders it uniformly rather than the caller having to handle two error paths.
+func (c *Client) Stream(ctx context.Context, chatID, content string) <-chan SSEEvent {
+	ch := make(chan SSEEvent, 64)
+	go func() {
+		defer close(ch)
+		err := c.SendMessage(ctx, chatID, content, func(ev SSEEvent) error {
+			select {
+			case ch <- ev:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		if err != nil && ctx.Err() == nil {
+			data, _ := json.Marshal(map[string]string{"error": err.Error()})
+			select {
+			case ch <- SSEEvent{Name: "error", Data: data}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	return ch
+}
+
 // SendMessage posts content to a chat and calls onEvent for each SSE event until
 // the stream ends. onEvent returning an error stops reading early.
 func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEvent func(SSEEvent) error) error {
