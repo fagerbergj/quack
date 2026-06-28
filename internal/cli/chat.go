@@ -57,7 +57,7 @@ func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON
 	fmt.Fprintf(out, "# %s\n\n", title)
 	for _, t := range detail.Turns {
 		fmt.Fprintf(out, "## You\n\n%s\n\n", strings.TrimSpace(t.Input.Content))
-		if a := strings.TrimSpace(assistantText(t.Output)); a != "" {
+		if a := strings.TrimSpace(AssistantText(t.Output)); a != "" {
 			fmt.Fprintf(out, "## Duck\n\n%s\n\n", a)
 		}
 	}
@@ -109,9 +109,9 @@ func chatTitle(t *string) string {
 	return "(untitled)"
 }
 
-// assistantText concatenates the text of every message output item in a turn,
-// skipping DAG and activity items.
-func assistantText(items []schema.OutputItem) string {
+// AssistantText concatenates the text of every message output item in a turn,
+// skipping DAG and activity items. Shared by export and the TUI's resume loader.
+func AssistantText(items []schema.OutputItem) string {
 	var sb strings.Builder
 	for _, it := range items {
 		m, err := it.AsMessageOutputItem()

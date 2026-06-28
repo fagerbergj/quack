@@ -20,6 +20,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/serve"
+	"github.com/fagerbergj/quack/internal/tui"
 	"github.com/fagerbergj/quack/internal/wizard"
 )
 
@@ -50,7 +51,9 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true, // a failing RunE is an error, not a usage mistake
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if printPrompt == "" {
-				return notWired("interactive TUI")
+				return withClient(cmd, func(ctx context.Context, c *cli.Client) error {
+					return tui.Run(ctx, c, "", "")
+				})
 			}
 			server, _ := cmd.Flags().GetString("server")
 			target, stop, err := resolveTarget(cmd.Context(), server)
@@ -100,8 +103,8 @@ func newChatCmd() *cobra.Command {
 	)
 
 	c.AddCommand(
-		stub("new [prompt]", "Start a new chat", "chat new"),
-		stub("resume [id]", "Resume an existing chat", "chat resume"),
+		newChatNewCmd(),
+		newChatResumeCmd(),
 		newChatListCmd(),
 		newChatExportCmd(),
 		newChatStopCmd(),
@@ -109,6 +112,62 @@ func newChatCmd() *cobra.Command {
 		node,
 	)
 	return c
+}
+
+// withClient resolves the target (remote or in-process duck), builds a client,
+// runs fn, and tears the in-process server down afterward. Used by the
+// interactive (TUI) commands, which need a live client for the whole session.
+func withClient(cmd *cobra.Command, fn func(ctx context.Context, c *cli.Client) error) error {
+	server, _ := cmd.Flags().GetString("server")
+	target, stop, err := resolveTarget(cmd.Context(), server)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	c, err := cli.NewClient(target)
+	if err != nil {
+		return err
+	}
+	return fn(cmd.Context(), c)
+}
+
+func newChatNewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "new [prompt]",
+		Short: "Start a new interactive chat (optionally with a first prompt)",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, func(ctx context.Context, c *cli.Client) error {
+				return tui.Run(ctx, c, "", strings.Join(args, " "))
+			})
+		},
+	}
+}
+
+func newChatResumeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume [id]",
+		Short: "Resume a chat in the TUI (most recent if no id given)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, func(ctx context.Context, c *cli.Client) error {
+				id := ""
+				if len(args) == 1 {
+					id = args[0]
+				} else {
+					chats, err := c.ListChats(ctx)
+					if err != nil {
+						return err
+					}
+					if len(chats) == 0 {
+						return fmt.Errorf("no chats yet — start one with `quack chat new`")
+					}
+					id = chats[0].Id // server orders most-recent first
+				}
+				return tui.Run(ctx, c, id, "")
+			})
+		},
+	}
 }
 
 // withTarget runs fn against a resolved server (remote or in-process duck),
