@@ -96,3 +96,54 @@ describe('ChatStore.submit — loading indicator gap (regression)', () => {
     await p
   })
 })
+
+describe('ChatStore — mid-node steering', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let store: ChatStore
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    store = new ChatStore()
+    store.seed('c', [])
+  })
+
+  it('node_steered re-queues the node and records the guidance', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher"}',
+      '',
+      'event: node_steered',
+      'data: {"node_id":"a","guidance":"focus on cost"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const ns = store.get('c').live?.dag?.nodeStates['a']
+    expect(ns?.status).toBe('queued')
+    expect(ns?.steers).toEqual(['focus on cost'])
+  })
+
+  it('steerNode POSTs guidance; cancelNode DELETEs the node', () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    store.steerNode('c', 'a', '  do X  ')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a/steer',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ guidance: 'do X' }) }),
+    )
+    store.cancelNode('c', 'a')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+
+  it('steerNode ignores empty guidance', () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    store.steerNode('c', 'a', '   ')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

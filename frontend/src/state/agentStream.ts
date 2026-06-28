@@ -92,13 +92,14 @@ export interface AgentStreamHandlers {
   onNodeStart?: (nodeId: string, agent: string) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
+  onNodeSteered?: (nodeId: string, guidance: string) => void
 }
 
 // Wire-level event names. Mirrors internal/stream/event.go.
 export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done',
-  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed',
+  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_steered',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
 
@@ -244,6 +245,13 @@ export function dispatchAgentEvent(
       const p = parsed as { node_id?: string; error?: string }
       if (typeof p.node_id === 'string') {
         handlers.onNodeFailed?.(p.node_id, typeof p.error === 'string' ? p.error : '')
+      }
+      return true
+    }
+    case 'node_steered': {
+      const p = parsed as { node_id?: string; guidance?: string }
+      if (typeof p.node_id === 'string') {
+        handlers.onNodeSteered?.(p.node_id, typeof p.guidance === 'string' ? p.guidance : '')
       }
       return true
     }

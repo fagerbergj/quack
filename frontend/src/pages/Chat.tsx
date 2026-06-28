@@ -153,6 +153,14 @@ export default function Chat() {
     if (activeChatId) store.stop(activeChatId)
   }, [activeChatId, store])
 
+  const handleStopNode = useCallback((nodeId: string) => {
+    if (activeChatId) store.cancelNode(activeChatId, nodeId)
+  }, [activeChatId, store])
+
+  const handleSteerNode = useCallback((nodeId: string, guidance: string) => {
+    if (activeChatId) store.steerNode(activeChatId, nodeId, guidance)
+  }, [activeChatId, store])
+
   const submitMessage = useCallback((text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
     if (!activeChatId) return
     setLiveAttachmentPreviews(previews)
@@ -366,7 +374,7 @@ export default function Chat() {
                           ) : (
                             <div className="space-y-3">
                               {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                              <DagView dag={liveDag} />
+                              <DagView dag={liveDag} onStopNode={handleStopNode} onSteerNode={handleSteerNode} />
                             </div>
                           )}
                           {liveText && (

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
@@ -168,6 +169,62 @@ function RevisionCard({ run, running }: { run: AgentRun; running: boolean }) {
   )
 }
 
+// NodeControls is the live per-node control row (stop / steer), shown only while
+// a node is running or queued and only on a live run (callbacks present). Steering
+// reveals an inline input; the guidance interrupts the node and re-runs it with
+// its prior work intact.
+function NodeControls({ nodeId, onStop, onSteer }: {
+  nodeId: string
+  onStop?: (nodeId: string) => void
+  onSteer?: (nodeId: string, guidance: string) => void
+}) {
+  const [steering, setSteering] = useState(false)
+  const [text, setText] = useState('')
+  if (!onStop && !onSteer) return null
+  const send = () => {
+    const g = text.trim()
+    if (!g) return
+    onSteer?.(nodeId, g)
+    setText('')
+    setSteering(false)
+  }
+  if (steering) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-amber-50/50 dark:bg-amber-900/10">
+        <input
+          autoFocus
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); send() }
+            if (e.key === 'Escape') { setSteering(false); setText('') }
+          }}
+          placeholder="Steer this node — new guidance (keeps its work)…"
+          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-400"
+        />
+        <button onClick={send} className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline">send</button>
+        <button onClick={() => { setSteering(false); setText('') }} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center gap-3 px-4 py-1.5 border-b border-gray-100 dark:border-gray-700">
+      {onSteer && (
+        <button onClick={() => setSteering(true)} title="Interrupt and re-run this node with new guidance (keeps its work)"
+          className="text-[10px] font-medium text-amber-600 dark:text-amber-400 hover:underline">
+          ↻ steer
+        </button>
+      )}
+      {onStop && (
+        <button onClick={() => onStop(nodeId)} title="Stop this node (the rest of the run continues)"
+          className="text-[10px] font-medium text-red-500 dark:text-red-400 hover:underline">
+          ✕ stop
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── DagNode ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -176,10 +233,13 @@ interface Props {
   runs: AgentRun[]
   answer: string
   isFinal: boolean
+  onStop?: (nodeId: string) => void
+  onSteer?: (nodeId: string, guidance: string) => void
 }
 
-export function DagNode({ node, state, runs, answer, isFinal }: Props) {
+export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer }: Props) {
   const running = state.status === 'running'
+  const controllable = running || state.status === 'queued'
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
 
@@ -195,6 +255,14 @@ export function DagNode({ node, state, runs, answer, isFinal }: Props) {
           {agentLabel(node.agent)}
         </span>
         <StatusBadge status={state.status} />
+        {state.steers && state.steers.length > 0 && (
+          <span
+            className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
+            title={`Steered:\n${state.steers.join('\n')}`}
+          >
+            ↻ steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
+          </span>
+        )}
         {running && runs.length === 0 && <Spinner />}
         <div className="ml-auto flex items-center gap-2">
           {state.model && (
@@ -233,6 +301,11 @@ export function DagNode({ node, state, runs, answer, isFinal }: Props) {
       <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
         {node.task}
       </div>
+
+      {/* Live per-node controls (stop / steer) — only while running/queued */}
+      {controllable && (onStop || onSteer) && (
+        <NodeControls nodeId={node.id} onStop={onStop} onSteer={onSteer} />
+      )}
 
       {/* Per-run stage cards */}
       {runs.map((run, i) => {
