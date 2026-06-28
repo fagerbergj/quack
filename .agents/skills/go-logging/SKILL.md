@@ -5,7 +5,7 @@ description: |
   log-or-return rule (log once at the handling boundary, never log-and-return), the Debug/Info/Warn/Error
   decision matrix (reserve Error for the exceptional), what/when to log by layer, native attrs over
   fmt.Sprintf, secret/PII redaction, and quack's own conventions: one slog default handler set in main
-  (LOG_LEVEL/LOG_FORMAT env, text default, stdout), a `component` attribute per subsystem, a per-instance
+  (QUACK_LOG_LEVEL/QUACK_LOG_FORMAT env, text default, stdout), a `component` attribute per subsystem, a per-instance
   `*slog.Logger` field for objects with stable identity (e.g. the vetting gate's `g.log`), hot-path
   per-round trace at Debug, and bridging third-party loggers (GORM) through slog.
   Use when adding, reviewing, or converting logging in any Go file under internal/ or cmd/ — choosing a
@@ -72,13 +72,13 @@ at?* If it's an optimization, a cosmetic feature, or a graceful fallback, it's `
 - **Do not** log every iteration of a tight loop at Info, giant payloads, nil/empty values, or every
   DB query. Slow queries only, at Warn (the GORM bridge already does this).
 - Hot paths (the vetting gate's per-round loop, compaction per-call) log at **Debug** so default Info
-  is quiet; `LOG_LEVEL=debug` brings the firehose back.
+  is quiet; `QUACK_LOG_LEVEL=debug` brings the firehose back.
 
 ## Quack conventions (match these)
 
 - **One default handler**, set once at the top of `main()` via `setupLogging()` — never construct
-  loggers ad hoc elsewhere. Config is env: `LOG_LEVEL` (debug|info|warn|error, default info),
-  `LOG_FORMAT` (text default, `json` for aggregators). Output goes to **stdout**.
+  loggers ad hoc elsewhere. Config is env: `QUACK_LOG_LEVEL` (debug|info|warn|error, default info),
+  `QUACK_LOG_FORMAT` (text default, `json` for aggregators). Output goes to **stdout**.
 - **`component` attribute** identifies the subsystem (`vetting`, `dag`, `agent`, `execute`, `title`,
   `store`, `startup`) — it replaced the old `subsystem:` string prefix.
 - **Package-level helpers / one-off sites**: call `slog.Info(msg, "component", "dag", …)` directly.
@@ -96,7 +96,7 @@ at?* If it's an optimization, a cosmetic feature, or a graceful fallback, it's `
 - **Package-level `slog.With` captures the wrong handler.** A `var logger = slog.With(...)` runs at
   import time, *before* `main` calls `slog.SetDefault`, so it binds the throwaway default handler.
   Use inline `slog.Info(..., "component", x)` or a struct field set in a runtime constructor.
-- **Parse `LOG_LEVEL` with `slog.Level.UnmarshalText`, not a hand-rolled switch.** It's case-insensitive
+- **Parse `QUACK_LOG_LEVEL` with `slog.Level.UnmarshalText`, not a hand-rolled switch.** It's case-insensitive
   and leaves the zero value `LevelInfo` on empty/garbage input — exactly the wanted default, in two lines.
 - **`go vet` is the correctness gate for slog.** It catches odd/mismatched key-value pairs across all
   call sites. A clean `make vet` is required; treat a vet finding as a real bug.

@@ -17,22 +17,22 @@ func writeTemp(t *testing.T, content string) string {
 }
 
 func TestLoadInterpolatesEnv(t *testing.T) {
-	t.Setenv("LLM_ENDPOINT", "http://x/v1")
-	t.Setenv("LLM_API_KEY", "secret")
-	t.Setenv("DATABASE_URL", "postgres://localhost/db")
-	t.Setenv("ORCH_MODEL", "m")
+	t.Setenv("QUACK_LLM_ENDPOINT", "http://x/v1")
+	t.Setenv("QUACK_LLM_API_KEY", "secret")
+	t.Setenv("QUACK_DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("QUACK_ORCH_MODEL", "m")
 	c, err := Load(writeTemp(t, `
 providers:
   default:
     kind: openai
-    endpoint: ${LLM_ENDPOINT}
-    api_key: ${LLM_API_KEY}
+    endpoint: ${QUACK_LLM_ENDPOINT}
+    api_key: ${QUACK_LLM_API_KEY}
 stores:
-  main: { kind: postgres, url: ${DATABASE_URL} }
+  main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
 session: { store: main }
 orchestrator:
   provider: default
-  model: ${ORCH_MODEL}
+  model: ${QUACK_ORCH_MODEL}
 server:
   addr: ":9000"
 `))
@@ -123,8 +123,8 @@ orchestrator: { provider: default, model: m }
 }
 
 func TestLoadParsesAgentsAndTools(t *testing.T) {
-	t.Setenv("SEARXNG_URL", "http://searxng:8080")
-	t.Setenv("CRAWL4AI_URL", "http://crawl4ai:11235")
+	t.Setenv("QUACK_SEARXNG_URL", "http://searxng:8080")
+	t.Setenv("QUACK_CRAWL4AI_URL", "http://crawl4ai:11235")
 	c, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
@@ -139,8 +139,8 @@ agents:
     model: r-model
     tools: [web_search, web_fetch, summarize]
 tools:
-  web_search: { kind: searxng, url: ${SEARXNG_URL} }
-  web_fetch: { kind: crawl4ai, url: ${CRAWL4AI_URL} }
+  web_search: { kind: searxng, url: ${QUACK_SEARXNG_URL} }
+  web_fetch: { kind: crawl4ai, url: ${QUACK_CRAWL4AI_URL} }
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -171,12 +171,12 @@ tools:
 }
 
 func TestToolAuthAPIKey(t *testing.T) {
-	t.Setenv("EXA_API_KEY", "sk-exa-123")
+	t.Setenv("QUACK_EXA_API_KEY", "sk-exa-123")
 	c, err := Load(writeTemp(t, baseConfig+`
 tools:
   web_search:
     kind: exa
-    auth: { kind: api_key, api_key: ${EXA_API_KEY} }
+    auth: { kind: api_key, api_key: ${QUACK_EXA_API_KEY} }
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -286,7 +286,7 @@ tools:
 	if rm.Collection != "task_memory" || rm.TopK != 5 || rm.MinScore != 0.5 {
 		t.Errorf("resolved = %+v, want collection/top_k/min_score defaults", rm)
 	}
-	// Empty URL (QDRANT_URL unset) ⇒ memory self-disables.
+	// Empty URL (QUACK_QDRANT_URL unset) ⇒ memory self-disables.
 	c, err = Load(writeTemp(t, fmt.Sprintf(cfg, "")))
 	if err != nil {
 		t.Fatal(err)
@@ -328,13 +328,13 @@ orchestrator: { provider: default, model: m }
 
 // TestRealConfigLoads is a smoke test that the shipped config/quack.yaml parses
 // and validates against the current structs (guards against config drift). Env
-// is set so required URLs are non-empty; QDRANT_URL left unset exercises the
+// is set so required URLs are non-empty; QUACK_QDRANT_URL left unset exercises the
 // memory self-disable path.
 func TestRealConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
-		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"}, {"DATABASE_URL", "postgres://localhost/db"},
-		{"ORCH_MODEL", "m"}, {"RESEARCHER_MODEL", "r"}, {"MEDIA_MODEL", "md"}, {"IMAGE_MODEL", "im"},
-		{"JUDGE_MODEL", "j"}, {"EMBED_MODEL", "e"}, {"SEARXNG_URL", "http://s"}, {"CRAWL4AI_URL", "http://c"},
+		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"}, {"QUACK_MEDIA_MODEL", "md"}, {"QUACK_IMAGE_MODEL", "im"},
+		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
@@ -352,9 +352,9 @@ func TestRealConfigLoads(t *testing.T) {
 // reads to decide whether to bring up the stores stack).
 func TestManagedConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
-		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"},
-		{"ORCH_MODEL", "m"}, {"RESEARCHER_MODEL", "r"},
-		{"JUDGE_MODEL", "j"}, {"EMBED_MODEL", "e"},
+		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"},
+		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"},
 	} {
 		t.Setenv(kv[0], kv[1])
 	}

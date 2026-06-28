@@ -155,20 +155,20 @@ Components under `src/components/` have co-located Storybook stories (`.stories.
 
 ### Stores
 
-- **Postgres** (GORM, `gorm.io/driver/postgres`) — ADK sessions + events, DAG plan/node state, chat metadata. Connection via env `DATABASE_URL`.
-- **qdrant** — semantic memory / RAG vectors. Connection via env `QDRANT_URL`.
+- **Postgres** (GORM, `gorm.io/driver/postgres`) — ADK sessions + events, DAG plan/node state, chat metadata. Connection via env `QUACK_DATABASE_URL`.
+- **qdrant** — semantic memory / RAG vectors. Connection via env `QUACK_QDRANT_URL`.
 
 ### Key env vars
 
 | Var | Purpose |
 |-----|---------|
 | `LLM_BASE_URL` | OpenAI-compatible LLM endpoint (e.g. `http://jason-server:11436/v1`) |
-| `LLM_API_KEY` | API key |
-| `DATABASE_URL` | Postgres DSN |
-| `QDRANT_URL` | qdrant endpoint |
+| `QUACK_LLM_API_KEY` | API key |
+| `QUACK_DATABASE_URL` | Postgres DSN |
+| `QUACK_QDRANT_URL` | qdrant endpoint |
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` / `OIDC_JWKS_URL` | Inbound OIDC auth |
-| `LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error`. `debug` surfaces per-round hot-path trace (vetting/compaction). |
-| `LOG_FORMAT` | slog output: `text` (default, human-readable) or `json` (one object per line, for log aggregators). |
+| `QUACK_LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error`. `debug` surfaces per-round hot-path trace (vetting/compaction). |
+| `QUACK_LOG_FORMAT` | slog output: `text` (default, human-readable) or `json` (one object per line, for log aggregators). |
 
 ## Spec-Driven Development
 

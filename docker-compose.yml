@@ -1,7 +1,7 @@
 # Local full stack: the Quack app + a self-contained Postgres, plus the keyless
 # search (SearXNG) and render (crawl4ai) backends the web-researcher
 # agent's tools use. One command:
-#   cp .env.example .env   # set LLM_ENDPOINT to something reachable from the container
+#   cp .env.example .env   # set QUACK_LLM_ENDPOINT to something reachable from the container
 #   docker compose up --build
 services:
   db:
@@ -69,35 +69,35 @@ services:
       qdrant:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
+      QUACK_DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
       # Logging. debug surfaces hot-path trace (per-embed timing, vetting rounds).
       # Empty ⇒ the app defaults to info / text.
-      LOG_LEVEL: ${LOG_LEVEL:-}
-      LOG_FORMAT: ${LOG_FORMAT:-}
+      QUACK_LOG_LEVEL: ${QUACK_LOG_LEVEL:-}
+      QUACK_LOG_FORMAT: ${QUACK_LOG_FORMAT:-}
       # Reachable from inside the container. Override in .env for your setup;
       # host.docker.internal points at an LLM server running on the host.
-      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11436/v1}
-      LLM_API_KEY: ${LLM_API_KEY:-unused}
-      ORCH_MODEL: ${ORCH_MODEL:-qwen3.6-35b}
-      RESEARCHER_MODEL: ${RESEARCHER_MODEL:-qwen3.6-35b}
-      MEDIA_MODEL: ${MEDIA_MODEL:-qwen3-omni-30b}
-      IMAGE_MODEL: ${IMAGE_MODEL:-qwen3-vl-32b}
+      QUACK_LLM_ENDPOINT: ${QUACK_LLM_ENDPOINT:-http://host.docker.internal:11436/v1}
+      QUACK_LLM_API_KEY: ${QUACK_LLM_API_KEY:-unused}
+      QUACK_ORCH_MODEL: ${QUACK_ORCH_MODEL:-qwen3.6-35b}
+      QUACK_RESEARCHER_MODEL: ${QUACK_RESEARCHER_MODEL:-qwen3.6-35b}
+      QUACK_MEDIA_MODEL: ${QUACK_MEDIA_MODEL:-qwen3-omni-30b}
+      QUACK_IMAGE_MODEL: ${QUACK_IMAGE_MODEL:-qwen3-vl-32b}
       # Independent judge model for the trust gate (empty disables vetting).
-      JUDGE_MODEL: ${JUDGE_MODEL:-gemma4-26b-a4b}
+      QUACK_JUDGE_MODEL: ${QUACK_JUDGE_MODEL:-gemma4-26b-a4b}
       # Context compaction (prune old tool outputs + summarise older turns when a
       # request would overflow an agent's context_window). The summariser must be
       # co-resident with the workers to avoid evicting one mid-run; the judge
       # model (gemma4-26b-a4b) is always warm alongside every worker.
-      COMPACTION_ENABLED: ${COMPACTION_ENABLED:-true}
-      COMPACTION_MODEL: ${COMPACTION_MODEL:-gemma4-26b-a4b}
+      QUACK_COMPACTION_ENABLED: ${QUACK_COMPACTION_ENABLED:-true}
+      QUACK_COMPACTION_MODEL: ${QUACK_COMPACTION_MODEL:-gemma4-26b-a4b}
       # The agent's tool backends. Default to the compose services above;
       # override to point at existing instances (e.g. on a home server).
-      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
-      CRAWL4AI_URL: ${CRAWL4AI_URL:-http://crawl4ai:11235}
+      QUACK_SEARXNG_URL: ${QUACK_SEARXNG_URL:-http://searxng:8080}
+      QUACK_CRAWL4AI_URL: ${QUACK_CRAWL4AI_URL:-http://crawl4ai:11235}
       # Semantic memory (M6). gRPC address of the qdrant service above; empty
       # disables memory. The embedding model is served by the LLM endpoint.
-      QDRANT_URL: ${QDRANT_URL:-qdrant:6334}
-      EMBED_MODEL: ${EMBED_MODEL:-qwen3-embed}
+      QUACK_QDRANT_URL: ${QUACK_QDRANT_URL:-qdrant:6334}
+      QUACK_EMBED_MODEL: ${QUACK_EMBED_MODEL:-qwen3-embed}
       # User memory is enabled by binding commit_memory to the orchestrator in
       # config/quack.yaml (no env toggle).
     # Host 8080 is taken by SearXNG above, so the app is published on 8081.

@@ -12,11 +12,11 @@ func setupLogging() {
 	// slog.Level implements TextUnmarshaler: "" and unknown values error out,
 	// leaving the zero value LevelInfo — our intended default.
 	var lvl slog.Level
-	_ = lvl.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
+	_ = lvl.UnmarshalText([]byte(os.Getenv("QUACK_LOG_LEVEL")))
 	opts := &slog.HandlerOptions{Level: lvl}
 	// stdout: logs are the server's output; let the orchestration layer ship them.
 	var h slog.Handler = slog.NewTextHandler(os.Stdout, opts)
-	if strings.EqualFold(os.Getenv("LOG_FORMAT"), "json") {
+	if strings.EqualFold(os.Getenv("QUACK_LOG_FORMAT"), "json") {
 		h = slog.NewJSONHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(h))

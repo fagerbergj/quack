@@ -5,11 +5,13 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/cli"
 )
 
 // Managed stores orchestration for `quack server` when server.topology: managed.
@@ -26,6 +28,10 @@ var storesCompose []byte
 // storesProject isolates the managed stores stack from the repo's dev
 // docker-compose.yml and any other compose stacks on the machine.
 const storesProject = "quack-stores"
+
+// stateDir is where quack keeps machine-local state (the embedded stores compose
+// file). Lives under the CLI home (~/.quack or $QUACK_HOME).
+func stateDir() string { return cli.Home() }
 
 // composePath is the stable on-disk path for the embedded stores compose, so up
 // and down reference the same file. Lives under the state dir alongside the
@@ -61,33 +67,6 @@ func upStores(ctx context.Context) error {
 	return nil
 }
 
-// downStores tears down the managed stores stack. Named volumes persist, so data
-// survives a stop/start cycle. Idempotent: a no-op if the stack isn't up.
-func downStores(ctx context.Context) error {
-	if err := writeStoresCompose(); err != nil {
-		return err
-	}
-	slog.Info("managed topology: tearing down stores", "component", "serve", "project", storesProject)
-	if out, err := runCompose(ctx, "down"); err != nil {
-		return fmt.Errorf("docker compose down: %w\n%s", err, out)
-	}
-	return nil
-}
-
-// storesUp reports whether the managed stores stack has any running containers.
-// Used by Stop so it only claims a teardown (and a "did something" outcome) when
-// there was actually a stack to tear down.
-func storesUp() bool {
-	if err := writeStoresCompose(); err != nil {
-		return false
-	}
-	out, err := runCompose(context.Background(), "ps", "-q")
-	if err != nil {
-		return false
-	}
-	return len(strings.TrimSpace(string(out))) > 0
-}
-
 // runCompose shells to `docker compose` against the embedded stores file with
 // the isolated project name. The seam for the orchestration; combined output is
 // returned so callers can surface it on error.
@@ -95,6 +74,24 @@ func runCompose(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{"compose", "-p", storesProject, "-f", composePath()}, args...)
 	cmd := exec.CommandContext(ctx, "docker", full...)
 	return cmd.CombinedOutput()
+}
+
+// listening reports whether addr currently accepts a TCP connection.
+func listening(addr string) bool {
+	c, err := net.DialTimeout("tcp", dialAddr(addr), 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+// dialAddr makes a listen address (":8080") dialable ("127.0.0.1:8080").
+func dialAddr(addr string) string {
+	if len(addr) > 0 && addr[0] == ':' {
+		return "127.0.0.1" + addr
+	}
+	return addr
 }
 
 // waitListeningCtx blocks until addr accepts a TCP connection or ctx/deadline.

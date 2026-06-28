@@ -12,9 +12,9 @@ import (
 // prompt.md fails here instead of at startup.
 func TestAgentBundlesLoad(t *testing.T) {
 	for _, kv := range [][2]string{
-		{"LLM_ENDPOINT", "http://x/v1"}, {"LLM_API_KEY", "k"}, {"DATABASE_URL", "postgres://localhost/db"},
-		{"ORCH_MODEL", "m"}, {"RESEARCHER_MODEL", "r"}, {"MEDIA_MODEL", "md"}, {"IMAGE_MODEL", "im"},
-		{"JUDGE_MODEL", "j"}, {"EMBED_MODEL", "e"}, {"SEARXNG_URL", "http://s"}, {"CRAWL4AI_URL", "http://c"},
+		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"}, {"QUACK_MEDIA_MODEL", "md"}, {"QUACK_IMAGE_MODEL", "im"},
+		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
 	}

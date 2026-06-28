@@ -187,7 +187,7 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 		entries = append(entries, e)
 	}
 	// Logs what preload_memory / load_memory pulled in (both route here). Enable with
-	// LOG_LEVEL=debug. scope = the partition key actually queried (agent name for task,
+	// QUACK_LOG_LEVEL=debug. scope = the partition key actually queried (agent name for task,
 	// userID for user); raw = matches in scope before minScore; top_score = best cosine;
 	// dropped = filtered by minScore. This pinpoints hits=0: scope mismatch (raw=0) vs
 	// threshold too high (raw>0, dropped=raw).
@@ -200,7 +200,7 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 // embed wraps the embedder with hot-path timing (Debug): which call site (path),
 // how many inputs, total input chars, and how long the call took — so a slow
 // embed in the llm-swap logs can be attributed to recall vs commit and to input
-// size. Enable with LOG_LEVEL=debug.
+// size. Enable with QUACK_LOG_LEVEL=debug.
 func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]float32, error) {
 	// Single-input calls (recall, neighbour probe) are memoized: preload_memory
 	// re-embeds the same node-task query on every model turn, and that embed is

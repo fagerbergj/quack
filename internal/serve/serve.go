@@ -26,6 +26,7 @@ import (
 	"google.golang.org/adk/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -62,12 +63,12 @@ func Run(ctx context.Context, configPath string, port int) error {
 	// Managed topology: bring up the Postgres + Qdrant stores via docker compose
 	// before opening them. embedded/external just run against pre-configured
 	// stores. Stores are left running on exit (persistent infra — restart the app
-	// freely); `quack server stop` tears them down.
+	// freely); tear them down with `docker compose -p quack-stores down`.
 	if cfg.Server.Managed() {
 		if err := upStores(ctx); err != nil {
 			return err
 		}
-		defer slog.Info("managed stores left running; run `quack server stop` to tear them down", "component", "serve")
+		defer slog.Info("managed stores left running; tear down with `docker compose -p quack-stores down`", "component", "serve")
 	}
 
 	sessionStore, ok := cfg.Store(cfg.Session.Store)
@@ -91,14 +92,16 @@ func Run(ctx context.Context, configPath string, port int) error {
 	}
 
 	// Load skills once at startup; pass the toolset to every specialist agent so
-	// all agents can call load_skill / list_skills / load_skill_resource.
-	skillSrc := skill.NewFileSystemSource(os.DirFS("skills/"))
+	// all agents can call load_skill / list_skills / load_skill_resource. Skills
+	// resolve from disk in cwd first (live repo edits) then the embedded copy,
+	// so an installed binary works from any directory.
+	skillSrc := skill.NewFileSystemSource(bundledir.SubFS("skills"))
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
 		return fmt.Errorf("skills toolset init failed: %w", err)
 	}
 
-	// Semantic memory (M6): a memory tool bound to a vector store (with QDRANT_URL
+	// Semantic memory (M6): a memory tool bound to a vector store (with QUACK_QDRANT_URL
 	// set) turns it on — config composes it, no dedicated block. Task memory
 	// follows `stage_memory` (researchers' recall + the trust gate's vetted
 	// commit); user memory follows `commit_memory` bound to the orchestrator. A
@@ -249,20 +252,20 @@ func Run(ctx context.Context, configPath string, port int) error {
 	return nil
 }
 
-// setupLogging installs the process-wide slog handler from LOG_LEVEL
-// (debug|info|warn|error, default info) and LOG_FORMAT (text|json, default
+// setupLogging installs the process-wide slog handler from QUACK_LOG_LEVEL
+// (debug|info|warn|error, default info) and QUACK_LOG_FORMAT (text|json, default
 // text). SetDefault also reroutes any stray stdlib log.* through this handler.
 // ponytail: env-driven; add a LevelVar when runtime re-leveling is actually needed.
 func setupLogging() {
 	// slog.Level implements TextUnmarshaler: "" and unknown values error out,
 	// leaving the zero value LevelInfo — our intended default.
 	var lvl slog.Level
-	_ = lvl.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
+	_ = lvl.UnmarshalText([]byte(os.Getenv("QUACK_LOG_LEVEL")))
 	opts := &slog.HandlerOptions{Level: lvl}
 	// stdout (not stderr): logs are the program's output for a server; let the
 	// container/orchestration layer collect and ship them.
 	var h slog.Handler = slog.NewTextHandler(os.Stdout, opts)
-	if strings.EqualFold(os.Getenv("LOG_FORMAT"), "json") {
+	if strings.EqualFold(os.Getenv("QUACK_LOG_FORMAT"), "json") {
 		h = slog.NewJSONHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(h))

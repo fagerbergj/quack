@@ -3,15 +3,17 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/fagerbergj/quack/internal/bundledir"
 )
 
-// Bundle is a declarative agent definition loaded from disk: an agent-card.json
-// (identity + skills) plus a prompt.md (the system instruction). Config binds the
-// model and the built-in tool selection separately, so defining a new agent is
-// just dropping a bundle directory and adding a config entry — no recompile.
+// Bundle is a declarative agent definition: an agent-card.json (identity +
+// skills) plus a prompt.md (the system instruction). Config binds the model
+// and the built-in tool selection separately, so defining a new agent is just
+// dropping a bundle directory (under agents/) and adding a config entry — no
+// recompile. Bundles are read from disk in cwd first (live repo edits), then
+// the embedded copy (so an installed binary works from any directory).
 type Bundle struct {
 	Card   Card
 	Prompt string
@@ -39,9 +41,10 @@ const (
 	memoryFile = "memory.md"
 )
 
-// LoadBundle reads and validates the agent bundle in dir.
+// LoadBundle reads and validates the agent bundle in dir (e.g. "agents/orchestrator").
+// dir is resolved from disk in cwd first, then the embedded copy.
 func LoadBundle(dir string) (*Bundle, error) {
-	rawCard, err := os.ReadFile(filepath.Join(dir, cardFile))
+	rawCard, err := bundledir.ReadFile(bundledir.PathJoin(dir, cardFile))
 	if err != nil {
 		return nil, fmt.Errorf("agent bundle %q: read %s: %w", dir, cardFile, err)
 	}
@@ -53,7 +56,7 @@ func LoadBundle(dir string) (*Bundle, error) {
 		return nil, fmt.Errorf("agent bundle %q: %s has empty name", dir, cardFile)
 	}
 
-	rawPrompt, err := os.ReadFile(filepath.Join(dir, promptFile))
+	rawPrompt, err := bundledir.ReadFile(bundledir.PathJoin(dir, promptFile))
 	if err != nil {
 		return nil, fmt.Errorf("agent bundle %q: read %s: %w", dir, promptFile, err)
 	}
@@ -71,12 +74,18 @@ func LoadBundle(dir string) (*Bundle, error) {
 // guidance never dangles (and references no tools) when memory is disabled. This
 // is the second optional bundle file alongside rubric.md.
 func LoadBundleMemory(dir string) (string, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, memoryFile))
-	if os.IsNotExist(err) {
-		return "", nil
-	}
+	raw, err := bundledir.ReadFile(bundledir.PathJoin(dir, memoryFile))
 	if err != nil {
+		// Absent on both disk and embedded ⇒ no memory guidance (not an error).
+		if isNotExist(err) {
+			return "", nil
+		}
 		return "", fmt.Errorf("agent bundle %q: read %s: %w", dir, memoryFile, err)
 	}
 	return strings.TrimSpace(string(raw)), nil
+}
+
+// isNotExist reports whether err is a not-exist error from either os or embed.
+func isNotExist(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "does not exist"))
 }
