@@ -6,6 +6,7 @@ import (
 	"iter"
 	"log/slog"
 	"strings"
+	"sync"
 	"time" //nolint:godot
 
 	adkagent "google.golang.org/adk/agent"
@@ -30,6 +31,14 @@ type Executor struct {
 	// whose dependencies are met still queue here until a slot frees, so a wide
 	// layer doesn't fire N huge model requests at the single worker at once.
 	sem chan struct{}
+
+	// mu guards nodeCancels: chatID → nodeID → cancel func for the in-flight run.
+	// CancelNode (called from the REST handler) cancels one node's context so the
+	// run continues without it (continue-but-warn), distinct from cancelling the
+	// whole run. The inner map is created when a run starts and dropped when it
+	// ends, so cancelling a finished node is a harmless no-op.
+	mu          sync.Mutex
+	nodeCancels map[string]map[string]context.CancelFunc
 }
 
 // NewExecutor returns an Executor. clients maps agent names to their A2A clients.
@@ -39,7 +48,46 @@ func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent, me
 	if maxActive < 1 {
 		maxActive = 2
 	}
-	return &Executor{sessions: sessions, clients: clients, mediaAgents: mediaAgents, sem: make(chan struct{}, maxActive)}
+	return &Executor{
+		sessions: sessions, clients: clients, mediaAgents: mediaAgents,
+		sem:         make(chan struct{}, maxActive),
+		nodeCancels: make(map[string]map[string]context.CancelFunc),
+	}
+}
+
+// CancelNode stops a single running node of chatID's active run. The node ends as
+// if its work failed (continue-but-warn: downstream still runs, told its input is
+// missing), NOT cancelling the whole run. Returns false if no such live node.
+func (e *Executor) CancelNode(chatID, nodeID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if m, ok := e.nodeCancels[chatID]; ok {
+		if cancel, ok := m[nodeID]; ok {
+			cancel()
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Executor) registerRun(chatID string) {
+	e.mu.Lock()
+	e.nodeCancels[chatID] = make(map[string]context.CancelFunc)
+	e.mu.Unlock()
+}
+
+func (e *Executor) unregisterRun(chatID string) {
+	e.mu.Lock()
+	delete(e.nodeCancels, chatID)
+	e.mu.Unlock()
+}
+
+func (e *Executor) registerNode(chatID, nodeID string, cancel context.CancelFunc) {
+	e.mu.Lock()
+	if m, ok := e.nodeCancels[chatID]; ok {
+		m[nodeID] = cancel
+	}
+	e.mu.Unlock()
 }
 
 // nodeMsg is one message sent from a node goroutine to the Execute main loop.
@@ -47,13 +95,14 @@ func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent, me
 // slot); done=false carries a live activity event; done=true signals the
 // goroutine finished (output, err, and stats are set accordingly).
 type nodeMsg struct {
-	nodeID string
-	ev     stream.SSEEvent
-	output string
-	err    error
-	start  bool
-	done   bool
-	stats  stream.NodeDoneData // only meaningful when done=true
+	nodeID    string
+	ev        stream.SSEEvent
+	output    string
+	err       error
+	start     bool
+	done      bool
+	cancelled bool                // node was individually cancelled (not a failure, not whole-run cancel)
+	stats     stream.NodeDoneData // only meaningful when done=true
 }
 
 // Execute runs the plan from scratch and yields SSE events: DAG lifecycle events
@@ -66,7 +115,7 @@ type nodeMsg struct {
 // dependencies are done, not at a layer boundary. Every launched goroutine
 // self-limits on the max-active semaphore (staying "queued" in the UI until a
 // slot frees), so launching the whole ready frontier at once is safe.
-func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
+func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// TopoSort is used only to validate the plan (cycles, unknown deps); the
 		// scheduler below runs by readiness, not by the returned layers.
@@ -74,6 +123,11 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return
 		}
+
+		// Register this run so the REST handler can cancel individual nodes by
+		// (chatID, nodeID); drop the whole map when the run ends.
+		e.registerRun(chatID)
+		defer e.unregisterRun(chatID)
 
 		// remainingDeps[id] = how many of node id's dependencies are not yet done;
 		// a node is runnable at 0. Counts occurrences, matching TopoSort's in-degree.
@@ -134,9 +188,13 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 				for k, v := range gateFailed {
 					failedSnap[k] = v
 				}
-				go func(n Node) {
-					e.streamNode(ctx, plan, n, userID, upstream, failedSnap, ch)
-				}(node)
+				// Per-node context (child of the run ctx) so one node can be
+				// cancelled without tearing down the run. Registered for CancelNode.
+				nodeCtx, nodeCancel := context.WithCancel(ctx)
+				e.registerNode(chatID, node.ID, nodeCancel)
+				go func(n Node, nctx context.Context) {
+					e.streamNode(nctx, ctx, plan, n, userID, upstream, failedSnap, ch)
+				}(node, nodeCtx)
 			}
 			return true
 		}
@@ -179,6 +237,25 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 				}
 				// Terminal message for this node.
 				completed++
+				if msg.cancelled {
+					// One node cancelled (not the whole run): continue-but-warn. It
+					// contributes no output; dependents are told their input is missing
+					// (gateFailed) so they don't rely on it. The DAG keeps running.
+					nodeOutputs[msg.nodeID] = ""
+					gateFailed[msg.nodeID] = true
+					if !yield(stream.NodeFailed(msg.nodeID, "cancelled by user"), nil) {
+						cancelAll()
+						drain(completed)
+						return
+					}
+					decrementDependents(msg.nodeID)
+					if !launchReady() {
+						cancelAll()
+						drain(completed)
+						return
+					}
+					continue
+				}
 				if msg.err != nil {
 					cancelAll()
 					yield(stream.NodeFailed(msg.nodeID, msg.err.Error()), nil)
@@ -217,12 +294,27 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID string, nodeOu
 
 // streamNode runs one node against its A2A client and sends all activity events
 // to ch as they arrive, followed by a done message.
-func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
+// streamNode runs one node. ctx is the node's own context (cancelled by
+// CancelNode); parentCtx is the run's context (cancelled on whole-run stop). The
+// two are distinguished so an individual node cancel ends as cancelled (the run
+// continues) while a run-wide cancel ends as a plain run teardown.
+func (e *Executor) streamNode(ctx, parentCtx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
 	// send blocks rather than racing ctx.Done: Execute always drains every
 	// launched goroutine before returning, so the receiver is guaranteed and a
 	// terminal (done/waiting) message can't be lost to a cancel race — which would
 	// hang drain's completion count.
 	send := func(m nodeMsg) { ch <- m }
+
+	// cancelled reports an individual node cancel: this node's ctx is done but the
+	// run's ctx is not (a whole-run stop cancels both).
+	cancelled := func() bool { return ctx.Err() != nil && parentCtx.Err() == nil }
+	endCtx := func() { // terminal msg for a ctx-cancelled node
+		if cancelled() {
+			send(nodeMsg{nodeID: node.ID, done: true, cancelled: true})
+		} else {
+			send(nodeMsg{nodeID: node.ID, done: true, err: ctx.Err()})
+		}
+	}
 
 	// Acquire a concurrency slot: the node's deps are met, but it waits here behind
 	// the max-active cap (it stays "queued" in the UI). Once a slot frees, emit
@@ -231,7 +323,7 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 	select {
 	case e.sem <- struct{}{}:
 	case <-ctx.Done():
-		send(nodeMsg{nodeID: node.ID, done: true, err: ctx.Err()})
+		endCtx()
 		return
 	}
 	defer func() { <-e.sem }()
@@ -290,6 +382,10 @@ func (e *Executor) streamNode(ctx context.Context, plan Plan, node Node, userID 
 
 	for ev, err := range r.Run(ctx, userID, nodeSessionID, content, adkagent.RunConfig{}) {
 		if err != nil {
+			if ctx.Err() != nil { // cancelled mid-run: classify individual vs run-wide
+				endCtx()
+				return
+			}
 			send(nodeMsg{nodeID: node.ID, done: true, err: fmt.Errorf("node %q: %w", node.ID, err)})
 			return
 		}

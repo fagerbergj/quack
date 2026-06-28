@@ -213,6 +213,18 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 		}
 		m.status = "nothing running"
 		return m, nil
+	case "/node":
+		if len(fields) >= 3 && fields[1] == "stop" {
+			nodeID := fields[2]
+			c, ctx, id := m.client, m.ctx, m.chatID
+			m.status = "stopping node " + nodeID + "…"
+			return m, func() tea.Msg {
+				_ = c.CancelNode(ctx, id, nodeID)
+				return nil
+			}
+		}
+		m.status = "usage: /node stop <node-id>"
+		return m, nil
 	default:
 		m.status = "unknown command: " + fields[0] + "  (try /help)"
 		return m, nil
@@ -470,6 +482,7 @@ func helpText() string {
 		"  " + promptStyle.Render("/help") + "   toggle this help",
 		"  " + promptStyle.Render("/new") + "    start a new chat",
 		"  " + promptStyle.Render("/stop") + "   cancel the running turn",
+		"  " + promptStyle.Render("/node stop <id>") + "   stop one running node",
 		"  " + promptStyle.Render("/quit") + "   exit",
 		"",
 		mutedStyle.Render("  enter send · ctrl+c cancel/quit · pgup/pgdn scroll · esc close help"),

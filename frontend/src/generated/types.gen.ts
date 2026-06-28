@@ -145,6 +145,8 @@ export type DagNodeState = {
 
 export type ChatId = string;
 
+export type NodeId = string;
+
 export type ResponseId = string;
 
 export type HealthCheckData = {
@@ -317,3 +319,22 @@ export type SubscribeChatStreamResponses = {
 };
 
 export type SubscribeChatStreamResponse = SubscribeChatStreamResponses[keyof SubscribeChatStreamResponses];
+
+export type CancelNodeData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}';
+};
+
+export type CancelNodeResponses = {
+    /**
+     * Cancelled (or no such active node)
+     */
+    204: void;
+};
+
+export type CancelNodeResponse = CancelNodeResponses[keyof CancelNodeResponses];

@@ -33,9 +33,9 @@ func TestCommandTree(t *testing.T) {
 		}
 	}
 
-	// `chat node steer` is the deepest leaf — prove 3-level nesting resolves.
-	if c, _, err := root.Find([]string{"chat", "node", "steer"}); err != nil || c.Name() != "steer" {
-		t.Errorf("chat node steer not registered: %v", err)
+	// `chat node stop` is the deepest leaf — prove 3-level nesting resolves.
+	if c, _, err := root.Find([]string{"chat", "node", "stop"}); err != nil || c.Name() != "stop" {
+		t.Errorf("chat node stop not registered: %v", err)
 	}
 
 	// version prints the stamp and does not error.

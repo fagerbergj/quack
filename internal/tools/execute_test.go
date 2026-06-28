@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewExecuteToolMetadata(t *testing.T) {
-	tl, err := NewExecuteTool(nil, NewPlanCache(), "user1")
+	tl, err := NewExecuteTool(nil, NewPlanCache(), "user1", "chat1")
 	if err != nil {
 		t.Fatalf("NewExecuteTool error: %v", err)
 	}

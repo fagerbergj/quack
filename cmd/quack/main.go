@@ -94,13 +94,8 @@ func newInitCmd() *cobra.Command {
 func newChatCmd() *cobra.Command {
 	c := &cobra.Command{Use: "chat", Short: "Create and drive chat sessions"}
 
-	node := &cobra.Command{Use: "node", Short: "Control nodes within a running chat"}
-	node.AddCommand(
-		stub("stop <node>", "Stop a running node", "chat node stop"),
-		stub("cancel <node>", "Cancel a node", "chat node cancel"),
-		stub("restart <node>", "Restart a node", "chat node restart"),
-		stub("steer <node> <message>", "Steer a running node mid-run (HITL)", "chat node steer"),
-	)
+	node := &cobra.Command{Use: "node", Short: "Control nodes within a chat's active run"}
+	node.AddCommand(newNodeStopCmd())
 
 	c.AddCommand(
 		newChatNewCmd(),
@@ -246,6 +241,20 @@ func newChatDeleteCmd() *cobra.Command {
 // asJSONFlag registers a standard --json flag bound to dst.
 func asJSONFlag(c *cobra.Command, dst *bool) {
 	c.Flags().BoolVar(dst, "json", false, "output raw JSON")
+}
+
+func newNodeStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "stop <chat-id> <node-id>",
+		Aliases: []string{"cancel"},
+		Short:   "Stop a running node (the rest of the run continues)",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodeStop(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1])
+			})
+		},
+	}
 }
 
 // newServerCmd: run and manage the server. `serve` folds in cmd/server in the

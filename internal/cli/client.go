@@ -65,6 +65,12 @@ func (c *Client) CancelRun(ctx context.Context, id string) error {
 	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id+"/stream")
 }
 
+// CancelNode stops one running node of a chat's active run; the rest of the DAG
+// continues (continue-but-warn). No-op if no such node is active.
+func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
+	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+chatID+"/nodes/"+nodeID)
+}
+
 // getJSON GETs path and decodes a JSON response into out; 404 → ErrNotFound.
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	status, body, err := c.Request(ctx, http.MethodGet, path, nil)

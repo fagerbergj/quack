@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelChatStreamData, CancelChatStreamResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
+import type { CancelChatStreamData, CancelChatStreamResponses, CancelNodeData, CancelNodeResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -124,3 +124,13 @@ export const cancelChatStream = <ThrowOnError extends boolean = false>(options: 
  *
  */
 export const subscribeChatStream = <ThrowOnError extends boolean = false>(options: Options<SubscribeChatStreamData, ThrowOnError, SubscribeChatStreamResponse>): Promise<ServerSentEventsResult<SubscribeChatStreamResponses>> => (options.client ?? client).sse.get<SubscribeChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
+
+/**
+ * Cancel a single running node of the chat's active run
+ *
+ * Stops one node of the chat's in-flight run. The rest of the DAG keeps
+ * running (continue-but-warn: dependents are told the node's output is
+ * missing). No-op if no such node is active.
+ *
+ */
+export const cancelNode = <ThrowOnError extends boolean = false>(options: Options<CancelNodeData, ThrowOnError>): RequestResult<CancelNodeResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelNodeResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/nodes/{node_id}', ...options });

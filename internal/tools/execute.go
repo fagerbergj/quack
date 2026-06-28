@@ -35,7 +35,7 @@ type executeResult struct {
 // node_start, agent activity, node_done/failed) are forwarded up through the
 // orchestrator's SSE stream via the yield context so the frontend can render
 // live DAG progress. Returns the final answer.
-func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (tool.Tool, error) {
+func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID, chatID string) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{
 			Name: "execute",
@@ -60,7 +60,7 @@ func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID string) (to
 			} else {
 				yieldFn, hasYield := stream.YieldFromContext(tc)
 				nodeOutputs := make(map[string]string)
-				for ev, err := range executor.Execute(tc, plan, userID, nodeOutputs) {
+				for ev, err := range executor.Execute(tc, plan, userID, chatID, nodeOutputs) {
 					if hasYield {
 						yieldFn(ev)
 					}

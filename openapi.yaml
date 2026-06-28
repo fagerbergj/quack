@@ -209,10 +209,32 @@ paths:
         "204":
           description: Cancelled (or no active run)
 
+  /api/v1/chats/{chat_id}/nodes/{node_id}:
+    delete:
+      operationId: cancelNode
+      summary: Cancel a single running node of the chat's active run
+      description: |
+        Stops one node of the chat's in-flight run. The rest of the DAG keeps
+        running (continue-but-warn: dependents are told the node's output is
+        missing). No-op if no such node is active.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "204":
+          description: Cancelled (or no such active node)
+
 components:
   parameters:
     ChatID:
       name: chat_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+    NodeID:
+      name: node_id
       in: path
       required: true
       schema:
