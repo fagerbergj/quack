@@ -60,11 +60,12 @@ const (
 	EventDone      = "done"
 
 	// DAG / static structure.
-	EventDagPlan    = "dag_plan"
-	EventNodeQueued = "node_queued"
-	EventNodeStart  = "node_start"
-	EventNodeDone   = "node_done"
-	EventNodeFailed = "node_failed"
+	EventDagPlan     = "dag_plan"
+	EventNodeQueued  = "node_queued"
+	EventNodeStart   = "node_start"
+	EventNodeDone    = "node_done"
+	EventNodeFailed  = "node_failed"
+	EventNodeSteered = "node_steered"
 )
 
 // SSEEvent is one server-sent event: a name plus a JSON-serializable payload.
@@ -240,6 +241,14 @@ type NodeFailedData struct {
 	Error  string `json:"error"`
 }
 
+// NodeSteeredData is the `node_steered` event payload: the user interrupted the
+// node and it is about to re-run with this guidance (its prior session — tool
+// calls and results — is retained). A fresh node_start … node_done follows.
+type NodeSteeredData struct {
+	NodeID   string `json:"node_id"`
+	Guidance string `json:"guidance"`
+}
+
 // ChatTitleData is the `chat_title` event payload.
 type ChatTitleData struct {
 	Title string `json:"title"`
@@ -271,6 +280,11 @@ func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 // NodeFailed builds a node_failed event.
 func NodeFailed(nodeID, errMsg string) SSEEvent {
 	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
+}
+
+// NodeSteered builds a node_steered event.
+func NodeSteered(nodeID, guidance string) SSEEvent {
+	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
 }
 
 // ChatTitle builds a chat_title event.

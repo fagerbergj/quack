@@ -71,6 +71,28 @@ func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
 	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+chatID+"/nodes/"+nodeID)
 }
 
+// SteerNode interrupts one running node and re-runs it with new guidance against
+// its same session (prior tool calls/results retained). No-op if no such node is
+// active. The re-run streams over the chat's existing SSE connection.
+func (c *Client) SteerNode(ctx context.Context, chatID, nodeID, guidance string) error {
+	body, _ := json.Marshal(schema.SteerNodeBody{Guidance: guidance})
+	path := "/api/v1/chats/" + chatID + "/nodes/" + nodeID + "/steer"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return c.reachErr(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("POST %s: server returned %s", path, resp.Status)
+	}
+	return nil
+}
+
 // getJSON GETs path and decodes a JSON response into out; 404 → ErrNotFound.
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	status, body, err := c.Request(ctx, http.MethodGet, path, nil)

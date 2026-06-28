@@ -125,3 +125,27 @@ func TestPrintPromptServerError(t *testing.T) {
 		t.Errorf("nothing should be printed on error, got %q", out.String())
 	}
 }
+
+// TestSteerNode posts the guidance to the node steer endpoint and accepts the
+// 204 the server returns (postJSON's 200-only check would reject it).
+func TestSteerNode(t *testing.T) {
+	var gotBody schema.SteerNodeBody
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/steer", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if err := c.SteerNode(context.Background(), "c1", "n2", "focus on cost"); err != nil {
+		t.Fatalf("SteerNode: %v", err)
+	}
+	if gotBody.Guidance != "focus on cost" {
+		t.Errorf("server got guidance %q, want %q", gotBody.Guidance, "focus on cost")
+	}
+}

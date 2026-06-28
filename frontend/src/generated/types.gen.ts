@@ -28,6 +28,13 @@ export type SendMessageBody = {
     content: string;
 };
 
+export type SteerNodeBody = {
+    /**
+     * New guidance to redirect the node; the worker revises on top of its existing session (prior tool calls and results retained).
+     */
+    guidance: string;
+};
+
 export type Turn = {
     id: string;
     created_at: string;
@@ -338,3 +345,22 @@ export type CancelNodeResponses = {
 };
 
 export type CancelNodeResponse = CancelNodeResponses[keyof CancelNodeResponses];
+
+export type SteerNodeData = {
+    body: SteerNodeBody;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/steer';
+};
+
+export type SteerNodeResponses = {
+    /**
+     * Accepted (or no such active node)
+     */
+    204: void;
+};
+
+export type SteerNodeResponse = SteerNodeResponses[keyof SteerNodeResponses];
