@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
 	"github.com/fagerbergj/quack/internal/cli"
@@ -34,20 +35,31 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 		WebFetch:  true,
 	}
 	cli.PrefillFromEnv(&a) // don't re-ask what the environment already answers
+
+	// Form 1 stands alone because the model list is fetched from the endpoint
+	// before the rest of the wizard can offer it as choices — a natural break,
+	// not a back-nav wall.
 	if err := askProvider(ctx, &a); err != nil {
 		return err
 	}
-	if err := askModels(ctx, &a); err != nil {
+	models, manual := discoverModels(ctx, &a)
+
+	// Form 2 is everything else as ONE multi-group form, so shift+tab walks back
+	// across models → features → stores → review without hitting a wall.
+	feats := featureList(&a)
+	var ok bool
+	groups := modelGroups(&a, models, manual)
+	groups = append(groups, featuresGroup(&feats))
+	groups = append(groups, storeGroups(&a, &feats)...)
+	groups = append(groups, reviewGroup(&a, &feats, outPath, &ok))
+	if err := runForm(huh.NewForm(groups...)); err != nil {
 		return err
 	}
-	if err := askFeatures(&a); err != nil {
-		return err
-	}
-	if err := askStores(&a); err != nil {
-		return err
-	}
-	if err := askConfirm(&a, outPath); err != nil {
-		return err
+	a.WebSearch = slices.Contains(feats, "search")
+	a.WebFetch = slices.Contains(feats, "fetch")
+	if !ok {
+		fmt.Println("Aborted — nothing written.")
+		return nil
 	}
 
 	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
@@ -66,25 +78,40 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	return nil
 }
 
-// runForm runs a form with the duck theme applied.
-func runForm(f *huh.Form) error { return f.WithTheme(duckTheme()).Run() }
+// runForm runs a form with the duck theme on a stable alt-screen. Without the
+// alt-screen huh renders inline, so a tall group (a long /models list) scrolls
+// the section title off the top of the terminal. WithProgramOptions *replaces*
+// huh's defaults, so we re-supply stderr output (keeps stdout pipeable) and
+// focus reporting.
+func runForm(f *huh.Form) error {
+	return f.WithTheme(duckTheme()).
+		WithProgramOptions(
+			tea.WithOutput(os.Stderr),
+			tea.WithReportFocus(),
+			tea.WithAltScreen(),
+		).Run()
+}
 
-// askConfirm is the final review gate: a summary note + a confirm. The user can
-// back up through the whole wizard and return here before anything is written.
-func askConfirm(a *cli.InitAnswers, outPath string) error {
-	summary := fmt.Sprintf(
-		"endpoint %s • main %s • judge %s • embed %s • session %s",
-		a.Endpoint, a.MainModel, noneLabel(a.JudgeModel), noneLabel(a.EmbedModel), a.SessionKind,
+// reviewGroup is the final screen: the live summary note + the confirm in ONE
+// group, so the answers and the Yes/No sit together. The note recomputes via
+// DescriptionFunc so backing up to change an answer updates the summary; ok
+// stays false unless the user confirms, so the caller can abort.
+func reviewGroup(a *cli.InitAnswers, feats *[]string, outPath string, ok *bool) *huh.Group {
+	return huh.NewGroup(
+		huh.NewNote().DescriptionFunc(func() string { return summarize(a, feats) }, a),
+		huh.NewConfirm().Title("Write "+outPath+"?").Value(ok),
+	).Title("Review").Description("Confirm before writing " + outPath)
+}
+
+func summarize(a *cli.InitAnswers, feats *[]string) string {
+	feat := "none"
+	if len(*feats) > 0 {
+		feat = strings.Join(*feats, ", ")
+	}
+	return fmt.Sprintf(
+		"endpoint   %s\nmain       %s\njudge      %s\nembed      %s\nsession    %s\nfeatures   %s",
+		a.Endpoint, a.MainModel, noneLabel(a.JudgeModel), noneLabel(a.EmbedModel), a.SessionKind, feat,
 	)
-	var ok bool
-	return runForm(huh.NewForm(
-		huh.NewGroup(
-			huh.NewNote().Title("Review").Description(summary),
-		),
-		huh.NewGroup(
-			huh.NewConfirm().Title(fmt.Sprintf("Write %s?", outPath)).Value(&ok),
-		),
-	))
 }
 
 func noneLabel(s string) string {
@@ -102,7 +129,7 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 		huh.NewSelect[string]().
 			Title("How will you use quack?").
 			Options(
-				huh.NewOption("Local — run quack on this machine", "local"),
+				huh.NewOption("Local  — run quack on this machine", "local"),
 				huh.NewOption("Remote — connect to a server someone else runs", "remote"),
 			).
 			Value(&mode),
@@ -182,24 +209,24 @@ func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	).Title("LLM provider").Description("How quack reaches its model server")))
 }
 
-// askModels calls /models, then asks for the main model + specialist models as
-// one multi-group form — so shift+tab/left returns to an earlier role. If
-// /models fails, it falls back to manual text entry for each role.
-func askModels(ctx context.Context, a *cli.InitAnswers) error {
+// discoverModels calls /models and applies heuristic pre-selections so the
+// common case is confirm-confirm-confirm. manual is true when /models is
+// unreachable (the worker falls back to text inputs for each role).
+func discoverModels(ctx context.Context, a *cli.InitAnswers) (models []string, manual bool) {
 	models, err := cli.ListModels(ctx, a.Endpoint, a.APIKey)
-	manual := err != nil
-	if manual {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "couldn't reach %s/models (%v) — entering model names manually.\n", a.Endpoint, err)
+		return nil, true
 	}
 
-	if a.MainModel == "" && !manual {
+	if a.MainModel == "" {
 		a.MainModel = suggestMain(models)
 	}
 	// Heuristic pre-selections for specialist roles (overridable; None disables).
 	// The OpenAI /models response gives IDs only — no capability field — so we
 	// guess from the name. Fast in the common case, easy to change when wrong.
 	if a.JudgeModel == "" {
-		a.JudgeModel = suggestModel(models, "gemma", "judge")
+		a.JudgeModel = suggestModel(models, "judge")
 	}
 	if a.EmbedModel == "" {
 		a.EmbedModel = suggestModel(models, "embed")
@@ -210,21 +237,30 @@ func askModels(ctx context.Context, a *cli.InitAnswers) error {
 	if a.AudioModel == "" {
 		a.AudioModel = suggestModel(models, "omni", "audio", "ast", "whisper")
 	}
-
-	none := huh.NewOption("None — disable", "")
-	return runForm(huh.NewForm(
-		huh.NewGroup(selectOrInput(manual, "Main chat model (orchestrator + researcher)", modelOptions(models, a.MainModel), &a.MainModel)).
-			Title("Models").Description("The model quack reasons and plans with"),
-		huh.NewGroup(specialistSelect("Judge model (trust gate)", models, &a.JudgeModel, none)),
-		huh.NewGroup(specialistSelect("Embedding model (semantic memory)", models, &a.EmbedModel, none)),
-		huh.NewGroup(specialistSelect("Vision model (image-reader)", models, &a.VisionModel, none)),
-		huh.NewGroup(specialistSelect("Audio model (media-reader)", models, &a.AudioModel, none)),
-	))
+	return models, false
 }
 
-// askFeatures: multi-select of optional tool features. Web search/fetch drive
-// whether their store questions appear in askStores.
-func askFeatures(a *cli.InitAnswers) error {
+// modelGroups: one model role per group (its own screen). A blurred huh select
+// still renders its full option list, so stacking several in one group overflows
+// the screen and the group viewport scrolls — options vanish with no indicator.
+func modelGroups(a *cli.InitAnswers, models []string, manual bool) []*huh.Group {
+	none := huh.NewOption("None — disable", "")
+	return []*huh.Group{
+		huh.NewGroup(selectOrInput(manual, modelOptions(models), &a.MainModel)).
+			Title("Main model").Description("The model quack reasons and plans with"),
+		huh.NewGroup(specialistSelect(models, &a.JudgeModel, none)).
+			Title("Judge model").Description("Trust gate — scores every node's output"),
+		huh.NewGroup(specialistSelect(models, &a.EmbedModel, none)).
+			Title("Embedding model").Description("Semantic memory — None disables it"),
+		huh.NewGroup(specialistSelect(models, &a.VisionModel, none)).
+			Title("Vision model").Description("Image-reader — None disables it"),
+		huh.NewGroup(specialistSelect(models, &a.AudioModel, none)).
+			Title("Audio model").Description("Media-reader — None disables it"),
+	}
+}
+
+// featureList seeds the optional-feature multi-select from the answer defaults.
+func featureList(a *cli.InitAnswers) []string {
 	feats := []string{}
 	if a.WebSearch {
 		feats = append(feats, "search")
@@ -232,62 +268,67 @@ func askFeatures(a *cli.InitAnswers) error {
 	if a.WebFetch {
 		feats = append(feats, "fetch")
 	}
-	form := huh.NewForm(huh.NewGroup(
+	return feats
+}
+
+// featuresGroup: multi-select of optional tool features. Its value drives the
+// WithHideFunc on the search/fetch store groups, so toggling here reveals or
+// hides the matching store as you navigate.
+func featuresGroup(feats *[]string) *huh.Group {
+	return huh.NewGroup(
 		huh.NewMultiSelect[string]().
 			Title("Optional features").
 			Options(
 				huh.NewOption("Web search", "search"),
 				huh.NewOption("Web fetch", "fetch"),
 			).
-			Value(&feats),
-	).Title("Features").Description("Toggle the tool backends to configure"))
-	if err := runForm(form); err != nil {
-		return err
-	}
-	a.WebSearch = slices.Contains(feats, "search")
-	a.WebFetch = slices.Contains(feats, "fetch")
-	return nil
+			Value(feats),
+	).Title("Features").Description("Toggle the tool backends to configure")
 }
 
-// askStores: one multi-group form — session (always), memory (if embedder),
-// search (if web search), fetch (if web fetch) — so shift+tab/left returns to
-// an earlier store. Each store is a group of kind-select + url-input; the url
-// is blank/ignored for kinds that need none (exa/direct).
-func askStores(a *cli.InitAnswers) error {
-	first := storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite", "quack.db").
-		Title("Stores").Description("Where quack keeps its state + tool backends")
-	groups := []*huh.Group{first}
-	if a.EmbedModel != "" {
-		groups = append(groups, storeGroup("Memory store", []string{"sqlite", "qdrant"}, &a.MemoryKind, &a.MemoryURL, "sqlite", "quack.db"))
-	}
-	if a.WebSearch {
-		groups = append(groups, storeGroup("Web search backend", []string{"exa", "searxng"}, &a.SearchKind, &a.SearchURL, "exa", ""))
-	}
-	if a.WebFetch {
-		groups = append(groups, storeGroup("Web fetch backend", []string{"direct", "crawl4ai"}, &a.FetchKind, &a.FetchURL, "direct", ""))
-	}
-	return runForm(huh.NewForm(groups...))
+// storeGroups: session (always), memory (when an embedder is set), search/fetch
+// (when their feature is on). The conditional groups carry WithHideFunc so they
+// appear/disappear live as earlier answers change. Emit gates on the same flags,
+// so a hidden group's default value is never written.
+func storeGroups(a *cli.InitAnswers, feats *[]string) []*huh.Group {
+	session := storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite").
+		Description("Where quack keeps its state + tool backends")
+	memory := storeGroup("Memory store", []string{"sqlite", "qdrant"}, &a.MemoryKind, &a.MemoryURL, "sqlite").
+		WithHideFunc(func() bool { return a.EmbedModel == "" })
+	search := storeGroup("Web search backend", []string{"exa", "searxng"}, &a.SearchKind, &a.SearchURL, "exa").
+		WithHideFunc(func() bool { return !slices.Contains(*feats, "search") })
+	fetch := storeGroup("Web fetch backend", []string{"direct", "crawl4ai"}, &a.FetchKind, &a.FetchURL, "direct").
+		WithHideFunc(func() bool { return !slices.Contains(*feats, "fetch") })
+	return []*huh.Group{session, memory, search, fetch}
 }
 
-// storeGroup builds one group: a kind select + a url input, pre-filled with the
-// defaults for the initial kind. The url is always shown (blank for kinds that
-// need none); the user edits it when they pick a url-needing kind.
-func storeGroup(title string, kinds []string, kind, url *string, defKind, defURL string) *huh.Group {
+// storeGroup builds one group — its title is the store name (the section header),
+// with a backend select + a url input. The url is left blank: its placeholder
+// tracks the selected kind's default (cli.DefaultBackendURL), and the emitter
+// fills that same default when the field is left empty. So accepting the default
+// is just pressing enter, and the placeholder updates live when you switch kind.
+func storeGroup(title string, kinds []string, kind, url *string, defKind string) *huh.Group {
 	*kind = defKind
-	*url = defURL
 	opts := make([]huh.Option[string], 0, len(kinds))
 	for _, k := range kinds {
 		opts = append(opts, huh.NewOption(k, k))
 	}
 	return huh.NewGroup(
-		huh.NewSelect[string]().Title(title).Options(opts...).Value(kind),
-		huh.NewInput().Title(title+" URL").Placeholder("blank if none").Value(url),
-	)
+		huh.NewSelect[string]().Title("Backend").Options(opts...).Value(kind),
+		huh.NewInput().Title("URL").
+			PlaceholderFunc(func() string {
+				if d := cli.DefaultBackendURL(*kind); d != "" {
+					return d + " (default)"
+				}
+				return "none needed"
+			}, kind).
+			Value(url),
+	).Title(title)
 }
 
 // modelOptions builds select options from a model list. If manual (no models),
 // returns nil and the caller uses an Input instead.
-func modelOptions(models []string, _ string) []huh.Option[string] {
+func modelOptions(models []string) []huh.Option[string] {
 	if len(models) == 0 {
 		return nil
 	}
@@ -299,29 +340,31 @@ func modelOptions(models []string, _ string) []huh.Option[string] {
 }
 
 // selectOrInput returns a Select field when models were discovered, else an
-// Input field for manual entry.
-func selectOrInput(manual bool, title string, opts []huh.Option[string], val *string) huh.Field {
+// Input field for manual entry. No field title — the group title is the header,
+// and no .Height so the whole option list stays static (the cursor moves through
+// it instead of the list scrolling under a window).
+func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Field {
 	if manual || len(opts) == 0 {
-		return huh.NewInput().Title(title).Value(val)
+		return huh.NewInput().Value(val)
 	}
-	return huh.NewSelect[string]().Title(title).Options(opts...).Value(val)
+	return huh.NewSelect[string]().Options(opts...).Value(val)
 }
 
 // specialistSelect is a model role pick with a "None — disable" option (so the
 // user can skip judge/memory/vision/audio). Falls back to Input when no models
 // were discovered.
-func specialistSelect(title string, models []string, val *string, none huh.Option[string]) huh.Field {
+func specialistSelect(models []string, val *string, none huh.Option[string]) huh.Field {
 	if len(models) == 0 {
-		return huh.NewInput().Title(title + " (blank for none)").Value(val)
+		return huh.NewInput().Placeholder("blank for none").Value(val)
 	}
-	opts := append([]huh.Option[string]{none}, modelOptions(models, *val)...)
+	opts := append([]huh.Option[string]{none}, modelOptions(models)...)
 	// If the prefilled value (from env/heuristic) isn't in the discovered list
 	// (stale env, or /models returned different IDs), add it as an explicit
 	// option so the select still pre-selects it instead of silently mismatching.
 	if *val != "" && !slices.Contains(models, *val) {
 		opts = append(opts, huh.NewOption(*val, *val))
 	}
-	return huh.NewSelect[string]().Title(title).Options(opts...).Value(val)
+	return huh.NewSelect[string]().Options(opts...).Value(val)
 }
 
 // suggestModel returns the first model whose name contains any of the keywords

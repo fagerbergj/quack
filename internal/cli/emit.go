@@ -49,9 +49,9 @@ func EmitServerConfig(a InitAnswers) string {
 	fmt.Fprintf(&b, "    endpoint: %s\n    api_key: ${QUACK_LLM_API_KEY}\n\n", a.Endpoint)
 
 	b.WriteString("stores:\n")
-	emitStore(&b, "default_postgres", a.SessionKind, a.SessionURL, defaultStoreURL(a.SessionKind, "session"))
+	emitStore(&b, "default_postgres", a.SessionKind, a.SessionURL)
 	if a.EmbedModel != "" {
-		emitStore(&b, "default_vector", a.MemoryKind, a.MemoryURL, defaultStoreURL(a.MemoryKind, "memory"))
+		emitStore(&b, "default_vector", a.MemoryKind, a.MemoryURL)
 	}
 	b.WriteString("\n")
 
@@ -117,12 +117,12 @@ func EnvExports(a InitAnswers) []string {
 	return out
 }
 
-func emitStore(b *strings.Builder, name, kind, url, fallback string) {
+func emitStore(b *strings.Builder, name, kind, url string) {
 	if kind == "" {
 		kind = "sqlite"
 	}
 	if url == "" {
-		url = fallback
+		url = DefaultBackendURL(kind)
 	}
 	fmt.Fprintf(b, "  %s:\n    kind: %s\n    url: %s\n", name, kind, url)
 }
@@ -130,6 +130,9 @@ func emitStore(b *strings.Builder, name, kind, url, fallback string) {
 func emitTool(b *strings.Builder, name, kind, url string) {
 	if kind == "" {
 		return
+	}
+	if url == "" {
+		url = DefaultBackendURL(kind)
 	}
 	if url == "" {
 		fmt.Fprintf(b, "  %s:\n    kind: %s\n", name, kind)
@@ -151,10 +154,12 @@ func emitAgent(b *strings.Builder, name, model string, ctx int, tools string, _ 
 		name, name, model, ctx, tools)
 }
 
-// defaultStoreURL is the no-docker default connection for a kind (used when the
-// user accepts the default). sqlite → a file path; qdrant → localhost; postgres
-// → localhost with the quack/quack creds the managed stack uses.
-func defaultStoreURL(kind, role string) string {
+// DefaultBackendURL is the no-docker default connection for a store/tool kind,
+// applied when the user leaves the URL blank — and surfaced live as the URL
+// field's placeholder in the wizard, so the default tracks the selected kind.
+// Kinds that need no URL (exa is API-key based; direct fetches in-process)
+// return "".
+func DefaultBackendURL(kind string) string {
 	switch kind {
 	case "sqlite":
 		return "quack.db"
@@ -162,7 +167,11 @@ func defaultStoreURL(kind, role string) string {
 		return "localhost:6334"
 	case "postgres":
 		return "postgres://quack:quack@localhost:5432/quack?sslmode=disable"
-	default:
+	case "searxng":
+		return "http://localhost:8080"
+	case "crawl4ai":
+		return "http://localhost:11235"
+	default: // exa, direct — no URL needed
 		return ""
 	}
 }

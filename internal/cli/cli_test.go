@@ -234,3 +234,32 @@ func TestEmitServerConfigTextOnly(t *testing.T) {
 		t.Error("text-only (no judge) should disable gates")
 	}
 }
+
+// TestEmitFillsBlankBackendURL: a blank URL for a kind that needs one is filled
+// with that kind's DefaultBackendURL; a kind that needs none (exa) stays bare.
+func TestEmitFillsBlankBackendURL(t *testing.T) {
+	a := InitAnswers{
+		Endpoint: "http://x/v1", MainModel: "m",
+		SessionKind: "postgres",                  // blank URL → default DSN
+		WebSearch:   true, SearchKind: "searxng", // blank URL → http://localhost:8080
+		WebFetch: true, FetchKind: "crawl4ai", // blank URL → http://localhost:11235
+	}
+	t.Setenv("QUACK_LLM_API_KEY", "k")
+	path := filepath.Join(t.TempDir(), "quack.yaml")
+	if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfigForTest(path)
+	if err != nil {
+		t.Fatalf("emitted config failed to load: %v\n---\n%s", err, EmitServerConfig(a))
+	}
+	if got := cfg.Tools["web_search"].URL; got != "http://localhost:8080" {
+		t.Errorf("searxng blank URL = %q, want the localhost default", got)
+	}
+	if got := cfg.Tools["web_fetch"].URL; got != "http://localhost:11235" {
+		t.Errorf("crawl4ai blank URL = %q, want the localhost default", got)
+	}
+	if got := cfg.Stores["default_postgres"].URL; got == "" {
+		t.Error("postgres blank URL should be filled with the default DSN")
+	}
+}
