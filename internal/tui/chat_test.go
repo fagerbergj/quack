@@ -279,6 +279,41 @@ func TestEnterBackslashInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestSteer_RedirectsAfterCancel(t *testing.T) {
+	// While streaming, /steer cancels then queues the guidance; once the run
+	// closes, the guidance is resubmitted (the two runs never overlap).
+	m := newTestModel()
+	m.streaming = true
+	m.cancelRun = func() {}
+	got, cmd := m.slash("/steer focus on cost")
+	gm := got.(Model)
+	if gm.pendingSteer != "focus on cost" || !gm.cancelling || cmd == nil {
+		t.Fatalf("/steer while streaming should cancel and queue, got steer=%q cancelling=%v", gm.pendingSteer, gm.cancelling)
+	}
+	// The cancel closes the stream → resubmit the guidance.
+	got2, cmd2 := gm.Update(streamClosedMsg{})
+	if got2.(Model).pendingSteer != "" {
+		t.Error("pendingSteer should be consumed after the run closes")
+	}
+	if cmd2 == nil {
+		t.Fatal("steer should resubmit after the run closes")
+	}
+	if sm, ok := cmd2().(submitMsg); !ok || sm.text != "focus on cost" {
+		t.Errorf("resubmit must carry the guidance, got %#v", cmd2())
+	}
+}
+
+func TestSteer_IdleSubmits(t *testing.T) {
+	m := newTestModel()
+	got, cmd := m.slash("/steer hello")
+	if got.(Model).pendingSteer != "" || cmd == nil {
+		t.Fatal("/steer when idle should submit immediately, not queue")
+	}
+	if sm, ok := cmd().(submitMsg); !ok || sm.text != "hello" {
+		t.Errorf("idle steer should submit the text, got %#v", cmd())
+	}
+}
+
 func TestSlash_NodeStopUsage(t *testing.T) {
 	m := newTestModel()
 	// Bad form → usage hint, no command.

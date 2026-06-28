@@ -42,7 +42,7 @@ type newChatMsg struct{ id string }
 type cmdErrMsg struct{ err error }
 
 // slashCommands drive both autocomplete and the dispatcher.
-var slashCommands = []string{"/help", "/new", "/session", "/ui", "/inspect ", "/stop", "/node stop ", "/quit"}
+var slashCommands = []string{"/help", "/new", "/session", "/ui", "/inspect ", "/steer ", "/stop", "/node stop ", "/quit"}
 
 // duckPuns rotate as the status line while the duck thinks — friendlier than a
 // flat "thinking…".
@@ -65,20 +65,21 @@ type Model struct {
 	title       string
 	serverLabel string
 
-	turns       []turn
-	streaming   bool
-	cancelling  bool
-	pending     string
-	live        strings.Builder
-	dag         *dagState
-	runErr      string
-	status      string
-	overlay     string // "" | "help" | "session" | "node"
-	inspectNode string // node id shown when overlay == "node"
-	initial     string
-	pendingQuit bool // esc-once when idle; esc again quits
-	tickN       int  // spinner ticks, drives pun rotation
-	streamGen   int  // bumped per run; the pump tags events so a stale stream's tail is ignored
+	turns        []turn
+	streaming    bool
+	cancelling   bool
+	pending      string
+	live         strings.Builder
+	dag          *dagState
+	runErr       string
+	status       string
+	overlay      string // "" | "help" | "session" | "node"
+	inspectNode  string // node id shown when overlay == "node"
+	initial      string
+	pendingQuit  bool   // esc-once when idle; esc again quits
+	pendingSteer string // guidance to resubmit once the cancelled run finishes
+	tickN        int    // spinner ticks, drives pun rotation
+	streamGen    int    // bumped per run; the pump tags events so a stale stream's tail is ignored
 
 	sub       <-chan cli.SSEEvent
 	cancelRun context.CancelFunc
@@ -171,7 +172,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.runErr = "connection lost — is the server still running?"
 			}
 			m.finishRun()
+			cmd := m.consumeSteer()
 			m.refreshViewport()
+			return m, cmd
 		}
 		return m, nil
 
@@ -349,6 +352,20 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 			}
 			return newChatMsg{id}
 		}
+	case "/steer":
+		guidance := strings.TrimSpace(strings.TrimPrefix(text, fields[0]))
+		if guidance == "" {
+			m.status = "usage: /steer <guidance>"
+			return m, nil
+		}
+		if m.streaming {
+			// Redirect: stop the current run, then resubmit the guidance so the
+			// duck re-plans with full context. (Mid-node injection is a later,
+			// server-side milestone; this is the safe, working form.)
+			m.pendingSteer = guidance
+			return m.cancelActive()
+		}
+		return m, func() tea.Msg { return submitMsg{guidance} }
 	case "/stop":
 		if m.streaming {
 			return m.cancelActive()
@@ -565,6 +582,17 @@ func (m *Model) finishRun() {
 	// guard drops the tail if a new run has started meanwhile.
 	m.status = ""
 	m.runErr = ""
+}
+
+// consumeSteer resubmits guidance queued by /steer once the cancelled run has
+// finished (so two runs never overlap).
+func (m *Model) consumeSteer() tea.Cmd {
+	if m.pendingSteer == "" {
+		return nil
+	}
+	g := m.pendingSteer
+	m.pendingSteer = ""
+	return func() tea.Msg { return submitMsg{g} }
 }
 
 func waitForEvent(sub <-chan cli.SSEEvent, gen int) tea.Cmd {
@@ -888,6 +916,7 @@ func helpText() string {
 		"  " + promptStyle.Render("/new") + "             start a new chat",
 		"  " + promptStyle.Render("/inspect <id>") + "    drill into a node's tool calls + thinking",
 		"  " + promptStyle.Render("ctrl+o") + "           inspect nodes (↑/↓ to move between them)",
+		"  " + promptStyle.Render("/steer <text>") + "    stop and redirect the duck with new guidance",
 		"  " + promptStyle.Render("/stop") + "            cancel the running turn",
 		"  " + promptStyle.Render("/node stop <id>") + "  stop one running node",
 		"  " + promptStyle.Render("/quit") + "            exit",
