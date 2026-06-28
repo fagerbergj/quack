@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -37,7 +39,7 @@ type newChatMsg struct{ id string }
 type cmdErrMsg struct{ err error }
 
 // slashCommands drive both autocomplete and the dispatcher.
-var slashCommands = []string{"/help", "/new", "/session", "/stop", "/node stop ", "/quit"}
+var slashCommands = []string{"/help", "/new", "/session", "/ui", "/stop", "/node stop ", "/quit"}
 
 // duckPuns rotate as the status line while the duck thinks — friendlier than a
 // flat "thinking…".
@@ -283,6 +285,17 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 		m.overlay = toggle(m.overlay, "session")
 		m.refreshViewport()
 		return m, nil
+	case "/ui", "/web":
+		url := ""
+		if m.client != nil {
+			url = m.client.BaseURL
+		}
+		if url == "" {
+			m.status = "no server URL to open"
+			return m, nil
+		}
+		m.status = "opening " + url + " in your browser"
+		return m, openBrowser(url)
 	case "/quit", "/exit", "/q":
 		return m, tea.Quit
 	case "/new":
@@ -441,8 +454,17 @@ func (m *Model) relayout() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	ih := m.inputHeight()
+	// Full width; height grows with content — LineCount counts wrapped lines too,
+	// so a long single line (or a paste) expands the box, capped so it can't eat
+	// the transcript (beyond the cap the textarea scrolls internally).
 	m.input.SetWidth(m.width)
+	ih := m.input.LineCount()
+	if ih < 1 {
+		ih = 1
+	}
+	if ih > inputMaxLines {
+		ih = inputMaxLines
+	}
 	m.input.SetHeight(ih)
 	sugg := len(m.slashMatches())
 	if sugg > 4 {
@@ -469,16 +491,7 @@ func (m *Model) relayout() {
 	}
 }
 
-func (m *Model) inputHeight() int {
-	n := strings.Count(m.input.Value(), "\n") + 1
-	if n < 1 {
-		n = 1
-	}
-	if n > 6 {
-		n = 6
-	}
-	return n
-}
+const inputMaxLines = 12
 
 func (m *Model) buildMD() {
 	w := m.vp.Width
@@ -520,10 +533,6 @@ func (m Model) View() string {
 
 	parts := []string{header, m.vp.View()}
 
-	if sugg := m.slashMatches(); len(sugg) > 0 {
-		parts = append(parts, faintStyle.Render("  "+strings.Join(capN(sugg, 4), "  ")))
-	}
-
 	if m.streaming {
 		parts = append(parts, m.spin.View()+" "+runStyle.Render(m.pun()))
 	} else {
@@ -531,6 +540,10 @@ func (m Model) View() string {
 			parts = append(parts, mutedStyle.Render(m.status))
 		}
 		parts = append(parts, m.input.View())
+		// Command hints go BELOW the input box (telesense-style).
+		if sugg := m.slashMatches(); len(sugg) > 0 {
+			parts = append(parts, faintStyle.Render("  "+strings.Join(capN(sugg, 4), "  ")))
+		}
 	}
 	parts = append(parts, footer)
 	return strings.Join(parts, "\n")
@@ -640,6 +653,7 @@ func helpText() string {
 		"",
 		"  " + promptStyle.Render("/help") + "            toggle this help",
 		"  " + promptStyle.Render("/session") + "         show session details",
+		"  " + promptStyle.Render("/ui") + "              open the web UI in your browser",
 		"  " + promptStyle.Render("/new") + "             start a new chat",
 		"  " + promptStyle.Render("/stop") + "            cancel the running turn",
 		"  " + promptStyle.Render("/node stop <id>") + "  stop one running node",
@@ -649,6 +663,23 @@ func helpText() string {
 		mutedStyle.Render("  pgup/pgdn or mouse wheel to scroll · esc to close"),
 	}
 	return strings.Join(lines, "\n")
+}
+
+// openBrowser opens url in the user's default browser (best-effort, non-blocking).
+func openBrowser(url string) tea.Cmd {
+	return func() tea.Msg {
+		var c *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			c = exec.Command("open", url)
+		case "windows":
+			c = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		default:
+			c = exec.Command("xdg-open", url)
+		}
+		_ = c.Start()
+		return nil
+	}
 }
 
 func toggle(cur, want string) string {

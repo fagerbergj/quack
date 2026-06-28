@@ -200,6 +200,24 @@ func TestSlash_SessionOverlay(t *testing.T) {
 	}
 }
 
+func TestSlash_OpenBrowser(t *testing.T) {
+	m := newTestModel()
+	m.client = &cli.Client{BaseURL: "http://127.0.0.1:8080"}
+	_, cmd := m.slash("/ui")
+	if cmd == nil {
+		t.Error("/ui with a server should issue an open-browser cmd")
+	}
+}
+
+func TestInputExpandsWithContent(t *testing.T) {
+	m := sized(newTestModel())
+	m.input.SetValue("one\ntwo\nthree\nfour")
+	m.relayout()
+	if m.input.Height() < 4 {
+		t.Errorf("input should grow to fit 4 lines, height=%d", m.input.Height())
+	}
+}
+
 func TestSlash_NodeStopUsage(t *testing.T) {
 	m := newTestModel()
 	// Bad form → usage hint, no command.
