@@ -359,19 +359,38 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 			return newChatMsg{id}
 		}
 	case "/steer":
-		guidance := strings.TrimSpace(strings.TrimPrefix(text, fields[0]))
-		if guidance == "" {
-			m.status = "usage: /steer <guidance>"
+		rest := strings.TrimSpace(strings.TrimPrefix(text, fields[0]))
+		if rest == "" {
+			m.status = "usage: /steer <guidance>   or   /steer <node-id> <guidance>"
 			return m, nil
 		}
+		// Node-targeted steer: if the first token names a node in the live DAG,
+		// interrupt that node and re-run it with the remaining text — it streams
+		// over THIS same connection (no cancel, no re-plan). Otherwise the whole
+		// text is a whole-run redirect (stop + resubmit so the duck re-plans).
+		if len(fields) >= 3 {
+			if d := m.currentDAG(); d != nil && d.node(fields[1]) != nil {
+				nodeID := fields[1]
+				guidance := strings.TrimSpace(strings.TrimPrefix(rest, fields[1]))
+				if guidance == "" {
+					m.status = "usage: /steer <node-id> <guidance>"
+					return m, nil
+				}
+				c, ctx, id := m.client, m.ctx, m.chatID
+				m.status = "steering node " + nodeID + "…"
+				return m, func() tea.Msg {
+					if err := c.SteerNode(ctx, id, nodeID, guidance); err != nil {
+						return cmdErrMsg{err}
+					}
+					return nil
+				}
+			}
+		}
 		if m.streaming {
-			// Redirect: stop the current run, then resubmit the guidance so the
-			// duck re-plans with full context. (Mid-node injection is a later,
-			// server-side milestone; this is the safe, working form.)
-			m.pendingSteer = guidance
+			m.pendingSteer = rest
 			return m.cancelActive()
 		}
-		return m, func() tea.Msg { return submitMsg{guidance} }
+		return m, func() tea.Msg { return submitMsg{rest} }
 	case "/stop":
 		if m.streaming {
 			return m.cancelActive()
@@ -498,6 +517,15 @@ func (m *Model) applyEvent(ev cli.SSEEvent) {
 		_ = json.Unmarshal(ev.Data, &d)
 		if m.dag != nil {
 			m.dag.fail(d.NodeID, d.Error)
+		}
+	case stream.EventNodeSteered:
+		// The node was interrupted and is re-running with new guidance (same
+		// session). Mark it queued again and note the steer in its activity feed; a
+		// fresh node_start → … → node_done follows on this same stream.
+		var d stream.NodeSteeredData
+		if json.Unmarshal(ev.Data, &d) == nil {
+			m.dagSet(d.NodeID, statusQueued)
+			m.dagActivity(d.NodeID, "↻ steered: "+firstLine(d.Guidance))
 		}
 	case stream.EventAgentToken:
 		var d stream.AgentTokenData
@@ -922,7 +950,8 @@ func helpText() string {
 		"  " + promptStyle.Render("/new") + "             start a new chat",
 		"  " + promptStyle.Render("/inspect <id>") + "    drill into a node's tool calls + thinking",
 		"  " + promptStyle.Render("ctrl+o") + "           inspect nodes (↑/↓ to move between them)",
-		"  " + promptStyle.Render("/steer <text>") + "    stop and redirect the duck with new guidance",
+		"  " + promptStyle.Render("/steer <text>") + "    stop and redirect the whole run with new guidance",
+		"  " + promptStyle.Render("/steer <id> <text>") + " interrupt one node and re-run it with guidance (keeps its work)",
 		"  " + promptStyle.Render("/stop") + "            cancel the running turn",
 		"  " + promptStyle.Render("/node stop <id>") + "  stop one running node",
 		"  " + promptStyle.Render("/quit") + "            exit",

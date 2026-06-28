@@ -329,6 +329,61 @@ func TestSteer_IdleSubmits(t *testing.T) {
 	}
 }
 
+func TestSteer_NodeTargetedInterrupts(t *testing.T) {
+	// /steer <node-id> <guidance>, where the id names a live node, is a node steer
+	// (interrupt + re-run over the same stream) — NOT a whole-run redirect, so it
+	// must not set pendingSteer / cancelling.
+	m := newTestModel()
+	m.client = &cli.Client{BaseURL: "http://127.0.0.1:0"}
+	m.streaming = true
+	m.dag = sampleDAG()
+	got, cmd := m.slash("/steer b dig into 2024 numbers")
+	gm := got.(Model)
+	if gm.pendingSteer != "" || gm.cancelling {
+		t.Errorf("a node steer must not redirect the whole run, got steer=%q cancelling=%v", gm.pendingSteer, gm.cancelling)
+	}
+	if cmd == nil {
+		t.Fatal("a node steer should issue a SteerNode cmd")
+	}
+	if !strings.Contains(gm.status, "b") {
+		t.Errorf("status should name the steered node, got %q", gm.status)
+	}
+}
+
+func TestSteer_UnknownNodeIsWholeRunRedirect(t *testing.T) {
+	// First token isn't a live node → the whole text is a whole-run redirect.
+	m := newTestModel()
+	m.streaming = true
+	m.cancelRun = func() {}
+	m.dag = sampleDAG()
+	got, cmd := m.slash("/steer zzz do the thing")
+	gm := got.(Model)
+	if gm.pendingSteer != "zzz do the thing" || !gm.cancelling || cmd == nil {
+		t.Errorf("unknown-node steer should redirect the whole run, got steer=%q cancelling=%v", gm.pendingSteer, gm.cancelling)
+	}
+}
+
+func TestNodeSteeredEventRequeues(t *testing.T) {
+	// A node_steered event marks the node queued again and notes the steer.
+	m := newTestModel()
+	m.dag = sampleDAG()
+	m.dagSet("b", statusRunning)
+	m.applyEvent(ev("node_steered", `{"node_id":"b","guidance":"focus on cost"}`))
+	nb := m.dag.node("b")
+	if nb.status != statusQueued {
+		t.Errorf("steered node should be re-queued, got status %v", nb.status)
+	}
+	found := false
+	for _, a := range nb.activity {
+		if strings.Contains(a, "steered") && strings.Contains(a, "focus on cost") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("steer should be noted in the node activity, got %v", nb.activity)
+	}
+}
+
 func TestSlash_NodeStopUsage(t *testing.T) {
 	m := newTestModel()
 	// Bad form → usage hint, no command.
