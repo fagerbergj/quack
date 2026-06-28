@@ -205,24 +205,25 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 
 	switch mode {
 	case "local":
+		// Local registers nothing: with no active server, the CLI runs the duck
+		// in-process (no separate `quack server run`). Writing quack.yaml is the
+		// whole job.
 		if err := ServerInit(ctx, serverInitPath, force); err != nil {
 			if errors.Is(err, ErrAborted) {
-				return nil // user cancelled at the existing-config gate; don't register
+				return nil // user cancelled at the existing-config gate
 			}
 			return err
 		}
-		c, err := cli.LoadClient()
-		if err != nil {
-			return err
+		// Migrate older setups: a registered `local → localhost:8080` entry used to
+		// be how local worked. Now local means in-process, so drop it (and clear it
+		// as active) — otherwise resolution would dial a server that isn't running.
+		if c, err := cli.LoadClient(); err == nil {
+			if _, ok := c.Servers["local"]; ok {
+				c.RemoveServer("local")
+				_ = c.Save()
+			}
 		}
-		_ = c.AddServer("local", "http://localhost:8080") // ignore "exists" — local is conventional
-		if err := c.Use("local"); err != nil {
-			return err
-		}
-		if err := c.Save(); err != nil {
-			return err
-		}
-		fmt.Println("✓ Registered `local` as your active server.")
+		fmt.Println("\nLocal duck ready — run `quack` to chat (it starts in-process).")
 		return nil
 	case "remote":
 		return registerRemote()

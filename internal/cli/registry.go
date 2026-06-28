@@ -93,9 +93,9 @@ func (c *ClientConfig) Use(name string) error {
 	return nil
 }
 
-// ActiveURL resolves the server to talk to: the --server override, else the
-// active server's URL, else the localhost default (so a freshly-run `quack
-// server run` just works without any registry setup).
+// ActiveURL resolves the remote server to talk to: the --server override, else
+// the active server's URL. Returns "" when no remote is configured — the signal
+// that the command should run the duck locally in-process (no separate server).
 func (c *ClientConfig) ActiveURL(override string) string {
 	if override != "" {
 		return override
@@ -105,5 +105,5 @@ func (c *ClientConfig) ActiveURL(override string) string {
 			return s.URL
 		}
 	}
-	return "http://localhost:8080"
+	return ""
 }

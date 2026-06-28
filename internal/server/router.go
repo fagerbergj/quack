@@ -4,8 +4,10 @@ package server
 
 import (
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -27,7 +29,7 @@ type Options struct {
 // New builds the HTTP handler.
 func New(opts Options) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	r.Use(requestLogger) // slog (not chi's stderr logger) so QUACK_LOG_LEVEL gates it
 	r.Use(middleware.Recoverer)
 
 	if opts.MCP != nil {
@@ -43,6 +45,22 @@ func New(opts Options) http.Handler {
 		r.NotFound(spaHandler(opts.SPA))
 	}
 	return r
+}
+
+// requestLogger logs one line per request through slog at Info, so the process
+// log level controls it — unlike chi's middleware.Logger, which writes to stderr
+// unconditionally and would pollute `quack -p` (the in-process duck runs at warn).
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		start := time.Now()
+		defer func() {
+			slog.Info("http request", "component", "server",
+				"method", r.Method, "path", r.URL.Path,
+				"status", ww.Status(), "bytes", ww.BytesWritten(), "dur", time.Since(start))
+		}()
+		next.ServeHTTP(ww, r)
+	})
 }
 
 func spaHandler(spa fs.FS) http.HandlerFunc {

@@ -6,6 +6,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"iter"
@@ -230,27 +231,33 @@ func New(kind, url string) (*Store, error) {
 	return &Store{db: db, Sessions: sessions}, nil
 }
 
-// dialectorFor returns a factory that yields a fresh GORM dialector for kind+url.
-// A factory (not a single instance) is returned because the dialector is consumed
-// twice — once for the app handle, once for ADK's session service — each opening
-// its own connection pool.
+// dialectorFor returns a factory that yields a GORM dialector for kind+url. The
+// dialector is consumed twice — once for the app handle, once for ADK's session
+// service. For postgres each call opens its own pool (postgres handles concurrent
+// writers). For sqlite both calls SHARE one *sql.DB capped to a single
+// connection: SQLite allows only one writer, so serializing every app +
+// ADK-session write through one connection is what prevents SQLITE_BUSY under the
+// concurrent DAG / gate / memory writers (busy_timeout alone wasn't enough — two
+// pools could still collide). WAL + busy_timeout stay (durability + reads).
+// ponytail: single local file, single instance — no-docker only.
 func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 	switch kind {
 	case "", "postgres":
 		return func() gorm.Dialector { return postgres.Open(url) }, nil
 	case "sqlite":
-		dsn := sqliteDSN(url)
-		return func() gorm.Dialector { return sqlite.Open(dsn) }, nil
+		sqlDB, err := sql.Open(sqlite.DriverName, sqliteDSN(url))
+		if err != nil {
+			return nil, fmt.Errorf("store: open sqlite: %w", err)
+		}
+		sqlDB.SetMaxOpenConns(1) // one writer; serialize the two pools onto it
+		return func() gorm.Dialector { return &sqlite.Dialector{Conn: sqlDB} }, nil
 	default:
 		return nil, fmt.Errorf("store: unsupported kind %q (postgres or sqlite)", kind)
 	}
 }
 
-// sqliteDSN enables WAL + a busy timeout on every connection so the two pools on
-// one file (app + ADK session) coordinate instead of failing with SQLITE_BUSY
-// under the concurrent DAG / gate / memory writers. ponytail: single local file,
-// single instance — no-docker only; SQLite is not for multi-instance. A caller
-// who supplies their own query params is left untouched.
+// sqliteDSN enables WAL + a busy timeout. A caller who supplies their own query
+// params is left untouched.
 func sqliteDSN(url string) string {
 	if strings.Contains(url, "?") {
 		return url
