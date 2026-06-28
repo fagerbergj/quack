@@ -6,11 +6,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -250,12 +253,58 @@ func newServerRemoveCmd() *cobra.Command {
 	}
 }
 
-// newAPICmd: raw authenticated REST passthrough, modeled on `gh api`.
+// newAPICmd: raw REST passthrough, modeled on `gh api`. With one arg the method
+// defaults to GET; the response body is written to stdout (pipeable to jq).
 func newAPICmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "api <method> <path>",
-		Short: "Make an authenticated request to the quack REST API",
-		RunE:  func(*cobra.Command, []string) error { return notWired("api passthrough") },
+	var data string
+	c := &cobra.Command{
+		Use:   "api [method] <path>",
+		Short: "Make a raw request to the quack REST API (à la `gh api`)",
+		Long: "Make a raw request to the quack REST API and print the response body.\n\n" +
+			"  quack api /health\n" +
+			"  quack api /api/v1/chats\n" +
+			"  quack api POST /api/v1/chats -d '{\"system_prompt\":\"...\"}'\n" +
+			"  quack api POST /api/v1/chats -d @body.json   # or -d - to read stdin\n\n" +
+			"Targets the active server (or --server); with neither, runs the duck in-process.",
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			method, path := "GET", args[0]
+			if len(args) == 2 {
+				method, path = args[0], args[1]
+			}
+			body, err := apiBody(data, cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			server, _ := cmd.Flags().GetString("server")
+			target, stop, err := resolveTarget(cmd.Context(), server)
+			if err != nil {
+				return err
+			}
+			defer stop()
+			return cli.RunAPI(cmd.Context(), cmd.OutOrStdout(), target, method, path, body)
+		},
+	}
+	c.Flags().StringVarP(&data, "data", "d", "", "request body: literal string, @file, or - for stdin")
+	return c
+}
+
+// apiBody resolves the -d value into a request body: "" → none, "-" → stdin,
+// "@path" → file contents, else the literal string.
+func apiBody(data string, stdin io.Reader) (io.Reader, error) {
+	switch {
+	case data == "":
+		return nil, nil
+	case data == "-":
+		return stdin, nil
+	case strings.HasPrefix(data, "@"):
+		b, err := os.ReadFile(data[1:])
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(b), nil
+	default:
+		return strings.NewReader(data), nil
 	}
 }
 

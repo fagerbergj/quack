@@ -48,6 +48,51 @@ func (c *Client) CreateChat(ctx context.Context, systemPrompt string) (string, e
 	return out.Id, nil
 }
 
+// Request performs an arbitrary REST call and returns the status code and the
+// response body. path may be absolute ("/health") or root-relative ("health");
+// body is nil for none (Content-Type defaults to JSON when a body is sent).
+func (c *Client) Request(ctx context.Context, method, path string, body io.Reader) (int, []byte, error) {
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), c.BaseURL+path, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, nil, c.reachErr(err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, b, err
+}
+
+// RunAPI is `quack api`: a raw REST passthrough (à la `gh api`). It writes the
+// response body to out and returns a non-nil error on a 4xx/5xx so the command
+// exits non-zero. body is the request body (nil for none).
+func RunAPI(ctx context.Context, out io.Writer, server, method, path string, body io.Reader) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	status, respBody, err := c.Request(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	_, _ = out.Write(respBody)
+	if n := len(respBody); n == 0 || respBody[n-1] != '\n' {
+		fmt.Fprintln(out) // tidy terminal output; harmless for pipes
+	}
+	if status >= 400 {
+		return fmt.Errorf("HTTP %d", status)
+	}
+	return nil
+}
+
 // SSEEvent is one decoded server-sent event: a name and its raw JSON data.
 type SSEEvent struct {
 	Name string
