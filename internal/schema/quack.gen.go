@@ -297,6 +297,9 @@ type Usage struct {
 // ChatID defines model for ChatID.
 type ChatID = string
 
+// NodeID defines model for NodeID.
+type NodeID = string
+
 // ResponseID defines model for ResponseID.
 type ResponseID = string
 
@@ -528,6 +531,9 @@ type ServerInterface interface {
 	// Get a chat with its turns
 	// (GET /api/v1/chats/{chat_id})
 	GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Cancel a single running node of the chat's active run
+	// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
+	CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Send a message and stream the response
 	// (POST /api/v1/chats/{chat_id}/responses)
 	SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID)
@@ -570,6 +576,12 @@ func (_ Unimplemented) DeleteChat(w http.ResponseWriter, r *http.Request, chatId
 // Get a chat with its turns
 // (GET /api/v1/chats/{chat_id})
 func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Cancel a single running node of the chat's active run
+// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
+func (_ Unimplemented) CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -683,6 +695,41 @@ func (siw *ServerInterfaceWrapper) GetChat(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChat(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelNode operation middleware
+func (siw *ServerInterfaceWrapper) CancelNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelNode(w, r, chatId, nodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -943,6 +990,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.GetChat)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.CancelNode)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/responses", wrapper.SendChatMessage)

@@ -46,6 +46,13 @@ type Orchestrator struct {
 	userMem   *memory.Store // optional user-memory store (M6); nil = user memory off
 }
 
+// CancelNode stops one running node of the chat's active run (continue-but-warn:
+// the rest of the DAG keeps going). Returns false if no such live node. chatID is
+// the session id used while executing.
+func (o *Orchestrator) CancelNode(chatID, nodeID string) bool {
+	return o.executor.CancelNode(chatID, nodeID)
+}
+
 // New builds the orchestrator. sysPrompt is assembled from agents/orchestrator/
 // via promptbuilder.Orchestrator at startup. skillTS may be nil. userMem, when
 // non-nil, enables personal memory: ambient recall (preload_memory) + an explicit
@@ -87,7 +94,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(o.executor, planCache, userID)
+		execTool, err := tools.NewExecuteTool(o.executor, planCache, userID, sessionID)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return

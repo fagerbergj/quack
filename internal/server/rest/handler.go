@@ -311,6 +311,13 @@ func (h *Handler) CancelChatStream(w http.ResponseWriter, r *http.Request, chatI
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CancelNode stops a single running node of the chat's active run; the rest of
+// the DAG keeps going (continue-but-warn). No-op if no such node is active.
+func (h *Handler) CancelNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	h.orch.CancelNode(chatID, nodeID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // SubscribeChatStream connects an additional client to a chat's live (or
 // just-completed) run: it replays the events so far, then streams live events
 // until the run ends — so a turn started on one device can be watched from

@@ -134,6 +134,27 @@ func TestRunChatDelete(t *testing.T) {
 	}
 }
 
+func TestRunNodeStop(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var hit string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			hit = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "n2"); err != nil {
+		t.Fatal(err)
+	}
+	if hit != "/api/v1/chats/c1/nodes/n2" {
+		t.Errorf("node stop hit %q, want /api/v1/chats/c1/nodes/n2", hit)
+	}
+}
+
 func TestRunChatStop(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var cancelled bool

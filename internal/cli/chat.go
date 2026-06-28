@@ -77,6 +77,20 @@ func RunChatStop(ctx context.Context, out io.Writer, server, id string) error {
 	return nil
 }
 
+// RunNodeStop is `quack chat node stop <chat-id> <node-id>`: cancel one running
+// node; the rest of the run continues. No-op if no such node is active.
+func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.CancelNode(ctx, chatID, nodeID); err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Stopped node %s (chat %s); the rest of the run continues.\n", nodeID, chatID)
+	return nil
+}
+
 // RunChatDelete is `quack chat delete <id>`. Deletion is irreversible, so it
 // confirms first unless yes is set (the --yes flag, or a non-interactive stdin).
 func RunChatDelete(ctx context.Context, out io.Writer, in io.Reader, server, id string, yes bool) error {

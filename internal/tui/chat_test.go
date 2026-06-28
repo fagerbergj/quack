@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -150,6 +151,20 @@ func TestSlash_HelpToggles(t *testing.T) {
 	got, _ := m.slash("/help")
 	if !got.(Model).showHelp {
 		t.Error("/help must show help")
+	}
+}
+
+func TestSlash_NodeStopUsage(t *testing.T) {
+	m := newTestModel()
+	// Bad form → usage hint, no command.
+	got, cmd := m.slash("/node")
+	if cmd != nil || !strings.Contains(got.(Model).status, "usage") {
+		t.Errorf("/node without args should show usage, status=%q", got.(Model).status)
+	}
+	// Well-formed → issues a cmd (the cancel call).
+	_, cmd2 := m.slash("/node stop n1")
+	if cmd2 == nil {
+		t.Error("/node stop <id> should issue a cancel cmd")
 	}
 }
 

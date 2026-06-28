@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/session"
@@ -112,7 +113,7 @@ func TestExecuteReadinessDiamond(t *testing.T) {
 	}
 
 	nodeOutputs := map[string]string{}
-	counts, failed := collectExec(t, exec.Execute(context.Background(), plan, "user", nodeOutputs))
+	counts, failed := collectExec(t, exec.Execute(context.Background(), plan, "user", "chat1", nodeOutputs))
 
 	if len(failed) != 0 {
 		t.Fatalf("unexpected node failures: %v", failed)
@@ -140,6 +141,98 @@ func TestExecuteReadinessDiamond(t *testing.T) {
 	}
 }
 
+// blockingAgent records its start (signalling `started`) then blocks until its
+// context is cancelled — so a test can cancel it mid-run via CancelNode.
+func blockingAgent(t *testing.T, name string, rec *recorder, started chan<- struct{}) adkagent.Agent {
+	t.Helper()
+	ag, err := adkagent.New(adkagent.Config{
+		Name:        name,
+		Description: "blocking fake test agent",
+		Run: func(ic adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
+			return func(yield func(*session.Event, error) bool) {
+				rec.record(name, "")
+				select {
+				case started <- struct{}{}:
+				default:
+				}
+				<-ic.Done() // unblocks when this node's ctx is cancelled
+				yield(nil, ic.Err())
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ag
+}
+
+// TestExecuteCancelNodeContinues: cancelling ONE running node ends that node
+// (node_failed: "cancelled by user") but the run continues — its dependent still
+// executes (continue-but-warn), unlike a node error which halts the DAG.
+func TestExecuteCancelNodeContinues(t *testing.T) {
+	rec := newRecorder()
+	startedB := make(chan struct{}, 1)
+	clients := map[string]adkagent.Agent{
+		"agA": fakeAgent(t, "agA", "out-A", rec, false),
+		"agB": blockingAgent(t, "agB", rec, startedB),
+		"agC": fakeAgent(t, "agC", "out-C", rec, false),
+	}
+	exec := NewExecutor(session.InMemoryService(), clients, nil, 4)
+	plan := Plan{
+		ID:          "pC",
+		UserMessage: "hi",
+		Nodes: []Node{
+			{ID: "A", AgentName: "agA", Task: "do A"},
+			{ID: "B", AgentName: "agB", Task: "do B", DependsOn: []string{"A"}},
+			{ID: "C", AgentName: "agC", Task: "do C", DependsOn: []string{"B"}},
+		},
+	}
+
+	type res struct {
+		counts map[string]int
+		failed map[string]string
+	}
+	done := make(chan res, 1)
+	go func() {
+		counts := map[string]int{}
+		failed := map[string]string{}
+		for ev, err := range exec.Execute(context.Background(), plan, "user", "chatX", map[string]string{}) {
+			if err != nil {
+				continue
+			}
+			counts[ev.Name]++
+			if d, ok := ev.Data.(stream.NodeFailedData); ok {
+				failed[d.NodeID] = d.Error
+			}
+		}
+		done <- res{counts, failed}
+	}()
+
+	<-startedB // B is running
+	if !exec.CancelNode("chatX", "B") {
+		t.Fatal("CancelNode should find running node B")
+	}
+	// Cancelling an unknown node/chat is a safe no-op.
+	if exec.CancelNode("chatX", "ghost") || exec.CancelNode("nope", "B") {
+		t.Error("CancelNode on a missing node/chat should return false")
+	}
+
+	select {
+	case r := <-done:
+		if r.failed["B"] == "" {
+			t.Errorf("B should be reported cancelled, failures=%v", r.failed)
+		}
+		if rec.order["agC"] == 0 {
+			t.Error("C must still run after B is cancelled (continue-but-warn)")
+		}
+		if r.counts[stream.EventNodeDone] != 2 { // A and C
+			t.Errorf("node_done = %d, want 2 (A + C)", r.counts[stream.EventNodeDone])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not complete after cancelling a node (deadlock?)")
+	}
+}
+
 // TestExecuteFailureStopsDownstream asserts a node error halts the DAG: the
 // failed node emits node_failed, downstream never runs, and Execute returns.
 func TestExecuteFailureStopsDownstream(t *testing.T) {
@@ -161,7 +254,7 @@ func TestExecuteFailureStopsDownstream(t *testing.T) {
 	}
 
 	nodeOutputs := map[string]string{}
-	_, failed := collectExec(t, exec.Execute(context.Background(), plan, "user", nodeOutputs))
+	_, failed := collectExec(t, exec.Execute(context.Background(), plan, "user", "chat1", nodeOutputs))
 
 	if _, ok := failed["B"]; !ok {
 		t.Errorf("expected node_failed for B, got failures=%v", failed)
