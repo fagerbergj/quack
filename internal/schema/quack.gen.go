@@ -262,6 +262,12 @@ type SendMessageBody struct {
 	Content string `json:"content"`
 }
 
+// SteerNodeBody defines model for SteerNodeBody.
+type SteerNodeBody struct {
+	// Guidance New guidance to redirect the node; the worker revises on top of its existing session (prior tool calls and results retained).
+	Guidance string `json:"guidance"`
+}
+
 // ToolCallItem defines model for ToolCallItem.
 type ToolCallItem struct {
 	Args   *map[string]interface{} `json:"args,omitempty"`
@@ -305,6 +311,9 @@ type ResponseID = string
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
+
+// SteerNodeJSONRequestBody defines body for SteerNode for application/json ContentType.
+type SteerNodeJSONRequestBody = SteerNodeBody
 
 // SendChatMessageJSONRequestBody defines body for SendChatMessage for application/json ContentType.
 type SendChatMessageJSONRequestBody = SendMessageBody
@@ -534,6 +543,9 @@ type ServerInterface interface {
 	// Cancel a single running node of the chat's active run
 	// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
 	CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// Interrupt a running node and re-run it with new guidance
+	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/steer)
+	SteerNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Send a message and stream the response
 	// (POST /api/v1/chats/{chat_id}/responses)
 	SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID)
@@ -582,6 +594,12 @@ func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId Ch
 // Cancel a single running node of the chat's active run
 // (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
 func (_ Unimplemented) CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Interrupt a running node and re-run it with new guidance
+// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/steer)
+func (_ Unimplemented) SteerNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -730,6 +748,41 @@ func (siw *ServerInterfaceWrapper) CancelNode(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CancelNode(w, r, chatId, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SteerNode operation middleware
+func (siw *ServerInterfaceWrapper) SteerNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SteerNode(w, r, chatId, nodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -993,6 +1046,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.CancelNode)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/steer", wrapper.SteerNode)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/responses", wrapper.SendChatMessage)

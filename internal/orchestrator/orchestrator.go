@@ -53,6 +53,13 @@ func (o *Orchestrator) CancelNode(chatID, nodeID string) bool {
 	return o.executor.CancelNode(chatID, nodeID)
 }
 
+// SteerNode interrupts a single running node and re-runs it with new guidance
+// against its same session (prior tool calls/results retained). Returns false if
+// no such live node. chatID is the session id used while executing.
+func (o *Orchestrator) SteerNode(chatID, nodeID, guidance string) bool {
+	return o.executor.SteerNode(chatID, nodeID, guidance)
+}
+
 // New builds the orchestrator. sysPrompt is assembled from agents/orchestrator/
 // via promptbuilder.Orchestrator at startup. skillTS may be nil. userMem, when
 // non-nil, enables personal memory: ambient recall (preload_memory) + an explicit

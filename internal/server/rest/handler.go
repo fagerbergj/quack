@@ -318,6 +318,19 @@ func (h *Handler) CancelNode(w http.ResponseWriter, r *http.Request, chatID sche
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// SteerNode interrupts a single running node and re-runs it with new guidance
+// against its same session (prior tool calls/results retained). No-op if no such
+// node is active. The re-run streams over the chat's existing SSE connection.
+func (h *Handler) SteerNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	var body schema.SteerNodeBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Guidance) == "" {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	h.orch.SteerNode(chatID, nodeID, body.Guidance)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // SubscribeChatStream connects an additional client to a chat's live (or
 // just-completed) run: it replays the events so far, then streams live events
 // until the run ends — so a turn started on one device can be watched from

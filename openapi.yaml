@@ -131,6 +131,7 @@ paths:
         - node_start
         - node_done
         - node_failed
+        - node_steered
         - chat_title
         - done
         - error
@@ -187,6 +188,7 @@ paths:
         - node_start
         - node_done
         - node_failed
+        - node_steered
         - chat_title
         - done
         - error
@@ -223,6 +225,30 @@ paths:
       responses:
         "204":
           description: Cancelled (or no such active node)
+
+  /api/v1/chats/{chat_id}/nodes/{node_id}/steer:
+    post:
+      operationId: steerNode
+      summary: Interrupt a running node and re-run it with new guidance
+      description: |
+        Interrupts one running node of the chat's in-flight run and re-runs it
+        against its SAME session — so the node's prior tool calls and results are
+        retained and the worker revises on top of them with the supplied guidance.
+        Dependents are untouched (they keep waiting for the re-run to finish).
+        No-op if no such node is active. Emits a node_steered event, then the
+        node's normal node_start → … → node_done sequence again.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteerNodeBody"
+      responses:
+        "204":
+          description: Accepted (or no such active node)
 
 components:
   parameters:
@@ -302,6 +328,15 @@ components:
       properties:
         content:
           type: string
+
+    SteerNodeBody:
+      type: object
+      required: [guidance]
+      properties:
+        guidance:
+          type: string
+          description: New guidance to redirect the node; the worker revises on top
+            of its existing session (prior tool calls and results retained).
 
     # -------------------------------------------------------------------------
     # Turn (one user→assistant exchange, modelled after OpenResponses Response)

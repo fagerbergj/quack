@@ -6,6 +6,7 @@ import (
 	"iter"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -230,6 +231,200 @@ func TestExecuteCancelNodeContinues(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("run did not complete after cancelling a node (deadlock?)")
+	}
+}
+
+// steerableAgent blocks on its first invocation until cancelled (signalling
+// `started`), then on every later invocation records the task it received and
+// yields `output`. It also records whether the re-run saw any prior session
+// events (proving the same session was reused). Used to test SteerNode.
+func steerableAgent(t *testing.T, name, output string, rec *recorder, started chan<- struct{}, runs *int32, sawPrior *bool) adkagent.Agent {
+	t.Helper()
+	ag, err := adkagent.New(adkagent.Config{
+		Name:        name,
+		Description: "steerable fake test agent",
+		Run: func(ic adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
+			return func(yield func(*session.Event, error) bool) {
+				n := atomic.AddInt32(runs, 1)
+				task := ""
+				if uc := ic.UserContent(); uc != nil && len(uc.Parts) > 0 {
+					task = uc.Parts[0].Text
+				}
+				rec.record(name, task)
+				if n == 1 {
+					select {
+					case started <- struct{}{}:
+					default:
+					}
+					<-ic.Done() // unblocks when SteerNode cancels this node's ctx
+					yield(nil, ic.Err())
+					return
+				}
+				// Re-run: the session should carry the first run's events.
+				if s := ic.Session(); s != nil && s.Events().Len() > 0 {
+					*sawPrior = true
+				}
+				ev := session.NewEvent(ic.InvocationID())
+				ev.Author = name
+				ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: output}}}
+				ev.TurnComplete = true
+				yield(ev, nil)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ag
+}
+
+// TestExecuteSteerReRunsNode: steering a running node interrupts it and re-runs
+// it (NOT failing it) with the guidance, reusing its session; the dependent waits
+// for the re-run and the run completes with every node done exactly once.
+func TestExecuteSteerReRunsNode(t *testing.T) {
+	rec := newRecorder()
+	startedA := make(chan struct{}, 1)
+	var runsA int32
+	var sawPrior bool
+	clients := map[string]adkagent.Agent{
+		"agA": steerableAgent(t, "agA", "out-A-steered", rec, startedA, &runsA, &sawPrior),
+		"agB": fakeAgent(t, "agB", "out-B", rec, false),
+	}
+	exec := NewExecutor(session.InMemoryService(), clients, nil, 4)
+	plan := Plan{
+		ID:          "pS",
+		UserMessage: "hi",
+		Nodes: []Node{
+			{ID: "A", AgentName: "agA", Task: "do A"},
+			{ID: "B", AgentName: "agB", Task: "do B", DependsOn: []string{"A"}},
+		},
+	}
+
+	type res struct {
+		counts map[string]int
+		failed map[string]string
+	}
+	done := make(chan res, 1)
+	go func() {
+		counts := map[string]int{}
+		failed := map[string]string{}
+		for ev, err := range exec.Execute(context.Background(), plan, "user", "chatS", map[string]string{}) {
+			if err != nil {
+				continue
+			}
+			counts[ev.Name]++
+			if d, ok := ev.Data.(stream.NodeFailedData); ok {
+				failed[d.NodeID] = d.Error
+			}
+		}
+		done <- res{counts, failed}
+	}()
+
+	<-startedA // A is running its first (blocking) invocation
+	if !exec.SteerNode("chatS", "A", "focus on cost") {
+		t.Fatal("SteerNode should find running node A")
+	}
+
+	select {
+	case r := <-done:
+		if r.failed["A"] != "" {
+			t.Errorf("a steered node must NOT be failed, got failure %q", r.failed["A"])
+		}
+		if r.counts[stream.EventNodeSteered] != 1 {
+			t.Errorf("node_steered = %d, want 1", r.counts[stream.EventNodeSteered])
+		}
+		if r.counts[stream.EventNodeDone] != 2 { // A (re-run) + B
+			t.Errorf("node_done = %d, want 2 (A re-run + B)", r.counts[stream.EventNodeDone])
+		}
+		if atomic.LoadInt32(&runsA) != 2 {
+			t.Errorf("A should run twice (original + steer re-run), got %d", runsA)
+		}
+		if !strings.Contains(rec.tasks["agA"], "focus on cost") {
+			t.Errorf("re-run task should carry the steer guidance, got %q", rec.tasks["agA"])
+		}
+		if !sawPrior {
+			t.Error("steer re-run should see the prior session events (same session reused)")
+		}
+		// B ran after A's re-run.
+		if !(rec.order["agB"] > rec.order["agA"]) {
+			t.Errorf("B must run after A's re-run: order=%v", rec.order)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not complete after steering a node (deadlock?)")
+	}
+}
+
+// TestSteerNodeNoLiveNode: SteerNode on an unknown node/chat is a safe no-op.
+func TestSteerNodeNoLiveNode(t *testing.T) {
+	exec := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{}, nil, 2)
+	if exec.SteerNode("nope", "ghost", "x") {
+		t.Error("SteerNode on a missing chat should return false")
+	}
+}
+
+// TestSanitizeDanglingCalls: a session that ends on an unanswered function call
+// gets a synthetic response appended (so a steer re-run's request is valid),
+// while the original call is preserved.
+func TestSanitizeDanglingCalls(t *testing.T) {
+	svc := session.InMemoryService()
+	exec := NewExecutor(svc, map[string]adkagent.Agent{}, nil, 2)
+	ctx := context.Background()
+	cr, err := svc.Create(ctx, &session.CreateRequest{AppName: nodeAppName, UserID: "user", SessionID: "sid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewEvent("inv")
+	call.Author = "agX"
+	call.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{
+		FunctionCall: &genai.FunctionCall{ID: "c1", Name: "web_search", Args: map[string]any{"q": "x"}},
+	}}}
+	if err := svc.AppendEvent(ctx, cr.Session, call); err != nil {
+		t.Fatal(err)
+	}
+
+	exec.sanitizeDanglingCalls(ctx, "user", "sid")
+
+	resp, err := svc.Get(ctx, &session.GetRequest{AppName: nodeAppName, UserID: "user", SessionID: "sid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls, responses int
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.FunctionCall != nil && p.FunctionCall.ID == "c1" {
+				calls++
+			}
+			if p.FunctionResponse != nil && p.FunctionResponse.ID == "c1" {
+				responses++
+			}
+		}
+	}
+	if calls != 1 {
+		t.Errorf("original tool call must be preserved, found %d", calls)
+	}
+	if responses != 1 {
+		t.Errorf("dangling call must get exactly one synthetic response, found %d", responses)
+	}
+
+	// Idempotent: a second pass (now that the call is answered) adds nothing.
+	exec.sanitizeDanglingCalls(ctx, "user", "sid")
+	resp2, _ := svc.Get(ctx, &session.GetRequest{AppName: nodeAppName, UserID: "user", SessionID: "sid"})
+	responses = 0
+	for ev := range resp2.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.FunctionResponse != nil && p.FunctionResponse.ID == "c1" {
+				responses++
+			}
+		}
+	}
+	if responses != 1 {
+		t.Errorf("sanitize must be idempotent, found %d responses after second pass", responses)
 	}
 }
 

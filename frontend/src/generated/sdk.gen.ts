@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelChatStreamData, CancelChatStreamResponses, CancelNodeData, CancelNodeResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
+import type { CancelChatStreamData, CancelChatStreamResponses, CancelNodeData, CancelNodeResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SteerNodeData, SteerNodeResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -134,3 +134,23 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
  *
  */
 export const cancelNode = <ThrowOnError extends boolean = false>(options: Options<CancelNodeData, ThrowOnError>): RequestResult<CancelNodeResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelNodeResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/nodes/{node_id}', ...options });
+
+/**
+ * Interrupt a running node and re-run it with new guidance
+ *
+ * Interrupts one running node of the chat's in-flight run and re-runs it
+ * against its SAME session — so the node's prior tool calls and results are
+ * retained and the worker revises on top of them with the supplied guidance.
+ * Dependents are untouched (they keep waiting for the re-run to finish).
+ * No-op if no such node is active. Emits a node_steered event, then the
+ * node's normal node_start → … → node_done sequence again.
+ *
+ */
+export const steerNode = <ThrowOnError extends boolean = false>(options: Options<SteerNodeData, ThrowOnError>): RequestResult<SteerNodeResponses, unknown, ThrowOnError> => (options.client ?? client).post<SteerNodeResponses, unknown, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/steer',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});

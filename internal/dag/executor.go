@@ -32,14 +32,23 @@ type Executor struct {
 	// layer doesn't fire N huge model requests at the single worker at once.
 	sem chan struct{}
 
-	// mu guards nodeCancels: chatID → nodeID → cancel func for the in-flight run.
+	// mu guards nodeCancels and steers: chatID → nodeID → … for the in-flight run.
 	// CancelNode (called from the REST handler) cancels one node's context so the
 	// run continues without it (continue-but-warn), distinct from cancelling the
-	// whole run. The inner map is created when a run starts and dropped when it
-	// ends, so cancelling a finished node is a harmless no-op.
+	// whole run. The inner maps are created when a run starts and dropped when it
+	// ends, so controlling a finished node is a harmless no-op.
 	mu          sync.Mutex
 	nodeCancels map[string]map[string]context.CancelFunc
+	// steers holds queued steer guidance: chatID → nodeID → guidance. SteerNode
+	// stores the guidance then cancels the node's context; the Execute loop, on
+	// seeing that cancel, re-runs the node with the guidance (against its same
+	// session, so prior tool calls/results are kept) instead of failing it.
+	steers map[string]map[string]string
 }
+
+// nodeAppName is the runner AppName for DAG nodes; the steer path reuses it to
+// reach a node's session for sanitising before a re-run.
+const nodeAppName = "quack-nodes"
 
 // NewExecutor returns an Executor. clients maps agent names to their A2A clients.
 // mediaAgents is the set of agent names that accept image/audio parts in their content.
@@ -52,6 +61,7 @@ func NewExecutor(sessions session.Service, clients map[string]adkagent.Agent, me
 		sessions: sessions, clients: clients, mediaAgents: mediaAgents,
 		sem:         make(chan struct{}, maxActive),
 		nodeCancels: make(map[string]map[string]context.CancelFunc),
+		steers:      make(map[string]map[string]string),
 	}
 }
 
@@ -70,15 +80,55 @@ func (e *Executor) CancelNode(chatID, nodeID string) bool {
 	return false
 }
 
+// SteerNode interrupts a single running node of chatID's active run and queues
+// guidance so the Execute loop re-runs that node against its same session (its
+// prior tool calls and results are retained; the worker revises on top of them).
+// Returns false if no such live node. The node is NOT failed and its dependents
+// keep waiting for the re-run.
+func (e *Executor) SteerNode(chatID, nodeID, guidance string) bool {
+	e.mu.Lock()
+	m, ok := e.nodeCancels[chatID]
+	if !ok {
+		e.mu.Unlock()
+		return false
+	}
+	cancel, ok := m[nodeID]
+	if !ok {
+		e.mu.Unlock()
+		return false
+	}
+	if s := e.steers[chatID]; s != nil {
+		s[nodeID] = guidance
+	}
+	e.mu.Unlock()
+	cancel() // interrupt the in-flight invocation; Execute sees the cancel + the queued steer
+	return true
+}
+
+// takeSteer returns and removes any queued steer guidance for a node.
+func (e *Executor) takeSteer(chatID, nodeID string) (string, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if s, ok := e.steers[chatID]; ok {
+		if g, ok := s[nodeID]; ok {
+			delete(s, nodeID)
+			return g, true
+		}
+	}
+	return "", false
+}
+
 func (e *Executor) registerRun(chatID string) {
 	e.mu.Lock()
 	e.nodeCancels[chatID] = make(map[string]context.CancelFunc)
+	e.steers[chatID] = make(map[string]string)
 	e.mu.Unlock()
 }
 
 func (e *Executor) unregisterRun(chatID string) {
 	e.mu.Lock()
 	delete(e.nodeCancels, chatID)
+	delete(e.steers, chatID)
 	e.mu.Unlock()
 }
 
@@ -151,6 +201,12 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 		// Buffered enough to absorb a burst so goroutines rarely block.
 		ch := make(chan nodeMsg, 256)
 
+		// nodesByID indexes the plan so a steer can re-launch a single node by ID.
+		nodesByID := make(map[string]Node, len(plan.Nodes))
+		for _, n := range plan.Nodes {
+			nodesByID[n.ID] = n
+		}
+
 		// decrementDependents lowers the remaining-dep count of every node that
 		// depends on id — called when id becomes (or is pre-seeded as) done.
 		decrementDependents := func(id string) {
@@ -165,36 +221,45 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 
 		completed := 0
 
-		// launchReady starts goroutines for every not-yet-launched node whose deps
-		// are all done. node_start is emitted later, by each goroutine once it
-		// acquires a concurrency slot. Returns false if the consumer disconnected.
+		// launchNode starts one node's goroutine (node_start is emitted later, by
+		// the goroutine once it acquires a concurrency slot). steer is "" for a
+		// normal launch, or the guidance for a steer re-run (same session reused).
+		// Returns false if the consumer disconnected.
+		launchNode := func(node Node, steer string) bool {
+			if !yield(stream.NodeQueued(node.ID), nil) {
+				return false
+			}
+			launched[node.ID] = true
+			// Immutable per-goroutine snapshot of upstream outputs + gate failures.
+			// All of this node's deps are done, so their outputs are present; the
+			// maps are mutated only here in the main loop.
+			upstream := make(map[string]string, len(nodeOutputs))
+			for k, v := range nodeOutputs {
+				upstream[k] = v
+			}
+			failedSnap := make(map[string]bool, len(gateFailed))
+			for k, v := range gateFailed {
+				failedSnap[k] = v
+			}
+			// Per-node context (child of the run ctx) so one node can be cancelled
+			// without tearing down the run. Registered for CancelNode / SteerNode.
+			nodeCtx, nodeCancel := context.WithCancel(ctx)
+			e.registerNode(chatID, node.ID, nodeCancel)
+			go func(n Node, nctx context.Context, st string) {
+				e.streamNode(nctx, ctx, plan, n, userID, upstream, failedSnap, st, ch)
+			}(node, nodeCtx, steer)
+			return true
+		}
+
+		// launchReady starts every not-yet-launched node whose deps are all done.
 		launchReady := func() bool {
 			for _, node := range plan.Nodes {
 				if launched[node.ID] || remainingDeps[node.ID] != 0 {
 					continue
 				}
-				if !yield(stream.NodeQueued(node.ID), nil) {
+				if !launchNode(node, "") {
 					return false
 				}
-				launched[node.ID] = true
-				// Immutable per-goroutine snapshot of upstream outputs + gate
-				// failures. All of this node's deps are done, so their outputs are
-				// present; the maps are mutated only here in the main loop.
-				upstream := make(map[string]string, len(nodeOutputs))
-				for k, v := range nodeOutputs {
-					upstream[k] = v
-				}
-				failedSnap := make(map[string]bool, len(gateFailed))
-				for k, v := range gateFailed {
-					failedSnap[k] = v
-				}
-				// Per-node context (child of the run ctx) so one node can be
-				// cancelled without tearing down the run. Registered for CancelNode.
-				nodeCtx, nodeCancel := context.WithCancel(ctx)
-				e.registerNode(chatID, node.ID, nodeCancel)
-				go func(n Node, nctx context.Context) {
-					e.streamNode(nctx, ctx, plan, n, userID, upstream, failedSnap, ch)
-				}(node, nodeCtx)
 			}
 			return true
 		}
@@ -237,7 +302,29 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 				}
 				// Terminal message for this node.
 				completed++
+				guidance, steered := e.takeSteer(chatID, msg.nodeID)
 				if msg.cancelled {
+					if steered {
+						// Steered, not stopped: re-run this same node with the
+						// guidance. Its session (prior tool calls + results) is reused
+						// — nodeSessionID is derived from plan.ID+node.ID, unchanged.
+						// Don't mark it done/failed and don't touch dependents (they
+						// keep waiting). Only undo the completion count once the re-run
+						// is actually launched, so a teardown before then still has the
+						// old goroutine's terminal accounted for (drain stays balanced).
+						if !yield(stream.NodeSteered(msg.nodeID, guidance), nil) {
+							cancelAll()
+							drain(completed)
+							return
+						}
+						if !launchNode(nodesByID[msg.nodeID], guidance) {
+							cancelAll()
+							drain(completed)
+							return
+						}
+						completed-- // re-run is live; this terminal wasn't a final completion
+						continue
+					}
 					// One node cancelled (not the whole run): continue-but-warn. It
 					// contributes no output; dependents are told their input is missing
 					// (gateFailed) so they don't rely on it. The DAG keeps running.
@@ -298,7 +385,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 // CancelNode); parentCtx is the run's context (cancelled on whole-run stop). The
 // two are distinguished so an individual node cancel ends as cancelled (the run
 // continues) while a run-wide cancel ends as a plain run teardown.
-func (e *Executor) streamNode(ctx, parentCtx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, ch chan<- nodeMsg) {
+func (e *Executor) streamNode(ctx, parentCtx context.Context, plan Plan, node Node, userID string, upstream map[string]string, gateFailed map[string]bool, steer string, ch chan<- nodeMsg) {
 	// send blocks rather than racing ctx.Done: Execute always drains every
 	// launched goroutine before returning, so the receiver is guaranteed and a
 	// terminal (done/waiting) message can't be lost to a cancel race — which would
@@ -336,7 +423,7 @@ func (e *Executor) streamNode(ctx, parentCtx context.Context, plan Plan, node No
 	}
 
 	r, err := runner.New(runner.Config{
-		AppName:           "quack-nodes",
+		AppName:           nodeAppName,
 		Agent:             client,
 		SessionService:    e.sessions,
 		AutoCreateSession: true,
@@ -353,28 +440,40 @@ func (e *Executor) streamNode(ctx, parentCtx context.Context, plan Plan, node No
 	// nodes lean and avoids dumping the whole transcript into every node.
 	nodeSessionID := plan.ID + ":" + node.ID
 
-	// Build the node's task content.
-	task := buildTask(plan, node, upstream, gateFailed)
-	// Diagnostic: how many of this node's upstream deps actually contributed a
-	// non-empty output. 0/N on a node with deps means upstream produced nothing.
-	if len(node.DependsOn) > 0 {
-		filled := 0
-		for _, dep := range node.DependsOn {
-			if strings.TrimSpace(upstream[dep]) != "" {
-				filled++
+	var content *genai.Content
+	if steer != "" {
+		// Steer re-run: reuse the existing session — the prior task, draft, tool
+		// calls and results are all there — and append the user's guidance as the
+		// next turn. An interrupt can cut a turn off mid tool-call, leaving an
+		// unanswered call the model server would reject, so close any such dangling
+		// call first.
+		e.sanitizeDanglingCalls(ctx, userID, nodeSessionID)
+		content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: steerPrompt(steer)}}}
+		slog.Info("node steered: re-running with guidance", "component", "dag", "node", node.ID, "guidance_len", len(steer))
+	} else {
+		// Build the node's task content.
+		task := buildTask(plan, node, upstream, gateFailed)
+		// Diagnostic: how many of this node's upstream deps actually contributed a
+		// non-empty output. 0/N on a node with deps means upstream produced nothing.
+		if len(node.DependsOn) > 0 {
+			filled := 0
+			for _, dep := range node.DependsOn {
+				if strings.TrimSpace(upstream[dep]) != "" {
+					filled++
+				}
 			}
+			slog.Debug("node built task from upstream outputs", "component", "dag", "node", node.ID, "filled", filled, "deps", len(node.DependsOn), "task_len", len(task))
 		}
-		slog.Debug("node built task from upstream outputs", "component", "dag", "node", node.ID, "filled", filled, "deps", len(node.DependsOn), "task_len", len(task))
+		// Media-capable agents (image/audio inputs) receive the attachment parts
+		// prepended before the text task so the model sees the file before the
+		// instruction — the standard layout for multimodal VLMs.
+		parts := []*genai.Part{{Text: task}}
+		if e.mediaAgents[node.AgentName] && len(plan.Attachments) > 0 {
+			parts = append(plan.Attachments, parts...)
+			slog.Debug("node sending attachments to media agent", "component", "dag", "node", node.ID, "attachments", len(plan.Attachments), "agent", node.AgentName)
+		}
+		content = &genai.Content{Role: "user", Parts: parts}
 	}
-	// Media-capable agents (image/audio inputs) receive the attachment parts
-	// prepended before the text task so the model sees the file before the
-	// instruction — the standard layout for multimodal VLMs.
-	parts := []*genai.Part{{Text: task}}
-	if e.mediaAgents[node.AgentName] && len(plan.Attachments) > 0 {
-		parts = append(plan.Attachments, parts...)
-		slog.Debug("node sending attachments to media agent", "component", "dag", "node", node.ID, "attachments", len(plan.Attachments), "agent", node.AgentName)
-	}
-	content := &genai.Content{Role: "user", Parts: parts}
 	var answer strings.Builder
 	var stats stream.NodeDoneData
 	startedAt := time.Now()
@@ -457,4 +556,61 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 	sb.WriteString("Your task: ")
 	sb.WriteString(node.Task)
 	return sb.String()
+}
+
+// steerPrompt wraps the user's mid-run guidance for a node re-run. The node's
+// session already holds its prior work, so the instruction is to revise, not
+// restart.
+func steerPrompt(guidance string) string {
+	return "The user is steering you mid-task with new guidance. Revise your work to follow it, " +
+		"reusing the research and tool results you already have rather than starting over:\n\n" + guidance
+}
+
+// sanitizeDanglingCalls closes any function call left without a matching response
+// in a node's session. An interrupt can cancel a turn mid tool-call, leaving an
+// unanswered call; a request that ends on one is rejected by the model server
+// ("function call without response"). ponytail: append a synthetic "interrupted"
+// response so the steer re-run sees a complete, valid history (all real tool
+// calls/results intact). Best-effort — a failure here just lets the re-run try.
+func (e *Executor) sanitizeDanglingCalls(ctx context.Context, userID, sessionID string) {
+	resp, err := e.sessions.Get(ctx, &session.GetRequest{AppName: nodeAppName, UserID: userID, SessionID: sessionID})
+	if err != nil || resp == nil || resp.Session == nil {
+		return
+	}
+	answered := make(map[string]bool)
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.FunctionResponse != nil {
+				answered[p.FunctionResponse.ID] = true
+			}
+		}
+	}
+	var parts []*genai.Part
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.FunctionCall != nil && p.FunctionCall.ID != "" && !answered[p.FunctionCall.ID] {
+				parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{
+					ID:       p.FunctionCall.ID,
+					Name:     p.FunctionCall.Name,
+					Response: map[string]any{"status": "interrupted", "note": "cancelled by user steer before completion"},
+				}})
+				answered[p.FunctionCall.ID] = true // a call could appear twice; close it once
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return
+	}
+	aev := session.NewEvent("")
+	aev.Author = "user"
+	aev.Content = &genai.Content{Role: "user", Parts: parts}
+	if err := e.sessions.AppendEvent(ctx, resp.Session, aev); err != nil {
+		slog.Warn("steer: could not close dangling tool calls", "component", "dag", "session", sessionID, "err", err)
+	}
 }
