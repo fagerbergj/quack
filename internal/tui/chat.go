@@ -264,6 +264,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Backslash-continuation: a trailing "\" + enter inserts a newline. Works in
 		// every terminal (alt+enter/shift+enter aren't reliably delivered).
 		if val := m.input.Value(); strings.HasSuffix(val, "\\") {
+			m.input.SetHeight(inputMaxLines) // grow before the newline so content can't scroll off the top
 			m.input.SetValue(val[:len(val)-1] + "\n")
 			m.input.CursorEnd()
 			m.relayout()
@@ -281,6 +282,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, func() tea.Msg { return submitMsg{text} }
 	}
+	// Grow to max before the textarea handles the key: inserting a newline (or a
+	// paste) while the box is too short makes its internal viewport scroll the top
+	// line out of view, and the later SetHeight won't scroll it back. relayout
+	// clamps the height back down to fit, with the offset still at the top.
+	m.input.SetHeight(inputMaxLines)
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.relayout()

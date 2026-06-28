@@ -279,6 +279,21 @@ func TestEnterBackslashInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestAltEnterKeepsFirstLine(t *testing.T) {
+	// Regression: alt+enter on the first line used to scroll the textarea's
+	// internal viewport, hiding line one until the box grew on the next keystroke.
+	m := sized(newTestModel())
+	m.input.SetValue("line one")
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	gm := got.(Model)
+	if gm.input.Value() != "line one\n" {
+		t.Fatalf("alt+enter should append a newline, got %q", gm.input.Value())
+	}
+	if !strings.Contains(gm.input.View(), "line one") {
+		t.Errorf("first line must stay visible after alt+enter, view=%q", gm.input.View())
+	}
+}
+
 func TestSteer_RedirectsAfterCancel(t *testing.T) {
 	// While streaming, /steer cancels then queues the guidance; once the run
 	// closes, the guidance is resubmitted (the two runs never overlap).
