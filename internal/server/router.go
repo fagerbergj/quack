@@ -40,10 +40,22 @@ func New(opts Options) http.Handler {
 	// Generated REST routing (registers /health + chat endpoints on r).
 	schema.HandlerFromMux(opts.REST, r)
 
-	// Serve the SPA for everything else (client-side routing falls back to index.html).
-	if opts.SPA != nil {
-		r.NotFound(spaHandler(opts.SPA))
-	}
+	// Unmatched routes: an unknown /api/ path is a real 404 (JSON) — don't fall
+	// through to the SPA, or API clients (and `quack api`) get index.html with 200.
+	// Everything else serves the SPA so client-side routing works.
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasPrefix(req.URL.Path, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		if opts.SPA != nil {
+			spaHandler(opts.SPA)(w, req)
+			return
+		}
+		http.NotFound(w, req)
+	})
 	return r
 }
 

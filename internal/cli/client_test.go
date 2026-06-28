@@ -50,6 +50,57 @@ func TestPrintPrompt(t *testing.T) {
 	}
 }
 
+// TestRunAPI covers the raw passthrough: GET prints the body (+ trailing
+// newline), POST forwards the request body, and a 4xx returns an error while
+// still printing the response body.
+func TestRunAPI(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		io.WriteString(w, `{"status":"ok"}`)
+	})
+	mux.HandleFunc("/api/v1/chats", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodPost || string(b) != `{"x":1}` {
+			t.Errorf("POST body = %q method = %s", b, r.Method)
+		}
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, `{"id":"c1"}`)
+	})
+	mux.HandleFunc("/nope", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, "not found")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunAPI(context.Background(), &out, srv.URL, "GET", "/health", nil); err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	if out.String() != "{\"status\":\"ok\"}\n" {
+		t.Errorf("GET out = %q", out.String())
+	}
+
+	out.Reset()
+	if err := RunAPI(context.Background(), &out, srv.URL, "post", "/api/v1/chats", strings.NewReader(`{"x":1}`)); err != nil {
+		t.Fatalf("POST: %v", err) // lowercase method is upper-cased by Request
+	}
+
+	out.Reset()
+	err := RunAPI(context.Background(), &out, srv.URL, "GET", "/nope", nil)
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Errorf("err = %v, want a 404 error", err)
+	}
+	if !strings.Contains(out.String(), "not found") {
+		t.Errorf("body should print even on error: %q", out.String())
+	}
+}
+
 // TestPrintPromptServerError: an `error` SSE event surfaces as a returned error
 // (so the command exits non-zero) and nothing is printed to stdout.
 func TestPrintPromptServerError(t *testing.T) {
