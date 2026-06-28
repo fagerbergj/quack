@@ -102,13 +102,91 @@ func newChatCmd() *cobra.Command {
 	c.AddCommand(
 		stub("new [prompt]", "Start a new chat", "chat new"),
 		stub("resume [id]", "Resume an existing chat", "chat resume"),
-		stub("list", "List chats", "chat list"),
-		stub("delete <id>", "Delete a chat", "chat delete"),
-		stub("export <id>", "Export a chat transcript", "chat export"),
-		stub("stop <id>", "Stop a running chat", "chat stop"),
+		newChatListCmd(),
+		newChatExportCmd(),
+		newChatStopCmd(),
+		newChatDeleteCmd(),
 		node,
 	)
 	return c
+}
+
+// withTarget runs fn against a resolved server (remote or in-process duck),
+// tearing the in-process server down afterward.
+func withTarget(cmd *cobra.Command, fn func(target string) error) error {
+	server, _ := cmd.Flags().GetString("server")
+	target, stop, err := resolveTarget(cmd.Context(), server)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	return fn(target)
+}
+
+func newChatListCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "list",
+		Short: "List chats",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunChatList(cmd.Context(), cmd.OutOrStdout(), t, asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	return c
+}
+
+func newChatExportCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "export <id>",
+		Short: "Export a chat transcript",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunChatExport(cmd.Context(), cmd.OutOrStdout(), t, args[0], asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	return c
+}
+
+func newChatStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop <id>",
+		Short: "Stop a chat's active run",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunChatStop(cmd.Context(), cmd.OutOrStdout(), t, args[0])
+			})
+		},
+	}
+}
+
+func newChatDeleteCmd() *cobra.Command {
+	var yes bool
+	c := &cobra.Command{
+		Use:   "delete <id>",
+		Short: "Delete a chat (irreversible)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunChatDelete(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), t, args[0], yes)
+			})
+		},
+	}
+	c.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
+	return c
+}
+
+// asJSONFlag registers a standard --json flag bound to dst.
+func asJSONFlag(c *cobra.Command, dst *bool) {
+	c.Flags().BoolVar(dst, "json", false, "output raw JSON")
 }
 
 // newServerCmd: run and manage the server. `serve` folds in cmd/server in the
