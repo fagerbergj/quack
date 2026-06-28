@@ -22,7 +22,7 @@ func TestView_TranscriptAndDAG(t *testing.T) {
 	m := sized(New(context.Background(), nil, "c1", "Ducks", []turn{
 		{user: "hello", answer: "hi there"},
 		{user: "research ducks", answer: "Ducks are great.", dag: d},
-	}, ""))
+	}, "", ""))
 
 	v := m.View()
 	for _, want := range []string{"quack", "Ducks", "You", "hello", "Duck", "Ducks are great.", "researcher", "synthesizer", "✓"} {
@@ -33,7 +33,7 @@ func TestView_TranscriptAndDAG(t *testing.T) {
 }
 
 func TestView_EmptyStateGuidesUser(t *testing.T) {
-	m := sized(New(context.Background(), nil, "c1", "", nil, ""))
+	m := sized(New(context.Background(), nil, "c1", "", nil, "", ""))
 	if !strings.Contains(m.View(), "Say something to the duck") {
 		t.Errorf("empty chat should invite input:\n%s", m.View())
 	}
@@ -43,7 +43,7 @@ func TestView_ErrorAndCancelledTurns(t *testing.T) {
 	m := sized(New(context.Background(), nil, "c1", "", []turn{
 		{user: "q1", err: "connection lost"},
 		{user: "q2", answer: "partial", cancelled: true},
-	}, ""))
+	}, "", ""))
 	v := m.View()
 	if !strings.Contains(v, "connection lost") {
 		t.Error("errored turn must show the error")
@@ -54,7 +54,7 @@ func TestView_ErrorAndCancelledTurns(t *testing.T) {
 }
 
 func TestView_HelpOverlay(t *testing.T) {
-	m := sized(New(context.Background(), nil, "c1", "", nil, ""))
+	m := sized(New(context.Background(), nil, "c1", "", nil, "", ""))
 	got, _ := m.slash("/help")
 	v := got.(Model).View()
 	for _, want := range []string{"Commands", "/new", "/stop", "/quit"} {
@@ -64,8 +64,22 @@ func TestView_HelpOverlay(t *testing.T) {
 	}
 }
 
+func TestView_ServerLabelAndSession(t *testing.T) {
+	m := sized(New(context.Background(), nil, "chat-123", "", nil, "", "local (in-process)"))
+	if !strings.Contains(m.View(), "local (in-process)") {
+		t.Error("header should show the server label")
+	}
+	got, _ := m.slash("/session")
+	v := got.(Model).View()
+	for _, want := range []string{"Session", "chat-123", "local (in-process)"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("/session overlay missing %q", want)
+		}
+	}
+}
+
 func TestView_NotReadyBeforeSize(t *testing.T) {
-	m := New(context.Background(), nil, "c1", "", nil, "")
+	m := New(context.Background(), nil, "c1", "", nil, "", "")
 	if m.View() != "starting…" {
 		t.Errorf("before a size, View should be a placeholder, got %q", m.View())
 	}

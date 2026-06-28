@@ -3,12 +3,15 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fagerbergj/quack/internal/cli"
@@ -20,68 +23,93 @@ type turn struct {
 	user      string
 	answer    string
 	dag       *dagState
-	err       string // run error (connection lost, server error), if any
-	cancelled bool   // user stopped the run
+	err       string
+	cancelled bool
 }
 
 // ── messages (principle 2: one server event per msg) ─────────────────────────
 
-type submitMsg struct{ text string } // user (or initial prompt) submitted text
+type submitMsg struct{ text string }
 type streamStartedMsg struct{ sub <-chan cli.SSEEvent }
-type sseMsg struct{ ev cli.SSEEvent } // one decoded server event
-type streamClosedMsg struct{}         // stream channel closed (cancel / drop / no explicit done)
+type sseMsg struct{ ev cli.SSEEvent }
+type streamClosedMsg struct{}
 type newChatMsg struct{ id string }
-type cmdErrMsg struct{ err error } // a side-effect command failed
+type cmdErrMsg struct{ err error }
+
+// slashCommands drive both autocomplete and the dispatcher.
+var slashCommands = []string{"/help", "/new", "/session", "/stop", "/node stop ", "/quit"}
+
+// duckPuns rotate as the status line while the duck thinks — friendlier than a
+// flat "thinking…".
+var duckPuns = []string{
+	"paddling furiously…",
+	"ruffling some feathers…",
+	"consulting the pond…",
+	"preening the details…",
+	"wading through it…",
+	"diving deep…",
+	"following the breadcrumbs…",
+	"having a quack at it…",
+}
 
 // Model is the chat TUI. Update is a pure reducer; all I/O is in returned tea.Cmds.
 type Model struct {
-	ctx    context.Context
-	client *cli.Client
-	chatID string
-	title  string
+	ctx         context.Context
+	client      *cli.Client
+	chatID      string
+	title       string
+	serverLabel string
 
-	turns      []turn
-	streaming  bool
-	cancelling bool
-	pending    string          // user text of the in-flight turn
-	live       strings.Builder // accumulated top-level answer tokens
-	dag        *dagState       // current run's DAG (nil until dag_plan)
-	runErr     string          // error for the in-flight run
-	status     string          // transient status/notice line
-	initial    string          // prompt to auto-send on start
+	turns       []turn
+	streaming   bool
+	cancelling  bool
+	pending     string
+	live        strings.Builder
+	dag         *dagState
+	runErr      string
+	status      string
+	overlay     string // "" | "help" | "session"
+	initial     string
+	pendingQuit bool // esc-once when idle; esc again quits
+	tickN       int  // spinner ticks, drives pun rotation
 
 	sub       <-chan cli.SSEEvent
 	cancelRun context.CancelFunc
 
-	input textinput.Model
+	input textarea.Model
 	vp    viewport.Model
 	spin  spinner.Model
+	md    *glamour.TermRenderer
 
 	width, height int
 	ready         bool
-	showHelp      bool
 }
 
 // New builds the chat model. history pre-populates the transcript (resume);
-// initialPrompt, if set, is auto-sent once the program starts.
-func New(ctx context.Context, c *cli.Client, chatID, title string, history []turn, initialPrompt string) Model {
-	in := textinput.New()
-	in.Placeholder = "Ask the duck…  (enter to send · /help for commands)"
-	in.Prompt = ""
-	in.Focus()
+// initialPrompt, if set, is auto-sent on start; serverLabel is shown in the
+// header (e.g. "local (in-process)" or a URL).
+func New(ctx context.Context, c *cli.Client, chatID, title string, history []turn, initialPrompt, serverLabel string) Model {
+	ta := textarea.New()
+	ta.Placeholder = "Ask the duck…  (enter to send · alt+enter newline · /help)"
+	ta.Prompt = promptStyle.Render("│ ")
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	// Enter is ours (send); newline is alt+enter / ctrl+j.
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
+	ta.Focus()
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = runStyle
 
 	return Model{
-		ctx: ctx, client: c, chatID: chatID, title: title,
-		turns: history, initial: initialPrompt, input: in, spin: sp,
+		ctx: ctx, client: c, chatID: chatID, title: title, serverLabel: serverLabel,
+		turns: history, initial: initialPrompt, input: ta, spin: sp,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.spin.Tick, textinput.Blink}
+	cmds := []tea.Cmd{m.spin.Tick, textarea.Blink}
 	if m.initial != "" {
 		init := m.initial
 		cmds = append(cmds, func() tea.Msg { return submitMsg{init} })
@@ -93,15 +121,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.layout()
+		m.relayout()
 		m.refreshViewport()
 		return m, nil
+
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg) // wheel scroll
+		return m, cmd
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		if m.streaming {
-			m.refreshViewport() // animate running-node icons
+			m.tickN++
+			m.refreshViewport()
 		}
 		return m, cmd
 
@@ -141,27 +175,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Default: route to the input (typing).
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.relayout()
 	return m, cmd
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	k := msg.String()
+	if k != "esc" {
+		m.pendingQuit = false
+	}
+	switch k {
 	case "ctrl+c":
 		if m.streaming {
 			return m.cancelActive()
 		}
 		return m, tea.Quit
 	case "esc":
-		if m.showHelp {
-			m.showHelp = false
+		if m.overlay != "" {
+			m.overlay = ""
 			m.refreshViewport()
 			return m, nil
 		}
 		if m.streaming {
 			return m.cancelActive()
+		}
+		if m.pendingQuit {
+			return m, tea.Quit
+		}
+		m.pendingQuit = true
+		m.status = "press esc again to quit"
+		return m, nil
+	case "tab":
+		if s := m.autocomplete(); s != "" {
+			m.input.SetValue(s)
+			m.input.CursorEnd()
 		}
 		return m, nil
 	case "pgup", "pgdown", "ctrl+u", "ctrl+d":
@@ -170,7 +219,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case "enter":
 		if m.streaming {
-			m.status = "still thinking… press ctrl+c or /stop to cancel"
+			m.status = "still thinking… ctrl+c or esc to stop"
 			return m, nil
 		}
 		text := strings.TrimSpace(m.input.Value())
@@ -179,6 +228,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.input.Reset()
 		m.status = ""
+		m.overlay = ""
 		if strings.HasPrefix(text, "/") {
 			return m.slash(text)
 		}
@@ -186,14 +236,51 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.relayout()
 	return m, cmd
 }
 
-// slash dispatches in-TUI commands (mirrors the cobra verbs).
+// autocomplete returns the completion for the current "/..." input: the single
+// match, or the longest common prefix of several. "" if nothing to do.
+func (m Model) autocomplete() string {
+	val := m.input.Value()
+	if !strings.HasPrefix(val, "/") || strings.Contains(val, "\n") {
+		return ""
+	}
+	matches := m.slashMatches()
+	switch len(matches) {
+	case 0:
+		return ""
+	case 1:
+		return matches[0]
+	default:
+		return longestCommonPrefix(matches)
+	}
+}
+
+// slashMatches returns the slash commands that start with the current input.
+func (m Model) slashMatches() []string {
+	val := m.input.Value()
+	if !strings.HasPrefix(val, "/") || strings.Contains(val, "\n") {
+		return nil
+	}
+	var out []string
+	for _, c := range slashCommands {
+		if strings.HasPrefix(c, val) && c != val {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 	switch fields := strings.Fields(text); fields[0] {
 	case "/help", "/?":
-		m.showHelp = !m.showHelp
+		m.overlay = toggle(m.overlay, "help")
+		m.refreshViewport()
+		return m, nil
+	case "/session":
+		m.overlay = toggle(m.overlay, "session")
 		m.refreshViewport()
 		return m, nil
 	case "/quit", "/exit", "/q":
@@ -201,11 +288,11 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 	case "/new":
 		c, ctx := m.client, m.ctx
 		return m, func() tea.Msg {
-			newID, err := c.CreateChat(ctx, "")
+			id, err := c.CreateChat(ctx, "")
 			if err != nil {
 				return cmdErrMsg{err}
 			}
-			return newChatMsg{newID}
+			return newChatMsg{id}
 		}
 	case "/stop":
 		if m.streaming {
@@ -231,7 +318,6 @@ func (m Model) slash(text string) (tea.Model, tea.Cmd) {
 	}
 }
 
-// startRun begins streaming a turn.
 func (m Model) startRun(text string) (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.cancelRun = cancel
@@ -242,13 +328,12 @@ func (m Model) startRun(text string) (tea.Model, tea.Cmd) {
 	m.live.Reset()
 	m.dag = nil
 	m.status = ""
+	m.overlay = ""
 	m.refreshViewport()
 	c, id := m.client, m.chatID
 	return m, func() tea.Msg { return streamStartedMsg{sub: c.Stream(ctx, id, text)} }
 }
 
-// cancelActive stops the in-flight run: cancel the local stream ctx (closes the
-// channel → streamClosedMsg finalizes) and tell the server to cancel too.
 func (m Model) cancelActive() (tea.Model, tea.Cmd) {
 	m.cancelling = true
 	m.status = "cancelling…"
@@ -282,7 +367,6 @@ func (m Model) handleEvent(ev cli.SSEEvent) (tea.Model, tea.Cmd) {
 	}
 }
 
-// applyEvent folds one non-terminal event into the live run state.
 func (m *Model) applyEvent(ev cli.SSEEvent) {
 	switch ev.Name {
 	case stream.EventChatTitle:
@@ -316,7 +400,7 @@ func (m *Model) applyEvent(ev cli.SSEEvent) {
 	case stream.EventAgentToken:
 		var d stream.AgentTokenData
 		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID == "" {
-			m.live.WriteString(d.Text) // top-level answer only; node tokens stay in the DAG
+			m.live.WriteString(d.Text)
 		}
 	}
 }
@@ -327,7 +411,6 @@ func (m *Model) dagSet(id string, s nodeStatus) {
 	}
 }
 
-// finishRun moves the in-flight run into the transcript and resets live state.
 func (m *Model) finishRun() {
 	t := turn{user: m.pending, answer: strings.TrimSpace(m.live.String()), dag: m.dag, err: m.runErr, cancelled: m.cancelling}
 	m.turns = append(m.turns, t)
@@ -342,7 +425,6 @@ func (m *Model) finishRun() {
 	m.runErr = ""
 }
 
-// waitForEvent pulls exactly one event off the stream; closed channel → done.
 func waitForEvent(sub <-chan cli.SSEEvent) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-sub
@@ -355,21 +437,56 @@ func waitForEvent(sub <-chan cli.SSEEvent) tea.Cmd {
 
 // ── layout & rendering ───────────────────────────────────────────────────────
 
-func (m *Model) layout() {
+func (m *Model) relayout() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	m.input.Width = m.width - 4
-	vpHeight := m.height - 4 // header(1) + input(1) + footer(1) + spacing(1)
-	if vpHeight < 1 {
-		vpHeight = 1
+	ih := m.inputHeight()
+	m.input.SetWidth(m.width)
+	m.input.SetHeight(ih)
+	sugg := len(m.slashMatches())
+	if sugg > 4 {
+		sugg = 4
+	}
+	statusLines := 0
+	if m.status != "" && !m.streaming {
+		statusLines = 1
+	}
+	vpH := m.height - 1 /*header*/ - ih - 1 /*footer*/ - sugg - statusLines
+	if vpH < 1 {
+		vpH = 1
 	}
 	if !m.ready {
-		m.vp = viewport.New(m.width, vpHeight)
+		m.vp = viewport.New(m.width, vpH)
 		m.ready = true
+		m.buildMD()
 	} else {
-		m.vp.Width = m.width
-		m.vp.Height = vpHeight
+		if m.vp.Width != m.width {
+			m.vp.Width = m.width
+			m.buildMD()
+		}
+		m.vp.Height = vpH
+	}
+}
+
+func (m *Model) inputHeight() int {
+	n := strings.Count(m.input.Value(), "\n") + 1
+	if n < 1 {
+		n = 1
+	}
+	if n > 6 {
+		n = 6
+	}
+	return n
+}
+
+func (m *Model) buildMD() {
+	w := m.vp.Width
+	if w < 20 {
+		w = 20
+	}
+	if r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(w-1)); err == nil {
+		m.md = r
 	}
 }
 
@@ -390,37 +507,45 @@ func (m Model) View() string {
 	}
 	header := headerStyle.Render("🦆 quack")
 	if m.title != "" {
-		header += "  " + mutedStyle.Render(m.title)
+		header += "  " + m.title
+	}
+	if m.serverLabel != "" {
+		header += "  " + faintStyle.Render("· "+m.serverLabel)
 	}
 
-	var footer string
+	footer := faintStyle.Render("enter send · alt+enter newline · /help · ctrl+c quit")
 	if m.streaming {
-		footer = faintStyle.Render("ctrl+c stop · pgup/pgdn scroll")
-	} else {
-		footer = faintStyle.Render("enter send · /help · ctrl+c quit")
+		footer = faintStyle.Render("ctrl+c / esc stop · pgup/pgdn or wheel scroll")
 	}
 
-	var inputLine string
+	parts := []string{header, m.vp.View()}
+
+	if sugg := m.slashMatches(); len(sugg) > 0 {
+		parts = append(parts, faintStyle.Render("  "+strings.Join(capN(sugg, 4), "  ")))
+	}
+
 	if m.streaming {
-		st := m.status
-		if st == "" {
-			st = "thinking…"
-		}
-		inputLine = m.spin.View() + " " + mutedStyle.Render(st)
+		parts = append(parts, m.spin.View()+" "+runStyle.Render(m.pun()))
 	} else {
-		inputLine = promptStyle.Render("› ") + m.input.View()
 		if m.status != "" {
-			inputLine = mutedStyle.Render(m.status) + "\n" + inputLine
+			parts = append(parts, mutedStyle.Render(m.status))
 		}
+		parts = append(parts, m.input.View())
 	}
-
-	return strings.Join([]string{header, m.vp.View(), inputLine, footer}, "\n")
+	parts = append(parts, footer)
+	return strings.Join(parts, "\n")
 }
 
-// transcript renders the full scrollback: finished turns + the in-flight run.
+func (m Model) pun() string {
+	return duckPuns[(m.tickN/20)%len(duckPuns)]
+}
+
 func (m Model) transcript() string {
-	if m.showHelp {
+	switch m.overlay {
+	case "help":
 		return helpText()
+	case "session":
+		return m.sessionText()
 	}
 	width := m.vp.Width
 	var b strings.Builder
@@ -428,22 +553,20 @@ func (m Model) transcript() string {
 		b.WriteString(mutedStyle.Render("Say something to the duck. It thinks, researches, and talks back.\n"))
 	}
 	for _, t := range m.turns {
-		b.WriteString(renderTurn(t, "", nil, width))
+		b.WriteString(m.renderTurn(t, "", nil, width))
 	}
 	if m.streaming {
 		live := turn{user: m.pending, answer: strings.TrimSpace(m.live.String())}
-		b.WriteString(renderTurn(live, m.spin.View(), m.dag, width))
+		b.WriteString(m.renderTurn(live, m.spin.View(), m.dag, width))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// renderTurn renders one exchange. spin/liveDAG are only set for the in-flight
-// turn (so running nodes animate); finished turns carry their own t.dag.
-func renderTurn(t turn, spin string, liveDAG *dagState, width int) string {
-	wrap := lipgloss.NewStyle().Width(maxInt(width-2, 10))
+func (m Model) renderTurn(t turn, spin string, liveDAG *dagState, width int) string {
+	plain := lipgloss.NewStyle().Width(maxInt(width-2, 10))
 	var b strings.Builder
 	b.WriteString(youStyle.Render("You") + "\n")
-	b.WriteString(wrap.Render(t.user) + "\n\n")
+	b.WriteString(plain.Render(t.user) + "\n\n")
 
 	dag := t.dag
 	if liveDAG != nil {
@@ -456,38 +579,106 @@ func renderTurn(t turn, spin string, liveDAG *dagState, width int) string {
 	b.WriteString(duckStyle.Render("Duck") + "\n")
 	switch {
 	case t.err != "":
-		body := t.answer
-		if body != "" {
-			b.WriteString(wrap.Render(body) + "\n")
+		if t.answer != "" {
+			b.WriteString(m.markdown(t.answer) + "\n")
 		}
 		b.WriteString(errStyle.Render("⚠ "+t.err) + "\n")
 	case t.cancelled:
 		if t.answer != "" {
-			b.WriteString(wrap.Render(t.answer) + "\n")
+			b.WriteString(m.markdown(t.answer) + "\n")
 		}
 		b.WriteString(mutedStyle.Render("⊘ cancelled") + "\n")
 	case t.answer == "" && spin != "":
 		b.WriteString(mutedStyle.Render("…") + "\n")
+	case spin != "":
+		// streaming: raw text (markdown mid-stream renders broken)
+		b.WriteString(plain.Render(t.answer) + "\n")
 	default:
-		b.WriteString(wrap.Render(t.answer) + "\n")
+		b.WriteString(m.markdown(t.answer) + "\n")
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// markdown renders finished answers; falls back to the raw text on any error.
+func (m Model) markdown(s string) string {
+	if m.md == nil || strings.TrimSpace(s) == "" {
+		return s
+	}
+	out, err := m.md.Render(s)
+	if err != nil {
+		return s
+	}
+	return strings.TrimRight(out, "\n")
+}
+
+func (m Model) sessionText() string {
+	server := m.serverLabel
+	if server == "" {
+		server = "(unknown)"
+	}
+	title := m.title
+	if title == "" {
+		title = "(untitled)"
+	}
+	lines := []string{
+		headerStyle.Render("Session"),
+		"",
+		"  " + mutedStyle.Render("server ") + server,
+		"  " + mutedStyle.Render("chat   ") + m.chatID,
+		"  " + mutedStyle.Render("title  ") + title,
+		"  " + mutedStyle.Render("turns  ") + fmt.Sprintf("%d", len(m.turns)),
+		"",
+		mutedStyle.Render("  esc to close"),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func helpText() string {
 	lines := []string{
 		headerStyle.Render("Commands"),
 		"",
-		"  " + promptStyle.Render("/help") + "   toggle this help",
-		"  " + promptStyle.Render("/new") + "    start a new chat",
-		"  " + promptStyle.Render("/stop") + "   cancel the running turn",
-		"  " + promptStyle.Render("/node stop <id>") + "   stop one running node",
-		"  " + promptStyle.Render("/quit") + "   exit",
+		"  " + promptStyle.Render("/help") + "            toggle this help",
+		"  " + promptStyle.Render("/session") + "         show session details",
+		"  " + promptStyle.Render("/new") + "             start a new chat",
+		"  " + promptStyle.Render("/stop") + "            cancel the running turn",
+		"  " + promptStyle.Render("/node stop <id>") + "  stop one running node",
+		"  " + promptStyle.Render("/quit") + "            exit",
 		"",
-		mutedStyle.Render("  enter send · ctrl+c cancel/quit · pgup/pgdn scroll · esc close help"),
+		mutedStyle.Render("  enter send · alt+enter newline · tab complete · ctrl+c/esc stop or quit"),
+		mutedStyle.Render("  pgup/pgdn or mouse wheel to scroll · esc to close"),
 	}
 	return strings.Join(lines, "\n")
+}
+
+func toggle(cur, want string) string {
+	if cur == want {
+		return ""
+	}
+	return want
+}
+
+func capN(s []string, n int) []string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+func longestCommonPrefix(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	p := ss[0]
+	for _, s := range ss[1:] {
+		for !strings.HasPrefix(s, p) {
+			p = p[:len(p)-1]
+			if p == "" {
+				return ""
+			}
+		}
+	}
+	return p
 }
 
 func maxInt(a, b int) int {

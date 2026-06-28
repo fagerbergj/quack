@@ -12,7 +12,7 @@ import (
 )
 
 func newTestModel() Model {
-	return New(context.Background(), nil, "c1", "", nil, "")
+	return New(context.Background(), nil, "c1", "", nil, "", "")
 }
 
 func ev(name, data string) cli.SSEEvent {
@@ -149,8 +149,54 @@ func TestUpdate_EnterWhileStreamingDoesNotSubmit(t *testing.T) {
 func TestSlash_HelpToggles(t *testing.T) {
 	m := newTestModel()
 	got, _ := m.slash("/help")
-	if !got.(Model).showHelp {
+	if got.(Model).overlay != "help" {
 		t.Error("/help must show help")
+	}
+}
+
+func TestEscEscQuitsWhenIdle(t *testing.T) {
+	m := newTestModel()
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	gm := got.(Model)
+	if !gm.pendingQuit || cmd != nil {
+		t.Fatal("first idle esc should arm quit, not quit")
+	}
+	_, cmd2 := gm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd2 == nil {
+		t.Fatal("second esc should quit")
+	}
+	if _, ok := cmd2().(tea.QuitMsg); !ok {
+		t.Error("second esc must return tea.Quit")
+	}
+}
+
+func TestEscWhileStreamingCancels(t *testing.T) {
+	m := newTestModel()
+	m.streaming = true
+	m.cancelRun = func() {}
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !got.(Model).cancelling || cmd == nil {
+		t.Error("esc while streaming must cancel, not arm quit")
+	}
+}
+
+func TestAutocomplete(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("/se")
+	if got := m.autocomplete(); got != "/session" {
+		t.Errorf("autocomplete /se = %q, want /session", got)
+	}
+	m.input.SetValue("/x")
+	if got := m.autocomplete(); got != "" {
+		t.Errorf("autocomplete of no-match = %q, want empty", got)
+	}
+}
+
+func TestSlash_SessionOverlay(t *testing.T) {
+	m := newTestModel()
+	got, _ := m.slash("/session")
+	if got.(Model).overlay != "session" {
+		t.Error("/session should open the session overlay")
 	}
 }
 

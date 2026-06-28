@@ -15,7 +15,7 @@ import (
 // otherwise it resumes that chat, loading its transcript first. initialPrompt, if
 // set, is auto-sent on start. Create/load errors surface here, before the
 // alt-screen takes over (so they print as plain errors, not lost behind the UI).
-func Run(ctx context.Context, c *cli.Client, chatID, initialPrompt string) error {
+func Run(ctx context.Context, c *cli.Client, chatID, initialPrompt, serverLabel string) error {
 	var (
 		title   string
 		history []turn
@@ -46,9 +46,10 @@ func Run(ctx context.Context, c *cli.Client, chatID, initialPrompt string) error
 	}
 
 	p := tea.NewProgram(
-		New(ctx, c, chatID, title, history, initialPrompt),
+		New(ctx, c, chatID, title, history, initialPrompt, serverLabel),
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),
+		tea.WithMouseCellMotion(), // mouse-wheel scrolling
 	)
 	_, err := p.Run()
 	return err
