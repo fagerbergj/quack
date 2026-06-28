@@ -51,8 +51,8 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true, // a failing RunE is an error, not a usage mistake
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if printPrompt == "" {
-				return withClient(cmd, func(ctx context.Context, c *cli.Client) error {
-					return tui.Run(ctx, c, "", "")
+				return withClient(cmd, func(ctx context.Context, c *cli.Client, label string) error {
+					return tui.Run(ctx, c, "", "", label)
 				})
 			}
 			server, _ := cmd.Flags().GetString("server")
@@ -112,8 +112,9 @@ func newChatCmd() *cobra.Command {
 // withClient resolves the target (remote or in-process duck), builds a client,
 // runs fn, and tears the in-process server down afterward. Used by the
 // interactive (TUI) commands, which need a live client for the whole session.
-func withClient(cmd *cobra.Command, fn func(ctx context.Context, c *cli.Client) error) error {
+func withClient(cmd *cobra.Command, fn func(ctx context.Context, c *cli.Client, serverLabel string) error) error {
 	server, _ := cmd.Flags().GetString("server")
+	label := serverLabel(server)
 	target, stop, err := resolveTarget(cmd.Context(), server)
 	if err != nil {
 		return err
@@ -123,7 +124,18 @@ func withClient(cmd *cobra.Command, fn func(ctx context.Context, c *cli.Client) 
 	if err != nil {
 		return err
 	}
-	return fn(cmd.Context(), c)
+	return fn(cmd.Context(), c, label)
+}
+
+// serverLabel describes the connection for the TUI header: the configured remote
+// URL, or "local (in-process)" when none is set (the duck runs in-process).
+func serverLabel(override string) string {
+	if cc, err := cli.LoadClient(); err == nil {
+		if url := cc.ActiveURL(override); url != "" {
+			return url
+		}
+	}
+	return "local (in-process)"
 }
 
 func newChatNewCmd() *cobra.Command {
@@ -132,8 +144,8 @@ func newChatNewCmd() *cobra.Command {
 		Short: "Start a new interactive chat (optionally with a first prompt)",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withClient(cmd, func(ctx context.Context, c *cli.Client) error {
-				return tui.Run(ctx, c, "", strings.Join(args, " "))
+			return withClient(cmd, func(ctx context.Context, c *cli.Client, label string) error {
+				return tui.Run(ctx, c, "", strings.Join(args, " "), label)
 			})
 		},
 	}
@@ -145,7 +157,7 @@ func newChatResumeCmd() *cobra.Command {
 		Short: "Resume a chat in the TUI (most recent if no id given)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withClient(cmd, func(ctx context.Context, c *cli.Client) error {
+			return withClient(cmd, func(ctx context.Context, c *cli.Client, label string) error {
 				id := ""
 				if len(args) == 1 {
 					id = args[0]
@@ -159,7 +171,7 @@ func newChatResumeCmd() *cobra.Command {
 					}
 					id = chats[0].Id // server orders most-recent first
 				}
-				return tui.Run(ctx, c, id, "")
+				return tui.Run(ctx, c, id, "", label)
 			})
 		},
 	}

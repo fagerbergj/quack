@@ -12,7 +12,7 @@ import (
 )
 
 func newTestModel() Model {
-	return New(context.Background(), nil, "c1", "", nil, "")
+	return New(context.Background(), nil, "c1", "", nil, "", "")
 }
 
 func ev(name, data string) cli.SSEEvent {
@@ -29,11 +29,50 @@ func TestUpdate_DoneFinishesRun(t *testing.T) {
 	if gm.streaming {
 		t.Error("done must clear streaming")
 	}
-	if cmd != nil {
-		t.Error("done must not re-issue the pump")
+	if cmd == nil {
+		t.Error("done should keep pumping to drain late events (e.g. chat_title)")
 	}
 	if len(gm.turns) != 1 || gm.turns[0].answer != "answer" || gm.turns[0].user != "hi" {
 		t.Errorf("done must move the run into a turn, got %+v", gm.turns)
+	}
+}
+
+func TestUpdate_TitleAfterDoneIsCaptured(t *testing.T) {
+	// The server sends the async chat_title AFTER the orchestrator's done; the
+	// pump must keep draining so the title (and /session) still gets it.
+	m := newTestModel()
+	m.streaming = true
+	m.pending = "q"
+	got, _ := m.Update(sseMsg{ev: ev("done", "{}")})
+	got2, _ := got.(Model).Update(sseMsg{ev: ev("chat_title", `{"title":"My Title"}`)})
+	if got2.(Model).title != "My Title" {
+		t.Errorf("a chat_title after done must still be captured, got %q", got2.(Model).title)
+	}
+}
+
+func TestUpdate_DeliverModeUsesTerminalOutput(t *testing.T) {
+	// Deliver mode (execute end_turn=true): no top-level tokens; the answer is the
+	// terminal node's output, carried on node_done.
+	m := newTestModel()
+	m.streaming = true
+	m.pending = "q"
+	m.applyEvent(ev("dag_plan", `{"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[]}`))
+	m.applyEvent(ev("node_done", `{"node_id":"a","output":"the delivered answer"}`))
+	got, _ := m.Update(sseMsg{ev: ev("done", "{}")})
+	gm := got.(Model)
+	if len(gm.turns) != 1 || gm.turns[0].answer != "the delivered answer" {
+		t.Errorf("deliver mode should fall back to the terminal node output, got %+v", gm.turns)
+	}
+}
+
+func TestUpdate_StaleStreamTailDropped(t *testing.T) {
+	// An event tagged with an old generation (a previous run's late tail) is
+	// dropped, not applied to the current run.
+	m := newTestModel()
+	m.streamGen = 2
+	got, cmd := m.Update(sseMsg{gen: 1, ev: ev("chat_title", `{"title":"stale"}`)})
+	if got.(Model).title == "stale" || cmd != nil {
+		t.Error("a stale-generation event must be dropped")
 	}
 }
 
@@ -56,8 +95,8 @@ func TestUpdate_ErrorEventMarksTurn(t *testing.T) {
 	if gm.streaming {
 		t.Error("error must clear streaming")
 	}
-	if cmd != nil {
-		t.Error("error is terminal — no re-issue")
+	if cmd == nil {
+		t.Error("error finalizes the run but keeps draining until the stream closes")
 	}
 	if len(gm.turns) != 1 || gm.turns[0].err != "boom" {
 		t.Errorf("error must annotate the turn, got %+v", gm.turns)
@@ -149,8 +188,94 @@ func TestUpdate_EnterWhileStreamingDoesNotSubmit(t *testing.T) {
 func TestSlash_HelpToggles(t *testing.T) {
 	m := newTestModel()
 	got, _ := m.slash("/help")
-	if !got.(Model).showHelp {
+	if got.(Model).overlay != "help" {
 		t.Error("/help must show help")
+	}
+}
+
+func TestEscEscQuitsWhenIdle(t *testing.T) {
+	m := newTestModel()
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	gm := got.(Model)
+	if !gm.pendingQuit || cmd != nil {
+		t.Fatal("first idle esc should arm quit, not quit")
+	}
+	_, cmd2 := gm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd2 == nil {
+		t.Fatal("second esc should quit")
+	}
+	if _, ok := cmd2().(tea.QuitMsg); !ok {
+		t.Error("second esc must return tea.Quit")
+	}
+}
+
+func TestEscWhileStreamingCancels(t *testing.T) {
+	m := newTestModel()
+	m.streaming = true
+	m.cancelRun = func() {}
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !got.(Model).cancelling || cmd == nil {
+		t.Error("esc while streaming must cancel, not arm quit")
+	}
+}
+
+func TestAutocomplete(t *testing.T) {
+	m := newTestModel()
+	m.input.SetValue("/se")
+	if got := m.autocomplete(); got != "/session" {
+		t.Errorf("autocomplete /se = %q, want /session", got)
+	}
+	m.input.SetValue("/x")
+	if got := m.autocomplete(); got != "" {
+		t.Errorf("autocomplete of no-match = %q, want empty", got)
+	}
+}
+
+func TestSlash_SessionOverlay(t *testing.T) {
+	m := newTestModel()
+	got, _ := m.slash("/session")
+	if got.(Model).overlay != "session" {
+		t.Error("/session should open the session overlay")
+	}
+}
+
+func TestSlash_OpenBrowser(t *testing.T) {
+	m := newTestModel()
+	m.client = &cli.Client{BaseURL: "http://127.0.0.1:8080"}
+	_, cmd := m.slash("/ui")
+	if cmd == nil {
+		t.Error("/ui with a server should issue an open-browser cmd")
+	}
+}
+
+func TestInputExpandsWithContent(t *testing.T) {
+	m := sized(newTestModel())
+	m.input.SetValue("one\ntwo\nthree\nfour")
+	m.relayout()
+	if m.input.Height() < 4 {
+		t.Errorf("input should grow to fit 4 lines, height=%d", m.input.Height())
+	}
+}
+
+func TestInputLinesCountsWrapping(t *testing.T) {
+	m := newTestModel()
+	m.width = 12 // narrow → a long line wraps to several rows
+	m.input.SetValue(strings.Repeat("x", 40))
+	if got := m.inputLines(); got < 2 {
+		t.Errorf("a long wrapping line should count as multiple rows, got %d", got)
+	}
+}
+
+func TestEnterBackslashInsertsNewline(t *testing.T) {
+	m := sized(newTestModel())
+	m.input.SetValue("line one\\")
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	gm := got.(Model)
+	if cmd != nil {
+		t.Error("backslash + enter should insert a newline, not submit")
+	}
+	if gm.input.Value() != "line one\n" {
+		t.Errorf("trailing backslash should become a newline, got %q", gm.input.Value())
 	}
 }
 

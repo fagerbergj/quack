@@ -50,7 +50,7 @@ func TestTUI_RendersRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := New(context.Background(), c, "c1", "", nil, "tell me about ducks")
+	m := New(context.Background(), c, "c1", "", nil, "tell me about ducks", "")
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(100, 30))
 
 	// The final frame (after all events) carries the title, the DAG with both
