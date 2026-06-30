@@ -366,12 +366,14 @@ export class ChatStore {
             nodeStates,
             nodeRuns: {},
             nodeAnswer: {},
-            startedAt: Date.now(),
+            startedAt: plan.started_at_ms ?? Date.now(),
           }
           this.write(chatId, { ...s, live: { ...s.live, dag } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
-        onNodeStart: nodeId => updateNodeState(nodeId, { status: 'running', startedAt: Date.now() }),
+        // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
+        // shows true elapsed time instead of restarting from the replay moment.
+        onNodeStart: (nodeId, _agent, startedAtMs) => updateNodeState(nodeId, { status: 'running', startedAt: startedAtMs ?? Date.now() }),
         onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => {
           // Freeze any run still counting — the node is done, so no run is live.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))

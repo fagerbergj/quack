@@ -154,6 +154,24 @@ describe('ChatStore — mid-node steering', () => {
     store.steerNode('c', 'a', '   ')
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  // Timers anchor to the server's start time (epoch ms), not Date.now() at event
+  // processing — so a reconnect/replay shows true elapsed instead of resetting.
+  it('uses server started_at_ms for the dag and node timers', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"r","started_at_ms":2000}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const dag = store.get('c').live?.dag
+    expect(dag?.startedAt).toBe(1000)
+    expect(dag?.nodeStates['a'].startedAt).toBe(2000)
+  })
 })
 
 describe('isTurnInProgress — re-subscribe gate', () => {
