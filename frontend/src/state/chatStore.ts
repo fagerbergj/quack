@@ -30,6 +30,7 @@ export interface NodeState {
   judgeRounds?: number
   judgeFinalScore?: number
   judgePassed?: boolean
+  steers?: string[]   // guidance applied via mid-node steering, in order
 }
 
 export interface DagTurnState {
@@ -157,6 +158,25 @@ export class ChatStore {
   stop(chatId: string): void {
     fetch(`/api/v1/chats/${chatId}/stream`, { method: 'DELETE' }).catch(() => {})
     this.controllers.get(chatId)?.abort()
+  }
+
+  // cancelNode stops one running node; the rest of the DAG keeps going
+  // (continue-but-warn). The local stream stays open.
+  cancelNode(chatId: string, nodeId: string): void {
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}`, { method: 'DELETE' }).catch(() => {})
+  }
+
+  // steerNode interrupts one running node and re-runs it with new guidance against
+  // its same session (prior tool calls/results retained). The re-run streams over
+  // the SAME open connection — no abort, no re-plan.
+  steerNode(chatId: string, nodeId: string, guidance: string): void {
+    const g = guidance.trim()
+    if (!g) return
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/steer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guidance: g }),
+    }).catch(() => {})
   }
 
   isStreaming(chatId: string): boolean {
@@ -296,6 +316,15 @@ export class ChatStore {
         onNodeFailed: (nodeId, error) => {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
+        },
+        onNodeSteered: (nodeId, guidance) => {
+          // The node was interrupted and is re-running with new guidance (same
+          // session). Freeze the interrupted run, re-queue the node, and record
+          // the steer; a fresh node_start → … → node_done follows on this stream.
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          const s = this.states.get(chatId)
+          const prevSteers = s?.live?.dag?.nodeStates[nodeId]?.steers ?? []
+          updateNodeState(nodeId, { status: 'queued', error: undefined, steers: [...prevSteers, guidance] })
         },
       })
       if (streamError) throw new Error(streamError)

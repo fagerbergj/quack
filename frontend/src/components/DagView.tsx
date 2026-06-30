@@ -43,9 +43,12 @@ function finalNodeId(nodeIds: string[], dependsOnMap: Record<string, string[]>):
 
 interface Props {
   dag: DagTurnState
+  // Present only for a live, streaming run: per-node controls (stop / steer).
+  onStopNode?: (nodeId: string) => void
+  onSteerNode?: (nodeId: string, guidance: string) => void
 }
 
-export function DagView({ dag }: Props) {
+export function DagView({ dag, onStopNode, onSteerNode }: Props) {
   const nodeMap = Object.fromEntries(dag.nodes.map(n => [n.id, n]))
   const dependsOnMap: Record<string, string[]> = {}
   for (const n of dag.nodes) dependsOnMap[n.id] = n.depends_on ?? []
@@ -89,6 +92,8 @@ export function DagView({ dag }: Props) {
                   runs={getRuns(id)}
                   answer={getAnswer(id)}
                   isFinal={id === finalId}
+                  onStop={onStopNode}
+                  onSteer={onSteerNode}
                 />
               </div>
             ))}
