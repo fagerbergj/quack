@@ -83,6 +83,12 @@ type Model struct {
 	tickN        int    // spinner ticks, drives pun rotation
 	streamGen    int    // bumped per run; the pump tags events so a stale stream's tail is ignored
 
+	// choice is a pending get_user_choice clarification (the duck asked the user to
+	// pick); cand stashes a top-level get_user_choice call's args until its result
+	// confirms it's pending. Answering = sending the pick as the next message.
+	choice *pendingChoice
+	cand   *pendingChoice
+
 	sub       <-chan cli.SSEEvent
 	cancelRun context.CancelFunc
 
@@ -221,6 +227,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inspectMove(1)
 			m.refreshViewport()
 			return m, nil
+		}
+	}
+	// A pending clarification + empty input: a digit picks that option (typing a
+	// free-form answer + enter also works — both send the next message, which the
+	// orchestrator resumes as the choice).
+	if m.choice != nil && !m.streaming && strings.TrimSpace(m.input.Value()) == "" {
+		if len(k) == 1 && k[0] >= '1' && k[0] <= '9' {
+			if i := int(k[0] - '1'); i < len(m.choice.options) {
+				return m, func() tea.Msg { return submitMsg{m.choice.options[i]} }
+			}
 		}
 	}
 	switch k {
@@ -466,6 +482,7 @@ func (m Model) startRun(text string) (tea.Model, tea.Cmd) {
 	m.dag = nil
 	m.status = ""
 	m.overlay = ""
+	m.choice, m.cand = nil, nil // this message answers any pending clarification
 	m.refreshViewport()
 	c, id := m.client, m.chatID
 	return m, func() tea.Msg { return streamStartedMsg{sub: c.Stream(ctx, id, text)} }
@@ -566,15 +583,68 @@ func (m *Model) applyEvent(ev cli.SSEEvent) {
 		}
 	case stream.EventAgentToolCall:
 		var d stream.AgentToolCallData
-		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
-			m.dagActivity(d.NodeID, "🔧 "+d.Name+"("+argsSummary(d.Args)+")")
+		if json.Unmarshal(ev.Data, &d) == nil {
+			if d.NodeID != "" {
+				m.dagActivity(d.NodeID, "🔧 "+d.Name+"("+argsSummary(d.Args)+")")
+			} else if d.Name == choiceToolName {
+				// Top-level clarification call: stash its question + options until the
+				// result confirms it's pending (mirrors the web's pendingChoice).
+				m.cand = parseChoiceArgs(d.Args)
+			}
 		}
 	case stream.EventAgentToolResult:
 		var d stream.AgentToolResultData
-		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
-			m.dagActivity(d.NodeID, "↳ "+resultSummary(d.Result))
+		if json.Unmarshal(ev.Data, &d) == nil {
+			if d.NodeID != "" {
+				m.dagActivity(d.NodeID, "↳ "+resultSummary(d.Result))
+			} else if d.Name == choiceToolName && m.cand != nil && isPendingResult(d.Result) {
+				m.choice = m.cand
+				m.cand = nil
+			}
 		}
 	}
+}
+
+// choiceToolName is the wire name of the orchestrator's clarification tool.
+const choiceToolName = "get_user_choice"
+
+// pendingChoice is a clarification the duck is waiting on: a question and the
+// options it offered. The user answers by sending a pick (or free text).
+type pendingChoice struct {
+	question string
+	options  []string
+}
+
+// parseChoiceArgs pulls a question + string options out of a get_user_choice
+// call's args; nil if there are no options.
+func parseChoiceArgs(args map[string]any) *pendingChoice {
+	raw, ok := args["options"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	pc := &pendingChoice{}
+	if q, ok := args["question"].(string); ok {
+		pc.question = q
+	}
+	for _, o := range raw {
+		if s, ok := o.(string); ok {
+			pc.options = append(pc.options, s)
+		}
+	}
+	if len(pc.options) == 0 {
+		return nil
+	}
+	return pc
+}
+
+// isPendingResult reports whether a get_user_choice result is the "pending"
+// placeholder (the real answer arrives as the next message).
+func isPendingResult(result any) bool {
+	m, ok := result.(map[string]any)
+	if !ok {
+		return false
+	}
+	return m["status"] == "pending"
 }
 
 func (m *Model) dagActivity(id, line string) {
@@ -817,7 +887,26 @@ func (m Model) transcript() string {
 		live := turn{user: m.pending, answer: strings.TrimSpace(m.live.String())}
 		b.WriteString(m.renderTurn(live, m.spin.View(), m.dag, width))
 	}
+	if m.choice != nil && !m.streaming {
+		b.WriteString(m.renderChoice())
+	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// renderChoice draws a pending get_user_choice clarification: the question and
+// numbered options. The user presses 1-N or types a free-form answer.
+func (m Model) renderChoice() string {
+	plain := lipgloss.NewStyle().Width(maxInt(m.vp.Width-2, 10))
+	var b strings.Builder
+	b.WriteString(promptStyle.Render("❓ Clarification needed") + "\n")
+	if q := strings.TrimSpace(m.choice.question); q != "" {
+		b.WriteString(plain.Render(q) + "\n")
+	}
+	for i, opt := range m.choice.options {
+		b.WriteString("  " + duckStyle.Render(fmt.Sprintf("%d)", i+1)) + " " + opt + "\n")
+	}
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("press 1-%d or type your own answer", len(m.choice.options))) + "\n")
+	return b.String()
 }
 
 func (m Model) renderTurn(t turn, spin string, liveDAG *dagState, width int) string {

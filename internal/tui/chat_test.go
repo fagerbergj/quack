@@ -546,3 +546,65 @@ func TestMarkdownCacheReused(t *testing.T) {
 		t.Error("cached markdown should match the first render")
 	}
 }
+
+func TestClarification_DetectedFromStream(t *testing.T) {
+	m := sized(newTestModel())
+	// Top-level get_user_choice call (node_id empty) + pending result → a choice.
+	m.applyEvent(ev("agent_tool_call", `{"name":"get_user_choice","args":{"question":"Which region?","options":["NA","EU","Asia"]}}`))
+	m.applyEvent(ev("agent_tool_result", `{"name":"get_user_choice","result":{"status":"pending"}}`))
+	if m.choice == nil {
+		t.Fatal("a pending get_user_choice should set m.choice")
+	}
+	if m.choice.question != "Which region?" || len(m.choice.options) != 3 || m.choice.options[1] != "EU" {
+		t.Errorf("choice parsed wrong: %+v", m.choice)
+	}
+	if !strings.Contains(m.renderChoice(), "Which region?") || !strings.Contains(m.renderChoice(), "2)") {
+		t.Errorf("renderChoice missing question/options: %q", m.renderChoice())
+	}
+}
+
+func TestClarification_NodeScopedToolIgnored(t *testing.T) {
+	// A get_user_choice scoped to a node (node_id set) is node activity, not a
+	// top-level clarification — must not pop a choice prompt.
+	m := newTestModel()
+	m.dag = sampleDAG()
+	m.applyEvent(ev("agent_tool_call", `{"node_id":"a","name":"get_user_choice","args":{"options":["x"]}}`))
+	m.applyEvent(ev("agent_tool_result", `{"node_id":"a","name":"get_user_choice","result":{"status":"pending"}}`))
+	if m.choice != nil {
+		t.Error("a node-scoped tool must not set a top-level choice")
+	}
+}
+
+func TestClarification_DigitSelects(t *testing.T) {
+	m := newTestModel()
+	m.choice = &pendingChoice{question: "Pick", options: []string{"alpha", "beta"}}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if cmd == nil {
+		t.Fatal("a digit should select an option")
+	}
+	if sm, ok := cmd().(submitMsg); !ok || sm.text != "beta" {
+		t.Errorf("digit 2 should submit the 2nd option, got %#v", cmd())
+	}
+}
+
+func TestClarification_DigitIgnoredWhenTyping(t *testing.T) {
+	// With text in the box, a digit is normal input, not a selection.
+	m := sized(newTestModel())
+	m.choice = &pendingChoice{options: []string{"a", "b"}}
+	m.input.SetValue("custom ans")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if cmd != nil {
+		if _, ok := cmd().(submitMsg); ok {
+			t.Error("a digit while typing must not select an option")
+		}
+	}
+}
+
+func TestClarification_ClearedOnNewRun(t *testing.T) {
+	m := sized(newTestModel())
+	m.choice = &pendingChoice{options: []string{"a"}}
+	got, _ := m.startRun("my answer")
+	if got.(Model).choice != nil {
+		t.Error("starting a run (answering) should clear the pending choice")
+	}
+}
