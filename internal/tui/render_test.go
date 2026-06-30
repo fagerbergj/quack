@@ -32,6 +32,37 @@ func TestView_TranscriptAndDAG(t *testing.T) {
 	}
 }
 
+// Streaming must not fight a manual scroll-up: once the user scrolls off the
+// bottom, an incoming token (refreshViewport) keeps their position instead of
+// yanking them back down. Regression for "scroll disabled while a DAG runs".
+func TestStickyScroll_StreamingKeepsScrollPosition(t *testing.T) {
+	var hist []turn
+	for i := 0; i < 40; i++ {
+		hist = append(hist, turn{user: "question", answer: "a sufficiently long answer line"})
+	}
+	m := sized(New(context.Background(), nil, "c", "", hist, "", ""))
+	m.streaming = true
+
+	// User scrolls to the top to read history.
+	m.vp.GotoTop()
+	if m.vp.AtBottom() {
+		t.Fatal("precondition: 40 turns should overflow a 24-row viewport")
+	}
+
+	// A streaming token arrives.
+	m.refreshViewport()
+	if m.vp.AtBottom() {
+		t.Error("streaming refresh yanked the viewport to the bottom despite scroll-up")
+	}
+
+	// But while pinned at the bottom, streaming still auto-follows.
+	m.vp.GotoBottom()
+	m.refreshViewport()
+	if !m.vp.AtBottom() {
+		t.Error("streaming should keep following when already at the bottom")
+	}
+}
+
 func TestView_EmptyStateGuidesUser(t *testing.T) {
 	m := sized(New(context.Background(), nil, "c1", "", nil, "", ""))
 	if !strings.Contains(m.View(), "Say something to the duck") {
