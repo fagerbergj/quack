@@ -51,6 +51,19 @@ type DagPlan struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ChatEvent is one persisted SSE run event, ordered per chat by a monotonic Seq
+// the run loop assigns. It backs the hub's replay durably: after a restart (when
+// the in-memory hub is empty) SubscribeChatStream replays a run from here. Event
+// is the serialized stream event ({name,data}), replayed verbatim. A new run on
+// the chat clears the prior run's rows, so the table holds one run per chat
+// (mirroring the hub's reset-on-new-run) and is windowed to MaxReplay rows.
+type ChatEvent struct {
+	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
+	Seq       int64     `gorm:"primaryKey;autoIncrement:false" json:"seq"`
+	Event     string    `json:"event"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // DagNode stores the execution state of one DAG node.
 type DagNode struct {
 	NodeID        string `gorm:"primaryKey;column:node_id" json:"node_id"`
@@ -218,7 +231,7 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}); err != nil {
 		return nil, err
 	}
 	sessions, err := database.NewSessionService(dialector(), gormCfg)
@@ -349,6 +362,35 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 // UpsertDagNode creates or updates a DAG node's execution state.
 func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	return s.db.WithContext(ctx).Save(&node).Error
+}
+
+// InsertChatEvent persists one run event. The caller assigns Seq (per-chat
+// monotonic) and serializes inserts per chat so order is stable.
+func (s *Store) InsertChatEvent(ctx context.Context, ev ChatEvent) error {
+	return s.db.WithContext(ctx).Create(&ev).Error
+}
+
+// LoadChatEvents returns a chat's persisted events with seq > afterSeq, ordered
+// by seq. afterSeq=0 returns the whole stored run (for Last-Event-ID resume the
+// client passes its last-seen seq).
+func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int64) ([]ChatEvent, error) {
+	var evs []ChatEvent
+	err := s.db.WithContext(ctx).
+		Where("chat_id = ? AND seq > ?", chatID, afterSeq).
+		Order("seq asc").Find(&evs).Error
+	return evs, err
+}
+
+// DeleteChatEvents drops a chat's persisted run events. Called at the start of a
+// new run so its events start fresh at seq 1 (mirrors the hub's per-run reset).
+func (s *Store) DeleteChatEvents(ctx context.Context, chatID string) error {
+	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&ChatEvent{}).Error
+}
+
+// TrimChatEvents drops a chat's events at or below upToSeq — used to window a very
+// long run to the durable replay ceiling, mirroring the hub's bounded buffer.
+func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64) error {
+	return s.db.WithContext(ctx).Where("chat_id = ? AND seq <= ?", chatID, upToSeq).Delete(&ChatEvent{}).Error
 }
 
 // FailStaleDagNodes marks any node still queued/running as failed. Called at

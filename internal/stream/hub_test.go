@@ -7,40 +7,40 @@ import (
 
 func ev(name string) SSEEvent { return SSEEvent{Name: name} }
 
-func recv(t *testing.T, ch <-chan SSEEvent) SSEEvent {
+func recv(t *testing.T, ch <-chan Event) Event {
 	t.Helper()
 	select {
 	case e := <-ch:
 		return e
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for live event")
-		return SSEEvent{}
+		return Event{}
 	}
 }
 
-// Events published before a subscriber joins are replayed; subsequent events
-// reach every live subscriber.
+// Events published before a subscriber joins are replayed (with their seq);
+// subsequent events reach every live subscriber.
 func TestHubReplayAndFanout(t *testing.T) {
 	h := NewHub()
-	h.Publish("c", ev("a")) // before anyone subscribes
+	h.Publish("c", 1, ev("a")) // before anyone subscribes
 
 	replay, l1, c1, done := h.Subscribe("c")
 	defer c1()
 	if done {
 		t.Fatal("topic should be active")
 	}
-	if len(replay) != 1 || replay[0].Name != "a" {
-		t.Fatalf("replay = %v, want [a]", replay)
+	if len(replay) != 1 || replay[0].SSE.Name != "a" || replay[0].Seq != 1 {
+		t.Fatalf("replay = %v, want [{1 a}]", replay)
 	}
 	_, l2, c2, _ := h.Subscribe("c")
 	defer c2()
 
-	h.Publish("c", ev("b"))
-	if e := recv(t, l1); e.Name != "b" {
-		t.Errorf("sub1 live = %q, want b", e.Name)
+	h.Publish("c", 2, ev("b"))
+	if e := recv(t, l1); e.SSE.Name != "b" || e.Seq != 2 {
+		t.Errorf("sub1 live = %+v, want {2 b}", e)
 	}
-	if e := recv(t, l2); e.Name != "b" {
-		t.Errorf("sub2 live = %q, want b", e.Name)
+	if e := recv(t, l2); e.SSE.Name != "b" {
+		t.Errorf("sub2 live = %q, want b", e.SSE.Name)
 	}
 }
 
@@ -48,15 +48,15 @@ func TestHubReplayAndFanout(t *testing.T) {
 // gets the whole run as replay with done=true.
 func TestHubClose(t *testing.T) {
 	h := NewHub()
-	h.Publish("c", ev("a"))
+	h.Publish("c", 1, ev("a"))
 	_, live, cancel, _ := h.Subscribe("c")
 	defer cancel()
-	h.Publish("c", Done())
+	h.Publish("c", 2, Done())
 	h.Close("c")
 
 	var names []string
 	for e := range live { // ranges until Close closed the channel
-		names = append(names, e.Name)
+		names = append(names, e.SSE.Name)
 	}
 	if len(names) == 0 {
 		t.Error("expected the buffered Done before close")
@@ -74,16 +74,16 @@ func TestHubClose(t *testing.T) {
 // The first publish after a run ends starts a fresh stream.
 func TestHubNewRunResets(t *testing.T) {
 	h := NewHub()
-	h.Publish("c", ev("old"))
+	h.Publish("c", 1, ev("old"))
 	h.Close("c")
-	h.Publish("c", ev("new")) // new run
+	h.Publish("c", 1, ev("new")) // new run, seq restarts
 
 	replay, _, cancel, done := h.Subscribe("c")
 	defer cancel()
 	if done {
 		t.Error("should be active after the new run's publish")
 	}
-	if len(replay) != 1 || replay[0].Name != "new" {
+	if len(replay) != 1 || replay[0].SSE.Name != "new" {
 		t.Errorf("reset replay = %v, want [new]", replay)
 	}
 }

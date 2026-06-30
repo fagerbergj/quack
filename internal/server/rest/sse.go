@@ -45,3 +45,18 @@ func (s *sseWriter) send(ev stream.SSEEvent) error {
 	s.flusher.Flush()
 	return nil
 }
+
+// sendID writes one event with its per-chat seq as the SSE id, so a reconnecting
+// subscriber resumes from the next event via the Last-Event-ID header. Used by the
+// subscribe endpoint (the POST run's body stream is one-shot and needs no id).
+func (s *sseWriter) sendID(seq int64, ev stream.SSEEvent) error {
+	data, err := json.Marshal(ev.Data)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, "id: %d\nevent: %s\ndata: %s\n\n", seq, ev.Name, data); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
