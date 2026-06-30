@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fagerbergj/quack/internal/cli"
 )
@@ -45,11 +46,18 @@ func Run(ctx context.Context, c *cli.Client, chatID, initialPrompt, serverLabel 
 		}
 	}
 
+	// Detect the terminal's background colour now, while we still own stdin in
+	// cooked mode. lipgloss caches it; otherwise it queries (OSC 11) on first
+	// render — once bubbletea holds stdin in raw mode — and the terminal's reply
+	// races the input reader and prints as garbage (`]11;rgb:…`) in the chat.
+	_ = lipgloss.HasDarkBackground()
+
+	// No WithMouseCellMotion: capturing the mouse steals click-drag from the
+	// terminal, so text can't be selected/copied. pgup/pgdn/ctrl+u/ctrl+d scroll.
 	p := tea.NewProgram(
 		New(ctx, c, chatID, title, history, initialPrompt, serverLabel),
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),
-		tea.WithMouseCellMotion(), // mouse-wheel scrolling
 	)
 	_, err := p.Run()
 	return err

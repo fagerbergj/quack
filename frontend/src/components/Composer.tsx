@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { AttachmentStrip, type AttachmentItem } from './AttachmentUI'
 
 export interface AttachmentPreview {
@@ -23,6 +23,17 @@ export function Composer({ disabled, streaming, onSubmit, onStop }: ComposerProp
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
+  // Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
+  // max-h-48 + overflow-y-auto cap it and start scrolling past ~8 lines.
+  useLayoutEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = `${ta.scrollHeight}px`
+  }, [input])
 
   function submit() {
     const trimmed = input.trim()
@@ -79,10 +90,9 @@ export function Composer({ disabled, streaming, onSubmit, onStop }: ComposerProp
           >
             📎
           </button>
-          {/* ponytail: native CSS auto-grow (field-sizing-content) — no resize hook.
-              Degrades to a fixed scrolling box on older Firefox. */}
           <textarea
-            className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none field-sizing-content max-h-48 overflow-y-auto disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+            ref={textareaRef}
+            className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 overflow-y-auto disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
             rows={1}
             placeholder={disabled ? 'Select or start a chat first' : 'Ask something… (Enter to send, Shift+Enter for newline)'}
             value={input}
