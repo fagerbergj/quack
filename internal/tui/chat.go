@@ -34,6 +34,7 @@ type turn struct {
 // ── messages (principle 2: one server event per msg) ─────────────────────────
 
 type submitMsg struct{ text string }
+type resumeMsg struct{} // re-attach to an in-progress run loaded at startup
 type streamStartedMsg struct{ sub <-chan cli.SSEEvent }
 type sseMsg struct {
 	gen int // stream generation; stale events (gen != current) are dropped
@@ -78,6 +79,7 @@ type Model struct {
 	overlay      string // "" | "help" | "session" | "node"
 	inspectNode  string // node id shown when overlay == "node"
 	initial      string
+	resume       bool   // set by Run when the loaded chat's latest run is still in progress
 	pendingQuit  bool   // esc-once when idle; esc again quits
 	pendingSteer string // guidance to resubmit once the cancelled run finishes
 	tickN        int    // spinner ticks, drives pun rotation
@@ -132,7 +134,10 @@ func New(ctx context.Context, c *cli.Client, chatID, title string, history []tur
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.spin.Tick, textarea.Blink}
-	if m.initial != "" {
+	switch {
+	case m.resume:
+		cmds = append(cmds, func() tea.Msg { return resumeMsg{} })
+	case m.initial != "":
 		init := m.initial
 		cmds = append(cmds, func() tea.Msg { return submitMsg{init} })
 	}
@@ -161,6 +166,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case submitMsg:
 		return m.startRun(msg.text)
+
+	case resumeMsg:
+		return m.startResume()
 
 	case streamStartedMsg:
 		m.sub = msg.sub
@@ -478,9 +486,29 @@ func (m Model) startRun(text string) (tea.Model, tea.Cmd) {
 	m.status = ""
 	m.overlay = ""
 	m.choice, m.cand = nil, nil // this message answers any pending clarification
-	m.refreshViewport()
+	m.jumpToBottom()            // a freshly sent turn jumps into view even if scrolled up
 	c, id := m.client, m.chatID
 	return m, func() tea.Msg { return streamStartedMsg{sub: c.Stream(ctx, id, text)} }
+}
+
+// startResume re-attaches to a run already in progress (loaded at startup): it
+// subscribes to the chat's live stream instead of posting a new message. The hub
+// replays the events so far — rebuilding the DAG and live answer through the same
+// handleEvent path the POST stream uses — then tails live. m.pending already holds
+// the resumed turn's prompt (set by Run), so the user bubble renders immediately.
+func (m Model) startResume() (tea.Model, tea.Cmd) {
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancelRun = cancel
+	m.streaming = true
+	m.cancelling = false
+	m.streamGen++
+	m.runErr = ""
+	m.live.Reset()
+	m.dag = nil
+	m.status = ""
+	m.jumpToBottom()
+	c, id := m.client, m.chatID
+	return m, func() tea.Msg { return streamStartedMsg{sub: c.Subscribe(ctx, id)} }
 }
 
 func (m Model) cancelActive() (tea.Model, tea.Cmd) {
@@ -811,15 +839,30 @@ func (m *Model) buildMD() {
 	}
 }
 
+// refreshViewport re-renders the transcript, keeping the scroll position sticky:
+// it follows the newest content only while the user is already at the bottom.
+// During a run that means it auto-scrolls with the stream — until the user scrolls
+// up to read, which then stays put (a new token no longer yanks them back down).
 func (m *Model) refreshViewport() {
 	if !m.ready {
 		return
 	}
 	atBottom := m.vp.AtBottom()
 	m.vp.SetContent(m.transcript())
-	if atBottom || m.streaming {
+	if atBottom {
 		m.vp.GotoBottom()
 	}
+}
+
+// jumpToBottom re-renders and pins to the newest content, used when the user
+// submits or resumes a turn so a fresh run is always visible even if they had
+// scrolled up to read history.
+func (m *Model) jumpToBottom() {
+	if !m.ready {
+		return
+	}
+	m.vp.SetContent(m.transcript())
+	m.vp.GotoBottom()
 }
 
 func (m Model) View() string {

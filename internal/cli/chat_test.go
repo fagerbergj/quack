@@ -8,7 +8,65 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/schema"
 )
+
+// TestDagInProgress: the resume gate is true only when a DAG output item is still
+// in_progress — completed DAGs (incl. restart-failed runs) and DAG-less turns are
+// not re-attached.
+func TestDagInProgress(t *testing.T) {
+	dag := func(status schema.ItemStatus) schema.OutputItem {
+		var it schema.OutputItem
+		_ = it.FromDagOutputItem(schema.DagOutputItem{Status: status})
+		return it
+	}
+	var msg schema.OutputItem
+	_ = msg.FromMessageOutputItem(schema.MessageOutputItem{})
+
+	cases := []struct {
+		name  string
+		items []schema.OutputItem
+		want  bool
+	}{
+		{"in_progress", []schema.OutputItem{dag(schema.InProgress)}, true},
+		{"completed", []schema.OutputItem{dag(schema.Completed)}, false},
+		{"no dag", []schema.OutputItem{msg}, false},
+		{"empty", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DagInProgress(tc.items); got != tc.want {
+				t.Errorf("DagInProgress = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSubscribe drives the resume transport: a GET to the chat's stream endpoint
+// whose SSE events arrive on the channel in order, closing on stream end.
+func TestSubscribe(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1/stream", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("subscribe: method = %s, want GET", r.Method)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: node_start\ndata: {\"node_id\":\"a\"}\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	var names []string
+	for ev := range c.Subscribe(context.Background(), "c1") {
+		names = append(names, ev.Name)
+	}
+	if got := strings.Join(names, ","); got != "node_start,done" {
+		t.Errorf("events = %q, want node_start,done", got)
+	}
+}
 
 // chatDetailJSON is a hand-written ChatDetail so the test exercises the real
 // generated-union parsing (message output item → text) the export path relies on.

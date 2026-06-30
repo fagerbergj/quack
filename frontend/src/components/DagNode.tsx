@@ -289,11 +289,15 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer }:
               ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">~{Math.round(state.outputChars / 4).toLocaleString()} tok</span>
               : null
           }
-          {state.startedAt != null && (
+          {/* A finished node shows the server-measured duration (reconnect-proof);
+              a running one ticks live from the server start time. */}
+          {(state.finishedAt != null && state.serverDurationMs != null) ? (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
+          ) : state.startedAt != null ? (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
               <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
             </span>
-          )}
+          ) : null}
         </div>
       </div>
 

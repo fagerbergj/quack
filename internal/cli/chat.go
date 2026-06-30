@@ -141,6 +141,22 @@ func AssistantText(items []schema.OutputItem) string {
 	return sb.String()
 }
 
+// DagInProgress reports whether a turn's output holds a DAG still running (status
+// in_progress). The TUI's resume loader uses it to decide whether to re-attach to
+// the live stream — a finished run replays from history alone. After a server
+// restart, FailStaleDagNodes has flipped orphaned nodes to failed, so the DAG
+// reads completed and we don't re-attach to a dead run.
+func DagInProgress(items []schema.OutputItem) bool {
+	for _, it := range items {
+		d, err := it.AsDagOutputItem()
+		if err != nil || string(d.Type) != "quack:dag" {
+			continue
+		}
+		return d.Status == schema.InProgress
+	}
+	return false
+}
+
 // notFoundAs turns the client's ErrNotFound into a chat-specific message.
 func notFoundAs(err error, id string) error {
 	if errors.Is(err, ErrNotFound) {

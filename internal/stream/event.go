@@ -19,6 +19,7 @@ package stream
 
 import (
 	"encoding/json"
+	"time"
 
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
@@ -199,6 +200,10 @@ type DagPlanData struct {
 	PlanID string       `json:"plan_id"`
 	Nodes  []DagNodeDef `json:"nodes"`
 	Edges  []DagEdgeDef `json:"edges"`
+	// StartedAtMs is the server wall-clock (epoch ms) the run began. The client
+	// uses it for the total-run timer so a reconnect/replay shows true elapsed time
+	// rather than restarting from when the events were re-processed.
+	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 }
 
 // NodeQueuedData is the `node_queued` event payload.
@@ -210,6 +215,10 @@ type NodeQueuedData struct {
 type NodeStartData struct {
 	NodeID string `json:"node_id"`
 	Agent  string `json:"agent"`
+	// StartedAtMs is the server wall-clock (epoch ms) the node began running. The
+	// client uses it as the timer origin so a reconnect/replay shows the node's true
+	// elapsed time instead of restarting from the replay moment.
+	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 }
 
 // NodeDoneData is the `node_done` event payload. Completion stats are the sum
@@ -256,9 +265,13 @@ type ChatTitleData struct {
 
 // ── event constructors ───────────────────────────────────────────────────────
 
-// DagPlan builds a dag_plan event carrying the full plan structure.
+// DagPlan builds a dag_plan event carrying the full plan structure. StartedAtMs is
+// stamped now (the run's start), so a reconnecting client's total timer is anchored
+// to real time and survives replay.
 func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
-	return SSEEvent{Name: EventDagPlan, Data: DagPlanData{PlanID: planID, Nodes: nodes, Edges: edges}}
+	return SSEEvent{Name: EventDagPlan, Data: DagPlanData{
+		PlanID: planID, Nodes: nodes, Edges: edges, StartedAtMs: time.Now().UnixMilli(),
+	}}
 }
 
 // NodeQueued builds a node_queued event.
@@ -266,9 +279,13 @@ func NodeQueued(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
 }
 
-// NodeStart builds a node_start event.
+// NodeStart builds a node_start event. StartedAtMs is stamped now (when the node
+// begins), so a reconnecting client's node timer is anchored to real time and
+// survives replay.
 func NodeStart(nodeID, agent string) SSEEvent {
-	return SSEEvent{Name: EventNodeStart, Data: NodeStartData{NodeID: nodeID, Agent: agent}}
+	return SSEEvent{Name: EventNodeStart, Data: NodeStartData{
+		NodeID: nodeID, Agent: agent, StartedAtMs: time.Now().UnixMilli(),
+	}}
 }
 
 // NodeDone builds a node_done event.

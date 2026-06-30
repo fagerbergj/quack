@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,12 +35,13 @@ type Handler struct {
 	orch          *orchestrator.Orchestrator
 	titler        model.LLM
 	hub           *stream.Hub // fans a chat's run to extra subscribers (other devices)
+	eventLog      *eventLog   // durably persists the run stream, backing replay across restarts
 	activeCancels sync.Map    // chatID → context.CancelFunc
 }
 
 // NewHandler builds a REST handler.
 func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM) *Handler {
-	return &Handler{store: s, orch: o, titler: titler, hub: stream.NewHub()}
+	return &Handler{store: s, orch: o, titler: titler, hub: stream.NewHub(), eventLog: newEventLog(s)}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
@@ -225,6 +227,20 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	// hub fan-out — continue even if this initiating client disconnects.
 	defer h.hub.Close(chatID)
 
+	// Fresh run: clear the previous run's durable events so this run's seq starts
+	// at 1 (mirrors the hub discarding the old buffer on its first publish).
+	h.eventLog.reset(runCtx, chatID)
+
+	// publish assigns the next per-chat seq, fans the event to live hub subscribers,
+	// and persists it durably (off the hot path). The run loop is the sole publisher
+	// for this chat, so seq stays monotonic without locking.
+	var seq int64
+	publish := func(ev stream.SSEEvent) {
+		seq++
+		h.hub.Publish(chatID, seq, ev)
+		h.eventLog.append(chatID, seq, ev)
+	}
+
 	// Generate a stable turn ID before the run so the DAG plan can reference it.
 	turnID := uuid.NewString()
 	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
@@ -249,7 +265,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		select {
 		case title, ok := <-titleCh:
 			if ok {
-				h.hub.Publish(chatID, stream.ChatTitle(title))
+				publish(stream.ChatTitle(title))
 				if !clientGone {
 					_ = sse.send(stream.ChatTitle(title))
 				}
@@ -263,8 +279,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content, attachments) {
 		trySendTitle()
 		if err != nil {
-			h.hub.Publish(chatID, stream.Errorf(err.Error()))
-			h.hub.Publish(chatID, stream.Done())
+			publish(stream.Errorf(err.Error()))
+			publish(stream.Done())
 			if !clientGone {
 				_ = sse.send(stream.Errorf(err.Error()))
 				_ = sse.send(stream.Done())
@@ -284,7 +300,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		}
 		// Fan out to any other subscribers regardless of whether THIS client is
 		// still connected; only the direct write is gated on clientGone.
-		h.hub.Publish(chatID, ev)
+		publish(ev)
 		if !clientGone {
 			if sendErr := sse.send(ev); sendErr != nil {
 				clientGone = true
@@ -292,12 +308,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		}
 	}
 	for title := range titleCh {
-		h.hub.Publish(chatID, stream.ChatTitle(title))
+		publish(stream.ChatTitle(title))
 		if !clientGone {
 			_ = sse.send(stream.ChatTitle(title))
 		}
 	}
-	h.hub.Publish(chatID, stream.Done())
+	publish(stream.Done())
 	if !clientGone {
 		_ = sse.send(stream.Done())
 	}
@@ -334,17 +350,51 @@ func (h *Handler) SteerNode(w http.ResponseWriter, r *http.Request, chatID schem
 // SubscribeChatStream connects an additional client to a chat's live (or
 // just-completed) run: it replays the events so far, then streams live events
 // until the run ends — so a turn started on one device can be watched from
-// another. Reconnect-safe via the hub's replay buffer.
+// another, or resumed by the same browser after a reload. Reconnect-safe two
+// ways: the hub's in-memory buffer on the warm path, and the durable event log
+// (store.ChatEvent) when the hub is cold (after a server restart). A client
+// resumes mid-stream by sending its last-seen seq via Last-Event-ID (the SSE id
+// emitted on every event) or the last_event_id query param.
 func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	sse, ok := newSSEWriter(w)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	lastSeq := lastEventID(r)
 	replay, live, cancel, done := h.hub.Subscribe(chatID)
 	defer cancel()
-	for _, ev := range replay {
-		if sse.send(ev) != nil {
+	_, active := h.activeCancels.Load(chatID)
+
+	// Cold path: the hub has no buffered events and no run is active in this
+	// process — a restart wiped the in-memory topic (the orchestrator goroutine
+	// died too). Replay the run from the durable log; there is nothing live to
+	// tail (a new run would repopulate the hub, taking the warm path below).
+	if len(replay) == 0 && !active {
+		evs, err := h.store.LoadChatEvents(r.Context(), chatID, lastSeq)
+		if err != nil {
+			slog.Warn("subscribe: durable replay failed", "component", "stream", "chat", chatID, "err", err)
+			return
+		}
+		for _, e := range evs {
+			ev, err := unmarshalEvent(e.Event)
+			if err != nil {
+				continue
+			}
+			if sse.sendID(e.Seq, ev) != nil {
+				return
+			}
+		}
+		return
+	}
+
+	// Warm path: the hub holds the run (live, or completed-but-still-buffered).
+	// Replay its buffer (skipping anything the client already saw), then tail live.
+	for _, it := range replay {
+		if it.Seq <= lastSeq {
+			continue
+		}
+		if sse.sendID(it.Seq, it.SSE) != nil {
 			return
 		}
 	}
@@ -353,17 +403,35 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	}
 	for {
 		select {
-		case ev, ok := <-live:
+		case it, ok := <-live:
 			if !ok {
 				return // run ended (its Done was delivered via the live channel)
 			}
-			if sse.send(ev) != nil {
+			if it.Seq <= lastSeq {
+				continue
+			}
+			if sse.sendID(it.Seq, it.SSE) != nil {
 				return
 			}
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+// lastEventID reads a reconnecting subscriber's last-seen seq from the standard
+// Last-Event-ID header (set automatically by EventSource on reconnect) or the
+// last_event_id query param. 0 (no/invalid value) replays from the start.
+func lastEventID(r *http.Request) int64 {
+	v := r.Header.Get("Last-Event-ID")
+	if v == "" {
+		v = r.URL.Query().Get("last_event_id")
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // buildTurn converts a TurnContent (store layer) into a schema.Turn (API layer).

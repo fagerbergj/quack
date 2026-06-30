@@ -55,6 +55,61 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestChatEventLog covers the durable event log backing SSE replay: ordered
+// load, Last-Event-ID resume (afterSeq), per-run reset, and the windowing trim.
+func TestChatEventLog(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	for seq := int64(1); seq <= 4; seq++ {
+		ev := ChatEvent{ChatID: "c", Seq: seq, Event: `{"name":"node_start"}`}
+		if err := st.InsertChatEvent(ctx, ev); err != nil {
+			t.Fatalf("InsertChatEvent %d: %v", seq, err)
+		}
+	}
+
+	// Full replay, ordered by seq.
+	evs, err := st.LoadChatEvents(ctx, "c", 0)
+	if err != nil || len(evs) != 4 {
+		t.Fatalf("LoadChatEvents(0): %d err=%v", len(evs), err)
+	}
+	for i, e := range evs {
+		if e.Seq != int64(i+1) {
+			t.Fatalf("event %d has seq %d, want %d (not ordered)", i, e.Seq, i+1)
+		}
+	}
+
+	// Resume from seq 2 → only events 3 and 4.
+	if evs, err := st.LoadChatEvents(ctx, "c", 2); err != nil || len(evs) != 2 || evs[0].Seq != 3 {
+		t.Fatalf("LoadChatEvents(2): %+v err=%v, want seqs [3,4]", evs, err)
+	}
+
+	// Trim windows away the oldest.
+	if err := st.TrimChatEvents(ctx, "c", 2); err != nil {
+		t.Fatalf("TrimChatEvents: %v", err)
+	}
+	if evs, err := st.LoadChatEvents(ctx, "c", 0); err != nil || len(evs) != 2 || evs[0].Seq != 3 {
+		t.Fatalf("after trim: %+v err=%v, want seqs [3,4]", evs, err)
+	}
+
+	// Reset clears the chat (a new run starts fresh); another chat is untouched.
+	if err := st.InsertChatEvent(ctx, ChatEvent{ChatID: "other", Seq: 1, Event: "{}"}); err != nil {
+		t.Fatalf("InsertChatEvent other: %v", err)
+	}
+	if err := st.DeleteChatEvents(ctx, "c"); err != nil {
+		t.Fatalf("DeleteChatEvents: %v", err)
+	}
+	if evs, err := st.LoadChatEvents(ctx, "c", 0); err != nil || len(evs) != 0 {
+		t.Fatalf("after reset: %d events, want 0 (err=%v)", len(evs), err)
+	}
+	if evs, err := st.LoadChatEvents(ctx, "other", 0); err != nil || len(evs) != 1 {
+		t.Fatalf("other chat clobbered: %d, want 1 (err=%v)", len(evs), err)
+	}
+}
+
 func TestStoreUnknownKind(t *testing.T) {
 	if _, err := New("mysql", "x"); err == nil {
 		t.Error("New should reject an unknown store kind")

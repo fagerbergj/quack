@@ -72,6 +72,7 @@ export interface DagPlanPayload {
   plan_id: string
   nodes: DagNodeDef[]
   edges: DagEdgeDef[]
+  started_at_ms?: number // server start time, for a reconnect-stable total timer
 }
 
 export interface AgentStreamHandlers {
@@ -89,7 +90,7 @@ export interface AgentStreamHandlers {
   // DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
-  onNodeStart?: (nodeId: string, agent: string) => void
+  onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
   onNodeSteered?: (nodeId: string, guidance: string) => void
@@ -198,11 +199,12 @@ export function dispatchAgentEvent(
       return true
     // DAG lifecycle events (M3)
     case 'dag_plan': {
-      const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[] }
+      const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[]; started_at_ms?: number }
       handlers.onDagPlan?.({
         plan_id: typeof p.plan_id === 'string' ? p.plan_id : '',
         nodes: (p.nodes ?? []) as DagNodeDef[],
         edges: (p.edges ?? []) as DagEdgeDef[],
+        started_at_ms: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
       })
       return true
     }
@@ -210,9 +212,10 @@ export function dispatchAgentEvent(
       if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
       return true
     case 'node_start': {
-      const p = parsed as { node_id?: string; agent?: string }
+      const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number }
       if (typeof p.node_id === 'string') {
-        handlers.onNodeStart?.(p.node_id, typeof p.agent === 'string' ? p.agent : '')
+        handlers.onNodeStart?.(p.node_id, typeof p.agent === 'string' ? p.agent : '',
+          typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined)
       }
       return true
     }
