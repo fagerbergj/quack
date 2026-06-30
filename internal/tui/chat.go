@@ -147,11 +147,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
-	case tea.MouseMsg:
-		var cmd tea.Cmd
-		m.vp, cmd = m.vp.Update(msg) // wheel scroll
-		return m, cmd
-
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
@@ -841,7 +836,7 @@ func (m Model) View() string {
 
 	footer := faintStyle.Render("enter send · \\+enter newline · /help · ctrl+c quit")
 	if m.streaming {
-		footer = faintStyle.Render("ctrl+c / esc stop · pgup/pgdn or wheel scroll")
+		footer = faintStyle.Render("ctrl+c / esc stop · pgup/pgdn scroll")
 	}
 
 	parts := []string{header, m.vp.View()}
@@ -1112,7 +1107,7 @@ func helpText() string {
 		"  " + promptStyle.Render("/quit") + "            exit",
 		"",
 		mutedStyle.Render("  enter send · alt+enter newline · tab complete · ctrl+c/esc stop or quit"),
-		mutedStyle.Render("  pgup/pgdn or mouse wheel to scroll · esc to close"),
+		mutedStyle.Render("  pgup/pgdn to scroll · select with mouse to copy · esc to close"),
 	}
 	return strings.Join(lines, "\n")
 }

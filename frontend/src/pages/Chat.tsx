@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
 import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
@@ -59,6 +59,15 @@ export default function Chat() {
   const [copied, setCopied] = useState<string | null>(null)
   const [submittingChoice, setSubmittingChoice] = useState(false)
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Open a chat scrolled to the latest message (and snap down as turns complete),
+  // not pinned to the top of a long history. Keyed on turn count so it fires after
+  // the async seed lands. Doesn't follow mid-stream tokens (not requested).
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [activeChatId, state.turns.length])
 
   useEffect(() => {
     const stored = localStorage.getItem('theme')
@@ -269,7 +278,7 @@ export default function Chat() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {!activeChatId && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Select or start a chat
