@@ -1,4 +1,4 @@
-import { readAgentStream, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta } from './agentStream'
+import { readAgentStream, attachAgentEventSource, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta } from './agentStream'
 import {
   startRun,
   appendRunThinking,
@@ -76,6 +76,7 @@ export class ChatStore {
   private states = new Map<string, ChatState>()
   private listeners = new Map<string, Set<Listener>>()
   private controllers = new Map<string, AbortController>()
+  private eventSources = new Map<string, () => void>()  // chatID → teardown for an attached subscribe stream
   private generations = new Map<string, number>()
 
   get(chatId: string): ChatState {
@@ -104,6 +105,8 @@ export class ChatStore {
   clear(chatId: string): void {
     this.controllers.get(chatId)?.abort()
     this.controllers.delete(chatId)
+    this.eventSources.get(chatId)?.()
+    this.eventSources.delete(chatId)
     this.states.delete(chatId)
     this.bumpGeneration(chatId)
     this.notify(chatId)
@@ -199,6 +202,81 @@ export class ChatStore {
       }
       if (!res.body) throw new Error('No response body')
 
+      let streamError = ''
+      await readAgentStream(res.body, this.streamHandlers(chatId, msg => { streamError = msg }, onTitle))
+      if (streamError) throw new Error(streamError)
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== 'AbortError') {
+        const msg = (err as Error)?.message || 'Request failed'
+        const s = this.states.get(chatId)
+        if (s) this.write(chatId, { ...s, error: msg })
+      }
+    } finally {
+      if (this.controllers.get(chatId) === controller) {
+        this.controllers.delete(chatId)
+      }
+      this.finishStream(chatId, generation)
+    }
+  }
+
+  // attach subscribes a client that did NOT post this run to its live stream
+  // (GET /chats/{id}/stream): the same browser after a refresh, or a second
+  // device. The hub replays the run so far, then tails live, through the same
+  // handlers the POST path uses. Callers gate on an in-progress run; it no-ops if
+  // this client is already streaming (so a run we started is never double-fed).
+  attach(chatId: string): void {
+    if (this.isStreaming(chatId) || this.eventSources.has(chatId)) return
+    const cur = this.get(chatId)
+    // The in-progress run is the latest seeded turn; lift it into `live` so the
+    // replayed events rebuild its DAG there (history renders only completed turns).
+    const last = cur.turns[cur.turns.length - 1]
+    const live: LiveTurn = { id: last?.id ?? '', userText: last?.input.content ?? '', streaming: true, error: '', text: '', runs: [] }
+    this.write(chatId, { ...cur, turns: cur.turns.slice(0, -1), live })
+
+    const generation = this.bumpGeneration(chatId)
+    const es = new EventSource(`/api/v1/chats/${chatId}/stream`)
+    const handlers: AgentStreamHandlers = {
+      ...this.streamHandlers(chatId, msg => {
+        const s = this.states.get(chatId)
+        if (s) this.write(chatId, { ...s, error: msg })
+      }),
+      onDone: () => this.teardownStream(chatId, generation),
+    }
+    const close = attachAgentEventSource(es, handlers)
+    // The server closes the stream once the run's `done` is delivered; EventSource
+    // sees that as an error and would otherwise reconnect and re-replay the whole
+    // buffer (duplicating appended tokens). Tear down instead — `done` already fired.
+    es.onerror = () => this.teardownStream(chatId, generation)
+    this.eventSources.set(chatId, close)
+  }
+
+  // teardownStream ends an attached run: closes its subscribe stream and flips the
+  // live turn out of streaming. Used on the stream's `done` / connection close.
+  // generation guards finishStream so a stale teardown can't clobber a newer run.
+  private teardownStream(chatId: string, generation: number): void {
+    this.detachStream(chatId)
+    this.finishStream(chatId, generation)
+  }
+
+  // detachStream closes an attached subscribe stream WITHOUT ending the turn — the
+  // run continues server-side. For chat switch / unmount. Re-attach re-subscribes
+  // and the hub replays. ponytail: returning to a still-streaming chat shows its
+  // frozen last state (attach no-ops while streaming) — reload to resume live.
+  detachStream(chatId: string): void {
+    const close = this.eventSources.get(chatId)
+    if (close) {
+      close()
+      this.eventSources.delete(chatId)
+    }
+  }
+
+  // streamHandlers builds the store-updating handler set shared by both transports:
+  // the POST response body (runStream) and the EventSource subscribe (attach).
+  private streamHandlers(
+    chatId: string,
+    onError: (msg: string) => void,
+    onTitle?: (title: string) => void,
+  ): AgentStreamHandlers {
       const updateNodeRuns = (nodeId: string | undefined, fn: (runs: AgentRun[]) => AgentRun[]) => {
         if (!nodeId) return
         const s = this.states.get(chatId)
@@ -249,8 +327,7 @@ export class ChatStore {
       const runArgs = (d: { runId: string; agent: string; stage: import('./agentStream').Stage; round?: number }) =>
         ({ runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: Date.now() })
 
-      let streamError = ''
-      await readAgentStream(res.body, {
+      return {
         onAgentStart: d => d.nodeId
           ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
           : updateTopLevelRuns(r => startRun(r, runArgs(d))),
@@ -276,7 +353,7 @@ export class ChatStore {
           }
         },
         onChatTitle: title => onTitle?.(title),
-        onError: msg => { streamError = msg },
+        onError,
         onDagPlan: plan => {
           const s = this.states.get(chatId)
           if (!s?.live) return
@@ -326,20 +403,7 @@ export class ChatStore {
           const prevSteers = s?.live?.dag?.nodeStates[nodeId]?.steers ?? []
           updateNodeState(nodeId, { status: 'queued', error: undefined, steers: [...prevSteers, guidance] })
         },
-      })
-      if (streamError) throw new Error(streamError)
-    } catch (err: unknown) {
-      if ((err as Error)?.name !== 'AbortError') {
-        const msg = (err as Error)?.message || 'Request failed'
-        const s = this.states.get(chatId)
-        if (s) this.write(chatId, { ...s, error: msg })
       }
-    } finally {
-      if (this.controllers.get(chatId) === controller) {
-        this.controllers.delete(chatId)
-      }
-      this.finishStream(chatId, generation)
-    }
   }
 
   private finishStream(chatId: string, generation: number): void {
@@ -365,6 +429,15 @@ export class ChatStore {
     if (!set) return
     for (const l of set) l()
   }
+}
+
+// isTurnInProgress reports whether a turn's DAG is still running — the gate for
+// re-subscribing to a live run on chat open/reload. After a server restart,
+// FailStaleDagNodes flips orphaned nodes to failed, so the DAG reads completed
+// and we don't (wrongly) re-attach to a dead run.
+export function isTurnInProgress(turn: Turn | undefined): boolean {
+  if (!turn) return false
+  return dagFromTurn(turn)?.status === 'in_progress'
 }
 
 // dagFromOutputItem extracts DagOutputItem from a Turn's output array.

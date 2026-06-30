@@ -8,7 +8,7 @@ import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, type DagTurnState } from '../state/chatStore'
+import { activityFromTurn, isTurnInProgress, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, showLiveSpinner, type AgentRun } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 
@@ -104,8 +104,17 @@ export default function Chat() {
         return [detail, ...prev]
       })
       store.seed(activeChatId, detail.turns)
+      // Reconnect to a run still in progress (e.g. this browser after a refresh):
+      // the POST body stream is gone, so subscribe to the hub. attach no-ops if
+      // this client already streams (it posted the run) — no double-subscribe.
+      if (isTurnInProgress(detail.turns[detail.turns.length - 1])) {
+        store.attach(activeChatId)
+      }
     }).catch(() => {})
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      store.detachStream(activeChatId)
+    }
   }, [activeChatId])
 
   function activateChat(id: string) {

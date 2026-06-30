@@ -18,8 +18,10 @@ import (
 // alt-screen takes over (so they print as plain errors, not lost behind the UI).
 func Run(ctx context.Context, c *cli.Client, chatID, initialPrompt, serverLabel string) error {
 	var (
-		title   string
-		history []turn
+		title        string
+		history      []turn
+		resume       bool
+		resumePrompt string
 	)
 	if chatID == "" {
 		id, err := c.CreateChat(ctx, "")
@@ -44,6 +46,14 @@ func Run(ctx context.Context, c *cli.Client, chatID, initialPrompt, serverLabel 
 				answer: strings.TrimSpace(cli.AssistantText(t.Output)),
 			})
 		}
+		// If the latest run is still in progress, its DAG/answer aren't in the
+		// persisted assistant text (AssistantText drops them) — re-attach to the live
+		// stream instead. Lift that turn out of history so it renders once, live.
+		if n := len(detail.Turns); n > 0 && cli.DagInProgress(detail.Turns[n-1].Output) {
+			resume = true
+			resumePrompt = strings.TrimSpace(detail.Turns[n-1].Input.Content)
+			history = history[:len(history)-1]
+		}
 	}
 
 	// Detect the terminal's background colour now, while we still own stdin in
@@ -52,10 +62,16 @@ func Run(ctx context.Context, c *cli.Client, chatID, initialPrompt, serverLabel 
 	// races the input reader and prints as garbage (`]11;rgb:…`) in the chat.
 	_ = lipgloss.HasDarkBackground()
 
+	m := New(ctx, c, chatID, title, history, initialPrompt, serverLabel)
+	if resume {
+		m.resume = true
+		m.pending = resumePrompt // the live user bubble; startResume keeps it
+	}
+
 	// No WithMouseCellMotion: capturing the mouse steals click-drag from the
 	// terminal, so text can't be selected/copied. pgup/pgdn/ctrl+u/ctrl+d scroll.
 	p := tea.NewProgram(
-		New(ctx, c, chatID, title, history, initialPrompt, serverLabel),
+		m,
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),
 	)

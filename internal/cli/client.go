@@ -192,10 +192,29 @@ type SSEEvent struct {
 // transport/HTTP error is delivered as a final SSEEvent{Name:"error"} so the UI
 // renders it uniformly rather than the caller having to handle two error paths.
 func (c *Client) Stream(ctx context.Context, chatID, content string) <-chan SSEEvent {
+	return c.streamChan(ctx, func(onEvent func(SSEEvent) error) error {
+		return c.SendMessage(ctx, chatID, content, onEvent)
+	})
+}
+
+// Subscribe attaches to a chat's live (or just-finished) run via the standalone
+// GET stream endpoint — for resuming a run started elsewhere, or by this client
+// before a reconnect. The hub replays the events so far, then tails live. Same
+// channel contract as Stream.
+func (c *Client) Subscribe(ctx context.Context, chatID string) <-chan SSEEvent {
+	return c.streamChan(ctx, func(onEvent func(SSEEvent) error) error {
+		return c.subscribeSSE(ctx, chatID, onEvent)
+	})
+}
+
+// streamChan runs an SSE-producing call on a goroutine and pumps its events to a
+// channel, closing on completion/cancel and surfacing a transport error as a
+// final error event. Shared by Stream (POST) and Subscribe (GET).
+func (c *Client) streamChan(ctx context.Context, run func(onEvent func(SSEEvent) error) error) <-chan SSEEvent {
 	ch := make(chan SSEEvent, 64)
 	go func() {
 		defer close(ch)
-		err := c.SendMessage(ctx, chatID, content, func(ev SSEEvent) error {
+		err := run(func(ev SSEEvent) error {
 			select {
 			case ch <- ev:
 				return nil
@@ -212,6 +231,26 @@ func (c *Client) Stream(ctx context.Context, chatID, content string) <-chan SSEE
 		}
 	}()
 	return ch
+}
+
+// subscribeSSE GETs the chat's stream endpoint and dispatches each SSE event to
+// onEvent until the stream ends.
+func (c *Client) subscribeSSE(ctx context.Context, chatID string, onEvent func(SSEEvent) error) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.BaseURL+"/api/v1/chats/"+chatID+"/stream", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return c.reachErr(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("subscribe: server returned %s", resp.Status)
+	}
+	return parseSSE(resp.Body, onEvent)
 }
 
 // SendMessage posts content to a chat and calls onEvent for each SSE event until

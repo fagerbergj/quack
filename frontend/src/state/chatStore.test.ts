@@ -1,10 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { activityFromTurn, ChatStore } from './chatStore'
+import { activityFromTurn, isTurnInProgress, ChatStore } from './chatStore'
 import { pendingChoice } from '../components/messageParts'
 import type { Turn } from '../generated'
 
 function turnWith(...output: Turn['output']): Turn {
   return { id: 't1', created_at: '', input: { role: 'user', content: 'hi' }, output }
+}
+
+function dagTurn(status: 'in_progress' | 'completed'): Turn {
+  return turnWith({
+    type: 'quack:dag', id: 'p', status, plan_id: 'p',
+    nodes: [{ id: 'a', agent: 'researcher', task: 't', depends_on: [] }],
+    edges: [], node_states: {},
+  })
 }
 
 describe('activityFromTurn', () => {
@@ -145,5 +153,64 @@ describe('ChatStore — mid-node steering', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     store.steerNode('c', 'a', '   ')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('isTurnInProgress — re-subscribe gate', () => {
+  it('is true only for a turn whose DAG is in_progress', () => {
+    expect(isTurnInProgress(dagTurn('in_progress'))).toBe(true)
+    expect(isTurnInProgress(dagTurn('completed'))).toBe(false)
+    expect(isTurnInProgress(turnWith())).toBe(false) // no DAG (e.g. failed nodes after restart)
+    expect(isTurnInProgress(undefined)).toBe(false)
+  })
+})
+
+// Minimal EventSource stand-in: jsdom has none. Captures listeners so a test can
+// feed the same SSE vocabulary the hub replays, and records close().
+class FakeEventSource {
+  static last: FakeEventSource | null = null
+  url: string
+  onerror: (() => void) | null = null
+  closed = false
+  private listeners: Record<string, ((e: MessageEvent) => void)[]> = {}
+  constructor(url: string) { this.url = url; FakeEventSource.last = this }
+  addEventListener(name: string, cb: (e: MessageEvent) => void) { (this.listeners[name] ??= []).push(cb) }
+  close() { this.closed = true }
+  emit(name: string, data = '') { for (const cb of this.listeners[name] ?? []) cb({ data } as MessageEvent) }
+}
+
+describe('ChatStore.attach — reconnect to a live run', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  it('subscribes to /stream, rebuilds the DAG from replay, and ends on done', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+    expect(es.url).toBe('/api/v1/chats/c/stream')
+    expect(store.get('c').live?.streaming).toBe(true)
+    // The in-progress turn was lifted out of history into `live` (no double render).
+    expect(store.get('c').turns).toHaveLength(0)
+    expect(store.get('c').live?.userText).toBe('hi')
+
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('node_start', '{"node_id":"a","agent":"researcher"}')
+    expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+
+    es.emit('done')
+    expect(store.get('c').live?.streaming).toBe(false)
+    expect(es.closed).toBe(true)
+  })
+
+  it('does not double-subscribe (second attach no-ops)', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const first = FakeEventSource.last
+    store.attach('c')
+    expect(FakeEventSource.last).toBe(first) // no new EventSource opened
   })
 })
