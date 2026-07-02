@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/fagerbergj/quack/internal/memory"
 )
@@ -35,7 +35,7 @@ func NewCommitMemoryTool(store *memory.Store, userID string) (tool.Tool, error) 
 				"what the user actually told you; skip transient details and anything sensitive they didn't ask " +
 				"you to keep.",
 		},
-		func(ctx agent.ToolContext, a commitMemoryArgs) (string, error) {
+		func(ctx agent.Context, a commitMemoryArgs) (string, error) {
 			if strings.TrimSpace(a.Content) == "" {
 				return "", fmt.Errorf("commit_memory: content is empty")
 			}

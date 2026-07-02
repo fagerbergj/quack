@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	adkmemory "google.golang.org/adk/memory"
-	"google.golang.org/adk/model"
+	adkmemory "google.golang.org/adk/v2/memory"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 )
 

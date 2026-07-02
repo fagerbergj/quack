@@ -3,9 +3,9 @@ package tools
 import (
 	"time"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 )
 
 // currentDateArgs is empty — the tool takes no input.
@@ -22,7 +22,7 @@ func newCurrentDate(_ Deps) (tool.Tool, error) {
 			Name:        "current_date",
 			Description: "Return today's real current date. Call this FIRST whenever the request is time-sensitive (mentions recent, latest, new, current, this year, etc.) so you search for the actual present and don't default to your training cutoff.",
 		},
-		func(_ agent.ToolContext, _ currentDateArgs) (string, error) {
+		func(_ agent.Context, _ currentDateArgs) (string, error) {
 			now := time.Now()
 			return "Today's date is " + now.Format("Monday, January 2, 2006") + ".", nil
 		},

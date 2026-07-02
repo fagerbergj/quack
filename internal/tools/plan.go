@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -42,7 +42,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
 				"directly. If validation fails, fix the nodes and call again.",
 		},
-		func(tc agent.ToolContext, a planArgs) (planResult, error) {
+		func(tc agent.Context, a planArgs) (planResult, error) {
 			p, err := planner.Build(a.Nodes, history, message, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)

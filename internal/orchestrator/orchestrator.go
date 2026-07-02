@@ -9,13 +9,13 @@ import (
 	"iter"
 	"strings"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	adkmemory "google.golang.org/adk/memory"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
-	"google.golang.org/adk/tool"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	adkmemory "google.golang.org/adk/v2/memory"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
 	internalagent "github.com/fagerbergj/quack/internal/agent"
@@ -231,7 +231,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		if delivered := planCache.Delivered(); delivered != "" {
 			persistCtx := context.WithoutCancel(ctx)
 			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
-				aev := session.NewEvent("")
+				aev := session.NewEvent(persistCtx, "")
 				aev.Author = ag.Name()
 				aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: delivered}}}
 				_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)

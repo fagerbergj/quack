@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/session"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -58,7 +58,7 @@ func fakeAgent(t *testing.T, name, output string, rec *recorder, fail bool) adka
 					yield(nil, fmt.Errorf("node agent %q boom", name))
 					return
 				}
-				ev := session.NewEvent(ic.InvocationID())
+				ev := session.NewEvent(ic, ic.InvocationID())
 				ev.Author = name
 				ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: output}}}
 				ev.TurnComplete = true
@@ -264,7 +264,7 @@ func steerableAgent(t *testing.T, name, output string, rec *recorder, started ch
 				if s := ic.Session(); s != nil && s.Events().Len() > 0 {
 					*sawPrior = true
 				}
-				ev := session.NewEvent(ic.InvocationID())
+				ev := session.NewEvent(ic, ic.InvocationID())
 				ev.Author = name
 				ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: output}}}
 				ev.TurnComplete = true
@@ -373,7 +373,7 @@ func TestSanitizeDanglingCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := session.NewEvent("inv")
+	call := session.NewEvent(context.Background(), "inv")
 	call.Author = "agX"
 	call.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{
 		FunctionCall: &genai.FunctionCall{ID: "c1", Name: "web_search", Args: map[string]any{"q": "x"}},

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/session"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 )
 
@@ -34,13 +34,15 @@ func (s *fakeState) All() iter.Seq2[string, any] {
 	}
 }
 
+// fakeCtx embeds StrictContextMock (v2 unified agent.Context) so it keeps
+// satisfying the interface as it grows; we override only what compaction uses.
 type fakeCtx struct {
-	context.Context
+	adkagent.StrictContextMock
 	state *fakeState
 }
 
 func newFakeCtx() *fakeCtx {
-	return &fakeCtx{Context: context.Background(), state: &fakeState{m: map[string]any{}}}
+	return &fakeCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}, state: &fakeState{m: map[string]any{}}}
 }
 
 func (c *fakeCtx) UserContent() *genai.Content          { return nil }

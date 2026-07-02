@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time" //nolint:godot
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -607,7 +607,7 @@ func (e *Executor) sanitizeDanglingCalls(ctx context.Context, userID, sessionID 
 	if len(parts) == 0 {
 		return
 	}
-	aev := session.NewEvent("")
+	aev := session.NewEvent(ctx, "")
 	aev.Author = "user"
 	aev.Content = &genai.Content{Role: "user", Parts: parts}
 	if err := e.sessions.AppendEvent(ctx, resp.Session, aev); err != nil {

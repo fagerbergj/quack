@@ -1,9 +1,9 @@
 package tools
 
 import (
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 )
 
 // ChoiceToolName is the name of the user-choice clarification tool. The
@@ -66,7 +66,7 @@ func NewGetUserChoiceTool() (tool.Tool, error) {
 				"Do NOT use when a sensible default exists or the task is already clear.",
 			IsLongRunning: true,
 		},
-		func(tc agent.ToolContext, a getUserChoiceArgs) (getUserChoiceResult, error) {
+		func(tc agent.Context, a getUserChoiceArgs) (getUserChoiceResult, error) {
 			tc.Actions().SkipSummarization = true
 			return getUserChoiceResult{Status: "pending"}, nil
 		},

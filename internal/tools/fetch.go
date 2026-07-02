@@ -14,9 +14,9 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 )
 
 const (
@@ -76,14 +76,14 @@ type fetchArgs struct {
 // path) and crawl4aiFetcher (the same GET plus a real-browser render fallback for
 // JS-heavy / bot-walled pages). newFetcher selects one from config.
 type fetcher interface {
-	fetch(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error)
+	fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error)
 }
 
 // directFetcher does a plain guarded GET and nothing more — no render fallback,
 // so it needs no external service.
 type directFetcher struct{}
 
-func (directFetcher) fetch(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error) {
+func (directFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
 	return fetchVia(tc, d, nil, u, target)
 }
 
@@ -91,7 +91,7 @@ func (directFetcher) fetch(tc agent.ToolContext, d Deps, u *url.URL, target stri
 // real-browser render for pages a bare GET can't read.
 type crawl4aiFetcher struct{ renderer PageRenderer }
 
-func (f crawl4aiFetcher) fetch(tc agent.ToolContext, d Deps, u *url.URL, target string) (string, error) {
+func (f crawl4aiFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
 	return fetchVia(tc, d, f.renderer, u, target)
 }
 
@@ -132,7 +132,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 			Name:        "web_fetch",
 			Description: desc,
 		},
-		func(tc agent.ToolContext, a fetchArgs) (string, error) {
+		func(tc agent.Context, a fetchArgs) (string, error) {
 			u, err := ValidateURL(strings.TrimSpace(a.URL))
 			if err != nil {
 				return "", err
@@ -250,7 +250,7 @@ func capFetchReturn(s string) string {
 // fetchVia is the shared fetch engine for both impls. It first tries a direct
 // GET; if that is thin, failed, or bot-walled, it falls back to the render backend
 // (renderer is nil for the basic impl, which therefore stops after the direct GET).
-func fetchVia(tc agent.ToolContext, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
+func fetchVia(tc agent.Context, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
 	text, derr := fetchReadable(tc, d.Guarded, target)
 	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
 		return text, nil

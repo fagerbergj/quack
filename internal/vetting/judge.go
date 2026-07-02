@@ -10,13 +10,13 @@ import (
 	"slices"
 	"strings"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
@@ -122,7 +122,7 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        submitVerdictTool,
 		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion.",
-	}, func(ctx tool.Context, args verdictArgs) (map[string]any, error) {
+	}, func(ctx adkagent.Context, args verdictArgs) (map[string]any, error) {
 		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback}
 		normalizeScale(&v)
 		*sink = v

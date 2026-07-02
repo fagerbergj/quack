@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -15,7 +15,7 @@ import (
 // appendUserText / appendModelText add a turn-shaped event to a session.
 func appendEvent(t *testing.T, svc session.Service, sess session.Session, author, text string, thought bool) {
 	t.Helper()
-	ev := session.NewEvent("test")
+	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = author
 	role := "user"
 	if author != "user" {
@@ -76,7 +76,7 @@ func TestBuildHistoryEmptySession(t *testing.T) {
 // appendPartsEvent appends a model-authored event carrying arbitrary parts.
 func appendPartsEvent(t *testing.T, svc session.Service, sess session.Session, longRunningIDs []string, parts ...*genai.Part) {
 	t.Helper()
-	ev := session.NewEvent("test")
+	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "orchestrator"
 	ev.LongRunningToolIDs = longRunningIDs
 	ev.Content = &genai.Content{Role: "model", Parts: parts}

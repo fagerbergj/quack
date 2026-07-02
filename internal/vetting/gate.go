@@ -27,8 +27,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/session"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/memory"
@@ -1043,7 +1043,7 @@ func (g *gate) emit(ctx adkagent.InvocationContext, yield func(*session.Event, e
 // the given author. Judge display events use judgeAuthor so they can be filtered
 // from the worker's session view; everything else uses the worker's name.
 func (g *gate) emitAuthored(ctx adkagent.InvocationContext, yield func(*session.Event, error) bool, author string, part *genai.Part) bool {
-	ev := session.NewEvent(ctx.InvocationID())
+	ev := session.NewEvent(ctx, ctx.InvocationID())
 	ev.Author = author
 	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{part}}
 	return yield(ev, nil)
@@ -1070,7 +1070,7 @@ func (g *gate) emitAnswer(ctx adkagent.InvocationContext, yield func(*session.Ev
 		g.log.Warn("empty final answer reached emit — substituting fallback placeholder")
 		answer = emptyAnswerFallback(nil)
 	}
-	ev := session.NewEvent(ctx.InvocationID())
+	ev := session.NewEvent(ctx, ctx.InvocationID())
 	ev.Author = g.name
 	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
 	ev.TurnComplete = true

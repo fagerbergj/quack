@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"strings"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	"google.golang.org/adk/model"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 )
 
@@ -71,7 +71,7 @@ func usable(contextWindow int) int {
 // miscounts media, so it's only a first-turn fallback before any measurement.
 func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 	budget := usable(c.ContextWindow)
-	return func(ctx adkagent.CallbackContext, req *model.LLMRequest) (*model.LLMResponse, error) {
+	return func(ctx adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
 		if budget <= 0 || req == nil {
 			return nil, nil
 		}
@@ -150,7 +150,7 @@ func prune(contents []*genai.Content) int {
 // contents as [task, summary, ...tail]. contents[0] (the self-contained task) and
 // the recent tail are kept verbatim. Returns ok=false (contents unchanged) when
 // there's no head worth summarising or the summariser call fails.
-func compact(ctx adkagent.CallbackContext, summarizer model.LLM, contents []*genai.Content, preserve int) ([]*genai.Content, bool) {
+func compact(ctx adkagent.Context, summarizer model.LLM, contents []*genai.Content, preserve int) ([]*genai.Content, bool) {
 	if summarizer == nil {
 		return contents, false
 	}
@@ -302,7 +302,7 @@ func summarizeHead(ctx context.Context, summarizer model.LLM, prompt string) (st
 // rather than the chars/4 estimate (the OpenCode approach: measure, then compact
 // before the next turn). The model itself is unchanged — we return (nil, nil).
 func recordUsage() llmagent.AfterModelCallback {
-	return func(ctx adkagent.CallbackContext, resp *model.LLMResponse, err error) (*model.LLMResponse, error) {
+	return func(ctx adkagent.Context, resp *model.LLMResponse, err error) (*model.LLMResponse, error) {
 		if err == nil && resp != nil && resp.UsageMetadata != nil && resp.UsageMetadata.PromptTokenCount > 0 {
 			if e := ctx.State().Set(measuredInputKey, int(resp.UsageMetadata.PromptTokenCount)); e != nil {
 				slog.Warn("compaction: record usage", "component", "agent", "err", e)
@@ -313,11 +313,11 @@ func recordUsage() llmagent.AfterModelCallback {
 }
 
 // measuredInput returns the last provider-reported prompt-token count, or 0.
-func measuredInput(ctx adkagent.CallbackContext) int { return intState(ctx, measuredInputKey) }
+func measuredInput(ctx adkagent.Context) int { return intState(ctx, measuredInputKey) }
 
 // readSummary returns the anchored summary and how many leading messages it folds
 // in (0 if none yet).
-func readSummary(ctx adkagent.CallbackContext) (string, int) {
+func readSummary(ctx adkagent.Context) (string, int) {
 	s := ""
 	if v, err := ctx.State().Get(summaryStateKey); err == nil {
 		s, _ = v.(string)
@@ -325,7 +325,7 @@ func readSummary(ctx adkagent.CallbackContext) (string, int) {
 	return s, intState(ctx, summaryCoversKey)
 }
 
-func writeSummary(ctx adkagent.CallbackContext, s string, coversN int) {
+func writeSummary(ctx adkagent.Context, s string, coversN int) {
 	if err := ctx.State().Set(summaryStateKey, s); err != nil {
 		slog.Warn("compaction: persist summary", "component", "agent", "err", err)
 	}
@@ -336,7 +336,7 @@ func writeSummary(ctx adkagent.CallbackContext, s string, coversN int) {
 
 // intState reads an int from session state, tolerating the float64 a JSON-backed
 // (DB) session round-trips through.
-func intState(ctx adkagent.CallbackContext, key string) int {
+func intState(ctx adkagent.Context, key string) int {
 	v, err := ctx.State().Get(key)
 	if err != nil {
 		return 0

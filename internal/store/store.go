@@ -16,8 +16,8 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
-	"google.golang.org/adk/session"
-	"google.golang.org/adk/session/database"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/session/database"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
