@@ -18,7 +18,6 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
-	internalagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -142,9 +141,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
 			Toolsets:    toolsets,
-			GenerateContentConfig: &genai.GenerateContentConfig{
-				MaxOutputTokens: internalagent.MaxOutputTokens,
-			},
 		})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: build agent: "+err.Error()), nil)

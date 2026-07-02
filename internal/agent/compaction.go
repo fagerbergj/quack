@@ -55,10 +55,10 @@ type Compaction struct {
 	Enabled       bool
 }
 
-// usable is the input budget: context window minus the output reserve (opencode
-// reserve = min(COMPACTION_BUFFER, max output tokens)).
+// usable is the input budget: context window minus a fixed output reserve
+// (compactionBuffer) left for the model's reply.
 func usable(contextWindow int) int {
-	if u := contextWindow - min(MaxOutputTokens, compactionBuffer); u > 0 {
+	if u := contextWindow - compactionBuffer; u > 0 {
 		return u
 	}
 	return 0

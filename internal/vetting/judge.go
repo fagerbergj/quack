@@ -19,7 +19,6 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
-	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -99,9 +98,6 @@ func NewJudgeFactory(judgeModel model.LLM, webTools []tool.Tool) JudgeFactory {
 				return promptbuilder.Judge(judgeTools, judgeAgentBehaviour), nil
 			},
 			Tools: judgeTools,
-			GenerateContentConfig: &genai.GenerateContentConfig{
-				MaxOutputTokens: quackagent.MaxOutputTokens,
-			},
 		})
 	}
 }
