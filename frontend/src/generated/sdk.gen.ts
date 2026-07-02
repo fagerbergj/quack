@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelChatStreamData, CancelChatStreamResponses, CancelNodeData, CancelNodeResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SteerNodeData, SteerNodeResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
+import type { CancelChatStreamData, CancelChatStreamResponses, CancelNodeData, CancelNodeResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, RetryNodeData, RetryNodeResponse, RetryNodeResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SteerNodeData, SteerNodeResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -148,6 +148,25 @@ export const cancelNode = <ThrowOnError extends boolean = false>(options: Option
  */
 export const steerNode = <ThrowOnError extends boolean = false>(options: Options<SteerNodeData, ThrowOnError>): RequestResult<SteerNodeResponses, unknown, ThrowOnError> => (options.client ?? client).post<SteerNodeResponses, unknown, ThrowOnError>({
     url: '/api/v1/chats/{chat_id}/nodes/{node_id}/steer',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Re-run a finished node and its descendants
+ *
+ * Re-runs a FAILED or DONE node and every node downstream of it, reusing the
+ * stored outputs of all other nodes, and streams the re-execution as
+ * Server-Sent Events (the same event vocabulary as sendChatMessage). Optional
+ * guidance is folded into the node's task (retry-with-guidance is steer, on a
+ * finished node). The new terminal answer replaces the turn's answer.
+ *
+ */
+export const retryNode = <ThrowOnError extends boolean = false>(options: Options<RetryNodeData, ThrowOnError, RetryNodeResponse>): Promise<ServerSentEventsResult<RetryNodeResponses>> => (options.client ?? client).sse.post<RetryNodeResponses, unknown, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/retry',
     ...options,
     headers: {
         'Content-Type': 'application/json',

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -345,6 +346,74 @@ func (h *Handler) SteerNode(w http.ResponseWriter, r *http.Request, chatID schem
 	}
 	h.orch.SteerNode(chatID, nodeID, body.Guidance)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RetryNode re-runs a FINISHED node (failed or done) and its descendants, reusing
+// the stored outputs of every other node, and streams the re-execution as SSE.
+// Optional guidance is folded into the node's task. The new node states are
+// persisted (DagNode store) and the new terminal answer replaces the chat's answer.
+func (h *Handler) RetryNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	var body schema.RetryNodeBody
+	_ = json.NewDecoder(r.Body).Decode(&body) // guidance is optional; empty body is fine
+	guidance := ""
+	if body.Guidance != nil {
+		guidance = *body.Guidance
+	}
+
+	// Load the chat's latest plan and the stored node outputs to reuse.
+	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
+	if err != nil || dp == nil {
+		http.Error(w, "no plan to retry for this chat", http.StatusNotFound)
+		return
+	}
+	var plan dag.Plan
+	if err := json.Unmarshal([]byte(dp.PlanJSON), &plan); err != nil {
+		http.Error(w, "stored plan is corrupt", http.StatusInternalServerError)
+		return
+	}
+	found := false
+	for _, n := range plan.Nodes {
+		if n.ID == nodeID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "no such node in the plan", http.StatusNotFound)
+		return
+	}
+	nodes, _ := h.store.GetDagNodes(r.Context(), plan.ID)
+	seeded := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		if n.Output != "" {
+			seeded[n.NodeID] = n.Output
+		}
+	}
+
+	sse, ok := newSSEWriter(w)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
+	h.activeCancels.Store(chatID, cancelRun)
+	defer func() {
+		cancelRun()
+		h.activeCancels.Delete(chatID)
+	}()
+
+	for ev, err := range h.orch.RetryNode(runCtx, userID, chatID, plan, seeded, nodeID, guidance) {
+		if err != nil {
+			_ = sse.send(stream.Errorf(err.Error()))
+			break
+		}
+		h.persistNodeEvent(plan.ID, ev) // update the re-run nodes' persisted state
+		if sendErr := sse.send(ev); sendErr != nil {
+			break
+		}
+	}
+	_ = sse.send(stream.Done())
+	_ = h.store.Touch(runCtx, chatID)
 }
 
 // SubscribeChatStream connects an additional client to a chat's live (or

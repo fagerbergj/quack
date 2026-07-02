@@ -48,7 +48,13 @@ type DagStream struct {
 	plan      Plan
 	agentByID map[string]string
 	yield     func(stream.SSEEvent, error) bool
+	only      map[string]bool // if non-nil, Finish only finalizes these nodes (retry scope)
 }
+
+// ScopeToRetry restricts the node_done/node_failed sweep to the retried node and
+// its descendants, so a retry doesn't re-emit (or false-fail) the seeded nodes it
+// left untouched.
+func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, nodeID) }
 
 // NewDagStream builds a router for one plan's gate-node events. nodeOutputs is
 // filled (node ID → vetted answer) for the caller's TerminalOutput.
@@ -90,6 +96,9 @@ func (s *DagStream) Finish() {
 	for _, n := range s.plan.Nodes {
 		if s.ds.doneEmitted[n.ID] {
 			continue
+		}
+		if s.only != nil && !s.only[n.ID] {
+			continue // retry: leave the seeded (not-re-run) nodes as they were
 		}
 		// A node that produced NO answer surfaces as a loud node_failed (not a quiet
 		// node_done) so the gap is never silent.

@@ -65,6 +65,76 @@ func (o *Orchestrator) SteerNode(chatID, nodeID, guidance string) bool {
 	return o.executor.SteerNode(chatID, nodeID, guidance)
 }
 
+// RetryNode re-runs a FINISHED node (failed or done) and its descendants for a
+// prior plan, reusing the seeded node outputs (node ID → prior text) for the rest,
+// and streams the re-execution. Optional guidance is folded into the target node's
+// task (retry-with-guidance == steer, on a finished node). The new terminal answer
+// is persisted as the chat's assistant message. The re-run happens on a derived
+// session so it doesn't add a turn to the chat; node controls stay keyed on chatID
+// so cancel/steer reach the re-running nodes.
+func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, plan dag.Plan, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+	return func(yield func(stream.SSEEvent, error) bool) {
+		if guidance = strings.TrimSpace(guidance); guidance != "" {
+			for i := range plan.Nodes {
+				if plan.Nodes[i].ID == nodeID {
+					plan.Nodes[i].Task += "\n\n[Retry guidance]: " + guidance
+				}
+			}
+		}
+		nodeOutputs := make(map[string]string)
+		retryNode := workflow.NewDynamicNode[any, string]("__retry",
+			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+				out, rerr := o.executor.RetryPlanInNode(nctx, plan, chatID, nodeID, seeded)
+				if rerr != nil {
+					return "", rerr
+				}
+				for k, v := range out {
+					nodeOutputs[k] = v
+				}
+				return "done", nil
+			}, workflow.NodeConfig{})
+		wf, err := workflowagent.New(workflowagent.Config{Name: "orchestrator-retry", Edges: workflow.Chain(workflow.Start, retryNode)})
+		if err != nil {
+			yield(stream.Errorf("orchestrator: retry workflow: "+err.Error()), nil)
+			return
+		}
+		// A derived session for the re-run so it doesn't append a turn to the chat.
+		runSess := chatID + "::retry"
+		r, err := runner.New(runner.Config{AppName: AppName, Agent: wf, SessionService: o.sessions, AutoCreateSession: true})
+		if err != nil {
+			yield(stream.Errorf("orchestrator: retry runner: "+err.Error()), nil)
+			return
+		}
+		var mu sync.Mutex
+		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
+		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
+		ds := o.executor.NewDagStream(ctx, plan, AppName, userID, runSess, safeYield, nodeOutputs)
+		ds.ScopeToRetry(nodeID)
+		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry " + nodeID}}}
+		for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
+			if rerr != nil {
+				safeYield(stream.Errorf(rerr.Error()), nil)
+				return
+			}
+			if ev == nil {
+				continue
+			}
+			ds.Handle(ev) // gate-node events; the __retry node's own events are ignored
+		}
+		ds.Finish()
+		// Persist the new terminal answer as the chat's assistant message.
+		if answer := tools.TerminalOutput(plan, nodeOutputs); answer != "" {
+			persistCtx := context.WithoutCancel(ctx)
+			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID}); gerr == nil && resp != nil {
+				aev := session.NewEvent(persistCtx, "")
+				aev.Author = orchestratorName
+				aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
+				_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
+			}
+		}
+	}
+}
+
 // New builds the orchestrator. sysPrompt is assembled from agents/orchestrator/
 // via promptbuilder.Orchestrator at startup. skillTS may be nil. userMem, when
 // non-nil, enables personal memory: ambient recall (preload_memory) + an explicit
