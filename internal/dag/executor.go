@@ -55,9 +55,9 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return
 		}
-		if !yield(dagPlanEvent(plan), nil) {
-			return
-		}
+		// The plan tool already emitted dag_plan for this plan_id (and M8 persists
+		// it); re-emitting here caused a duplicate insert (dag_plans_pkey). The plan
+		// tool owns dag_plan emission — the executor only streams node lifecycle.
 
 		// ponytail: media attachments + per-node History threading are deferred
 		// (Phase 4 / follow-up). Leaf nodes assemble their prompt from
@@ -132,19 +132,6 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 	sb.WriteString("Your task: ")
 	sb.WriteString(node.Task)
 	return sb.String()
-}
-
-// dagPlanEvent renders the plan as the dag_plan SSE event (nodes + DependsOn edges).
-func dagPlanEvent(plan Plan) stream.SSEEvent {
-	nodes := make([]stream.DagNodeDef, len(plan.Nodes))
-	var edges []stream.DagEdgeDef
-	for i, n := range plan.Nodes {
-		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn}
-		for _, d := range n.DependsOn {
-			edges = append(edges, stream.DagEdgeDef{From: d, To: n.ID})
-		}
-	}
-	return stream.DagPlan(plan.ID, nodes, edges)
 }
 
 // nodeIDFromEvent extracts the emitting node's name from NodeInfo.Path
