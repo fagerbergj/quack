@@ -50,9 +50,17 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.Ju
 				// input skeptically.
 				gateFailed := readGateFailed(ctx, node.DependsOn)
 				prompt := buildTask(plan, node, upstream, gateFailed)
-				answer, passed, err := vetting.RunGatedRefine(ctx, workerNode, judge, cfg, prompt)
+				answer, res, err := vetting.RunGatedRefine(ctx, workerNode, judge, cfg, prompt)
 				if err == nil {
-					_ = ctx.State().Set(gateFailedKey+node.ID, !passed)
+					// Persist the gate outcome to session state: gate_failed drives
+					// continue-but-warn on dependents; score/passed/rounds let Execute
+					// surface the judge result on node_done (the judge runs in its own
+					// isolated runner, so its result can't ride the workflow stream).
+					st := ctx.State()
+					_ = st.Set(gateFailedKey+node.ID, !res.Passed)
+					_ = st.Set(gateScoreKey+node.ID, res.Score)
+					_ = st.Set(gatePassedKey+node.ID, res.Passed)
+					_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
 				}
 				return answer, err
 			},
@@ -88,9 +96,16 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.Ju
 	})
 }
 
-// gateFailedKey prefixes the session-state flag a gated node writes (true when its
-// answer did NOT clear the judge threshold) so dependents can warn (continue-but-warn).
-const gateFailedKey = "quack.gate_failed/"
+// Session-state key prefixes a gated node writes under its node ID: gate_failed
+// (true when the answer did NOT clear threshold) drives continue-but-warn on
+// dependents; gate_score/passed/rounds carry the judge result to Execute's
+// node_done (the judge runs isolated, off the workflow stream).
+const (
+	gateFailedKey = "quack.gate_failed/"
+	gateScoreKey  = "quack.gate_score/"
+	gatePassedKey = "quack.gate_passed/"
+	gateRoundsKey = "quack.gate_rounds/"
+)
 
 // readGateFailed reconstructs the gateFailed map for buildTask by reading each
 // dependency's gate-fail flag from workflow session state.
