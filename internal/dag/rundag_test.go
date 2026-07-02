@@ -127,3 +127,58 @@ func TestRunDAG_FanInDelivery(t *testing.T) {
 		t.Fatalf("synthesizer prompt missing a fan-in input; got %q", final)
 	}
 }
+
+func TestRetrySet(t *testing.T) {
+	plan := Plan{Nodes: []Node{
+		{ID: "a"}, {ID: "b", DependsOn: []string{"a"}}, {ID: "c", DependsOn: []string{"b"}},
+		{ID: "d", DependsOn: []string{"a"}}, // sibling of b, NOT downstream of b
+	}}
+	got := retrySet(plan, "b")
+	if !got["b"] || !got["c"] || got["a"] || got["d"] || len(got) != 2 {
+		t.Fatalf("retrySet(b) = %v, want {b,c}", got)
+	}
+	if got := retrySet(plan, "a"); len(got) != 4 {
+		t.Fatalf("retrySet(a) = %v, want all 4", got)
+	}
+}
+
+// TestRetryPlanInNode_ReusesUpstream: retrying b in a→b→c re-runs b and c but
+// keeps a's seeded output (a is not re-run).
+func TestRetryPlanInNode_ReusesUpstream(t *testing.T) {
+	stub := okStub{}
+	mk := func() adkagent.Agent {
+		a, _ := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
+		return a
+	}
+	agents := map[string]adkagent.Agent{"a": mk(), "b": mk(), "c": mk()}
+	ex := NewExecutor(session.InMemoryService(), agents, nil, vetting.NewJudgeFactory(stub, nil),
+		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{
+		{ID: "a", AgentName: "a"}, {ID: "b", AgentName: "b", DependsOn: []string{"a"}},
+		{ID: "c", AgentName: "c", DependsOn: []string{"b"}},
+	}}
+	seeded := map[string]string{"a": "A-SEED-KEEP", "b": "B-OLD", "c": "C-OLD"}
+	var out map[string]string
+	orchestrate := workflow.NewDynamicNode[any, string]("orch",
+		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+			o, err := ex.RetryPlanInNode(ctx, plan, "chat", "b", seeded)
+			out = o
+			return "done", err
+		}, workflow.NodeConfig{})
+	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
+	r, _ := runner.New(runner.Config{AppName: "o", Agent: top, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	for _, err := range r.Run(context.Background(), "u", "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+	if out["a"] != "A-SEED-KEEP" {
+		t.Errorf("a should keep its seeded output (not re-run), got %q", out["a"])
+	}
+	if !strings.Contains(out["b"], "ANSWER") || out["b"] == "B-OLD" {
+		t.Errorf("b should be freshly re-run, got %q", out["b"])
+	}
+	if !strings.Contains(out["c"], "ANSWER") || out["c"] == "C-OLD" {
+		t.Errorf("c should be freshly re-run, got %q", out["c"])
+	}
+}

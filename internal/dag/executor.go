@@ -113,6 +113,19 @@ func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string)
 	return runDAG(ctx, plan, gateNodes, e.maxActive)
 }
 
+// RetryPlanInNode re-runs the target node and its descendants, reusing the seeded
+// outputs (node ID → prior text) for every other node — a retry of a failed/done
+// node whose upstream is unchanged. Returns the full node-output map (seeded +
+// freshly re-run). Per-node guidance should already be folded into the plan's node
+// Task by the caller.
+func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	if err != nil {
+		return nil, err
+	}
+	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, retrySet(plan, nodeID))
+}
+
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate — the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.

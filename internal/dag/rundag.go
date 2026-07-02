@@ -10,13 +10,22 @@ import (
 
 // runDAG schedules a plan's gate nodes via concurrent RunNode in topological
 // layers (≤ maxActive running at once), gathering each node's output for its
-// dependents. It runs inside ONE runner (the orchestration node's sub-scheduler),
-// so a gate node's empty-pause (ErrNodeInterrupted) propagates up to pause the
-// whole run; on resume the orchestration node re-runs, completed nodes replay
-// from the RunNode cache, and the paused node resumes with the human's reply.
-//
+// dependents. It runs inside ONE runner (the orchestration node's sub-scheduler).
 // This replaces BuildWorkflow's edge graph + the executor's separate runner.
 func runDAG(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int) (map[string]string, error) {
+	all := make(map[string]bool, len(plan.Nodes))
+	for _, n := range plan.Nodes {
+		all[n.ID] = true
+	}
+	return runDAGSubset(ctx, plan, gateNodes, maxActive, nil, all)
+}
+
+// runDAGSubset runs only the nodes in `run` (the retry set), leaving every other
+// node at its `seeded` output (node ID → reused text from a prior run). A full run
+// is the special case run=all-nodes, seeded=nil; a retry passes the target node +
+// its descendants as `run` and the rest of the prior run's outputs as `seeded`, so
+// only the affected subgraph re-executes.
+func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	if maxActive < 1 {
 		maxActive = 1
 	}
@@ -30,20 +39,32 @@ func runDAG(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node,
 	}
 
 	var mu sync.Mutex
-	outputs := map[string]string{}
+	outputs := make(map[string]string, len(plan.Nodes))
+	for k, v := range seeded {
+		outputs[k] = v // reused outputs for nodes not being re-run
+	}
 	for _, layer := range layers {
+		var todo []string
+		for _, nid := range layer {
+			if run[nid] {
+				todo = append(todo, nid)
+			}
+		}
+		if len(todo) == 0 {
+			continue
+		}
 		sem := make(chan struct{}, maxActive)
-		errs := make([]error, len(layer))
+		errs := make([]error, len(todo))
 		var wg sync.WaitGroup
-		for i, nid := range layer {
+		for i, nid := range todo {
 			wg.Add(1)
 			go func(i int, nid string) {
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				// Feed this node its dependencies' outputs (dep ID → text), the same
-				// shape upstreamFromInput/buildTask expect from a JoinNode fan-in.
+				// Feed this node its dependencies' outputs (dep ID → text) — a mix of
+				// freshly-run and seeded — the shape upstreamFromInput/buildTask expect.
 				in := map[string]any{}
 				mu.Lock()
 				for _, d := range nodeByID[nid].DependsOn {
@@ -62,8 +83,6 @@ func runDAG(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node,
 			}(i, nid)
 		}
 		wg.Wait()
-		// A pause (ErrNodeInterrupted) or hard error on any node ends the walk; the
-		// error propagates up so the run pauses/aborts. Resume re-runs from the top.
 		for _, e := range errs {
 			if e != nil {
 				return outputs, e
@@ -71,6 +90,30 @@ func runDAG(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node,
 		}
 	}
 	return outputs, nil
+}
+
+// retrySet returns nodeID plus every node that (transitively) depends on it — the
+// subgraph a retry must re-run because the target's output feeds them.
+func retrySet(plan Plan, nodeID string) map[string]bool {
+	dependents := map[string][]string{}
+	for _, n := range plan.Nodes {
+		for _, d := range n.DependsOn {
+			dependents[d] = append(dependents[d], n.ID)
+		}
+	}
+	set := map[string]bool{}
+	var walk func(string)
+	walk = func(id string) {
+		if set[id] {
+			return
+		}
+		set[id] = true
+		for _, dep := range dependents[id] {
+			walk(dep)
+		}
+	}
+	walk(nodeID)
+	return set
 }
 
 // topoLayers groups nodes into dependency layers (Kahn): layer 0 is the leaves,
