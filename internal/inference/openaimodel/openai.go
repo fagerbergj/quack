@@ -293,6 +293,8 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 				for _, c := range calls {
 					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{FunctionCall: c})
 				}
+				slog.WarnContext(ctx, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
+					"component", "inference", "model", o.ModelName, "count", len(calls))
 			}
 		}
 
