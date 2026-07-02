@@ -14,18 +14,12 @@ import (
 
 type executeArgs struct {
 	PlanID string `json:"plan_id"` // the plan_id returned by the plan tool
-	// EndTurn: true when the plan fully answers the user's question (the answer is
-	// shown to the user directly and the caller adds nothing); false/omitted when
-	// the caller still has work to do with the result. See the tool Description.
-	EndTurn bool `json:"end_turn,omitempty"`
 }
 
-// executeResult.Status is a bare enum: "delivered" (end_turn=true, answer shown
-// to the user, caller outputs nothing) or "complete" (answer returned for the
-// caller to use). All guidance lives in the tool Description, not this payload.
+// executeResult.Status is always "delivered": the plan's answer streams straight to
+// the user from the execute node and the orchestrator stays silent.
 type executeResult struct {
-	Status string `json:"status"`           // "delivered" | "complete"
-	Answer string `json:"answer,omitempty"` // set only when Status == "complete"
+	Status string `json:"status"` // "delivered"
 }
 
 // ExecPlanIDKey is the session-state key the execute tool stashes the selected

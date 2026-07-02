@@ -284,9 +284,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			RunID: orchRunID, Stage: stream.StageWorker,
 		}}, nil)
 
-		// Deliver mode (execute end_turn=true): the specialist's answer streamed
-		// straight to the user and the orchestrator stayed silent, so its session
-		// holds no record of the answer. Append it as the assistant message so it
+		// Deliver: the execute node streamed the plan's answer straight to the user
+		// and the orchestrator stayed silent, so its session holds no record of the
+		// answer. Append it as the assistant message so it
 		// survives reload (AsstText) and is visible to follow-up turns. Use a
 		// detached context so a client disconnect at end-of-stream still persists.
 		if delivered := planCache.Delivered(); delivered != "" {

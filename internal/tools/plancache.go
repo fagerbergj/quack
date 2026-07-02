@@ -19,7 +19,7 @@ type PlanCache struct {
 	mu        sync.Mutex
 	plans     map[string]dag.Plan
 	results   map[string]string // plan ID → terminal answer, memoised after first execute
-	delivered string            // terminal answer when execute ran in deliver (end_turn) mode
+	delivered string            // terminal answer the execute node delivered straight to the user
 	lastID    string            // most-recently-Put plan (for the single-runner router)
 }
 
@@ -47,7 +47,7 @@ func (c *PlanCache) Result(id string) (string, bool) {
 }
 
 // SetDelivered records the terminal answer that execute streamed straight to the
-// user in deliver mode (end_turn=true). The orchestrator stays silent in that
+// user in deliver mode. The orchestrator stays silent in that
 // mode, so its session would otherwise hold no record of the answer; the caller
 // reads this after the run to persist it as the turn's assistant message (fixing
 // reload and follow-up conversation history).
