@@ -362,10 +362,10 @@ func PrintPrompt(ctx context.Context, out, events io.Writer, server, prompt stri
 		return err
 	}
 	var streamErr error
-	var orch strings.Builder            // orchestrator's own streamed answer (node_id == "")
-	nodeOut := map[string]string{}      // node_id → latest output (research answers)
-	successor := map[string]bool{}      // node_id that some other node depends on
-	var lastNode string                 // last node to finish (terminal completes last)
+	var orch strings.Builder       // orchestrator's own streamed answer (node_id == "")
+	nodeOut := map[string]string{} // node_id → latest output (research answers)
+	successor := map[string]bool{} // node_id that some other node depends on
+	var lastNode string            // last node to finish (terminal completes last)
 	err = c.SendMessage(ctx, chatID, prompt, func(ev SSEEvent) error {
 		if events != nil {
 			data := string(ev.Data)
