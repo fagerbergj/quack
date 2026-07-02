@@ -1,15 +1,18 @@
 package vetting
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -188,7 +191,51 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 			answer = revised
 		}
 	}
+	if res.Passed {
+		commitMemoryOnPass(ctx, cfg, nodeID, answer, activityFromSession(ctx.Session()).staged)
+	}
 	return answer, res, nil
+}
+
+// stagedCandidate parses a stage_memory tool call's args (content + optional
+// kind) into a memory candidate; ok=false if there's no usable content.
+func stagedCandidate(fc *genai.FunctionCall) (memory.Candidate, bool) {
+	c, ok := fc.Args["content"].(string)
+	if !ok || strings.TrimSpace(c) == "" {
+		return memory.Candidate{}, false
+	}
+	cand := memory.Candidate{Content: strings.TrimSpace(c)}
+	if k, ok := fc.Args["kind"].(string); ok && k != "" {
+		cand.Metadata = map[string]string{"kind": k}
+	}
+	return cand, true
+}
+
+// commitMemoryOnPass fires the agent's staged tradecraft (plus consolidation from
+// the accepted answer) into task memory — only on a gate pass, so nothing is
+// remembered from a failed answer. Fire-and-forget: memory is best-effort and
+// never blocks or fails the node. Commit also runs with empty staged (its
+// answer-extraction still mines the accepted answer), matching the M6 design.
+func commitMemoryOnPass(ctx adkagent.Context, cfg Config, author, answer string, staged []memory.Candidate) {
+	if cfg.Memory == nil || !cfg.CommitMemory || strings.TrimSpace(answer) == "" {
+		return
+	}
+	userID := ""
+	if s := ctx.Session(); s != nil {
+		userID = s.UserID()
+	}
+	go func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		n, err := cfg.Memory.Commit(cctx, userID, author, staged, answer)
+		if err != nil {
+			slog.Warn("memory commit failed", "component", "vetting", "node", author, "err", err, "staged", len(staged))
+			return
+		}
+		if n > 0 {
+			slog.Info("memory committed", "component", "vetting", "node", author, "count", n, "user", userID)
+		}
+	}()
 }
 
 // runWorkerNode runs the worker as a sub-branched child with a stable per-run
@@ -277,6 +324,10 @@ func activityFromSession(sess session.Session) workerActivity {
 				case "web_fetch":
 					if u, ok := p.FunctionCall.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
 						pending[p.FunctionCall.ID] = strings.TrimSpace(u)
+					}
+				case "stage_memory":
+					if cand, ok := stagedCandidate(p.FunctionCall); ok {
+						act.staged = append(act.staged, cand)
 					}
 				}
 			}
