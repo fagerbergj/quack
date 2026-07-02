@@ -652,3 +652,44 @@ func questionText(c *genai.Content) string {
 	}
 	return b.String()
 }
+
+// runWriterFresh recovers an empty worker draft: it runs a TOOL-LESS writer (the
+// worker's model, no tools) in a FRESH in-memory runner with the self-contained
+// finalize prompt, which already carries the worker's findings. The fresh runner is
+// the whole point — re-invoking the worker in its own session drops the finalize
+// prompt (the llmagent rebuilds its request from session events, which end in the
+// empty reply), so the write-up never happens. A tool-less writer composes the
+// answer directly from the findings instead of re-researching.
+func runWriterFresh(ctx context.Context, m model.LLM, content *genai.Content) (string, error) {
+	if m == nil {
+		return "", fmt.Errorf("vetting: no writer model for empty-answer recovery")
+	}
+	writer, err := llmagent.New(llmagent.Config{
+		Name:        "finalize-writer",
+		Description: "Composes the final answer from the findings provided, without tools.",
+		Model:       m,
+		Instruction: "You are a writer. Using ONLY the findings and instructions in the message, write the complete final answer now. You have no tools — do not attempt to call any; compose directly from what you are given.",
+	})
+	if err != nil {
+		return "", fmt.Errorf("vetting: build writer: %w", err)
+	}
+	wr, err := runner.New(runner.Config{AppName: "quack-writer", Agent: writer, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		return "", fmt.Errorf("vetting: writer runner: %w", err)
+	}
+	var out strings.Builder
+	for ev, rerr := range wr.Run(ctx, "writer", "finalize", content, adkagent.RunConfig{}) {
+		if rerr != nil {
+			return "", rerr
+		}
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p != nil && !p.Thought && p.Text != "" {
+				out.WriteString(p.Text)
+			}
+		}
+	}
+	return stream.StripThinking(out.String()), nil
+}

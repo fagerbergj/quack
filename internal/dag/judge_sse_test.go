@@ -32,7 +32,7 @@ func TestExecute_JudgeStreamsAsStageJudge(t *testing.T) {
 	}
 	judge := vetting.NewJudgeFactory(stub, nil)
 	cfgFor := func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }
-	ex := NewExecutor(session.InMemoryService(), agents, nil, judge, cfgFor, nil)
+	ex := NewExecutor(session.InMemoryService(), agents, nil, nil, judge, cfgFor, nil)
 
 	plan := Plan{ID: "t", UserMessage: "compare A and B", Nodes: []Node{
 		{ID: "r1", AgentName: "r1", Task: "research A"},
@@ -85,7 +85,7 @@ func TestExecute_AdvisorStreamsAsStageAdvisor(t *testing.T) {
 	advisor := mk("advisor", "ROLE:advisor") // stub returns generic text; wiring is what we assert
 	judge := vetting.NewJudgeFactory(stub, nil)
 	cfgFor := func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }
-	ex := NewExecutor(session.InMemoryService(), agents, advisor, judge, cfgFor, nil)
+	ex := NewExecutor(session.InMemoryService(), agents, nil, advisor, judge, cfgFor, nil)
 
 	plan := Plan{ID: "t", UserMessage: "compare", Nodes: []Node{
 		{ID: "r1", AgentName: "r1", Task: "research"},

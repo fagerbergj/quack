@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
@@ -21,6 +22,7 @@ import (
 type Executor struct {
 	sessions    session.Service
 	agents      map[string]adkagent.Agent             // agent name → built (plain) agent
+	models      map[string]model.LLM                  // agent name → raw model (for the tool-less empty-recovery writer)
 	advisor     adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
 	judge       vetting.JudgeFactory                  // independent judge factory
 	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
@@ -115,7 +117,7 @@ func (s *DagStream) Finish() {
 // workflow path. Returns node ID → vetted output; an empty node fails (marks itself)
 // and the DAG continues so the run always finishes.
 func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +130,7 @@ func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string)
 // freshly re-run). Per-node guidance should already be folded into the plan's node
 // Task by the caller.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +140,8 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate — the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.
-func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
+func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
+	return &Executor{sessions: sessions, agents: agents, models: models, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 
 // gateScore is a node's trust-gate result read back from workflow session state.

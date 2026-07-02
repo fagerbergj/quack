@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
 
@@ -26,7 +27,7 @@ const (
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
 // runDAG ignores them).
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -53,7 +54,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagen
 			}
 		}
 		node := n // capture per iteration
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -63,7 +64,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagen
 // FAILS (marks the node) on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
 // directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, _ func(*session.Event) error) (string, error) {
 			upstream := upstreamFromInput(in, node.DependsOn)
@@ -89,7 +90,7 @@ func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, j
 				ctrl = nc
 			}
 
-			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
+			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, workerModel, judge, cfg, prompt, atts, ctrl)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				// Empty → the node FAILS. The DAG continues (dependents see the gap via
 				// buildTask's ⚠ note) and the empty output drives a loud node_failed. A

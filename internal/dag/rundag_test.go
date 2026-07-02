@@ -47,7 +47,7 @@ func TestRunDAG_Layers(t *testing.T) {
 	for _, n := range plan.Nodes {
 		ag, _ := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 		wn, _ := vetting.NewWorkerNode(ag)
-		gateNodes[n.ID] = newGatedNode(plan, n, wn, nil, vetting.NewJudgeFactory(stub, nil), cfg("w"), nil, nil, "")
+		gateNodes[n.ID] = newGatedNode(plan, n, wn, nil, nil, vetting.NewJudgeFactory(stub, nil), cfg("w"), nil, nil, "")
 	}
 	var out map[string]string
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
@@ -71,7 +71,7 @@ func TestRunDAG_Layers(t *testing.T) {
 func TestRunPlanInNode(t *testing.T) {
 	stub := okStub{}
 	ag, _ := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
-	exec := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil,
+	exec := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil, nil,
 		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{
 		{ID: "n1", AgentName: "w"}, {ID: "n2", AgentName: "w", DependsOn: []string{"n1"}},
@@ -112,7 +112,7 @@ func TestRunDAG_FanInDelivery(t *testing.T) {
 		"researcher2": mk("researcher2", "ROLE:r2"),
 		"synthesizer": mk("synthesizer", "ROLE:synth"),
 	}
-	ex := NewExecutor(session.InMemoryService(), agents, nil, vetting.NewJudgeFactory(stub, nil),
+	ex := NewExecutor(session.InMemoryService(), agents, nil, nil, vetting.NewJudgeFactory(stub, nil),
 		func(string) vetting.Config {
 			return vetting.Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10"}
 		}, nil)
@@ -151,7 +151,7 @@ func TestRetryPlanInNode_ReusesUpstream(t *testing.T) {
 		return a
 	}
 	agents := map[string]adkagent.Agent{"a": mk(), "b": mk(), "c": mk()}
-	ex := NewExecutor(session.InMemoryService(), agents, nil, vetting.NewJudgeFactory(stub, nil),
+	ex := NewExecutor(session.InMemoryService(), agents, nil, nil, vetting.NewJudgeFactory(stub, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{
 		{ID: "a", AgentName: "a"}, {ID: "b", AgentName: "b", DependsOn: []string{"a"}},
