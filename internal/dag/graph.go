@@ -21,7 +21,7 @@ import (
 // along the graph edges (buildTask, reused from the legacy executor) and runs the
 // trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
 // Executor.Execute (TopoSort + semaphore + per-node runner).
-func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool) (adkagent.Agent, error) {
+func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -65,7 +65,17 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 				if !mediaAgents[node.AgentName] {
 					atts = nil
 				}
-				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts)
+				// Register a per-node control so CancelNode/SteerNode can reach THIS
+				// node while it runs (cooperative, at gate-stage boundaries). Keep it a
+				// nil interface when controls are off — a typed-nil would panic in the
+				// gate's ctrl.Cancelled() check.
+				var ctrl vetting.NodeControl
+				if controls != nil {
+					nc := controls.register(chatID, node.ID)
+					defer controls.unregister(chatID, node.ID)
+					ctrl = nc
+				}
+				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
 				if err == nil {
 					// Persist the gate outcome to session state: gate_failed drives
 					// continue-but-warn on dependents; score/passed/rounds let Execute

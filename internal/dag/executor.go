@@ -30,14 +30,15 @@ type Executor struct {
 	advisor     adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
 	judge       vetting.JudgeFactory                  // independent judge factory
 	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
-	mediaAgents map[string]bool                       // agents accepting image/audio parts (media threading TODO)
+	mediaAgents map[string]bool                       // agents accepting image/audio parts
+	controls    *runControls                          // live per-node cancel/steer handles (M5b)
 }
 
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate — the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.
 func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents}
+	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls()}
 }
 
 // Execute builds the plan's workflow, runs it via a fresh runner, and translates
@@ -56,7 +57,7 @@ func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, adv
 // nodeOutputs (node ID → vetted answer) is filled for the caller's TerminalOutput.
 func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents)
+		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
 		if err != nil {
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return

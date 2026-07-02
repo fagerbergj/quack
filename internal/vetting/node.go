@@ -51,7 +51,7 @@ func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, 
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, judge, cfg, task, nil)
+		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, judge, cfg, task, nil, nil)
 		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
@@ -87,9 +87,19 @@ type GateResult struct {
 //
 // Returns (answer, result, err); result carries the final verdict (score/passed/
 // feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part) (string, GateResult, error) {
+// NodeControl lets a caller cancel or steer a running gate between its stages.
+// nil = no control. Cooperative: checked at gate-stage boundaries (before each
+// judge round), not mid-model-call — see docs/adk2-migration.md Phase 3c for why
+// mid-call per-node cancel isn't possible on ADK v2 without breaking streaming.
+type NodeControl interface {
+	// Cancelled reports whether this node should stop (keep its current answer).
+	Cancelled() bool
+	// TakeSteer returns and clears any pending steer guidance ("" if none).
+	TakeSteer() string
+}
+
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
-	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	// Advisor consult (formative, once per worker round). Best-effort: on error,
 	// proceed WITHOUT advice rather than fail the node. It runs via RunNode so it
@@ -113,88 +123,127 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		}
 		return base + "\n\n--- Advisor guidance (consider before answering) ---\n" + advice
 	}
-
-	answer, err := runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0", prompt)), attachments), "worker-r0")
-	if err != nil {
-		// Log at our boundary before returning: ADK's scheduler can swallow a
-		// node error into a silent empty completion, so this ERROR line (with the
-		// model's error body) is what makes a failed worker visible in the logs.
-		log.Error("worker draft failed", "run", "worker-r0", "err", err)
-		return "", GateResult{}, err
-	}
-
-	// Empty-answer recovery: the worker sometimes ends a turn with no answer text
-	// (it called tools but never wrote up, or thought into the void). Re-invoke it
-	// with a finalize prompt asking it to write up what it found, up to the retry
-	// budget. ponytail: the legacy gate used a tool-LESS writer clone here (a
-	// tool-having re-invoke can keep researching); re-invoking the worker with a
-	// finalize prompt is the graph-native port — swap in a tool-less writer node if
-	// empty answers prove sticky.
-	if strings.TrimSpace(answer) == "" {
-		// Empty (no error) is the OTHER silent failure mode besides a 400 — a
-		// reasoning model can spend its whole output budget on thinking and return
-		// empty content. Log it so an empty node isn't a mystery.
-		log.Warn("worker draft empty; attempting finalize recovery", "retries", maxEmptyRetries)
-		fin := contentPlainText(buildFinalizeContent(question, activityFromSession(ctx.Session())))
-		for attempt := 1; attempt <= maxEmptyRetries && strings.TrimSpace(answer) == ""; attempt++ {
-			answer, err = runWorkerNode(ctx, workerNode, fin, fmt.Sprintf("worker-finalize-%d", attempt))
-			if err != nil {
-				log.Error("worker finalize failed", "attempt", attempt, "err", err)
-				return "", GateResult{}, err
-			}
-		}
-		if strings.TrimSpace(answer) == "" {
-			log.Error("worker produced NO answer after finalize recovery — node output will be empty", "retries", maxEmptyRetries)
-		}
-	}
-
-	// Judge/revise loop: judge the current answer, fold in the deterministic
-	// citation/length criteria, and on a fail revise via a fresh worker call whose
-	// prompt inlines the feedback + prior answer (buildRevisionContent is
-	// self-contained, so the stateless worker needs no session continuity).
+	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	// The judge runs in its own isolated runner (off the workflow event stream), so
 	// its activity can't ride that stream. Forward it to the client as a stage:judge
 	// run via the SSE sink injected on ctx (executor.Execute) — SSE-only, never
 	// written to the session, so it can't re-poison a downstream node's request.
 	sink, _ := stream.YieldFromContext(ctx)
-	var res GateResult
-	for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
+
+	// Per-node steer/cancel (M5b), cooperative at gate-stage boundaries (see
+	// docs Phase 3c: ADK v2 can't cancel a single model call mid-flight without
+	// breaking streaming). basePrompt is the un-guided task; a steer re-runs the
+	// whole gate with the guidance appended.
+	basePrompt := prompt
+	steerAttempt := 0
+	for {
+		if cancelled() {
+			return "", GateResult{}, nil // cancelled before drafting → empty (continue-but-warn)
+		}
+		// A steered re-run needs fresh RunNode run IDs: WithRunID replays a completed
+		// run (the durable-skip property), so reusing "worker-r0" would replay the
+		// pre-steer draft instead of re-invoking the worker with the guidance.
+		sfx := ""
+		if steerAttempt > 0 {
+			sfx = fmt.Sprintf("-s%d", steerAttempt)
+		}
+		question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
+
+		answer, err := runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0"+sfx, prompt)), attachments), "worker-r0"+sfx)
+		if err != nil {
+			// Log at our boundary before returning: ADK's scheduler can swallow a
+			// node error into a silent empty completion, so this ERROR line (with the
+			// model's error body) is what makes a failed worker visible in the logs.
+			log.Error("worker draft failed", "run", "worker-r0", "err", err)
+			return "", GateResult{}, err
+		}
+
+		// Empty-answer recovery: the worker sometimes ends a turn with no answer text
+		// (it called tools but never wrote up, or thought into the void). Re-invoke it
+		// with a finalize prompt asking it to write up what it found, up to the retry
+		// budget. ponytail: the legacy gate used a tool-LESS writer clone here (a
+		// tool-having re-invoke can keep researching); re-invoking the worker with a
+		// finalize prompt is the graph-native port — swap in a tool-less writer node if
+		// empty answers prove sticky.
 		if strings.TrimSpace(answer) == "" {
-			break // still nothing to judge after recovery
+			// Empty (no error) is the OTHER silent failure mode besides a 400 — a
+			// reasoning model can spend its whole output budget on thinking and return
+			// empty content. Log it so an empty node isn't a mystery.
+			log.Warn("worker draft empty; attempting finalize recovery", "retries", maxEmptyRetries)
+			fin := contentPlainText(buildFinalizeContent(question, activityFromSession(ctx.Session())))
+			for attempt := 1; attempt <= maxEmptyRetries && strings.TrimSpace(answer) == ""; attempt++ {
+				answer, err = runWorkerNode(ctx, workerNode, fin, fmt.Sprintf("worker-finalize-%d%s", attempt, sfx))
+				if err != nil {
+					log.Error("worker finalize failed", "attempt", attempt, "err", err)
+					return "", GateResult{}, err
+				}
+			}
+			if strings.TrimSpace(answer) == "" {
+				log.Error("worker produced NO answer after finalize recovery — node output will be empty", "retries", maxEmptyRetries)
+			}
 		}
-		act := activityFromSession(ctx.Session())
-		runID := fmt.Sprintf("judge-r%d", round)
-		emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
-		v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, judgePartEmitter(sink, nodeID, runID))
-		if jerr != nil {
-			// ERROR, not Warn: a judge failure means the answer is going out
-			// UNVETTED — that must be loud in the logs, not buried.
-			log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
-			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
-			return answer, res, nil
+
+		// Judge/revise loop: judge the current answer, fold in the deterministic
+		// citation/length criteria, and on a fail revise via a fresh worker call whose
+		// prompt inlines the feedback + prior answer (buildRevisionContent is
+		// self-contained, so the stateless worker needs no session continuity).
+		var res GateResult
+		steered := ""
+		for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
+			if strings.TrimSpace(answer) == "" {
+				break // still nothing to judge after recovery
+			}
+			// Cooperative cancel/steer, checked before each judge round: cancel stops
+			// refining (keep the current answer); a steer re-runs the whole gate.
+			if ctrl != nil {
+				if ctrl.Cancelled() {
+					return answer, res, nil
+				}
+				if g := ctrl.TakeSteer(); strings.TrimSpace(g) != "" {
+					steered = g
+					break
+				}
+			}
+			act := activityFromSession(ctx.Session())
+			runID := fmt.Sprintf("judge-r%d", round)
+			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
+			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, judgePartEmitter(sink, nodeID, runID))
+			if jerr != nil {
+				// ERROR, not Warn: a judge failure means the answer is going out
+				// UNVETTED — that must be loud in the logs, not buried.
+				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
+				emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
+				return answer, res, nil
+			}
+			v = foldDeterministic(v, answer, act)
+			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: v.Feedback, Rounds: round}
+			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
+			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
+			if res.Passed || round >= cfg.JudgeRounds {
+				break
+			}
+			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
+			advRun := fmt.Sprintf("advisor-r%d%s", round, sfx)
+			revised, rerr := runWorkerNode(ctx, workerNode, withAdvice(revisePrompt, consult(advRun, revisePrompt)), fmt.Sprintf("worker-r%d%s", round, sfx))
+			if rerr != nil {
+				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
+				return answer, res, nil // revision failed; keep the prior answer
+			}
+			if strings.TrimSpace(revised) != "" {
+				answer = revised
+			}
 		}
-		v = foldDeterministic(v, answer, act)
-		res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: v.Feedback, Rounds: round}
-		emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
-		log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
-		if res.Passed || round >= cfg.JudgeRounds {
-			break
+		if steered != "" {
+			log.Info("node steered; re-running with guidance", "node", nodeID)
+			steerAttempt++
+			prompt = basePrompt + "\n\n--- User steering guidance (revise your approach accordingly) ---\n" + steered
+			continue // re-run the whole gate with the guidance (fresh run IDs)
 		}
-		revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
-		advRun := fmt.Sprintf("advisor-r%d", round)
-		revised, rerr := runWorkerNode(ctx, workerNode, withAdvice(revisePrompt, consult(advRun, revisePrompt)), fmt.Sprintf("worker-r%d", round))
-		if rerr != nil {
-			log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
-			return answer, res, nil // revision failed; keep the prior answer
+		if res.Passed {
+			commitMemoryOnPass(ctx, cfg, nodeID, answer, activityFromSession(ctx.Session()).staged)
 		}
-		if strings.TrimSpace(revised) != "" {
-			answer = revised
-		}
+		return answer, res, nil
 	}
-	if res.Passed {
-		commitMemoryOnPass(ctx, cfg, nodeID, answer, activityFromSession(ctx.Session()).staged)
-	}
-	return answer, res, nil
 }
 
 // stagedCandidate parses a stage_memory tool call's args (content + optional
