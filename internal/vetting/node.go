@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -87,6 +88,12 @@ type GateResult struct {
 //
 // Returns (answer, result, err); result carries the final verdict (score/passed/
 // feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
+// ErrNodeEmpty is returned by RunGatedRefine when the worker produced no answer
+// even after the empty-recovery retry. The node body catches it to pause the run
+// for a human steer (re-run with guidance) or cancel, instead of silently
+// emitting an empty output that cascades into empty dependents.
+var ErrNodeEmpty = errors.New("vetting: node produced no answer")
+
 // NodeControl lets a caller cancel or steer a running gate between its stages.
 // nil = no control. Cooperative: checked at gate-stage boundaries (before each
 // judge round), not mid-model-call: mid-call per-node cancel isn't possible on
@@ -179,7 +186,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 				}
 			}
 			if strings.TrimSpace(answer) == "" {
-				log.Error("worker produced NO answer after finalize recovery — node output will be empty", "retries", maxEmptyRetries)
+				log.Error("worker produced NO answer after finalize recovery", "retries", maxEmptyRetries)
+				return "", GateResult{}, ErrNodeEmpty
 			}
 		}
 

@@ -1,7 +1,9 @@
 package dag
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/workflowagent"
@@ -52,7 +54,7 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 		node := n // capture per iteration
 		cfg := cfgFor(node.AgentName)
 		gated := workflow.NewDynamicNode[any, string](node.ID,
-			func(ctx adkagent.Context, in any, _ func(*session.Event) error) (string, error) {
+			func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 				upstream := upstreamFromInput(in, node.DependsOn)
 				// Continue-but-warn: a dependency whose vetting failed flags itself in
 				// session state; buildTask prefixes a ⚠ warning so this node treats that
@@ -75,7 +77,37 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 					defer controls.unregister(chatID, node.ID)
 					ctrl = nc
 				}
+
+				// Fail-into-steerable: if the worker produced nothing, pause the run for
+				// a human steer (re-run with guidance) or cancel, rather than silently
+				// emitting an empty output that cascades into empty dependents.
+				interruptID := "empty-" + node.ID + "-" + ctx.InvocationID()
+				resumed := false
+				if reply, ok := ctx.ResumedInput(interruptID); ok {
+					resumed = true
+					g, _ := reply.(string)
+					guidance := strings.TrimSpace(strings.TrimPrefix(g, "steer:"))
+					if g == "cancel" || guidance == "" {
+						markGateFailed(ctx, node.ID) // cancelled → empty, continue-but-warn
+						return "", nil
+					}
+					prompt += "\n\n--- Guidance (you produced no answer; address this and write it) ---\n" + guidance
+				}
+
 				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
+				if errors.Is(err, vetting.ErrNodeEmpty) {
+					if resumed {
+						markGateFailed(ctx, node.ID) // steered re-run still empty → fail clean, don't re-pause
+						return "", nil
+					}
+					if e := emit(workflow.NewRequestInputEvent(ctx, session.RequestInput{
+						InterruptID: interruptID,
+						Message:     "Node \"" + node.ID + "\" produced no answer. Steer it with guidance, or cancel.",
+					})); e != nil {
+						return "", e
+					}
+					return "", workflow.ErrNodeInterrupted // pause the run for human input
+				}
 				if err == nil {
 					// Persist the gate outcome to session state: gate_failed drives
 					// continue-but-warn on dependents; score/passed/rounds let Execute
@@ -154,6 +186,16 @@ const (
 	gatePassedKey = "quack.gate_passed/"
 	gateRoundsKey = "quack.gate_rounds/"
 )
+
+// markGateFailed flags a node as failed in session state so its dependents get
+// the continue-but-warn treatment — used when a node is cancelled or its steered
+// re-run still produced nothing.
+func markGateFailed(ctx adkagent.Context, nodeID string) {
+	if st := ctx.State(); st != nil {
+		_ = st.Set(gateFailedKey+nodeID, true)
+		_ = st.Set(gatePassedKey+nodeID, false)
+	}
+}
 
 // readGateFailed reconstructs the gateFailed map for buildTask by reading each
 // dependency's gate-fail flag from workflow session state.
