@@ -59,7 +59,19 @@ first would mean wiring it into the soon-deleted `dag` executor (throwaway).
    `ResumeOrRequestInput`.
 3. **Graph orchestration** — workers as first-class nodes; refine loop (advisor→worker→judge
    via `RunNode`) inside each; gate as native nodes; delete `internal/dag/` scheduler.
-4. **Stream translator** — v2 `session.Event` (`NodeInfo`/`Output`/`Routes`/`RequestedInput`).
+4. **Stream translator** — rebuild to DERIVE our SSE events from v2's structured
+   `session.Event` (`NodeInfo` path+RunID, `Output`, `Routes`, `RequestedInput`),
+   not from the deleted gate markers. Decision: **keep the frontend-facing SSE
+   vocabulary stable** (its abstraction just insulated the frontend through the
+   whole v1→v2 bump — don't trade that away by mirroring ADK's internal event
+   structs 1:1, which would re-couple wire+frontend to ADK churn). Take the
+   "closer to ADK" win on the read side only: `stage`/`round` fall out of node
+   `RunID`s (`worker-r0`/`judge-r0`/`worker-r1`); `node_id`/`run_id` from
+   `NodeInfo` (drop manual ScopeToRun/ScopeToNode); HITL `RequestedInput` → a
+   first-class SSE event. Vocabulary evolves additively (drop `self_refine`; add
+   `advisor` later; optionally expose `Routes`/node-state). Also: the gate node
+   must `emit` the judge verdict (score/passed/feedback) as a workflow event so
+   `node_done` regains its score badge (lost in 3b-2's minimal SSE).
 5. **M8 reconcile** — delete run-state durability now owned by ADK; keep client-facing
    SSE `Last-Event-ID` replay.
 
