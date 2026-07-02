@@ -155,6 +155,35 @@ describe('ChatStore — mid-node steering', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('retryNode resets the target + descendants, keeps the rest, and POSTs to /retry', async () => {
+    // Seed a live DAG: a → b, a done (with an answer), b failed.
+    const sse = [
+      `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }, { id: 'b', agent: 'r', task: 't', depends_on: ['a'] }], edges: [{ from: 'a', to: 'b' }] })}\n\n`,
+      `event: agent_token\ndata: {"node_id":"a","run_id":"worker-r0","text":"A-ANSWER"}\n\n`,
+      `event: node_done\ndata: {"node_id":"a"}\n\n`,
+      `event: node_failed\ndata: {"node_id":"b","error":"produced no answer"}\n\n`,
+      `event: done\ndata: {}\n\n`,
+    ].join('')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'hello')
+    expect(store.get('c').live?.dag?.nodeStates['b']?.status).toBe('failed')
+
+    fetchMock.mockResolvedValueOnce(makeStream('event: done\ndata: {}\n\n'))
+    store.retryNode('c', 'b', '  focus on X  ')
+
+    // Synchronous reset: b (the target) cleared; a (upstream, not downstream of b) kept.
+    const dag = store.get('c').live?.dag
+    expect(dag?.nodeAnswer['b'] ?? '').toBe('')
+    expect(dag?.nodeStates['b']?.status).toBe('queued')
+    expect(dag?.nodeAnswer['a']).toContain('A-ANSWER')
+
+    await new Promise(r => setTimeout(r, 0)) // let runStream fire the POST
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/v1/chats/c/nodes/b/retry',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ guidance: 'focus on X' }) }),
+    )
+  })
+
   // Timers anchor to the server's start time (epoch ms), not Date.now() at event
   // processing — so a reconnect/replay shows true elapsed instead of resetting.
   it('uses server started_at_ms for the dag and node timers', async () => {
