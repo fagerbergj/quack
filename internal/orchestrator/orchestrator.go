@@ -265,7 +265,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			// DAG stream; everything else is the orchestrator's own thinking/tool activity.
 			if ds == nil {
 				if p, ok := planCache.Latest(); ok {
-					ds = o.executor.NewDagStream(ctx, p, userID, safeYield, nodeOutputs)
+					ds = o.executor.NewDagStream(ctx, p, AppName, userID, sessionID, safeYield, nodeOutputs)
 				}
 			}
 			if ds != nil && ds.Handle(ev) {

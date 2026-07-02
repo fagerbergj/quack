@@ -1,7 +1,6 @@
 package dag
 
 import (
-	"context"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -43,11 +42,8 @@ func TestExecute_JudgeStreamsAsStageJudge(t *testing.T) {
 
 	judgeStart := map[string]bool{}
 	judgeDoneScored := map[string]bool{}
-	out := map[string]string{}
-	for ev, err := range ex.Execute(context.Background(), plan, "u", "chat", out) {
-		if err != nil {
-			t.Fatalf("execute: %v", err)
-		}
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+	for _, ev := range events {
 		switch d := ev.Data.(type) {
 		case stream.AgentStartData:
 			if d.Stage == stream.StageJudge {
@@ -97,11 +93,8 @@ func TestExecute_AdvisorStreamsAsStageAdvisor(t *testing.T) {
 	}}
 
 	advisorStart := map[string]bool{}
-	out := map[string]string{}
-	for ev, err := range ex.Execute(context.Background(), plan, "u", "chat", out) {
-		if err != nil {
-			t.Fatalf("execute: %v", err)
-		}
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+	for _, ev := range events {
 		if d, ok := ev.Data.(stream.AgentStartData); ok && d.Stage == stream.StageAdvisor {
 			advisorStart[d.NodeID] = true
 		}

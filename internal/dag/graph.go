@@ -6,79 +6,11 @@ import (
 	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/agent/workflowagent"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 )
-
-// BuildWorkflow turns a validated Plan into an ADK v2 workflow: one first-class
-// gated-worker node per plan node (named node.ID), fanned out per DependsOn and
-// joined via JoinNode barriers. Because each gated worker is a first-class graph
-// node (not a RunNode child), a completed node is durably skipped on resume — the
-// property the spike proved and the M8 durability win depends on.
-//
-// Each node's body assembles its worker prompt from the upstream outputs delivered
-// along the graph edges (buildTask, reused from the legacy executor) and runs the
-// trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
-// Executor.Execute (TopoSort + semaphore + per-node runner).
-func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, pauseOnEmpty bool) (adkagent.Agent, error) {
-	nodesByID, subAgents, err := buildGateNodes(plan, agents, advisor, judge, cfgFor, mediaAgents, controls, chatID, pauseOnEmpty)
-	if err != nil {
-		return nil, err
-	}
-
-	// Edges from DependsOn: leaves ← Start; one dep ← direct edge; N deps ← a
-	// per-node JoinNode barrier (keyed by predecessor node name == dep ID).
-	eb := workflow.NewEdgeBuilder()
-	for _, n := range plan.Nodes {
-		node := nodesByID[n.ID]
-		switch len(n.DependsOn) {
-		case 0:
-			eb.Add(workflow.Start, node)
-		case 1:
-			eb.Add(nodesByID[n.DependsOn[0]], node)
-		default:
-			join := workflow.NewJoinNode(n.ID + "-join")
-			deps := make([]workflow.Node, 0, len(n.DependsOn))
-			for _, d := range n.DependsOn {
-				deps = append(deps, nodesByID[d])
-			}
-			eb.AddFanIn(join, deps...)
-			eb.Add(join, node)
-		}
-	}
-
-	// ADK requires a single terminal (no-successor) output node. A plan with
-	// several — e.g. two research nodes and no synthesizer — otherwise fails with
-	// "multiple terminal nodes produced output". Fan the extra terminals into one
-	// terminal JoinNode so the workflow always has a single output. The planner
-	// usually adds a synthesizer (one terminal); this is the safety net for when
-	// the LLM omits it. Execute streams per-node node_done off the event stream, so
-	// the join (not a plan node) is transparent to the client.
-	isDep := map[string]bool{}
-	for _, n := range plan.Nodes {
-		for _, d := range n.DependsOn {
-			isDep[d] = true
-		}
-	}
-	var terminals []workflow.Node
-	for _, n := range plan.Nodes {
-		if !isDep[n.ID] {
-			terminals = append(terminals, nodesByID[n.ID])
-		}
-	}
-	if len(terminals) > 1 {
-		eb.AddFanIn(workflow.NewJoinNode("__terminal_join"), terminals...)
-	}
-
-	return workflowagent.New(workflowagent.Config{
-		Name:      "quack-dag-" + plan.ID,
-		SubAgents: subAgents,
-		Edges:     eb.Build(),
-	})
-}
 
 // Session-state key prefixes a gated node writes under its node ID: gate_failed
 // (true when the answer did NOT clear threshold) drives continue-but-warn on

@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -91,5 +92,38 @@ func TestRunPlanInNode(t *testing.T) {
 	}
 	if len(out) != 2 || out["n1"] == "" || out["n2"] == "" {
 		t.Fatalf("RunPlanInNode outputs incomplete: %v", out)
+	}
+}
+
+// TestRunDAG_FanInDelivery: runDAG feeds a fan-in node BOTH upstream outputs
+// (dep ID → text) so the synthesizer's assembled prompt carries them — the
+// single-runner replacement for the old BuildWorkflow JoinNode fan-in test.
+func TestRunDAG_FanInDelivery(t *testing.T) {
+	stub := stubG{}
+	mk := func(name, role string) adkagent.Agent {
+		a, err := llmagent.New(llmagent.Config{Name: name, Model: stub, Description: name, Instruction: role + " Answer the task."})
+		if err != nil {
+			t.Fatalf("agent %s: %v", name, err)
+		}
+		return a
+	}
+	agents := map[string]adkagent.Agent{
+		"researcher1": mk("researcher1", "ROLE:r1"),
+		"researcher2": mk("researcher2", "ROLE:r2"),
+		"synthesizer": mk("synthesizer", "ROLE:synth"),
+	}
+	ex := NewExecutor(session.InMemoryService(), agents, nil, vetting.NewJudgeFactory(stub, nil),
+		func(string) vetting.Config {
+			return vetting.Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10"}
+		}, nil)
+	plan := Plan{ID: "p1", UserMessage: "compare alpha and beta", Nodes: []Node{
+		{ID: "r1", AgentName: "researcher1", Task: "find alpha"},
+		{ID: "r2", AgentName: "researcher2", Task: "find beta"},
+		{ID: "synth", AgentName: "synthesizer", Task: "combine findings", DependsOn: []string{"r1", "r2"}},
+	}}
+	_, outputs := runPlanSSE(t, ex, plan, "chat")
+	final := outputs["synth"]
+	if !strings.Contains(final, "ALPHA-FINDING") || !strings.Contains(final, "BETA-FINDING") {
+		t.Fatalf("synthesizer prompt missing a fan-in input; got %q", final)
 	}
 }

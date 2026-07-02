@@ -4,16 +4,9 @@ import (
 	"context"
 	"iter"
 	"strings"
-	"testing"
 
-	adkagent "google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/runner"
-	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
-
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // stubG is a deterministic model.LLM routing by agent role (system-instruction
@@ -42,107 +35,6 @@ func (stubG) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) i
 		default:
 			yield(gText("?"), nil)
 		}
-	}
-}
-
-// TestBuildWorkflow_FanInAssembly builds a two-researcher → synthesizer plan and
-// runs it on the real ADK v2 engine, asserting the synthesizer's assembled prompt
-// carried BOTH researcher outputs (fan-out → JoinNode fan-in → buildTask).
-func TestBuildWorkflow_FanInAssembly(t *testing.T) {
-	stub := stubG{}
-	mk := func(name, role string) adkagent.Agent {
-		a, err := llmagent.New(llmagent.Config{
-			Name: name, Model: stub, Description: name,
-			Instruction: role + " Answer the task.",
-		})
-		if err != nil {
-			t.Fatalf("agent %s: %v", name, err)
-		}
-		return a
-	}
-	agents := map[string]adkagent.Agent{
-		"researcher1": mk("researcher1", "ROLE:r1"),
-		"researcher2": mk("researcher2", "ROLE:r2"),
-		"synthesizer": mk("synthesizer", "ROLE:synth"),
-	}
-	plan := Plan{
-		ID:          "p1",
-		UserMessage: "compare alpha and beta",
-		Nodes: []Node{
-			{ID: "r1", AgentName: "researcher1", Task: "find alpha"},
-			{ID: "r2", AgentName: "researcher2", Task: "find beta"},
-			{ID: "synth", AgentName: "synthesizer", Task: "combine findings", DependsOn: []string{"r1", "r2"}},
-		},
-	}
-	cfg := vetting.Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10"}
-
-	root, err := BuildWorkflow(plan, agents, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return cfg }, nil, nil, "", false)
-	if err != nil {
-		t.Fatalf("BuildWorkflow: %v", err)
-	}
-	r, err := runner.New(runner.Config{
-		AppName: "test", Agent: root,
-		SessionService: session.InMemoryService(), AutoCreateSession: true,
-	})
-	if err != nil {
-		t.Fatalf("runner: %v", err)
-	}
-
-	msg := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}
-	var final string
-	for ev, err := range r.Run(t.Context(), "u", "s", msg, adkagent.RunConfig{}) {
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-		if ev == nil {
-			continue
-		}
-		if s, ok := ev.Output.(string); ok && strings.HasPrefix(s, "SYNTH{") {
-			final = s
-		}
-	}
-
-	if final == "" {
-		t.Fatal("no synthesizer output captured")
-	}
-	if !strings.Contains(final, "ALPHA-FINDING") || !strings.Contains(final, "BETA-FINDING") {
-		t.Fatalf("synthesizer prompt missing a fan-in input; got %q", final)
-	}
-}
-
-// TestBuildWorkflow_MultipleTerminalsNoError guards the terminal-join safety net:
-// a plan with two independent terminal nodes and NO synthesizer must build and run
-// without ADK's "multiple terminal nodes produced output" error.
-func TestBuildWorkflow_MultipleTerminalsNoError(t *testing.T) {
-	stub := stubG{}
-	mk := func(name, role string) adkagent.Agent {
-		a, err := llmagent.New(llmagent.Config{Name: name, Model: stub, Description: name, Instruction: role + " Answer."})
-		if err != nil {
-			t.Fatalf("agent %s: %v", name, err)
-		}
-		return a
-	}
-	agents := map[string]adkagent.Agent{"researcher1": mk("researcher1", "ROLE:r1"), "researcher2": mk("researcher2", "ROLE:r2")}
-	plan := Plan{ID: "p2", UserMessage: "two topics", Nodes: []Node{
-		{ID: "a", AgentName: "researcher1", Task: "find alpha"},
-		{ID: "b", AgentName: "researcher2", Task: "find beta"}, // both terminal, no synth
-	}}
-	cfg := vetting.Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10"}
-
-	root, err := BuildWorkflow(plan, agents, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return cfg }, nil, nil, "", false)
-	if err != nil {
-		t.Fatalf("BuildWorkflow: %v", err)
-	}
-	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
-	if err != nil {
-		t.Fatalf("runner: %v", err)
-	}
-	msg := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}
-	for ev, err := range r.Run(t.Context(), "u", "s", msg, adkagent.RunConfig{}) {
-		if err != nil {
-			t.Fatalf("run errored (multiple-terminal not handled?): %v", err)
-		}
-		_ = ev
 	}
 }
 

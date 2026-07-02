@@ -8,9 +8,11 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/agent/workflowagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -65,7 +67,16 @@ func newHITLRunner(t *testing.T) *runner.Runner {
 		t.Fatal(err)
 	}
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
-	root, err := BuildWorkflow(plan, map[string]adkagent.Agent{"w": ag}, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil, nil, "", true)
+	workerNode, err := vetting.NewWorkerNode(ag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateNode := newGatedNode(plan, plan.Nodes[0], workerNode, nil, vetting.NewJudgeFactory(stub, nil), vetting.Config{Threshold: 0.6, JudgeRounds: 1}, nil, nil, "", true)
+	orchestrate := workflow.NewDynamicNode[any, string]("orch",
+		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+			return workflow.RunNode[string](ctx, gateNode, plan.UserMessage)
+		}, workflow.NodeConfig{})
+	root, err := workflowagent.New(workflowagent.Config{Name: "t", Edges: workflow.Chain(workflow.Start, orchestrate)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,11 +146,8 @@ func TestExecute_EmptyNode_SurfacesNeedsInput(t *testing.T) {
 
 	var needsInput, spuriousDone bool
 	var interruptID string
-	out := map[string]string{}
-	for ev, err := range ex.Execute(context.Background(), plan, "u", "chat", out) {
-		if err != nil {
-			t.Fatalf("execute: %v", err)
-		}
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+	for _, ev := range events {
 		switch d := ev.Data.(type) {
 		case stream.NodeNeedsInputData:
 			needsInput = true

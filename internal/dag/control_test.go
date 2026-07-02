@@ -68,12 +68,7 @@ func newCoopExecutor(t *testing.T, stub *coopStub, rounds int) (*Executor, Plan)
 
 func drain(t *testing.T, ex *Executor, plan Plan) {
 	t.Helper()
-	out := map[string]string{}
-	for _, err := range ex.Execute(context.Background(), plan, "u", "chat", out) {
-		if err != nil {
-			t.Fatalf("execute: %v", err)
-		}
-	}
+	runPlanSSE(t, ex, plan, "chat")
 }
 
 // TestExecute_CancelNodeStopsBeforeJudge: cancelling a running node makes the gate
