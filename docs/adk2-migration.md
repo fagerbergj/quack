@@ -124,13 +124,23 @@ ADK's `LongRunningFunctionTool` primitive), and `workflow.ResumeOrRequestInput` 
 for *mid-node* HITL — a research node pausing to ask the user — which is new
 capability we don't currently need (YAGNI). No change.
 
-## Phase 3c — per-node steer/cancel (blocked on ADK; whole-run cancel works)
+## Phase 3c — per-node steer/cancel (cooperative; shipped)
 
-Whole-run cancel works today (`CancelChatStream` cancels the run context). *Per-
-node* steer/cancel (M5b) — interrupt one running node, continue the rest, or re-run
-it with guidance — is stubbed (`orchestrator.CancelNode`/`SteerNode` return false).
+**Shipped as cooperative, streaming-safe control.** A `(chatID,nodeID)` registry
+(`dag.runControls`) is reachable from `orchestrator.CancelNode`/`SteerNode`; each
+gated node registers a `vetting.NodeControl` while it runs, and the gate checks it
+at stage boundaries (before each judge round): **cancel** stops refining and keeps
+the current answer (dependents continue-but-warn); **steer** re-runs the whole gate
+with the guidance appended, using fresh `RunNode` run IDs so `WithRunID` doesn't
+replay the pre-steer draft. Verified `-race`: `CancelNodeStopsBeforeJudge`,
+`SteerNodeReRunsWithGuidance`, and the advisor/judge SSE tests stay green.
 
-**Attempted and reverted — mid-call per-node cancel is ADK-blocked.** A working
+It's **cooperative** (gate-stage boundaries, bounded by one model call) rather than
+mid-model-call, because mid-call per-node cancel is ADK-blocked — the finding below
+is why, and why cooperative is the right trade (it never regresses live streaming).
+Whole-run cancel (`CancelChatStream`) still covers instant stop.
+
+**Why not mid-call (attempted and reverted):** A working
 per-node cancel needs each node's worker to run under its **own cancellable
 context** so cancelling one node doesn't kill the run. That was built (a
 `(chatID,nodeID)` control registry + orchestrator delegation) and tested against a
