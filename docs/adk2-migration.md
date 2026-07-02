@@ -91,3 +91,24 @@ Deterministic, offline, stdlib + sqlite session store (see `go-testing` skill):
    non-streaming + streaming aggregation, tool-calls, `reasoning_content`→Thought, usage.
 
 Behavioral drift from this spec becomes a failing test, not a production incident.
+
+## Phase 5 — M8 durability reconcile (decision: nothing to delete)
+
+Goal was to delete run-state persistence that ADK v2 checkpointing now owns.
+Investigated; the reconcile is already achieved and there is **no safe further
+dedup**:
+
+- The run-state / resume **logic** ADK checkpointing replaces was the *bespoke
+  executor* (TopoSort + manual re-execution) — **already deleted in Phase 3b-2**
+  (~657 lines). ADK now owns workflow resume via the Postgres **session store**
+  (completed first-class nodes are durably skipped on replay).
+- The remaining M8 persistence is **client-facing and non-redundant**, with
+  distinct lifecycles — deleting either loses a live feature, not redundancy:
+  - `DagPlan` / `DagNode` — durable **structured history** (single writer:
+    `persistNodeEvent`, folded from the SSE stream), read by `GET chat-detail`.
+  - `ChatEvent` — a **windowed replay buffer** for reconnect / `Last-Event-ID`
+    (trimmed to `MaxReplay`, cleared at each run start), NOT durable history.
+
+So `DagNode` can't be derived from `ChatEvent` (trimmed) and neither is the
+workflow-resume state (that's the session store). No code change — deleting any
+of these would regress history or reconnect.
