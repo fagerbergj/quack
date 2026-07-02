@@ -190,11 +190,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		var res GateResult
 		steered := ""
 		for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
-			if strings.TrimSpace(answer) == "" {
-				break // still nothing to judge after recovery
-			}
-			// Cooperative cancel/steer, checked before each judge round: cancel stops
-			// refining (keep the current answer); a steer re-runs the whole gate.
+			// Cooperative cancel/steer, checked before each judge round AND before the
+			// empty-answer guard below — so an empty node (a reasoning model that
+			// produced nothing) can still be cancelled or steered into a fresh attempt.
+			// Cancel stops refining (keep the current answer); a steer re-runs the gate.
 			if ctrl != nil {
 				if ctrl.Cancelled() {
 					return answer, res, nil
@@ -203,6 +202,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 					steered = g
 					break
 				}
+			}
+			if strings.TrimSpace(answer) == "" {
+				break // still nothing to judge after recovery
 			}
 			act := activityFromSession(ctx.Session())
 			runID := fmt.Sprintf("judge-r%d", round)
