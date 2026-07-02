@@ -40,14 +40,13 @@ func (e *Executor) SetMaxActive(n int) {
 // DagStream translates a single-runner's gate-node events into SSE for the
 // one-orchestrator-workflow path, where the orchestrator llmagent and the DAG
 // gate nodes share ONE runner/event-stream. Handle returns true for events it
-// owns (gate-node lifecycle + empty-node pauses) and false for the orchestrator's
+// owns (gate-node lifecycle) and false for the orchestrator's
 // own events, which the caller routes to its translator.
 type DagStream struct {
 	ctx       context.Context
 	ds        *dagStream
 	plan      Plan
 	agentByID map[string]string
-	paused    map[string]bool
 	yield     func(stream.SSEEvent, error) bool
 }
 
@@ -62,25 +61,19 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		agentByID[n.ID] = n.AgentName
 	}
 	return &DagStream{
-		ctx: ctx, plan: plan, agentByID: agentByID, paused: map[string]bool{}, yield: yield,
+		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
 		ds: newDagStream(agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}),
 	}
 }
 
-// Handle routes one runner event: gate-node lifecycle + empty-node pause events
-// are translated to SSE (returns true); anything else (the orchestrator's own
-// thinking/tool events) is left to the caller (returns false).
+// Handle routes one runner event: gate-node lifecycle events are translated to SSE
+// (returns true); anything else (the orchestrator's own thinking/tool events) is
+// left to the caller (returns false).
 func (s *DagStream) Handle(ev *session.Event) bool {
 	if ev == nil {
 		return false
-	}
-	if ev.RequestedInput != nil { // empty-node pause → steer/cancel
-		nid := nodeIDFromPayload(ev.RequestedInput.Payload)
-		s.paused[nid] = true
-		s.yield(stream.NodeNeedsInput(nid, ev.RequestedInput.InterruptID, ev.RequestedInput.Message), nil)
-		return true
 	}
 	if ev.NodeInfo == nil || planNodeInPath(ev.NodeInfo.Path, s.agentByID) == "" {
 		return false // not a gate-node event — the orchestrator's own
@@ -89,17 +82,17 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 	return true
 }
 
-// Finish flushes the last run and emits node_done for every non-paused plan node
+// Finish flushes the last run and emits node_done for every plan node
 // that hasn't already emitted one live. Call after the runner loop ends.
 func (s *DagStream) Finish() {
 	s.ds.flush()
 	ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
 	for _, n := range s.plan.Nodes {
-		if s.ds.doneEmitted[n.ID] || s.paused[n.ID] {
+		if s.ds.doneEmitted[n.ID] {
 			continue
 		}
 		// A node that produced NO answer surfaces as a loud node_failed (not a quiet
-		// node_done) so the gap is explicit even in autonomous continue-but-warn mode.
+		// node_done) so the gap is never silent.
 		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
 			s.yield(stream.NodeFailed(n.ID, "produced no answer"), nil)
 			continue
@@ -110,10 +103,10 @@ func (s *DagStream) Finish() {
 
 // RunPlanInNode runs a plan's gated nodes via runDAG in the CURRENT workflow
 // node's sub-scheduler (single runner) — the entry point for the one-orchestrator-
-// workflow path. Returns node ID → vetted output; a gate node's empty-pause
-// (ErrNodeInterrupted) propagates up so the whole run pauses for human steer/cancel.
-func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string, interactive bool) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, interactive)
+// workflow path. Returns node ID → vetted output; an empty node fails (marks itself)
+// and the DAG continues so the run always finishes.
+func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,16 +118,6 @@ func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string,
 // loop). cfgFor supplies the per-agent trust-gate config.
 func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
 	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
-}
-
-// nodeIDFromPayload pulls the node_id a paused node stamped on its RequestInput.
-func nodeIDFromPayload(p any) string {
-	if m, ok := p.(map[string]any); ok {
-		if s, ok := m["node_id"].(string); ok {
-			return s
-		}
-	}
-	return ""
 }
 
 // gateScore is a node's trust-gate result read back from workflow session state.

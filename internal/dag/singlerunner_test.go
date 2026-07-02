@@ -20,7 +20,7 @@ import (
 // emits plus the captured node outputs. It's the single-runner replacement for the
 // old ex.Execute iterator in tests. chatID keys the per-node control registry (for
 // CancelNode/SteerNode); the run session is "quack"/"s".
-func runPlanSSE(t *testing.T, ex *Executor, plan Plan, chatID string, interactive bool) ([]stream.SSEEvent, map[string]string) {
+func runPlanSSE(t *testing.T, ex *Executor, plan Plan, chatID string) ([]stream.SSEEvent, map[string]string) {
 	t.Helper()
 	dsOutputs := map[string]string{} // filled by DagStream for node_done
 	var planOutputs map[string]string
@@ -34,7 +34,7 @@ func runPlanSSE(t *testing.T, ex *Executor, plan Plan, chatID string, interactiv
 	}
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-			o, err := ex.RunPlanInNode(ctx, plan, chatID, interactive)
+			o, err := ex.RunPlanInNode(ctx, plan, chatID)
 			planOutputs = o // authoritative node outputs
 			return "done", err
 		}, workflow.NodeConfig{})

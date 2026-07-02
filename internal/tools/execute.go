@@ -27,7 +27,7 @@ type executeResult struct {
 // (full JSON) under. The orchestrator workflow's execute node reads it and runs the
 // DAG in the SAME runner after the llmagent's turn — so a tool (which has no
 // sub-scheduler) never runs the DAG. Storing the whole plan (not just its id) means
-// a resume after an empty-node pause finds it in the persisted session, where the
+// a retry of a failed node finds it in the persisted session, where the
 // per-run plan cache no longer exists.
 const ExecPlanKey = "orch.exec.plan"
 

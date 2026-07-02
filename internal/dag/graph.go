@@ -3,7 +3,6 @@ package dag
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/session"
@@ -27,7 +26,7 @@ const (
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
 // runDAG ignores them).
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, pauseOnEmpty bool) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -54,19 +53,19 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagen
 			}
 		}
 		node := n // capture per iteration
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID, pauseOnEmpty)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
 	}
 	return nodesByID, subAgents, nil
 }
 
 // newGatedNode builds the dynamic node for one plan node: it assembles the
 // worker prompt from upstream outputs, runs the trust-gate refine loop, and
-// (fail-into-steerable) pauses for human steer/cancel on an empty answer. The
+// FAILS (marks the node) on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
 // directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, pauseOnEmpty bool) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
-		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
+		func(ctx adkagent.Context, in any, _ func(*session.Event) error) (string, error) {
 			upstream := upstreamFromInput(in, node.DependsOn)
 			// Continue-but-warn: a dependency whose vetting failed flags itself in
 			// session state; buildTask prefixes a ⚠ warning so this node treats that
@@ -90,43 +89,13 @@ func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, j
 				ctrl = nc
 			}
 
-			// Fail-into-steerable: if the worker produced nothing, pause the run for a
-			// human steer (re-run with guidance) or cancel, rather than silently
-			// emitting an empty output that cascades into empty dependents. Stable
-			// across pause/resume AND nesting (a nested RunNode child gets a fresh
-			// InvocationID on resume, so key on plan+node — unique per run, unchanging
-			// within it).
-			interruptID := "empty-" + plan.ID + "-" + node.ID
-			resumed := false
-			if reply, ok := ctx.ResumedInput(interruptID); ok {
-				resumed = true
-				g, _ := reply.(string)
-				guidance := strings.TrimSpace(strings.TrimPrefix(g, "steer:"))
-				if g == "cancel" || guidance == "" {
-					markGateFailed(ctx, node.ID) // cancelled → empty, continue-but-warn
-					return "", nil
-				}
-				prompt += "\n\n--- Guidance (you produced no answer; address this and write it) ---\n" + guidance
-			}
-
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
-				// Continue-but-warn unless an interactive client can steer/cancel: a
-				// steered re-run that's still empty, OR any empty in autonomous mode
-				// (-p/cron, no one to answer node_needs_input), fails clean so the rest
-				// of the DAG still produces an answer instead of the run hanging.
-				if resumed || !pauseOnEmpty {
-					markGateFailed(ctx, node.ID)
-					return "", nil
-				}
-				if e := emit(workflow.NewRequestInputEvent(ctx, session.RequestInput{
-					InterruptID: interruptID,
-					Message:     "Node \"" + node.ID + "\" produced no answer. Steer it with guidance, or cancel.",
-					Payload:     map[string]any{"node_id": node.ID},
-				})); e != nil {
-					return "", e
-				}
-				return "", workflow.ErrNodeInterrupted // pause the run for human input
+				// Empty → the node FAILS. The DAG continues (dependents see the gap via
+				// buildTask's ⚠ note) and the empty output drives a loud node_failed. A
+				// human can retry the failed node afterward.
+				markGateFailed(ctx, node.ID)
+				return "", nil
 			}
 			if err == nil {
 				// Persist the gate outcome to session state: gate_failed drives

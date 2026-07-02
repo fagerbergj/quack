@@ -47,7 +47,7 @@ func TestRunDAG_Layers(t *testing.T) {
 	for _, n := range plan.Nodes {
 		ag, _ := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 		wn, _ := vetting.NewWorkerNode(ag)
-		gateNodes[n.ID] = newGatedNode(plan, n, wn, nil, vetting.NewJudgeFactory(stub, nil), cfg("w"), nil, nil, "", false)
+		gateNodes[n.ID] = newGatedNode(plan, n, wn, nil, vetting.NewJudgeFactory(stub, nil), cfg("w"), nil, nil, "")
 	}
 	var out map[string]string
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
@@ -80,7 +80,7 @@ func TestRunPlanInNode(t *testing.T) {
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			var err error
-			out, err = exec.RunPlanInNode(ctx, plan, "chat", false)
+			out, err = exec.RunPlanInNode(ctx, plan, "chat")
 			return "done", err
 		}, workflow.NodeConfig{})
 	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
@@ -121,7 +121,7 @@ func TestRunDAG_FanInDelivery(t *testing.T) {
 		{ID: "r2", AgentName: "researcher2", Task: "find beta"},
 		{ID: "synth", AgentName: "synthesizer", Task: "combine findings", DependsOn: []string{"r1", "r2"}},
 	}}
-	_, outputs := runPlanSSE(t, ex, plan, "chat", false)
+	_, outputs := runPlanSSE(t, ex, plan, "chat")
 	final := outputs["synth"]
 	if !strings.Contains(final, "ALPHA-FINDING") || !strings.Contains(final, "BETA-FINDING") {
 		t.Fatalf("synthesizer prompt missing a fan-in input; got %q", final)

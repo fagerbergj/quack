@@ -276,7 +276,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	var activePlanID string
 
-	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content, attachments, false) {
+	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content, attachments) {
 		trySendTitle()
 		if err != nil {
 			publish(stream.Errorf(err.Error()))
