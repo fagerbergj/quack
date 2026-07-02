@@ -90,6 +90,10 @@ func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeF
 
 	answer, err := runWorkerNode(ctx, workerNode, prompt, "worker-r0")
 	if err != nil {
+		// Log at our boundary before returning: ADK's scheduler can swallow a
+		// node error into a silent empty completion, so this ERROR line (with the
+		// model's error body) is what makes a failed worker visible in the logs.
+		log.Error("worker draft failed", "run", "worker-r0", "err", err)
 		return "", GateResult{}, err
 	}
 
@@ -101,12 +105,20 @@ func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeF
 	// finalize prompt is the graph-native port — swap in a tool-less writer node if
 	// empty answers prove sticky.
 	if strings.TrimSpace(answer) == "" {
+		// Empty (no error) is the OTHER silent failure mode besides a 400 — a
+		// reasoning model can spend its whole output budget on thinking and return
+		// empty content. Log it so an empty node isn't a mystery.
+		log.Warn("worker draft empty; attempting finalize recovery", "retries", maxEmptyRetries)
 		fin := contentPlainText(buildFinalizeContent(question, activityFromSession(ctx.Session())))
 		for attempt := 1; attempt <= maxEmptyRetries && strings.TrimSpace(answer) == ""; attempt++ {
 			answer, err = runWorkerNode(ctx, workerNode, fin, fmt.Sprintf("worker-finalize-%d", attempt))
 			if err != nil {
+				log.Error("worker finalize failed", "attempt", attempt, "err", err)
 				return "", GateResult{}, err
 			}
+		}
+		if strings.TrimSpace(answer) == "" {
+			log.Error("worker produced NO answer after finalize recovery — node output will be empty", "retries", maxEmptyRetries)
 		}
 	}
 
@@ -122,7 +134,9 @@ func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeF
 		act := activityFromSession(ctx.Session())
 		v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, func(*genai.Part) bool { return true })
 		if jerr != nil {
-			log.Warn("judge round error; surfacing answer unvetted", "round", round, "err", jerr)
+			// ERROR, not Warn: a judge failure means the answer is going out
+			// UNVETTED — that must be loud in the logs, not buried.
+			log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
 			return answer, res, nil
 		}
 		v = foldDeterministic(v, answer, act)
@@ -134,6 +148,7 @@ func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeF
 		revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
 		revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d", round))
 		if rerr != nil {
+			log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 			return answer, res, nil // revision failed; keep the prior answer
 		}
 		if strings.TrimSpace(revised) != "" {

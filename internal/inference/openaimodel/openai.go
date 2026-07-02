@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -48,6 +49,23 @@ func NewOpenAIModel(modelName, endpoint, apiKey string) *OpenAIModel {
 // Name implements model.LLM.
 func (o *OpenAIModel) Name() string {
 	return o.ModelName
+}
+
+// apiErr logs an OpenAI-compatible API failure with the model's HTTP status and
+// response body, then returns an enriched error. The log is the load-bearing part:
+// ADK's runner catches a sub-agent's yielded error and can hand the caller empty
+// output with no error (see the adk-swallows-subagent-errors finding), so without
+// a log at THIS boundary a model 400 (e.g. context/tool/format) vanishes silently.
+func (o *OpenAIModel) apiErr(ctx context.Context, op string, err error) error {
+	var ae *openai.Error
+	if errors.As(err, &ae) {
+		slog.ErrorContext(ctx, "openai API error", "component", "inference",
+			"model", o.ModelName, "op", op, "status", ae.StatusCode, "body", ae.Error())
+		return fmt.Errorf("openai %s (%s): status %d: %s", o.ModelName, op, ae.StatusCode, ae.Error())
+	}
+	slog.ErrorContext(ctx, "openai request failed", "component", "inference",
+		"model", o.ModelName, "op", op, "err", err)
+	return fmt.Errorf("openai %s (%s): %w", o.ModelName, op, err)
 }
 
 // Embed returns one embedding vector per input text, in input order, from the
@@ -101,7 +119,7 @@ func (o *OpenAIModel) generate(ctx context.Context, req *model.LLMRequest) iter.
 
 		resp, err := o.client.Chat.Completions.New(ctx, openaiReq)
 		if err != nil {
-			yield(nil, err)
+			yield(nil, o.apiErr(ctx, "generate", err))
 			return
 		}
 
@@ -229,7 +247,9 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		}
 
 		if err := stream.Err(); err != nil {
-			yield(nil, err)
+			// The streaming path is what the agents use, so this is where a model
+			// 400 (context/tool/format) actually surfaces — log status+body here.
+			yield(nil, o.apiErr(ctx, "generate_stream", err))
 			return
 		}
 
@@ -254,6 +274,28 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 
 		if modelVersion == "" {
 			modelVersion = string(openaiReq.Model)
+		}
+		// Reasoning-model failure mode: a turn with neither answer text nor a tool
+		// call (the model often spends its whole output budget thinking and hits the
+		// length limit). Otherwise invisible — it surfaces downstream only as a
+		// mysteriously empty node — so log finish_reason + whether it was thinking.
+		hasAnswer, hadThinking := false, false
+		for _, p := range aggregatedContent.Parts {
+			switch {
+			case p.FunctionCall != nil, !p.Thought && p.Text != "":
+				hasAnswer = true
+			case p.Thought && p.Text != "":
+				hadThinking = true
+			}
+		}
+		if !hasAnswer {
+			var compl int32
+			if usageMetadata != nil {
+				compl = usageMetadata.CandidatesTokenCount
+			}
+			slog.WarnContext(ctx, "model returned no answer content (empty turn)",
+				"component", "inference", "model", o.ModelName, "finish_reason", string(finishReason),
+				"had_thinking", hadThinking, "completion_tokens", compl)
 		}
 		yield(&model.LLMResponse{
 			Content:       aggregatedContent,
