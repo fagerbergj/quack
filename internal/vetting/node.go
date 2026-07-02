@@ -37,12 +37,10 @@ import (
 // ponytail: self-critique (old Stage 1) is dropped — the advisor consult replaces
 // it (a later increment). The loop is worker → deterministic → judge → revise.
 func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, cfg Config) (workflow.Node, error) {
-	workerNode, err := workflow.NewAgentNode(worker, workflow.NodeConfig{})
+	workerNode, err := NewWorkerNode(worker)
 	if err != nil {
-		return nil, fmt.Errorf("vetting: build worker node: %w", err)
+		return nil, err
 	}
-	log := slog.With("component", "vetting", "agent", name)
-
 	fn := func(ctx adkagent.Context, task string, _ func(*session.Event) error) (string, error) {
 		// First-class node: as the graph entry its input is the user content; as a
 		// mid-graph node its input is the predecessor's output. Fall back to the
@@ -50,46 +48,66 @@ func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, 
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: task}}}
+		return RunGatedRefine(ctx, workerNode, judge, cfg, task)
+	}
+	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
+}
 
-		answer, err := runWorkerNode(ctx, workerNode, task, 0)
-		if err != nil {
-			return "", err
-		}
+// NewWorkerNode wraps a worker agent as an AgentNode for use as the worker inside
+// a gated refine loop (see RunGatedRefine).
+func NewWorkerNode(worker adkagent.Agent) (workflow.Node, error) {
+	n, err := workflow.NewAgentNode(worker, workflow.NodeConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("vetting: build worker node: %w", err)
+	}
+	return n, nil
+}
 
-		// Judge/revise loop: judge the current answer, fold in the deterministic
-		// citation/length criteria, and on a fail revise via a fresh worker call
-		// whose prompt inlines the feedback + prior answer (buildRevisionContent is
-		// self-contained, so the stateless worker needs no session continuity).
-		for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
-			if strings.TrimSpace(answer) == "" {
-				break // nothing to judge; empty-answer recovery is a later increment
-			}
-			act := activityFromSession(ctx.Session())
-			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, func(*genai.Part) bool { return true })
-			if jerr != nil {
-				log.Warn("judge round error; surfacing answer unvetted", "round", round, "err", jerr)
-				return answer, nil
-			}
-			v = foldDeterministic(v, answer, act)
-			passed := v.Score >= cfg.Threshold
-			log.Info("judge round done", "round", round, "score", v.Score, "passed", passed)
-			if passed || round >= cfg.JudgeRounds {
-				break
-			}
-			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
-			revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, round)
-			if rerr != nil {
-				return answer, nil // revision failed; keep the prior answer
-			}
-			if strings.TrimSpace(revised) != "" {
-				answer = revised
-			}
-		}
-		return answer, nil
+// RunGatedRefine runs the trust-gate refine loop against an already-built worker
+// node: worker draft → deterministic citation/length checks → independent judge →
+// revise, until the score clears cfg.Threshold or cfg.JudgeRounds is exhausted.
+// It is the reusable core shared by NewGatedWorkerNode and the DAG graph builder
+// (dag.BuildWorkflow); callable from inside any dynamic-node body since it drives
+// the worker via RunNode. prompt is the fully-assembled worker instruction.
+func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, error) {
+	log := slog.With("component", "vetting")
+	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
+
+	answer, err := runWorkerNode(ctx, workerNode, prompt, 0)
+	if err != nil {
+		return "", err
 	}
 
-	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
+	// Judge/revise loop: judge the current answer, fold in the deterministic
+	// citation/length criteria, and on a fail revise via a fresh worker call whose
+	// prompt inlines the feedback + prior answer (buildRevisionContent is
+	// self-contained, so the stateless worker needs no session continuity).
+	for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
+		if strings.TrimSpace(answer) == "" {
+			break // nothing to judge; empty-answer recovery is a later increment
+		}
+		act := activityFromSession(ctx.Session())
+		v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, func(*genai.Part) bool { return true })
+		if jerr != nil {
+			log.Warn("judge round error; surfacing answer unvetted", "round", round, "err", jerr)
+			return answer, nil
+		}
+		v = foldDeterministic(v, answer, act)
+		passed := v.Score >= cfg.Threshold
+		log.Info("judge round done", "round", round, "score", v.Score, "passed", passed)
+		if passed || round >= cfg.JudgeRounds {
+			break
+		}
+		revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
+		revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, round)
+		if rerr != nil {
+			return answer, nil // revision failed; keep the prior answer
+		}
+		if strings.TrimSpace(revised) != "" {
+			answer = revised
+		}
+	}
+	return answer, nil
 }
 
 // runWorkerNode runs the worker as a sub-branched child with a stable per-round
