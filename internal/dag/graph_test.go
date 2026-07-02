@@ -76,7 +76,7 @@ func TestBuildWorkflow_FanInAssembly(t *testing.T) {
 	}
 	cfg := vetting.Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10"}
 
-	root, err := BuildWorkflow(plan, agents, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return cfg }, nil, nil, "")
+	root, err := BuildWorkflow(plan, agents, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return cfg }, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("BuildWorkflow: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestBuildWorkflow_MultipleTerminalsNoError(t *testing.T) {
 	}}
 	cfg := vetting.Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10"}
 
-	root, err := BuildWorkflow(plan, agents, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return cfg }, nil, nil, "")
+	root, err := BuildWorkflow(plan, agents, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return cfg }, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("BuildWorkflow: %v", err)
 	}

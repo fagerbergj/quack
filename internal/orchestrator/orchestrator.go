@@ -6,16 +6,20 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
+	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/agent/workflowagent"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -101,7 +105,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(o.executor, planCache, userID, sessionID)
+		execTool, err := tools.NewExecuteTool(planCache)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return
@@ -147,9 +151,49 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			return
 		}
 
+		// One-orchestrator-workflow: the routing/planning/clarification llmagent and
+		// the DAG run in ONE runner. The llmagent is the first node; a following
+		// execute node runs the plan it selected (execute tool → ExecPlanIDKey) via
+		// runDAG in this same runner — so an empty node pauses the whole run for human
+		// steer/cancel natively, with no separate DAG runner to bridge.
+		agentNode, err := workflow.NewAgentNode(ag, workflow.NodeConfig{})
+		if err != nil {
+			yield(stream.Errorf("orchestrator: agent node: "+err.Error()), nil)
+			return
+		}
+		nodeOutputs := make(map[string]string)
+		execNode := workflow.NewDynamicNode[any, string]("__execute",
+			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+				v, _ := nctx.State().Get(tools.ExecPlanIDKey)
+				planID, _ := v.(string)
+				if planID == "" {
+					return "", nil // the llmagent answered directly — no DAG to run
+				}
+				plan, ok := planCache.Get(planID)
+				if !ok {
+					return "", fmt.Errorf("execute node: unknown plan %q", planID)
+				}
+				outputs, rerr := o.executor.RunPlanInNode(nctx, plan, sessionID)
+				if rerr != nil {
+					return "", rerr // ErrNodeInterrupted → pause the run for steer/cancel
+				}
+				answer := tools.TerminalOutput(plan, outputs)
+				planCache.SetResult(planID, answer)
+				planCache.SetDelivered(answer)
+				return answer, nil
+			}, workflow.NodeConfig{})
+		wf, err := workflowagent.New(workflowagent.Config{
+			Name:  "orchestrator-workflow",
+			Edges: workflow.Chain(workflow.Start, agentNode, execNode),
+		})
+		if err != nil {
+			yield(stream.Errorf("orchestrator: workflow: "+err.Error()), nil)
+			return
+		}
+
 		r, err := runner.New(runner.Config{
 			AppName:           AppName,
-			Agent:             ag,
+			Agent:             wf,
 			SessionService:    o.sessions,
 			MemoryService:     memSvc,
 			AutoCreateSession: true,
@@ -159,9 +203,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			return
 		}
 
-		// Inject yield into context so the plan and execute tools can forward
-		// SSE events (dag_plan, node_queued/start/done, agent activity) up
-		// through this stream without going through the ADK session pipeline.
+		// Inject yield into context so the plan tool can forward its dag_plan SSE
+		// event up through this stream without going through the ADK session pipeline.
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
 
 		// Tell the orchestrator (in text) that media is attached so it routes to
@@ -205,16 +248,37 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker,
 		}}, nil)
 
+		// Gate-node lifecycle SSE can be emitted from concurrent workflow goroutines;
+		// serialize all yields through one mutex.
+		var mu sync.Mutex
+		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
+		var ds *dag.DagStream
 		for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
 			if err != nil {
-				yield(stream.Errorf(err.Error()), nil)
+				safeYield(stream.Errorf(err.Error()), nil)
 				return
 			}
+			if ev == nil {
+				continue
+			}
+			// Once the plan tool has cached a plan, route its gate-node events to the
+			// DAG stream; everything else is the orchestrator's own thinking/tool activity.
+			if ds == nil {
+				if p, ok := planCache.Latest(); ok {
+					ds = o.executor.NewDagStream(ctx, p, userID, safeYield, nodeOutputs)
+				}
+			}
+			if ds != nil && ds.Handle(ev) {
+				continue
+			}
 			for _, se := range translator.Event(ev) {
-				if !yield(stream.ScopeToRun(se, orchRunID), nil) {
+				if !safeYield(stream.ScopeToRun(se, orchRunID), nil) {
 					return
 				}
 			}
+		}
+		if ds != nil {
+			ds.Finish()
 		}
 		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
 			RunID: orchRunID, Stage: stream.StageWorker,

@@ -20,6 +20,7 @@ type PlanCache struct {
 	plans     map[string]dag.Plan
 	results   map[string]string // plan ID → terminal answer, memoised after first execute
 	delivered string            // terminal answer when execute ran in deliver (end_turn) mode
+	lastID    string            // most-recently-Put plan (for the single-runner router)
 }
 
 // NewPlanCache returns an empty cache.
@@ -69,6 +70,16 @@ func (c *PlanCache) Put(p dag.Plan) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.plans[p.ID] = p
+	c.lastID = p.ID
+}
+
+// Latest returns the most-recently-Put plan (the single-runner router builds its
+// gate-node stream from it once the plan tool has run).
+func (c *PlanCache) Latest() (dag.Plan, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p, ok := c.plans[c.lastID]
+	return p, ok
 }
 
 // Get returns the plan for id and whether it was found.

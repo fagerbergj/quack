@@ -62,13 +62,13 @@ const (
 	EventDone      = "done"
 
 	// DAG / static structure.
-	EventDagPlan     = "dag_plan"
+	EventDagPlan        = "dag_plan"
 	EventNodeQueued     = "node_queued"
 	EventNodeStart      = "node_start"
 	EventNodeDone       = "node_done"
 	EventNodeNeedsInput = "node_needs_input"
-	EventNodeFailed  = "node_failed"
-	EventNodeSteered = "node_steered"
+	EventNodeFailed     = "node_failed"
+	EventNodeSteered    = "node_steered"
 )
 
 // SSEEvent is one server-sent event: a name plus a JSON-serializable payload.

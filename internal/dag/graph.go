@@ -23,8 +23,8 @@ import (
 // along the graph edges (buildTask, reused from the legacy executor) and runs the
 // trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
 // Executor.Execute (TopoSort + semaphore + per-node runner).
-func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (adkagent.Agent, error) {
-	nodesByID, subAgents, err := buildGateNodes(plan, agents, advisor, judge, cfgFor, mediaAgents, controls, chatID)
+func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, pauseOnEmpty bool) (adkagent.Agent, error) {
+	nodesByID, subAgents, err := buildGateNodes(plan, agents, advisor, judge, cfgFor, mediaAgents, controls, chatID, pauseOnEmpty)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ const (
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
 // runDAG ignores them).
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, pauseOnEmpty bool) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -122,7 +122,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagen
 			}
 		}
 		node := n // capture per iteration
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID, pauseOnEmpty)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -132,7 +132,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagen
 // (fail-into-steerable) pauses for human steer/cancel on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
 // directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, pauseOnEmpty bool) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			upstream := upstreamFromInput(in, node.DependsOn)
@@ -179,8 +179,12 @@ func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, j
 
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
-				if resumed {
-					markGateFailed(ctx, node.ID) // steered re-run still empty → fail clean, don't re-pause
+				// Continue-but-warn unless an interactive client can steer/cancel: a
+				// steered re-run that's still empty, OR any empty in autonomous mode
+				// (-p/cron, no one to answer node_needs_input), fails clean so the rest
+				// of the DAG still produces an answer instead of the run hanging.
+				if resumed || !pauseOnEmpty {
+					markGateFailed(ctx, node.ID)
 					return "", nil
 				}
 				if e := emit(workflow.NewRequestInputEvent(ctx, session.RequestInput{

@@ -28,67 +28,38 @@ type executeResult struct {
 	Answer string `json:"answer,omitempty"` // set only when Status == "complete"
 }
 
-// NewExecuteTool returns a tool that runs a DAG plan produced by the plan tool.
-// The plan is looked up by ID from cache (the same cache the plan tool wrote to)
-// rather than parsed from a model-relayed JSON blob — the model only passes the
-// short plan_id, so no nodes can be lost in transit. Node events (node_queued,
-// node_start, agent activity, node_done/failed) are forwarded up through the
-// orchestrator's SSE stream via the yield context so the frontend can render
-// live DAG progress. Returns the final answer.
-func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID, chatID string) (tool.Tool, error) {
+// ExecPlanIDKey is the session-state key the execute tool stashes the selected
+// plan_id under. The orchestrator workflow's execute node reads it and runs the
+// DAG in the SAME runner after the llmagent's turn — so a tool (which has no
+// sub-scheduler) never runs the DAG, and an empty node can pause the run for
+// human steer/cancel natively.
+const ExecPlanIDKey = "orch.exec.plan_id"
+
+// NewExecuteTool returns the execute tool. In the single-runner model it does not
+// run the DAG (a tool context has no sub-scheduler); it validates the plan_id and
+// selects it for the workflow's execute node, then ends the llmagent's turn so it
+// can't chatter over the streamed answer.
+func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{
 			Name: "execute",
 			Description: "Tool to execute a DAG plan produced by the plan tool. Pass the plan_id returned by plan. " +
-				"Set end_turn=true whenever the plan can fully answer the user's question on its own (the usual case): " +
-				"the answer is shown to the user directly, this tool returns status=\"delivered\" with no answer text, " +
-				"and you must then output nothing further — no acknowledgement, no restatement, and never say a specialist will respond (the work is already done). " +
-				"Set end_turn=false (or omit it) only when you still have work to do after the plan runs — combining its result with other information or reshaping it yourself: " +
-				"this tool then returns status=\"complete\" with the result in `answer` for you to fold into your reply.",
+				"The plan's answer is shown to the user directly; after calling execute you must output nothing " +
+				"further — no acknowledgement, no restatement, and never say a specialist will respond (the work is already done).",
 		},
 		func(tc agent.Context, a executeArgs) (executeResult, error) {
-			plan, ok := cache.Get(a.PlanID)
-			if !ok {
+			if _, ok := cache.Get(a.PlanID); !ok {
 				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q — call plan first and pass the plan_id it returns", a.PlanID)
 			}
-			// Memoised: a repeat execute of the same plan reuses the first run's
-			// answer instead of re-running the DAG (minutes + tokens). Only the
-			// (cheap) end_turn handling below re-runs.
-			answer, cached := cache.Result(a.PlanID)
-			if cached {
-				slog.Info("plan reusing cached answer", "component", "execute", "plan", a.PlanID, "end_turn", a.EndTurn)
-			} else {
-				yieldFn, hasYield := stream.YieldFromContext(tc)
-				nodeOutputs := make(map[string]string)
-				for ev, err := range executor.Execute(tc, plan, userID, chatID, nodeOutputs) {
-					if hasYield {
-						yieldFn(ev)
-					}
-					if err != nil {
-						return executeResult{}, fmt.Errorf("execute: %w", err)
-					}
-				}
-				answer = TerminalOutput(plan, nodeOutputs)
-				if answer == "" {
-					return executeResult{}, fmt.Errorf("execute: all nodes completed but produced no output")
-				}
-				cache.SetResult(a.PlanID, answer)
-				slog.Info("plan executed", "component", "execute", "plan", a.PlanID, "end_turn", a.EndTurn, "answer_len", len(answer))
-			}
-			if a.EndTurn {
-				// Deliver: the answer already streamed to the user. End the
-				// orchestrator's turn STRUCTURALLY — SkipSummarization makes this tool
-				// response the final response, so the runner never calls the model
-				// again and it cannot emit a chatty acknowledgement (relying on the
-				// prompt to stay silent proved unreliable). Withhold the answer text so
-				// it can't echo, and stash it so the orchestrator persists it as the
-				// turn's (only) assistant message.
-				tc.Actions().SkipSummarization = true
-				cache.SetDelivered(answer)
-				return executeResult{Status: "delivered"}, nil
-			}
-			// Caller still has work to do: hand the answer back to fold into its reply.
-			return executeResult{Status: "complete", Answer: answer}, nil
+			tc.State().Set(ExecPlanIDKey, a.PlanID)
+			// End the llmagent turn structurally so it can't emit a chatty
+			// acknowledgement over the execute node's streamed answer.
+			// ponytail: fold-into-reply (end_turn=false) dropped in v1 — the execute node
+			// always delivers; add a post-execute loop-back node when a plan needs LLM
+			// post-processing.
+			tc.Actions().SkipSummarization = true
+			slog.Info("plan selected for execution", "component", "execute", "plan", a.PlanID)
+			return executeResult{Status: "delivered"}, nil
 		},
 	)
 }

@@ -25,15 +25,21 @@ const nodeAppName = "quack-nodes"
 // executor — ADK's scheduler owns concurrency, ordering, and (on a durable
 // session store) restart-durable completed-node skipping.
 type Executor struct {
-	sessions    session.Service
-	agents      map[string]adkagent.Agent             // agent name → built (plain) agent
-	advisor     adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
-	judge       vetting.JudgeFactory                  // independent judge factory
-	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
-	mediaAgents map[string]bool                       // agents accepting image/audio parts
-	controls    *runControls                          // live per-node cancel/steer handles (M5b)
-	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
+	sessions     session.Service
+	agents       map[string]adkagent.Agent             // agent name → built (plain) agent
+	advisor      adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
+	judge        vetting.JudgeFactory                  // independent judge factory
+	cfgFor       func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
+	mediaAgents  map[string]bool                       // agents accepting image/audio parts
+	controls     *runControls                          // live per-node cancel/steer handles (M5b)
+	maxActive    int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
+	pauseOnEmpty bool                                  // interactive: empty node pauses for steer/cancel; else continue-but-warn
 }
+
+// SetPauseOnEmpty enables fail-into-steerable: an empty node pauses the run for a
+// human to steer/cancel (interactive clients). Off by default so autonomous runs
+// (-p/cron) continue-but-warn instead of hanging on node_needs_input.
+func (e *Executor) SetPauseOnEmpty(v bool) { e.pauseOnEmpty = v }
 
 // SetMaxActive sets the concurrent-node cap used by RunPlanInNode (config
 // dag.max_active_nodes). No-op for values < 1.
@@ -43,12 +49,74 @@ func (e *Executor) SetMaxActive(n int) {
 	}
 }
 
+// DagStream translates a single-runner's gate-node events into SSE for the
+// one-orchestrator-workflow path, where the orchestrator llmagent and the DAG
+// gate nodes share ONE runner/event-stream. Handle returns true for events it
+// owns (gate-node lifecycle + empty-node pauses) and false for the orchestrator's
+// own events, which the caller routes to its translator.
+type DagStream struct {
+	ctx       context.Context
+	ds        *dagStream
+	plan      Plan
+	agentByID map[string]string
+	paused    map[string]bool
+	yield     func(stream.SSEEvent, error) bool
+}
+
+// NewDagStream builds a router for one plan's gate-node events. nodeOutputs is
+// filled (node ID → vetted answer) for the caller's TerminalOutput.
+func (e *Executor) NewDagStream(ctx context.Context, plan Plan, userID string, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string) *DagStream {
+	agentByID := make(map[string]string, len(plan.Nodes))
+	for _, n := range plan.Nodes {
+		agentByID[n.ID] = n.AgentName
+	}
+	return &DagStream{
+		ctx: ctx, plan: plan, agentByID: agentByID, paused: map[string]bool{}, yield: yield,
+		ds: newDagStream(agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
+			return e.gateScore(ctx, userID, plan.ID, nodeID)
+		}),
+	}
+}
+
+// Handle routes one runner event: gate-node lifecycle + empty-node pause events
+// are translated to SSE (returns true); anything else (the orchestrator's own
+// thinking/tool events) is left to the caller (returns false).
+func (s *DagStream) Handle(ev *session.Event) bool {
+	if ev == nil {
+		return false
+	}
+	if ev.RequestedInput != nil { // empty-node pause → steer/cancel
+		nid := nodeIDFromPayload(ev.RequestedInput.Payload)
+		s.paused[nid] = true
+		s.yield(stream.NodeNeedsInput(nid, ev.RequestedInput.InterruptID, ev.RequestedInput.Message), nil)
+		return true
+	}
+	if ev.NodeInfo == nil || planNodeInPath(ev.NodeInfo.Path, s.agentByID) == "" {
+		return false // not a gate-node event — the orchestrator's own
+	}
+	s.ds.handle(ev)
+	return true
+}
+
+// Finish flushes the last run and emits node_done for every non-paused plan node
+// that hasn't already emitted one live. Call after the runner loop ends.
+func (s *DagStream) Finish() {
+	s.ds.flush()
+	ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
+	for _, n := range s.plan.Nodes {
+		if s.ds.doneEmitted[n.ID] || s.paused[n.ID] {
+			continue
+		}
+		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
+	}
+}
+
 // RunPlanInNode runs a plan's gated nodes via runDAG in the CURRENT workflow
 // node's sub-scheduler (single runner) — the entry point for the one-orchestrator-
 // workflow path. Returns node ID → vetted output; a gate node's empty-pause
 // (ErrNodeInterrupted) propagates up so the whole run pauses for human steer/cancel.
 func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, e.pauseOnEmpty)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +146,7 @@ func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, adv
 // nodeOutputs (node ID → vetted answer) is filled for the caller's TerminalOutput.
 func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, e.pauseOnEmpty)
 		if err != nil {
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return

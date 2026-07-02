@@ -65,7 +65,7 @@ func newHITLRunner(t *testing.T) *runner.Runner {
 		t.Fatal(err)
 	}
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
-	root, err := BuildWorkflow(plan, map[string]adkagent.Agent{"w": ag}, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil, nil, "")
+	root, err := BuildWorkflow(plan, map[string]adkagent.Agent{"w": ag}, nil, vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil, nil, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +130,7 @@ func TestExecute_EmptyNode_SurfacesNeedsInput(t *testing.T) {
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil,
 		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	ex.SetPauseOnEmpty(true)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
 
 	var needsInput, spuriousDone bool

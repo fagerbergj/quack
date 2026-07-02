@@ -37,7 +37,7 @@ func TestPrototype_SingleRunnerNativeHITL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateNode := newGatedNode(plan, plan.Nodes[0], workerNode, nil, vetting.NewJudgeFactory(stub, nil), vetting.Config{Threshold: 0.6, JudgeRounds: 1}, nil, nil, "")
+	gateNode := newGatedNode(plan, plan.Nodes[0], workerNode, nil, vetting.NewJudgeFactory(stub, nil), vetting.Config{Threshold: 0.6, JudgeRounds: 1}, nil, nil, "", true)
 	orchestrate := workflow.NewDynamicNode[any, string]("orchestrate",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			// (a real orchestrator would make the planning LLM call here first)
