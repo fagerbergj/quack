@@ -6,6 +6,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"iter"
 	"strings"
@@ -88,7 +89,7 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // presence is described to the orchestrator in text and the raw parts are
 // threaded through the plan tool to the planner, which routes them to a
 // media-capable node (the orchestrator model itself stays text/vision-only).
-func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part, interactive bool) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
@@ -164,21 +165,21 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		nodeOutputs := make(map[string]string)
 		execNode := workflow.NewDynamicNode[any, string]("__execute",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-				v, _ := nctx.State().Get(tools.ExecPlanIDKey)
-				planID, _ := v.(string)
-				if planID == "" {
+				v, _ := nctx.State().Get(tools.ExecPlanKey)
+				planJSON, _ := v.(string)
+				if planJSON == "" {
 					return "", nil // the llmagent answered directly — no DAG to run
 				}
-				plan, ok := planCache.Get(planID)
-				if !ok {
-					return "", fmt.Errorf("execute node: unknown plan %q", planID)
+				var plan dag.Plan
+				if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+					return "", fmt.Errorf("execute node: unmarshal plan: %w", err)
 				}
-				outputs, rerr := o.executor.RunPlanInNode(nctx, plan, sessionID)
+				outputs, rerr := o.executor.RunPlanInNode(nctx, plan, sessionID, interactive)
 				if rerr != nil {
 					return "", rerr // ErrNodeInterrupted → pause the run for steer/cancel
 				}
 				answer := tools.TerminalOutput(plan, outputs)
-				planCache.SetResult(planID, answer)
+				planCache.SetResult(plan.ID, answer)
 				planCache.SetDelivered(answer)
 				return answer, nil
 			}, workflow.NodeConfig{})

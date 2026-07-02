@@ -36,7 +36,7 @@ func Handler(orch *orchestrator.Orchestrator) http.Handler {
 			sessionID = uuid.NewString()
 		}
 		var answer string
-		for ev, err := range orch.Run(ctx, userID, sessionID, args.Query, nil) {
+		for ev, err := range orch.Run(ctx, userID, sessionID, args.Query, nil, false) {
 			if err != nil {
 				return &mcp.CallToolResult{
 					IsError: true,

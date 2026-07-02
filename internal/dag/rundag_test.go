@@ -80,7 +80,7 @@ func TestRunPlanInNode(t *testing.T) {
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			var err error
-			out, err = exec.RunPlanInNode(ctx, plan, "chat")
+			out, err = exec.RunPlanInNode(ctx, plan, "chat", false)
 			return "done", err
 		}, workflow.NodeConfig{})
 	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
@@ -121,7 +121,7 @@ func TestRunDAG_FanInDelivery(t *testing.T) {
 		{ID: "r2", AgentName: "researcher2", Task: "find beta"},
 		{ID: "synth", AgentName: "synthesizer", Task: "combine findings", DependsOn: []string{"r1", "r2"}},
 	}}
-	_, outputs := runPlanSSE(t, ex, plan, "chat")
+	_, outputs := runPlanSSE(t, ex, plan, "chat", false)
 	final := outputs["synth"]
 	if !strings.Contains(final, "ALPHA-FINDING") || !strings.Contains(final, "BETA-FINDING") {
 		t.Fatalf("synthesizer prompt missing a fan-in input; got %q", final)

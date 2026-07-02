@@ -42,7 +42,7 @@ func TestExecute_JudgeStreamsAsStageJudge(t *testing.T) {
 
 	judgeStart := map[string]bool{}
 	judgeDoneScored := map[string]bool{}
-	events, _ := runPlanSSE(t, ex, plan, "chat")
+	events, _ := runPlanSSE(t, ex, plan, "chat", false)
 	for _, ev := range events {
 		switch d := ev.Data.(type) {
 		case stream.AgentStartData:
@@ -93,7 +93,7 @@ func TestExecute_AdvisorStreamsAsStageAdvisor(t *testing.T) {
 	}}
 
 	advisorStart := map[string]bool{}
-	events, _ := runPlanSSE(t, ex, plan, "chat")
+	events, _ := runPlanSSE(t, ex, plan, "chat", false)
 	for _, ev := range events {
 		if d, ok := ev.Data.(stream.AgentStartData); ok && d.Stage == stream.StageAdvisor {
 			advisorStart[d.NodeID] = true

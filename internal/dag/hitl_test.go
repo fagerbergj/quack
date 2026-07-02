@@ -141,12 +141,12 @@ func TestExecute_EmptyNode_SurfacesNeedsInput(t *testing.T) {
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil,
 		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
-	ex.SetPauseOnEmpty(true)
+
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
 
 	var needsInput, spuriousDone bool
 	var interruptID string
-	events, _ := runPlanSSE(t, ex, plan, "chat")
+	events, _ := runPlanSSE(t, ex, plan, "chat", true)
 	for _, ev := range events {
 		switch d := ev.Data.(type) {
 		case stream.NodeNeedsInputData:
@@ -169,5 +169,45 @@ func TestExecute_EmptyNode_SurfacesNeedsInput(t *testing.T) {
 	}
 	if spuriousDone {
 		t.Error("emitted a spurious node_done for the paused node")
+	}
+}
+
+// TestExecute_EmptyNode_AutonomousFailsLoud: with interactive=false an empty node
+// does NOT pause — it continue-but-warns AND surfaces as a loud node_failed (not a
+// quiet node_done), so the gap is explicit.
+func TestExecute_EmptyNode_AutonomousFailsLoud(t *testing.T) {
+	stub := steerAwareStub{}
+	ag, err := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
+
+	var failed, needsInput, done bool
+	events, _ := runPlanSSE(t, ex, plan, "chat", false) // autonomous
+	for _, ev := range events {
+		switch d := ev.Data.(type) {
+		case stream.NodeFailedData:
+			if d.NodeID == "n1" {
+				failed = true
+			}
+		case stream.NodeNeedsInputData:
+			needsInput = true
+		case stream.NodeDoneData:
+			if d.NodeID == "n1" {
+				done = true
+			}
+		}
+	}
+	if needsInput {
+		t.Error("autonomous mode should NOT pause (node_needs_input)")
+	}
+	if !failed {
+		t.Error("empty node should surface as node_failed")
+	}
+	if done {
+		t.Error("empty node should NOT emit a quiet node_done")
 	}
 }

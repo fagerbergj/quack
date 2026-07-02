@@ -19,21 +19,15 @@ import (
 // executor — ADK's scheduler owns concurrency, ordering, and (on a durable
 // session store) restart-durable completed-node skipping.
 type Executor struct {
-	sessions     session.Service
-	agents       map[string]adkagent.Agent             // agent name → built (plain) agent
-	advisor      adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
-	judge        vetting.JudgeFactory                  // independent judge factory
-	cfgFor       func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
-	mediaAgents  map[string]bool                       // agents accepting image/audio parts
-	controls     *runControls                          // live per-node cancel/steer handles (M5b)
-	maxActive    int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
-	pauseOnEmpty bool                                  // interactive: empty node pauses for steer/cancel; else continue-but-warn
+	sessions    session.Service
+	agents      map[string]adkagent.Agent             // agent name → built (plain) agent
+	advisor     adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
+	judge       vetting.JudgeFactory                  // independent judge factory
+	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
+	mediaAgents map[string]bool                       // agents accepting image/audio parts
+	controls    *runControls                          // live per-node cancel/steer handles (M5b)
+	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
 }
-
-// SetPauseOnEmpty enables fail-into-steerable: an empty node pauses the run for a
-// human to steer/cancel (interactive clients). Off by default so autonomous runs
-// (-p/cron) continue-but-warn instead of hanging on node_needs_input.
-func (e *Executor) SetPauseOnEmpty(v bool) { e.pauseOnEmpty = v }
 
 // SetMaxActive sets the concurrent-node cap used by RunPlanInNode (config
 // dag.max_active_nodes). No-op for values < 1.
@@ -104,6 +98,12 @@ func (s *DagStream) Finish() {
 		if s.ds.doneEmitted[n.ID] || s.paused[n.ID] {
 			continue
 		}
+		// A node that produced NO answer surfaces as a loud node_failed (not a quiet
+		// node_done) so the gap is explicit even in autonomous continue-but-warn mode.
+		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
+			s.yield(stream.NodeFailed(n.ID, "produced no answer"), nil)
+			continue
+		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
 	}
 }
@@ -112,8 +112,8 @@ func (s *DagStream) Finish() {
 // node's sub-scheduler (single runner) — the entry point for the one-orchestrator-
 // workflow path. Returns node ID → vetted output; a gate node's empty-pause
 // (ErrNodeInterrupted) propagates up so the whole run pauses for human steer/cancel.
-func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, e.pauseOnEmpty)
+func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string, interactive bool) (map[string]string, error) {
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, interactive)
 	if err != nil {
 		return nil, err
 	}
@@ -235,16 +235,18 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	// The gated node's OWN event (last segment == the plan node): its output marks
 	// node completion. node_done fires live here with the judge score from state.
 	if segName(last) == node {
-		if ev.Output != nil {
-			if out := outputString(ev.Output); out != "" {
-				s.outputs[node] = out
-				s.last = out
-			}
-		}
 		if ev.Output != nil && !s.doneEmitted[node] {
 			s.closeRun(node) // end any open worker run first
 			s.doneEmitted[node] = true
-			if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
+			if out := outputString(ev.Output); out != "" {
+				s.outputs[node] = out
+				s.last = out
+				if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
+					return false
+				}
+			} else if !s.emit(stream.NodeFailed(node, "produced no answer")) {
+				// No answer (continue-but-warn / cancelled) → loud node_failed, not a
+				// quiet node_done, so the gap is never silent.
 				return false
 			}
 		}
@@ -495,6 +497,11 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 			}
 			sb.WriteString(out)
 			sb.WriteString("\n\n---\n\n")
+		} else {
+			// Empty dep: the upstream node produced NO answer. Tell the synthesizer
+			// explicitly so it calls out the gap instead of silently dropping the topic
+			// (or inventing content to fill it).
+			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer — it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
 		}
 	}
 	if sb.Len() == 0 {

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -22,12 +23,13 @@ type executeResult struct {
 	Status string `json:"status"` // "delivered"
 }
 
-// ExecPlanIDKey is the session-state key the execute tool stashes the selected
-// plan_id under. The orchestrator workflow's execute node reads it and runs the
+// ExecPlanKey is the session-state key the execute tool stashes the selected plan
+// (full JSON) under. The orchestrator workflow's execute node reads it and runs the
 // DAG in the SAME runner after the llmagent's turn — so a tool (which has no
-// sub-scheduler) never runs the DAG, and an empty node can pause the run for
-// human steer/cancel natively.
-const ExecPlanIDKey = "orch.exec.plan_id"
+// sub-scheduler) never runs the DAG. Storing the whole plan (not just its id) means
+// a resume after an empty-node pause finds it in the persisted session, where the
+// per-run plan cache no longer exists.
+const ExecPlanKey = "orch.exec.plan"
 
 // NewExecuteTool returns the execute tool. In the single-runner model it does not
 // run the DAG (a tool context has no sub-scheduler); it validates the plan_id and
@@ -42,10 +44,15 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 				"further — no acknowledgement, no restatement, and never say a specialist will respond (the work is already done).",
 		},
 		func(tc agent.Context, a executeArgs) (executeResult, error) {
-			if _, ok := cache.Get(a.PlanID); !ok {
+			plan, ok := cache.Get(a.PlanID)
+			if !ok {
 				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q — call plan first and pass the plan_id it returns", a.PlanID)
 			}
-			tc.State().Set(ExecPlanIDKey, a.PlanID)
+			planJSON, err := json.Marshal(plan)
+			if err != nil {
+				return executeResult{}, fmt.Errorf("execute: marshal plan: %w", err)
+			}
+			tc.State().Set(ExecPlanKey, string(planJSON))
 			// End the llmagent turn structurally so it can't emit a chatty
 			// acknowledgement over the execute node's streamed answer.
 			// ponytail: the plan's synthesizer node IS the loop-back — it folds the

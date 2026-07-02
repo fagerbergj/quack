@@ -144,9 +144,10 @@ func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, j
 		workflow.NodeConfig{})
 }
 
-// markGateFailed flags a node as failed in session state so its dependents get
-// the continue-but-warn treatment — used when a node is cancelled or its steered
-// re-run still produced nothing.
+// markGateFailed flags a node that produced NO answer (cancelled, steered-still-
+// empty, or autonomous continue-but-warn) so its dependents get the continue-but-
+// warn treatment (buildTask prefixes a ⚠). The empty output itself drives the loud
+// node_failed the DagStream emits for it.
 func markGateFailed(ctx adkagent.Context, nodeID string) {
 	if st := ctx.State(); st != nil {
 		_ = st.Set(gateFailedKey+nodeID, true)
