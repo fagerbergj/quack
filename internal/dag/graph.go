@@ -81,7 +81,10 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 				// Fail-into-steerable: if the worker produced nothing, pause the run for
 				// a human steer (re-run with guidance) or cancel, rather than silently
 				// emitting an empty output that cascades into empty dependents.
-				interruptID := "empty-" + node.ID + "-" + ctx.InvocationID()
+				// Stable across pause/resume AND across nesting (a nested RunNode child
+				// gets a fresh InvocationID on resume, so key on plan+node, which don't
+				// change within a run and are unique per run).
+				interruptID := "empty-" + plan.ID + "-" + node.ID
 				resumed := false
 				if reply, ok := ctx.ResumedInput(interruptID); ok {
 					resumed = true
