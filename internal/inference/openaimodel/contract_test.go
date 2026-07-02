@@ -116,3 +116,30 @@ func TestStreaming_EmptyTurnReasoningOnly(t *testing.T) {
 		t.Errorf("finish = %v, want MaxTokens (length)", finish)
 	}
 }
+
+// TestReasoningToolCalls covers the Qwen3.x recovery: tool calls that arrive as
+// <tool_call> XML inside reasoning_content (llama.cpp#22684) are parsed back into
+// FunctionCalls, and the blocks are stripped from the thinking.
+func TestReasoningToolCalls(t *testing.T) {
+	reasoning := "Let me search.\n<tool_call>\n{\"name\": \"web_search\", \"arguments\": {\"query\": \"SMR 2026\"}}\n</tool_call>\nand fetch:\n<tool_call>{\"name\":\"web_fetch\",\"arguments\":{\"url\":\"https://x\"}}</tool_call>"
+	calls, cleaned := reasoningToolCalls(reasoning)
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want 2", len(calls))
+	}
+	if calls[0].Name != "web_search" || calls[0].Args["query"] != "SMR 2026" {
+		t.Errorf("call0 = %+v", calls[0])
+	}
+	if calls[1].Name != "web_fetch" || calls[1].Args["url"] != "https://x" {
+		t.Errorf("call1 = %+v", calls[1])
+	}
+	if calls[0].ID == "" || calls[0].ID == calls[1].ID {
+		t.Errorf("calls need distinct non-empty IDs: %q %q", calls[0].ID, calls[1].ID)
+	}
+	if strings.Contains(cleaned, "<tool_call>") {
+		t.Errorf("tool_call blocks not stripped: %q", cleaned)
+	}
+	// no false positives on plain thinking
+	if c, _ := reasoningToolCalls("just thinking, no tools"); len(c) != 0 {
+		t.Errorf("plain thinking yielded %d calls", len(c))
+	}
+}

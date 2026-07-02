@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -269,6 +270,29 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 						Args: parseJSONArgs(b.args),
 					},
 				})
+			}
+		}
+
+		// Qwen3.x streams tool calls inside reasoning_content as <tool_call> XML
+		// instead of delta.tool_calls (llama.cpp#22684). When no proper tool calls
+		// arrived, recover them from the thinking so the agent acts on them instead
+		// of stalling on an empty turn (the empty-node bug).
+		if len(toolCallsMap) == 0 {
+			var rb strings.Builder
+			for _, p := range aggregatedContent.Parts {
+				if p.Thought && p.Text != "" {
+					rb.WriteString(p.Text)
+				}
+			}
+			if calls, _ := reasoningToolCalls(rb.String()); len(calls) > 0 {
+				for _, p := range aggregatedContent.Parts {
+					if p.Thought && p.Text != "" {
+						p.Text = toolCallRe.ReplaceAllString(p.Text, "")
+					}
+				}
+				for _, c := range calls {
+					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{FunctionCall: c})
+				}
 			}
 		}
 
@@ -740,4 +764,35 @@ func parseJSONArgs(argsJSON string) map[string]any {
 		return make(map[string]any)
 	}
 	return args
+}
+
+// toolCallRe matches a Hermes-style <tool_call>{json}</tool_call> block.
+var toolCallRe = regexp.MustCompile(`(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>`)
+
+// reasoningToolCalls recovers tool calls that Qwen3.x streamed inside
+// reasoning_content as <tool_call> XML instead of delta.tool_calls
+// (llama.cpp#22684, closed not-planned — so the client must parse them). Without
+// this the agent sees no tool call and an empty answer, and the node stalls empty.
+// Returns the parsed calls and the reasoning with those blocks removed.
+func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
+	matches := toolCallRe.FindAllStringSubmatch(reasoning, -1)
+	if len(matches) == 0 {
+		return nil, reasoning
+	}
+	var calls []*genai.FunctionCall
+	for i, m := range matches {
+		var tc struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if json.Unmarshal([]byte(m[1]), &tc) != nil || tc.Name == "" {
+			continue
+		}
+		calls = append(calls, &genai.FunctionCall{
+			ID:   fmt.Sprintf("rtc_%d_%s", i, tc.Name),
+			Name: tc.Name,
+			Args: tc.Arguments,
+		})
+	}
+	return calls, toolCallRe.ReplaceAllString(reasoning, "")
 }
