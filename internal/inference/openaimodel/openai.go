@@ -315,13 +315,35 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			}
 		}
 		if !hasAnswer {
-			var compl int32
-			if usageMetadata != nil {
-				compl = usageMetadata.CandidatesTokenCount
+			// Content-side of #22684: the model wrote its answer inside an unclosed
+			// <think>, so it landed in reasoning_content and content came back empty.
+			// Promote the thinking to the answer rather than emit an empty turn — a
+			// reasoning-only turn is terminal anyway (nothing for the agent to act on),
+			// and the judge/revise gates its quality. Only tool-less answer turns reach
+			// here; tool calls were already recovered above.
+			if hadThinking {
+				var rb strings.Builder
+				for _, p := range aggregatedContent.Parts {
+					if p.Thought && p.Text != "" {
+						rb.WriteString(p.Text)
+					}
+				}
+				if txt := strings.TrimSpace(rb.String()); txt != "" {
+					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{Text: txt})
+					hasAnswer = true
+					slog.WarnContext(ctx, "promoted reasoning to answer (empty content, unclosed </think>)",
+						"component", "inference", "model", o.ModelName, "chars", len(txt))
+				}
 			}
-			slog.WarnContext(ctx, "model returned no answer content (empty turn)",
-				"component", "inference", "model", o.ModelName, "finish_reason", string(finishReason),
-				"had_thinking", hadThinking, "completion_tokens", compl)
+			if !hasAnswer {
+				var compl int32
+				if usageMetadata != nil {
+					compl = usageMetadata.CandidatesTokenCount
+				}
+				slog.WarnContext(ctx, "model returned no answer content (empty turn)",
+					"component", "inference", "model", o.ModelName, "finish_reason", string(finishReason),
+					"had_thinking", hadThinking, "completion_tokens", compl)
+			}
 		}
 		yield(&model.LLMResponse{
 			Content:       aggregatedContent,
