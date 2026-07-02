@@ -305,12 +305,18 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 }
 
 func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string) (string, error) {
+	t0 := time.Now()
 	out, err := workflow.RunNode[string](ctx, workerNode, input,
 		workflow.WithUseSubBranch(), workflow.WithRunID(runID))
 	if err != nil {
 		return "", err
 	}
-	return stream.StripThinking(out), nil
+	stripped := stream.StripThinking(out)
+	// ms=~0 means RunNode short-circuited (no model call); raw_len>0 & stripped_len=0
+	// means StripThinking nuked an inline <think>. Debug: hot path, one line per run.
+	slog.DebugContext(ctx, "worker run", "run", runID, "ms", time.Since(t0).Milliseconds(),
+		"raw_len", len(out), "stripped_len", len(stripped))
+	return stripped, nil
 }
 
 // emitJudge sends a judge-stage SSE event scoped to nodeID, if a sink is present.
