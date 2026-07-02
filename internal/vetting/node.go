@@ -34,8 +34,8 @@ import (
 //
 // The node input is the task string (its round-0 prompt); its output is the
 // vetted answer. Placed as a FIRST-CLASS node it is durably skipped on resume
-// (a completed node is not re-run — see .quack/adk2-spike-findings.md), which the
-// spike proved dynamic RunNode children are NOT.
+// (a completed node is not re-run), which the spike proved dynamic RunNode
+// children are NOT.
 //
 // ponytail: self-critique (old Stage 1) is dropped — the advisor consult replaces
 // it (a later increment). The loop is worker → deterministic → judge → revise.
@@ -89,8 +89,8 @@ type GateResult struct {
 // feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
 // NodeControl lets a caller cancel or steer a running gate between its stages.
 // nil = no control. Cooperative: checked at gate-stage boundaries (before each
-// judge round), not mid-model-call — see .quack/adk2-migration.md Phase 3c for why
-// mid-call per-node cancel isn't possible on ADK v2 without breaking streaming.
+// judge round), not mid-model-call: mid-call per-node cancel isn't possible on
+// ADK v2 without breaking event streaming.
 type NodeControl interface {
 	// Cancelled reports whether this node should stop (keep its current answer).
 	Cancelled() bool
@@ -130,10 +130,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 	// written to the session, so it can't re-poison a downstream node's request.
 	sink, _ := stream.YieldFromContext(ctx)
 
-	// Per-node steer/cancel (M5b), cooperative at gate-stage boundaries (see
-	// docs Phase 3c: ADK v2 can't cancel a single model call mid-flight without
-	// breaking streaming). basePrompt is the un-guided task; a steer re-runs the
-	// whole gate with the guidance appended.
+	// Per-node steer/cancel (M5b), cooperative at gate-stage boundaries: ADK v2
+	// can't cancel a single model call mid-flight without breaking event streaming,
+	// so cancel/steer land between stages. basePrompt is the un-guided task; a steer
+	// re-runs the whole gate with the guidance appended.
 	basePrompt := prompt
 	steerAttempt := 0
 	for {
