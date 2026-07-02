@@ -171,7 +171,7 @@ func TestPrune(t *testing.T) {
 func TestCompactSummarises(t *testing.T) {
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 	// context_window 10k tokens, reserve 8k ⇒ usable 2k tokens (8k chars).
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 10_000, Prune: true, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Prune: true, Enabled: true})
 
 	task := textContent(genai.RoleUser, "the self-contained task")
 	contents := []*genai.Content{task}
@@ -314,7 +314,9 @@ func TestReuseSkipsSummariser(t *testing.T) {
 // on the next compaction.
 func TestAnchoredSummaryFedBack(t *testing.T) {
 	llm := &fakeLLM{text: "FIRST-SUMMARY"}
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 10_000, Prune: false, Enabled: true})
+	// usable = ctx - min(MaxOutputTokens, compactionBuffer=20000) = 1808: a small
+	// budget so the second oversized turn re-summarises (not the reuse fast-path).
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 21_808, Prune: false, Enabled: true})
 	ctx := newFakeCtx()
 
 	oversized := func() *model.LLMRequest {
