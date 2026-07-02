@@ -72,8 +72,25 @@ func (o *Orchestrator) SteerNode(chatID, nodeID, guidance string) bool {
 // is persisted as the chat's assistant message. The re-run happens on a derived
 // session so it doesn't add a turn to the chat; node controls stay keyed on chatID
 // so cancel/steer reach the re-running nodes.
-func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, plan dag.Plan, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// Load the real dag.Plan the execute tool stashed in session state — the
+		// DagPlan store holds the dag_plan EVENT shape (agent, not agent_name), not
+		// this struct.
+		var plan dag.Plan
+		if resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID}); err == nil && resp != nil {
+			if st := resp.Session.State(); st != nil {
+				if v, gerr := st.Get(tools.ExecPlanKey); gerr == nil {
+					if s, ok := v.(string); ok {
+						_ = json.Unmarshal([]byte(s), &plan)
+					}
+				}
+			}
+		}
+		if len(plan.Nodes) == 0 {
+			yield(stream.Errorf("retry: no plan in session to retry"), nil)
+			return
+		}
 		if guidance = strings.TrimSpace(guidance); guidance != "" {
 			for i := range plan.Nodes {
 				if plan.Nodes[i].ID == nodeID {

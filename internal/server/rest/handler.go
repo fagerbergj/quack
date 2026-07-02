@@ -17,7 +17,6 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
-	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -360,34 +359,28 @@ func (h *Handler) RetryNode(w http.ResponseWriter, r *http.Request, chatID schem
 		guidance = *body.Guidance
 	}
 
-	// Load the chat's latest plan and the stored node outputs to reuse.
+	// The plan itself is loaded from session state by the orchestrator (the real
+	// dag.Plan). Here we just need the plan_id (for the node outputs) + the stored
+	// outputs to reuse, and to confirm the node exists.
 	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
 	if err != nil || dp == nil {
 		http.Error(w, "no plan to retry for this chat", http.StatusNotFound)
 		return
 	}
-	var plan dag.Plan
-	if err := json.Unmarshal([]byte(dp.PlanJSON), &plan); err != nil {
-		http.Error(w, "stored plan is corrupt", http.StatusInternalServerError)
-		return
-	}
+	nodes, _ := h.store.GetDagNodes(r.Context(), dp.ID)
+	seeded := make(map[string]string, len(nodes))
 	found := false
-	for _, n := range plan.Nodes {
-		if n.ID == nodeID {
+	for _, n := range nodes {
+		if n.NodeID == nodeID {
 			found = true
-			break
+		}
+		if n.Output != "" {
+			seeded[n.NodeID] = n.Output
 		}
 	}
 	if !found {
 		http.Error(w, "no such node in the plan", http.StatusNotFound)
 		return
-	}
-	nodes, _ := h.store.GetDagNodes(r.Context(), plan.ID)
-	seeded := make(map[string]string, len(nodes))
-	for _, n := range nodes {
-		if n.Output != "" {
-			seeded[n.NodeID] = n.Output
-		}
 	}
 
 	sse, ok := newSSEWriter(w)
@@ -402,12 +395,12 @@ func (h *Handler) RetryNode(w http.ResponseWriter, r *http.Request, chatID schem
 		h.activeCancels.Delete(chatID)
 	}()
 
-	for ev, err := range h.orch.RetryNode(runCtx, userID, chatID, plan, seeded, nodeID, guidance) {
+	for ev, err := range h.orch.RetryNode(runCtx, userID, chatID, seeded, nodeID, guidance) {
 		if err != nil {
 			_ = sse.send(stream.Errorf(err.Error()))
 			break
 		}
-		h.persistNodeEvent(plan.ID, ev) // update the re-run nodes' persisted state
+		h.persistNodeEvent(dp.ID, ev) // update the re-run nodes' persisted state
 		if sendErr := sse.send(ev); sendErr != nil {
 			break
 		}
