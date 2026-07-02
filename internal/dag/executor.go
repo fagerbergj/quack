@@ -5,6 +5,7 @@ import (
 	"iter"
 	"strconv"
 	"strings"
+	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/runner"
@@ -64,6 +65,15 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return
 		}
+		// Thread-safe yield: fan-out nodes run on concurrent workflow goroutines, and
+		// each may stream judge-stage SSE (below) at the same time the main loop yields
+		// node lifecycle — serialize all SSE through one mutex.
+		var mu sync.Mutex
+		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
+		// Inject an SSE sink so vetting.RunGatedRefine can stream the judge's own
+		// run (it executes in an isolated runner OFF this event stream) up to the
+		// client as stage:judge activity — SSE-only, never written to the session.
+		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 		// The plan tool already emitted dag_plan for this plan_id (and M8 persists
 		// it); re-emitting here caused a duplicate insert (dag_plans_pkey). The plan
 		// tool owns dag_plan emission — the executor only streams node lifecycle.
@@ -78,13 +88,13 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 			agentByID[n.ID] = n.AgentName
 		}
 
-		ds := newDagStream(agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
+		ds := newDagStream(agentByID, safeYield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, userID, plan.ID, nodeID)
 		})
 
 		for ev, rerr := range r.Run(ctx, userID, plan.ID, content, adkagent.RunConfig{}) {
 			if rerr != nil {
-				yield(stream.Errorf(rerr.Error()), nil)
+				safeYield(stream.Errorf(rerr.Error()), nil)
 				return
 			}
 			if ev == nil {
@@ -105,7 +115,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 			if ds.doneEmitted[n.ID] {
 				continue
 			}
-			if !yield(stream.NodeDone(n.ID, ds.nodeDoneData(n.ID)), nil) {
+			if !safeYield(stream.NodeDone(n.ID, ds.nodeDoneData(n.ID)), nil) {
 				return
 			}
 		}

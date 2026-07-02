@@ -50,7 +50,7 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.Ju
 				// input skeptically.
 				gateFailed := readGateFailed(ctx, node.DependsOn)
 				prompt := buildTask(plan, node, upstream, gateFailed)
-				answer, res, err := vetting.RunGatedRefine(ctx, workerNode, judge, cfg, prompt)
+				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, judge, cfg, prompt)
 				if err == nil {
 					// Persist the gate outcome to session state: gate_failed drives
 					// continue-but-warn on dependents; score/passed/rounds let Execute

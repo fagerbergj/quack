@@ -48,7 +48,7 @@ func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, 
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		answer, _, err := RunGatedRefine(ctx, workerNode, judge, cfg, task)
+		answer, _, err := RunGatedRefine(ctx, name, workerNode, judge, cfg, task)
 		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
@@ -84,8 +84,8 @@ type GateResult struct {
 //
 // Returns (answer, result, err); result carries the final verdict (score/passed/
 // feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
-func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, GateResult, error) {
-	log := slog.With("component", "vetting")
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, GateResult, error) {
+	log := slog.With("component", "vetting", "node", nodeID)
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	answer, err := runWorkerNode(ctx, workerNode, prompt, "worker-r0")
@@ -126,21 +126,30 @@ func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeF
 	// citation/length criteria, and on a fail revise via a fresh worker call whose
 	// prompt inlines the feedback + prior answer (buildRevisionContent is
 	// self-contained, so the stateless worker needs no session continuity).
+	// The judge runs in its own isolated runner (off the workflow event stream), so
+	// its activity can't ride that stream. Forward it to the client as a stage:judge
+	// run via the SSE sink injected on ctx (executor.Execute) — SSE-only, never
+	// written to the session, so it can't re-poison a downstream node's request.
+	sink, _ := stream.YieldFromContext(ctx)
 	var res GateResult
 	for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
 		if strings.TrimSpace(answer) == "" {
 			break // still nothing to judge after recovery
 		}
 		act := activityFromSession(ctx.Session())
-		v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, func(*genai.Part) bool { return true })
+		runID := fmt.Sprintf("judge-r%d", round)
+		emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
+		v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, judgePartEmitter(sink, nodeID, runID))
 		if jerr != nil {
 			// ERROR, not Warn: a judge failure means the answer is going out
 			// UNVETTED — that must be loud in the logs, not buried.
 			log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
+			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
 			return answer, res, nil
 		}
 		v = foldDeterministic(v, answer, act)
 		res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: v.Feedback, Rounds: round}
+		emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
 		log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
 		if res.Passed || round >= cfg.JudgeRounds {
 			break
@@ -168,6 +177,36 @@ func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input, runID 
 		return "", err
 	}
 	return stream.StripThinking(out), nil
+}
+
+// emitJudge sends a judge-stage SSE event scoped to nodeID, if a sink is present.
+func emitJudge(sink func(stream.SSEEvent), nodeID string, ev stream.SSEEvent) {
+	if sink != nil {
+		sink(stream.ScopeToNode(ev, nodeID))
+	}
+}
+
+// judgePartEmitter forwards the judge agent's streamed parts to the SSE sink as
+// stage:judge activity (thinking / tokens / tool calls), scoped to nodeID+runID.
+// nil-sink-safe. It never writes to the workflow session, so it cannot re-poison
+// a downstream node's model request (unlike the v1 orphan-marker approach).
+func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*genai.Part) bool {
+	return func(p *genai.Part) bool {
+		if sink == nil || p == nil {
+			return true
+		}
+		switch {
+		case p.Thought && p.Text != "":
+			sink(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentThinking, Data: stream.AgentThinkingData{RunID: runID, Text: p.Text}}, nodeID))
+		case p.Text != "":
+			sink(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentToken, Data: stream.AgentTokenData{RunID: runID, Text: p.Text}}, nodeID))
+		case p.FunctionCall != nil:
+			sink(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentToolCall, Data: stream.AgentToolCallData{RunID: runID, CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args}}, nodeID))
+		case p.FunctionResponse != nil:
+			sink(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentToolResult, Data: stream.AgentToolResultData{RunID: runID, CallID: p.FunctionResponse.ID, Name: p.FunctionResponse.Name, Result: p.FunctionResponse.Response}}, nodeID))
+		}
+		return true
+	}
 }
 
 // foldDeterministic folds the code-owned criteria (citation backing, answer
