@@ -51,7 +51,7 @@ func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, 
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, judge, cfg, task)
+		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, judge, cfg, task, nil)
 		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
@@ -87,7 +87,7 @@ type GateResult struct {
 //
 // Returns (answer, result, err); result carries the final verdict (score/passed/
 // feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, GateResult, error) {
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
@@ -114,7 +114,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		return base + "\n\n--- Advisor guidance (consider before answering) ---\n" + advice
 	}
 
-	answer, err := runWorkerNode(ctx, workerNode, withAdvice(prompt, consult("advisor-r0", prompt)), "worker-r0")
+	answer, err := runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0", prompt)), attachments), "worker-r0")
 	if err != nil {
 		// Log at our boundary before returning: ADK's scheduler can swallow a
 		// node error into a silent empty completion, so this ERROR line (with the
@@ -241,7 +241,19 @@ func commitMemoryOnPass(ctx adkagent.Context, cfg Config, author, answer string,
 // runWorkerNode runs the worker as a sub-branched child with a stable per-run
 // RunID (so a completed run replays from the event log on resume rather than
 // re-executing) and returns its answer with leaked <think> content stripped.
-func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input, runID string) (string, error) {
+// workerInput builds a worker node's input: a plain string when there are no
+// attachments, or a *genai.Content carrying the prompt + media parts (image/audio)
+// for a media-capable node. AgentNode's nodeInputToContent accepts either.
+// ponytail: media rides only the initial draft; revisions are text (the prior
+// answer already captured the media reading) — re-attaching each round is costly.
+func workerInput(prompt string, attachments []*genai.Part) any {
+	if len(attachments) == 0 {
+		return prompt
+	}
+	return &genai.Content{Role: "user", Parts: append([]*genai.Part{{Text: prompt}}, attachments...)}
+}
+
+func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string) (string, error) {
 	out, err := workflow.RunNode[string](ctx, workerNode, input,
 		workflow.WithUseSubBranch(), workflow.WithRunID(runID))
 	if err != nil {

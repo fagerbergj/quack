@@ -21,7 +21,7 @@ import (
 // along the graph edges (buildTask, reused from the legacy executor) and runs the
 // trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
 // Executor.Execute (TopoSort + semaphore + per-node runner).
-func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config) (adkagent.Agent, error) {
+func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool) (adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -59,7 +59,13 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 				// input skeptically.
 				gateFailed := readGateFailed(ctx, node.DependsOn)
 				prompt := buildTask(plan, node, upstream, gateFailed)
-				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt)
+				// Thread the turn's media parts to a media-capable node's worker
+				// (image/audio); text-only nodes get nil (a plain string prompt).
+				atts := plan.Attachments
+				if !mediaAgents[node.AgentName] {
+					atts = nil
+				}
+				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts)
 				if err == nil {
 					// Persist the gate outcome to session state: gate_failed drives
 					// continue-but-warn on dependents; score/passed/rounds let Execute
@@ -96,6 +102,29 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 			eb.AddFanIn(join, deps...)
 			eb.Add(join, node)
 		}
+	}
+
+	// ADK requires a single terminal (no-successor) output node. A plan with
+	// several — e.g. two research nodes and no synthesizer — otherwise fails with
+	// "multiple terminal nodes produced output". Fan the extra terminals into one
+	// terminal JoinNode so the workflow always has a single output. The planner
+	// usually adds a synthesizer (one terminal); this is the safety net for when
+	// the LLM omits it. Execute streams per-node node_done off the event stream, so
+	// the join (not a plan node) is transparent to the client.
+	isDep := map[string]bool{}
+	for _, n := range plan.Nodes {
+		for _, d := range n.DependsOn {
+			isDep[d] = true
+		}
+	}
+	var terminals []workflow.Node
+	for _, n := range plan.Nodes {
+		if !isDep[n.ID] {
+			terminals = append(terminals, nodesByID[n.ID])
+		}
+	}
+	if len(terminals) > 1 {
+		eb.AddFanIn(workflow.NewJoinNode("__terminal_join"), terminals...)
 	}
 
 	return workflowagent.New(workflowagent.Config{

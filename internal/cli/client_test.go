@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,7 +44,7 @@ func TestPrintPrompt(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi"); err != nil {
+	if err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi", nil); err != nil {
 		t.Fatalf("PrintPrompt: %v", err)
 	}
 	if got := out.String(); got != "Hello world\n" {
@@ -117,7 +119,7 @@ func TestPrintPromptServerError(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi")
+	err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi", nil)
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("err = %v, want it to contain the server error", err)
 	}
@@ -147,5 +149,48 @@ func TestSteerNode(t *testing.T) {
 	}
 	if gotBody.Guidance != "focus on cost" {
 		t.Errorf("server got guidance %q, want %q", gotBody.Guidance, "focus on cost")
+	}
+}
+
+func TestSendMessageWithFiles(t *testing.T) {
+	var gotContent, gotName, gotCT string
+	var gotData []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("parse multipart: %v", err)
+			return
+		}
+		gotContent = r.FormValue("content")
+		for _, fhs := range r.MultipartForm.File {
+			for _, fh := range fhs {
+				gotName, gotCT = fh.Filename, fh.Header.Get("Content-Type")
+				f, _ := fh.Open()
+				gotData, _ = io.ReadAll(f)
+				f.Close()
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+	}))
+	defer srv.Close()
+
+	img := filepath.Join(t.TempDir(), "pic.png")
+	if err := os.WriteFile(img, []byte{1, 2, 3}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if err := c.SendMessageWithFiles(context.Background(), "chat1", "hi", []string{img}, func(SSEEvent) error { return nil }); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if gotContent != "hi" {
+		t.Errorf("content = %q, want hi", gotContent)
+	}
+	if gotName != "pic.png" {
+		t.Errorf("filename = %q, want pic.png", gotName)
+	}
+	if gotCT != "image/png" { // inferred from extension
+		t.Errorf("file content-type = %q, want image/png", gotCT)
+	}
+	if len(gotData) != 3 {
+		t.Errorf("file bytes = %d, want 3", len(gotData))
 	}
 }

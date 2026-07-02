@@ -112,3 +112,26 @@ dedup**:
 So `DagNode` can't be derived from `ChatEvent` (trimmed) and neither is the
 workflow-resume state (that's the session store). No code change — deleting any
 of these would regress history or reconnect.
+
+## Phase 2 — HITL clarification (no change needed)
+
+The upfront clarification HITL (`get_user_choice`) lives on the **orchestrator**,
+which is a direct `llmagent` **not migrated to the graph** — so the migration
+never touched it. The tool + the resume logic (`pendingChoiceCallID` → deliver
+the next message as the call's `FunctionResponse`) are intact (M5 PR1 #39). ADK v2
+ships **no native `get_user_choice`** to swap the port for (the port already rides
+ADK's `LongRunningFunctionTool` primitive), and `workflow.ResumeOrRequestInput` is
+for *mid-node* HITL — a research node pausing to ask the user — which is new
+capability we don't currently need (YAGNI). No change.
+
+## Phase 3c — per-node steer/cancel (blocked on ADK; whole-run cancel works)
+
+Whole-run cancel works today (`CancelChatStream` cancels the run context). *Per-
+node* steer/cancel (M5b) — interrupt one running node, continue the rest, or re-run
+it with guidance — is stubbed (`orchestrator.CancelNode`/`SteerNode` return false).
+Reimplementing it on the graph needs each node's worker to run under its **own
+cancellable context** so cancelling one node doesn't kill the run. ADK v2 `RunNode`
+honors *parent* ctx cancellation but exposes **no per-node / sub-branch cancellation
+hook**, and `agent.Context` is an interface constructed internally — so per-node
+cancel needs either upstream ADK support or fragile internal-context wrapping. A
+dedicated follow-up, not a mechanical un-stub.

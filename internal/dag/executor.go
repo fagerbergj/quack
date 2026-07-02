@@ -56,7 +56,7 @@ func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, adv
 // nodeOutputs (node ID → vetted answer) is filled for the caller's TerminalOutput.
 func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor)
+		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents)
 		if err != nil {
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return
