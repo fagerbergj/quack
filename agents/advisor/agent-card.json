@@ -1,0 +1,17 @@
+{
+  "name": "advisor",
+  "description": "Formative research advisor. Consulted mid-task by a worker agent for a quick 'am I on track?' check before it commits to a draft — flags missing angles, weak scoping, and where citations/better sources are needed. Does NOT do the research or write the answer itself.",
+  "skills": [
+    {
+      "id": "formative_advice",
+      "name": "Formative advice",
+      "description": "Reviews a worker's task (and any draft-in-progress) and returns a few concise, actionable pointers to improve coverage, scoping, and sourcing before the worker finalizes. Never writes the final answer.",
+      "tags": ["advice", "critique", "research", "formative"],
+      "examples": [
+        "Is my plan to answer this research task on the right track?",
+        "What angles or sources am I missing before I write this up?",
+        "Review my approach to comparing these two topics."
+      ]
+    }
+  ]
+}

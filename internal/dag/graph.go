@@ -21,7 +21,7 @@ import (
 // along the graph edges (buildTask, reused from the legacy executor) and runs the
 // trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
 // Executor.Execute (TopoSort + semaphore + per-node runner).
-func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config) (adkagent.Agent, error) {
+func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config) (adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -40,6 +40,15 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.Ju
 		if err != nil {
 			return nil, err
 		}
+		// The advisor (formative consult) is the same agent for every node; wrap it
+		// per node so concurrent nodes don't share one node instance. nil ⇒ the gate
+		// skips the consult (e.g. judge/advisor disabled).
+		var advisorNode workflow.Node
+		if advisor != nil {
+			if advisorNode, err = vetting.NewWorkerNode(advisor); err != nil {
+				return nil, err
+			}
+		}
 		node := n // capture per iteration
 		cfg := cfgFor(node.AgentName)
 		gated := workflow.NewDynamicNode[any, string](node.ID,
@@ -50,7 +59,7 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.Ju
 				// input skeptically.
 				gateFailed := readGateFailed(ctx, node.DependsOn)
 				prompt := buildTask(plan, node, upstream, gateFailed)
-				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, judge, cfg, prompt)
+				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt)
 				if err == nil {
 					// Persist the gate outcome to session state: gate_failed drives
 					// continue-but-warn on dependents; score/passed/rounds let Execute

@@ -297,7 +297,26 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// non-gated (or gates-disabled) agent gets the zero Config (JudgeRounds=0), so
 	// RunGatedRefine runs the worker once and returns it ungated.
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
-	executor := dag.NewExecutor(st.Sessions, clientMap, judgeFactory, cfgFor, mediaAgents)
+	// Advisor: a formative consult run inside the gate before each worker draft
+	// (replaces the dropped self-critique). Built from the judge's model + the
+	// agents/advisor bundle; nil (skip the consult) when gating is off or it fails
+	// to build. Not added to the plannable roster — it's a gate helper, not a node.
+	var advisorAgent adkagent.Agent
+	if cfg.Gates.JudgeEnabled() {
+		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
+			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model); merr != nil {
+				slog.Warn("advisor model build failed; consult disabled", "component", "startup", "err", merr)
+			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
+				slog.Warn("advisor bundle load failed; consult disabled", "component", "startup", "err", berr)
+			} else if built, aerr := agent.Build(ab, am, nil, nil, agent.Compaction{}, ""); aerr != nil {
+				slog.Warn("advisor build failed; consult disabled", "component", "startup", "err", aerr)
+			} else {
+				advisorAgent = built
+				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
+			}
+		}
+	}
+	executor := dag.NewExecutor(st.Sessions, clientMap, advisorAgent, judgeFactory, cfgFor, mediaAgents)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS, userStore)
 
 	spa, err := fs.Sub(webDist, "web/dist")

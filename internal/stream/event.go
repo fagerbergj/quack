@@ -35,6 +35,7 @@ const (
 	StageSelfRefine = "self_refine"
 	StageJudge      = "judge"
 	StageRevise     = "revise"
+	StageAdvisor    = "advisor" // formative consult before a worker draft (replaces self_refine)
 )
 
 // Gate marker tool names: the gate yields these as function-response parts to

@@ -27,6 +27,7 @@ const nodeAppName = "quack-nodes"
 type Executor struct {
 	sessions    session.Service
 	agents      map[string]adkagent.Agent             // agent name → built (plain) agent
+	advisor     adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
 	judge       vetting.JudgeFactory                  // independent judge factory
 	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
 	mediaAgents map[string]bool                       // agents accepting image/audio parts (media threading TODO)
@@ -35,8 +36,8 @@ type Executor struct {
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate — the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.
-func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents}
+func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
+	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents}
 }
 
 // Execute builds the plan's workflow, runs it via a fresh runner, and translates
@@ -55,7 +56,7 @@ func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, jud
 // nodeOutputs (node ID → vetted answer) is filled for the caller's TerminalOutput.
 func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		root, err := BuildWorkflow(plan, e.agents, e.judge, e.cfgFor)
+		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor)
 		if err != nil {
 			yield(stream.Errorf("dag: "+err.Error()), nil)
 			return
@@ -239,7 +240,10 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	// A worker-run child event (path segment "…@worker-rN"): stream its activity as
 	// a run under the node.
 	runID := segRun(last)
-	if !strings.HasPrefix(runID, "worker") {
+	// worker-rN = the gated worker's draft/revision; advisor-rN = the formative
+	// advisor consult (both run via RunNode on this stream). Anything else (e.g. a
+	// worker's own sub-agent tool run) isn't a node-level run — skip it.
+	if !strings.HasPrefix(runID, "worker") && !strings.HasPrefix(runID, "advisor") {
 		return true
 	}
 	if s.curRun[node] != runID {
@@ -400,11 +404,14 @@ func segRun(seg string) string {
 	return ""
 }
 
-// stageRound maps a worker run ID to its SSE stage + round: worker-r0 is the
-// initial worker draft; worker-rN (N≥1) is a revision; worker-finalize-* is an
-// empty-answer write-up (a worker stage).
+// stageRound maps a run ID to its SSE stage + round: advisor-rN is the formative
+// advisor consult; worker-r0 is the initial worker draft; worker-rN (N≥1) is a
+// revision; worker-finalize-* is an empty-answer write-up (a worker stage).
 func stageRound(runID string) (string, int) {
-	if strings.HasPrefix(runID, "worker-r") {
+	switch {
+	case strings.HasPrefix(runID, "advisor-r"):
+		return stream.StageAdvisor, toInt(runID[len("advisor-r"):])
+	case strings.HasPrefix(runID, "worker-r"):
 		if n := toInt(runID[len("worker-r"):]); n > 0 {
 			return stream.StageRevise, n
 		}

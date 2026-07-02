@@ -48,7 +48,7 @@ func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, 
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		answer, _, err := RunGatedRefine(ctx, name, workerNode, judge, cfg, task)
+		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, judge, cfg, task)
 		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
@@ -84,11 +84,34 @@ type GateResult struct {
 //
 // Returns (answer, result, err); result carries the final verdict (score/passed/
 // feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, GateResult, error) {
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
-	answer, err := runWorkerNode(ctx, workerNode, prompt, "worker-r0")
+	// Advisor consult (formative, once per worker round). Best-effort: on error,
+	// proceed WITHOUT advice rather than fail the node. It runs via RunNode so it
+	// streams to the UI as a stage:advisor run (dagStream translates advisor-rN).
+	// Replaces the dropped self-critique stage — an independent second look at the
+	// approach before the worker commits.
+	consult := func(runID, task string) string {
+		if advisorNode == nil {
+			return ""
+		}
+		advice, aerr := runWorkerNode(ctx, advisorNode, "Advise on this task before it is attempted:\n\n"+task, runID)
+		if aerr != nil {
+			log.Warn("advisor consult failed; proceeding without advice", "run", runID, "err", aerr)
+			return ""
+		}
+		return advice
+	}
+	withAdvice := func(base, advice string) string {
+		if strings.TrimSpace(advice) == "" {
+			return base
+		}
+		return base + "\n\n--- Advisor guidance (consider before answering) ---\n" + advice
+	}
+
+	answer, err := runWorkerNode(ctx, workerNode, withAdvice(prompt, consult("advisor-r0", prompt)), "worker-r0")
 	if err != nil {
 		// Log at our boundary before returning: ADK's scheduler can swallow a
 		// node error into a silent empty completion, so this ERROR line (with the
@@ -155,7 +178,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			break
 		}
 		revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
-		revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d", round))
+		advRun := fmt.Sprintf("advisor-r%d", round)
+		revised, rerr := runWorkerNode(ctx, workerNode, withAdvice(revisePrompt, consult(advRun, revisePrompt)), fmt.Sprintf("worker-r%d", round))
 		if rerr != nil {
 			log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 			return answer, res, nil // revision failed; keep the prior answer
