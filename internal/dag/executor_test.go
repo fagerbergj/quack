@@ -17,6 +17,7 @@ func drive(evs []*session.Event, agentByID map[string]string, score gateScore) [
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{},
 		func(string) gateScore { return score },
+		func(string) bool { return false },
 	)
 	for _, ev := range evs {
 		ds.handle(ev)

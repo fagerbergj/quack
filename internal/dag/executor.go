@@ -72,6 +72,8 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
 		ds: newDagStream(agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
+		}, func(nodeID string) bool {
+			return e.controls.wasCancelled(sessionID, nodeID)
 		}),
 	}
 }
@@ -102,8 +104,12 @@ func (s *DagStream) Finish() {
 		if s.only != nil && !s.only[n.ID] {
 			continue // retry: leave the seeded (not-re-run) nodes as they were
 		}
-		// A node that produced NO answer surfaces as a loud node_failed (not a quiet
-		// node_done) so the gap is never silent.
+		// A user-cancelled node reads "Stopped by you"; a node that produced NO answer
+		// surfaces as a loud node_failed (not a quiet node_done) so the gap is never silent.
+		if s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
+			s.yield(stream.NodeFailed(n.ID, "Stopped by you"), nil)
+			continue
+		}
 		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
 			s.yield(stream.NodeFailed(n.ID, "produced no answer"), nil)
 			continue
@@ -186,6 +192,7 @@ type dagStream struct {
 	yield     func(stream.SSEEvent, error) bool
 	outputs   map[string]string      // nodeID → captured output (== caller's nodeOutputs)
 	scoreOf   func(string) gateScore // reads a node's persisted judge result
+	cancelled func(string) bool      // nodeID → user-cancelled this run (→ "stopped", not "failed")
 
 	started     map[string]bool   // node_start emitted
 	doneEmitted map[string]bool   // node_done emitted
@@ -200,9 +207,9 @@ type runUsage struct {
 	model, finish                        string
 }
 
-func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore) *dagStream {
+func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool) *dagStream {
 	return &dagStream{
-		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf,
+		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled,
 		started: map[string]bool{}, doneEmitted: map[string]bool{},
 		curRun: map[string]string{}, usage: map[string]*runUsage{},
 	}
@@ -245,16 +252,25 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		if ev.Output != nil && !s.doneEmitted[node] {
 			s.closeRun(node) // end any open worker run first
 			s.doneEmitted[node] = true
-			if out := outputString(ev.Output); out != "" {
-				s.outputs[node] = out
+			out := outputString(ev.Output)
+			if out != "" {
+				s.outputs[node] = out // keep any partial output for downstream, even if cancelled
 				s.last = out
+			}
+			switch {
+			case s.cancelled != nil && s.cancelled(node):
+				if !s.emit(stream.NodeFailed(node, "Stopped by you")) {
+					return false
+				}
+			case out != "":
 				if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
 					return false
 				}
-			} else if !s.emit(stream.NodeFailed(node, "produced no answer")) {
-				// No answer (continue-but-warn / cancelled) → loud node_failed, not a
-				// quiet node_done, so the gap is never silent.
-				return false
+			// No answer (continue-but-warn) → loud node_failed, not a quiet node_done.
+			default:
+				if !s.emit(stream.NodeFailed(node, "produced no answer")) {
+					return false
+				}
 			}
 		}
 		return true
