@@ -129,9 +129,25 @@ capability we don't currently need (YAGNI). No change.
 Whole-run cancel works today (`CancelChatStream` cancels the run context). *Per-
 node* steer/cancel (M5b) — interrupt one running node, continue the rest, or re-run
 it with guidance — is stubbed (`orchestrator.CancelNode`/`SteerNode` return false).
-Reimplementing it on the graph needs each node's worker to run under its **own
-cancellable context** so cancelling one node doesn't kill the run. ADK v2 `RunNode`
-honors *parent* ctx cancellation but exposes **no per-node / sub-branch cancellation
-hook**, and `agent.Context` is an interface constructed internally — so per-node
-cancel needs either upstream ADK support or fragile internal-context wrapping. A
-dedicated follow-up, not a mechanical un-stub.
+
+**Attempted and reverted — mid-call per-node cancel is ADK-blocked.** A working
+per-node cancel needs each node's worker to run under its **own cancellable
+context** so cancelling one node doesn't kill the run. That was built (a
+`(chatID,nodeID)` control registry + orchestrator delegation) and tested against a
+blocking worker, and the finding is concrete, not speculative:
+
+- Deriving a fresh child context via `agent.NewContext(ctx.WithContext(nodeCtx))`
+  **does** cancel the model mid-call — but **detaches event emission**: the
+  advisor's `stage:advisor` and the worker's own activity stop reaching the SSE
+  stream (`TestExecute_AdvisorStreamsAsStageAdvisor` fails).
+- The shallow-copy primitives that preserve event emission
+  (`ctx.WithAgentContext(...)`, `ctx.WithAgentCancel()`) **don't** propagate
+  cancellation to the model — `RunNode` threads the child's execution context from
+  the workflow root, not the `childCtx` passed for state/session, so the worker
+  runs to completion (the blocking-worker test hits its 10s safety timeout).
+
+So per-node **mid-call** cancel and live SSE streaming are mutually exclusive on
+ADK v2.0.0 as shipped. Cooperative (gate-stage-boundary) cancel would preserve
+streaming but can't interrupt a single long model call and needs invasive checks
+threaded through the core trust-gate loop — not worth destabilising the gate for.
+Deferred pending upstream ADK support for per-sub-branch cancellation.
