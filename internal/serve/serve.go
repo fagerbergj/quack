@@ -317,6 +317,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		}
 	}
 	executor := dag.NewExecutor(st.Sessions, clientMap, advisorAgent, judgeFactory, cfgFor, mediaAgents)
+	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS, userStore)
 
 	spa, err := fs.Sub(webDist, "web/dist")

@@ -66,3 +66,30 @@ func TestRunDAG_Layers(t *testing.T) {
 		t.Fatalf("runDAG outputs incomplete: %v", out)
 	}
 }
+
+func TestRunPlanInNode(t *testing.T) {
+	stub := okStub{}
+	ag, _ := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
+	exec := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{
+		{ID: "n1", AgentName: "w"}, {ID: "n2", AgentName: "w", DependsOn: []string{"n1"}},
+	}}
+	var out map[string]string
+	orchestrate := workflow.NewDynamicNode[any, string]("orch",
+		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+			var err error
+			out, err = exec.RunPlanInNode(ctx, plan, "chat")
+			return "done", err
+		}, workflow.NodeConfig{})
+	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
+	r, _ := runner.New(runner.Config{AppName: "o", Agent: top, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	for _, err := range r.Run(context.Background(), "u", "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+	if len(out) != 2 || out["n1"] == "" || out["n2"] == "" {
+		t.Fatalf("RunPlanInNode outputs incomplete: %v", out)
+	}
+}

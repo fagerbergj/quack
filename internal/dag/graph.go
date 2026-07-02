@@ -24,36 +24,9 @@ import (
 // trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
 // Executor.Execute (TopoSort + semaphore + per-node runner).
 func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (adkagent.Agent, error) {
-	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
-	var subAgents []adkagent.Agent
-	seenAgent := map[string]bool{}
-
-	// One gated-worker node per plan node.
-	for _, n := range plan.Nodes {
-		ag, ok := agents[n.AgentName]
-		if !ok {
-			return nil, fmt.Errorf("dag: no agent %q for node %q", n.AgentName, n.ID)
-		}
-		if !seenAgent[n.AgentName] {
-			seenAgent[n.AgentName] = true
-			subAgents = append(subAgents, ag) // dedup: author resolution only
-		}
-		workerNode, err := vetting.NewWorkerNode(ag)
-		if err != nil {
-			return nil, err
-		}
-		// The advisor (formative consult) is the same agent for every node; wrap it
-		// per node so concurrent nodes don't share one node instance. nil ⇒ the gate
-		// skips the consult (e.g. judge/advisor disabled).
-		var advisorNode workflow.Node
-		if advisor != nil {
-			if advisorNode, err = vetting.NewWorkerNode(advisor); err != nil {
-				return nil, err
-			}
-		}
-		node := n // capture per iteration
-		var advisorN workflow.Node = advisorNode
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorN, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+	nodesByID, subAgents, err := buildGateNodes(plan, agents, advisor, judge, cfgFor, mediaAgents, controls, chatID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Edges from DependsOn: leaves ← Start; one dep ← direct edge; N deps ← a
@@ -117,6 +90,42 @@ const (
 	gatePassedKey = "quack.gate_passed/"
 	gateRoundsKey = "quack.gate_rounds/"
 )
+
+// buildGateNodes builds one gated-worker node per plan node (node ID → node),
+// shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
+// returns the deduped worker agents (for BuildWorkflow's author resolution;
+// runDAG ignores them).
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
+	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
+	var subAgents []adkagent.Agent
+	seenAgent := map[string]bool{}
+	for _, n := range plan.Nodes {
+		ag, ok := agents[n.AgentName]
+		if !ok {
+			return nil, nil, fmt.Errorf("dag: no agent %q for node %q", n.AgentName, n.ID)
+		}
+		if !seenAgent[n.AgentName] {
+			seenAgent[n.AgentName] = true
+			subAgents = append(subAgents, ag) // dedup: author resolution only
+		}
+		workerNode, err := vetting.NewWorkerNode(ag)
+		if err != nil {
+			return nil, nil, err
+		}
+		// The advisor (formative consult) is the same agent for every node; wrap it
+		// per node so concurrent nodes don't share one node instance. nil ⇒ the gate
+		// skips the consult (e.g. judge/advisor disabled).
+		var advisorNode workflow.Node
+		if advisor != nil {
+			if advisorNode, err = vetting.NewWorkerNode(advisor); err != nil {
+				return nil, nil, err
+			}
+		}
+		node := n // capture per iteration
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+	}
+	return nodesByID, subAgents, nil
+}
 
 // newGatedNode builds the dynamic node for one plan node: it assembles the
 // worker prompt from upstream outputs, runs the trust-gate refine loop, and

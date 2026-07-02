@@ -32,13 +32,34 @@ type Executor struct {
 	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
 	mediaAgents map[string]bool                       // agents accepting image/audio parts
 	controls    *runControls                          // live per-node cancel/steer handles (M5b)
+	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
+}
+
+// SetMaxActive sets the concurrent-node cap used by RunPlanInNode (config
+// dag.max_active_nodes). No-op for values < 1.
+func (e *Executor) SetMaxActive(n int) {
+	if n >= 1 {
+		e.maxActive = n
+	}
+}
+
+// RunPlanInNode runs a plan's gated nodes via runDAG in the CURRENT workflow
+// node's sub-scheduler (single runner) — the entry point for the one-orchestrator-
+// workflow path. Returns node ID → vetted output; a gate node's empty-pause
+// (ErrNodeInterrupted) propagates up so the whole run pauses for human steer/cancel.
+func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	if err != nil {
+		return nil, err
+	}
+	return runDAG(ctx, plan, gateNodes, e.maxActive)
 }
 
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate — the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.
 func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls()}
+	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 
 // Execute builds the plan's workflow, runs it via a fresh runner, and translates
