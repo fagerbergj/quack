@@ -340,7 +340,17 @@ export class ChatStore {
         onAgentToolResult: (runId, callId, name, result, nid) => nid
           ? updateNodeRuns(nid, r => fillRunToolResult(r, runId, callId, name, result))
           : updateTopLevelRuns(r => fillRunToolResult(r, runId, callId, name, result)),
-        onAgentToken: (_runId, text, nid) => nid ? updateNodeAnswer(nid, text) : updateTopLevelText(text),
+        onAgentToken: (runId, text, nid) => {
+          if (!nid) { updateTopLevelText(text); return }
+          // Only the worker's answer text belongs in a node's answer box. The advisor
+          // consult (stage: advisor) and the judge (stage: judge) are internal gate
+          // stages shown as their own runs — without this, they leaked into the answer
+          // (e.g. a failed node still displayed the advisor's critique as its "answer").
+          const st = this.states.get(chatId)
+          const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
+          if (run && run.stage !== 'worker') return
+          updateNodeAnswer(nid, text)
+        },
         onAgentComplete: d => {
           const completeArgs = {
             changed: d.changed, score: d.score, passed: d.passed, feedback: d.feedback,
