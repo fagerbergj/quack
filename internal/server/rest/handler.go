@@ -347,6 +347,68 @@ func (h *Handler) SteerNode(w http.ResponseWriter, r *http.Request, chatID schem
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RetryNode re-runs a FINISHED node (failed or done) and its descendants, reusing
+// the stored outputs of every other node, and streams the re-execution as SSE.
+// Optional guidance is folded into the node's task. The new node states are
+// persisted (DagNode store) and the new terminal answer replaces the chat's answer.
+func (h *Handler) RetryNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	var body schema.RetryNodeBody
+	_ = json.NewDecoder(r.Body).Decode(&body) // guidance is optional; empty body is fine
+	guidance := ""
+	if body.Guidance != nil {
+		guidance = *body.Guidance
+	}
+
+	// The plan itself is loaded from session state by the orchestrator (the real
+	// dag.Plan). Here we just need the plan_id (for the node outputs) + the stored
+	// outputs to reuse, and to confirm the node exists.
+	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
+	if err != nil || dp == nil {
+		http.Error(w, "no plan to retry for this chat", http.StatusNotFound)
+		return
+	}
+	nodes, _ := h.store.GetDagNodes(r.Context(), dp.ID)
+	seeded := make(map[string]string, len(nodes))
+	found := false
+	for _, n := range nodes {
+		if n.NodeID == nodeID {
+			found = true
+		}
+		if n.Output != "" {
+			seeded[n.NodeID] = n.Output
+		}
+	}
+	if !found {
+		http.Error(w, "no such node in the plan", http.StatusNotFound)
+		return
+	}
+
+	sse, ok := newSSEWriter(w)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
+	h.activeCancels.Store(chatID, cancelRun)
+	defer func() {
+		cancelRun()
+		h.activeCancels.Delete(chatID)
+	}()
+
+	for ev, err := range h.orch.RetryNode(runCtx, userID, chatID, seeded, nodeID, guidance) {
+		if err != nil {
+			_ = sse.send(stream.Errorf(err.Error()))
+			break
+		}
+		h.persistNodeEvent(dp.ID, ev) // update the re-run nodes' persisted state
+		if sendErr := sse.send(ev); sendErr != nil {
+			break
+		}
+	}
+	_ = sse.send(stream.Done())
+	_ = h.store.Touch(runCtx, chatID)
+}
+
 // SubscribeChatStream connects an additional client to a chat's live (or
 // just-completed) run: it replays the events so far, then streams live events
 // until the run ends — so a turn started on one device can be watched from

@@ -411,6 +411,20 @@ func (s *Store) GetDagNodes(ctx context.Context, planID string) ([]DagNode, erro
 	return nodes, err
 }
 
+// GetLatestDagPlan returns the most-recent DAG plan for a chat (the one a retry
+// targets), or (nil, nil) if the chat has no plan.
+func (s *Store) GetLatestDagPlan(ctx context.Context, chatID string) (*DagPlan, error) {
+	var p DagPlan
+	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Order("created_at DESC").First(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // GetTurnsWithContent returns fully-joined turn data for a chat: ADK event
 // text grouped by turn, with the associated DAG plan and nodes when present.
 // Turns are matched to ADK event groups by sequence order.

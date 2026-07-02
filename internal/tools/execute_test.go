@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewExecuteToolMetadata(t *testing.T) {
-	tl, err := NewExecuteTool(nil, NewPlanCache(), "user1", "chat1")
+	tl, err := NewExecuteTool(NewPlanCache())
 	if err != nil {
 		t.Fatalf("NewExecuteTool error: %v", err)
 	}
@@ -17,9 +17,6 @@ func TestNewExecuteToolMetadata(t *testing.T) {
 	}
 	if !strings.Contains(tl.Description(), "plan") {
 		t.Errorf("Description() = %q, want mention of plan", tl.Description())
-	}
-	if !strings.Contains(tl.Description(), "end_turn") {
-		t.Errorf("Description() = %q, want mention of end_turn flag", tl.Description())
 	}
 }
 

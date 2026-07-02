@@ -1,148 +1,16 @@
 package dag
 
 import (
+	"errors"
 	"fmt"
 
 	adkagent "google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 )
-
-// BuildWorkflow turns a validated Plan into an ADK v2 workflow: one first-class
-// gated-worker node per plan node (named node.ID), fanned out per DependsOn and
-// joined via JoinNode barriers. Because each gated worker is a first-class graph
-// node (not a RunNode child), a completed node is durably skipped on resume — the
-// property the spike proved and the M8 durability win depends on.
-//
-// Each node's body assembles its worker prompt from the upstream outputs delivered
-// along the graph edges (buildTask, reused from the legacy executor) and runs the
-// trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
-// Executor.Execute (TopoSort + semaphore + per-node runner).
-func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (adkagent.Agent, error) {
-	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
-	var subAgents []adkagent.Agent
-	seenAgent := map[string]bool{}
-
-	// One gated-worker node per plan node.
-	for _, n := range plan.Nodes {
-		ag, ok := agents[n.AgentName]
-		if !ok {
-			return nil, fmt.Errorf("dag: no agent %q for node %q", n.AgentName, n.ID)
-		}
-		if !seenAgent[n.AgentName] {
-			seenAgent[n.AgentName] = true
-			subAgents = append(subAgents, ag) // dedup: author resolution only
-		}
-		workerNode, err := vetting.NewWorkerNode(ag)
-		if err != nil {
-			return nil, err
-		}
-		// The advisor (formative consult) is the same agent for every node; wrap it
-		// per node so concurrent nodes don't share one node instance. nil ⇒ the gate
-		// skips the consult (e.g. judge/advisor disabled).
-		var advisorNode workflow.Node
-		if advisor != nil {
-			if advisorNode, err = vetting.NewWorkerNode(advisor); err != nil {
-				return nil, err
-			}
-		}
-		node := n // capture per iteration
-		cfg := cfgFor(node.AgentName)
-		gated := workflow.NewDynamicNode[any, string](node.ID,
-			func(ctx adkagent.Context, in any, _ func(*session.Event) error) (string, error) {
-				upstream := upstreamFromInput(in, node.DependsOn)
-				// Continue-but-warn: a dependency whose vetting failed flags itself in
-				// session state; buildTask prefixes a ⚠ warning so this node treats that
-				// input skeptically.
-				gateFailed := readGateFailed(ctx, node.DependsOn)
-				prompt := buildTask(plan, node, upstream, gateFailed)
-				// Thread the turn's media parts to a media-capable node's worker
-				// (image/audio); text-only nodes get nil (a plain string prompt).
-				atts := plan.Attachments
-				if !mediaAgents[node.AgentName] {
-					atts = nil
-				}
-				// Register a per-node control so CancelNode/SteerNode can reach THIS
-				// node while it runs (cooperative, at gate-stage boundaries). Keep it a
-				// nil interface when controls are off — a typed-nil would panic in the
-				// gate's ctrl.Cancelled() check.
-				var ctrl vetting.NodeControl
-				if controls != nil {
-					nc := controls.register(chatID, node.ID)
-					defer controls.unregister(chatID, node.ID)
-					ctrl = nc
-				}
-				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
-				if err == nil {
-					// Persist the gate outcome to session state: gate_failed drives
-					// continue-but-warn on dependents; score/passed/rounds let Execute
-					// surface the judge result on node_done (the judge runs in its own
-					// isolated runner, so its result can't ride the workflow stream).
-					st := ctx.State()
-					_ = st.Set(gateFailedKey+node.ID, !res.Passed)
-					_ = st.Set(gateScoreKey+node.ID, res.Score)
-					_ = st.Set(gatePassedKey+node.ID, res.Passed)
-					_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
-				}
-				return answer, err
-			},
-			workflow.NodeConfig{})
-		nodesByID[node.ID] = gated
-	}
-
-	// Edges from DependsOn: leaves ← Start; one dep ← direct edge; N deps ← a
-	// per-node JoinNode barrier (keyed by predecessor node name == dep ID).
-	eb := workflow.NewEdgeBuilder()
-	for _, n := range plan.Nodes {
-		node := nodesByID[n.ID]
-		switch len(n.DependsOn) {
-		case 0:
-			eb.Add(workflow.Start, node)
-		case 1:
-			eb.Add(nodesByID[n.DependsOn[0]], node)
-		default:
-			join := workflow.NewJoinNode(n.ID + "-join")
-			deps := make([]workflow.Node, 0, len(n.DependsOn))
-			for _, d := range n.DependsOn {
-				deps = append(deps, nodesByID[d])
-			}
-			eb.AddFanIn(join, deps...)
-			eb.Add(join, node)
-		}
-	}
-
-	// ADK requires a single terminal (no-successor) output node. A plan with
-	// several — e.g. two research nodes and no synthesizer — otherwise fails with
-	// "multiple terminal nodes produced output". Fan the extra terminals into one
-	// terminal JoinNode so the workflow always has a single output. The planner
-	// usually adds a synthesizer (one terminal); this is the safety net for when
-	// the LLM omits it. Execute streams per-node node_done off the event stream, so
-	// the join (not a plan node) is transparent to the client.
-	isDep := map[string]bool{}
-	for _, n := range plan.Nodes {
-		for _, d := range n.DependsOn {
-			isDep[d] = true
-		}
-	}
-	var terminals []workflow.Node
-	for _, n := range plan.Nodes {
-		if !isDep[n.ID] {
-			terminals = append(terminals, nodesByID[n.ID])
-		}
-	}
-	if len(terminals) > 1 {
-		eb.AddFanIn(workflow.NewJoinNode("__terminal_join"), terminals...)
-	}
-
-	return workflowagent.New(workflowagent.Config{
-		Name:      "quack-dag-" + plan.ID,
-		SubAgents: subAgents,
-		Edges:     eb.Build(),
-	})
-}
 
 // Session-state key prefixes a gated node writes under its node ID: gate_failed
 // (true when the answer did NOT clear threshold) drives continue-but-warn on
@@ -154,6 +22,108 @@ const (
 	gatePassedKey = "quack.gate_passed/"
 	gateRoundsKey = "quack.gate_rounds/"
 )
+
+// buildGateNodes builds one gated-worker node per plan node (node ID → node),
+// shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
+// returns the deduped worker agents (for BuildWorkflow's author resolution;
+// runDAG ignores them).
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
+	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
+	var subAgents []adkagent.Agent
+	seenAgent := map[string]bool{}
+	for _, n := range plan.Nodes {
+		ag, ok := agents[n.AgentName]
+		if !ok {
+			return nil, nil, fmt.Errorf("dag: no agent %q for node %q", n.AgentName, n.ID)
+		}
+		if !seenAgent[n.AgentName] {
+			seenAgent[n.AgentName] = true
+			subAgents = append(subAgents, ag) // dedup: author resolution only
+		}
+		workerNode, err := vetting.NewWorkerNode(ag)
+		if err != nil {
+			return nil, nil, err
+		}
+		// The advisor (formative consult) is the same agent for every node; wrap it
+		// per node so concurrent nodes don't share one node instance. nil ⇒ the gate
+		// skips the consult (e.g. judge/advisor disabled).
+		var advisorNode workflow.Node
+		if advisor != nil {
+			if advisorNode, err = vetting.NewWorkerNode(advisor); err != nil {
+				return nil, nil, err
+			}
+		}
+		node := n // capture per iteration
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+	}
+	return nodesByID, subAgents, nil
+}
+
+// newGatedNode builds the dynamic node for one plan node: it assembles the
+// worker prompt from upstream outputs, runs the trust-gate refine loop, and
+// FAILS (marks the node) on an empty answer. The
+// same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
+// directly by an orchestration node (single-runner path).
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
+	return workflow.NewDynamicNode[any, string](node.ID,
+		func(ctx adkagent.Context, in any, _ func(*session.Event) error) (string, error) {
+			upstream := upstreamFromInput(in, node.DependsOn)
+			// Continue-but-warn: a dependency whose vetting failed flags itself in
+			// session state; buildTask prefixes a ⚠ warning so this node treats that
+			// input skeptically.
+			gateFailed := readGateFailed(ctx, node.DependsOn)
+			prompt := buildTask(plan, node, upstream, gateFailed)
+			// Thread the turn's media parts to a media-capable node's worker
+			// (image/audio); text-only nodes get nil (a plain string prompt).
+			atts := plan.Attachments
+			if !mediaAgents[node.AgentName] {
+				atts = nil
+			}
+			// Register a per-node control so CancelNode/SteerNode can reach THIS
+			// node while it runs (cooperative, at gate-stage boundaries). Keep it a
+			// nil interface when controls are off — a typed-nil would panic in the
+			// gate's ctrl.Cancelled() check.
+			var ctrl vetting.NodeControl
+			if controls != nil {
+				nc := controls.register(chatID, node.ID)
+				defer controls.unregister(chatID, node.ID)
+				ctrl = nc
+			}
+
+			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, workerModel, judge, cfg, prompt, atts, ctrl)
+			if errors.Is(err, vetting.ErrNodeEmpty) {
+				// Empty → the node FAILS. The DAG continues (dependents see the gap via
+				// buildTask's ⚠ note) and the empty output drives a loud node_failed. A
+				// human can retry the failed node afterward.
+				markGateFailed(ctx, node.ID)
+				return "", nil
+			}
+			if err == nil {
+				// Persist the gate outcome to session state: gate_failed drives
+				// continue-but-warn on dependents; score/passed/rounds let Execute
+				// surface the judge result on node_done (the judge runs in its own
+				// isolated runner, so its result can't ride the workflow stream).
+				st := ctx.State()
+				_ = st.Set(gateFailedKey+node.ID, !res.Passed)
+				_ = st.Set(gateScoreKey+node.ID, res.Score)
+				_ = st.Set(gatePassedKey+node.ID, res.Passed)
+				_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
+			}
+			return answer, err
+		},
+		workflow.NodeConfig{})
+}
+
+// markGateFailed flags a node that produced NO answer (cancelled, steered-still-
+// empty, or autonomous continue-but-warn) so its dependents get the continue-but-
+// warn treatment (buildTask prefixes a ⚠). The empty output itself drives the loud
+// node_failed the DagStream emits for it.
+func markGateFailed(ctx adkagent.Context, nodeID string) {
+	if st := ctx.State(); st != nil {
+		_ = st.Set(gateFailedKey+nodeID, true)
+		_ = st.Set(gatePassedKey+nodeID, false)
+	}
+}
 
 // readGateFailed reconstructs the gateFailed map for buildTask by reading each
 // dependency's gate-fail flag from workflow session state.

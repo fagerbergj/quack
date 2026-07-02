@@ -250,6 +250,41 @@ paths:
         "204":
           description: Accepted (or no such active node)
 
+  /api/v1/chats/{chat_id}/nodes/{node_id}/retry:
+    post:
+      operationId: retryNode
+      summary: Re-run a finished node and its descendants
+      description: |
+        Re-runs a FAILED or DONE node and every node downstream of it, reusing the
+        stored outputs of all other nodes, and streams the re-execution as
+        Server-Sent Events (the same event vocabulary as sendChatMessage). Optional
+        guidance is folded into the node's task (retry-with-guidance is steer, on a
+        finished node). The new terminal answer replaces the turn's answer.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetryNodeBody"
+      x-sse-events:
+        - node_start
+        - node_done
+        - node_failed
+        - agent_start
+        - agent_complete
+        - done
+        - error
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
 components:
   parameters:
     ChatID:
@@ -337,6 +372,14 @@ components:
           type: string
           description: New guidance to redirect the node; the worker revises on top
             of its existing session (prior tool calls and results retained).
+
+    RetryNodeBody:
+      type: object
+      properties:
+        guidance:
+          type: string
+          description: Optional guidance folded into the node's task for the re-run
+            (retry-with-guidance is steer, on a finished node).
 
     # -------------------------------------------------------------------------
     # Turn (one user→assistant exchange, modelled after OpenResponses Response)

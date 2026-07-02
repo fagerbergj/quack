@@ -35,6 +35,13 @@ export type SteerNodeBody = {
     guidance: string;
 };
 
+export type RetryNodeBody = {
+    /**
+     * Optional guidance folded into the node's task for the re-run (retry-with-guidance is steer, on a finished node).
+     */
+    guidance?: string;
+};
+
 export type Turn = {
     id: string;
     created_at: string;
@@ -364,3 +371,22 @@ export type SteerNodeResponses = {
 };
 
 export type SteerNodeResponse = SteerNodeResponses[keyof SteerNodeResponses];
+
+export type RetryNodeData = {
+    body?: RetryNodeBody;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/retry';
+};
+
+export type RetryNodeResponses = {
+    /**
+     * SSE event stream
+     */
+    200: string;
+};
+
+export type RetryNodeResponse = RetryNodeResponses[keyof RetryNodeResponses];

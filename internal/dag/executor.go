@@ -2,22 +2,17 @@ package dag
 
 import (
 	"context"
-	"iter"
 	"strconv"
 	"strings"
-	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
-
-// nodeAppName is the ADK application name for a DAG run's workflow session.
-const nodeAppName = "quack-nodes"
 
 // Executor runs a Plan as an ADK v2 graph workflow (BuildWorkflow): one
 // first-class gated-worker node per plan node, fanned out per DependsOn. It is
@@ -27,101 +22,126 @@ const nodeAppName = "quack-nodes"
 type Executor struct {
 	sessions    session.Service
 	agents      map[string]adkagent.Agent             // agent name → built (plain) agent
+	models      map[string]model.LLM                  // agent name → raw model (for the tool-less empty-recovery writer)
 	advisor     adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
 	judge       vetting.JudgeFactory                  // independent judge factory
 	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
 	mediaAgents map[string]bool                       // agents accepting image/audio parts
 	controls    *runControls                          // live per-node cancel/steer handles (M5b)
+	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
+}
+
+// SetMaxActive sets the concurrent-node cap used by RunPlanInNode (config
+// dag.max_active_nodes). No-op for values < 1.
+func (e *Executor) SetMaxActive(n int) {
+	if n >= 1 {
+		e.maxActive = n
+	}
+}
+
+// DagStream translates a single-runner's gate-node events into SSE for the
+// one-orchestrator-workflow path, where the orchestrator llmagent and the DAG
+// gate nodes share ONE runner/event-stream. Handle returns true for events it
+// owns (gate-node lifecycle) and false for the orchestrator's
+// own events, which the caller routes to its translator.
+type DagStream struct {
+	ctx       context.Context
+	ds        *dagStream
+	plan      Plan
+	agentByID map[string]string
+	yield     func(stream.SSEEvent, error) bool
+	only      map[string]bool // if non-nil, Finish only finalizes these nodes (retry scope)
+}
+
+// ScopeToRetry restricts the node_done/node_failed sweep to the retried node and
+// its descendants, so a retry doesn't re-emit (or false-fail) the seeded nodes it
+// left untouched.
+func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, nodeID) }
+
+// NewDagStream builds a router for one plan's gate-node events. nodeOutputs is
+// filled (node ID → vetted answer) for the caller's TerminalOutput.
+// appName/userID/sessionID identify the session the gate nodes write their judge
+// results into — in the single-runner model that's the orchestrator's own session,
+// not a separate DAG session.
+func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID, sessionID string, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string) *DagStream {
+	agentByID := make(map[string]string, len(plan.Nodes))
+	for _, n := range plan.Nodes {
+		agentByID[n.ID] = n.AgentName
+	}
+	return &DagStream{
+		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
+		ds: newDagStream(agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
+			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
+		}),
+	}
+}
+
+// Handle routes one runner event: gate-node lifecycle events are translated to SSE
+// (returns true); anything else (the orchestrator's own thinking/tool events) is
+// left to the caller (returns false).
+func (s *DagStream) Handle(ev *session.Event) bool {
+	if ev == nil {
+		return false
+	}
+	if ev.NodeInfo == nil || planNodeInPath(ev.NodeInfo.Path, s.agentByID) == "" {
+		return false // not a gate-node event — the orchestrator's own
+	}
+	s.ds.handle(ev)
+	return true
+}
+
+// Finish flushes the last run and emits node_done for every plan node
+// that hasn't already emitted one live. Call after the runner loop ends.
+func (s *DagStream) Finish() {
+	s.ds.flush()
+	ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
+	for _, n := range s.plan.Nodes {
+		if s.ds.doneEmitted[n.ID] {
+			continue
+		}
+		if s.only != nil && !s.only[n.ID] {
+			continue // retry: leave the seeded (not-re-run) nodes as they were
+		}
+		// A node that produced NO answer surfaces as a loud node_failed (not a quiet
+		// node_done) so the gap is never silent.
+		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
+			s.yield(stream.NodeFailed(n.ID, "produced no answer"), nil)
+			continue
+		}
+		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
+	}
+}
+
+// RunPlanInNode runs a plan's gated nodes via runDAG in the CURRENT workflow
+// node's sub-scheduler (single runner) — the entry point for the one-orchestrator-
+// workflow path. Returns node ID → vetted output; an empty node fails (marks itself)
+// and the DAG continues so the run always finishes.
+func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	if err != nil {
+		return nil, err
+	}
+	return runDAG(ctx, plan, gateNodes, e.maxActive)
+}
+
+// RetryPlanInNode re-runs the target node and its descendants, reusing the seeded
+// outputs (node ID → prior text) for every other node — a retry of a failed/done
+// node whose upstream is unchanged. Returns the full node-output map (seeded +
+// freshly re-run). Per-node guidance should already be folded into the plan's node
+// Task by the caller.
+func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	if err != nil {
+		return nil, err
+	}
+	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, retrySet(plan, nodeID))
 }
 
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate — the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.
-func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls()}
-}
-
-// Execute builds the plan's workflow, runs it via a fresh runner, and translates
-// the workflow's raw session-event stream into Quack's SSE vocabulary:
-//   - node_start (live, on a node's first event) + node_done (per node, with the
-//     judge score/passed/rounds read from session state);
-//   - within each node, the worker's runs as agent_start/agent_complete with
-//     agent_thinking / agent_tool_call / agent_tool_result / agent_token activity.
-//
-// Translation is SSE-only: it NEVER writes back into the workflow session, so it
-// cannot re-poison a downstream node's model request the way orphan-marker
-// FunctionResponses did in v1 (see the 3a spike finding). The judge runs in its
-// own isolated runner (off this stream), so its result is carried via session
-// state (dag.gateScoreKey…) rather than the event stream.
-//
-// nodeOutputs (node ID → vetted answer) is filled for the caller's TerminalOutput.
-func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string, nodeOutputs map[string]string) iter.Seq2[stream.SSEEvent, error] {
-	return func(yield func(stream.SSEEvent, error) bool) {
-		root, err := BuildWorkflow(plan, e.agents, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
-		if err != nil {
-			yield(stream.Errorf("dag: "+err.Error()), nil)
-			return
-		}
-		r, err := runner.New(runner.Config{AppName: nodeAppName, Agent: root, SessionService: e.sessions, AutoCreateSession: true})
-		if err != nil {
-			yield(stream.Errorf("dag: "+err.Error()), nil)
-			return
-		}
-		// Thread-safe yield: fan-out nodes run on concurrent workflow goroutines, and
-		// each may stream judge-stage SSE (below) at the same time the main loop yields
-		// node lifecycle — serialize all SSE through one mutex.
-		var mu sync.Mutex
-		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
-		// Inject an SSE sink so vetting.RunGatedRefine can stream the judge's own
-		// run (it executes in an isolated runner OFF this event stream) up to the
-		// client as stage:judge activity — SSE-only, never written to the session.
-		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
-		// The plan tool already emitted dag_plan for this plan_id (and M8 persists
-		// it); re-emitting here caused a duplicate insert (dag_plans_pkey). The plan
-		// tool owns dag_plan emission — the executor only streams node lifecycle.
-
-		// ponytail: media attachments + per-node History threading are deferred
-		// (follow-up). Leaf nodes assemble their prompt from plan.UserMessage via
-		// buildTask, so text research works end-to-end now.
-		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: plan.UserMessage}}}
-
-		agentByID := make(map[string]string, len(plan.Nodes))
-		for _, n := range plan.Nodes {
-			agentByID[n.ID] = n.AgentName
-		}
-
-		ds := newDagStream(agentByID, safeYield, nodeOutputs, func(nodeID string) gateScore {
-			return e.gateScore(ctx, userID, plan.ID, nodeID)
-		})
-
-		for ev, rerr := range r.Run(ctx, userID, plan.ID, content, adkagent.RunConfig{}) {
-			if rerr != nil {
-				safeYield(stream.Errorf(rerr.Error()), nil)
-				return
-			}
-			if ev == nil {
-				continue
-			}
-			if !ds.handle(ev) {
-				return
-			}
-		}
-		if !ds.flush() {
-			return
-		}
-		// Seed the terminal node from the last output if its own event was missed,
-		// so TerminalOutput and its node_done have an answer.
-		ensureTerminal(plan, nodeOutputs, ds.last)
-		// node_done for every plan node that hasn't already emitted one live.
-		for _, n := range plan.Nodes {
-			if ds.doneEmitted[n.ID] {
-				continue
-			}
-			if !safeYield(stream.NodeDone(n.ID, ds.nodeDoneData(n.ID)), nil) {
-				return
-			}
-		}
-	}
+func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
+	return &Executor{sessions: sessions, agents: agents, models: models, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 
 // gateScore is a node's trust-gate result read back from workflow session state.
@@ -133,9 +153,9 @@ type gateScore struct {
 
 // gateScore reads a node's persisted judge result (written by the gated node via
 // dag.gateScoreKey…). Returns the zero value if the session/state/keys are absent.
-func (e *Executor) gateScore(ctx context.Context, userID, planID, nodeID string) gateScore {
+func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, nodeID string) gateScore {
 	var g gateScore
-	resp, err := e.sessions.Get(ctx, &session.GetRequest{AppName: nodeAppName, UserID: userID, SessionID: planID})
+	resp, err := e.sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: sessionID})
 	if err != nil || resp == nil {
 		return g
 	}
@@ -222,16 +242,18 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	// The gated node's OWN event (last segment == the plan node): its output marks
 	// node completion. node_done fires live here with the judge score from state.
 	if segName(last) == node {
-		if ev.Output != nil {
-			if out := outputString(ev.Output); out != "" {
-				s.outputs[node] = out
-				s.last = out
-			}
-		}
 		if ev.Output != nil && !s.doneEmitted[node] {
 			s.closeRun(node) // end any open worker run first
 			s.doneEmitted[node] = true
-			if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
+			if out := outputString(ev.Output); out != "" {
+				s.outputs[node] = out
+				s.last = out
+				if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
+					return false
+				}
+			} else if !s.emit(stream.NodeFailed(node, "produced no answer")) {
+				// No answer (continue-but-warn / cancelled) → loud node_failed, not a
+				// quiet node_done, so the gap is never silent.
 				return false
 			}
 		}
@@ -482,6 +504,11 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 			}
 			sb.WriteString(out)
 			sb.WriteString("\n\n---\n\n")
+		} else {
+			// Empty dep: the upstream node produced NO answer. Tell the synthesizer
+			// explicitly so it calls out the gap instead of silently dropping the topic
+			// (or inventing content to fill it).
+			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer — it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
 		}
 	}
 	if sb.Len() == 0 {

@@ -2,12 +2,14 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
@@ -39,7 +41,7 @@ import (
 //
 // ponytail: self-critique (old Stage 1) is dropped — the advisor consult replaces
 // it (a later increment). The loop is worker → deterministic → judge → revise.
-func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, cfg Config) (workflow.Node, error) {
+func NewGatedWorkerNode(name string, worker adkagent.Agent, workerModel model.LLM, judge JudgeFactory, cfg Config) (workflow.Node, error) {
 	workerNode, err := NewWorkerNode(worker)
 	if err != nil {
 		return nil, err
@@ -51,7 +53,7 @@ func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, 
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, judge, cfg, task, nil, nil)
+		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, workerModel, judge, cfg, task, nil, nil)
 		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
@@ -87,6 +89,12 @@ type GateResult struct {
 //
 // Returns (answer, result, err); result carries the final verdict (score/passed/
 // feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
+// ErrNodeEmpty is returned by RunGatedRefine when the worker produced no answer
+// even after the empty-recovery retry. The node body catches it to pause the run
+// for a human steer (re-run with guidance) or cancel, instead of silently
+// emitting an empty output that cascades into empty dependents.
+var ErrNodeEmpty = errors.New("vetting: node produced no answer")
+
 // NodeControl lets a caller cancel or steer a running gate between its stages.
 // nil = no control. Cooperative: checked at gate-stage boundaries (before each
 // judge round), not mid-model-call: mid-call per-node cancel isn't possible on
@@ -98,7 +106,7 @@ type NodeControl interface {
 	TakeSteer() string
 }
 
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl) (string, GateResult, error) {
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
 	// Advisor consult (formative, once per worker round). Best-effort: on error,
@@ -167,19 +175,23 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		// empty answers prove sticky.
 		if strings.TrimSpace(answer) == "" {
 			// Empty (no error) is the OTHER silent failure mode besides a 400 — a
-			// reasoning model can spend its whole output budget on thinking and return
-			// empty content. Log it so an empty node isn't a mystery.
-			log.Warn("worker draft empty; attempting finalize recovery", "retries", maxEmptyRetries)
-			fin := contentPlainText(buildFinalizeContent(question, activityFromSession(ctx.Session())))
+			// reasoning model can spend its whole output budget on thinking (or trap its
+			// tool calls in reasoning) and return empty content. Recover via a TOOL-LESS
+			// writer run in a FRESH runner with the findings: re-invoking the worker in
+			// its own session drops the finalize prompt (llmagent rebuilds from session
+			// events, which end in the empty reply), so that write-up never happened.
+			log.Warn("worker draft empty; recovering via tool-less writer", "retries", maxEmptyRetries)
+			fin := buildFinalizeContent(question, activityFromSession(ctx.Session()))
 			for attempt := 1; attempt <= maxEmptyRetries && strings.TrimSpace(answer) == ""; attempt++ {
-				answer, err = runWorkerNode(ctx, workerNode, fin, fmt.Sprintf("worker-finalize-%d%s", attempt, sfx))
+				answer, err = runWriterFresh(ctx, workerModel, fin)
 				if err != nil {
-					log.Error("worker finalize failed", "attempt", attempt, "err", err)
+					log.Error("writer recovery failed", "attempt", attempt, "err", err)
 					return "", GateResult{}, err
 				}
 			}
 			if strings.TrimSpace(answer) == "" {
-				log.Error("worker produced NO answer after finalize recovery — node output will be empty", "retries", maxEmptyRetries)
+				log.Error("worker produced NO answer; writer recovery also empty", "retries", maxEmptyRetries)
+				return "", GateResult{}, ErrNodeEmpty
 			}
 		}
 

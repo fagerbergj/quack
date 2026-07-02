@@ -60,7 +60,7 @@ func newCoopExecutor(t *testing.T, stub *coopStub, rounds int) (*Executor, Plan)
 	if err != nil {
 		t.Fatalf("agent: %v", err)
 	}
-	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil,
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil, nil,
 		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: rounds} }, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
 	return ex, plan
@@ -68,12 +68,7 @@ func newCoopExecutor(t *testing.T, stub *coopStub, rounds int) (*Executor, Plan)
 
 func drain(t *testing.T, ex *Executor, plan Plan) {
 	t.Helper()
-	out := map[string]string{}
-	for _, err := range ex.Execute(context.Background(), plan, "u", "chat", out) {
-		if err != nil {
-			t.Fatalf("execute: %v", err)
-		}
-	}
+	runPlanSSE(t, ex, plan, "chat")
 }
 
 // TestExecute_CancelNodeStopsBeforeJudge: cancelling a running node makes the gate

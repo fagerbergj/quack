@@ -257,6 +257,12 @@ type ReasoningPart struct {
 // ReasoningPartType defines model for ReasoningPart.Type.
 type ReasoningPartType string
 
+// RetryNodeBody defines model for RetryNodeBody.
+type RetryNodeBody struct {
+	// Guidance Optional guidance folded into the node's task for the re-run (retry-with-guidance is steer, on a finished node).
+	Guidance *string `json:"guidance,omitempty"`
+}
+
 // SendMessageBody defines model for SendMessageBody.
 type SendMessageBody struct {
 	Content string `json:"content"`
@@ -311,6 +317,9 @@ type ResponseID = string
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
+
+// RetryNodeJSONRequestBody defines body for RetryNode for application/json ContentType.
+type RetryNodeJSONRequestBody = RetryNodeBody
 
 // SteerNodeJSONRequestBody defines body for SteerNode for application/json ContentType.
 type SteerNodeJSONRequestBody = SteerNodeBody
@@ -543,6 +552,9 @@ type ServerInterface interface {
 	// Cancel a single running node of the chat's active run
 	// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
 	CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// Re-run a finished node and its descendants
+	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/retry)
+	RetryNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Interrupt a running node and re-run it with new guidance
 	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/steer)
 	SteerNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
@@ -594,6 +606,12 @@ func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId Ch
 // Cancel a single running node of the chat's active run
 // (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
 func (_ Unimplemented) CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Re-run a finished node and its descendants
+// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/retry)
+func (_ Unimplemented) RetryNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -748,6 +766,41 @@ func (siw *ServerInterfaceWrapper) CancelNode(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CancelNode(w, r, chatId, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetryNode operation middleware
+func (siw *ServerInterfaceWrapper) RetryNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetryNode(w, r, chatId, nodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1046,6 +1099,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.CancelNode)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/retry", wrapper.RetryNode)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/steer", wrapper.SteerNode)
