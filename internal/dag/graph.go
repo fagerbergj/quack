@@ -52,81 +52,8 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 			}
 		}
 		node := n // capture per iteration
-		cfg := cfgFor(node.AgentName)
-		gated := workflow.NewDynamicNode[any, string](node.ID,
-			func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
-				upstream := upstreamFromInput(in, node.DependsOn)
-				// Continue-but-warn: a dependency whose vetting failed flags itself in
-				// session state; buildTask prefixes a ⚠ warning so this node treats that
-				// input skeptically.
-				gateFailed := readGateFailed(ctx, node.DependsOn)
-				prompt := buildTask(plan, node, upstream, gateFailed)
-				// Thread the turn's media parts to a media-capable node's worker
-				// (image/audio); text-only nodes get nil (a plain string prompt).
-				atts := plan.Attachments
-				if !mediaAgents[node.AgentName] {
-					atts = nil
-				}
-				// Register a per-node control so CancelNode/SteerNode can reach THIS
-				// node while it runs (cooperative, at gate-stage boundaries). Keep it a
-				// nil interface when controls are off — a typed-nil would panic in the
-				// gate's ctrl.Cancelled() check.
-				var ctrl vetting.NodeControl
-				if controls != nil {
-					nc := controls.register(chatID, node.ID)
-					defer controls.unregister(chatID, node.ID)
-					ctrl = nc
-				}
-
-				// Fail-into-steerable: if the worker produced nothing, pause the run for
-				// a human steer (re-run with guidance) or cancel, rather than silently
-				// emitting an empty output that cascades into empty dependents.
-				// Stable across pause/resume AND across nesting (a nested RunNode child
-				// gets a fresh InvocationID on resume, so key on plan+node, which don't
-				// change within a run and are unique per run).
-				interruptID := "empty-" + plan.ID + "-" + node.ID
-				resumed := false
-				if reply, ok := ctx.ResumedInput(interruptID); ok {
-					resumed = true
-					g, _ := reply.(string)
-					guidance := strings.TrimSpace(strings.TrimPrefix(g, "steer:"))
-					if g == "cancel" || guidance == "" {
-						markGateFailed(ctx, node.ID) // cancelled → empty, continue-but-warn
-						return "", nil
-					}
-					prompt += "\n\n--- Guidance (you produced no answer; address this and write it) ---\n" + guidance
-				}
-
-				answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
-				if errors.Is(err, vetting.ErrNodeEmpty) {
-					if resumed {
-						markGateFailed(ctx, node.ID) // steered re-run still empty → fail clean, don't re-pause
-						return "", nil
-					}
-					if e := emit(workflow.NewRequestInputEvent(ctx, session.RequestInput{
-						InterruptID: interruptID,
-						Message:     "Node \"" + node.ID + "\" produced no answer. Steer it with guidance, or cancel.",
-						Payload:     map[string]any{"node_id": node.ID},
-					})); e != nil {
-						return "", e
-					}
-					return "", workflow.ErrNodeInterrupted // pause the run for human input
-				}
-				if err == nil {
-					// Persist the gate outcome to session state: gate_failed drives
-					// continue-but-warn on dependents; score/passed/rounds let Execute
-					// surface the judge result on node_done (the judge runs in its own
-					// isolated runner, so its result can't ride the workflow stream).
-					st := ctx.State()
-					_ = st.Set(gateFailedKey+node.ID, !res.Passed)
-					_ = st.Set(gateScoreKey+node.ID, res.Score)
-					_ = st.Set(gatePassedKey+node.ID, res.Passed)
-					_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
-				}
-				return answer, err
-			},
-			workflow.NodeConfig{})
-		nodesByID[node.ID] = gated
+		var advisorN workflow.Node = advisorNode
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, advisorN, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
 	}
 
 	// Edges from DependsOn: leaves ← Start; one dep ← direct edge; N deps ← a
@@ -190,6 +117,87 @@ const (
 	gatePassedKey = "quack.gate_passed/"
 	gateRoundsKey = "quack.gate_rounds/"
 )
+
+// newGatedNode builds the dynamic node for one plan node: it assembles the
+// worker prompt from upstream outputs, runs the trust-gate refine loop, and
+// (fail-into-steerable) pauses for human steer/cancel on an empty answer. The
+// same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
+// directly by an orchestration node (single-runner path).
+func newGatedNode(plan Plan, node Node, workerNode, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
+	return workflow.NewDynamicNode[any, string](node.ID,
+		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
+			upstream := upstreamFromInput(in, node.DependsOn)
+			// Continue-but-warn: a dependency whose vetting failed flags itself in
+			// session state; buildTask prefixes a ⚠ warning so this node treats that
+			// input skeptically.
+			gateFailed := readGateFailed(ctx, node.DependsOn)
+			prompt := buildTask(plan, node, upstream, gateFailed)
+			// Thread the turn's media parts to a media-capable node's worker
+			// (image/audio); text-only nodes get nil (a plain string prompt).
+			atts := plan.Attachments
+			if !mediaAgents[node.AgentName] {
+				atts = nil
+			}
+			// Register a per-node control so CancelNode/SteerNode can reach THIS
+			// node while it runs (cooperative, at gate-stage boundaries). Keep it a
+			// nil interface when controls are off — a typed-nil would panic in the
+			// gate's ctrl.Cancelled() check.
+			var ctrl vetting.NodeControl
+			if controls != nil {
+				nc := controls.register(chatID, node.ID)
+				defer controls.unregister(chatID, node.ID)
+				ctrl = nc
+			}
+
+			// Fail-into-steerable: if the worker produced nothing, pause the run for a
+			// human steer (re-run with guidance) or cancel, rather than silently
+			// emitting an empty output that cascades into empty dependents. Stable
+			// across pause/resume AND nesting (a nested RunNode child gets a fresh
+			// InvocationID on resume, so key on plan+node — unique per run, unchanging
+			// within it).
+			interruptID := "empty-" + plan.ID + "-" + node.ID
+			resumed := false
+			if reply, ok := ctx.ResumedInput(interruptID); ok {
+				resumed = true
+				g, _ := reply.(string)
+				guidance := strings.TrimSpace(strings.TrimPrefix(g, "steer:"))
+				if g == "cancel" || guidance == "" {
+					markGateFailed(ctx, node.ID) // cancelled → empty, continue-but-warn
+					return "", nil
+				}
+				prompt += "\n\n--- Guidance (you produced no answer; address this and write it) ---\n" + guidance
+			}
+
+			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, judge, cfg, prompt, atts, ctrl)
+			if errors.Is(err, vetting.ErrNodeEmpty) {
+				if resumed {
+					markGateFailed(ctx, node.ID) // steered re-run still empty → fail clean, don't re-pause
+					return "", nil
+				}
+				if e := emit(workflow.NewRequestInputEvent(ctx, session.RequestInput{
+					InterruptID: interruptID,
+					Message:     "Node \"" + node.ID + "\" produced no answer. Steer it with guidance, or cancel.",
+					Payload:     map[string]any{"node_id": node.ID},
+				})); e != nil {
+					return "", e
+				}
+				return "", workflow.ErrNodeInterrupted // pause the run for human input
+			}
+			if err == nil {
+				// Persist the gate outcome to session state: gate_failed drives
+				// continue-but-warn on dependents; score/passed/rounds let Execute
+				// surface the judge result on node_done (the judge runs in its own
+				// isolated runner, so its result can't ride the workflow stream).
+				st := ctx.State()
+				_ = st.Set(gateFailedKey+node.ID, !res.Passed)
+				_ = st.Set(gateScoreKey+node.ID, res.Score)
+				_ = st.Set(gatePassedKey+node.ID, res.Passed)
+				_ = st.Set(gateRoundsKey+node.ID, res.Rounds)
+			}
+			return answer, err
+		},
+		workflow.NodeConfig{})
+}
 
 // markGateFailed flags a node as failed in session state so its dependents get
 // the continue-but-warn treatment — used when a node is cancelled or its steered

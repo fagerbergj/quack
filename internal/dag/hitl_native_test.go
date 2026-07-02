@@ -30,22 +30,18 @@ func TestPrototype_SingleRunnerNativeHITL(t *testing.T) {
 	}
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
 
-	// EXISTING code, unchanged: build the DAG workflow + gate.
-	dagAgent, err := BuildWorkflow(plan, map[string]adkagent.Agent{"w": ag}, nil,
-		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil, nil, "")
+	// Flattened single-runner shape: the orchestration node schedules the gate
+	// node DIRECTLY via RunNode (one scheduler, single nesting) — not a nested
+	// sub-workflow. The gate node is the SAME newGatedNode BuildWorkflow uses.
+	workerNode, err := vetting.NewWorkerNode(ag)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// NEW shell: an orchestration workflow whose node runs the DAG via RunNode.
-	dagNode, err := workflow.NewAgentNode(dagAgent, workflow.NodeConfig{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	gateNode := newGatedNode(plan, plan.Nodes[0], workerNode, nil, vetting.NewJudgeFactory(stub, nil), vetting.Config{Threshold: 0.6, JudgeRounds: 1}, nil, nil, "")
 	orchestrate := workflow.NewDynamicNode[any, string]("orchestrate",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			// (a real orchestrator would make the planning LLM call here first)
-			return workflow.RunNode[string](ctx, dagNode, plan.UserMessage)
+			return workflow.RunNode[string](ctx, gateNode, plan.UserMessage)
 		}, workflow.NodeConfig{})
 	top, err := workflowagent.New(workflowagent.Config{Name: "orch", Edges: workflow.Chain(workflow.Start, orchestrate)})
 	if err != nil {
@@ -83,12 +79,9 @@ func TestPrototype_SingleRunnerNativeHITL(t *testing.T) {
 			}
 		}
 	}
-	// SPIKE FINDING: the nested resume RESPONSE does not reach the inner gate node
-	// via a wrapped sub-workflow (needs ResumeOrRequestInput and/or scheduling the
-	// DAG nodes with direct RunNode rather than an AgentNode-wrapped sub-workflow).
-	if strings.Contains(final, "STEERED-ANSWER") {
-		t.Logf("RESUMED + recovered: %q", final)
+	if !strings.Contains(final, "STEERED-ANSWER") {
+		t.Errorf("resume through the single runner did not recover the node; final=%q", final)
 	} else {
-		t.Logf("resume gap: nested sub-workflow did not deliver the reply (final=%q) — see spike notes", final)
+		t.Logf("RESUMED + recovered in one runner: %q", final)
 	}
 }
