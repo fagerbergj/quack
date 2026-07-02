@@ -346,7 +346,13 @@ func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 // text with no node_id (the top-level orchestrator reply); node-scoped tokens are
 // intermediate research output and are not printed. stdout stays clean for pipes;
 // the caller routes errors to stderr.
-func PrintPrompt(ctx context.Context, out io.Writer, server, prompt string) error {
+// PrintPrompt runs a one-shot prompt and prints the final answer to out. For a
+// conversational reply the orchestrator streams the answer directly; for a
+// research query the answer is the terminal DAG node's output (which the
+// orchestrator delivers). When events is non-nil, a compact per-event trace of
+// the pipeline (plan, node lifecycle, errors) is written there (stderr) — so a
+// research run is observable, not silent.
+func PrintPrompt(ctx context.Context, out, events io.Writer, server, prompt string) error {
 	c, err := NewClient(server)
 	if err != nil {
 		return err
@@ -356,17 +362,49 @@ func PrintPrompt(ctx context.Context, out io.Writer, server, prompt string) erro
 		return err
 	}
 	var streamErr error
-	printed := false
+	var orch strings.Builder            // orchestrator's own streamed answer (node_id == "")
+	nodeOut := map[string]string{}      // node_id → latest output (research answers)
+	successor := map[string]bool{}      // node_id that some other node depends on
+	var lastNode string                 // last node to finish (terminal completes last)
 	err = c.SendMessage(ctx, chatID, prompt, func(ev SSEEvent) error {
+		if events != nil {
+			data := string(ev.Data)
+			if len(data) > 200 {
+				data = data[:200] + "…"
+			}
+			fmt.Fprintf(events, "  «%s» %s\n", ev.Name, data)
+		}
 		switch ev.Name {
+		case "dag_plan":
+			var d struct {
+				Edges []struct{ From, To string } `json:"edges"`
+			}
+			if json.Unmarshal(ev.Data, &d) == nil {
+				for _, e := range d.Edges {
+					successor[e.From] = true
+				}
+			}
 		case "agent_token":
 			var d struct {
 				NodeID string `json:"node_id"`
 				Text   string `json:"text"`
 			}
 			if json.Unmarshal(ev.Data, &d) == nil && d.NodeID == "" && d.Text != "" {
-				fmt.Fprint(out, d.Text)
-				printed = true
+				orch.WriteString(d.Text)
+			}
+		case "node_done":
+			var d struct {
+				NodeID        string `json:"node_id"`
+				Output        string `json:"output"`
+				OutputPreview string `json:"output_preview"`
+			}
+			if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
+				o := d.Output
+				if o == "" {
+					o = d.OutputPreview
+				}
+				nodeOut[d.NodeID] = o
+				lastNode = d.NodeID
 			}
 		case "error":
 			var d struct {
@@ -383,8 +421,24 @@ func PrintPrompt(ctx context.Context, out io.Writer, server, prompt string) erro
 	if streamErr != nil {
 		return streamErr
 	}
-	if printed {
-		fmt.Fprintln(out) // newline after the streamed answer
+
+	// Final answer: the orchestrator's direct reply if it spoke; otherwise the
+	// terminal DAG node's output (a node with no successor), falling back to the
+	// last node to finish.
+	answer := strings.TrimSpace(orch.String())
+	if answer == "" {
+		for id, o := range nodeOut {
+			if !successor[id] && strings.TrimSpace(o) != "" {
+				answer = o
+				break
+			}
+		}
+		if answer == "" {
+			answer = nodeOut[lastNode]
+		}
+	}
+	if strings.TrimSpace(answer) != "" {
+		fmt.Fprintln(out, strings.TrimSpace(answer))
 	}
 	return nil
 }

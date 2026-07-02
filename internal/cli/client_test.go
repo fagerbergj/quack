@@ -42,7 +42,7 @@ func TestPrintPrompt(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := PrintPrompt(context.Background(), &out, srv.URL, "hi"); err != nil {
+	if err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi"); err != nil {
 		t.Fatalf("PrintPrompt: %v", err)
 	}
 	if got := out.String(); got != "Hello world\n" {
@@ -117,7 +117,7 @@ func TestPrintPromptServerError(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	err := PrintPrompt(context.Background(), &out, srv.URL, "hi")
+	err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi")
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("err = %v, want it to contain the server error", err)
 	}
