@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -116,5 +117,48 @@ func TestExecute_EmptyNode_CancelEmpties(t *testing.T) {
 				t.Errorf("cancel should NOT recover; got %q", s)
 			}
 		}
+	}
+}
+
+// TestExecute_EmptyNode_SurfacesNeedsInput: Execute emits node_needs_input for a
+// paused (empty) node and does NOT emit a spurious node_done for it.
+func TestExecute_EmptyNode_SurfacesNeedsInput(t *testing.T) {
+	stub := steerAwareStub{}
+	ag, err := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w", Task: "do it"}}}
+
+	var needsInput, spuriousDone bool
+	var interruptID string
+	out := map[string]string{}
+	for ev, err := range ex.Execute(context.Background(), plan, "u", "chat", out) {
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		switch d := ev.Data.(type) {
+		case stream.NodeNeedsInputData:
+			needsInput = true
+			interruptID = d.InterruptID
+			if d.NodeID != "n1" {
+				t.Errorf("needs_input node_id = %q, want n1", d.NodeID)
+			}
+		case stream.NodeDoneData:
+			if d.NodeID == "n1" {
+				spuriousDone = true
+			}
+		}
+	}
+	if !needsInput {
+		t.Error("no node_needs_input emitted for the empty node")
+	}
+	if interruptID == "" {
+		t.Error("node_needs_input carried no interrupt_id")
+	}
+	if spuriousDone {
+		t.Error("emitted a spurious node_done for the paused node")
 	}
 }

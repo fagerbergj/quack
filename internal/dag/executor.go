@@ -94,12 +94,23 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 			return e.gateScore(ctx, userID, plan.ID, nodeID)
 		})
 
+		paused := map[string]bool{} // nodes paused for human steer/cancel (empty output)
 		for ev, rerr := range r.Run(ctx, userID, plan.ID, content, adkagent.RunConfig{}) {
 			if rerr != nil {
 				safeYield(stream.Errorf(rerr.Error()), nil)
 				return
 			}
 			if ev == nil {
+				continue
+			}
+			// Fail-into-steerable pause: a node produced nothing and requested input.
+			// Surface it (not a node_done) so the client can steer or cancel it.
+			if ev.RequestedInput != nil {
+				nid := nodeIDFromPayload(ev.RequestedInput.Payload)
+				paused[nid] = true
+				if !safeYield(stream.NodeNeedsInput(nid, ev.RequestedInput.InterruptID, ev.RequestedInput.Message), nil) {
+					return
+				}
 				continue
 			}
 			if !ds.handle(ev) {
@@ -114,14 +125,24 @@ func (e *Executor) Execute(ctx context.Context, plan Plan, userID, chatID string
 		ensureTerminal(plan, nodeOutputs, ds.last)
 		// node_done for every plan node that hasn't already emitted one live.
 		for _, n := range plan.Nodes {
-			if ds.doneEmitted[n.ID] {
-				continue
+			if ds.doneEmitted[n.ID] || paused[n.ID] {
+				continue // a paused (needs-input) node isn't done — no node_done
 			}
 			if !safeYield(stream.NodeDone(n.ID, ds.nodeDoneData(n.ID)), nil) {
 				return
 			}
 		}
 	}
+}
+
+// nodeIDFromPayload pulls the node_id a paused node stamped on its RequestInput.
+func nodeIDFromPayload(p any) string {
+	if m, ok := p.(map[string]any); ok {
+		if s, ok := m["node_id"].(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // gateScore is a node's trust-gate result read back from workflow session state.

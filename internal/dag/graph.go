@@ -103,6 +103,7 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, advisor adkagent
 					if e := emit(workflow.NewRequestInputEvent(ctx, session.RequestInput{
 						InterruptID: interruptID,
 						Message:     "Node \"" + node.ID + "\" produced no answer. Steer it with guidance, or cancel.",
+						Payload:     map[string]any{"node_id": node.ID},
 					})); e != nil {
 						return "", e
 					}

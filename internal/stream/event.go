@@ -63,9 +63,10 @@ const (
 
 	// DAG / static structure.
 	EventDagPlan     = "dag_plan"
-	EventNodeQueued  = "node_queued"
-	EventNodeStart   = "node_start"
-	EventNodeDone    = "node_done"
+	EventNodeQueued     = "node_queued"
+	EventNodeStart      = "node_start"
+	EventNodeDone       = "node_done"
+	EventNodeNeedsInput = "node_needs_input"
 	EventNodeFailed  = "node_failed"
 	EventNodeSteered = "node_steered"
 )
@@ -293,6 +294,20 @@ func NodeStart(nodeID, agent string) SSEEvent {
 func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 	data.NodeID = nodeID
 	return SSEEvent{Name: EventNodeDone, Data: data}
+}
+
+// NodeNeedsInputData is the `node_needs_input` payload: a node produced no answer
+// and the run is paused for a human to steer it (re-run with guidance) or cancel.
+// interrupt_id is the token a resolve call must echo back.
+type NodeNeedsInputData struct {
+	NodeID      string `json:"node_id"`
+	InterruptID string `json:"interrupt_id"`
+	Message     string `json:"message"`
+}
+
+// NodeNeedsInput builds a node_needs_input event for a paused (empty) node.
+func NodeNeedsInput(nodeID, interruptID, message string) SSEEvent {
+	return SSEEvent{Name: EventNodeNeedsInput, Data: NodeNeedsInputData{NodeID: nodeID, InterruptID: interruptID, Message: message}}
 }
 
 // NodeFailed builds a node_failed event.
