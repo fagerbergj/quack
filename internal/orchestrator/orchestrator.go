@@ -49,15 +49,17 @@ type Orchestrator struct {
 // CancelNode stops one running node of the chat's active run (continue-but-warn:
 // the rest of the DAG keeps going). Returns false if no such live node. chatID is
 // the session id used while executing.
+// ponytail: steer/cancel stubbed during the graph migration — reimplement on ADK
+// v2 interrupt/resume (Phase 3c). Returns false: no live per-node control yet.
 func (o *Orchestrator) CancelNode(chatID, nodeID string) bool {
-	return o.executor.CancelNode(chatID, nodeID)
+	return false
 }
 
 // SteerNode interrupts a single running node and re-runs it with new guidance
 // against its same session (prior tool calls/results retained). Returns false if
 // no such live node. chatID is the session id used while executing.
 func (o *Orchestrator) SteerNode(chatID, nodeID, guidance string) bool {
-	return o.executor.SteerNode(chatID, nodeID, guidance)
+	return false
 }
 
 // New builds the orchestrator. sysPrompt is assembled from agents/orchestrator/

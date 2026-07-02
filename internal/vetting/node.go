@@ -48,7 +48,8 @@ func NewGatedWorkerNode(name string, worker adkagent.Agent, judge JudgeFactory, 
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		return RunGatedRefine(ctx, workerNode, judge, cfg, task)
+		answer, _, err := RunGatedRefine(ctx, workerNode, judge, cfg, task)
+		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
 }
@@ -69,53 +70,75 @@ func NewWorkerNode(worker adkagent.Agent) (workflow.Node, error) {
 // It is the reusable core shared by NewGatedWorkerNode and the DAG graph builder
 // (dag.BuildWorkflow); callable from inside any dynamic-node body since it drives
 // the worker via RunNode. prompt is the fully-assembled worker instruction.
-func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, error) {
+//
+// Returns (answer, passed, err) where passed reports whether the final verdict
+// cleared cfg.Threshold — the DAG builder writes this to session state so a
+// dependent node can warn about unvetted upstream input (continue-but-warn).
+func RunGatedRefine(ctx adkagent.Context, workerNode workflow.Node, judge JudgeFactory, cfg Config, prompt string) (string, bool, error) {
 	log := slog.With("component", "vetting")
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
-	answer, err := runWorkerNode(ctx, workerNode, prompt, 0)
+	answer, err := runWorkerNode(ctx, workerNode, prompt, "worker-r0")
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+
+	// Empty-answer recovery: the worker sometimes ends a turn with no answer text
+	// (it called tools but never wrote up, or thought into the void). Re-invoke it
+	// with a finalize prompt asking it to write up what it found, up to the retry
+	// budget. ponytail: the legacy gate used a tool-LESS writer clone here (a
+	// tool-having re-invoke can keep researching); re-invoking the worker with a
+	// finalize prompt is the graph-native port — swap in a tool-less writer node if
+	// empty answers prove sticky.
+	if strings.TrimSpace(answer) == "" {
+		fin := contentPlainText(buildFinalizeContent(question, activityFromSession(ctx.Session())))
+		for attempt := 1; attempt <= maxEmptyRetries && strings.TrimSpace(answer) == ""; attempt++ {
+			answer, err = runWorkerNode(ctx, workerNode, fin, fmt.Sprintf("worker-finalize-%d", attempt))
+			if err != nil {
+				return "", false, err
+			}
+		}
 	}
 
 	// Judge/revise loop: judge the current answer, fold in the deterministic
 	// citation/length criteria, and on a fail revise via a fresh worker call whose
 	// prompt inlines the feedback + prior answer (buildRevisionContent is
 	// self-contained, so the stateless worker needs no session continuity).
+	passed := false
 	for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
 		if strings.TrimSpace(answer) == "" {
-			break // nothing to judge; empty-answer recovery is a later increment
+			break // still nothing to judge after recovery
 		}
 		act := activityFromSession(ctx.Session())
 		v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, func(*genai.Part) bool { return true })
 		if jerr != nil {
 			log.Warn("judge round error; surfacing answer unvetted", "round", round, "err", jerr)
-			return answer, nil
+			return answer, false, nil
 		}
 		v = foldDeterministic(v, answer, act)
-		passed := v.Score >= cfg.Threshold
+		passed = v.Score >= cfg.Threshold
 		log.Info("judge round done", "round", round, "score", v.Score, "passed", passed)
 		if passed || round >= cfg.JudgeRounds {
 			break
 		}
 		revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
-		revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, round)
+		revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d", round))
 		if rerr != nil {
-			return answer, nil // revision failed; keep the prior answer
+			return answer, passed, nil // revision failed; keep the prior answer
 		}
 		if strings.TrimSpace(revised) != "" {
 			answer = revised
 		}
 	}
-	return answer, nil
+	return answer, passed, nil
 }
 
-// runWorkerNode runs the worker as a sub-branched child with a stable per-round
-// RunID (so a completed round replays from the event log on resume rather than
+// runWorkerNode runs the worker as a sub-branched child with a stable per-run
+// RunID (so a completed run replays from the event log on resume rather than
 // re-executing) and returns its answer with leaked <think> content stripped.
-func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input string, round int) (string, error) {
+func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input, runID string) (string, error) {
 	out, err := workflow.RunNode[string](ctx, workerNode, input,
-		workflow.WithUseSubBranch(), workflow.WithRunID(fmt.Sprintf("worker-r%d", round)))
+		workflow.WithUseSubBranch(), workflow.WithRunID(runID))
 	if err != nil {
 		return "", err
 	}

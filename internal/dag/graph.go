@@ -21,7 +21,7 @@ import (
 // along the graph edges (buildTask, reused from the legacy executor) and runs the
 // trust-gate refine loop (vetting.RunGatedRefine). This is the v2 replacement for
 // Executor.Execute (TopoSort + semaphore + per-node runner).
-func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.JudgeFactory, cfg vetting.Config) (adkagent.Agent, error) {
+func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(agentName string) vetting.Config) (adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -41,13 +41,20 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.Ju
 			return nil, err
 		}
 		node := n // capture per iteration
+		cfg := cfgFor(node.AgentName)
 		gated := workflow.NewDynamicNode[any, string](node.ID,
 			func(ctx adkagent.Context, in any, _ func(*session.Event) error) (string, error) {
 				upstream := upstreamFromInput(in, node.DependsOn)
-				// ponytail: gateFailed (continue-but-warn) propagation is a follow-up;
-				// empty map = no warnings until node pass/fail rides the graph.
-				prompt := buildTask(plan, node, upstream, map[string]bool{})
-				return vetting.RunGatedRefine(ctx, workerNode, judge, cfg, prompt)
+				// Continue-but-warn: a dependency whose vetting failed flags itself in
+				// session state; buildTask prefixes a ⚠ warning so this node treats that
+				// input skeptically.
+				gateFailed := readGateFailed(ctx, node.DependsOn)
+				prompt := buildTask(plan, node, upstream, gateFailed)
+				answer, passed, err := vetting.RunGatedRefine(ctx, workerNode, judge, cfg, prompt)
+				if err == nil {
+					_ = ctx.State().Set(gateFailedKey+node.ID, !passed)
+				}
+				return answer, err
 			},
 			workflow.NodeConfig{})
 		nodesByID[node.ID] = gated
@@ -79,6 +86,28 @@ func BuildWorkflow(plan Plan, agents map[string]adkagent.Agent, judge vetting.Ju
 		SubAgents: subAgents,
 		Edges:     eb.Build(),
 	})
+}
+
+// gateFailedKey prefixes the session-state flag a gated node writes (true when its
+// answer did NOT clear the judge threshold) so dependents can warn (continue-but-warn).
+const gateFailedKey = "quack.gate_failed/"
+
+// readGateFailed reconstructs the gateFailed map for buildTask by reading each
+// dependency's gate-fail flag from workflow session state.
+func readGateFailed(ctx adkagent.Context, dependsOn []string) map[string]bool {
+	out := map[string]bool{}
+	st := ctx.State()
+	if st == nil {
+		return out
+	}
+	for _, dep := range dependsOn {
+		if v, err := st.Get(gateFailedKey + dep); err == nil {
+			if b, ok := v.(bool); ok && b {
+				out[dep] = true
+			}
+		}
+	}
+	return out
 }
 
 // upstreamFromInput converts a dynamic node's edge input into the upstream map

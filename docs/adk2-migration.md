@@ -43,7 +43,13 @@ Same REST/MCP/A2A surface and same SSE event sequence
 (`dag_plan → node_* → agent_* → done`). Internally, node identity comes from ADK's
 `session.Event.NodeInfo` instead of hand-scoped run/node IDs.
 
-## Phases (each builds + tests green before the next)
+## Phases
+
+Numbers are nominal; **execution follows dependency order: 1 → 3 → 2 → 4 → 5 → tests.**
+Phase 3 runs before Phase 2 because (a) Phase 3 is what restores a green build — the
+only post-bump failure is the gate's v1.4.0 technique, which Phase 3 replaces; (b) native
+HITL (`ResumeOrRequestInput`) lives *inside* the graph Phase 3 creates, so doing Phase 2
+first would mean wiring it into the soon-deleted `dag` executor (throwaway).
 
 0. Spec (this doc).
 1. **Mechanical bump** — imports + breaking signatures (`session.NewEvent(ctx,…)`,
