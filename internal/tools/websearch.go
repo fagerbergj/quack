@@ -1,9 +1,9 @@
 package tools
 
 import (
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 )
 
 // maxSearchResults caps how many hits web_search returns to keep the agent's
@@ -44,7 +44,7 @@ func newWebSearch(d Deps) (tool.Tool, error) {
 			Name:        "web_search",
 			Description: "Search the web for a query. Returns {results: [{title, url, snippet}]}. Use the urls with the fetch tool to read a page.",
 		},
-		func(tc agent.ToolContext, a searchArgs) (searchResponse, error) {
+		func(tc agent.Context, a searchArgs) (searchResponse, error) {
 			results, note, err := searcher.Search(tc, a.Query)
 			return searchResponse{Results: results, Note: note}, err
 		},

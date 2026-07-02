@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/skilltoolset/skill"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
 // Agent assembles the 4-layer system prompt for a specialist agent.

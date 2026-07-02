@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"google.golang.org/adk/tool/skilltoolset/skill"
+	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
 // TestSkillsLoad guards against a shipped skill whose SKILL.md frontmatter fails

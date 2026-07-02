@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/loadmemorytool"
-	"google.golang.org/adk/tool/preloadmemorytool"
-	"google.golang.org/adk/tool/skilltoolset/skill"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/loadmemorytool"
+	"google.golang.org/adk/v2/tool/preloadmemorytool"
+	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/promptbuilder"

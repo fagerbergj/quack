@@ -6,9 +6,10 @@ import (
 	"strings"
 	"time"
 
-	adkmemory "google.golang.org/adk/memory"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/tool"
+	adkagent "google.golang.org/adk/v2/agent"
+	adkmemory "google.golang.org/adk/v2/memory"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 )
 
@@ -41,7 +42,7 @@ func (oncePreload) Description() string {
 }
 func (oncePreload) IsLongRunning() bool { return false }
 
-func (oncePreload) ProcessRequest(ctx tool.Context, req *model.LLMRequest) error {
+func (oncePreload) ProcessRequest(ctx adkagent.Context, req *model.LLMRequest) error {
 	uc := ctx.UserContent()
 	if uc == nil || len(uc.Parts) == 0 || uc.Parts[0] == nil || uc.Parts[0].Text == "" {
 		return nil

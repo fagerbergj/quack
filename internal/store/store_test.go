@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"google.golang.org/adk/session"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 )
 
@@ -117,14 +117,14 @@ func TestStoreUnknownKind(t *testing.T) {
 }
 
 func userEvent(text string) *session.Event {
-	ev := session.NewEvent("test")
+	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "user"
 	ev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
 	return ev
 }
 
 func asstEvent(parts ...*genai.Part) *session.Event {
-	ev := session.NewEvent("test")
+	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "orchestrator"
 	ev.Content = &genai.Content{Role: "model", Parts: parts}
 	return ev
@@ -133,7 +133,7 @@ func asstEvent(parts ...*genai.Part) *session.Event {
 // answerEvent is how a resumed clarification answer is persisted: a user-authored
 // event whose only part is a get_user_choice FunctionResponse carrying the choice.
 func answerEvent(choice string) *session.Event {
-	ev := session.NewEvent("test")
+	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "user"
 	ev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{
 		FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "get_user_choice", Response: map[string]any{"choice": choice}},

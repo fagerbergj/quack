@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 )
 
 // stageMemoryArgs is one piece of tradecraft the agent wants to remember.
@@ -30,7 +30,7 @@ func newStageMemory(_ Deps) (tool.Tool, error) {
 				"volatile facts (prices, hours) or request-specific answers. Staged items are reviewed and kept " +
 				"only if your answer passes vetting — nothing is remembered until then.",
 		},
-		func(_ agent.ToolContext, a stageMemoryArgs) (string, error) {
+		func(_ agent.Context, a stageMemoryArgs) (string, error) {
 			if strings.TrimSpace(a.Content) == "" {
 				return "", fmt.Errorf("stage_memory: content is empty")
 			}

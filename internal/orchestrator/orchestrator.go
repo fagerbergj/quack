@@ -9,16 +9,15 @@ import (
 	"iter"
 	"strings"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	adkmemory "google.golang.org/adk/memory"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
-	"google.golang.org/adk/tool"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	adkmemory "google.golang.org/adk/v2/memory"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
-	internalagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -48,14 +47,15 @@ type Orchestrator struct {
 
 // CancelNode stops one running node of the chat's active run (continue-but-warn:
 // the rest of the DAG keeps going). Returns false if no such live node. chatID is
-// the session id used while executing.
+// the session id used while executing (the executor registers node controls under
+// it). Cooperative: takes effect at the node's next gate-stage boundary.
 func (o *Orchestrator) CancelNode(chatID, nodeID string) bool {
 	return o.executor.CancelNode(chatID, nodeID)
 }
 
-// SteerNode interrupts a single running node and re-runs it with new guidance
-// against its same session (prior tool calls/results retained). Returns false if
-// no such live node. chatID is the session id used while executing.
+// SteerNode re-runs a single running node with new guidance. Returns false if no
+// such live node. chatID is the session id used while executing. Cooperative:
+// takes effect at the node's next gate-stage boundary.
 func (o *Orchestrator) SteerNode(chatID, nodeID, guidance string) bool {
 	return o.executor.SteerNode(chatID, nodeID, guidance)
 }
@@ -141,9 +141,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
 			Toolsets:    toolsets,
-			GenerateContentConfig: &genai.GenerateContentConfig{
-				MaxOutputTokens: internalagent.MaxOutputTokens,
-			},
 		})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: build agent: "+err.Error()), nil)
@@ -231,7 +228,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		if delivered := planCache.Delivered(); delivered != "" {
 			persistCtx := context.WithoutCancel(ctx)
 			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
-				aev := session.NewEvent("")
+				aev := session.NewEvent(persistCtx, "")
 				aev.Author = ag.Name()
 				aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: delivered}}}
 				_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)

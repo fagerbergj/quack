@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -46,7 +46,7 @@ func NewExecuteTool(executor *dag.Executor, cache *PlanCache, userID, chatID str
 				"Set end_turn=false (or omit it) only when you still have work to do after the plan runs — combining its result with other information or reshaping it yourself: " +
 				"this tool then returns status=\"complete\" with the result in `answer` for you to fold into your reply.",
 		},
-		func(tc agent.ToolContext, a executeArgs) (executeResult, error) {
+		func(tc agent.Context, a executeArgs) (executeResult, error) {
 			plan, ok := cache.Get(a.PlanID)
 			if !ok {
 				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q — call plan first and pass the plan_id it returns", a.PlanID)

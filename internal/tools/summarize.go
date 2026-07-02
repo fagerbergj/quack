@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 )
 
@@ -35,7 +35,7 @@ func newSummarize(d Deps) (tool.Tool, error) {
 			Name:        "summarize",
 			Description: "Summarize a long block of text, optionally focused on a question or topic. Returns a compact, faithful summary.",
 		},
-		func(tc agent.ToolContext, a summarizeArgs) (string, error) {
+		func(tc agent.Context, a summarizeArgs) (string, error) {
 			return summarizeText(tc, m, a.Text, a.Focus)
 		},
 	)

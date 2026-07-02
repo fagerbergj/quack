@@ -8,7 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/schema"
@@ -275,6 +280,59 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEven
 	return parseSSE(resp.Body, onEvent)
 }
 
+// SendMessageWithFiles posts content plus file attachments (image/audio) as
+// multipart/form-data (field "content" + repeated "files") and streams the SSE
+// response. The per-file Content-Type is inferred from the extension so the
+// server threads the right MIME to a media-capable node. Used by `-p --attach`.
+func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content string, filePaths []string, onEvent func(SSEEvent) error) error {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("content", content); err != nil {
+		return err
+	}
+	for _, p := range filePaths {
+		f, err := os.Open(p)
+		if err != nil {
+			return fmt.Errorf("attach %s: %w", p, err)
+		}
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files"; filename=%q`, filepath.Base(p)))
+		ct := mime.TypeByExtension(filepath.Ext(p))
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		h.Set("Content-Type", ct)
+		fw, err := mw.CreatePart(h)
+		if err != nil {
+			f.Close()
+			return err
+		}
+		if _, err := io.Copy(fw, f); err != nil {
+			f.Close()
+			return fmt.Errorf("attach %s: %w", p, err)
+		}
+		f.Close()
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/v1/chats/"+chatID+"/responses", &buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return c.reachErr(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("send message: server returned %s", resp.Status)
+	}
+	return parseSSE(resp.Body, onEvent)
+}
+
 // postJSON POSTs v as JSON to path and decodes the JSON response into out (nil to
 // ignore the body).
 func (c *Client) postJSON(ctx context.Context, path string, v, out any) error {
@@ -346,7 +404,13 @@ func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 // text with no node_id (the top-level orchestrator reply); node-scoped tokens are
 // intermediate research output and are not printed. stdout stays clean for pipes;
 // the caller routes errors to stderr.
-func PrintPrompt(ctx context.Context, out io.Writer, server, prompt string) error {
+// PrintPrompt runs a one-shot prompt and prints the final answer to out. For a
+// conversational reply the orchestrator streams the answer directly; for a
+// research query the answer is the terminal DAG node's output (which the
+// orchestrator delivers). When events is non-nil, a compact per-event trace of
+// the pipeline (plan, node lifecycle, errors) is written there (stderr) — so a
+// research run is observable, not silent.
+func PrintPrompt(ctx context.Context, out, events io.Writer, server, prompt string, attachPaths []string) error {
 	c, err := NewClient(server)
 	if err != nil {
 		return err
@@ -356,17 +420,49 @@ func PrintPrompt(ctx context.Context, out io.Writer, server, prompt string) erro
 		return err
 	}
 	var streamErr error
-	printed := false
-	err = c.SendMessage(ctx, chatID, prompt, func(ev SSEEvent) error {
+	var orch strings.Builder       // orchestrator's own streamed answer (node_id == "")
+	nodeOut := map[string]string{} // node_id → latest output (research answers)
+	successor := map[string]bool{} // node_id that some other node depends on
+	var lastNode string            // last node to finish (terminal completes last)
+	onEvent := func(ev SSEEvent) error {
+		if events != nil {
+			data := string(ev.Data)
+			if len(data) > 200 {
+				data = data[:200] + "…"
+			}
+			fmt.Fprintf(events, "  «%s» %s\n", ev.Name, data)
+		}
 		switch ev.Name {
+		case "dag_plan":
+			var d struct {
+				Edges []struct{ From, To string } `json:"edges"`
+			}
+			if json.Unmarshal(ev.Data, &d) == nil {
+				for _, e := range d.Edges {
+					successor[e.From] = true
+				}
+			}
 		case "agent_token":
 			var d struct {
 				NodeID string `json:"node_id"`
 				Text   string `json:"text"`
 			}
 			if json.Unmarshal(ev.Data, &d) == nil && d.NodeID == "" && d.Text != "" {
-				fmt.Fprint(out, d.Text)
-				printed = true
+				orch.WriteString(d.Text)
+			}
+		case "node_done":
+			var d struct {
+				NodeID        string `json:"node_id"`
+				Output        string `json:"output"`
+				OutputPreview string `json:"output_preview"`
+			}
+			if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
+				o := d.Output
+				if o == "" {
+					o = d.OutputPreview
+				}
+				nodeOut[d.NodeID] = o
+				lastNode = d.NodeID
 			}
 		case "error":
 			var d struct {
@@ -376,15 +472,38 @@ func PrintPrompt(ctx context.Context, out io.Writer, server, prompt string) erro
 			streamErr = fmt.Errorf("server error: %s", d.Error)
 		}
 		return nil
-	})
+	}
+	if len(attachPaths) > 0 {
+		err = c.SendMessageWithFiles(ctx, chatID, prompt, attachPaths, onEvent)
+	} else {
+		err = c.SendMessage(ctx, chatID, prompt, onEvent)
+	}
 	if err != nil {
 		return err
 	}
 	if streamErr != nil {
 		return streamErr
 	}
-	if printed {
-		fmt.Fprintln(out) // newline after the streamed answer
+
+	// Final answer: the terminal DAG node's output when a plan ran (the last node
+	// to finish is the terminal — it depends on the others), falling back to any
+	// no-successor node with output, and only then to the orchestrator's own reply
+	// (a direct, no-DAG answer). Preferring the orchestrator first was wrong: its
+	// interstitial reasoning (e.g. "let me re-plan") would shadow the real answer.
+	answer := strings.TrimSpace(nodeOut[lastNode])
+	if answer == "" {
+		for id, o := range nodeOut {
+			if !successor[id] && strings.TrimSpace(o) != "" {
+				answer = strings.TrimSpace(o)
+				break
+			}
+		}
+	}
+	if answer == "" {
+		answer = strings.TrimSpace(orch.String())
+	}
+	if strings.TrimSpace(answer) != "" {
+		fmt.Fprintln(out, strings.TrimSpace(answer))
 	}
 	return nil
 }

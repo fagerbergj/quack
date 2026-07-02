@@ -61,13 +61,20 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 			defer stop()
-			return cli.PrintPrompt(cmd.Context(), cmd.OutOrStdout(), target, printPrompt)
+			var events io.Writer
+			if showEvents, _ := cmd.Flags().GetBool("events"); showEvents {
+				events = cmd.ErrOrStderr() // pipeline trace → stderr; answer → stdout
+			}
+			attach, _ := cmd.Flags().GetStringSlice("attach")
+			return cli.PrintPrompt(cmd.Context(), cmd.OutOrStdout(), events, target, printPrompt, attach)
 		},
 	}
 	// Client context: which server to talk to. Resolution (flag → config → default)
 	// lands with internal/cli; here it is just declared so subcommands inherit it.
 	root.PersistentFlags().String("server", "", "quack server URL (default: active server from config, else http://localhost:8080)")
 	root.Flags().StringVarP(&printPrompt, "print", "p", "", "one-shot prompt; print the result and exit (no TUI)")
+	root.Flags().Bool("events", false, "with -p: also print the pipeline event trace (plan, node lifecycle) to stderr")
+	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) — image/audio — to the prompt (repeatable)")
 
 	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd())
 	return root

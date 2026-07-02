@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	adkagent "google.golang.org/adk/agent"
-	"google.golang.org/adk/model"
-	"google.golang.org/adk/session"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 )
 
@@ -34,13 +34,15 @@ func (s *fakeState) All() iter.Seq2[string, any] {
 	}
 }
 
+// fakeCtx embeds StrictContextMock (v2 unified agent.Context) so it keeps
+// satisfying the interface as it grows; we override only what compaction uses.
 type fakeCtx struct {
-	context.Context
+	adkagent.StrictContextMock
 	state *fakeState
 }
 
 func newFakeCtx() *fakeCtx {
-	return &fakeCtx{Context: context.Background(), state: &fakeState{m: map[string]any{}}}
+	return &fakeCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}, state: &fakeState{m: map[string]any{}}}
 }
 
 func (c *fakeCtx) UserContent() *genai.Content          { return nil }
@@ -169,7 +171,7 @@ func TestPrune(t *testing.T) {
 func TestCompactSummarises(t *testing.T) {
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 	// context_window 10k tokens, reserve 8k ⇒ usable 2k tokens (8k chars).
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 10_000, Prune: true, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Prune: true, Enabled: true})
 
 	task := textContent(genai.RoleUser, "the self-contained task")
 	contents := []*genai.Content{task}
@@ -312,7 +314,9 @@ func TestReuseSkipsSummariser(t *testing.T) {
 // on the next compaction.
 func TestAnchoredSummaryFedBack(t *testing.T) {
 	llm := &fakeLLM{text: "FIRST-SUMMARY"}
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 10_000, Prune: false, Enabled: true})
+	// usable = ctx - min(MaxOutputTokens, compactionBuffer=20000) = 1808: a small
+	// budget so the second oversized turn re-summarises (not the reuse fast-path).
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 21_808, Prune: false, Enabled: true})
 	ctx := newFakeCtx()
 
 	oversized := func() *model.LLMRequest {
