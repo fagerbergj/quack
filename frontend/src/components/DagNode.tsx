@@ -16,11 +16,13 @@ function StatusBadge({ status, stopped }: { status: NodeStatus; stopped?: boolea
   const styles: Record<NodeStatus, string> = {
     queued:  'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
     running: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400',
+    needs_input: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
     done:    'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
     failed:  'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400',
   }
   const labels: Record<NodeStatus, string> = {
     queued: 'queued', running: 'running…', done: 'done', failed: 'failed',
+    needs_input: 'waiting for you',
   }
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${styles[status]}`}>
@@ -279,6 +281,40 @@ function RetryControl({ nodeId, onRetry }: {
   )
 }
 
+// NodeAskPrompt renders a paused node's question (mid-node HITL) with an inline
+// answer box. The answer is sent as the next chat message — the backend routes it
+// to the paused node (see orchestrator resumeNodeRun).
+function NodeAskPrompt({ question, onAnswer }: {
+  question: string
+  onAnswer: (answer: string) => void
+}) {
+  const [text, setText] = useState('')
+  const send = () => {
+    const t = text.trim()
+    if (!t) return
+    onAnswer(t)
+    setText('')
+  }
+  return (
+    <div className="px-4 py-2 border-b border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/15">
+      <div className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1.5">
+        This agent needs your input: <span className="font-normal">{question}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          autoFocus
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send() } }}
+          placeholder="Type your answer…"
+          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-400"
+        />
+        <button onClick={send} className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline">answer</button>
+      </div>
+    </div>
+  )
+}
+
 // ── DagNode ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -290,9 +326,11 @@ interface Props {
   onStop?: (nodeId: string) => void
   onSteer?: (nodeId: string, guidance: string) => void
   onRetry?: (nodeId: string, guidance?: string) => void
+  // Answer a paused node's question (mid-node HITL); present on a live turn.
+  onAnswer?: (nodeId: string, answer: string) => void
 }
 
-export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry }: Props) {
+export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry, onAnswer }: Props) {
   const running = state.status === 'running'
   const controllable = running || state.status === 'queued'
   const finished = state.status === 'done' || state.status === 'failed'
@@ -373,6 +411,11 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
       {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
       {finished && onRetry && (
         <RetryControl nodeId={node.id} onRetry={onRetry} />
+      )}
+
+      {/* Mid-node HITL: the node paused to ask the user a question */}
+      {state.status === 'needs_input' && state.question && onAnswer && (
+        <NodeAskPrompt question={state.question} onAnswer={a => onAnswer(node.id, a)} />
       )}
 
       {/* Per-run stage cards */}

@@ -10,12 +10,15 @@ import {
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem } from '../generated'
 
-export type NodeStatus = 'queued' | 'running' | 'done' | 'failed'
+export type NodeStatus = 'queued' | 'running' | 'done' | 'failed' | 'needs_input'
 
 export interface NodeState {
   status: NodeStatus
   outputPreview?: string
   error?: string
+  // Set while status === 'needs_input': the question the node asked the user.
+  // The next message sent on the chat is delivered to the node as the answer.
+  question?: string
   startedAt?: number
   finishedAt?: number
   outputChars?: number
@@ -451,6 +454,13 @@ export class ChatStore {
         onNodeFailed: (nodeId, error) => {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
+        },
+        onNodeNeedsInput: (nodeId, _interruptId, message) => {
+          // Mid-node HITL: the node paused to ask the user. Freeze its open runs
+          // and mark it waiting; the answer goes out as a normal chat message
+          // (the backend routes it to the paused node).
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeState(nodeId, { status: 'needs_input', question: message })
         },
         onNodeSteered: (nodeId, guidance) => {
           // The node was interrupted and is re-running with new guidance (same

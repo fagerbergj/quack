@@ -124,6 +124,15 @@ const (
 	choiceAnswerKey = "choice"
 )
 
+// nodeInputCallName / nodeInputPayloadKey mirror ADK's adk_request_input resume
+// shape: a mid-node HITL answer is delivered as a FunctionResponse on a
+// user-authored event with the answer text under "payload". Surfaced as the
+// turn's user text, same as a clarification answer.
+const (
+	nodeInputCallName   = "adk_request_input"
+	nodeInputPayloadKey = "payload"
+)
+
 // turnGroup is the per-turn content extracted from a session's events.
 type turnGroup struct {
 	userText, asstText, asstThink string
@@ -149,11 +158,17 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 				if p == nil {
 					continue
 				}
-				// A clarification answer arrives as a get_user_choice FunctionResponse
-				// (Role:user); surface the chosen option as the user's message text.
+				// A clarification answer (get_user_choice) or a mid-node HITL answer
+				// (adk_request_input) arrives as a FunctionResponse (Role:user); surface
+				// the answer as the user's message text.
 				if p.FunctionResponse != nil {
-					if p.FunctionResponse.Name == choiceToolName {
+					switch p.FunctionResponse.Name {
+					case choiceToolName:
 						if c, ok := p.FunctionResponse.Response[choiceAnswerKey].(string); ok {
+							cur.userText += c
+						}
+					case nodeInputCallName:
+						if c, ok := p.FunctionResponse.Response[nodeInputPayloadKey].(string); ok {
 							cur.userText += c
 						}
 					}

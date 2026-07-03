@@ -86,3 +86,7 @@ One `-` item per source you retrieved and relied on.
 ## Notes
 
 - When the web yields no usable evidence, report that plainly rather than answering from memory.
+- If your task is blocked on information only the user has (an ambiguous requirement, a
+  choice that materially changes the research), call `ask_user` with ONE precise question
+  and stop; their answer will be delivered back to you. Never ask when a sensible default
+  or your own research can resolve it.

@@ -183,6 +183,15 @@ export default function Chat() {
     if (activeChatId) store.retryNode(activeChatId, nodeId, guidance)
   }, [activeChatId, store])
 
+  // handleAnswerNode answers a paused node's question (mid-node HITL) by sending
+  // the answer as the next message — the backend delivers it to the paused node.
+  const handleAnswerNode = useCallback((_nodeId: string, answer: string) => {
+    if (!activeChatId) return
+    void store.submit(activeChatId, answer, undefined, title => {
+      setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
+    }).then(() => loadChats().then(data => setChats(data)))
+  }, [activeChatId, store, loadChats])
+
   const submitMessage = useCallback((text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
     if (!activeChatId) return
     setLiveAttachmentPreviews(previews)
@@ -390,7 +399,7 @@ export default function Chat() {
                               </summary>
                               <div className="p-2 space-y-3">
                                 {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                                <DagView dag={liveDag} onRetryNode={handleRetryNode} />
+                                <DagView dag={liveDag} onRetryNode={handleRetryNode} onAnswerNode={handleAnswerNode} />
                               </div>
                             </details>
                           ) : (

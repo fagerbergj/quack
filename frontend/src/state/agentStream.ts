@@ -99,13 +99,16 @@ export interface AgentStreamHandlers {
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
   onNodeSteered?: (nodeId: string, guidance: string) => void
+  // A node paused to ask the user a question (mid-node HITL). The next message
+  // sent on the chat is delivered to the node as the answer.
+  onNodeNeedsInput?: (nodeId: string, interruptId: string, message: string) => void
 }
 
 // Wire-level event names. Mirrors internal/stream/event.go.
 export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done',
-  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_steered',
+  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_steered', 'node_needs_input',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
 
@@ -260,6 +263,15 @@ export function dispatchAgentEvent(
       const p = parsed as { node_id?: string; guidance?: string }
       if (typeof p.node_id === 'string') {
         handlers.onNodeSteered?.(p.node_id, typeof p.guidance === 'string' ? p.guidance : '')
+      }
+      return true
+    }
+    case 'node_needs_input': {
+      const p = parsed as { node_id?: string; interrupt_id?: string; message?: string }
+      if (typeof p.node_id === 'string') {
+        handlers.onNodeNeedsInput?.(p.node_id,
+          typeof p.interrupt_id === 'string' ? p.interrupt_id : '',
+          typeof p.message === 'string' ? p.message : '')
       }
       return true
     }

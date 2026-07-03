@@ -135,6 +135,25 @@ describe('ChatStore — mid-node steering', () => {
     expect(ns?.steers).toEqual(['focus on cost'])
   })
 
+  it('node_needs_input marks the node waiting with its question', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher"}',
+      '',
+      'event: node_needs_input',
+      'data: {"node_id":"a","interrupt_id":"hitl-a-r1","message":"which direction?"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const ns = store.get('c').live?.dag?.nodeStates['a']
+    expect(ns?.status).toBe('needs_input')
+    expect(ns?.question).toBe('which direction?')
+  })
+
   it('steerNode POSTs guidance; cancelNode DELETEs the node', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     store.steerNode('c', 'a', '  do X  ')

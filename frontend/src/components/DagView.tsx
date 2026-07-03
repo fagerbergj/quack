@@ -49,9 +49,11 @@ interface Props {
   // Retry a finished node (failed or done) + its downstream. Present when the turn
   // is the live one and not currently streaming.
   onRetryNode?: (nodeId: string, guidance?: string) => void
+  // Answer a paused node's question (mid-node HITL).
+  onAnswerNode?: (nodeId: string, answer: string) => void
 }
 
-export function DagView({ dag, onStopNode, onSteerNode, onRetryNode }: Props) {
+export function DagView({ dag, onStopNode, onSteerNode, onRetryNode, onAnswerNode }: Props) {
   const nodeMap = Object.fromEntries(dag.nodes.map(n => [n.id, n]))
   const dependsOnMap: Record<string, string[]> = {}
   for (const n of dag.nodes) dependsOnMap[n.id] = n.depends_on ?? []
@@ -98,6 +100,7 @@ export function DagView({ dag, onStopNode, onSteerNode, onRetryNode }: Props) {
                   onStop={onStopNode}
                   onSteer={onSteerNode}
                   onRetry={onRetryNode}
+                  onAnswer={onAnswerNode}
                 />
               </div>
             ))}
