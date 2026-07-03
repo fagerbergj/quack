@@ -310,6 +310,11 @@ func NodeNeedsInput(nodeID, interruptID, message string) SSEEvent {
 	return SSEEvent{Name: EventNodeNeedsInput, Data: NodeNeedsInputData{NodeID: nodeID, InterruptID: interruptID, Message: message}}
 }
 
+// CancelledError is the node_failed error string that flags a user-cancelled node
+// (rendered neutrally as "stopped", not red). The frontend matches on it exactly —
+// keep in sync with frontend/src/state/agentStream.ts CANCELLED_ERROR.
+const CancelledError = "Stopped by you"
+
 // NodeFailed builds a node_failed event.
 func NodeFailed(nodeID, errMsg string) SSEEvent {
 	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}

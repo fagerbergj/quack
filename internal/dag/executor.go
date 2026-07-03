@@ -67,8 +67,10 @@ func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, node
 // filled (node ID → vetted answer) for the caller's TerminalOutput.
 // appName/userID/sessionID identify the session the gate nodes write their judge
 // results into — in the single-runner model that's the orchestrator's own session,
-// not a separate DAG session.
-func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID, sessionID string, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string) *DagStream {
+// not a separate DAG session. cancelKey is the key the node controls are registered
+// under (== chatID); it differs from sessionID on the retry path, which runs on a
+// derived session but registers/cancels its nodes under the real chatID.
+func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID, sessionID, cancelKey string, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string) *DagStream {
 	agentByID := make(map[string]string, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		agentByID[n.ID] = n.AgentName
@@ -78,7 +80,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		ds: newDagStream(agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
-			return e.controls.wasCancelled(sessionID, nodeID)
+			return e.controls.wasCancelled(cancelKey, nodeID)
 		}),
 	}
 }
@@ -112,7 +114,7 @@ func (s *DagStream) Finish() {
 		// A user-cancelled node reads "Stopped by you"; a node that produced NO answer
 		// surfaces as a loud node_failed (not a quiet node_done) so the gap is never silent.
 		if s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
-			s.yield(stream.NodeFailed(n.ID, "Stopped by you"), nil)
+			s.yield(stream.NodeFailed(n.ID, stream.CancelledError), nil)
 			continue
 		}
 		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
@@ -264,7 +266,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 			}
 			switch {
 			case s.cancelled != nil && s.cancelled(node):
-				if !s.emit(stream.NodeFailed(node, "Stopped by you")) {
+				if !s.emit(stream.NodeFailed(node, stream.CancelledError)) {
 					return false
 				}
 			case out != "":

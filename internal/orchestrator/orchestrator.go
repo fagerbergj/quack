@@ -125,7 +125,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		var mu sync.Mutex
 		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
-		ds := o.executor.NewDagStream(ctx, plan, AppName, userID, runSess, safeYield, nodeOutputs)
+		// Session is the derived runSess (where this re-run's verdicts land), but
+		// node controls stay registered under chatID — so cancel-rendering keys on it.
+		ds := o.executor.NewDagStream(ctx, plan, AppName, userID, runSess, chatID, safeYield, nodeOutputs)
 		ds.ScopeToRetry(nodeID)
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry " + nodeID}}}
 		for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
@@ -355,7 +357,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			// DAG stream; everything else is the orchestrator's own thinking/tool activity.
 			if ds == nil {
 				if p, ok := planCache.Latest(); ok {
-					ds = o.executor.NewDagStream(ctx, p, AppName, userID, sessionID, safeYield, nodeOutputs)
+					// Normal run: session == chatID, so it's also the cancel key.
+					ds = o.executor.NewDagStream(ctx, p, AppName, userID, sessionID, sessionID, safeYield, nodeOutputs)
 				}
 			}
 			if ds != nil && ds.Handle(ev) {

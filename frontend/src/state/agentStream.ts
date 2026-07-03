@@ -12,6 +12,11 @@ export interface ConfirmationRequestPayload {
 
 export type Stage = 'worker' | 'self_refine' | 'judge' | 'revise'
 
+// The node_failed error string a user-cancelled node carries, so the UI renders it
+// neutrally ("stopped") instead of as a red failure. Must match the backend exactly
+// — keep in sync with internal/stream/event.go CancelledError.
+export const CANCELLED_ERROR = 'Stopped by you'
+
 // AgentStartPayload opens an agent run within a node.
 export interface AgentStartPayload {
   nodeId?: string

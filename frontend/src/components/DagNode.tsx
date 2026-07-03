@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
-import type { DagNodeDef } from '../state/agentStream'
+import { CANCELLED_ERROR, type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
 function StatusBadge({ status, stopped }: { status: NodeStatus; stopped?: boolean }) {
@@ -298,7 +298,7 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
   const finished = state.status === 'done' || state.status === 'failed'
   // A user-cancelled node comes back as failed with this specific error; render it
   // as a neutral "stopped" rather than a red failure.
-  const stopped = state.status === 'failed' && state.error === 'Stopped by you'
+  const stopped = state.status === 'failed' && state.error === CANCELLED_ERROR
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
 
