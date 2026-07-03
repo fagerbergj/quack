@@ -130,6 +130,20 @@ func asstEvent(parts ...*genai.Part) *session.Event {
 	return ev
 }
 
+// orchestratorAgentNodeEvent is the orchestrator's OWN reply as ADK actually
+// stamps it in production: the orchestrator llmagent is wrapped in a
+// workflow.AgentNode too (Start → agentNode), so its real events carry NodeInfo
+// just like a gate-internal node's — "author, not NodeInfo" is what distinguishes
+// them. Regression fixture for the bug where a plain `NodeInfo != nil` exclusion
+// filter dropped the orchestrator's own conversational (no-DAG) answer entirely.
+func orchestratorAgentNodeEvent(text string) *session.Event {
+	ev := session.NewEvent(context.Background(), "test")
+	ev.Author = "orchestrator"
+	ev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: text}}}
+	ev.NodeInfo = &session.NodeInfo{Path: "orchestrator-workflow@1/orchestrator@1"}
+	return ev
+}
+
 // answerEvent is how a resumed clarification answer is persisted: a user-authored
 // event whose only part is a get_user_choice FunctionResponse carrying the choice.
 func answerEvent(choice string) *session.Event {
@@ -231,5 +245,23 @@ func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 	}
 	if len(g.toolCalls) != 1 || g.toolCalls[0].Name != "execute" {
 		t.Errorf("toolCalls = %+v, want only the top-level execute call", g.toolCalls)
+	}
+}
+
+// TestGroupSessionEvents_OrchestratorOwnReplyKept guards the regression: the
+// orchestrator's own conversational (no-DAG) reply carries NodeInfo (it's
+// AgentNode-wrapped too) but must still be captured — only gate-internal
+// (different-author) events are excluded.
+func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
+	events := []*session.Event{
+		userEvent("what is the tallest mountain?"),
+		orchestratorAgentNodeEvent("Mount Everest, per National Geographic."),
+	}
+	groups := groupSessionEvents(slices.Values(events))
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(groups))
+	}
+	if got := groups[0].asstText; got != "Mount Everest, per National Geographic." {
+		t.Errorf("asstText = %q, want the orchestrator's own reply preserved", got)
 	}
 }

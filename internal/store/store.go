@@ -132,6 +132,15 @@ const (
 	nodeInputPayloadKey = "payload"
 )
 
+// orchestratorAuthor mirrors orchestrator.orchestratorName: the Author stamped on
+// BOTH the orchestrator llmagent's own events (it's wrapped in a workflow.AgentNode
+// too, so it carries NodeInfo like everything else — NodeInfo alone can't
+// distinguish it) and the delivered-answer event persistAnswer appends. Everything
+// else authored differently (a plan node's worker/advisor/judge-adjacent activity,
+// or the plan-graph wrapper's own structural events) is gate-internal and never
+// the user-facing message.
+const orchestratorAuthor = "orchestrator"
+
 // turnGroup is the per-turn content extracted from a session's events.
 type turnGroup struct {
 	userText, asstText, asstThink string
@@ -183,12 +192,14 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 			continue
 		}
 		// Gate-internal activity (a worker draft, the formative advisor consult, a
-		// revision) carries NodeInfo — it's the trust gate's own deliberation, never
-		// the user-facing message. Skip it entirely so it can't get glued into
-		// asstText (which used to concatenate EVERY assistant event's text in the
-		// turn, node-scoped or not) or listed as top-level activity. The turn's
-		// real answer is the orchestrator's own persistAnswer event (NodeInfo nil).
-		if ev.NodeInfo != nil {
+		// revision, the plan-graph wrapper's own structural events) is authored by
+		// something other than the orchestrator — it's the trust gate's own
+		// deliberation, never the user-facing message. Skip it entirely so it can't
+		// get glued into asstText (which used to concatenate EVERY assistant event's
+		// text in the turn, gate-internal or not) or listed as top-level activity.
+		// NodeInfo alone can't distinguish this: the orchestrator llmagent is ALSO
+		// wrapped in a workflow.AgentNode, so its own real replies carry NodeInfo too.
+		if ev.Author != orchestratorAuthor {
 			continue
 		}
 		for _, p := range ev.Content.Parts {
