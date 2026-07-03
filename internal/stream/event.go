@@ -276,11 +276,6 @@ func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
 	}}
 }
 
-// NodeQueued builds a node_queued event.
-func NodeQueued(nodeID string) SSEEvent {
-	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
-}
-
 // NodeStart builds a node_start event. StartedAtMs is stamped now (when the node
 // begins), so a reconnecting client's node timer is anchored to real time and
 // survives replay.
@@ -320,11 +315,6 @@ func NodeFailed(nodeID, errMsg string) SSEEvent {
 	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
 }
 
-// NodeSteered builds a node_steered event.
-func NodeSteered(nodeID, guidance string) SSEEvent {
-	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
-}
-
 // ChatTitle builds a chat_title event.
 func ChatTitle(title string) SSEEvent {
 	return SSEEvent{Name: EventChatTitle, Data: ChatTitleData{Title: title}}
@@ -336,43 +326,11 @@ func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: Error
 // Done builds the terminal done event.
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }
 
-// ── gate marker parts (yielded by the gate, decoded by the Translator) ────────
-
-// AgentStartPart encodes the start of an agent run.
-func AgentStartPart(runID, agent, stage string, round int) *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     agentStartTool,
-		Response: map[string]any{"run_id": runID, "agent": agent, "stage": stage, "round": round},
-	}}
-}
-
-// AgentCompletePart encodes the end of an agent run with its stage-specific
-// result. Token usage / model / finish_reason are filled in by the Translator
-// from the run's model events, so the gate need not supply them.
-func AgentCompletePart(d AgentCompleteData) *genai.Part {
-	resp := map[string]any{"run_id": d.RunID, "stage": d.Stage, "round": d.Round}
-	if d.Changed {
-		resp["changed"] = d.Changed
-	}
-	if d.Stage == StageJudge {
-		resp["score"] = d.Score
-		resp["passed"] = d.Passed
-		resp["feedback"] = d.Feedback
-	}
-	if d.Status != "" {
-		resp["status"] = d.Status
-		resp["reason"] = d.Reason
-	}
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: agentCompleteTool, Response: resp}}
-}
-
-// KeepAlivePart builds the heartbeat marker the gate emits during long runs.
-func KeepAlivePart() *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: keepaliveTool, Response: map[string]any{}}}
-}
-
-// AgentTokenPart builds a plain-text part the gate yields for the final answer.
-func AgentTokenPart(text string) *genai.Part { return &genai.Part{Text: text} }
+// The v1 gate emitted marker FunctionResponses (agent_start/agent_complete/
+// keepalive) that the Translator decodes; the v2 gate no longer emits them, so
+// the builders live in event_test.go as decoder fixtures. IsGateMarkerName and
+// the tool-name consts stay: the executor still filters marker responses
+// defensively and the decoder still recognizes them.
 
 // ThinkingPart builds a reasoning part the gate yields directly (e.g. judge
 // thinking re-emitted from its isolated run).

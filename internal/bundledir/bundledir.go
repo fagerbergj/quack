@@ -22,16 +22,6 @@ import (
 // fallback that makes an installed binary work from any directory.
 var embedded = root.Embedded
 
-// Open resolves a path under agents/ or skills/ from disk in cwd first, then
-// the embedded copy. It returns a read-only file. Callers that need the whole
-// tree use FS() instead.
-func Open(name string) (fs.File, error) {
-	if f, err := os.Open(name); err == nil {
-		return f, nil
-	}
-	return embedded.Open(name)
-}
-
 // ReadFile resolves name (e.g. "agents/orchestrator/agent-card.json") from disk
 // in cwd first, then the embedded copy.
 func ReadFile(name string) ([]byte, error) {
@@ -39,17 +29,6 @@ func ReadFile(name string) ([]byte, error) {
 		return b, nil
 	}
 	return embedded.ReadFile(name)
-}
-
-// Stat reports whether name exists on disk in cwd or in the embedded copy.
-func Stat(name string) bool {
-	if _, err := os.Stat(name); err == nil {
-		return true
-	}
-	if _, err := fs.Stat(embedded, name); err == nil {
-		return true
-	}
-	return false
 }
 
 // SubFS returns an fs.FS rooted at subdir (e.g. "skills"), preferring disk in

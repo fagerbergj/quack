@@ -18,33 +18,13 @@ import (
 type PlanCache struct {
 	mu        sync.Mutex
 	plans     map[string]dag.Plan
-	results   map[string]string // plan ID → terminal answer, memoised after first execute
-	delivered string            // terminal answer the execute node delivered straight to the user
-	selected  string            // plan ID the execute tool committed to this run
-	lastID    string            // most-recently-Put plan (for the single-runner router)
+	delivered string // terminal answer the execute node delivered straight to the user
+	selected  string // plan ID the execute tool committed to this run
 }
 
 // NewPlanCache returns an empty cache.
 func NewPlanCache() *PlanCache {
-	return &PlanCache{plans: make(map[string]dag.Plan), results: make(map[string]string)}
-}
-
-// SetResult memoises a plan's terminal answer so a repeat execute of the same
-// plan_id returns the cached answer instead of re-running the whole DAG (the
-// model sometimes calls execute twice — e.g. once to read the result, then again
-// with end_turn=true). Re-execution would burn minutes and tokens redundantly.
-func (c *PlanCache) SetResult(id, answer string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.results[id] = answer
-}
-
-// Result returns the memoised answer for a plan and whether it was found.
-func (c *PlanCache) Result(id string) (string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	a, ok := c.results[id]
-	return a, ok
+	return &PlanCache{plans: make(map[string]dag.Plan)}
 }
 
 // SetDelivered records the terminal answer that execute streamed straight to the
@@ -86,16 +66,6 @@ func (c *PlanCache) Put(p dag.Plan) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.plans[p.ID] = p
-	c.lastID = p.ID
-}
-
-// Latest returns the most-recently-Put plan (the single-runner router builds its
-// gate-node stream from it once the plan tool has run).
-func (c *PlanCache) Latest() (dag.Plan, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	p, ok := c.plans[c.lastID]
-	return p, ok
 }
 
 // Get returns the plan for id and whether it was found.

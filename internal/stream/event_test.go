@@ -166,3 +166,38 @@ func TestAgentCompleteNonJudgeOmitsScore(t *testing.T) {
 		t.Errorf("non-judge run must not serialize a score field, got %v", m["score"])
 	}
 }
+
+// Marker-part builders: v1-gate wire fixtures kept ONLY to exercise the
+// Translator's decoder (production code no longer emits markers).
+// AgentStartPart encodes (test fixture) the start of an agent run.
+func AgentStartPart(runID, agent, stage string, round int) *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name:     agentStartTool,
+		Response: map[string]any{"run_id": runID, "agent": agent, "stage": stage, "round": round},
+	}}
+}
+
+// AgentCompletePart encodes (test fixture) the end of an agent run with its stage-specific
+// result. Token usage / model / finish_reason are filled in by the Translator
+// from the run's model events, so the gate need not supply them.
+func AgentCompletePart(d AgentCompleteData) *genai.Part {
+	resp := map[string]any{"run_id": d.RunID, "stage": d.Stage, "round": d.Round}
+	if d.Changed {
+		resp["changed"] = d.Changed
+	}
+	if d.Stage == StageJudge {
+		resp["score"] = d.Score
+		resp["passed"] = d.Passed
+		resp["feedback"] = d.Feedback
+	}
+	if d.Status != "" {
+		resp["status"] = d.Status
+		resp["reason"] = d.Reason
+	}
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: agentCompleteTool, Response: resp}}
+}
+
+// KeepAlivePart builds (test fixture) the heartbeat marker the gate emits during long runs.
+func KeepAlivePart() *genai.Part {
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: keepaliveTool, Response: map[string]any{}}}
+}

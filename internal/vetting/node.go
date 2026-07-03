@@ -18,47 +18,6 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// NewGatedWorkerNode re-expresses the trust gate as a native ADK v2 workflow
-// node: a first-class graph node whose body is a dynamic refine loop
-// (worker → deterministic checks → judge → revise) that reuses judge.go's
-// evaluation logic. It is the v2 replacement for the custom-agent gate (gate.go).
-//
-// Unlike the legacy gate it does NOT manipulate the worker's session view or emit
-// orphan marker-FunctionResponses. Those markers are exactly what v2's
-// contents_processor rejects ("no function call event found for function
-// responses ids"), and the critiqueContext/filteredSession machinery that hid
-// them from v1.4.0 no longer works. Instead:
-//   - the worker runs as an AgentNode via RunNode, in its own sub-branch, so its
-//     model request is clean and its thinking/tool events flow natively on the
-//     workflow stream (the translator turns them into SSE — Phase 4);
-//   - tool activity for deterministic citation scoring is reconstructed from the
-//     session after each worker run (activityFromSession), not intercepted live.
-//
-// The node input is the task string (its round-0 prompt); its output is the
-// vetted answer. Placed as a FIRST-CLASS node it is durably skipped on resume
-// (a completed node is not re-run), which the spike proved dynamic RunNode
-// children are NOT.
-//
-// ponytail: self-critique (old Stage 1) is dropped — the advisor consult replaces
-// it (a later increment). The loop is worker → deterministic → judge → revise.
-func NewGatedWorkerNode(name string, worker adkagent.Agent, workerModel model.LLM, judge JudgeFactory, cfg Config) (workflow.Node, error) {
-	workerNode, err := NewWorkerNode(worker)
-	if err != nil {
-		return nil, err
-	}
-	fn := func(ctx adkagent.Context, task string, emit func(*session.Event) error) (string, error) {
-		// First-class node: as the graph entry its input is the user content; as a
-		// mid-graph node its input is the predecessor's output. Fall back to the
-		// session's user content if the typed input arrives empty.
-		if strings.TrimSpace(task) == "" {
-			task = contentPlainText(ctx.UserContent())
-		}
-		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, workerModel, judge, cfg, task, nil, nil, emit)
-		return answer, err
-	}
-	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
-}
-
 // NewWorkerNode wraps a worker agent as an AgentNode for use as the worker inside
 // a gated refine loop (see RunGatedRefine).
 func NewWorkerNode(worker adkagent.Agent) (workflow.Node, error) {

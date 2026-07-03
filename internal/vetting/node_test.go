@@ -61,7 +61,7 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := NewGatedWorkerNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -164,4 +164,22 @@ func stubCall(name string, args map[string]any) *model.LLMResponse {
 		FinishReason: genai.FinishReasonStop,
 		TurnComplete: true,
 	}
+}
+
+// newTestGatedNode wraps RunGatedRefine as a first-class dynamic node — the shape
+// dag.newGatedNode builds in production (test fixture; the old exported
+// NewGatedWorkerNode constructor was removed as dead code).
+func newTestGatedNode(name string, worker adkagent.Agent, workerModel model.LLM, judge JudgeFactory, cfg Config) (workflow.Node, error) {
+	workerNode, err := NewWorkerNode(worker)
+	if err != nil {
+		return nil, err
+	}
+	fn := func(ctx adkagent.Context, task string, emit func(*session.Event) error) (string, error) {
+		if strings.TrimSpace(task) == "" {
+			task = contentPlainText(ctx.UserContent())
+		}
+		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, workerModel, judge, cfg, task, nil, nil, emit)
+		return answer, err
+	}
+	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
 }

@@ -31,22 +31,6 @@ func TestPlanCacheDelivered(t *testing.T) {
 	}
 }
 
-func TestPlanCacheResult(t *testing.T) {
-	c := NewPlanCache()
-	if _, ok := c.Result("p1"); ok {
-		t.Error("Result() on fresh cache returned ok=true, want false")
-	}
-	c.SetResult("p1", "memoised answer")
-	got, ok := c.Result("p1")
-	if !ok || got != "memoised answer" {
-		t.Errorf("Result(p1) = (%q, %v), want (%q, true)", got, ok, "memoised answer")
-	}
-	// Distinct plan IDs don't collide.
-	if _, ok := c.Result("p2"); ok {
-		t.Error("Result(p2) returned ok=true, want false")
-	}
-}
-
 func TestTerminalOutput(t *testing.T) {
 	// Single node — returns its output.
 	single := dag.Plan{

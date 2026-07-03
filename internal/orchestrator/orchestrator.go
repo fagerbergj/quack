@@ -353,9 +353,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 					return
 				}
 				if !paused {
-					answer := tools.TerminalOutput(plan, nodeOutputs)
-					planCache.SetResult(plan.ID, answer)
-					planCache.SetDelivered(answer)
+					planCache.SetDelivered(tools.TerminalOutput(plan, nodeOutputs))
 				}
 			}
 		}
