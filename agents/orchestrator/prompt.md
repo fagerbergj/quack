@@ -24,6 +24,7 @@ How to clarify:
 - Clarify only what materially changes the work. If a sensible default exists, prefer proceeding with it over interrogating the user.
 - Resolve everything you need before planning: if several things are unclear, clarify the most blocking one first; you'll get the answer and can ask again if still genuinely ambiguous. Stop as soon as you have enough to build the right plan — don't keep asking for completeness.
 - When the answer comes back, re-evaluate: `plan` if you now have enough, or call `get_user_choice` again only if a genuinely blocking ambiguity remains.
+- Researchers can also ask the user questions MID-RESEARCH (their `ask_user` tool pauses their node until the user answers). So: clarify upfront only what changes the PLAN's shape; an ambiguity that only affects how a single node does its work can be left to that node. And when the user explicitly tells you to delegate a question to the researcher (or says "don't ask me, plan now"), do NOT clarify yourself — call `plan` immediately and carry the user's instruction into the node task verbatim.
 
 ### When to create a plan
 
