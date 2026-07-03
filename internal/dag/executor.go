@@ -63,6 +63,18 @@ type DagStream struct {
 // left untouched.
 func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, nodeID) }
 
+// ScopeToResume restricts the sweep to the resumed (previously paused) nodes and
+// their descendants — on a resume run, completed siblings are durably skipped by
+// ADK and emit nothing, so sweeping them would false-fail finished work.
+func (s *DagStream) ScopeToResume(nodeIDs []string) {
+	s.only = map[string]bool{}
+	for _, id := range nodeIDs {
+		for k := range retrySet(s.plan, id) {
+			s.only[k] = true
+		}
+	}
+}
+
 // NewDagStream builds a router for one plan's gate-node events. nodeOutputs is
 // filled (node ID → vetted answer) for the caller's TerminalOutput.
 // appName/userID/sessionID identify the session the gate nodes write their judge
@@ -109,7 +121,16 @@ func (s *DagStream) Finish() {
 			continue
 		}
 		if s.only != nil && !s.only[n.ID] {
-			continue // retry: leave the seeded (not-re-run) nodes as they were
+			continue // retry/resume: leave the seeded (not-re-run) nodes as they were
+		}
+		// A node paused for user input is WAITING, not failed — node_needs_input
+		// already surfaced it. Nodes that never started while a pause is open are
+		// blocked behind it (join/synth downstream of the asker): also waiting.
+		if s.ds.paused[n.ID] {
+			continue
+		}
+		if len(s.ds.paused) > 0 && !s.ds.started[n.ID] {
+			continue
 		}
 		// A user-cancelled node reads "Stopped by you"; a node that produced NO answer
 		// surfaces as a loud node_failed (not a quiet node_done) so the gap is never silent.
@@ -203,6 +224,7 @@ type dagStream struct {
 
 	started     map[string]bool   // node_start emitted
 	doneEmitted map[string]bool   // node_done emitted
+	paused      map[string]bool   // node paused for user input this run (node_needs_input emitted)
 	curRun      map[string]string // nodeID → active worker runID
 	usage       map[string]*runUsage
 	last        string // last non-empty output (terminal fallback)
@@ -217,7 +239,7 @@ type runUsage struct {
 func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool) *dagStream {
 	return &dagStream{
 		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled,
-		started: map[string]bool{}, doneEmitted: map[string]bool{},
+		started: map[string]bool{}, doneEmitted: map[string]bool{}, paused: map[string]bool{},
 		curRun: map[string]string{}, usage: map[string]*runUsage{},
 	}
 }
@@ -250,6 +272,16 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		if !s.emit(stream.NodeStart(node, s.agentByID[node])) {
 			return false
 		}
+	}
+
+	// A pause: the node is asking the user for input (gate HITL). Surface it as
+	// node_needs_input and mark the node WAITING so Finish doesn't sweep it as
+	// failed. The run ends after this; the answer arrives as the next turn's
+	// adk_request_input FunctionResponse.
+	if ev.RequestedInput != nil {
+		s.closeRun(node) // end any open worker run cleanly
+		s.paused[node] = true
+		return s.emit(stream.NodeNeedsInput(node, ev.RequestedInput.InterruptID, ev.RequestedInput.Message))
 	}
 
 	last := lastSeg(ev.NodeInfo.Path)
