@@ -157,7 +157,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		}
 		question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
-		answer, err := runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0"+sfx, prompt)), attachments), "worker-r0"+sfx)
+		answer, err := runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0"+sfx, prompt)), attachments), "worker-r0"+sfx, workflow.WithRaiseOnWait())
+		if errors.Is(err, workflow.ErrNodeInterrupted) {
+			// HITL: the worker called a long-running tool (e.g. get_user_choice) and is
+			// waiting on the user. WithRaiseOnWait surfaced it as an interrupt; propagate
+			// it up so runDAG→execNode parks the top workflow (NOT a failure — no Error
+			// log, no empty-recovery). ADK resumes this node when the answer arrives.
+			return "", GateResult{}, err
+		}
 		if err != nil {
 			// Log at our boundary before returning: ADK's scheduler can swallow a
 			// node error into a silent empty completion, so this ERROR line (with the
@@ -238,7 +245,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 			}
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
 			advRun := fmt.Sprintf("advisor-r%d%s", round, sfx)
-			revised, rerr := runWorkerNode(ctx, workerNode, withAdvice(revisePrompt, consult(advRun, revisePrompt)), fmt.Sprintf("worker-r%d%s", round, sfx))
+			revised, rerr := runWorkerNode(ctx, workerNode, withAdvice(revisePrompt, consult(advRun, revisePrompt)), fmt.Sprintf("worker-r%d%s", round, sfx), workflow.WithRaiseOnWait())
+			if errors.Is(rerr, workflow.ErrNodeInterrupted) {
+				return "", GateResult{}, rerr // HITL during revision: park (see draft note)
+			}
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
@@ -316,10 +326,10 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 	return &genai.Content{Role: "user", Parts: append([]*genai.Part{{Text: prompt}}, attachments...)}
 }
 
-func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string) (string, error) {
+func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string, opts ...workflow.RunNodeOption) (string, error) {
 	t0 := time.Now()
-	out, err := workflow.RunNode[string](ctx, workerNode, input,
-		workflow.WithUseSubBranch(), workflow.WithRunID(runID))
+	base := []workflow.RunNodeOption{workflow.WithUseSubBranch(), workflow.WithRunID(runID)}
+	out, err := workflow.RunNode[string](ctx, workerNode, input, append(base, opts...)...)
 	if err != nil {
 		return "", err
 	}
