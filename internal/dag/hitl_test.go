@@ -9,9 +9,7 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
-	"google.golang.org/adk/v2/agent/workflowagent"
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
@@ -84,8 +82,11 @@ func (s *hitlStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 	}
 }
 
-func newHITLExecutor(t *testing.T, stub *hitlStub, sessions session.Service) (*Executor, Plan) {
-	t.Helper()
+// TestHITL_SingleNodePauseResume covers the degenerate plan where the ASKER is
+// itself the terminal node (no synthesizer): run 1 parks it under hitl-n1-r1; the
+// answer turn re-enters it and its output becomes the plan's terminal answer.
+func TestHITL_SingleNodePauseResume(t *testing.T) {
+	stub := &hitlStub{}
 	ag, err := llmagent.New(llmagent.Config{
 		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer.",
 		Tools: []tool.Tool{newAskTool(t)},
@@ -93,94 +94,43 @@ func newHITLExecutor(t *testing.T, stub *hitlStub, sessions session.Service) (*E
 	if err != nil {
 		t.Fatalf("agent: %v", err)
 	}
-	ex := NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil, nil,
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil, nil,
 		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
-	return ex, plan
-}
 
-// runPlanContent runs a plan through the single-runner path (execNode→RunPlanInNode)
-// on ex's session store with the given content (a fresh user turn or a resume
-// FunctionResponse), calling observe for every raw session event. Returns the
-// captured node outputs. Reuses ex.sessions so a second call resumes the first.
-func runPlanContent(t *testing.T, ex *Executor, plan Plan, chatID string, content *genai.Content, observe func(*session.Event)) (map[string]string, error) {
-	t.Helper()
-	var planOutputs map[string]string
-	dsOutputs := map[string]string{}
-	yield := func(stream.SSEEvent, error) bool { return true }
-	orchestrate := workflow.NewDynamicNode[any, string]("orch",
-		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-			o, err := ex.RunPlanInNode(ctx, plan, chatID)
-			planOutputs = o
-			return "done", err
-		}, workflow.NodeConfig{})
-	top, err := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
-	if err != nil {
-		return nil, err
-	}
-	r, err := runner.New(runner.Config{AppName: "quack", Agent: top, SessionService: ex.sessions, AutoCreateSession: true})
-	if err != nil {
-		return nil, err
-	}
-	ctx := stream.WithYield(context.Background(), func(ev stream.SSEEvent) { yield(ev, nil) })
-	ds := ex.NewDagStream(ctx, plan, "quack", "u", chatID, chatID, yield, dsOutputs)
-	for ev, rerr := range r.Run(ctx, "u", chatID, content, adkagent.RunConfig{}) {
-		if rerr != nil {
-			return nil, rerr
-		}
-		if ev == nil {
-			continue
-		}
-		observe(ev)
-		ds.Handle(ev)
-	}
-	ds.Finish()
-	return planOutputs, nil
-}
-
-// TestHITL_GatePausesAndResumes proves the full mid-node HITL cycle through the
-// real gate: the worker calls ask_user → the gate parks the NODE under the stable
-// interrupt ID hitl-n1-r1 (run 1 ends, no node output); delivering the user's
-// answer as the adk_request_input FunctionResponse re-enters the node, the gate
-// re-runs the worker with the Q&A folded in, and the node completes.
-func TestHITL_GatePausesAndResumes(t *testing.T) {
-	stub := &hitlStub{}
-	ex, plan := newHITLExecutor(t, stub, session.InMemoryService())
-
-	// Run 1: park. Capture the pause request from the raw events.
 	var pauseID, pauseMsg string
-	out1, err := runPlanContent(t, ex, plan, "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}, func(ev *session.Event) {
-		if ev != nil && ev.RequestedInput != nil {
-			pauseID = ev.RequestedInput.InterruptID
-			pauseMsg = ev.RequestedInput.Message
+	yield := func(ev stream.SSEEvent, _ error) bool {
+		if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
+			pauseID, pauseMsg = d.InterruptID, d.Message
 		}
-	})
+		return true
+	}
+	out1 := map[string]string{}
+	paused, err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "s",
+		&genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}, yield, out1, nil)
 	if err != nil {
 		t.Fatalf("run1: %v", err)
 	}
-	if out1["n1"] != "" {
-		t.Fatalf("run1: paused node should have no output, got %q", out1["n1"])
+	if !paused || out1["n1"] != "" {
+		t.Fatalf("run1: want paused with no output, got paused=%v out=%q", paused, out1["n1"])
 	}
-	if pauseID != "hitl-n1-r1" {
-		t.Fatalf("run1: interrupt ID = %q, want hitl-n1-r1", pauseID)
-	}
-	if pauseMsg != "which direction?" {
-		t.Errorf("run1: pause message = %q, want the worker's question", pauseMsg)
+	if pauseID != "hitl-n1-r1" || pauseMsg != "which direction?" {
+		t.Fatalf("run1: node_needs_input = (%q, %q), want (hitl-n1-r1, which direction?)", pauseID, pauseMsg)
 	}
 
-	// Run 2: deliver the answer.
 	answer := &genai.Content{Role: "user", Parts: []*genai.Part{{
 		FunctionResponse: &genai.FunctionResponse{
 			ID: pauseID, Name: workflow.WorkflowInputFunctionCallName,
 			Response: map[string]any{"payload": "north"},
 		},
 	}}}
-	out2, err := runPlanContent(t, ex, plan, "s", answer, func(*session.Event) {})
+	out2 := map[string]string{}
+	paused2, err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "s", answer, yield, out2, []string{"n1"})
 	if err != nil {
 		t.Fatalf("run2: %v", err)
 	}
-	if out2["n1"] == "" {
-		t.Fatalf("run2: node should complete after resume, got none")
+	if paused2 || out2["n1"] == "" {
+		t.Fatalf("run2: want completed with output, got paused=%v out=%q", paused2, out2["n1"])
 	}
 	stub.mu.Lock()
 	defer stub.mu.Unlock()

@@ -53,6 +53,7 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 				return executeResult{}, fmt.Errorf("execute: marshal plan: %w", err)
 			}
 			tc.State().Set(ExecPlanKey, string(planJSON))
+			cache.SetSelected(a.PlanID)
 			// End the llmagent turn structurally so it can't emit a chatty
 			// acknowledgement over the execute node's streamed answer.
 			// ponytail: the plan's synthesizer node IS the loop-back — it folds the

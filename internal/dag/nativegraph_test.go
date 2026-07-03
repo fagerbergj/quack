@@ -120,8 +120,12 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 	// ---- Run 1: fresh — parks at n1 ----
 	outputs := map[string]string{}
 	start := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}
-	if err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "chat", start, record, outputs, nil); err != nil {
+	paused, err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "chat", start, record, outputs, nil)
+	if err != nil {
 		t.Fatalf("run1: %v", err)
+	}
+	if !paused {
+		t.Fatal("run1: expected a paused run")
 	}
 	if !has(stream.EventNodeDone, "n2") {
 		t.Errorf("run1: sibling n2 should complete with node_done")
@@ -150,8 +154,12 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 		},
 	}}}
 	outputs2 := map[string]string{}
-	if err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "chat", answer, record, outputs2, []string{"n1"}); err != nil {
+	paused2, err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "chat", answer, record, outputs2, []string{"n1"})
+	if err != nil {
 		t.Fatalf("run2: %v", err)
+	}
+	if paused2 {
+		t.Fatal("run2: should complete, not pause again")
 	}
 	if stub.plainRuns != 1 {
 		t.Errorf("run2: sibling n2 re-ran (%d total) — durable skip broken", stub.plainRuns)

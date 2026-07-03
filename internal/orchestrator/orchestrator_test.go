@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -144,4 +145,54 @@ func TestOrchestratorReturnType(t *testing.T) {
 		}
 	}
 	t.Log("return type is stream.SSEEvent")
+}
+
+// TestLatestPendingNodeInterrupt: an unanswered mid-node HITL request routes the
+// next message as its answer; an answered one does not; the most recent
+// unanswered request wins; non-hitl RequestedInput events are ignored.
+func TestLatestPendingNodeInterrupt(t *testing.T) {
+	req := func(id, msg string) *session.Event {
+		ev := &session.Event{}
+		ev.RequestedInput = &session.RequestInput{InterruptID: id, Message: msg}
+		return ev
+	}
+	ans := func(id string) *session.Event {
+		ev := &session.Event{}
+		ev.Author = "user"
+		ev.Content = &genai.Content{Parts: []*genai.Part{{
+			FunctionResponse: &genai.FunctionResponse{ID: id, Name: workflow.WorkflowInputFunctionCallName},
+		}}}
+		return ev
+	}
+
+	t.Run("pending", func(t *testing.T) {
+		p, ok := latestPendingNodeInterrupt([]*session.Event{req("hitl-n1-r1", "which?")})
+		if !ok || p.nodeID != "n1" || p.id != "hitl-n1-r1" || p.message != "which?" {
+			t.Fatalf("got %+v ok=%v", p, ok)
+		}
+	})
+	t.Run("answered is not pending", func(t *testing.T) {
+		if _, ok := latestPendingNodeInterrupt([]*session.Event{req("hitl-n1-r1", "q"), ans("hitl-n1-r1")}); ok {
+			t.Fatal("answered interrupt should not be pending")
+		}
+	})
+	t.Run("latest unanswered wins", func(t *testing.T) {
+		p, ok := latestPendingNodeInterrupt([]*session.Event{
+			req("hitl-n1-r1", "q1"), ans("hitl-n1-r1"), req("hitl-n2-r1", "q2"),
+		})
+		if !ok || p.nodeID != "n2" {
+			t.Fatalf("got %+v ok=%v", p, ok)
+		}
+	})
+	t.Run("non-hitl interrupts ignored", func(t *testing.T) {
+		if _, ok := latestPendingNodeInterrupt([]*session.Event{req("something-else", "q")}); ok {
+			t.Fatal("non-hitl interrupt should be ignored")
+		}
+	})
+	t.Run("multi-round node id parses", func(t *testing.T) {
+		p, ok := latestPendingNodeInterrupt([]*session.Event{req("hitl-research-web-r2", "q")})
+		if !ok || p.nodeID != "research-web" {
+			t.Fatalf("got %+v ok=%v", p, ok)
+		}
+	})
 }

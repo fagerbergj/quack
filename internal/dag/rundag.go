@@ -8,23 +8,13 @@ import (
 	"google.golang.org/adk/v2/workflow"
 )
 
-// runDAG schedules a plan's gate nodes via concurrent RunNode in topological
-// layers (≤ maxActive running at once), gathering each node's output for its
-// dependents. It runs inside ONE runner (the orchestration node's sub-scheduler).
-// This replaces BuildWorkflow's edge graph + the executor's separate runner.
-func runDAG(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int) (map[string]string, error) {
-	all := make(map[string]bool, len(plan.Nodes))
-	for _, n := range plan.Nodes {
-		all[n.ID] = true
-	}
-	return runDAGSubset(ctx, plan, gateNodes, maxActive, nil, all)
-}
-
 // runDAGSubset runs only the nodes in `run` (the retry set), leaving every other
-// node at its `seeded` output (node ID → reused text from a prior run). A full run
-// is the special case run=all-nodes, seeded=nil; a retry passes the target node +
-// its descendants as `run` and the rest of the prior run's outputs as `seeded`, so
-// only the affected subgraph re-executes.
+// node at its `seeded` output (node ID → reused text from a prior run) — the
+// RETRY path's scheduler (RetryPlanInNode). The main path runs plans as native
+// first-class ADK graphs (RunPlanAsGraph); this manual RunNode scheduler remains
+// only because a retry re-runs a SUBSET against seeded outputs, which the native
+// graph can't express. ponytail: migrate retry to the native graph if ADK grows
+// per-node seeding.
 func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	if maxActive < 1 {
 		maxActive = 1

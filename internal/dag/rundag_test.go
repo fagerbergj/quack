@@ -15,6 +15,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -54,8 +55,12 @@ func TestRunDAG_Layers(t *testing.T) {
 	var out map[string]string
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+			all := map[string]bool{}
+			for _, n := range plan.Nodes {
+				all[n.ID] = true
+			}
 			var err error
-			out, err = runDAG(ctx, plan, gateNodes, 2)
+			out, err = runDAGSubset(ctx, plan, gateNodes, 2, nil, all)
 			return "done", err
 		}, workflow.NodeConfig{})
 	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
@@ -70,7 +75,7 @@ func TestRunDAG_Layers(t *testing.T) {
 	}
 }
 
-func TestRunPlanInNode(t *testing.T) {
+func TestRunPlanAsGraph_Chain(t *testing.T) {
 	stub := okStub{}
 	ag, _ := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 	exec := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": ag}, nil, nil,
@@ -78,22 +83,18 @@ func TestRunPlanInNode(t *testing.T) {
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{
 		{ID: "n1", AgentName: "w"}, {ID: "n2", AgentName: "w", DependsOn: []string{"n1"}},
 	}}
-	var out map[string]string
-	orchestrate := workflow.NewDynamicNode[any, string]("orch",
-		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-			var err error
-			out, err = exec.RunPlanInNode(ctx, plan, "chat")
-			return "done", err
-		}, workflow.NodeConfig{})
-	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
-	r, _ := runner.New(runner.Config{AppName: "o", Agent: top, SessionService: session.InMemoryService(), AutoCreateSession: true})
-	for _, err := range r.Run(context.Background(), "u", "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}, adkagent.RunConfig{}) {
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
+	out := map[string]string{}
+	paused, err := exec.RunPlanAsGraph(context.Background(), plan, "o", "u", "s",
+		&genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}},
+		func(stream.SSEEvent, error) bool { return true }, out, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if paused {
+		t.Fatal("nothing should pause")
 	}
 	if len(out) != 2 || out["n1"] == "" || out["n2"] == "" {
-		t.Fatalf("RunPlanInNode outputs incomplete: %v", out)
+		t.Fatalf("RunPlanAsGraph outputs incomplete: %v", out)
 	}
 }
 

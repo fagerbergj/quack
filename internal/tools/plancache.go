@@ -20,6 +20,7 @@ type PlanCache struct {
 	plans     map[string]dag.Plan
 	results   map[string]string // plan ID → terminal answer, memoised after first execute
 	delivered string            // terminal answer the execute node delivered straight to the user
+	selected  string            // plan ID the execute tool committed to this run
 	lastID    string            // most-recently-Put plan (for the single-runner router)
 }
 
@@ -66,6 +67,21 @@ func (c *PlanCache) Delivered() string {
 }
 
 // Put stores a plan keyed by its ID.
+// SetSelected records the plan the execute tool committed to this run; the
+// orchestrator runs it as a native graph after the llmagent's turn ends.
+func (c *PlanCache) SetSelected(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.selected = id
+}
+
+// Selected returns the plan ID the execute tool selected this run, if any.
+func (c *PlanCache) Selected() (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.selected, c.selected != ""
+}
+
 func (c *PlanCache) Put(p dag.Plan) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

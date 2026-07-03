@@ -31,7 +31,7 @@ type Executor struct {
 	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
 }
 
-// SetMaxActive sets the concurrent-node cap used by RunPlanInNode (config
+// SetMaxActive sets the concurrent-node cap for plan execution (config
 // dag.max_active_nodes). No-op for values < 1.
 func (e *Executor) SetMaxActive(n int) {
 	if n >= 1 {
@@ -113,9 +113,16 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 
 // Finish flushes the last run and emits node_done for every plan node
 // that hasn't already emitted one live. Call after the runner loop ends.
+// Paused reports whether any node paused for user input during this run.
+func (s *DagStream) Paused() bool { return len(s.ds.paused) > 0 }
+
 func (s *DagStream) Finish() {
 	s.ds.flush()
-	ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
+	// A paused run is incomplete by design: don't fabricate a terminal output
+	// from the last finished node — the real terminal runs after the resume.
+	if len(s.ds.paused) == 0 {
+		ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
+	}
 	for _, n := range s.plan.Nodes {
 		if s.ds.doneEmitted[n.ID] {
 			continue
@@ -144,18 +151,6 @@ func (s *DagStream) Finish() {
 		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
 	}
-}
-
-// RunPlanInNode runs a plan's gated nodes via runDAG in the CURRENT workflow
-// node's sub-scheduler (single runner) — the entry point for the one-orchestrator-
-// workflow path. Returns node ID → vetted output; an empty node fails (marks itself)
-// and the DAG continues so the run always finishes.
-func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
-	if err != nil {
-		return nil, err
-	}
-	return runDAG(ctx, plan, gateNodes, e.maxActive)
 }
 
 // RetryPlanInNode re-runs the target node and its descendants, reusing the seeded

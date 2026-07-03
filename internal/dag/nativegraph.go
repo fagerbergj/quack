@@ -183,18 +183,18 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 // resumeNodes, non-empty on a resume turn, scopes the DagStream's terminal sweep
 // to the paused nodes + their downstream (skipped siblings emit nothing this run
 // and must not be swept as failed).
-func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) error {
+func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	edges, err := buildPlanGraph(plan, gateNodes)
 	if err != nil {
-		return err
+		return false, err
 	}
-	wf, err := workflow.New(planWrapperName, edges)
+	wf, err := workflow.New(planWrapperName, edges, workflow.WithMaxConcurrency(e.maxActive))
 	if err != nil {
-		return fmt.Errorf("dag: plan graph: %w", err)
+		return false, fmt.Errorf("dag: plan graph: %w", err)
 	}
 	nodeNames := map[string]bool{}
 	for _, n := range plan.Nodes {
@@ -203,11 +203,11 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	}
 	wrapper, err := newPlanWrapper(wf, nodeNames)
 	if err != nil {
-		return fmt.Errorf("dag: plan wrapper: %w", err)
+		return false, fmt.Errorf("dag: plan wrapper: %w", err)
 	}
 	r, err := runner.New(runner.Config{AppName: appName, Agent: wrapper, SessionService: e.sessions, AutoCreateSession: true})
 	if err != nil {
-		return fmt.Errorf("dag: plan graph runner: %w", err)
+		return false, fmt.Errorf("dag: plan graph runner: %w", err)
 	}
 	ds := e.NewDagStream(ctx, plan, appName, userID, chatID, chatID, yield, nodeOutputs)
 	if len(resumeNodes) > 0 {
@@ -215,7 +215,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	}
 	for ev, rerr := range r.Run(ctx, userID, chatID, content, adkagent.RunConfig{}) {
 		if rerr != nil {
-			return rerr
+			return ds.Paused(), rerr
 		}
 		if ev == nil {
 			continue
@@ -223,5 +223,5 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 		ds.Handle(ev)
 	}
 	ds.Finish()
-	return nil
+	return ds.Paused(), nil
 }
