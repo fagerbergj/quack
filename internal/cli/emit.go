@@ -96,8 +96,8 @@ func EmitServerConfig(a InitAnswers) string {
 	b.WriteString("\n")
 
 	if a.JudgeModel != "" {
-		b.WriteString("gates:\n  enabled: true\n  deterministic_rounds: 1\n  self_critique_rounds: 1\n")
-		fmt.Fprintf(&b, "  judge:\n    provider: default\n    model: %s\n    rounds: 1\n    threshold: 0.6\n\n", a.JudgeModel)
+		b.WriteString("gates:\n  rubric_path: config/rubric.md\n  deterministic_checks:\n    max_rounds: 1\n")
+		fmt.Fprintf(&b, "  judge:\n    provider: default\n    model: %s\n    max_rounds: 1\n    threshold: 0.6\n\n", a.JudgeModel)
 	}
 
 	b.WriteString("dag:\n  max_active_nodes: 2\n\n")

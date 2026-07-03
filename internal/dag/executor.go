@@ -31,7 +31,7 @@ type Executor struct {
 	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
 }
 
-// SetMaxActive sets the concurrent-node cap used by RunPlanInNode (config
+// SetMaxActive sets the concurrent-node cap for plan execution (config
 // dag.max_active_nodes). No-op for values < 1.
 func (e *Executor) SetMaxActive(n int) {
 	if n >= 1 {
@@ -62,6 +62,18 @@ type DagStream struct {
 // its descendants, so a retry doesn't re-emit (or false-fail) the seeded nodes it
 // left untouched.
 func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, nodeID) }
+
+// ScopeToResume restricts the sweep to the resumed (previously paused) nodes and
+// their descendants — on a resume run, completed siblings are durably skipped by
+// ADK and emit nothing, so sweeping them would false-fail finished work.
+func (s *DagStream) ScopeToResume(nodeIDs []string) {
+	s.only = map[string]bool{}
+	for _, id := range nodeIDs {
+		for k := range retrySet(s.plan, id) {
+			s.only[k] = true
+		}
+	}
+}
 
 // NewDagStream builds a router for one plan's gate-node events. nodeOutputs is
 // filled (node ID → vetted answer) for the caller's TerminalOutput.
@@ -101,15 +113,31 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 
 // Finish flushes the last run and emits node_done for every plan node
 // that hasn't already emitted one live. Call after the runner loop ends.
+// Paused reports whether any node paused for user input during this run.
+func (s *DagStream) Paused() bool { return len(s.ds.paused) > 0 }
+
 func (s *DagStream) Finish() {
 	s.ds.flush()
-	ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
+	// A paused run is incomplete by design: don't fabricate a terminal output
+	// from the last finished node — the real terminal runs after the resume.
+	if len(s.ds.paused) == 0 {
+		ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
+	}
 	for _, n := range s.plan.Nodes {
 		if s.ds.doneEmitted[n.ID] {
 			continue
 		}
 		if s.only != nil && !s.only[n.ID] {
-			continue // retry: leave the seeded (not-re-run) nodes as they were
+			continue // retry/resume: leave the seeded (not-re-run) nodes as they were
+		}
+		// A node paused for user input is WAITING, not failed — node_needs_input
+		// already surfaced it. Nodes that never started while a pause is open are
+		// blocked behind it (join/synth downstream of the asker): also waiting.
+		if s.ds.paused[n.ID] {
+			continue
+		}
+		if len(s.ds.paused) > 0 && !s.ds.started[n.ID] {
+			continue
 		}
 		// A user-cancelled node reads "Stopped by you"; a node that produced NO answer
 		// surfaces as a loud node_failed (not a quiet node_done) so the gap is never silent.
@@ -123,18 +151,6 @@ func (s *DagStream) Finish() {
 		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
 	}
-}
-
-// RunPlanInNode runs a plan's gated nodes via runDAG in the CURRENT workflow
-// node's sub-scheduler (single runner) — the entry point for the one-orchestrator-
-// workflow path. Returns node ID → vetted output; an empty node fails (marks itself)
-// and the DAG continues so the run always finishes.
-func (e *Executor) RunPlanInNode(ctx adkagent.Context, plan Plan, chatID string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
-	if err != nil {
-		return nil, err
-	}
-	return runDAG(ctx, plan, gateNodes, e.maxActive)
 }
 
 // RetryPlanInNode re-runs the target node and its descendants, reusing the seeded
@@ -203,6 +219,7 @@ type dagStream struct {
 
 	started     map[string]bool   // node_start emitted
 	doneEmitted map[string]bool   // node_done emitted
+	paused      map[string]bool   // node paused for user input this run (node_needs_input emitted)
 	curRun      map[string]string // nodeID → active worker runID
 	usage       map[string]*runUsage
 	last        string // last non-empty output (terminal fallback)
@@ -217,7 +234,7 @@ type runUsage struct {
 func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool) *dagStream {
 	return &dagStream{
 		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled,
-		started: map[string]bool{}, doneEmitted: map[string]bool{},
+		started: map[string]bool{}, doneEmitted: map[string]bool{}, paused: map[string]bool{},
 		curRun: map[string]string{}, usage: map[string]*runUsage{},
 	}
 }
@@ -250,6 +267,16 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		if !s.emit(stream.NodeStart(node, s.agentByID[node])) {
 			return false
 		}
+	}
+
+	// A pause: the node is asking the user for input (gate HITL). Surface it as
+	// node_needs_input and mark the node WAITING so Finish doesn't sweep it as
+	// failed. The run ends after this; the answer arrives as the next turn's
+	// adk_request_input FunctionResponse.
+	if ev.RequestedInput != nil {
+		s.closeRun(node) // end any open worker run cleanly
+		s.paused[node] = true
+		return s.emit(stream.NodeNeedsInput(node, ev.RequestedInput.InterruptID, ev.RequestedInput.Message))
 	}
 
 	last := lastSeg(ev.NodeInfo.Path)

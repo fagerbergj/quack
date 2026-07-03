@@ -89,14 +89,13 @@ export const FinalNodeDone: Story = {
   },
 }
 
-export const SelfCritiqueRunning: Story = {
+export const AdvisorRunning: Story = {
   render: () => (
     <DagNode
       node={wrNode}
       state={{ status: 'running', startedAt: Date.now() - 8_000 }}
       runs={[
-        workerDone(researchActivity),
-        { runId: 'sr', agent: 'web-researcher', stage: 'self_refine', done: false, activity: [{ kind: 'thinking', text: 'Reviewing my draft for citation gaps…' }] },
+        { runId: 'adv', agent: 'advisor', stage: 'advisor', done: false, activity: [{ kind: 'thinking', text: 'Considering what could go wrong with this task before the worker starts…' }] },
       ]}
       answer=""
       isFinal={false}
@@ -124,8 +123,8 @@ export const JudgeRoundsAllDone: Story = {
     node: wrNode,
     state: { status: 'done', startedAt: 0, finishedAt: 62_000, totalTokens: 3_421, model: 'qwen3-30b-a3b' },
     runs: [
+      { runId: 'adv', agent: 'advisor', stage: 'advisor', done: true, activity: [] },
       workerDone(researchActivity),
-      { runId: 'sr', agent: 'web-researcher', stage: 'self_refine', done: true, changed: false, activity: [] },
       judgeRun(1, 0.52, false, 'Add a source URL for the weather claim.'),
       { runId: 'rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, activity: [{ kind: 'tool', tool: { callId: 'rc1', name: 'web_fetch', args: { url: 'https://example.com/met' }, result: 'Met Éireann climate averages…', done: true } }] },
       judgeRun(2, 0.88, true, ''),

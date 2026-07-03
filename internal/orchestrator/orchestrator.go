@@ -7,8 +7,8 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"iter"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -77,17 +77,8 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		// Load the real dag.Plan the execute tool stashed in session state — the
 		// DagPlan store holds the dag_plan EVENT shape (agent, not agent_name), not
 		// this struct.
-		var plan dag.Plan
-		if resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID}); err == nil && resp != nil {
-			if st := resp.Session.State(); st != nil {
-				if v, gerr := st.Get(tools.ExecPlanKey); gerr == nil {
-					if s, ok := v.(string); ok {
-						_ = json.Unmarshal([]byte(s), &plan)
-					}
-				}
-			}
-		}
-		if len(plan.Nodes) == 0 {
+		plan, ok := o.stashedPlan(ctx, userID, chatID)
+		if !ok {
 			yield(stream.Errorf("retry: no plan in session to retry"), nil)
 			return
 		}
@@ -190,6 +181,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// message — so it holds only earlier turns. Used for both the planner's
 		// history and pending-clarification detection below.
 		prior := o.priorEvents(ctx, userID, sessionID)
+		// Mid-node HITL: if the previous turn parked a plan node waiting on the
+		// user, THIS message is the answer to that node's question — deliver it to
+		// the paused plan run and skip the orchestrator llmagent entirely.
+		if pend, ok := latestPendingNodeInterrupt(prior); ok {
+			o.resumeNodeRun(ctx, userID, sessionID, message, pend, yield)
+			return
+		}
 		// Threaded to the planner so a re-plan after a clarifying exchange (or any
 		// follow-up) resolves references against what was already said.
 		history := buildHistory(prior)
@@ -244,39 +242,18 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			return
 		}
 
-		// One-orchestrator-workflow: the routing/planning/clarification llmagent and
-		// the DAG run in ONE runner. The llmagent is the first node; a following
-		// execute node runs the plan it selected (execute tool → ExecPlanKey) via
-		// runDAG in this same runner — no separate DAG runner to bridge.
 		agentNode, err := workflow.NewAgentNode(ag, workflow.NodeConfig{})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: agent node: "+err.Error()), nil)
 			return
 		}
-		nodeOutputs := make(map[string]string)
-		execNode := workflow.NewDynamicNode[any, string]("__execute",
-			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-				v, _ := nctx.State().Get(tools.ExecPlanKey)
-				planJSON, _ := v.(string)
-				if planJSON == "" {
-					return "", nil // the llmagent answered directly — no DAG to run
-				}
-				var plan dag.Plan
-				if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
-					return "", fmt.Errorf("execute node: unmarshal plan: %w", err)
-				}
-				outputs, rerr := o.executor.RunPlanInNode(nctx, plan, sessionID)
-				if rerr != nil {
-					return "", rerr // ErrNodeInterrupted → pause the run for steer/cancel
-				}
-				answer := tools.TerminalOutput(plan, outputs)
-				planCache.SetResult(plan.ID, answer)
-				planCache.SetDelivered(answer)
-				return answer, nil
-			}, workflow.NodeConfig{})
+		// Phase 1 of two: the routing/planning/clarification llmagent runs alone;
+		// when its execute tool commits a plan, phase 2 below runs that plan as a
+		// native first-class-node graph (its own runner) so nodes can durably skip
+		// on resume and pause for the user (mid-node HITL).
 		wf, err := workflowagent.New(workflowagent.Config{
 			Name:  "orchestrator-workflow",
-			Edges: workflow.Chain(workflow.Start, agentNode, execNode),
+			Edges: workflow.Chain(workflow.Start, agentNode),
 		})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: workflow: "+err.Error()), nil)
@@ -340,11 +317,10 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker,
 		}}, nil)
 
-		// Gate-node lifecycle SSE can be emitted from concurrent workflow goroutines;
-		// serialize all yields through one mutex.
+		// SSE can be emitted from concurrent workflow goroutines; serialize all
+		// yields through one mutex.
 		var mu sync.Mutex
 		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
-		var ds *dag.DagStream
 		for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
 			if err != nil {
 				safeYield(stream.Errorf(err.Error()), nil)
@@ -353,46 +329,150 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			if ev == nil {
 				continue
 			}
-			// Once the plan tool has cached a plan, route its gate-node events to the
-			// DAG stream; everything else is the orchestrator's own thinking/tool activity.
-			if ds == nil {
-				if p, ok := planCache.Latest(); ok {
-					// Normal run: session == chatID, so it's also the cancel key.
-					ds = o.executor.NewDagStream(ctx, p, AppName, userID, sessionID, sessionID, safeYield, nodeOutputs)
-				}
-			}
-			if ds != nil && ds.Handle(ev) {
-				continue
-			}
 			for _, se := range translator.Event(ev) {
 				if !safeYield(stream.ScopeToRun(se, orchRunID), nil) {
 					return
 				}
 			}
 		}
-		if ds != nil {
-			ds.Finish()
-		}
 		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
 			RunID: orchRunID, Stage: stream.StageWorker,
 		}}, nil)
 
-		// Deliver: the execute node streamed the plan's answer straight to the user
-		// and the orchestrator stayed silent, so its session holds no record of the
-		// answer. Append it as the assistant message so it
-		// survives reload (AsstText) and is visible to follow-up turns. Use a
-		// detached context so a client disconnect at end-of-stream still persists.
-		if delivered := planCache.Delivered(); delivered != "" {
-			persistCtx := context.WithoutCancel(ctx)
-			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
-				aev := session.NewEvent(persistCtx, "")
-				aev.Author = ag.Name()
-				aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: delivered}}}
-				_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
+		// Phase 2: the llmagent committed a plan (execute tool) — run it as a
+		// native graph. Node events stream through the DagStream inside
+		// RunPlanAsGraph; a node may PAUSE to ask the user (node_needs_input), in
+		// which case the turn ends here and the next user message resumes it (the
+		// resume branch at the top of Run).
+		if planID, selected := planCache.Selected(); selected {
+			if plan, ok := planCache.Get(planID); ok {
+				nodeOutputs := make(map[string]string)
+				paused, rerr := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, nil, safeYield, nodeOutputs, nil)
+				if rerr != nil {
+					safeYield(stream.Errorf("orchestrator: plan run: "+rerr.Error()), nil)
+					return
+				}
+				if !paused {
+					planCache.SetDelivered(tools.TerminalOutput(plan, nodeOutputs))
+				}
 			}
 		}
+
+		// Deliver: the plan graph streamed the answer straight to the user and the
+		// orchestrator llmagent stayed silent, so its session holds no record of the
+		// answer. Append it as the assistant message so it survives reload.
+		o.persistAnswer(ctx, userID, sessionID, planCache.Delivered())
 		yield(stream.Done(), nil)
 	}
+}
+
+// stashedPlan loads the dag.Plan the execute tool stashed in session state
+// (ExecPlanKey). Shared by RetryNode and the mid-node HITL resume path.
+func (o *Orchestrator) stashedPlan(ctx context.Context, userID, chatID string) (dag.Plan, bool) {
+	var plan dag.Plan
+	if resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID}); err == nil && resp != nil {
+		if st := resp.Session.State(); st != nil {
+			if v, gerr := st.Get(tools.ExecPlanKey); gerr == nil {
+				if s, ok := v.(string); ok {
+					_ = json.Unmarshal([]byte(s), &plan)
+				}
+			}
+		}
+	}
+	return plan, len(plan.Nodes) > 0
+}
+
+// pendingInterrupt is an unanswered mid-node HITL request from a prior turn: the
+// node asked the user a question and its plan run parked awaiting the answer.
+type pendingInterrupt struct {
+	id      string // adk_request_input interrupt ID ("hitl-<node>-r<round>")
+	nodeID  string
+	message string
+}
+
+// hitlIDRe parses the gate's round-stable interrupt IDs (vetting.hitlInterruptID).
+var hitlIDRe = regexp.MustCompile(`^hitl-(.+)-r\d+$`)
+
+// latestPendingNodeInterrupt scans prior session events for the most recent
+// mid-node HITL request that no user FunctionResponse has answered. When one
+// exists, the next user message is that question's ANSWER and must be delivered
+// as the paused run's FunctionResponse, not as a fresh orchestrator turn.
+func latestPendingNodeInterrupt(events []*session.Event) (pendingInterrupt, bool) {
+	answered := map[string]bool{}
+	for _, ev := range events {
+		if ev == nil || ev.Author != "user" || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == workflow.WorkflowInputFunctionCallName {
+				answered[p.FunctionResponse.ID] = true
+			}
+		}
+	}
+	var out pendingInterrupt
+	found := false
+	for _, ev := range events {
+		if ev == nil || ev.RequestedInput == nil || answered[ev.RequestedInput.InterruptID] {
+			continue
+		}
+		if m := hitlIDRe.FindStringSubmatch(ev.RequestedInput.InterruptID); m != nil {
+			out = pendingInterrupt{id: ev.RequestedInput.InterruptID, nodeID: m[1], message: ev.RequestedInput.Message}
+			found = true // latest unanswered wins
+		}
+	}
+	return out, found
+}
+
+// persistAnswer appends the delivered answer to the chat session as the
+// orchestrator's assistant message so it survives reload and is visible to
+// follow-up turns. Detached context: a client disconnect must not lose it.
+func (o *Orchestrator) persistAnswer(ctx context.Context, userID, sessionID, answer string) {
+	if answer == "" {
+		return
+	}
+	persistCtx := context.WithoutCancel(ctx)
+	if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
+		aev := session.NewEvent(persistCtx, "")
+		aev.Author = orchestratorName
+		aev.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: answer}}}
+		_ = o.sessions.AppendEvent(persistCtx, resp.Session, aev)
+	}
+}
+
+// resumeNodeRun handles a turn whose user message ANSWERS a paused node's
+// question: re-emit the plan's dag_plan (so the client rebuilds the DAG view for
+// this turn), deliver the message as the paused interrupt's FunctionResponse, and
+// stream the resumed run. ADK re-enters only the paused node (completed siblings
+// durably skip); if the run completes, the terminal answer is delivered and
+// persisted; if it pauses again (another question), the turn just ends.
+func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
+	plan, ok := o.stashedPlan(ctx, userID, sessionID)
+	if !ok {
+		yield(stream.Errorf("resume: no plan in session to resume"), nil)
+		return
+	}
+	var mu sync.Mutex
+	safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
+	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
+	safeYield(tools.DagPlanEvent(plan), nil)
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{
+		FunctionResponse: &genai.FunctionResponse{
+			ID:       pend.id,
+			Name:     workflow.WorkflowInputFunctionCallName,
+			Response: map[string]any{"payload": message},
+		},
+	}}}
+	nodeOutputs := make(map[string]string)
+	paused, err := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, content, safeYield, nodeOutputs, []string{pend.nodeID})
+	if err != nil {
+		safeYield(stream.Errorf("resume: "+err.Error()), nil)
+		return
+	}
+	if !paused {
+		answer := tools.TerminalOutput(plan, nodeOutputs)
+		o.persistAnswer(ctx, userID, sessionID, answer)
+	}
+	yield(stream.Done(), nil)
 }
 
 // priorEvents reads the persisted session's events (nil if the session is

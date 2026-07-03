@@ -31,11 +31,10 @@ const transferTool = "transfer_to_agent"
 
 // Stage names label what an agent run is doing within a node.
 const (
-	StageWorker     = "worker"
-	StageSelfRefine = "self_refine"
-	StageJudge      = "judge"
-	StageRevise     = "revise"
-	StageAdvisor    = "advisor" // formative consult before a worker draft (replaces self_refine)
+	StageWorker  = "worker"
+	StageJudge   = "judge"
+	StageRevise  = "revise"
+	StageAdvisor = "advisor" // formative consult before a worker draft
 )
 
 // Gate marker tool names: the gate yields these as function-response parts to
@@ -84,7 +83,7 @@ type AgentStartData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
 	Agent  string `json:"agent"`
-	Stage  string `json:"stage"` // worker | self_refine | judge | revise
+	Stage  string `json:"stage"` // worker | advisor | judge | revise
 	Round  int    `json:"round,omitempty"`
 }
 
@@ -122,9 +121,9 @@ type AgentToolResultData struct {
 }
 
 // AgentCompleteData closes an agent run. Fields are populated by stage: model +
-// usage + finish_reason for model runs (worker/self_refine/revise), changed for
-// self_refine, score/passed/feedback for judge, and status/reason when a run was
-// not completed normally (e.g. the judge was unavailable).
+// usage + finish_reason for model runs (worker/advisor/revise), score/passed/
+// feedback for judge, and status/reason when a run was not completed normally
+// (e.g. the judge was unavailable).
 type AgentCompleteData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
@@ -138,7 +137,6 @@ type AgentCompleteData struct {
 	TotalTokens      int32  `json:"total_tokens,omitempty"`
 	FinishReason     string `json:"finish_reason,omitempty"`
 
-	Changed  bool    `json:"changed,omitempty"`  // self_refine
 	Score    float64 `json:"score,omitempty"`    // judge
 	Passed   bool    `json:"passed,omitempty"`   // judge
 	Feedback string  `json:"feedback,omitempty"` // judge
@@ -240,7 +238,6 @@ type NodeDoneData struct {
 	TotalTokens      int32   `json:"total_tokens,omitempty"`
 	FinishReason     string  `json:"finish_reason,omitempty"`
 	DurationMs       int64   `json:"duration_ms,omitempty"`
-	SelfRefined      bool    `json:"self_refined,omitempty"`
 	JudgeRounds      int32   `json:"judge_rounds,omitempty"`
 	JudgeFinalScore  float64 `json:"judge_final_score,omitempty"`
 	JudgePassed      bool    `json:"judge_passed,omitempty"`
@@ -274,11 +271,6 @@ func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
 	return SSEEvent{Name: EventDagPlan, Data: DagPlanData{
 		PlanID: planID, Nodes: nodes, Edges: edges, StartedAtMs: time.Now().UnixMilli(),
 	}}
-}
-
-// NodeQueued builds a node_queued event.
-func NodeQueued(nodeID string) SSEEvent {
-	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
 }
 
 // NodeStart builds a node_start event. StartedAtMs is stamped now (when the node
@@ -320,11 +312,6 @@ func NodeFailed(nodeID, errMsg string) SSEEvent {
 	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
 }
 
-// NodeSteered builds a node_steered event.
-func NodeSteered(nodeID, guidance string) SSEEvent {
-	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
-}
-
 // ChatTitle builds a chat_title event.
 func ChatTitle(title string) SSEEvent {
 	return SSEEvent{Name: EventChatTitle, Data: ChatTitleData{Title: title}}
@@ -336,43 +323,11 @@ func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: Error
 // Done builds the terminal done event.
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }
 
-// ── gate marker parts (yielded by the gate, decoded by the Translator) ────────
-
-// AgentStartPart encodes the start of an agent run.
-func AgentStartPart(runID, agent, stage string, round int) *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-		Name:     agentStartTool,
-		Response: map[string]any{"run_id": runID, "agent": agent, "stage": stage, "round": round},
-	}}
-}
-
-// AgentCompletePart encodes the end of an agent run with its stage-specific
-// result. Token usage / model / finish_reason are filled in by the Translator
-// from the run's model events, so the gate need not supply them.
-func AgentCompletePart(d AgentCompleteData) *genai.Part {
-	resp := map[string]any{"run_id": d.RunID, "stage": d.Stage, "round": d.Round}
-	if d.Changed {
-		resp["changed"] = d.Changed
-	}
-	if d.Stage == StageJudge {
-		resp["score"] = d.Score
-		resp["passed"] = d.Passed
-		resp["feedback"] = d.Feedback
-	}
-	if d.Status != "" {
-		resp["status"] = d.Status
-		resp["reason"] = d.Reason
-	}
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: agentCompleteTool, Response: resp}}
-}
-
-// KeepAlivePart builds the heartbeat marker the gate emits during long runs.
-func KeepAlivePart() *genai.Part {
-	return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: keepaliveTool, Response: map[string]any{}}}
-}
-
-// AgentTokenPart builds a plain-text part the gate yields for the final answer.
-func AgentTokenPart(text string) *genai.Part { return &genai.Part{Text: text} }
+// The v1 gate emitted marker FunctionResponses (agent_start/agent_complete/
+// keepalive) that the Translator decodes; the v2 gate no longer emits them, so
+// the builders live in event_test.go as decoder fixtures. IsGateMarkerName and
+// the tool-name consts stay: the executor still filters marker responses
+// defensively and the decoder still recognizes them.
 
 // ThinkingPart builds a reasoning part the gate yields directly (e.g. judge
 // thinking re-emitted from its isolated run).
@@ -458,7 +413,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 			r := p.FunctionResponse.Response
 			d := AgentCompleteData{
 				RunID: asString(r["run_id"]), Stage: asString(r["stage"]), Round: asInt(r["round"]),
-				Changed: asBool(r["changed"]), Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
+				Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
 				Feedback: asString(r["feedback"]), Status: asString(r["status"]), Reason: asString(r["reason"]),
 				Model: t.model, PromptTokens: t.prompt, CompletionTokens: t.completion,
 				ReasoningTokens: t.reasoning, TotalTokens: t.total, FinishReason: t.finish,

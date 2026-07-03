@@ -18,47 +18,6 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// NewGatedWorkerNode re-expresses the trust gate as a native ADK v2 workflow
-// node: a first-class graph node whose body is a dynamic refine loop
-// (worker → deterministic checks → judge → revise) that reuses judge.go's
-// evaluation logic. It is the v2 replacement for the custom-agent gate (gate.go).
-//
-// Unlike the legacy gate it does NOT manipulate the worker's session view or emit
-// orphan marker-FunctionResponses. Those markers are exactly what v2's
-// contents_processor rejects ("no function call event found for function
-// responses ids"), and the critiqueContext/filteredSession machinery that hid
-// them from v1.4.0 no longer works. Instead:
-//   - the worker runs as an AgentNode via RunNode, in its own sub-branch, so its
-//     model request is clean and its thinking/tool events flow natively on the
-//     workflow stream (the translator turns them into SSE — Phase 4);
-//   - tool activity for deterministic citation scoring is reconstructed from the
-//     session after each worker run (activityFromSession), not intercepted live.
-//
-// The node input is the task string (its round-0 prompt); its output is the
-// vetted answer. Placed as a FIRST-CLASS node it is durably skipped on resume
-// (a completed node is not re-run), which the spike proved dynamic RunNode
-// children are NOT.
-//
-// ponytail: self-critique (old Stage 1) is dropped — the advisor consult replaces
-// it (a later increment). The loop is worker → deterministic → judge → revise.
-func NewGatedWorkerNode(name string, worker adkagent.Agent, workerModel model.LLM, judge JudgeFactory, cfg Config) (workflow.Node, error) {
-	workerNode, err := NewWorkerNode(worker)
-	if err != nil {
-		return nil, err
-	}
-	fn := func(ctx adkagent.Context, task string, _ func(*session.Event) error) (string, error) {
-		// First-class node: as the graph entry its input is the user content; as a
-		// mid-graph node its input is the predecessor's output. Fall back to the
-		// session's user content if the typed input arrives empty.
-		if strings.TrimSpace(task) == "" {
-			task = contentPlainText(ctx.UserContent())
-		}
-		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, workerModel, judge, cfg, task, nil, nil)
-		return answer, err
-	}
-	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
-}
-
 // NewWorkerNode wraps a worker agent as an AgentNode for use as the worker inside
 // a gated refine loop (see RunGatedRefine).
 func NewWorkerNode(worker adkagent.Agent) (workflow.Node, error) {
@@ -106,7 +65,100 @@ type NodeControl interface {
 	TakeSteer() string
 }
 
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl) (string, GateResult, error) {
+// AskToolName is the mid-node HITL tool a worker calls to ask the user a
+// question. The tool itself only records the question (in its call args) and ends
+// the worker's turn; the GATE detects the call and pauses the node via
+// workflow.ResumeOrRequestInput under a round-stable InterruptID, so ADK routes
+// the user's answer back to this node on the next turn.
+const AskToolName = "ask_user"
+
+// hitlInterruptID is the STABLE per-node, per-round interrupt key for a mid-node
+// HITL pause. Node IDs repeat across plans and rounds repeat within a node, but
+// (invocation, node, round) is unique — and ADK scopes resume rehydration by
+// invocation, so this is collision-free.
+func hitlInterruptID(nodeID string, round int) string {
+	return fmt.Sprintf("hitl-%s-r%d", nodeID, round)
+}
+
+// hitlScan summarizes a node's HITL history within ONE invocation: how many times
+// its worker asked the user (asks), how many pauses the gate already emitted for
+// it (pauses), and the most recent question. Derived entirely from session events
+// (no state keys) so it survives resume re-entry and node-ID reuse across plans.
+type hitlScan struct {
+	asks   int
+	pauses int
+	lastQ  string
+}
+
+func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
+	var s hitlScan
+	if sess == nil {
+		return s
+	}
+	prefix := "hitl-" + nodeID + "-r"
+	for ev := range sess.Events().All() {
+		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID || !pathHasNode(ev, nodeID) {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p == nil || p.FunctionCall == nil {
+				continue
+			}
+			switch p.FunctionCall.Name {
+			case AskToolName:
+				s.asks++
+				if q, ok := p.FunctionCall.Args["question"].(string); ok && strings.TrimSpace(q) != "" {
+					s.lastQ = strings.TrimSpace(q)
+				}
+			case workflow.WorkflowInputFunctionCallName:
+				if strings.HasPrefix(p.FunctionCall.ID, prefix) {
+					s.pauses++
+				}
+			}
+		}
+	}
+	return s
+}
+
+// pathHasNode reports whether the event was emitted under the given graph node
+// (NodeInfo.Path segments are "name@run"; worker/advisor child runs nest below
+// the gated node's segment).
+func pathHasNode(ev *session.Event, nodeID string) bool {
+	if ev.NodeInfo == nil {
+		return false
+	}
+	for _, seg := range strings.Split(ev.NodeInfo.Path, "/") {
+		if i := strings.IndexByte(seg, '@'); i >= 0 {
+			seg = seg[:i]
+		}
+		if seg == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
+// withUserAnswer builds the self-contained prompt for the post-answer worker run.
+// The worker runs in a fresh sub-branch, so the Q&A must ride the prompt (the
+// ask_user call lives in the previous run's branch and is filtered from this
+// run's LLM history).
+func withUserAnswer(prompt, question, answer string) string {
+	return prompt + "\n\n--- You previously asked the user a question and they have now answered ---\nQ: " + question +
+		"\nA: " + answer + "\n\nUse this answer and complete the task now. Do not ask again."
+}
+
+// replyString coerces a resumed HITL payload to text.
+func replyString(reply any) string {
+	if s, ok := reply.(string); ok {
+		return s
+	}
+	if reply == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", reply)
+}
+
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
 	// Advisor consult (formative, once per worker round). Best-effort: on error,
@@ -157,13 +209,51 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		}
 		question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
-		answer, err := runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0"+sfx, prompt)), attachments), "worker-r0"+sfx)
-		if err != nil {
-			// Log at our boundary before returning: ADK's scheduler can swallow a
-			// node error into a silent empty completion, so this ERROR line (with the
-			// model's error body) is what makes a failed worker visible in the logs.
-			log.Error("worker draft failed", "run", "worker-r0", "err", err)
-			return "", GateResult{}, err
+		// HITL resume: if this node previously paused to ask the user and THIS turn
+		// delivered the answer (ADK re-entered the node with a ResumedInput under the
+		// round-stable interrupt ID), skip the normal draft — run the worker once with
+		// the Q&A folded into a self-contained prompt.
+		var answer string
+		var err error
+		resumed := false
+		if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); scan.pauses > 0 {
+			if reply, ok := ctx.ResumedInput(hitlInterruptID(nodeID, scan.pauses)); ok {
+				resumed = true
+				log.Info("node resumed with user answer", "round", scan.pauses)
+				answer, err = runWorkerNode(ctx, workerNode,
+					workerInput(withUserAnswer(prompt, scan.lastQ, replyString(reply)), attachments),
+					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx))
+				if err != nil {
+					log.Error("post-answer worker run failed", "err", err)
+					return "", GateResult{}, err
+				}
+			}
+		}
+		if !resumed {
+			answer, err = runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0"+sfx, prompt)), attachments), "worker-r0"+sfx)
+			if err != nil {
+				// Log at our boundary before returning: ADK's scheduler can swallow a
+				// node error into a silent empty completion, so this ERROR line (with the
+				// model's error body) is what makes a failed worker visible in the logs.
+				log.Error("worker draft failed", "run", "worker-r0", "err", err)
+				return "", GateResult{}, err
+			}
+		}
+
+		// HITL pause: the worker just called ask_user (a fresh ask beyond the pauses
+		// already requested) and ended its turn without an answer. Park the NODE via
+		// ResumeOrRequestInput — first pass emits the request event and returns
+		// ErrNodeInterrupted (propagated up; NOT a failure, no empty-recovery); on the
+		// answer turn ADK re-enters the node and the resume branch above runs instead.
+		if strings.TrimSpace(answer) == "" && emit != nil {
+			if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); scan.asks > scan.pauses {
+				log.Info("worker asked the user; pausing node", "question", scan.lastQ, "round", scan.pauses+1)
+				_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
+					InterruptID: hitlInterruptID(nodeID, scan.pauses+1),
+					Message:     scan.lastQ,
+				})
+				return "", GateResult{}, ierr // ErrNodeInterrupted → park
+			}
 		}
 
 		// Empty-answer recovery: the worker sometimes ends a turn with no answer text

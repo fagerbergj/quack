@@ -61,25 +61,24 @@ type DagConfig struct {
 	MaxActiveNodes int `yaml:"max_active_nodes"`
 }
 
-// GatesConfig configures the trust gate that wraps every agent. Three stages run
-// lowest-effort-first, each with its own round budget (a stage with max_rounds 0
-// is skipped):
+// GatesConfig configures the trust gate that wraps every agent, each stage with
+// its own round budget (a stage with max_rounds 0 is skipped):
 //
 //   - deterministic_checks — free code checks (citation backing, length) that
 //     drive cheap targeted revisions before any expensive stage runs.
-//   - self_critique — the worker critiques and revises its own draft.
 //   - judge — an independent model scores the answer against the rubric and the
-//     worker revises on a fail.
+//     worker revises on a fail. A formative advisor consult also runs before
+//     each worker draft whenever the judge is enabled (reuses its
+//     provider/model; not a separate gates.* toggle — see internal/serve).
 //
 // The gate is optional: when no stage is active it is disabled and agents are
-// served unwrapped. constitution/rubric are shared by self_critique and judge.
+// served unwrapped. constitution/rubric are shared by the advisor and judge.
 type GatesConfig struct {
 	ConstitutionPath    string      `yaml:"constitution_path"`    // global principles file (optional)
 	Constitution        string      `yaml:"constitution"`         // inline constitution (alternative to path)
 	RubricPath          string      `yaml:"rubric_path"`          // scoring guide file
 	Rubric              string      `yaml:"rubric"`               // inline rubric (alternative to path)
 	DeterministicChecks StageConfig `yaml:"deterministic_checks"` // free citation/length checks + cheap revises
-	SelfCritique        StageConfig `yaml:"self_critique"`        // worker self-improvement passes
 	Judge               JudgeConfig `yaml:"judge"`                // expensive model-judge stage
 }
 
@@ -103,7 +102,7 @@ func (g GatesConfig) JudgeEnabled() bool { return g.Judge.Model != "" && g.Judge
 
 // Enabled reports whether the trust gate should wrap agents (any stage active).
 func (g GatesConfig) Enabled() bool {
-	return g.DeterministicChecks.MaxRounds > 0 || g.SelfCritique.MaxRounds > 0 || g.JudgeEnabled()
+	return g.DeterministicChecks.MaxRounds > 0 || g.JudgeEnabled()
 }
 
 // AgentConfig binds a declarative agent bundle (a directory holding an
@@ -418,7 +417,7 @@ func (c *Config) validate() error {
 	}
 	if c.Gates.Enabled() {
 		g := &c.Gates
-		if g.DeterministicChecks.MaxRounds < 0 || g.SelfCritique.MaxRounds < 0 || g.Judge.MaxRounds < 0 {
+		if g.DeterministicChecks.MaxRounds < 0 || g.Judge.MaxRounds < 0 {
 			return fmt.Errorf("config: gates.*.max_rounds must be >= 0")
 		}
 		if g.ConstitutionPath != "" && g.Constitution != "" {
@@ -427,9 +426,9 @@ func (c *Config) validate() error {
 		if g.RubricPath != "" && g.Rubric != "" {
 			return fmt.Errorf("config: gates sets both rubric_path and rubric; use one")
 		}
-		// self_critique and judge score against the rubric; deterministic checks don't.
-		if (g.SelfCritique.MaxRounds > 0 || g.JudgeEnabled()) && g.RubricPath == "" && g.Rubric == "" {
-			return fmt.Errorf("config: gates needs one of rubric_path or rubric when self_critique or judge is enabled")
+		// The advisor and judge score against the rubric; deterministic checks don't.
+		if g.JudgeEnabled() && g.RubricPath == "" && g.Rubric == "" {
+			return fmt.Errorf("config: gates needs one of rubric_path or rubric when judge is enabled")
 		}
 		if g.JudgeEnabled() {
 			if _, ok := c.Providers[g.Judge.Provider]; !ok {

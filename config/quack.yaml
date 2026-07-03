@@ -51,7 +51,7 @@ agents:
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory]
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
@@ -97,21 +97,22 @@ tools:
     store: default_vector
     collection: user_memory
 
-# The trust gate wraps every agent and runs three stages cheapest-first, each
-# with its own round budget (a stage with max_rounds:0 is skipped):
+# The trust gate wraps every agent and runs cheapest-first, each stage with its
+# own round budget (a stage with max_rounds:0 is skipped):
 #   1. deterministic_checks — free code checks (citation backing + length) that
 #      drive cheap targeted revisions to drop fabricated citations up front.
-#   2. self_critique — the worker critiques and revises its own draft.
+#   2. advisor — a formative consult (a separate agent, agents/advisor) gives the
+#      worker guidance BEFORE it drafts. Not a gates.* toggle: it reuses the
+#      judge's provider/model and is enabled whenever the judge is (see below).
 #   3. judge — an independent model scores the answer; the worker revises on fail.
 # Deterministic citation/length scores are always folded into the judge's verdict.
-# Leave judge.model empty to disable the judge (the cheaper stages still run).
+# Leave judge.model empty to disable the judge (and the advisor); the cheaper
+# deterministic_checks stage still runs.
 gates:
-  constitution_path: config/constitution.md   # global principles, used for self-critique + judge
+  constitution_path: config/constitution.md   # global principles, used for the advisor + judge
   rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.md in their bundle)
   deterministic_checks:
     max_rounds: 4   # free citation/length checks; up to 4 cheap worker revise cycles
-  self_critique:
-    max_rounds: 1   # worker self-improvement passes before the judge
   judge:
     provider: default
     model: ${QUACK_JUDGE_MODEL}   # empty ⇒ judge disabled

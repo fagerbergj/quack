@@ -42,6 +42,7 @@ var registry = map[string]constructor{
 	"summarize":    newSummarize,
 	"current_date": newCurrentDate,
 	"stage_memory": newStageMemory,
+	"ask_user":     func(Deps) (tool.Tool, error) { return NewAskUserTool() },
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an

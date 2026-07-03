@@ -53,16 +53,23 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			// Emit dag_plan immediately so the frontend knows the plan structure
 			// before the execute tool starts running nodes.
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {
-				nodes := make([]stream.DagNodeDef, len(p.Nodes))
-				for i, n := range p.Nodes {
-					nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn}
-				}
-				yieldFn(stream.DagPlan(p.ID, nodes, planEdges(p.Nodes)))
+				yieldFn(DagPlanEvent(*p))
 			}
 
 			return planResult{PlanID: p.ID, Summary: summarizePlan(p)}, nil
 		},
 	)
+}
+
+// DagPlanEvent builds the dag_plan SSE event for a plan. Shared by the plan tool
+// (fresh turns) and the orchestrator's HITL resume path, which re-emits the plan
+// so the client can rebuild the DAG view for the resumed turn.
+func DagPlanEvent(p dag.Plan) stream.SSEEvent {
+	nodes := make([]stream.DagNodeDef, len(p.Nodes))
+	for i, n := range p.Nodes {
+		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn}
+	}
+	return stream.DagPlan(p.ID, nodes, planEdges(p.Nodes))
 }
 
 // planEdges projects each node's DependsOn into the wire edge list. The dag_plan

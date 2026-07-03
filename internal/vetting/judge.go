@@ -373,64 +373,6 @@ func lengthScore(answer string) float64 {
 	return 1.0
 }
 
-// unbackedCitations lists cited URLs that scored 0.0 — never retrieved this
-// session in any form (the worker neither fetched nor searched them or their
-// host). These are the clear, deterministically-fixable defect the cheap
-// deterministic stage revises away.
-func unbackedCitations(details []citationDetail) []string {
-	var out []string
-	for _, d := range details {
-		if d.score == 0 {
-			out = append(out, d.url)
-		}
-	}
-	return out
-}
-
-// weakCitations lists cited URLs that scored below 0.5 (no exact-URL or
-// same-host fetch backs them), for revision feedback. Returns "" when every
-// citation is well-backed.
-func weakCitations(details []citationDetail) string {
-	var weak []string
-	for _, d := range details {
-		if d.score < 0.5 {
-			weak = append(weak, fmt.Sprintf("%s (%.2f)", d.url, d.score))
-		}
-	}
-	return strings.Join(weak, ", ")
-}
-
-// buildCritiqueContent constructs the user message for the agentic self-refine
-// pass. The worker receives its own draft alongside the rubric and a directive
-// to use its tools to fix any gaps — fetching missing sources, verifying
-// claims, retrieving URLs it cited but did not read — then output only the
-// corrected answer.
-func buildCritiqueContent(constitution, rubric string, question *genai.Content, draft string, act workerActivity) *genai.Content {
-	var sb strings.Builder
-	sb.WriteString("You previously drafted an answer to the question below. " +
-		"Review it critically against the scoring criteria. " +
-		"Use your tools to fix any gaps — fetch missing sources, verify claims, retrieve URLs you cited but did not read. " +
-		"Then output only the corrected answer with no preamble or commentary. " +
-		"If the draft already meets all criteria, output it unchanged.\n\n")
-	if constitution != "" {
-		sb.WriteString("Principles:\n")
-		sb.WriteString(constitution)
-		sb.WriteString("\n\n")
-	}
-	sb.WriteString("Scoring criteria:\n")
-	sb.WriteString(rubric)
-	sb.WriteString("\n\n")
-	if section := buildActivitySection(act); section != "" {
-		sb.WriteString(section)
-		sb.WriteString("\n\n")
-	}
-	sb.WriteString("Original question:\n")
-	sb.WriteString(questionText(question))
-	sb.WriteString("\n\nYour draft:\n")
-	sb.WriteString(draft)
-	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
-}
-
 // buildActivitySection returns a prompt section summarising what retrieval the
 // worker performed. An empty return means no retrieval happened (non-web agent
 // or a session where all fetches failed) — the section is omitted entirely.

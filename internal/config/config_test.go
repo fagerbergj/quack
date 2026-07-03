@@ -392,7 +392,6 @@ func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 gates:
   rubric: "be good"
   deterministic_checks: { max_rounds: 4 }
-  self_critique: { max_rounds: 1 }
   judge:
     provider: default
     model: judge-m
@@ -407,8 +406,8 @@ gates:
 	if c.Gates.Judge.Threshold != 0.7 || c.Gates.Judge.MaxIterations != 6 {
 		t.Errorf("judge defaults not applied: threshold=%v max_iterations=%d", c.Gates.Judge.Threshold, c.Gates.Judge.MaxIterations)
 	}
-	if c.Gates.DeterministicChecks.MaxRounds != 4 || c.Gates.SelfCritique.MaxRounds != 1 {
-		t.Errorf("stage rounds wrong: det=%d self=%d", c.Gates.DeterministicChecks.MaxRounds, c.Gates.SelfCritique.MaxRounds)
+	if c.Gates.DeterministicChecks.MaxRounds != 4 {
+		t.Errorf("stage rounds wrong: det=%d", c.Gates.DeterministicChecks.MaxRounds)
 	}
 
 	// Deterministic-only gate (no judge model) is valid and enabled.
@@ -428,8 +427,8 @@ func TestLoadGatesRejectsBadConfig(t *testing.T) {
 	cases := map[string]string{
 		"unknown provider": `
 gates: { rubric: r, judge: { provider: nope, model: j, max_rounds: 1 } }`,
-		"judge/self_critique need rubric": `
-gates: { self_critique: { max_rounds: 1 } }`,
+		"judge needs rubric": `
+gates: { judge: { provider: default, model: j, max_rounds: 1 } }`,
 		"both rubrics": `
 gates: { rubric: r, rubric_path: p, judge: { provider: default, model: j, max_rounds: 1 } }`,
 		"bad threshold": `

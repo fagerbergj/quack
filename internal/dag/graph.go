@@ -66,7 +66,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 // directly by an orchestration node (single-runner path).
 func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
-		func(ctx adkagent.Context, in any, _ func(*session.Event) error) (string, error) {
+		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			upstream := upstreamFromInput(in, node.DependsOn)
 			// Continue-but-warn: a dependency whose vetting failed flags itself in
 			// session state; buildTask prefixes a ⚠ warning so this node treats that
@@ -90,7 +90,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				ctrl = nc
 			}
 
-			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, workerModel, judge, cfg, prompt, atts, ctrl)
+			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				// Empty → the node FAILS. The DAG continues (dependents see the gap via
 				// buildTask's ⚠ note) and the empty output drives a loud node_failed. A

@@ -484,20 +484,6 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-// stub builds a leaf command that reports it is not implemented yet. Removed as
-// each verb gets wired to internal/cli / internal/tui.
-func stub(use, short, what string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE:  func(*cobra.Command, []string) error { return notWired(what) },
-	}
-}
-
-func notWired(what string) error {
-	return fmt.Errorf("%s is not wired yet — coming in a later M8 commit", what)
-}
-
 // defaultConfigPath resolves the server config: $QUACK_CONFIG if set, else
 // ./quack.yaml in cwd — matching what `quack init` writes, so init→run just
 // works in a fresh dir. The repo's example config at config/quack.yaml is

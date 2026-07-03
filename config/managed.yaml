@@ -64,13 +64,13 @@ tools:
     kind: direct         # plain SSRF-guarded GET — no render backend needed
 
 gates:
-  enabled: true
-  deterministic_rounds: 1
-  self_critique_rounds: 1
+  rubric_path: config/rubric.md
+  deterministic_checks:
+    max_rounds: 1
   judge:
     provider: default
     model: ${QUACK_JUDGE_MODEL}
-    rounds: 1
+    max_rounds: 1
     threshold: 0.6
 
 dag:

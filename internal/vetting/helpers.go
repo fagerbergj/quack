@@ -15,7 +15,6 @@ import (
 // the caller.
 type Config struct {
 	DeterministicRounds int     // cheap citation/length check + targeted revise cycles
-	SelfCritiqueRounds  int     // (legacy) worker self-improvement passes; dropped in v2 (advisor replaces)
 	JudgeRounds         int     // expensive model-judge/revise rounds
 	Threshold           float64 // judge pass score in (0,1]
 	JudgeMaxIterations  int     // cap on the agentic judge's model turns per round (0 ⇒ default)

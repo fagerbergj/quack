@@ -1,4 +1,4 @@
-import { readAgentStream, attachAgentEventSource, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta } from './agentStream'
+import { readAgentStream, attachAgentEventSource, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage } from './agentStream'
 import {
   startRun,
   appendRunThinking,
@@ -10,12 +10,15 @@ import {
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem } from '../generated'
 
-export type NodeStatus = 'queued' | 'running' | 'done' | 'failed'
+export type NodeStatus = 'queued' | 'running' | 'done' | 'failed' | 'needs_input'
 
 export interface NodeState {
   status: NodeStatus
   outputPreview?: string
   error?: string
+  // Set while status === 'needs_input': the question the node asked the user.
+  // The next message sent on the chat is delivered to the node as the answer.
+  question?: string
   startedAt?: number
   finishedAt?: number
   outputChars?: number
@@ -26,7 +29,6 @@ export interface NodeState {
   totalTokens?: number
   finishReason?: string
   serverDurationMs?: number
-  selfRefined?: boolean
   judgeRounds?: number
   judgeFinalScore?: number
   judgePassed?: boolean
@@ -373,10 +375,28 @@ export class ChatStore {
       const runArgs = (d: { runId: string; agent: string; stage: import('./agentStream').Stage; round?: number }) =>
         ({ runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: Date.now() })
 
+      // ANSWER_STAGES are the stages whose streamed text IS the node's answer: the
+      // initial worker draft AND each revision (which fully replaces the prior
+      // draft). Advisor/judge/self-refine are internal gate commentary, never the
+      // answer. A node can go through several worker-stage runs now (mid-node HITL
+      // re-asks, each re-entering as a fresh 'worker'-stage run) — resetAnswer below
+      // clears the accumulator per run so those don't concatenate together, and a
+      // revision doesn't glue onto the judge-rejected draft it replaces.
+      const ANSWER_STAGES: ReadonlySet<Stage> = new Set(['worker', 'revise'])
+      const resetAnswer = (nodeId: string | undefined, stage: Stage) => {
+        if (!nodeId || !ANSWER_STAGES.has(stage)) return
+        const s = this.states.get(chatId)
+        if (!s?.live?.dag) return
+        this.write(chatId, { ...s, live: { ...s.live, dag: { ...s.live.dag, nodeAnswer: { ...s.live.dag.nodeAnswer, [nodeId]: '' } } } })
+      }
+
       return {
-        onAgentStart: d => d.nodeId
-          ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
-          : updateTopLevelRuns(r => startRun(r, runArgs(d))),
+        onAgentStart: d => {
+          resetAnswer(d.nodeId, d.stage)
+          return d.nodeId
+            ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
+            : updateTopLevelRuns(r => startRun(r, runArgs(d)))
+        },
         onAgentThinking: (runId, text, nid) => nid
           ? updateNodeRuns(nid, r => appendRunThinking(r, runId, text))
           : updateTopLevelRuns(r => appendRunThinking(r, runId, text)),
@@ -388,18 +408,18 @@ export class ChatStore {
           : updateTopLevelRuns(r => fillRunToolResult(r, runId, callId, name, result)),
         onAgentToken: (runId, text, nid) => {
           if (!nid) { updateTopLevelText(text); return }
-          // Only the worker's answer text belongs in a node's answer box. The advisor
-          // consult (stage: advisor) and the judge (stage: judge) are internal gate
-          // stages shown as their own runs — without this, they leaked into the answer
-          // (e.g. a failed node still displayed the advisor's critique as its "answer").
+          // Only an answer-stage run's text belongs in the node's answer box. The
+          // advisor consult and the judge are internal gate commentary shown as
+          // their own runs — without this, they leaked into the answer (e.g. a
+          // failed node still displayed the advisor's critique as its "answer").
           const st = this.states.get(chatId)
           const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
-          if (run && run.stage !== 'worker') return
+          if (run && !ANSWER_STAGES.has(run.stage)) return
           updateNodeAnswer(nid, text)
         },
         onAgentComplete: d => {
           const completeArgs = {
-            changed: d.changed, score: d.score, passed: d.passed, feedback: d.feedback,
+            score: d.score, passed: d.passed, feedback: d.feedback,
             status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
           }
           if (d.nodeId) {
@@ -442,7 +462,6 @@ export class ChatStore {
             totalTokens: meta.totalTokens,
             finishReason: meta.finishReason,
             serverDurationMs: meta.durationMs,
-            selfRefined: meta.selfRefined,
             judgeRounds: meta.judgeRounds,
             judgeFinalScore: meta.judgeFinalScore,
             judgePassed: meta.judgePassed,
@@ -451,6 +470,13 @@ export class ChatStore {
         onNodeFailed: (nodeId, error) => {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
+        },
+        onNodeNeedsInput: (nodeId, _interruptId, message) => {
+          // Mid-node HITL: the node paused to ask the user. Freeze its open runs
+          // and mark it waiting; the answer goes out as a normal chat message
+          // (the backend routes it to the paused node).
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeState(nodeId, { status: 'needs_input', question: message })
         },
         onNodeSteered: (nodeId, guidance) => {
           // The node was interrupted and is re-running with new guidance (same

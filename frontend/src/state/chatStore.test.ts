@@ -135,6 +135,67 @@ describe('ChatStore — mid-node steering', () => {
     expect(ns?.steers).toEqual(['focus on cost'])
   })
 
+  it('node_needs_input marks the node waiting with its question', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher"}',
+      '',
+      'event: node_needs_input',
+      'data: {"node_id":"a","interrupt_id":"hitl-a-r1","message":"which direction?"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const ns = store.get('c').live?.dag?.nodeStates['a']
+    expect(ns?.status).toBe('needs_input')
+    expect(ns?.question).toBe('which direction?')
+  })
+
+  it("a node's answer reflects only its LATEST worker/revise draft — advisor commentary never leaks in, and a revision replaces (doesn't concatenate with) the draft it revised", async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      // Advisor consult runs first — its commentary must never reach the answer.
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"advisor-r0","agent":"advisor","stage":"advisor"}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"advisor-r0","text":"Consider checking multiple sources."}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"advisor-r0","stage":"advisor"}',
+      '',
+      // Worker's first draft — this becomes the answer.
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r0","agent":"researcher","stage":"worker"}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"worker-r0","text":"DRAFT ONE (unsourced)"}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r0","stage":"worker"}',
+      '',
+      // Judge fails it, triggering a revision — the revision REPLACES the draft.
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r1","agent":"researcher","stage":"revise","round":1}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"worker-r1","text":"REVISED ANSWER (sourced)"}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r1","stage":"revise","round":1}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const answer = store.get('c').live?.dag?.nodeAnswer['a']
+    expect(answer).toBe('REVISED ANSWER (sourced)')
+  })
+
   it('steerNode POSTs guidance; cancelNode DELETEs the node', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     store.steerNode('c', 'a', '  do X  ')

@@ -398,7 +398,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			judgeFactory = vetting.NewJudgeFactory(judge, nil)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
-			"deterministic_rounds", gateCfg.DeterministicRounds, "self_critique_rounds", gateCfg.SelfCritiqueRounds,
+			"deterministic_rounds", gateCfg.DeterministicRounds,
 			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
 	}
 
