@@ -58,10 +58,10 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  *
  * The model is flat and agent-centric: the DAG (dag_plan + node_* events) is
  * the static structure, and within each node the trust gate runs a SEQUENCE
- * of agent invocations ("runs") — the worker draft, an optional self-refine,
- * each judge round, and each revision. Every run is delimited by
- * `agent_start` / `agent_complete` and carries a `run_id` + `stage`
- * (`worker` | `self_refine` | `judge` | `revise`); its activity references
+ * of agent invocations ("runs") — an optional formative advisor consult, the
+ * worker draft, each judge round, and each revision. Every run is delimited
+ * by `agent_start` / `agent_complete` and carries a `run_id` + `stage`
+ * (`worker` | `advisor` | `judge` | `revise`); its activity references
  * that `run_id`. Clients group runs by `node_id` and pair tools by `call_id`.
  *
  * Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round"})
@@ -73,8 +73,7 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * the node); `agent_complete` ({"node_id","run_id","stage",...}) closes a run
  * with its stage-specific result — judge runs carry `score`/`passed`/
  * `feedback` (or `status:"unavailable"`+`reason` when the judge couldn't
- * run), self_refine carries `changed`, model runs carry `finish_reason` +
- * token usage.
+ * run), model runs carry `finish_reason` + token usage.
  *
  * DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
  * output item has been added; `node_queued` ({"node_id"}), `node_start`

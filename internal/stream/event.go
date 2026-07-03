@@ -31,11 +31,10 @@ const transferTool = "transfer_to_agent"
 
 // Stage names label what an agent run is doing within a node.
 const (
-	StageWorker     = "worker"
-	StageSelfRefine = "self_refine"
-	StageJudge      = "judge"
-	StageRevise     = "revise"
-	StageAdvisor    = "advisor" // formative consult before a worker draft (replaces self_refine)
+	StageWorker  = "worker"
+	StageJudge   = "judge"
+	StageRevise  = "revise"
+	StageAdvisor = "advisor" // formative consult before a worker draft
 )
 
 // Gate marker tool names: the gate yields these as function-response parts to
@@ -84,7 +83,7 @@ type AgentStartData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
 	Agent  string `json:"agent"`
-	Stage  string `json:"stage"` // worker | self_refine | judge | revise
+	Stage  string `json:"stage"` // worker | advisor | judge | revise
 	Round  int    `json:"round,omitempty"`
 }
 
@@ -122,9 +121,9 @@ type AgentToolResultData struct {
 }
 
 // AgentCompleteData closes an agent run. Fields are populated by stage: model +
-// usage + finish_reason for model runs (worker/self_refine/revise), changed for
-// self_refine, score/passed/feedback for judge, and status/reason when a run was
-// not completed normally (e.g. the judge was unavailable).
+// usage + finish_reason for model runs (worker/advisor/revise), score/passed/
+// feedback for judge, and status/reason when a run was not completed normally
+// (e.g. the judge was unavailable).
 type AgentCompleteData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
@@ -138,7 +137,6 @@ type AgentCompleteData struct {
 	TotalTokens      int32  `json:"total_tokens,omitempty"`
 	FinishReason     string `json:"finish_reason,omitempty"`
 
-	Changed  bool    `json:"changed,omitempty"`  // self_refine
 	Score    float64 `json:"score,omitempty"`    // judge
 	Passed   bool    `json:"passed,omitempty"`   // judge
 	Feedback string  `json:"feedback,omitempty"` // judge
@@ -240,7 +238,6 @@ type NodeDoneData struct {
 	TotalTokens      int32   `json:"total_tokens,omitempty"`
 	FinishReason     string  `json:"finish_reason,omitempty"`
 	DurationMs       int64   `json:"duration_ms,omitempty"`
-	SelfRefined      bool    `json:"self_refined,omitempty"`
 	JudgeRounds      int32   `json:"judge_rounds,omitempty"`
 	JudgeFinalScore  float64 `json:"judge_final_score,omitempty"`
 	JudgePassed      bool    `json:"judge_passed,omitempty"`
@@ -416,7 +413,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 			r := p.FunctionResponse.Response
 			d := AgentCompleteData{
 				RunID: asString(r["run_id"]), Stage: asString(r["stage"]), Round: asInt(r["round"]),
-				Changed: asBool(r["changed"]), Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
+				Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
 				Feedback: asString(r["feedback"]), Status: asString(r["status"]), Reason: asString(r["reason"]),
 				Model: t.model, PromptTokens: t.prompt, CompletionTokens: t.completion,
 				ReasoningTokens: t.reasoning, TotalTokens: t.total, FinishReason: t.finish,

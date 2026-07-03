@@ -24,7 +24,6 @@ func FromConfig(c config.GatesConfig) (Config, error) {
 	}
 	return Config{
 		DeterministicRounds: c.DeterministicChecks.MaxRounds,
-		SelfCritiqueRounds:  c.SelfCritique.MaxRounds,
 		JudgeRounds:         c.Judge.MaxRounds,
 		Threshold:           c.Judge.Threshold,
 		JudgeMaxIterations:  c.Judge.MaxIterations,

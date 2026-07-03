@@ -99,17 +99,18 @@ function NodeAnswer({ answer }: { answer: string }) {
   )
 }
 
-function SelfCritiqueCard({ run, running }: { run: AgentRun; running: boolean }) {
+// AdvisorCard renders the formative advisor consult that runs before the worker's
+// draft — a distinct labeled stage so its guidance reads as commentary, not (as an
+// unlabeled ResearchCard) something that could be mistaken for the node's answer.
+function AdvisorCard({ run, running }: { run: AgentRun; running: boolean }) {
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
           <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
-            Self-critique
+            Advisor
           </span>
-          {running ? <Spinner /> : (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500">{run.changed ? 'revised' : 'no changes'}</span>
-          )}
+          {running && <Spinner />}
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
@@ -422,10 +423,10 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
       {runs.map((run, i) => {
         const runRunning = i === activeIdx
         switch (run.stage) {
-          case 'self_refine': return <SelfCritiqueCard key={run.runId} run={run} running={runRunning} />
-          case 'judge':       return <JudgeCard key={run.runId} run={run} running={runRunning} />
-          case 'revise':      return <RevisionCard key={run.runId} run={run} running={runRunning} />
-          default:            return <ResearchCard key={run.runId} run={run} running={runRunning} />
+          case 'advisor': return <AdvisorCard key={run.runId} run={run} running={runRunning} />
+          case 'judge':   return <JudgeCard key={run.runId} run={run} running={runRunning} />
+          case 'revise':  return <RevisionCard key={run.runId} run={run} running={runRunning} />
+          default:        return <ResearchCard key={run.runId} run={run} running={runRunning} />
         }
       })}
 

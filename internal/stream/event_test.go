@@ -182,9 +182,6 @@ func AgentStartPart(runID, agent, stage string, round int) *genai.Part {
 // from the run's model events, so the gate need not supply them.
 func AgentCompletePart(d AgentCompleteData) *genai.Part {
 	resp := map[string]any{"run_id": d.RunID, "stage": d.Stage, "round": d.Round}
-	if d.Changed {
-		resp["changed"] = d.Changed
-	}
 	if d.Stage == StageJudge {
 		resp["score"] = d.Score
 		resp["passed"] = d.Passed

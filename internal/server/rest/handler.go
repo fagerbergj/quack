@@ -545,7 +545,6 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 					ReasoningTokens:  intPtr(int(n.ReasoningTokens)),
 					TotalTokens:      intPtr(int(n.TotalTokens)),
 					ServerDurationMs: intPtr(int(n.DurationMs)),
-					SelfRefined:      boolPtr(n.SelfRefined),
 					JudgeRounds:      intPtr(int(n.JudgeRounds)),
 					JudgeFinalScore:  float64Ptr(n.JudgeFinalScore),
 					JudgePassed:      boolPtr(n.JudgePassed),
@@ -694,7 +693,7 @@ func (h *Handler) persistNodeEvent(planID string, ev stream.SSEEvent) {
 			OutputPreview: d.OutputPreview, Output: d.Output, FinishedAt: &t,
 			Model: d.Model, PromptTokens: d.PromptTokens, CompletionTokens: d.CompletionTokens,
 			ReasoningTokens: d.ReasoningTokens, TotalTokens: d.TotalTokens,
-			FinishReason: d.FinishReason, DurationMs: d.DurationMs, SelfRefined: d.SelfRefined,
+			FinishReason: d.FinishReason, DurationMs: d.DurationMs,
 			JudgeRounds: d.JudgeRounds, JudgeFinalScore: d.JudgeFinalScore, JudgePassed: d.JudgePassed,
 		})
 	case stream.NodeFailedData:
