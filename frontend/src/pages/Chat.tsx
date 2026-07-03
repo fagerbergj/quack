@@ -9,7 +9,7 @@ import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { activityFromTurn, isTurnInProgress, type DagTurnState } from '../state/chatStore'
-import { pendingChoice, showLiveSpinner, type AgentRun } from '../components/messageParts'
+import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -22,24 +22,6 @@ function liveDagFinalText(dag: DagTurnState): string {
   const finalNode = dag.nodes.find(n => !hasSuccessor.has(n.id))
   if (!finalNode) return ''
   return dag.nodeAnswer[finalNode.id] ?? ''
-}
-
-// executeDeliverMode reports whether the orchestrator's most recent execute call
-// used end_turn=true (deliver). In deliver mode the terminal node's answer IS the
-// user-facing answer; otherwise the orchestrator composes it (synthesize) and its
-// own text is the answer. Read off the execute tool call(s) in the orchestrator's
-// own (top-level) runs — the LAST call wins, since the model may call execute
-// twice (e.g. once to read the result, then again with end_turn=true).
-function executeDeliverMode(topRuns: AgentRun[]): boolean {
-  let deliver = false
-  for (const run of topRuns) {
-    for (const a of run.activity) {
-      if (a.kind === 'tool' && a.tool.name === 'execute') {
-        deliver = a.tool.args?.end_turn === true
-      }
-    }
-  }
-  return deliver
 }
 
 export default function Chat() {
@@ -332,17 +314,15 @@ export default function Chat() {
             const liveTopText = live.text ?? ''
             const liveTopRuns = live.runs ?? []
             const liveDone = !streaming
-            const deliverMode = liveDag ? executeDeliverMode(liveTopRuns) : false
             // Which text is the user-facing answer:
-            //  - deliver (execute end_turn=true): the terminal node's answer IS the
-            //    response, streaming token-by-token via nodeAnswer.
-            //  - synthesize: the orchestrator composes the final answer (its own
-            //    top-level text); fall back to the terminal node's answer if it
-            //    produced none — so a missed deliver-detection never blanks the reply.
-            //  - no DAG: the orchestrator answered directly.
-            const liveText = liveDag
-              ? (deliverMode ? liveDagFinalText(liveDag) : (liveTopText || liveDagFinalText(liveDag)))
-              : liveTopText
+            //  - a DAG ran: the terminal node's answer IS the response (execute always
+            //    delivers from the node now — there's no orchestrator-composed
+            //    "synthesize" mode to prefer instead). liveTopText is the
+            //    orchestrator's OWN narration (planning chatter, reasoning about the
+            //    request) — never the answer when a DAG exists; falling back to it
+            //    only masks a missing/incomplete terminal answer with unrelated text.
+            //  - no DAG: the orchestrator answered directly, so its text IS the reply.
+            const liveText = liveDag ? (liveDagFinalText(liveDag) || liveTopText) : liveTopText
             // The orchestrator's own activity (deciding to research, plan/execute calls).
             // get_user_choice is surfaced as the ChoicePrompt below, not as a raw tool block.
             const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))

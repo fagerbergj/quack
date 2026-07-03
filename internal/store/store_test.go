@@ -188,3 +188,48 @@ func TestGroupSessionEvents(t *testing.T) {
 		t.Errorf("turn 1 toolCalls = %d, want 0", len(g1.toolCalls))
 	}
 }
+
+// nodeEvent is a gate-internal event (a worker draft, an advisor consult, a
+// revision) — tagged with NodeInfo, unlike the orchestrator's own top-level
+// events (asstEvent, persistAnswer). Never the user-facing message.
+func nodeEvent(path string, parts ...*genai.Part) *session.Event {
+	ev := session.NewEvent(context.Background(), "test")
+	ev.Author = "web-researcher"
+	ev.Content = &genai.Content{Role: "model", Parts: parts}
+	ev.NodeInfo = &session.NodeInfo{Path: path}
+	return ev
+}
+
+// TestGroupSessionEvents_NodeActivityExcluded guards the leak that made a node's
+// internal deliberation (advisor guidance, a worker's raw draft) show up as the
+// turn's message: gate-internal events (NodeInfo set) must contribute NEITHER
+// asstText NOR toolCalls — only the orchestrator's own top-level events do.
+func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
+	events := []*session.Event{
+		userEvent("research X"),
+		asstEvent(&genai.Part{FunctionCall: &genai.FunctionCall{ID: "e1", Name: "execute", Args: map[string]any{"plan_id": "p1"}}}),
+		// Gate-internal: an advisor consult and a worker draft, both node-scoped.
+		nodeEvent("n1/advisor-r0@1", &genai.Part{Text: "Consider checking multiple sources."}),
+		nodeEvent("n1/worker-r0@1", &genai.Part{FunctionCall: &genai.FunctionCall{ID: "w1", Name: "web_search", Args: map[string]any{"query": "X"}}}),
+		nodeEvent("n1/worker-r0@1", &genai.Part{Text: "raw unvetted draft text"}),
+		// The real delivered answer: a top-level orchestrator event (persistAnswer).
+		asstEvent(&genai.Part{Text: "The real, vetted answer."}),
+	}
+
+	groups := groupSessionEvents(slices.Values(events))
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(groups))
+	}
+	g := groups[0]
+	if g.asstText != "The real, vetted answer." {
+		t.Errorf("asstText = %q, want only the top-level answer (no node-scoped leak)", g.asstText)
+	}
+	for _, tc := range g.toolCalls {
+		if tc.Name == "web_search" {
+			t.Errorf("toolCalls includes a node-scoped call: %+v", tc)
+		}
+	}
+	if len(g.toolCalls) != 1 || g.toolCalls[0].Name != "execute" {
+		t.Errorf("toolCalls = %+v, want only the top-level execute call", g.toolCalls)
+	}
+}

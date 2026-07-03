@@ -182,6 +182,15 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		if cur == nil {
 			continue
 		}
+		// Gate-internal activity (a worker draft, the formative advisor consult, a
+		// revision) carries NodeInfo — it's the trust gate's own deliberation, never
+		// the user-facing message. Skip it entirely so it can't get glued into
+		// asstText (which used to concatenate EVERY assistant event's text in the
+		// turn, node-scoped or not) or listed as top-level activity. The turn's
+		// real answer is the orchestrator's own persistAnswer event (NodeInfo nil).
+		if ev.NodeInfo != nil {
+			continue
+		}
 		for _, p := range ev.Content.Parts {
 			if p == nil {
 				continue
