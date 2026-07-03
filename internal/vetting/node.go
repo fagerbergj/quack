@@ -80,14 +80,20 @@ func hitlInterruptID(nodeID string, round int) string {
 	return fmt.Sprintf("hitl-%s-r%d", nodeID, round)
 }
 
-// hitlScan summarizes a node's HITL history within ONE invocation: how many times
-// its worker asked the user (asks), how many pauses the gate already emitted for
-// it (pauses), and the most recent question. Derived entirely from session events
+// hitlTurn is one ask/answer exchange within a node's HITL history. answer is ""
+// until the corresponding pause is resolved.
+type hitlTurn struct {
+	question string
+	answer   string
+}
+
+// hitlScan summarizes a node's FULL HITL history within ONE invocation: every
+// question the worker has asked so far (turns, in order) and how many of those
+// the gate has already paused for (pauses). Derived entirely from session events
 // (no state keys) so it survives resume re-entry and node-ID reuse across plans.
 type hitlScan struct {
-	asks   int
+	turns  []hitlTurn
 	pauses int
-	lastQ  string
 }
 
 func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
@@ -96,8 +102,29 @@ func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 		return s
 	}
 	prefix := "hitl-" + nodeID + "-r"
+	answers := map[string]string{} // interruptID → the user's answer text
 	for ev := range sess.Events().All() {
-		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID || !pathHasNode(ev, nodeID) {
+		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
+			continue
+		}
+		// Resume deliveries are user-authored FunctionResponses, not under the
+		// node's own path — collect them by interrupt ID so each round's answer
+		// can be paired to the question that raised it (round i ↔ turns[i-1]).
+		if ev.Author == "user" {
+			for _, p := range ev.Content.Parts {
+				if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != workflow.WorkflowInputFunctionCallName {
+					continue
+				}
+				if !strings.HasPrefix(p.FunctionResponse.ID, prefix) {
+					continue
+				}
+				if payload, ok := p.FunctionResponse.Response["payload"].(string); ok {
+					answers[p.FunctionResponse.ID] = payload
+				}
+			}
+			continue
+		}
+		if !pathHasNode(ev, nodeID) {
 			continue
 		}
 		for _, p := range ev.Content.Parts {
@@ -106,16 +133,20 @@ func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 			}
 			switch p.FunctionCall.Name {
 			case AskToolName:
-				s.asks++
-				if q, ok := p.FunctionCall.Args["question"].(string); ok && strings.TrimSpace(q) != "" {
-					s.lastQ = strings.TrimSpace(q)
+				q := ""
+				if qq, ok := p.FunctionCall.Args["question"].(string); ok {
+					q = strings.TrimSpace(qq)
 				}
+				s.turns = append(s.turns, hitlTurn{question: q})
 			case workflow.WorkflowInputFunctionCallName:
 				if strings.HasPrefix(p.FunctionCall.ID, prefix) {
 					s.pauses++
 				}
 			}
 		}
+	}
+	for i := range s.turns {
+		s.turns[i].answer = answers[hitlInterruptID(nodeID, i+1)]
 	}
 	return s
 }
@@ -138,13 +169,24 @@ func pathHasNode(ev *session.Event, nodeID string) bool {
 	return false
 }
 
-// withUserAnswer builds the self-contained prompt for the post-answer worker run.
-// The worker runs in a fresh sub-branch, so the Q&A must ride the prompt (the
-// ask_user call lives in the previous run's branch and is filtered from this
-// run's LLM history).
-func withUserAnswer(prompt, question, answer string) string {
-	return prompt + "\n\n--- You previously asked the user a question and they have now answered ---\nQ: " + question +
-		"\nA: " + answer + "\n\nUse this answer and complete the task now. Do not ask again."
+// withUserAnswer builds the self-contained prompt for the post-answer worker run,
+// folding in the FULL Q&A transcript (every round asked so far, not just the
+// latest) so a worker several rounds deep still has what it already asked and was
+// told. The worker runs in a fresh sub-branch each round, so this must ride the
+// prompt — the ask_user calls live in earlier rounds' branches and are filtered
+// from this run's LLM history.
+func withUserAnswer(prompt string, turns []hitlTurn) string {
+	var b strings.Builder
+	b.WriteString(prompt)
+	b.WriteString("\n\n--- You previously asked the user question(s) and they answered ---\n")
+	for _, t := range turns {
+		if t.answer == "" {
+			continue // not yet resolved; shouldn't happen for a round we're folding in
+		}
+		b.WriteString("Q: " + t.question + "\nA: " + t.answer + "\n")
+	}
+	b.WriteString("\nUse these answers and complete the task now. Do not ask again unless something new and genuinely blocking comes up.")
+	return b.String()
 }
 
 // replyString coerces a resumed HITL payload to text.
@@ -166,15 +208,33 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 	// streams to the UI as a stage:advisor run (dagStream translates advisor-rN).
 	// Replaces the dropped self-critique stage — an independent second look at the
 	// approach before the worker commits.
+	//
+	// lastAdvice carries the advisor's OWN prior output forward across rounds
+	// within this invocation (draft → revision → revision …), so a later consult
+	// isn't a cold restart: the advisor sees what it already told the worker. This
+	// can't come for free from ADK's own session/branch mechanism — the AgentNode
+	// wrapper forces every LlmAgent into single-turn mode (IncludeContents:"none"),
+	// which discards session history regardless of branch, so we carry the memory
+	// ourselves instead. (It does NOT survive a HITL pause/resume — that's a fresh
+	// RunGatedRefine call — but the advisor doesn't run again on that path anyway;
+	// see the resumed branch below.)
+	var lastAdvice string
 	consult := func(runID, task string) string {
 		if advisorNode == nil {
 			return ""
 		}
-		advice, aerr := runWorkerNode(ctx, advisorNode, "Advise on this task before it is attempted:\n\n"+task, runID)
+		req := "Advise on this task before it is attempted:\n\n" + task
+		if lastAdvice != "" {
+			req = "You advised on an earlier attempt at this task:\n\n" + lastAdvice +
+				"\n\n--- New context for this attempt ---\n" + task +
+				"\n\nGive updated advice: reinforce what still applies, drop what's already been addressed, flag anything new."
+		}
+		advice, aerr := runWorkerNode(ctx, advisorNode, req, runID)
 		if aerr != nil {
 			log.Warn("advisor consult failed; proceeding without advice", "run", runID, "err", aerr)
 			return ""
 		}
+		lastAdvice = advice
 		return advice
 	}
 	withAdvice := func(base, advice string) string {
@@ -219,9 +279,16 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); scan.pauses > 0 {
 			if reply, ok := ctx.ResumedInput(hitlInterruptID(nodeID, scan.pauses)); ok {
 				resumed = true
+				// The just-delivered answer may not have landed in session history yet
+				// at scan time (it arrives as this turn's inbound message) — fill it in
+				// from ctx.ResumedInput so the current round is in the transcript too.
+				turns := scan.turns
+				if n := len(turns); n > 0 && turns[n-1].answer == "" {
+					turns[n-1].answer = replyString(reply)
+				}
 				log.Info("node resumed with user answer", "round", scan.pauses)
 				answer, err = runWorkerNode(ctx, workerNode,
-					workerInput(withUserAnswer(prompt, scan.lastQ, replyString(reply)), attachments),
+					workerInput(withUserAnswer(prompt, turns), attachments),
 					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx))
 				if err != nil {
 					log.Error("post-answer worker run failed", "err", err)
@@ -246,11 +313,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 		// ErrNodeInterrupted (propagated up; NOT a failure, no empty-recovery); on the
 		// answer turn ADK re-enters the node and the resume branch above runs instead.
 		if strings.TrimSpace(answer) == "" && emit != nil {
-			if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); scan.asks > scan.pauses {
-				log.Info("worker asked the user; pausing node", "question", scan.lastQ, "round", scan.pauses+1)
+			if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); len(scan.turns) > scan.pauses {
+				q := scan.turns[len(scan.turns)-1].question
+				log.Info("worker asked the user; pausing node", "question", q, "round", scan.pauses+1)
 				_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
 					InterruptID: hitlInterruptID(nodeID, scan.pauses+1),
-					Message:     scan.lastQ,
+					Message:     q,
 				})
 				return "", GateResult{}, ierr // ErrNodeInterrupted → park
 			}

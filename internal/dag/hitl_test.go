@@ -64,7 +64,7 @@ func (s *hitlStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 		s.mu.Lock()
 		s.workerCalls++
 		s.mu.Unlock()
-		if txt := gUserText(req); strings.Contains(txt, "they have now answered") {
+		if txt := gUserText(req); strings.Contains(txt, "they answered") {
 			// Post-answer run: extract the answer line for assertions.
 			if i := strings.Index(txt, "\nA: "); i >= 0 {
 				line := txt[i+4:]
@@ -136,5 +136,98 @@ func TestHITL_SingleNodePauseResume(t *testing.T) {
 	defer stub.mu.Unlock()
 	if stub.sawAnswer != "north" {
 		t.Errorf("worker never received the user's answer: sawAnswer=%q", stub.sawAnswer)
+	}
+}
+
+// multiRoundStub asks TWO questions across two separate pauses before finally
+// answering, so the test can assert the round-2+ prompt folds in the FULL
+// transcript (both Q&A pairs), not just the latest one.
+type multiRoundStub struct {
+	mu        sync.Mutex
+	finalText string // the full prompt text seen on the final (answering) call
+}
+
+func (*multiRoundStub) Name() string { return "multiRoundStub" }
+
+func (s *multiRoundStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if gHasTool(req, "submit_verdict") {
+			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			return
+		}
+		txt := gUserText(req)
+		switch strings.Count(txt, "\nA: ") {
+		case 0:
+			yield(gCall(vetting.AskToolName, map[string]any{"question": "which direction?"}), nil)
+		case 1:
+			yield(gCall(vetting.AskToolName, map[string]any{"question": "which region?"}), nil)
+		default:
+			s.mu.Lock()
+			s.finalText = txt
+			s.mu.Unlock()
+			yield(gText("Final answer using both directions."), nil)
+		}
+	}
+}
+
+// TestHITL_MultiRoundFoldsFullTranscript: a node paused for TWO separate
+// questions across two rounds must see BOTH Q&A pairs on its final (answering)
+// run — not just the most recent one. Guards the withUserAnswer/hitlScan
+// full-transcript fix (a single-pair fold would silently drop round 1's Q&A).
+func TestHITL_MultiRoundFoldsFullTranscript(t *testing.T) {
+	stub := &multiRoundStub{}
+	ag, err := llmagent.New(llmagent.Config{
+		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer.",
+		Tools: []tool.Tool{newAskTool(t)},
+	})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil, nil,
+		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
+
+	yield := func(stream.SSEEvent, error) bool { return true }
+	run := func(content *genai.Content) (map[string]string, bool) {
+		out := map[string]string{}
+		paused, err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "s", content, yield, out, []string{"n1"})
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		return out, paused
+	}
+	answerContent := func(interruptID, payload string) *genai.Content {
+		return &genai.Content{Role: "user", Parts: []*genai.Part{{
+			FunctionResponse: &genai.FunctionResponse{
+				ID: interruptID, Name: workflow.WorkflowInputFunctionCallName,
+				Response: map[string]any{"payload": payload},
+			},
+		}}}
+	}
+
+	// Round 1: parks asking "which direction?".
+	_, paused := run(&genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}})
+	if !paused {
+		t.Fatal("round 1: expected a pause")
+	}
+	// Round 2: answer round 1 → parks again asking "which region?".
+	_, paused = run(answerContent("hitl-n1-r1", "north"))
+	if !paused {
+		t.Fatal("round 2: expected a second pause")
+	}
+	// Round 3: answer round 2 → completes.
+	out, paused := run(answerContent("hitl-n1-r2", "coastal"))
+	if paused || out["n1"] == "" {
+		t.Fatalf("round 3: expected completion, got paused=%v out=%q", paused, out["n1"])
+	}
+
+	stub.mu.Lock()
+	final := stub.finalText
+	stub.mu.Unlock()
+	if !strings.Contains(final, "Q: which direction?") || !strings.Contains(final, "A: north") {
+		t.Errorf("final prompt missing round 1's Q&A:\n%s", final)
+	}
+	if !strings.Contains(final, "Q: which region?") || !strings.Contains(final, "A: coastal") {
+		t.Errorf("final prompt missing round 2's Q&A:\n%s", final)
 	}
 }
