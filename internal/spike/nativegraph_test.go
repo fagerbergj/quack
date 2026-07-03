@@ -7,8 +7,9 @@
 // JoinNode fan-in?
 //
 // Shape:  Start ──▶ workerA (pauses: ResumeOrRequestInput)
-//              └──▶ workerB (completes immediately, counts its runs)
-//         workerA, workerB ──▶ join ──▶ synth (counts its runs)
+//
+//	     └──▶ workerB (completes immediately, counts its runs)
+//	workerA, workerB ──▶ join ──▶ synth (counts its runs)
 //
 // Run 1 parks at workerA. Run 2 (fresh runner, same session store) feeds the
 // answer. We assert workerB did NOT re-run and synth ran exactly once.
