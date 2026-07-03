@@ -6,7 +6,7 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/a2aproject/a2a-go/v2 v2.3.1
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7
-	github.com/charmbracelet/bubbletea v1.3.6
+	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
