@@ -18,7 +18,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/oapi-codegen/runtime v1.4.2
 	github.com/openai/openai-go/v3 v3.41.0
-	github.com/qdrant/go-client v1.18.2
+	github.com/qdrant/go-client v1.18.3
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/adk/v2 v2.0.0
 	google.golang.org/genai v1.62.0
@@ -109,7 +109,7 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/api v0.279.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260511170946-3700d4141b60 // indirect
-	google.golang.org/grpc v1.81.0 // indirect
+	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.22.5 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
