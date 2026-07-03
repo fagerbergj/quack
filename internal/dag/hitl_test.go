@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"iter"
+	"strings"
 	"sync"
 	"testing"
 
@@ -21,11 +22,82 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-const testAskTool = "ask_user"
+type askArgs struct {
+	Question string `json:"question"`
+}
+type askResult struct {
+	Status string `json:"status"`
+}
 
-// confirmationCallName is ADK's FunctionCall name for a HITL confirmation request
-// (toolconfirmation.FunctionCallName). The resume FunctionResponse must echo it.
-const confirmationCallName = "adk_request_confirmation"
+// newAskTool mirrors tools.NewAskUserTool: a plain tool that records the question
+// (in its call args) and ends the worker's turn; the GATE detects the call and
+// pauses the node. Built inline to avoid the tools→dag import cycle.
+func newAskTool(t *testing.T) tool.Tool {
+	t.Helper()
+	tl, err := functiontool.New[askArgs, askResult](
+		functiontool.Config{Name: vetting.AskToolName, Description: "Ask the user a question."},
+		func(tc adkagent.Context, _ askArgs) (askResult, error) {
+			tc.Actions().SkipSummarization = true
+			return askResult{Status: "forwarded to the user"}, nil
+		})
+	if err != nil {
+		t.Fatalf("tool: %v", err)
+	}
+	return tl
+}
+
+// hitlStub: as a judge it passes; as a worker it asks the user via ask_user unless
+// its request already carries the delivered answer (the gate's withUserAnswer
+// prompt), in which case it writes the final answer.
+type hitlStub struct {
+	mu          sync.Mutex
+	workerCalls int
+	sawAnswer   string // the user answer text observed in the post-answer prompt
+}
+
+func (*hitlStub) Name() string { return "hitlStub" }
+
+func (s *hitlStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if gHasTool(req, "submit_verdict") {
+			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			return
+		}
+		s.mu.Lock()
+		s.workerCalls++
+		s.mu.Unlock()
+		if txt := gUserText(req); strings.Contains(txt, "they have now answered") {
+			// Post-answer run: extract the answer line for assertions.
+			if i := strings.Index(txt, "\nA: "); i >= 0 {
+				line := txt[i+4:]
+				if j := strings.IndexByte(line, '\n'); j >= 0 {
+					line = line[:j]
+				}
+				s.mu.Lock()
+				s.sawAnswer = line
+				s.mu.Unlock()
+			}
+			yield(gText("Final answer using the user's direction."), nil)
+			return
+		}
+		yield(gCall(vetting.AskToolName, map[string]any{"question": "which direction?"}), nil)
+	}
+}
+
+func newHITLExecutor(t *testing.T, stub *hitlStub, sessions session.Service) (*Executor, Plan) {
+	t.Helper()
+	ag, err := llmagent.New(llmagent.Config{
+		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer.",
+		Tools: []tool.Tool{newAskTool(t)},
+	})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil, nil,
+		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
+	return ex, plan
+}
 
 // runPlanContent runs a plan through the single-runner path (execNode→RunPlanInNode)
 // on ex's session store with the given content (a fresh user turn or a resume
@@ -66,183 +138,53 @@ func runPlanContent(t *testing.T, ex *Executor, plan Plan, chatID string, conten
 	return planOutputs, nil
 }
 
-type askArgs struct {
-	Question string `json:"question"`
-}
-type askResult struct {
-	Status string `json:"status"`
-}
-
-// newAskTool is a minimal long-running "ask the user" tool (like get_user_choice
-// but built inline to avoid the tools→dag import cycle).
-func newAskTool(t *testing.T) tool.Tool {
-	t.Helper()
-	tl, err := functiontool.New[askArgs, askResult](
-		functiontool.Config{Name: testAskTool, Description: "Ask the user a question."},
-		func(tc adkagent.Context, a askArgs) (askResult, error) {
-			// Native tool-level HITL: record a pending confirmation + halt the loop.
-			if err := tc.RequestConfirmation(a.Question, nil); err != nil {
-				return askResult{}, err
-			}
-			return askResult{Status: "pending"}, nil
-		})
-	if err != nil {
-		t.Fatalf("tool: %v", err)
-	}
-	return tl
-}
-
-// hitlStub: as a worker it calls the long-running ask_user tool (→ HITL pause); as
-// a judge it passes.
-type hitlStub struct {
-	mu          sync.Mutex
-	workerCalls int
-}
-
-func (*hitlStub) Name() string { return "hitlStub" }
-
-func (s *hitlStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-			return
-		}
-		s.mu.Lock()
-		s.workerCalls++
-		s.mu.Unlock()
-		// After the ask_user tool has returned (confirmation delivered), write the
-		// answer; before that, ask the user.
-		if gHasFuncResponse(req, testAskTool) {
-			yield(gText("Chose the direction you picked. Final answer."), nil)
-			return
-		}
-		yield(gCall(testAskTool, map[string]any{"question": "which direction?"}), nil)
-	}
-}
-
-// gHasFuncResponse reports whether the request's contents carry a FunctionResponse
-// for the named tool (i.e. the tool has already run and returned).
-func gHasFuncResponse(req *model.LLMRequest, name string) bool {
-	for _, c := range req.Contents {
-		if c == nil {
-			continue
-		}
-		for _, p := range c.Parts {
-			if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// TestHITL_WorkerPausesNode: a worker that calls a long-running tool parks its node
-// instead of failing — WithRaiseOnWait turns the unresolved tool into an interrupt
-// that runDAG→execNode swallows into a pause. The node emits no answer and the tool
-// call surfaces to the client.
-func TestHITL_WorkerPausesNode(t *testing.T) {
+// TestHITL_GatePausesAndResumes proves the full mid-node HITL cycle through the
+// real gate: the worker calls ask_user → the gate parks the NODE under the stable
+// interrupt ID hitl-n1-r1 (run 1 ends, no node output); delivering the user's
+// answer as the adk_request_input FunctionResponse re-enters the node, the gate
+// re-runs the worker with the Q&A folded in, and the node completes.
+func TestHITL_GatePausesAndResumes(t *testing.T) {
 	stub := &hitlStub{}
-	ag, err := llmagent.New(llmagent.Config{
-		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer.",
-		Tools: []tool.Tool{newAskTool(t)},
+	ex, plan := newHITLExecutor(t, stub, session.InMemoryService())
+
+	// Run 1: park. Capture the pause request from the raw events.
+	var pauseID, pauseMsg string
+	out1, err := runPlanContent(t, ex, plan, "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}, func(ev *session.Event) {
+		if ev != nil && ev.RequestedInput != nil {
+			pauseID = ev.RequestedInput.InterruptID
+			pauseMsg = ev.RequestedInput.Message
+		}
 	})
-	if err != nil {
-		t.Fatalf("agent: %v", err)
-	}
-	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil, nil,
-		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
-	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
-
-	events, outputs := runPlanSSE(t, ex, plan, "s")
-
-	if out := outputs["n1"]; out != "" {
-		t.Errorf("paused node should have no output, got %q", out)
-	}
-	var sawAsk, sawDone bool
-	for _, ev := range events {
-		switch d := ev.Data.(type) {
-		case stream.AgentToolCallData:
-			if d.Name == testAskTool {
-				sawAsk = true
-			}
-		case stream.NodeDoneData:
-			if d.NodeID == "n1" {
-				sawDone = true
-			}
-		}
-	}
-	if !sawAsk {
-		t.Errorf("expected the ask_user tool call to surface in events")
-	}
-	if sawDone {
-		t.Errorf("node n1 should be paused, not done")
-	}
-	if stub.workerCalls == 0 {
-		t.Errorf("worker never ran")
-	}
-}
-
-// TestHITL_WorkerResumeReAsks documents the OPEN resume problem (Path B, B1 variant):
-// a worker parking on tc.RequestConfirmation cannot be resumed by delivering the
-// confirmation FunctionResponse, because runDAG re-runs the whole plan on resume
-// (RerunOnResume) and the worker llmagent re-executes with FRESH tool-call IDs — so
-// the confirmation, tied to run-1's call ID, never matches the run-2 worker, which
-// just asks again and re-parks.
-//
-// The fix is B2: the GATE NODE BODY (not the worker llmagent) owns the pause via
-// workflow.ResumeOrRequestInput with a STABLE, node-based InterruptID (the spike
-// TestPathB_RunDAGNestingHITLResume proved that resumes), detecting the worker's
-// intent to ask and feeding the answer back into the worker's next run. Until B2 is
-// built, this test asserts the current re-ask behavior so the regression is visible.
-func TestHITL_WorkerResumeReAsks(t *testing.T) {
-	stub := &hitlStub{}
-	ag, err := llmagent.New(llmagent.Config{
-		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer.",
-		Tools: []tool.Tool{newAskTool(t)},
-	})
-	if err != nil {
-		t.Fatalf("agent: %v", err)
-	}
-	sessions := session.InMemoryService()
-	ex := NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil, nil,
-		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
-	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
-
-	confirmID := ""
-	capture := func(ev *session.Event) {
-		if ev == nil || ev.Content == nil {
-			return
-		}
-		for _, p := range ev.Content.Parts {
-			if p.FunctionCall != nil && p.FunctionCall.Name == confirmationCallName {
-				confirmID = p.FunctionCall.ID
-			}
-		}
-	}
-	out1, err := runPlanContent(t, ex, plan, "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}, capture)
 	if err != nil {
 		t.Fatalf("run1: %v", err)
 	}
 	if out1["n1"] != "" {
-		t.Fatalf("run1: node should be paused, got %q", out1["n1"])
+		t.Fatalf("run1: paused node should have no output, got %q", out1["n1"])
 	}
-	if confirmID == "" {
-		t.Fatal("run1: never saw an adk_request_confirmation call")
+	if pauseID != "hitl-n1-r1" {
+		t.Fatalf("run1: interrupt ID = %q, want hitl-n1-r1", pauseID)
+	}
+	if pauseMsg != "which direction?" {
+		t.Errorf("run1: pause message = %q, want the worker's question", pauseMsg)
 	}
 
+	// Run 2: deliver the answer.
 	answer := &genai.Content{Role: "user", Parts: []*genai.Part{{
 		FunctionResponse: &genai.FunctionResponse{
-			ID: confirmID, Name: confirmationCallName,
-			Response: map[string]any{"confirmed": true, "payload": "north"},
+			ID: pauseID, Name: workflow.WorkflowInputFunctionCallName,
+			Response: map[string]any{"payload": "north"},
 		},
 	}}}
 	out2, err := runPlanContent(t, ex, plan, "s", answer, func(*session.Event) {})
 	if err != nil {
 		t.Fatalf("run2: %v", err)
 	}
-	// KNOWN LIMITATION: resume does NOT complete the node (it re-asks). When B2 lands,
-	// flip this to require out2["n1"] != "" and rename the test.
-	if out2["n1"] != "" {
-		t.Errorf("resume now COMPLETES the node (out=%q) — B2 may be done; update this test to assert success", out2["n1"])
+	if out2["n1"] == "" {
+		t.Fatalf("run2: node should complete after resume, got none")
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.sawAnswer != "north" {
+		t.Errorf("worker never received the user's answer: sawAnswer=%q", stub.sawAnswer)
 	}
 }
