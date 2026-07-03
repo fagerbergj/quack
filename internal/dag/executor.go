@@ -39,6 +39,11 @@ func (e *Executor) SetMaxActive(n int) {
 	}
 }
 
+// ResetNodeCancels clears a chat's leftover user-cancelled node flags. Call at
+// the start of each turn so a cancelled node ID doesn't mark the next turn's
+// same-ID node as "stopped".
+func (e *Executor) ResetNodeCancels(chatID string) { e.controls.resetCancelled(chatID) }
+
 // DagStream translates a single-runner's gate-node events into SSE for the
 // one-orchestrator-workflow path, where the orchestrator llmagent and the DAG
 // gate nodes share ONE runner/event-stream. Handle returns true for events it

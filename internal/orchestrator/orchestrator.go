@@ -178,6 +178,9 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // media-capable node (the orchestrator model itself stays text/vision-only).
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// Fresh turn: drop any cancelled-node flags from a prior turn so a reused
+		// node ID (n1, n2, …) doesn't inherit last turn's "stopped" rendering.
+		o.executor.ResetNodeCancels(sessionID)
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()

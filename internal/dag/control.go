@@ -61,6 +61,15 @@ func (r *runControls) wasCancelled(chatID, nodeID string) bool {
 	return r.cancelled[chatID][nodeID]
 }
 
+// resetCancelled clears a chat's user-cancelled flags. Called at the start of
+// each new turn so a cancelled node ID (n1, n2, … are reused across plans) can't
+// leak into the next turn's same-ID node and mark it "stopped".
+func (r *runControls) resetCancelled(chatID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.cancelled, chatID)
+}
+
 func (r *runControls) register(chatID, nodeID string) *nodeControl {
 	r.mu.Lock()
 	defer r.mu.Unlock()
