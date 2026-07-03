@@ -7,7 +7,7 @@
 // no open-container heuristics. No JSX here so this stays trivially testable;
 // rendering lives in AgentParts.tsx / DagNode.tsx.
 
-export type Stage = 'worker' | 'self_refine' | 'judge' | 'revise'
+export type Stage = 'worker' | 'judge' | 'revise' | 'advisor'
 
 // ToolCall is one tool invocation within a run; result fills in when it returns.
 export interface ToolCall {
@@ -35,7 +35,6 @@ export interface AgentRun {
   startedAt?: number    // ms timestamp when the run opened
   durationMs?: number   // set on complete
   // results (set on complete)
-  changed?: boolean    // self_refine
   score?: number       // judge
   passed?: boolean     // judge
   feedback?: string    // judge

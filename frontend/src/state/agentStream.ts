@@ -10,7 +10,7 @@ export interface ConfirmationRequestPayload {
   payload: Record<string, unknown>
 }
 
-export type Stage = 'worker' | 'self_refine' | 'judge' | 'revise'
+export type Stage = 'worker' | 'judge' | 'revise' | 'advisor'
 
 // The node_failed error string a user-cancelled node carries, so the UI renders it
 // neutrally ("stopped") instead of as a red failure. Must match the backend exactly
@@ -32,7 +32,6 @@ export interface AgentCompletePayload {
   runId: string
   stage: Stage
   round?: number
-  changed?: boolean
   score?: number
   passed?: boolean
   feedback?: string
@@ -66,7 +65,6 @@ export interface NodeDoneMeta {
   totalTokens?: number
   finishReason?: string
   durationMs?: number
-  selfRefined?: boolean
   judgeRounds?: number
   judgeFinalScore?: number
   judgePassed?: boolean
@@ -172,7 +170,6 @@ export function dispatchAgentEvent(
           runId: p.run_id,
           stage: (typeof p.stage === 'string' ? p.stage : 'worker') as Stage,
           round: typeof p.round === 'number' ? p.round : undefined,
-          changed: p.changed === true,
           score: typeof p.score === 'number' ? p.score : undefined,
           passed: p.passed === true,
           feedback: typeof p.feedback === 'string' ? p.feedback : undefined,
@@ -232,7 +229,7 @@ export function dispatchAgentEvent(
         node_id?: string; output_preview?: string
         model?: string; prompt_tokens?: number; completion_tokens?: number
         reasoning_tokens?: number; total_tokens?: number; finish_reason?: string; duration_ms?: number
-        self_refined?: boolean; judge_rounds?: number; judge_final_score?: number; judge_passed?: boolean
+        judge_rounds?: number; judge_final_score?: number; judge_passed?: boolean
       }
       if (typeof p.node_id === 'string') {
         const meta: NodeDoneMeta = {
@@ -243,7 +240,6 @@ export function dispatchAgentEvent(
           totalTokens: p.total_tokens,
           finishReason: p.finish_reason,
           durationMs: p.duration_ms,
-          selfRefined: p.self_refined,
           judgeRounds: p.judge_rounds,
           judgeFinalScore: p.judge_final_score,
           judgePassed: p.judge_passed,
