@@ -2,10 +2,17 @@ import { useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
-import type { DagNodeDef } from '../state/agentStream'
+import { CANCELLED_ERROR, type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
-function StatusBadge({ status }: { status: NodeStatus }) {
+function StatusBadge({ status, stopped }: { status: NodeStatus; stopped?: boolean }) {
+  if (stopped) {
+    return (
+      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+        stopped
+      </span>
+    )
+  }
   const styles: Record<NodeStatus, string> = {
     queued:  'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
     running: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400',
@@ -225,6 +232,53 @@ function NodeControls({ nodeId, onStop, onSteer }: {
   )
 }
 
+// RetryControl re-runs a FINISHED node (failed or done) and everything downstream
+// of it. Plain retry reuses the node's task; "retry with guidance" reveals an inline
+// input (guidance == steer, on a finished node). Shown only on a live turn.
+function RetryControl({ nodeId, onRetry }: {
+  nodeId: string
+  onRetry: (nodeId: string, guidance?: string) => void
+}) {
+  const [guiding, setGuiding] = useState(false)
+  const [text, setText] = useState('')
+  const send = () => {
+    onRetry(nodeId, text.trim() || undefined)
+    setText('')
+    setGuiding(false)
+  }
+  if (guiding) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-indigo-50/50 dark:bg-indigo-900/10">
+        <input
+          autoFocus
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); send() }
+            if (e.key === 'Escape') { setGuiding(false); setText('') }
+          }}
+          placeholder="Retry with guidance (optional) — re-runs this node + downstream…"
+          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+        />
+        <button onClick={send} className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline">retry</button>
+        <button onClick={() => { setGuiding(false); setText('') }} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center gap-3 px-4 py-1.5 border-b border-gray-100 dark:border-gray-700">
+      <button onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)"
+        className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+        ↻ retry
+      </button>
+      <button onClick={() => setGuiding(true)} title="Re-run this node with new guidance"
+        className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+        ↻ retry with guidance…
+      </button>
+    </div>
+  )
+}
+
 // ── DagNode ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -235,11 +289,16 @@ interface Props {
   isFinal: boolean
   onStop?: (nodeId: string) => void
   onSteer?: (nodeId: string, guidance: string) => void
+  onRetry?: (nodeId: string, guidance?: string) => void
 }
 
-export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer }: Props) {
+export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry }: Props) {
   const running = state.status === 'running'
   const controllable = running || state.status === 'queued'
+  const finished = state.status === 'done' || state.status === 'failed'
+  // A user-cancelled node comes back as failed with this specific error; render it
+  // as a neutral "stopped" rather than a red failure.
+  const stopped = state.status === 'failed' && state.error === CANCELLED_ERROR
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
 
@@ -254,7 +313,7 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer }:
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
           {agentLabel(node.agent)}
         </span>
-        <StatusBadge status={state.status} />
+        <StatusBadge status={state.status} stopped={stopped} />
         {state.steers && state.steers.length > 0 && (
           <span
             className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
@@ -311,6 +370,11 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer }:
         <NodeControls nodeId={node.id} onStop={onStop} onSteer={onSteer} />
       )}
 
+      {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
+      {finished && onRetry && (
+        <RetryControl nodeId={node.id} onRetry={onRetry} />
+      )}
+
       {/* Per-run stage cards */}
       {runs.map((run, i) => {
         const runRunning = i === activeIdx
@@ -325,9 +389,11 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer }:
       {/* Vetted answer (below the stage cards, for every node) */}
       <NodeAnswer answer={answer} />
 
-      {/* Failed state */}
+      {/* Failed / stopped state (a user-cancelled node reads neutrally, not as an error) */}
       {state.status === 'failed' && state.error && (
-        <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
+        <div className={`px-4 py-2 text-xs ${stopped
+          ? 'text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40'
+          : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20'}`}>
           {state.error}
         </div>
       )}

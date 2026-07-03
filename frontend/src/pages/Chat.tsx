@@ -179,6 +179,10 @@ export default function Chat() {
     if (activeChatId) store.steerNode(activeChatId, nodeId, guidance)
   }, [activeChatId, store])
 
+  const handleRetryNode = useCallback((nodeId: string, guidance?: string) => {
+    if (activeChatId) store.retryNode(activeChatId, nodeId, guidance)
+  }, [activeChatId, store])
+
   const submitMessage = useCallback((text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
     if (!activeChatId) return
     setLiveAttachmentPreviews(previews)
@@ -386,7 +390,7 @@ export default function Chat() {
                               </summary>
                               <div className="p-2 space-y-3">
                                 {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                                <DagView dag={liveDag} />
+                                <DagView dag={liveDag} onRetryNode={handleRetryNode} />
                               </div>
                             </details>
                           ) : (

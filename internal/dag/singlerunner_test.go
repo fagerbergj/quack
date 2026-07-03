@@ -47,7 +47,7 @@ func runPlanSSE(t *testing.T, ex *Executor, plan Plan, chatID string) ([]stream.
 		t.Fatalf("runner: %v", err)
 	}
 	ctx := stream.WithYield(context.Background(), func(ev stream.SSEEvent) { yield(ev, nil) })
-	ds := ex.NewDagStream(ctx, plan, "quack", "u", "s", yield, dsOutputs)
+	ds := ex.NewDagStream(ctx, plan, "quack", "u", "s", chatID, yield, dsOutputs)
 	for ev, rerr := range r.Run(ctx, "u", "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: plan.UserMessage}}}, adkagent.RunConfig{}) {
 		if rerr != nil {
 			t.Fatalf("run: %v", rerr)

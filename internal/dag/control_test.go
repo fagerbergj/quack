@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -89,6 +90,57 @@ func TestExecute_CancelNodeStopsBeforeJudge(t *testing.T) {
 	if stub.judgeCalls != 0 {
 		t.Errorf("judge ran %d times; cancel should have stopped the node before judging", stub.judgeCalls)
 	}
+}
+
+// nodeEnd returns the terminal event name (node_done / node_failed) for a node.
+func nodeEnd(events []stream.SSEEvent, nodeID string) string {
+	for _, ev := range events {
+		switch d := ev.Data.(type) {
+		case stream.NodeDoneData:
+			if d.NodeID == nodeID {
+				return stream.EventNodeDone
+			}
+		case stream.NodeFailedData:
+			if d.NodeID == nodeID {
+				return stream.EventNodeFailed
+			}
+		}
+	}
+	return ""
+}
+
+// TestExecute_CancelFlagDoesNotLeakAcrossTurns: node IDs (n1, n2, …) repeat every
+// turn, and the user-cancelled flag survives its control's unregister — so without
+// a per-turn reset a node cancelled last turn marks THIS turn's same-ID node
+// "stopped". ResetNodeCancels (called at the start of each Run) clears it.
+func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
+	// A prior turn's cancel left cancelled["s"]["n1"] set; this turn n1 completes.
+	newRun := func() (*Executor, Plan) {
+		stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+		close(stub.unblock) // never block: worker answers, judge passes
+		ex, plan := newCoopExecutor(t, stub, 1)
+		ex.controls.cancelled = map[string]map[string]bool{"s": {"n1": true}}
+		return ex, plan
+	}
+
+	t.Run("reset clears it", func(t *testing.T) {
+		ex, plan := newRun()
+		ex.ResetNodeCancels("s")
+		events, _ := runPlanSSE(t, ex, plan, "s")
+		if got := nodeEnd(events, "n1"); got != stream.EventNodeDone {
+			t.Errorf("n1 ended as %q; want node_done after reset", got)
+		}
+	})
+
+	// Guard the guard: without the reset the stale flag DOES corrupt this turn, so
+	// the reset above is load-bearing rather than a no-op.
+	t.Run("without reset it leaks", func(t *testing.T) {
+		ex, plan := newRun()
+		events, _ := runPlanSSE(t, ex, plan, "s")
+		if got := nodeEnd(events, "n1"); got != stream.EventNodeFailed {
+			t.Errorf("n1 ended as %q; want the leak (node_failed) that proves reset matters", got)
+		}
+	})
 }
 
 // TestExecute_SteerNodeReRunsWithGuidance: steering a running node re-runs its

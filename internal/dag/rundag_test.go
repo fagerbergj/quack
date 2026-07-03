@@ -1,7 +1,9 @@
 package dag
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -180,5 +182,34 @@ func TestRetryPlanInNode_ReusesUpstream(t *testing.T) {
 	}
 	if !strings.Contains(out["c"], "ANSWER") || out["c"] == "C-OLD" {
 		t.Errorf("c should be freshly re-run, got %q", out["c"])
+	}
+}
+
+// TestPlan_AttachmentsSurviveJSON guards the single-runner media path: the execute
+// tool stashes the plan as JSON in session state (ExecPlanKey) and the execute node
+// unmarshals it, so media attachments (image/audio bytes) must survive that round
+// trip or media nodes silently lose their input.
+func TestPlan_AttachmentsSurviveJSON(t *testing.T) {
+	plan := Plan{
+		ID: "p", UserMessage: "describe this",
+		Nodes:       []Node{{ID: "n1", AgentName: "media"}},
+		Attachments: []*genai.Part{{InlineData: &genai.Blob{MIMEType: "image/png", Data: []byte{1, 2, 3, 4, 5}}}},
+	}
+	b, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Plan
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Attachments) != 1 || got.Attachments[0].InlineData == nil {
+		t.Fatalf("attachment lost through JSON: %+v", got.Attachments)
+	}
+	if got.Attachments[0].InlineData.MIMEType != "image/png" {
+		t.Errorf("mime lost: %q", got.Attachments[0].InlineData.MIMEType)
+	}
+	if !bytes.Equal(got.Attachments[0].InlineData.Data, []byte{1, 2, 3, 4, 5}) {
+		t.Errorf("attachment bytes corrupted: %v", got.Attachments[0].InlineData.Data)
 	}
 }

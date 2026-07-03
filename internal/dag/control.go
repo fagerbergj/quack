@@ -44,12 +44,30 @@ func (c *nodeControl) setSteer(g string) {
 // orchestrator can cancel or steer a single running node while the DAG runs.
 // ponytail: a plain mutex-guarded map — one active run per chat, a few nodes.
 type runControls struct {
-	mu sync.Mutex
-	m  map[string]map[string]*nodeControl // chatID → nodeID → control
+	mu        sync.Mutex
+	m         map[string]map[string]*nodeControl // chatID → nodeID → control (live)
+	cancelled map[string]map[string]bool         // chatID → nodeID → user-cancelled; persists after the control is unregistered so the stream can mark the node "cancelled" (not "failed")
 }
 
 func newRunControls() *runControls {
-	return &runControls{m: map[string]map[string]*nodeControl{}}
+	return &runControls{m: map[string]map[string]*nodeControl{}, cancelled: map[string]map[string]bool{}}
+}
+
+// wasCancelled reports whether a node was user-cancelled this run (survives the
+// control's unregister, unlike get()).
+func (r *runControls) wasCancelled(chatID, nodeID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cancelled[chatID][nodeID]
+}
+
+// resetCancelled clears a chat's user-cancelled flags. Called at the start of
+// each new turn so a cancelled node ID (n1, n2, … are reused across plans) can't
+// leak into the next turn's same-ID node and mark it "stopped".
+func (r *runControls) resetCancelled(chatID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.cancelled, chatID)
 }
 
 func (r *runControls) register(chatID, nodeID string) *nodeControl {
@@ -92,6 +110,12 @@ func (e *Executor) CancelNode(chatID, nodeID string) bool {
 		return false
 	}
 	c.markCancelled()
+	e.controls.mu.Lock()
+	if e.controls.cancelled[chatID] == nil {
+		e.controls.cancelled[chatID] = map[string]bool{}
+	}
+	e.controls.cancelled[chatID][nodeID] = true
+	e.controls.mu.Unlock()
 	return true
 }
 

@@ -72,6 +72,25 @@ type Listener = () => void
 
 export const EMPTY_STATE: ChatState = { turns: [], error: '' }
 
+// retrySet returns nodeId plus every node transitively downstream of it (via the
+// DAG edges) — the subgraph a retry re-runs because the target's output feeds them.
+function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
+  const dependents = new Map<string, string[]>()
+  for (const e of edges) {
+    const arr = dependents.get(e.from) ?? []
+    arr.push(e.to)
+    dependents.set(e.from, arr)
+  }
+  const set = new Set<string>()
+  const walk = (id: string) => {
+    if (set.has(id)) return
+    set.add(id)
+    for (const d of dependents.get(id) ?? []) walk(d)
+  }
+  walk(nodeId)
+  return set
+}
+
 export class ChatStore {
   private states = new Map<string, ChatState>()
   private listeners = new Map<string, Set<Listener>>()
@@ -180,6 +199,33 @@ export class ChatStore {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ guidance: g }),
     }).catch(() => {})
+  }
+
+  // retryNode re-runs a FINISHED (failed or done) node and its descendants, reusing
+  // the stored outputs of the rest. Optional guidance is folded into the node's task.
+  // The re-run streams like a normal turn: the affected subgraph is reset to queued
+  // (answer + runs cleared) so the incoming node events rebuild it in place.
+  retryNode(chatId: string, nodeId: string, guidance?: string): void {
+    const s = this.states.get(chatId)
+    if (!s?.live?.dag || s.live.streaming) return
+    const dag = s.live.dag
+    const affected = retrySet(dag.edges, nodeId)
+    const nodeStates = { ...dag.nodeStates }
+    const nodeAnswer = { ...dag.nodeAnswer }
+    const nodeRuns = { ...dag.nodeRuns }
+    for (const id of affected) {
+      nodeStates[id] = { status: 'queued' }
+      nodeAnswer[id] = ''
+      nodeRuns[id] = []
+    }
+    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    const g = guidance?.trim()
+    void this.runStream(chatId, signal => fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/retry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(g ? { guidance: g } : {}),
+      signal,
+    }))
   }
 
   isStreaming(chatId: string): boolean {
