@@ -6,8 +6,6 @@ per-choice config in [configuration.md](configuration.md).
 
 Format per milestone: **Goal · Scope · Done when · Out of scope**.
 
----
-
 ## M0 — End-to-end skeleton ✅
 
 <details>
@@ -49,8 +47,6 @@ through the MCP endpoint; CI is green and branch protection blocks un-tested mer
 verification, deployment.
 
 </details>
-
----
 
 ## M1 — Config-defined agents + single-agent dispatch ✅
 
@@ -96,8 +92,6 @@ auth, deployment.
 
 </details>
 
----
-
 ## M2 — Adversarial vetting ✅
 
 <details>
@@ -127,8 +121,6 @@ hits `max_rounds`). The vetting loop is visible in the stream.
 
 </details>
 
----
-
 ## M3 — DAG planning + execution (with visualization) ✅
 
 <details>
@@ -137,6 +129,12 @@ of agent nodes and runs it topologically — each node wrapped in M2's trust gat
 <code>synthesizer</code> joining the results. The DAG streams over the APIs (node-lifecycle events) and
 animates live in the UI (<code>DagView</code> / <code>DagNode</code>). <em>Inferred complete from the
 code; confirm the Dublin trip-planning demo is validated.</em></summary>
+
+> **Engine replaced (2026-07).** The custom topological executor described below was replaced by
+> the **ADK v2 graph engine** (PRs #117–#118): orchestration is now a single ADK workflow/runner
+> (plan node → execute node → graph run in `internal/dag/graph.go` / `rundag.go`), with the trust
+> gate and node lifecycle native to it. The milestone's *behavior* (decompose → vetted nodes →
+> synthesizer, live DAG view) is unchanged; this body is the historical implementation.
 
 **Goal.** The orchestrator stops single-dispatching and starts **decomposing a request into a DAG of
 agent nodes and executing it**, surfacing the DAG over the APIs and **visualizing it live in the
@@ -173,8 +171,6 @@ fetch its structure + node states via REST and MCP.
 **Out of scope (later).** Memory (M6), auth, deployment.
 
 </details>
-
----
 
 ## M4 — Multi-modal input (photo + audio) ✅
 
@@ -263,8 +259,6 @@ later group + agent); the document-ingestion pipeline (the paused Document miles
 
 </details>
 
----
-
 ## M5 — Human-in-the-loop (clarify) ✅
 
 **Goal.** The orchestrator **clarifies an ambiguous ask before launching a DAG** — agent-driven, not an
@@ -281,7 +275,8 @@ automatic confidence gate (the M2 judge keeps its continue-but-warn behavior).
   orchestrator is the top-level session, so the existing chat loop covers this entirely.
 - **Readiness-driven executor (kept).** M3's strict per-layer barrier was replaced by a scheduler that
   runs a node **as soon as its `DependsOn` are all `done`**, so independent branches make progress
-  concurrently. This landed alongside M5b and stays even though the pause path was removed.
+  concurrently. This landed alongside M5b; the executor itself was since replaced by the ADK v2
+  graph engine (see the M3 note), which preserves the readiness-driven concurrency.
 
 **Done when.** An ambiguous request triggers an **upfront** clarifying question (a choice prompt) before
 any DAG runs; the user's answer flows back into the same turn and planning proceeds.
@@ -295,13 +290,17 @@ storage — inherent complexity for a flow with no concrete need yet. A throttle
 `web_search`) wants backoff/retry inside the tool, not a human pause, so that case doesn't justify the
 plumbing either. Recoverable from git history if a real need appears.
 
+> **Update (M5b shipped, 2026-06).** Mid-node steering later shipped **without** reviving this
+> machinery: `SteerNode` interrupts the node's context and **re-runs the same session** with the
+> guidance appended, so prior tool calls/results are retained (PRs #108–#112, React + TUI parity).
+> True mid-node *pause for human input* is a separate effort on the native ADK v2 path
+> (`feat/node-hitl`).
+
 **Out of scope (later).** `RequireConfirmation` approve/deny gate for side-effecting tools (folds into
 the paused Code-review milestone's GitHub writes — though M9's `bash` safety gate is a related
 approve/deny path); the `doc-ingest` / `code-review` skills; automatic confidence-based parking.
 
----
-
-## M6 — Memory (explicit recall + gated, consolidating commit)
+## M6 — Memory (explicit recall + gated, consolidating commit) ✅
 
 <details>
 <summary><strong>✅ Complete.</strong> Embedder, Qdrant-backed recall, the gated/consolidating
@@ -372,8 +371,6 @@ store); auth, deployment.
 
 </details>
 
----
-
 ## M7 — Skills: hand-authored DAG templates
 
 **Goal.** Give the orchestrator a **catalog of skills** — predetermined DAG recipes it runs
@@ -412,8 +409,6 @@ back** to dynamic planning. Every node is vetted against its **agent's own** rub
 **Out of scope (later).** The `doc-ingest` and `code-review` skills themselves (the paused Document / Code-review milestones); mid-DAG
 human parking (removed from M5; would need reviving).
 
----
-
 ## M8 — Usability / interactive control & operability
 
 **Goal.** Make runs **controllable and durable**: persist tool calls + node lifecycle, control
@@ -421,28 +416,34 @@ runs/nodes (stop / start / cancel / **steer**), **queue + interrupt** requests, 
 (rendezvous) routing**, and drive it all from a **Go CLI**. This is the operability layer — inspired
 by what Turnstone ships that Quack lacked.
 
+> **Status (2026-07): mostly shipped.** Durable event log + reconnect (PR #115), per-node
+> cancel/retry (PR #120), mid-node steering (PRs #108–#112), and the Go CLI (`cmd/quack`, a full
+> Bubble Tea TUI) are merged. Remaining: **request queuing + interrupt** and **HRW routing** —
+> both specced pre-ADK v2, so re-scope before building.
+
 **Scope.**
 
-- **Durable event log**: persist the run event stream (`dag_plan`, node lifecycle, `agent_tool_call` /
-  `agent_tool_result`, tokens) to Postgres, backing the SSE hub's replay (today in-memory, lost on
-  restart). Buys reconnect / multi-device / post-restart replay **and** a tool-call **audit trail**
-  (real provenance — Turnstone's auditability done better).
-- **Run + node lifecycle**: extend whole-run cancel (`DELETE /chats/{id}/stream`) to **per-node**
-  cancel + restart and run **stop / start**; each node's `context` (the executor already holds it) is
-  the cancel handle.
-- **Node steering (HITL)**: inject a steer message into a **running** node to redirect it mid-run —
-  **revives the M5b node pause/resume sub-session machinery** (removed, "recoverable from git
-  history"; see the M5 "Removed" note) and productionizes it (`node_waiting` → persisted `waiting` →
-  steer endpoint → `executor.Resume`). The hard part; once built it also unblocks node-level tool
-  approval used by M9's `bash`.
-- **Request queuing + interrupt**: a bounded **inter-request** run queue at the chat entry (at
-  capacity → queue, not reject) with **interrupt** of a queued or in-flight run. Distinct from
+- ✅ **Durable event log** (PR #115): persist the run event stream (`dag_plan`, node lifecycle,
+  `agent_tool_call` / `agent_tool_result`, tokens) to Postgres, backing the SSE hub's replay with
+  `Last-Event-ID` resume. Buys reconnect / multi-device / post-restart replay **and** a tool-call
+  **audit trail**. Known follow-up: client-side replay of a run killed by a restart.
+- ✅ **Run + node lifecycle** (PR #120 + M5b): whole-run cancel extended to **per-node** cancel and
+  **retry of a finished node**, with cancelled status surfaced in both UIs.
+- ✅ **Node steering (HITL)** (PRs #108–#112, shipped early as M5b): inject a steer message into a
+  **running** node to redirect it mid-run. Shipped **without** the pause/resume revival this bullet
+  originally planned — steering interrupts the node's context and **re-runs the same session** with
+  the guidance appended (prior tool results retained). Node-level *pause for human input* (which
+  M9's `bash` approval needs) is the separate native-HITL effort on `feat/node-hitl`.
+- **Request queuing + interrupt** *(open)*: a bounded **inter-request** run queue at the chat entry
+  (at capacity → queue, not reject) with **interrupt** of a queued or in-flight run. Distinct from
   `dag.max_active_nodes` (intra-DAG node concurrency).
-- **HRW routing**: a Highest-Random-Weight router (FNV-1a of `node_id` × backend id) to spread
-  node/agent dispatch across worker backends with minimal reshuffle on join/leave — pulls the
-  Future-work *Distributed A2A* seam's routing primitive forward.
-- **Go CLI**: a `quack` CLI (`cmd/cli/`) over the REST API (new chat, stream, list, cancel, steer),
-  reusing the generated client — a terminal client à la Turnstone.
+- **HRW routing** *(open — re-scope post-ADK v2)*: a Highest-Random-Weight router (FNV-1a of
+  `node_id` × backend id) to spread node/agent dispatch across worker backends with minimal
+  reshuffle on join/leave — pulls the Future-work *Distributed A2A* seam's routing primitive
+  forward. Revisit whether it still earns its place under the ADK v2 engine.
+- ✅ **Go CLI** — shipped beyond spec: `cmd/quack` is a full **Bubble Tea TUI** (chat, DAG view,
+  node inspector, steering, clarification prompts) plus the `server init` wizard and `-p` print
+  mode, over the REST API via the generated client.
 
 **Done when.** A run **replays fully after an app restart**; a node is **cancelled / restarted /
 steered** mid-run from the UI or CLI; requests past capacity **queue** and an in-flight one can be
@@ -451,8 +452,6 @@ to end.
 
 **Out of scope (later).** Standalone distributed A2A services (M8 ships the HRW routing primitive
 only); multi-tenant scheduling / fairness; auth (M11).
-
----
 
 ## M9 — Primitive file-system + shell tools
 
@@ -484,8 +483,6 @@ validated by Turnstone (files + ripgrep + bash, no document DB).
 **Out of scope (later).** Container / namespace isolation of `bash` (it's cwd-confined + judge-governed
 for now); any document DB / FTS / semantic doc search (the paused Document milestone).
 
----
-
 ## M10 — CI/CD release automation
 
 **Goal.** Cut **versioned releases** automatically: publish the `quack` **CLI binaries** to GitHub
@@ -510,8 +507,6 @@ image** and a **GitHub Release** with downloadable **CLI binaries**, both stampe
 
 **Out of scope (later).** Production deploy behind the gateway (M11); release signing / SBOM /
 provenance attestation; Homebrew tap / apt distribution.
-
----
 
 ## M11 — Auth + deploy
 
@@ -542,8 +537,6 @@ rejected; the spec is live in the gateway docs.
 installation token (the paused Code-review milestone); broader researcher build-out (more agents /
 tools, RAG / `rag-researcher`).
 
----
-
 ## M12 — Adaptive / content-dependent re-planning
 
 **Goal.** Let the orchestrator **re-plan the DAG as results arrive**, so it can act on content it could
@@ -563,8 +556,6 @@ not know up front — transcribe an audio clip, *then* plan the work the transcr
 orchestrator **plans + runs** the requested work, with no second turn needed.
 
 **Out of scope (later).** Anything not about re-planning.
-
----
 
 ## M13 — Observability (OTel → Prometheus + Grafana)
 
