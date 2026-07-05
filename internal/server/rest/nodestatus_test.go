@@ -239,7 +239,7 @@ func TestUpdateResponseStatus_CancelsActiveRun(t *testing.T) {
 	cancelled := false
 	h.activeCancels.Store(chatID, &activeRun{responseID: responseID, cancel: func() { cancelled = true }})
 
-	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.ResponseStatusCancelled})
+	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status", strings.NewReader(string(b)))
 	rec := httptest.NewRecorder()
 	h.UpdateResponseStatus(rec, req, chatID, responseID)
@@ -258,7 +258,7 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 	cancelled := false
 	h.activeCancels.Store(chatID, &activeRun{responseID: "the-real-one", cancel: func() { cancelled = true }})
 
-	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.ResponseStatusCancelled})
+	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/chats/"+chatID+"/responses/stale/status", strings.NewReader(string(b)))
 	rec := httptest.NewRecorder()
 	h.UpdateResponseStatus(rec, req, chatID, "stale")
@@ -273,7 +273,7 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 
 func TestUpdateResponseStatus_NoActiveRun404(t *testing.T) {
 	h := newTestHandler(t)
-	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.ResponseStatusCancelled})
+	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/chats/c1/responses/r1/status", strings.NewReader(string(b)))
 	rec := httptest.NewRecorder()
 	h.UpdateResponseStatus(rec, req, "c1", "r1")
@@ -324,7 +324,7 @@ func TestSendChatMessage_ResponseCreatedFirst(t *testing.T) {
 
 	// The run has already returned (SendChatMessage is synchronous in this
 	// test), so activeCancels was cleared — cancelling by that id now 404s.
-	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.ResponseStatusCancelled})
+	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 	req2 := httptest.NewRequest(http.MethodPut, "/api/v1/chats/"+chatID+"/responses/"+d.ResponseID+"/status", strings.NewReader(string(b)))
 	rec2 := httptest.NewRecorder()
 	h.UpdateResponseStatus(rec2, req2, chatID, d.ResponseID)

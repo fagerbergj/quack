@@ -70,7 +70,7 @@ func (c *Client) DeleteChat(ctx context.Context, id string) error {
 // response is the active run; a stale/finished id 404s.
 func (c *Client) CancelRun(ctx context.Context, chatID, responseID string) error {
 	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status",
-		schema.ResponseStatusUpdateBody{Status: schema.ResponseStatusCancelled})
+		schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 }
 
 // CancelNode stops one running node of a chat's active run; the rest of the DAG

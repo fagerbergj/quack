@@ -37,7 +37,7 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 	if !follow {
 		return 0
 	}
-	if detail.Status != schema.Running {
+	if detail.Status != schema.ChatStatusRunning {
 		fmt.Fprintln(out, "(nothing running)")
 		return 0
 	}
@@ -91,7 +91,7 @@ func printNodeTable(out io.Writer, d schema.DagOutputItem) {
 	for _, n := range d.Nodes {
 		st := d.NodeStates[n.Id]
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			n.Id, n.Agent, orDash(st.Status), derefStr(st.Model), formatTokens(st.TotalTokens),
+			n.Id, n.Agent, orDash(string(st.Status)), derefStr(st.Model), formatTokens(st.TotalTokens),
 			formatDurationMs(st.ServerDurationMs), formatScore(st.JudgeFinalScore))
 	}
 	_ = tw.Flush()

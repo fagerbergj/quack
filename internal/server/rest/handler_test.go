@@ -2,7 +2,6 @@ package rest
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"google.golang.org/adk/v2/session"
@@ -15,19 +14,6 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// newTestHandler builds a Handler backed by a real (sqlite) store and a minimal
-// orchestrator whose only exercised method is PriorEvents — planner/executor/
-// model stay nil since chatStatus never calls them.
-func newTestHandler(t *testing.T) *Handler {
-	t.Helper()
-	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
-	orch := orchestrator.New(st.Sessions, nil, "", nil, nil, nil, nil)
-	return NewHandler(st, orch, nil)
-}
-
 // TestChatStatusIdle: a fresh chat with no turns, no session activity, and no
 // live run is idle.
 func TestChatStatusIdle(t *testing.T) {
@@ -38,7 +24,7 @@ func TestChatStatusIdle(t *testing.T) {
 		t.Fatalf("CreateChat: %v", err)
 	}
 	got := h.toSummary(ctx, *c)
-	if got.Status != schema.Idle {
+	if got.Status != schema.ChatStatusIdle {
 		t.Errorf("status = %q, want idle", got.Status)
 	}
 	if got.PendingQuestion != nil {
@@ -58,7 +44,7 @@ func TestChatStatusRunning(t *testing.T) {
 	h.hub.Publish(c.ID, 1, stream.SSEEvent{Name: "node_start"})
 
 	got := h.toSummary(ctx, *c)
-	if got.Status != schema.Running {
+	if got.Status != schema.ChatStatusRunning {
 		t.Errorf("status = %q, want running", got.Status)
 	}
 }
@@ -100,7 +86,7 @@ func TestChatStatusNeedsInput(t *testing.T) {
 	}
 
 	got := h.toSummary(ctx, *c)
-	if got.Status != schema.NeedsInput {
+	if got.Status != schema.ChatStatusNeedsInput {
 		t.Fatalf("status = %q, want needs_input", got.Status)
 	}
 	if got.PendingQuestion == nil || *got.PendingQuestion != "which Springfield?" {
@@ -128,7 +114,7 @@ func TestChatStatusFailed(t *testing.T) {
 	}
 
 	got := h.toSummary(ctx, *c)
-	if got.Status != schema.Failed {
+	if got.Status != schema.ChatStatusFailed {
 		t.Errorf("status = %q, want failed", got.Status)
 	}
 }

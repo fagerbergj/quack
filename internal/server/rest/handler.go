@@ -353,7 +353,7 @@ func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, c
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if body.Status != schema.ResponseStatusCancelled {
+	if body.Status != schema.Cancelled {
 		http.Error(w, "unsupported target status", http.StatusBadRequest)
 		return
 	}
@@ -803,19 +803,19 @@ func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummar
 //   - idle — none of the above.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
 	if h.hub.Active(chatID) {
-		return schema.Running, nil
+		return schema.ChatStatusRunning, nil
 	}
 	if pq, ok := orchestrator.LatestPendingQuestion(h.orch.PriorEvents(ctx, userID, chatID)); ok {
 		q := pq.Message
-		return schema.NeedsInput, &q
+		return schema.ChatStatusNeedsInput, &q
 	}
 	if n := len(turns); n > 0 {
 		last := turns[n-1]
 		if strings.TrimSpace(last.AsstText) == "" && hasFailedNode(last.Nodes) {
-			return schema.Failed, nil
+			return schema.ChatStatusFailed, nil
 		}
 	}
-	return schema.Idle, nil
+	return schema.ChatStatusIdle, nil
 }
 
 // hasFailedNode reports whether any node in a turn's DAG failed.

@@ -79,7 +79,7 @@ func TestRunChatShowJSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &detail); err != nil {
 		t.Fatalf("--json output not valid JSON: %v\n%s", err, out.String())
 	}
-	if detail.Id != "c1" || detail.Status != schema.NeedsInput {
+	if detail.Id != "c1" || detail.Status != schema.ChatStatusNeedsInput {
 		t.Errorf("decoded detail = %+v, want id c1 status needs_input", detail)
 	}
 }

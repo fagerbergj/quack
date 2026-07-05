@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/schema"
 )
 
 // TestSubscribe drives the resume transport: a GET to the chat's stream endpoint
