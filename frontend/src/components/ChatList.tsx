@@ -31,7 +31,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   return (
     <div className={`
       fixed md:static inset-y-0 left-0 z-40
-      w-[250px] flex-shrink-0 flex flex-col
+      h-screen w-[250px] flex-shrink-0 flex flex-col
       border-r border-gray-200 dark:border-gray-700
       bg-white dark:bg-gray-800
       transition-transform duration-200

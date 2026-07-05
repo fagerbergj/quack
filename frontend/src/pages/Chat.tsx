@@ -223,7 +223,10 @@ export default function Chat() {
   const liveIsChoiceAnswer = lastTurn ? pendingChoice(activityFromTurn(lastTurn)) != null : false
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
+    // overflow-hidden: the app owns ALL scrolling internally (messages pane,
+    // sidebar list); without it any over-tall child stretches the document and
+    // the page itself scrolls into blank space below the composer.
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
       {chatListOpen && (
         <div
           className="md:hidden fixed inset-0 z-30 bg-black/50"

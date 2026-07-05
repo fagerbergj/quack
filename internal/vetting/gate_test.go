@@ -247,3 +247,50 @@ func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
 		t.Errorf("0–1 verdict was altered: %+v", v)
 	}
 }
+
+// TestFoldDeterministic_RequireRetrievalHardFail: a retrieval agent that did
+// ZERO web_search/web_fetch cannot pass the gate — regression for the live e2e
+// 2026-07-05 hole where a worker wrote a question to the user as its answer
+// text (no tool calls at all), citationScore abstained (nothing to grade), and
+// the judge waved the "answer" through. Weakest-link must be 0, and the
+// feedback must point at BOTH ways out (retrieve, or ask_user).
+func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+	got := foldDeterministic(v, "Which city are you moving to?", workerActivity{}, Config{RequireRetrieval: true})
+	if got.Score != 0 {
+		t.Fatalf("score = %v, want 0 (weakest-link on grounded_in_retrieval)", got.Score)
+	}
+	c, ok := got.Criteria["grounded_in_retrieval"]
+	if !ok || c.Score != 0 {
+		t.Fatalf("grounded_in_retrieval criterion missing or nonzero: %+v", got.Criteria)
+	}
+	if !strings.Contains(c.Reason, "ask_user") {
+		t.Errorf("feedback should name ask_user as the way out when blocked on the user; got %q", c.Reason)
+	}
+}
+
+// TestFoldDeterministic_NoRetrievalOKForSynthesizer: a tool-less agent
+// (RequireRetrieval=false) with no activity is NOT penalized — it legitimately
+// re-cites upstream URLs (the pre-existing citationScore abstention stands).
+func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+	got := foldDeterministic(v, "Combined findings: [x](https://ex.com/a).", workerActivity{}, Config{})
+	if _, present := got.Criteria["grounded_in_retrieval"]; present {
+		t.Fatal("grounded_in_retrieval applied to a non-retrieval agent")
+	}
+	if got.Score != 0.9 {
+		t.Errorf("score = %v, want 0.9 (untouched)", got.Score)
+	}
+}
+
+// TestFoldDeterministic_RetrievalPresentNotPenalized: any recorded retrieval
+// (even just search results seen) satisfies the grounding check; citation
+// backing is then graded by citationScore as before.
+func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
+	act := workerActivity{seen: map[string]string{"https://ex.com/a": "snippet"}}
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+	got := foldDeterministic(v, "Answer citing [x](https://ex.com/a).", act, Config{RequireRetrieval: true})
+	if _, present := got.Criteria["grounded_in_retrieval"]; present {
+		t.Fatal("grounded_in_retrieval penalty applied despite recorded retrieval")
+	}
+}
