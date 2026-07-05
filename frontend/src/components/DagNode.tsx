@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
-import type { AgentRun } from './messageParts'
+import { agentLabel, type AgentRun } from './messageParts'
 import { CANCELLED_ERROR, type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
@@ -54,10 +54,14 @@ function RunTimer({ run }: { run: AgentRun }) {
     : null
 }
 
-function agentLabel(name: string): string {
-  if (name === 'web-researcher') return 'Web researcher'
-  if (name === 'synthesizer') return 'Synthesizer'
-  return name
+// RunModel shows the model that produced a run, once known (set on agent_complete).
+function RunModel({ run }: { run: AgentRun }) {
+  if (!run.model) return null
+  return (
+    <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[100px]" title={run.model}>
+      {run.model}
+    </span>
+  )
 }
 
 // ── per-run stage cards ──────────────────────────────────────────────────────
@@ -72,8 +76,9 @@ function ResearchCard({ run, running }: { run: AgentRun; running: boolean }) {
   }
   return (
     <details open={running} className="not-prose">
-      <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-        {running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
+      <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+        <span>{running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}</span>
+        <RunModel run={run} />
       </summary>
       <div className="px-4 pb-3">
         <ActivityList activity={run.activity} />
@@ -111,6 +116,7 @@ function AdvisorCard({ run, running }: { run: AgentRun; running: boolean }) {
             Advisor
           </span>
           {running && <Spinner />}
+          <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
@@ -146,6 +152,7 @@ function JudgeCard({ run, running }: { run: AgentRun; running: boolean }) {
               {run.passed ? '✓' : '✗'} {(run.score * 100).toFixed(0)}%
             </span>
           )}
+          <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
@@ -169,6 +176,7 @@ function RevisionCard({ run, running }: { run: AgentRun; running: boolean }) {
             ↺ Revised · round {run.round}
           </span>
           {running && <Spinner />}
+          <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
@@ -282,40 +290,6 @@ function RetryControl({ nodeId, onRetry }: {
   )
 }
 
-// NodeAskPrompt renders a paused node's question (mid-node HITL) with an inline
-// answer box. The answer is sent as the next chat message — the backend routes it
-// to the paused node (see orchestrator resumeNodeRun).
-function NodeAskPrompt({ question, onAnswer }: {
-  question: string
-  onAnswer: (answer: string) => void
-}) {
-  const [text, setText] = useState('')
-  const send = () => {
-    const t = text.trim()
-    if (!t) return
-    onAnswer(t)
-    setText('')
-  }
-  return (
-    <div className="px-4 py-2 border-b border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/15">
-      <div className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1.5">
-        This agent needs your input: <span className="font-normal">{question}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <input
-          autoFocus
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send() } }}
-          placeholder="Type your answer…"
-          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-400"
-        />
-        <button onClick={send} className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline">answer</button>
-      </div>
-    </div>
-  )
-}
-
 // ── DagNode ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -327,11 +301,9 @@ interface Props {
   onStop?: (nodeId: string) => void
   onSteer?: (nodeId: string, guidance: string) => void
   onRetry?: (nodeId: string, guidance?: string) => void
-  // Answer a paused node's question (mid-node HITL); present on a live turn.
-  onAnswer?: (nodeId: string, answer: string) => void
 }
 
-export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry, onAnswer }: Props) {
+export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry }: Props) {
   const running = state.status === 'running'
   const controllable = running || state.status === 'queued'
   const finished = state.status === 'done' || state.status === 'failed'
@@ -381,12 +353,9 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
               ⚠ unvetted
             </span>
           )}
-          {(state.totalTokens != null && state.totalTokens > 0)
-            ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{state.totalTokens.toLocaleString()} tok</span>
-            : state.outputChars != null && state.outputChars > 0
-              ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">~{Math.round(state.outputChars / 4).toLocaleString()} tok</span>
-              : null
-          }
+          {state.totalTokens != null && state.totalTokens > 0 && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{state.totalTokens.toLocaleString()} tok</span>
+          )}
           {/* A finished node shows the server-measured duration (reconnect-proof);
               a running one ticks live from the server start time. */}
           {(state.finishedAt != null && state.serverDurationMs != null) ? (
@@ -412,11 +381,6 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
       {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
       {finished && onRetry && (
         <RetryControl nodeId={node.id} onRetry={onRetry} />
-      )}
-
-      {/* Mid-node HITL: the node paused to ask the user a question */}
-      {state.status === 'needs_input' && state.question && onAnswer && (
-        <NodeAskPrompt question={state.question} onAnswer={a => onAnswer(node.id, a)} />
       )}
 
       {/* Per-run stage cards */}

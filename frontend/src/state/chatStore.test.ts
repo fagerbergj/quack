@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { activityFromTurn, isTurnInProgress, ChatStore } from './chatStore'
+import {
+  activityFromTurn, isTurnInProgress, ChatStore,
+  terminalNodeId, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, pendingNodeQuestion,
+  type DagTurnState,
+} from './chatStore'
 import { pendingChoice } from '../components/messageParts'
 import type { Turn } from '../generated'
 
@@ -261,6 +265,74 @@ describe('ChatStore — mid-node steering', () => {
     const dag = store.get('c').live?.dag
     expect(dag?.startedAt).toBe(1000)
     expect(dag?.nodeStates['a'].startedAt).toBe(2000)
+  })
+})
+
+// dag builds a minimal DagTurnState: two nodes, b depends on a (a is not
+// terminal, b is), so answer attribution + total tokens have a real "which node
+// is terminal" question to answer.
+function dag(nodeStates: DagTurnState['nodeStates']): DagTurnState {
+  return {
+    planId: 'p',
+    nodes: [
+      { id: 'a', agent: 'web-researcher', task: 't', depends_on: [] },
+      { id: 'b', agent: 'synthesizer', task: 't', depends_on: ['a'] },
+    ],
+    edges: [{ from: 'a', to: 'b' }],
+    nodeStates,
+    nodeRuns: {},
+    nodeAnswer: {},
+  }
+}
+
+describe('answer-bubble attribution helpers', () => {
+  it('terminalNodeId finds the node with no successor', () => {
+    expect(terminalNodeId(dag({}).nodes)).toBe('b')
+  })
+
+  it('terminalNodeId returns undefined for an empty DAG', () => {
+    expect(terminalNodeId([])).toBeUndefined()
+  })
+
+  it('dagTotalTokens sums total_tokens across every node', () => {
+    const d = dag({ a: { status: 'done', totalTokens: 100 }, b: { status: 'done', totalTokens: 50 } })
+    expect(dagTotalTokens(d)).toBe(150)
+  })
+
+  it('dagTotalTokens is 0 when no node reports usage', () => {
+    expect(dagTotalTokens(dag({}))).toBe(0)
+  })
+
+  it("dagAnswerAttribution credits the terminal node's agent + its own model/tokens", () => {
+    const d = dag({
+      a: { status: 'done', model: 'qwen3-30b-a3b', totalTokens: 999 },
+      b: { status: 'done', model: 'gpt-oss-120b', totalTokens: 500 },
+    })
+    expect(dagAnswerAttribution(d)).toEqual({ agent: 'synthesizer', model: 'gpt-oss-120b', tokens: 500 })
+  })
+
+  it('dagAnswerAttribution omits model/tokens when the terminal node has none yet', () => {
+    const d = dag({ b: { status: 'running' } })
+    expect(dagAnswerAttribution(d)).toEqual({ agent: 'synthesizer', model: undefined, tokens: undefined })
+  })
+
+  it('turnUsageTotal sums input+output tokens from a persisted Turn', () => {
+    const turn: Turn = { id: 't', created_at: '', input: { role: 'user', content: 'hi' }, output: [], usage: { input_tokens: 40, output_tokens: 17 } }
+    expect(turnUsageTotal(turn)).toBe(57)
+  })
+
+  it('turnUsageTotal is undefined when the turn carries no usage (e.g. a DAG-only turn)', () => {
+    const turn: Turn = { id: 't', created_at: '', input: { role: 'user', content: 'hi' }, output: [] }
+    expect(turnUsageTotal(turn)).toBeUndefined()
+  })
+
+  it('pendingNodeQuestion finds a paused node awaiting an answer, credited to its own agent', () => {
+    const d = dag({ a: { status: 'done' }, b: { status: 'needs_input', question: 'Which time zone?' } })
+    expect(pendingNodeQuestion(d)).toEqual({ nodeId: 'b', agent: 'synthesizer', question: 'Which time zone?' })
+  })
+
+  it('pendingNodeQuestion is undefined when no node is waiting', () => {
+    expect(pendingNodeQuestion(dag({ a: { status: 'done' }, b: { status: 'running' } }))).toBeUndefined()
   })
 })
 
