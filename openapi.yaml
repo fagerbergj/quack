@@ -106,10 +106,14 @@ paths:
         DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
         output item has been added; `node_queued` ({"node_id"}), `node_start`
         ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
-        and `node_failed` ({"node_id","error"}) track node lifecycle.
+        `node_failed` ({"node_id","error"}), and `node_cancelled` ({"node_id"})
+        track node lifecycle.
 
-        Lifecycle: `chat_title` ({"title"}) is sent once the title is generated;
-        `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
+        Lifecycle: `response_created` ({"response_id"}) is the very first event
+        of the stream, naming the turn so a client can cancel this run via
+        `PUT /chats/{chat_id}/responses/{response_id}/status`; `chat_title`
+        ({"title"}) is sent once the title is generated; `done` ({}) terminates
+        the stream; `error` ({"error"}) signals failure.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       requestBody:
@@ -119,6 +123,7 @@ paths:
             schema:
               $ref: "#/components/schemas/SendMessageBody"
       x-sse-events:
+        - response_created
         - agent_start
         - agent_thinking
         - agent_tool_call
@@ -130,6 +135,8 @@ paths:
         - node_start
         - node_done
         - node_failed
+        - node_cancelled
+        - node_needs_input
         - node_steered
         - chat_title
         - done
@@ -176,6 +183,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ChatID"
       x-sse-events:
+        - response_created
         - agent_start
         - agent_thinking
         - agent_tool_call
@@ -187,6 +195,8 @@ paths:
         - node_start
         - node_done
         - node_failed
+        - node_cancelled
+        - node_needs_input
         - node_steered
         - chat_title
         - done
@@ -198,44 +208,30 @@ paths:
             text/event-stream:
               schema:
                 type: string
-    delete:
-      operationId: cancelChatStream
-      summary: Cancel an in-progress stream
-      description: |
-        Cancels the active orchestrator run for this chat. No-op if no run is
-        in progress. The SSE client should also abort its connection.
-      parameters:
-        - $ref: "#/components/parameters/ChatID"
-      responses:
-        "204":
-          description: Cancelled (or no active run)
 
-  /api/v1/chats/{chat_id}/nodes/{node_id}:
-    delete:
-      operationId: cancelNode
-      summary: Cancel a single running node of the chat's active run
+  /api/v1/chats/{chat_id}/nodes/{node_id}/status:
+    put:
+      operationId: updateNodeStatus
+      summary: Transition a DAG node's status (cancel, retry, or steer)
       description: |
-        Stops one node of the chat's in-flight run. The rest of the DAG keeps
-        running (continue-but-warn: dependents are told the node's output is
-        missing). No-op if no such node is active.
-      parameters:
-        - $ref: "#/components/parameters/ChatID"
-        - $ref: "#/components/parameters/NodeID"
-      responses:
-        "204":
-          description: Cancelled (or no such active node)
+        A single resource-oriented endpoint replacing the old cancel/steer/retry
+        RPC verbs — the request body names the TARGET status:
 
-  /api/v1/chats/{chat_id}/nodes/{node_id}/steer:
-    post:
-      operationId: steerNode
-      summary: Interrupt a running node and re-run it with new guidance
-      description: |
-        Interrupts one running node of the chat's in-flight run and re-runs it
-        against its SAME session — so the node's prior tool calls and results are
-        retained and the worker revises on top of them with the supplied guidance.
-        Dependents are untouched (they keep waiting for the re-run to finish).
-        No-op if no such node is active. Emits a node_steered event, then the
-        node's normal node_start → … → node_done sequence again.
+        - `{"status":"cancelled"}` — cancel the node (legal from `queued`,
+          `running`, or `needs_input`). No-op (200, unchanged state) if the node
+          isn't currently live.
+        - `{"status":"running","guidance":"..."}` — steer: interrupt a RUNNING
+          node and re-run it against its SAME session (prior tool calls/results
+          retained) with the supplied guidance. Only legal from `running`;
+          `guidance` is required (400 without it).
+        - `{"status":"queued","guidance":"..."}` — retry: re-run a finished node
+          (and every node downstream of it) reusing the stored outputs of all
+          other nodes. Only legal from `done`, `failed`, or `cancelled`.
+          `guidance` is optional and folded into the node's task.
+
+        An illegal transition (e.g. `done` → `running`) returns 409 naming the
+        allowed target statuses. The re-run (steer/retry) streams over the
+        chat's existing SSE connection — this endpoint does not open a new one.
       parameters:
         - $ref: "#/components/parameters/ChatID"
         - $ref: "#/components/parameters/NodeID"
@@ -244,45 +240,51 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SteerNodeBody"
+              $ref: "#/components/schemas/NodeStatusUpdateBody"
       responses:
-        "204":
-          description: Accepted (or no such active node)
+        "200":
+          description: The updated node state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DagNodeState"
+        "400":
+          description: Bad request (e.g. steer without guidance)
+        "404":
+          description: No such node
+        "409":
+          description: Illegal transition; body names the allowed target statuses
+            for the node's current status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransitionError"
 
-  /api/v1/chats/{chat_id}/nodes/{node_id}/retry:
-    post:
-      operationId: retryNode
-      summary: Re-run a finished node and its descendants
+  /api/v1/chats/{chat_id}/responses/{response_id}/status:
+    put:
+      operationId: updateResponseStatus
+      summary: Cancel the chat's active run by response id
       description: |
-        Re-runs a FAILED or DONE node and every node downstream of it, reusing the
-        stored outputs of all other nodes, and streams the re-execution as
-        Server-Sent Events (the same event vocabulary as sendChatMessage). Optional
-        guidance is folded into the node's task (retry-with-guidance is steer, on a
-        finished node). The new terminal answer replaces the turn's answer.
+        `{"status":"cancelled"}` cancels the active orchestrator run for this
+        chat — only legal when response_id names the CURRENTLY active run (the
+        id surfaced in the stream's opening `response_created` event). 404 if
+        this response isn't the active run (already finished, or never was).
       parameters:
         - $ref: "#/components/parameters/ChatID"
-        - $ref: "#/components/parameters/NodeID"
+        - $ref: "#/components/parameters/ResponseID"
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RetryNodeBody"
-      x-sse-events:
-        - node_start
-        - node_done
-        - node_failed
-        - agent_start
-        - agent_complete
-        - done
-        - error
+              $ref: "#/components/schemas/ResponseStatusUpdateBody"
       responses:
-        "200":
-          description: SSE event stream
-          content:
-            text/event-stream:
-              schema:
-                type: string
+        "204":
+          description: Cancelled
+        "400":
+          description: Bad request (unsupported target status)
+        "404":
+          description: This response is not the active run
 
 components:
   parameters:
@@ -363,22 +365,57 @@ components:
         content:
           type: string
 
-    SteerNodeBody:
-      type: object
-      required: [guidance]
-      properties:
-        guidance:
-          type: string
-          description: New guidance to redirect the node; the worker revises on top
-            of its existing session (prior tool calls and results retained).
+    NodeStatus:
+      type: string
+      description: |
+        A DAG node's canonical lifecycle state. Legal transitions (enforced
+        server-side by internal/dag.CanTransition):
+          queued      → running, cancelled, failed (stale-on-restart)
+          running     → running (steer, in place), needs_input, done, failed, cancelled
+          needs_input → running (resumed), cancelled
+          done        → queued (retry)
+          failed      → queued (retry)
+          cancelled   → queued (retry)
+      enum: [queued, running, needs_input, done, failed, cancelled]
 
-    RetryNodeBody:
+    NodeStatusUpdateBody:
       type: object
+      required: [status]
       properties:
+        status:
+          $ref: "#/components/schemas/NodeStatus"
         guidance:
           type: string
-          description: Optional guidance folded into the node's task for the re-run
-            (retry-with-guidance is steer, on a finished node).
+          description: Required when status is "running" (steer); optional and
+            folded into the node's task when status is "queued" (retry).
+            Unused for "cancelled".
+
+    ResponseStatus:
+      type: string
+      description: The only supported target status for a response — cancelling
+        the active run. (A separate enum from NodeStatus, which has states with
+        no meaning at the response/run level.)
+      enum: [cancelled]
+
+    ResponseStatusUpdateBody:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/ResponseStatus"
+
+    TransitionError:
+      type: object
+      required: [error, current, allowed]
+      properties:
+        error:
+          type: string
+        current:
+          $ref: "#/components/schemas/NodeStatus"
+        allowed:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeStatus"
 
     # -------------------------------------------------------------------------
     # Turn (one user→assistant exchange, modelled after OpenResponses Response)
@@ -583,8 +620,7 @@ components:
       required: [status]
       properties:
         status:
-          type: string
-          description: queued | running | done | failed
+          $ref: "#/components/schemas/NodeStatus"
         output_preview:
           type: string
         error:

@@ -28,18 +28,40 @@ export type SendMessageBody = {
     content: string;
 };
 
-export type SteerNodeBody = {
-    /**
-     * New guidance to redirect the node; the worker revises on top of its existing session (prior tool calls and results retained).
-     */
-    guidance: string;
-};
+/**
+ * A DAG node's canonical lifecycle state. Legal transitions (enforced
+ * server-side by internal/dag.CanTransition):
+ * queued      → running, cancelled, failed (stale-on-restart)
+ * running     → running (steer, in place), needs_input, done, failed, cancelled
+ * needs_input → running (resumed), cancelled
+ * done        → queued (retry)
+ * failed      → queued (retry)
+ * cancelled   → queued (retry)
+ *
+ */
+export type NodeStatus = 'queued' | 'running' | 'needs_input' | 'done' | 'failed' | 'cancelled';
 
-export type RetryNodeBody = {
+export type NodeStatusUpdateBody = {
+    status: NodeStatus;
     /**
-     * Optional guidance folded into the node's task for the re-run (retry-with-guidance is steer, on a finished node).
+     * Required when status is "running" (steer); optional and folded into the node's task when status is "queued" (retry). Unused for "cancelled".
      */
     guidance?: string;
+};
+
+/**
+ * The only supported target status for a response — cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
+ */
+export type ResponseStatus = 'cancelled';
+
+export type ResponseStatusUpdateBody = {
+    status: ResponseStatus;
+};
+
+export type TransitionError = {
+    error: string;
+    current: NodeStatus;
+    allowed: Array<NodeStatus>;
 };
 
 export type Turn = {
@@ -136,10 +158,7 @@ export type DagEdge = {
 };
 
 export type DagNodeState = {
-    /**
-     * queued | running | done | failed
-     */
-    status: string;
+    status: NodeStatus;
     output_preview?: string;
     error?: string;
     started_at_ms?: number;
@@ -297,24 +316,6 @@ export type GetResponseResponses = {
 
 export type GetResponseResponse = GetResponseResponses[keyof GetResponseResponses];
 
-export type CancelChatStreamData = {
-    body?: never;
-    path: {
-        chat_id: string;
-    };
-    query?: never;
-    url: '/api/v1/chats/{chat_id}/stream';
-};
-
-export type CancelChatStreamResponses = {
-    /**
-     * Cancelled (or no active run)
-     */
-    204: void;
-};
-
-export type CancelChatStreamResponse = CancelChatStreamResponses[keyof CancelChatStreamResponses];
-
 export type SubscribeChatStreamData = {
     body?: never;
     path: {
@@ -333,59 +334,68 @@ export type SubscribeChatStreamResponses = {
 
 export type SubscribeChatStreamResponse = SubscribeChatStreamResponses[keyof SubscribeChatStreamResponses];
 
-export type CancelNodeData = {
-    body?: never;
+export type UpdateNodeStatusData = {
+    body: NodeStatusUpdateBody;
     path: {
         chat_id: string;
         node_id: string;
     };
     query?: never;
-    url: '/api/v1/chats/{chat_id}/nodes/{node_id}';
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/status';
 };
 
-export type CancelNodeResponses = {
+export type UpdateNodeStatusErrors = {
     /**
-     * Cancelled (or no such active node)
+     * Bad request (e.g. steer without guidance)
+     */
+    400: unknown;
+    /**
+     * No such node
+     */
+    404: unknown;
+    /**
+     * Illegal transition; body names the allowed target statuses for the node's current status
+     */
+    409: TransitionError;
+};
+
+export type UpdateNodeStatusError = UpdateNodeStatusErrors[keyof UpdateNodeStatusErrors];
+
+export type UpdateNodeStatusResponses = {
+    /**
+     * The updated node state
+     */
+    200: DagNodeState;
+};
+
+export type UpdateNodeStatusResponse = UpdateNodeStatusResponses[keyof UpdateNodeStatusResponses];
+
+export type UpdateResponseStatusData = {
+    body: ResponseStatusUpdateBody;
+    path: {
+        chat_id: string;
+        response_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/responses/{response_id}/status';
+};
+
+export type UpdateResponseStatusErrors = {
+    /**
+     * Bad request (unsupported target status)
+     */
+    400: unknown;
+    /**
+     * This response is not the active run
+     */
+    404: unknown;
+};
+
+export type UpdateResponseStatusResponses = {
+    /**
+     * Cancelled
      */
     204: void;
 };
 
-export type CancelNodeResponse = CancelNodeResponses[keyof CancelNodeResponses];
-
-export type SteerNodeData = {
-    body: SteerNodeBody;
-    path: {
-        chat_id: string;
-        node_id: string;
-    };
-    query?: never;
-    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/steer';
-};
-
-export type SteerNodeResponses = {
-    /**
-     * Accepted (or no such active node)
-     */
-    204: void;
-};
-
-export type SteerNodeResponse = SteerNodeResponses[keyof SteerNodeResponses];
-
-export type RetryNodeData = {
-    body?: RetryNodeBody;
-    path: {
-        chat_id: string;
-        node_id: string;
-    };
-    query?: never;
-    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/retry';
-};
-
-export type RetryNodeResponses = {
-    /**
-     * SSE event stream
-     */
-    200: string;
-};
-
-export type RetryNodeResponse = RetryNodeResponses[keyof RetryNodeResponses];
+export type UpdateResponseStatusResponse = UpdateResponseStatusResponses[keyof UpdateResponseStatusResponses];

@@ -80,6 +80,36 @@ func (e MessageOutputItemType) Valid() bool {
 	}
 }
 
+// Defines values for NodeStatus.
+const (
+	NodeStatusCancelled  NodeStatus = "cancelled"
+	NodeStatusDone       NodeStatus = "done"
+	NodeStatusFailed     NodeStatus = "failed"
+	NodeStatusNeedsInput NodeStatus = "needs_input"
+	NodeStatusQueued     NodeStatus = "queued"
+	NodeStatusRunning    NodeStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the NodeStatus enum.
+func (e NodeStatus) Valid() bool {
+	switch e {
+	case NodeStatusCancelled:
+		return true
+	case NodeStatusDone:
+		return true
+	case NodeStatusFailed:
+		return true
+	case NodeStatusNeedsInput:
+		return true
+	case NodeStatusQueued:
+		return true
+	case NodeStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OutputTextPartType.
 const (
 	OutputText OutputTextPartType = "output_text"
@@ -104,6 +134,21 @@ const (
 func (e ReasoningPartType) Valid() bool {
 	switch e {
 	case Reasoning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResponseStatus.
+const (
+	ResponseStatusCancelled ResponseStatus = "cancelled"
+)
+
+// Valid indicates whether the value is a known member of the ResponseStatus enum.
+func (e ResponseStatus) Valid() bool {
+	switch e {
+	case ResponseStatusCancelled:
 		return true
 	default:
 		return false
@@ -200,9 +245,16 @@ type DagNodeState struct {
 	ServerDurationMs *int     `json:"server_duration_ms,omitempty"`
 	StartedAtMs      *int     `json:"started_at_ms,omitempty"`
 
-	// Status queued | running | done | failed
-	Status      string `json:"status"`
-	TotalTokens *int   `json:"total_tokens,omitempty"`
+	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
+	// server-side by internal/dag.CanTransition):
+	//   queued      → running, cancelled, failed (stale-on-restart)
+	//   running     → running (steer, in place), needs_input, done, failed, cancelled
+	//   needs_input → running (resumed), cancelled
+	//   done        → queued (retry)
+	//   failed      → queued (retry)
+	//   cancelled   → queued (retry)
+	Status      NodeStatus `json:"status"`
+	TotalTokens *int       `json:"total_tokens,omitempty"`
 }
 
 // DagOutputItem defines model for DagOutputItem.
@@ -233,6 +285,33 @@ type MessageOutputItem struct {
 // MessageOutputItemType defines model for MessageOutputItem.Type.
 type MessageOutputItemType string
 
+// NodeStatus A DAG node's canonical lifecycle state. Legal transitions (enforced
+// server-side by internal/dag.CanTransition):
+//
+//	queued      → running, cancelled, failed (stale-on-restart)
+//	running     → running (steer, in place), needs_input, done, failed, cancelled
+//	needs_input → running (resumed), cancelled
+//	done        → queued (retry)
+//	failed      → queued (retry)
+//	cancelled   → queued (retry)
+type NodeStatus string
+
+// NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
+type NodeStatusUpdateBody struct {
+	// Guidance Required when status is "running" (steer); optional and folded into the node's task when status is "queued" (retry). Unused for "cancelled".
+	Guidance *string `json:"guidance,omitempty"`
+
+	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
+	// server-side by internal/dag.CanTransition):
+	//   queued      → running, cancelled, failed (stale-on-restart)
+	//   running     → running (steer, in place), needs_input, done, failed, cancelled
+	//   needs_input → running (resumed), cancelled
+	//   done        → queued (retry)
+	//   failed      → queued (retry)
+	//   cancelled   → queued (retry)
+	Status NodeStatus `json:"status"`
+}
+
 // OutputItem defines model for OutputItem.
 type OutputItem struct {
 	union json.RawMessage
@@ -256,21 +335,18 @@ type ReasoningPart struct {
 // ReasoningPartType defines model for ReasoningPart.Type.
 type ReasoningPartType string
 
-// RetryNodeBody defines model for RetryNodeBody.
-type RetryNodeBody struct {
-	// Guidance Optional guidance folded into the node's task for the re-run (retry-with-guidance is steer, on a finished node).
-	Guidance *string `json:"guidance,omitempty"`
+// ResponseStatus The only supported target status for a response — cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
+type ResponseStatus string
+
+// ResponseStatusUpdateBody defines model for ResponseStatusUpdateBody.
+type ResponseStatusUpdateBody struct {
+	// Status The only supported target status for a response — cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
+	Status ResponseStatus `json:"status"`
 }
 
 // SendMessageBody defines model for SendMessageBody.
 type SendMessageBody struct {
 	Content string `json:"content"`
-}
-
-// SteerNodeBody defines model for SteerNodeBody.
-type SteerNodeBody struct {
-	// Guidance New guidance to redirect the node; the worker revises on top of its existing session (prior tool calls and results retained).
-	Guidance string `json:"guidance"`
 }
 
 // ToolCallItem defines model for ToolCallItem.
@@ -279,6 +355,22 @@ type ToolCallItem struct {
 	CallId string                  `json:"call_id"`
 	Name   string                  `json:"name"`
 	Result *map[string]interface{} `json:"result,omitempty"`
+}
+
+// TransitionError defines model for TransitionError.
+type TransitionError struct {
+	Allowed []NodeStatus `json:"allowed"`
+
+	// Current A DAG node's canonical lifecycle state. Legal transitions (enforced
+	// server-side by internal/dag.CanTransition):
+	//   queued      → running, cancelled, failed (stale-on-restart)
+	//   running     → running (steer, in place), needs_input, done, failed, cancelled
+	//   needs_input → running (resumed), cancelled
+	//   done        → queued (retry)
+	//   failed      → queued (retry)
+	//   cancelled   → queued (retry)
+	Current NodeStatus `json:"current"`
+	Error   string     `json:"error"`
 }
 
 // Turn defines model for Turn.
@@ -317,14 +409,14 @@ type ResponseID = string
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
 
-// RetryNodeJSONRequestBody defines body for RetryNode for application/json ContentType.
-type RetryNodeJSONRequestBody = RetryNodeBody
-
-// SteerNodeJSONRequestBody defines body for SteerNode for application/json ContentType.
-type SteerNodeJSONRequestBody = SteerNodeBody
+// UpdateNodeStatusJSONRequestBody defines body for UpdateNodeStatus for application/json ContentType.
+type UpdateNodeStatusJSONRequestBody = NodeStatusUpdateBody
 
 // SendChatMessageJSONRequestBody defines body for SendChatMessage for application/json ContentType.
 type SendChatMessageJSONRequestBody = SendMessageBody
+
+// UpdateResponseStatusJSONRequestBody defines body for UpdateResponseStatus for application/json ContentType.
+type UpdateResponseStatusJSONRequestBody = ResponseStatusUpdateBody
 
 // AsOutputTextPart returns the union data inside the ContentPart as a OutputTextPart
 func (t ContentPart) AsOutputTextPart() (OutputTextPart, error) {
@@ -548,24 +640,18 @@ type ServerInterface interface {
 	// Get a chat with its turns
 	// (GET /api/v1/chats/{chat_id})
 	GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
-	// Cancel a single running node of the chat's active run
-	// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
-	CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
-	// Re-run a finished node and its descendants
-	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/retry)
-	RetryNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
-	// Interrupt a running node and re-run it with new guidance
-	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/steer)
-	SteerNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// Transition a DAG node's status (cancel, retry, or steer)
+	// (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
+	UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Send a message and stream the response
 	// (POST /api/v1/chats/{chat_id}/responses)
 	SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID)
 	// Get a specific response (turn) with its output items
 	// (GET /api/v1/chats/{chat_id}/responses/{response_id})
 	GetResponse(w http.ResponseWriter, r *http.Request, chatId ChatID, responseId ResponseID)
-	// Cancel an in-progress stream
-	// (DELETE /api/v1/chats/{chat_id}/stream)
-	CancelChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Cancel the chat's active run by response id
+	// (PUT /api/v1/chats/{chat_id}/responses/{response_id}/status)
+	UpdateResponseStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, responseId ResponseID)
 	// Subscribe to a chat's live response stream
 	// (GET /api/v1/chats/{chat_id}/stream)
 	SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
@@ -602,21 +688,9 @@ func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId Ch
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Cancel a single running node of the chat's active run
-// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id})
-func (_ Unimplemented) CancelNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Re-run a finished node and its descendants
-// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/retry)
-func (_ Unimplemented) RetryNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Interrupt a running node and re-run it with new guidance
-// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/steer)
-func (_ Unimplemented) SteerNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+// Transition a DAG node's status (cancel, retry, or steer)
+// (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
+func (_ Unimplemented) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -632,9 +706,9 @@ func (_ Unimplemented) GetResponse(w http.ResponseWriter, r *http.Request, chatI
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Cancel an in-progress stream
-// (DELETE /api/v1/chats/{chat_id}/stream)
-func (_ Unimplemented) CancelChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+// Cancel the chat's active run by response id
+// (PUT /api/v1/chats/{chat_id}/responses/{response_id}/status)
+func (_ Unimplemented) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, responseId ResponseID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -739,8 +813,8 @@ func (siw *ServerInterfaceWrapper) GetChat(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
-// CancelNode operation middleware
-func (siw *ServerInterfaceWrapper) CancelNode(w http.ResponseWriter, r *http.Request) {
+// UpdateNodeStatus operation middleware
+func (siw *ServerInterfaceWrapper) UpdateNodeStatus(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -764,77 +838,7 @@ func (siw *ServerInterfaceWrapper) CancelNode(w http.ResponseWriter, r *http.Req
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CancelNode(w, r, chatId, nodeId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RetryNode operation middleware
-func (siw *ServerInterfaceWrapper) RetryNode(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "chat_id" -------------
-	var chatId ChatID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "node_id" -------------
-	var nodeId NodeID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RetryNode(w, r, chatId, nodeId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SteerNode operation middleware
-func (siw *ServerInterfaceWrapper) SteerNode(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "chat_id" -------------
-	var chatId ChatID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "node_id" -------------
-	var nodeId NodeID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SteerNode(w, r, chatId, nodeId)
+		siw.Handler.UpdateNodeStatus(w, r, chatId, nodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -905,8 +909,8 @@ func (siw *ServerInterfaceWrapper) GetResponse(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// CancelChatStream operation middleware
-func (siw *ServerInterfaceWrapper) CancelChatStream(w http.ResponseWriter, r *http.Request) {
+// UpdateResponseStatus operation middleware
+func (siw *ServerInterfaceWrapper) UpdateResponseStatus(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -920,8 +924,17 @@ func (siw *ServerInterfaceWrapper) CancelChatStream(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// ------------- Path parameter "response_id" -------------
+	var responseId ResponseID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "response_id", chi.URLParam(r, "response_id"), &responseId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "response_id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CancelChatStream(w, r, chatId)
+		siw.Handler.UpdateResponseStatus(w, r, chatId, responseId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1097,13 +1110,7 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.GetChat)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.CancelNode)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/retry", wrapper.RetryNode)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/steer", wrapper.SteerNode)
+		r.Put(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/status", wrapper.UpdateNodeStatus)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/responses", wrapper.SendChatMessage)
@@ -1112,7 +1119,7 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/responses/{response_id}", wrapper.GetResponse)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.CancelChatStream)
+		r.Put(options.BaseURL+"/api/v1/chats/{chat_id}/responses/{response_id}/status", wrapper.UpdateResponseStatus)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.SubscribeChatStream)
