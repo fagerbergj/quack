@@ -286,7 +286,7 @@ export default function Chat() {
           </div>
         )}
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">
           {!activeChatId && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Select or start a chat
