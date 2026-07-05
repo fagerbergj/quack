@@ -104,10 +104,23 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	out := schema.ChatList{Data: make([]schema.ChatSummary, 0, len(chats))}
-	for _, c := range chats {
-		out.Data = append(out.Data, h.toSummary(r.Context(), c))
+	// Status computation reads each chat's session twice (turns + pending-question
+	// scan) — serial, a ~15-chat list took 3-4s live. Fan out, keep order.
+	// ponytail: still N+1 reads, just concurrent; the real fix is stamping the
+	// run outcome on the chat row at run END so list is one table read.
+	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for i, c := range chats {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			out.Data[i] = h.toSummary(r.Context(), c)
+		}()
 	}
+	wg.Wait()
 	writeJSON(w, http.StatusOK, out)
 }
 
