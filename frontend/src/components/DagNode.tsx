@@ -62,22 +62,34 @@ function RunModel({ run }: { run: AgentRun }) {
 
 // ResearchCard renders the worker stage (draft + finalize): its activity. The
 // node's vetted answer is rendered separately at the foot of the node (NodeAnswer),
-// so it sits below the judge rather than inside the worker card.
+// so it sits below the judge rather than inside the worker card. Like every other
+// stage card it carries its own labeled header — without one, its activity rows
+// visually attach to whatever labeled card rendered above it (a running advisor
+// card made the ADVISOR look like it was doing the web searches).
 function ResearchCard({ run, running }: { run: AgentRun; running: boolean }) {
   const empty = run.activity.length === 0
   if (empty) {
     return running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
   }
   return (
-    <details open={running} className="not-prose">
-      <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-        <span>{running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}</span>
-        <RunModel run={run} />
-      </summary>
-      <div className="px-4 pb-3">
-        <ActivityList activity={run.activity} />
-      </div>
-    </details>
+    <div className="border-t border-gray-100 dark:border-gray-700">
+      <details open={running} className="not-prose">
+        <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
+          <span className="text-[10px] font-semibold text-sky-600 dark:text-sky-400 uppercase tracking-wide">
+            Research
+          </span>
+          {running && <Spinner />}
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
+          </span>
+          <RunModel run={run} />
+          <RunTimer run={run} />
+        </summary>
+        <div className="px-4 pb-3">
+          <ActivityList activity={run.activity} />
+        </div>
+      </details>
+    </div>
   )
 }
 
