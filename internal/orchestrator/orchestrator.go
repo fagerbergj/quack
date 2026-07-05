@@ -241,6 +241,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
 			Toolsets:    toolsets,
+			// The orchestrator is a CONVERSATION, not a task node — but it runs
+			// wrapped in a workflow AgentNode, and AgentNode forces an unset mode
+			// to ModeSingleTurn (agent_node.go), which discards ALL session history
+			// from the request. That made every follow-up turn amnesiac: "I don't
+			// see a previously created plan in our conversation" one turn after
+			// delivering the plan. ModeChat keeps the full chat history.
+			Mode: llmagent.ModeChat,
 		})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: build agent: "+err.Error()), nil)

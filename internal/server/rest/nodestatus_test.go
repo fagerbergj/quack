@@ -48,6 +48,13 @@ func (stubModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool)
 // direct-answer turn (no plan/execute).
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
+	return newTestHandlerWithModel(t, stubModel{})
+}
+
+// newTestHandlerWithModel is newTestHandler with an injectable top-level model
+// (e.g. a request-capturing stub for conversation-memory tests).
+func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
+	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
@@ -55,7 +62,7 @@ func newTestHandler(t *testing.T) *Handler {
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil, nil,
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil)
-	orch := orchestrator.New(st.Sessions, stubModel{}, "You are a test duck.", planner, ex, nil, nil)
+	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil)
 	return NewHandler(st, orch, nil)
 }
 
