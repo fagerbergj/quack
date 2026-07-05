@@ -299,6 +299,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	}
 
 	var activePlanID string
+	// The model behind the orchestrator's own reply, captured from its top-level
+	// agent_complete (empty node_id). Stamped onto the turn row after the run —
+	// ADK's event storage drops ModelVersion, so history can't recover it later.
+	var orchModel string
 
 	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content, attachments) {
 		trySendTitle()
@@ -310,6 +314,11 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 				_ = sse.send(stream.Done())
 			}
 			return
+		}
+		if ev.Name == stream.EventAgentComplete {
+			if d, ok := ev.Data.(stream.AgentCompleteData); ok && d.NodeID == "" && d.Model != "" {
+				orchModel = d.Model
+			}
 		}
 		if ev.Name == stream.EventDagPlan {
 			if d, ok := ev.Data.(stream.DagPlanData); ok {
@@ -340,6 +349,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	publish(stream.Done())
 	if !clientGone {
 		_ = sse.send(stream.Done())
+	}
+	// Stamp the orchestrator's model on the turn row so history attribution
+	// matches the live stream. Plain replies only — a DAG turn's models live
+	// per-node on DagNodeState, and its answer is credited to the terminal node.
+	if orchModel != "" && activePlanID == "" {
+		_ = h.store.SetTurnModel(runCtx, chatID, turnID, orchModel)
 	}
 	_ = h.store.Touch(runCtx, chatID)
 }
@@ -706,11 +721,29 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		output = append(output, msgItem)
 	}
 
+	// Usage: the orchestrator's own token usage for this turn (recovered from the
+	// stored session events — UsageMetadata survives ADK's Postgres round-trip,
+	// unlike ModelVersion, which the storage layer drops; that's why Model below
+	// comes from our own turn row instead). Nil when nothing was recorded (e.g. a
+	// turn that only ran a DAG, whose per-node tokens live on DagNodeState).
+	var usage *schema.Usage
+	if tc.PromptTokens > 0 || tc.CompletionTokens > 0 || tc.ReasoningTokens > 0 {
+		usage = &schema.Usage{
+			InputTokens:  intPtr(int(tc.PromptTokens)),
+			OutputTokens: intPtr(int(tc.CompletionTokens + tc.ReasoningTokens)),
+		}
+	}
+
 	return schema.Turn{
 		Id:        tc.ID,
 		CreatedAt: tc.CreatedAt,
 		Input:     schema.TurnInput{Role: schema.User, Content: tc.UserText},
 		Output:    output,
+		Usage:     usage,
+		// The orchestrator's own model, persisted on the turn row at run end
+		// (ADK's event storage drops ModelVersion, so it's not recoverable from
+		// session events). Nil for DAG turns.
+		Model: strPtr(tc.Model),
 	}
 }
 

@@ -452,6 +452,11 @@ components:
             $ref: "#/components/schemas/OutputItem"
         usage:
           $ref: "#/components/schemas/Usage"
+        model:
+          type: string
+          description: >
+            Model that produced the orchestrator's own reply this turn.
+            Absent for DAG turns (their models are per-node in DagNodeState).
 
     TurnInput:
       type: object

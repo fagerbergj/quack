@@ -414,11 +414,14 @@ type TransitionError struct {
 
 // Turn defines model for Turn.
 type Turn struct {
-	CreatedAt time.Time    `json:"created_at"`
-	Id        string       `json:"id"`
-	Input     TurnInput    `json:"input"`
-	Output    []OutputItem `json:"output"`
-	Usage     *Usage       `json:"usage,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+	Input     TurnInput `json:"input"`
+
+	// Model Model that produced the orchestrator's own reply this turn. Absent for DAG turns (their models are per-node in DagNodeState).
+	Model  *string      `json:"model,omitempty"`
+	Output []OutputItem `json:"output"`
+	Usage  *Usage       `json:"usage,omitempty"`
 }
 
 // TurnInput defines model for TurnInput.

@@ -83,6 +83,27 @@ func TestTranslatorAccumulatesUsageOntoComplete(t *testing.T) {
 	}
 }
 
+// TestTranslatorUsageWithoutMarkers covers the orchestrator's own un-gated
+// direct-answer session: it feeds raw model events straight to the Translator
+// with no agent_start/agent_complete markers at all (curRun never opens), so
+// Usage() must still report the accumulated totals for the caller to stamp onto
+// its own manually-built agent_complete event.
+func TestTranslatorUsageWithoutMarkers(t *testing.T) {
+	tr := NewTranslator()
+	usage := eventWith(&genai.Part{Text: "the answer"})
+	usage.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+		PromptTokenCount: 50, CandidatesTokenCount: 10, TotalTokenCount: 60,
+	}
+	usage.ModelVersion = "gpt-oss-120b"
+	usage.FinishReason = genai.FinishReasonStop
+	tr.Event(usage)
+
+	model, prompt, completion, _, total, finish := tr.Usage()
+	if model != "gpt-oss-120b" || prompt != 50 || completion != 10 || total != 60 || finish != string(genai.FinishReasonStop) {
+		t.Errorf("Usage() = model=%q prompt=%d completion=%d total=%d finish=%q", model, prompt, completion, total, finish)
+	}
+}
+
 func TestTranslatorJudgeVerdict(t *testing.T) {
 	tr := NewTranslator()
 	tr.Event(eventWith(AgentStartPart("r2", "judge", StageJudge, 2)))

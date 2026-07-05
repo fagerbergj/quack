@@ -40,6 +40,14 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
+	// The orchestrator's model is stamped on the turn row at run end (ADK's
+	// event storage drops ModelVersion) and must round-trip into TurnContent.
+	if err := st.SetTurnModel(ctx, c.ID, "t1", "gpt-oss-120b"); err != nil {
+		t.Fatalf("SetTurnModel: %v", err)
+	}
+	if turns, err := st.GetTurnsWithContent(ctx, "quack", "local", c.ID); err != nil || len(turns) != 1 || turns[0].Model != "gpt-oss-120b" {
+		t.Fatalf("GetTurnsWithContent model round-trip: %+v err=%v", turns, err)
+	}
 	if err := st.SaveDagPlan(ctx, c.ID, "p1", "t1", `{"nodes":[]}`); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}
@@ -245,6 +253,37 @@ func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 	}
 	if len(g.toolCalls) != 1 || g.toolCalls[0].Name != "execute" {
 		t.Errorf("toolCalls = %+v, want only the top-level execute call", g.toolCalls)
+	}
+}
+
+// TestGroupSessionEvents_UsageAccumulation covers Turn.usage's data source: the
+// orchestrator's own model events carry UsageMetadata, summed per turn — while a
+// gate-internal node event's usage (already surfaced separately via DagNodeState)
+// must NOT leak into it, mirroring the asstText/toolCalls exclusion above.
+func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
+	orch1 := asstEvent(&genai.Part{Text: "thinking"})
+	orch1.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 30, CandidatesTokenCount: 5}
+	orch2 := asstEvent(&genai.Part{Text: "The answer."})
+	orch2.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 40, CandidatesTokenCount: 15, ThoughtsTokenCount: 2}
+
+	node := nodeEvent("n1/worker-r0@1", &genai.Part{Text: "raw draft"})
+	node.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 999, CandidatesTokenCount: 999}
+
+	events := []*session.Event{
+		userEvent("research X"),
+		orch1,
+		node,
+		orch2,
+	}
+
+	groups := groupSessionEvents(slices.Values(events))
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(groups))
+	}
+	g := groups[0]
+	if g.promptTokens != 70 || g.completionTokens != 20 || g.reasoningTokens != 2 {
+		t.Errorf("usage = prompt=%d completion=%d reasoning=%d, want 70/20/2 (node-scoped usage must not leak in)",
+			g.promptTokens, g.completionTokens, g.reasoningTokens)
 	}
 }
 

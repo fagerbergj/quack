@@ -1,13 +1,13 @@
 import { memo } from 'react'
-import { AssistantText, ActivityList } from './AgentParts'
-import { ChoicePrompt } from './ChoicePrompt'
-import { DagView } from './DagView'
-import { dagFromTurn, textFromTurn, activityFromTurn, type DagTurnState } from '../state/chatStore'
+import { AssistantText, ActivityList, BubbleHeader } from './AgentParts'
+import { QuestionBubble } from './QuestionBubble'
+import { DagView, DagBubbleHeader } from './DagView'
+import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn, DagOutputItem } from '../generated'
 
 // visibleActivity hides get_user_choice tool calls from the activity log — they are
-// surfaced separately as a ChoicePrompt button group, so showing the raw tool block
+// surfaced separately as a QuestionBubble button group, so showing the raw tool block
 // too would be redundant. Shared by TurnView (completed turns) and Chat (live turn).
 export function visibleActivity(activity: Activity[]): Activity[] {
   return activity.filter(a => !(a.kind === 'tool' && a.tool.name === 'get_user_choice'))
@@ -77,9 +77,14 @@ export const TurnView = memo(function TurnView({
   const turnRuns = activityFromTurn(turn)
   const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
   const turnChoice = pendingChoice(turnRuns)
-  // Skip the assistant bubble when the turn produced no visible content
-  // (e.g. it only held the get_user_choice call) — avoids a blank box.
-  const hasBubbleContent = !!dagState || turnActivity.length > 0 || !!text
+  // Attribution for the answer bubble: a DAG turn credits its terminal node
+  // (agent + that node's own model/tokens); a plain reply credits the
+  // orchestrator, with the model persisted on the turn row (turn.model) and
+  // tokens from Turn.usage — history attribution matches the live stream.
+  const attribution = dagState ? dagAnswerAttribution(dagState) : plainReplyAttribution(turn)
+  // Skip the answer bubble when the turn produced no visible content for it
+  // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
+  const hasAnswerContent = dagState ? !!text : (turnActivity.length > 0 || !!text)
   const copyKey = `turn-${turn.id}`
   return (
     <div>
@@ -93,34 +98,33 @@ export const TurnView = memo(function TurnView({
           </div>
         </div>
       )}
-      {/* Assistant response */}
+      {/* Assistant response: DAG bubble → answer bubble, as siblings */}
       <div className="flex justify-start">
-        <div className="w-full">
-          {hasBubbleContent && (
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-            {dagState ? (
-              <>
-                <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                    ▸ Research steps
-                  </summary>
-                  <div className="p-2 space-y-3">
-                    {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
-                    <DagView dag={dagState} />
-                  </div>
-                </details>
-                {text && <AssistantText text={text} />}
-              </>
-            ) : (
-              <>
-                {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
-                {text && <AssistantText text={text} />}
-              </>
-            )}
-          </div>
+        <div className="w-full space-y-3">
+          {dagState && (
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+              <DagBubbleHeader dag={dagState} />
+              <details className="rounded-lg border border-gray-200 dark:border-gray-700">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                  ▸ Research steps
+                </summary>
+                <div className="p-2 space-y-3">
+                  {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
+                  <DagView dag={dagState} />
+                </div>
+              </details>
+            </div>
+          )}
+          {hasAnswerContent && (
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+              <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} />
+              {!dagState && turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
+              {text && <AssistantText text={text} />}
+            </div>
           )}
           {turnChoice && (
-            <ChoicePrompt
+            <QuestionBubble
+              agent="orchestrator"
               question={turnChoice.question}
               options={turnChoice.options}
               disabled={submittingChoice}

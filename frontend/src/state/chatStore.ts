@@ -618,3 +618,72 @@ export function textFromTurn(turn: Turn): string {
   }
   return ''
 }
+
+// ── answer-bubble attribution ────────────────────────────────────────────────
+// Every assistant bubble is authored by someone: a DAG turn's answer is really
+// produced by the terminal node's agent, a plain reply by the orchestrator
+// itself. These helpers compute that attribution (agent + model + tokens) for
+// both a live DagTurnState and a persisted Turn, shared by TurnView and Chat.
+
+export interface Attribution {
+  agent: string
+  model?: string
+  tokens?: number
+}
+
+// terminalNodeId returns the DAG's terminal node — the one with no successor,
+// whose answer IS the turn's response. Shared by DagView's topology rendering
+// and the answer-bubble attribution (which node actually produced this answer).
+export function terminalNodeId(nodes: DagNodeDef[]): string | undefined {
+  const hasSuccessor = new Set<string>()
+  for (const n of nodes) for (const dep of n.depends_on ?? []) hasSuccessor.add(dep)
+  return nodes.find(n => !hasSuccessor.has(n.id))?.id
+}
+
+// dagTotalTokens sums total_tokens across every node in a DAG — the DAG bubble
+// header's token count.
+export function dagTotalTokens(dag: DagTurnState): number {
+  return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
+}
+
+// dagAnswerAttribution is the answer bubble's header for a DAG turn: the
+// terminal node's agent + that node's own model/tokens (not the DAG-wide total).
+export function dagAnswerAttribution(dag: DagTurnState): Attribution | undefined {
+  const id = terminalNodeId(dag.nodes)
+  if (id == null) return undefined
+  const node = dag.nodes.find(n => n.id === id)
+  if (!node) return undefined
+  const state = dag.nodeStates[id]
+  return { agent: node.agent, model: state?.model, tokens: state?.totalTokens }
+}
+
+// turnUsageTotal sums a persisted Turn's usage (input + output tokens), or
+// undefined when usage wasn't recorded (e.g. a DAG-only turn — its tokens are
+// surfaced per-node instead) or is all-zero.
+export function turnUsageTotal(turn: Turn): number | undefined {
+  const u = turn.usage
+  if (!u) return undefined
+  const total = (u.input_tokens ?? 0) + (u.output_tokens ?? 0)
+  return total > 0 ? total : undefined
+}
+
+// plainReplyAttribution is the answer bubble's header for a reloaded plain-reply
+// turn: the orchestrator, with the actual model persisted on the turn row at run
+// end (turn.model — never the currently-configured model, which could silently
+// rewrite history) and the turn's total tokens — matching the live stream.
+export function plainReplyAttribution(turn: Turn): Attribution {
+  return { agent: 'orchestrator', model: turn.model, tokens: turnUsageTotal(turn) }
+}
+
+// pendingNodeQuestion finds a paused mid-node HITL question awaiting an answer
+// in a live DAG — the node's own conversation-level "question bubble" (as
+// opposed to the orchestrator's get_user_choice, surfaced via pendingChoice).
+export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent: string; question: string } | undefined {
+  for (const n of dag.nodes) {
+    const st = dag.nodeStates[n.id]
+    if (st?.status === 'needs_input' && st.question) {
+      return { nodeId: n.id, agent: n.agent, question: st.question }
+    }
+  }
+  return undefined
+}

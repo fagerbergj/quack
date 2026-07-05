@@ -340,8 +340,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 				}
 			}
 		}
+		model, promptTokens, completionTokens, reasoningTokens, totalTokens, finishReason := translator.Usage()
 		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
 			RunID: orchRunID, Stage: stream.StageWorker,
+			Model: model, PromptTokens: promptTokens, CompletionTokens: completionTokens,
+			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, FinishReason: finishReason,
 		}}, nil)
 
 		// Phase 2: the llmagent committed a plan (execute tool) — run it as a
