@@ -128,17 +128,18 @@ func TestPrintPromptServerError(t *testing.T) {
 	}
 }
 
-// TestSteerNode posts the guidance to the node steer endpoint and accepts the
-// 204 the server returns (postJSON's 200-only check would reject it).
+// TestSteerNode PUTs {"status":"running","guidance":...} to the node status
+// endpoint and accepts the 200 the server returns.
 func TestSteerNode(t *testing.T) {
-	var gotBody schema.SteerNodeBody
+	var gotBody schema.NodeStatusUpdateBody
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/steer", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
+	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %s, want PUT", r.Method)
 		}
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusRunning})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -147,8 +148,11 @@ func TestSteerNode(t *testing.T) {
 	if err := c.SteerNode(context.Background(), "c1", "n2", "focus on cost"); err != nil {
 		t.Fatalf("SteerNode: %v", err)
 	}
-	if gotBody.Guidance != "focus on cost" {
-		t.Errorf("server got guidance %q, want %q", gotBody.Guidance, "focus on cost")
+	if gotBody.Status != schema.NodeStatusRunning {
+		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusRunning)
+	}
+	if gotBody.Guidance == nil || *gotBody.Guidance != "focus on cost" {
+		t.Errorf("server got guidance %v, want %q", gotBody.Guidance, "focus on cost")
 	}
 }
 

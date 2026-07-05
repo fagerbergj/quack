@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -195,10 +196,13 @@ func TestRunChatDelete(t *testing.T) {
 func TestRunNodeStop(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var hit string
+	var gotBody schema.NodeStatusUpdateBody
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
+		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/nodes/n2/status" {
 			hit = r.URL.Path
-			w.WriteHeader(http.StatusNoContent)
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusCancelled})
 			return
 		}
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -208,8 +212,11 @@ func TestRunNodeStop(t *testing.T) {
 	if err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "n2"); err != nil {
 		t.Fatal(err)
 	}
-	if hit != "/api/v1/chats/c1/nodes/n2" {
-		t.Errorf("node stop hit %q, want /api/v1/chats/c1/nodes/n2", hit)
+	if hit != "/api/v1/chats/c1/nodes/n2/status" {
+		t.Errorf("node stop hit %q, want /api/v1/chats/c1/nodes/n2/status", hit)
+	}
+	if gotBody.Status != schema.NodeStatusCancelled {
+		t.Errorf("node stop sent status %q, want %q", gotBody.Status, schema.NodeStatusCancelled)
 	}
 }
 
@@ -217,11 +224,17 @@ func TestRunChatStop(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var cancelled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/chats/c1/stream" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/chats/c1":
+			_ = json.NewEncoder(w).Encode(schema.ChatDetail{
+				Turns: []schema.Turn{{Id: "t1"}},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/responses/t1/status":
 			cancelled = true
-			return
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
@@ -229,6 +242,6 @@ func TestRunChatStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !cancelled {
-		t.Error("stop should DELETE the stream")
+		t.Error("stop should PUT the response status to cancelled")
 	}
 }

@@ -14,11 +14,12 @@ import (
 type nodeStatus int
 
 const (
-	statusPending nodeStatus = iota // planned, not yet queued
-	statusQueued                    // ready, waiting for a slot
-	statusRunning                   // executing now
-	statusDone                      // completed (gate passed)
-	statusFailed                    // gate failed / errored
+	statusPending   nodeStatus = iota // planned, not yet queued
+	statusQueued                      // ready, waiting for a slot
+	statusRunning                     // executing now
+	statusDone                        // completed (gate passed)
+	statusFailed                      // gate failed / errored
+	statusCancelled                   // stopped by the user (node_cancelled)
 )
 
 type dagNode struct {
@@ -58,6 +59,14 @@ func (d *dagState) fail(id, msg string) {
 	if i, ok := d.index[id]; ok {
 		d.nodes[i].status = statusFailed
 		d.nodes[i].failErr = msg
+	}
+}
+
+// cancel marks a node stopped by the user (node_cancelled) — rendered neutrally
+// (stopped), distinct from a real gate failure.
+func (d *dagState) cancel(id string) {
+	if i, ok := d.index[id]; ok {
+		d.nodes[i].status = statusCancelled
 	}
 }
 
@@ -116,7 +125,7 @@ func (d *dagState) toJSON() string {
 	}
 	statusName := map[nodeStatus]string{
 		statusPending: "pending", statusQueued: "queued", statusRunning: "running",
-		statusDone: "done", statusFailed: "failed",
+		statusDone: "done", statusFailed: "failed", statusCancelled: "cancelled",
 	}
 	type jsonNode struct {
 		ID      string   `json:"id"`
@@ -245,6 +254,8 @@ func nodeIcon(s nodeStatus, spin string) (string, lipgloss.Style) {
 		return okStyle.Render("✓"), okStyle
 	case statusFailed:
 		return errStyle.Render("✗"), errStyle
+	case statusCancelled:
+		return mutedStyle.Render("◼"), mutedStyle
 	case statusQueued:
 		return mutedStyle.Render("◔"), mutedStyle
 	default:

@@ -65,24 +65,34 @@ func (c *Client) DeleteChat(ctx context.Context, id string) error {
 	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id)
 }
 
-// CancelRun cancels the active orchestrator run for a chat (no-op if none).
-func (c *Client) CancelRun(ctx context.Context, id string) error {
-	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id+"/stream")
+// CancelRun cancels the chat's active run by response id (the id surfaced in
+// the run's opening response_created SSE event) — only legal while that
+// response is the active run; a stale/finished id 404s.
+func (c *Client) CancelRun(ctx context.Context, chatID, responseID string) error {
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status",
+		schema.ResponseStatusUpdateBody{Status: schema.ResponseStatusCancelled})
 }
 
 // CancelNode stops one running node of a chat's active run; the rest of the DAG
 // continues (continue-but-warn). No-op if no such node is active.
 func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
-	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+chatID+"/nodes/"+nodeID)
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
 }
 
 // SteerNode interrupts one running node and re-runs it with new guidance against
 // its same session (prior tool calls/results retained). No-op if no such node is
 // active. The re-run streams over the chat's existing SSE connection.
 func (c *Client) SteerNode(ctx context.Context, chatID, nodeID, guidance string) error {
-	body, _ := json.Marshal(schema.SteerNodeBody{Guidance: guidance})
-	path := "/api/v1/chats/" + chatID + "/nodes/" + nodeID + "/steer"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning, Guidance: &guidance})
+}
+
+// putStatus PUTs body (a *StatusUpdateBody schema type) to path — the shared
+// shape of the node/response status-transition endpoints.
+func (c *Client) putStatus(ctx context.Context, path string, body any) error {
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -92,8 +102,11 @@ func (c *Client) SteerNode(ctx context.Context, chatID, nodeID, guidance string)
 		return c.reachErr(err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("POST %s: server returned %s", path, resp.Status)
+		return fmt.Errorf("PUT %s: server returned %s", path, resp.Status)
 	}
 	return nil
 }

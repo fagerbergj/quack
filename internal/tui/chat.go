@@ -91,8 +91,9 @@ type Model struct {
 	choice *pendingChoice
 	cand   *pendingChoice
 
-	sub       <-chan cli.SSEEvent
-	cancelRun context.CancelFunc
+	sub              <-chan cli.SSEEvent
+	cancelRun        context.CancelFunc
+	activeResponseID string // response_id of the in-flight run (from response_created), for CancelRun
 
 	input textarea.Model
 	vp    viewport.Model
@@ -517,9 +518,11 @@ func (m Model) cancelActive() (tea.Model, tea.Cmd) {
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
-	c, id := m.client, m.chatID
+	c, id, responseID := m.client, m.chatID, m.activeResponseID
 	return m, func() tea.Msg {
-		_ = c.CancelRun(context.Background(), id)
+		if responseID != "" {
+			_ = c.CancelRun(context.Background(), id, responseID)
+		}
 		return nil
 	}
 }
@@ -554,6 +557,11 @@ func (m Model) handleEvent(ev cli.SSEEvent) (tea.Model, tea.Cmd) {
 
 func (m *Model) applyEvent(ev cli.SSEEvent) {
 	switch ev.Name {
+	case stream.EventResponseCreated:
+		var d stream.ResponseCreatedData
+		if json.Unmarshal(ev.Data, &d) == nil {
+			m.activeResponseID = d.ResponseID
+		}
 	case stream.EventChatTitle:
 		var d stream.ChatTitleData
 		if json.Unmarshal(ev.Data, &d) == nil && d.Title != "" {
@@ -584,6 +592,11 @@ func (m *Model) applyEvent(ev cli.SSEEvent) {
 		_ = json.Unmarshal(ev.Data, &d)
 		if m.dag != nil {
 			m.dag.fail(d.NodeID, d.Error)
+		}
+	case stream.EventNodeCancelled:
+		var d stream.NodeCancelledData
+		if json.Unmarshal(ev.Data, &d) == nil && m.dag != nil {
+			m.dag.cancel(d.NodeID)
 		}
 	case stream.EventNodeSteered:
 		// The node was interrupted and is re-running with new guidance (same

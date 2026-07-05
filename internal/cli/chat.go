@@ -65,13 +65,28 @@ func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON
 }
 
 // RunChatStop is `quack chat stop <id>`: cancel the active run (no-op if none).
+// Cancelling by response id is the server's only cancel path now, so this
+// looks up the chat's latest turn (the in-progress run, if any) first.
 func RunChatStop(ctx context.Context, out io.Writer, server, id string) error {
 	c, err := NewClient(server)
 	if err != nil {
 		return err
 	}
-	if err := c.CancelRun(ctx, id); err != nil {
+	detail, err := c.GetChat(ctx, id)
+	if err != nil {
 		return notFoundAs(err, id)
+	}
+	if len(detail.Turns) == 0 {
+		fmt.Fprintf(out, "No active run on chat %s.\n", id)
+		return nil
+	}
+	responseID := detail.Turns[len(detail.Turns)-1].Id
+	if err := c.CancelRun(ctx, id, responseID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			fmt.Fprintf(out, "No active run on chat %s.\n", id)
+			return nil
+		}
+		return err
 	}
 	fmt.Fprintf(out, "Stopped any active run on chat %s.\n", id)
 	return nil
