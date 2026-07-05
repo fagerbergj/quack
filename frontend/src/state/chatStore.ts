@@ -615,6 +615,14 @@ export function turnUsageTotal(turn: Turn): number | undefined {
   return total > 0 ? total : undefined
 }
 
+// plainReplyAttribution is the answer bubble's header for a reloaded plain-reply
+// turn: the orchestrator, with the actual model persisted on the turn row at run
+// end (turn.model — never the currently-configured model, which could silently
+// rewrite history) and the turn's total tokens — matching the live stream.
+export function plainReplyAttribution(turn: Turn): Attribution {
+  return { agent: 'orchestrator', model: turn.model, tokens: turnUsageTotal(turn) }
+}
+
 // pendingNodeQuestion finds a paused mid-node HITL question awaiting an answer
 // in a live DAG — the node's own conversation-level "question bubble" (as
 // opposed to the orchestrator's get_user_choice, surfaced via pendingChoice).

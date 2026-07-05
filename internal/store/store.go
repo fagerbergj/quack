@@ -39,6 +39,11 @@ type ChatTurn struct {
 	ChatID    string    `gorm:"index" json:"chat_id"`
 	Seq       int       `json:"seq"`
 	CreatedAt time.Time `json:"created_at"`
+	// Model is the model that produced the orchestrator's own plain reply this
+	// turn, stamped from the live stream at run end (ADK's event storage drops
+	// ModelVersion on read, so it can't be recovered from session events later).
+	// Empty for DAG turns — their models live per-node on DagNode.
+	Model string `json:"model,omitempty"`
 }
 
 // DagPlan stores the JSON-encoded plan for a chat turn so the DAG can be
@@ -101,6 +106,9 @@ type TurnContent struct {
 	// Usage is the orchestrator's own token usage for this turn (its conversational
 	// session — a DAG turn's per-node tokens are separate, surfaced via Nodes).
 	PromptTokens, CompletionTokens, ReasoningTokens int32
+	// Model is the orchestrator's own model for a plain-reply turn (from the
+	// ChatTurn row, stamped at run end); empty for DAG turns.
+	Model string
 }
 
 // ToolCallRecord is one orchestrator tool call recovered from the session events,
@@ -381,6 +389,15 @@ func (s *Store) SaveTurn(ctx context.Context, chatID, turnID string) error {
 	return s.db.WithContext(ctx).Create(t).Error
 }
 
+// SetTurnModel stamps the model that produced the orchestrator's own reply on
+// the turn row. Called at run end from the live stream's accumulated
+// ModelVersion — the only place it exists, since ADK's event storage drops it.
+func (s *Store) SetTurnModel(ctx context.Context, chatID, turnID, model string) error {
+	return s.db.WithContext(ctx).Model(&ChatTurn{}).
+		Where("id = ? AND chat_id = ?", turnID, chatID).
+		Update("model", model).Error
+}
+
 // ListTurns returns all turns for a chat ordered by sequence.
 func (s *Store) ListTurns(ctx context.Context, chatID string) ([]ChatTurn, error) {
 	var turns []ChatTurn
@@ -497,7 +514,7 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
-		tc := TurnContent{ID: t.ID, CreatedAt: t.CreatedAt}
+		tc := TurnContent{ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model}
 		if i < len(groups) {
 			tc.UserText = groups[i].userText
 			tc.AsstText = groups[i].asstText

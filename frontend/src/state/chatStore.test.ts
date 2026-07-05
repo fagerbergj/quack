@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   activityFromTurn, isTurnInProgress, ChatStore,
-  terminalNodeId, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, pendingNodeQuestion,
+  terminalNodeId, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, plainReplyAttribution, pendingNodeQuestion,
   type DagTurnState,
 } from './chatStore'
 import { pendingChoice } from '../components/messageParts'
@@ -324,6 +324,19 @@ describe('answer-bubble attribution helpers', () => {
   it('turnUsageTotal is undefined when the turn carries no usage (e.g. a DAG-only turn)', () => {
     const turn: Turn = { id: 't', created_at: '', input: { role: 'user', content: 'hi' }, output: [] }
     expect(turnUsageTotal(turn)).toBeUndefined()
+  })
+
+  it('plainReplyAttribution credits the orchestrator with the turn-persisted model + tokens', () => {
+    const turn: Turn = {
+      id: 't', created_at: '', input: { role: 'user', content: 'hi' }, output: [],
+      model: 'gpt-oss-120b', usage: { input_tokens: 40, output_tokens: 17 },
+    }
+    expect(plainReplyAttribution(turn)).toEqual({ agent: 'orchestrator', model: 'gpt-oss-120b', tokens: 57 })
+  })
+
+  it('plainReplyAttribution omits model/tokens when the turn carries neither', () => {
+    const turn: Turn = { id: 't', created_at: '', input: { role: 'user', content: 'hi' }, output: [] }
+    expect(plainReplyAttribution(turn)).toEqual({ agent: 'orchestrator', model: undefined, tokens: undefined })
   })
 
   it('pendingNodeQuestion finds a paused node awaiting an answer, credited to its own agent', () => {

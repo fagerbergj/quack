@@ -2,7 +2,7 @@ import { memo } from 'react'
 import { AssistantText, ActivityList, BubbleHeader } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
-import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, turnUsageTotal, type DagTurnState } from '../state/chatStore'
+import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn, DagOutputItem } from '../generated'
 
@@ -79,9 +79,9 @@ export const TurnView = memo(function TurnView({
   const turnChoice = pendingChoice(turnRuns)
   // Attribution for the answer bubble: a DAG turn credits its terminal node
   // (agent + that node's own model/tokens); a plain reply credits the
-  // orchestrator, with tokens from the persisted Turn.usage (no model — history
-  // doesn't carry the orchestrator's model, only its token counts; see PR2 plan).
-  const attribution = dagState ? dagAnswerAttribution(dagState) : { agent: 'orchestrator', tokens: turnUsageTotal(turn) }
+  // orchestrator, with the model persisted on the turn row (turn.model) and
+  // tokens from Turn.usage — history attribution matches the live stream.
+  const attribution = dagState ? dagAnswerAttribution(dagState) : plainReplyAttribution(turn)
   // Skip the answer bubble when the turn produced no visible content for it
   // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
   const hasAnswerContent = dagState ? !!text : (turnActivity.length > 0 || !!text)

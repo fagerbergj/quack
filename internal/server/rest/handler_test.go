@@ -21,6 +21,7 @@ func TestBuildTurnUsage(t *testing.T) {
 		PromptTokens:     40,
 		CompletionTokens: 15,
 		ReasoningTokens:  2,
+		Model:            "gpt-oss-120b",
 	}
 
 	turn := buildTurn(tc)
@@ -33,6 +34,9 @@ func TestBuildTurnUsage(t *testing.T) {
 	}
 	if turn.Usage.OutputTokens == nil || *turn.Usage.OutputTokens != 17 {
 		t.Errorf("OutputTokens = %v, want 17 (completion + reasoning)", turn.Usage.OutputTokens)
+	}
+	if turn.Model == nil || *turn.Model != "gpt-oss-120b" {
+		t.Errorf("Model = %v, want gpt-oss-120b (from the persisted turn row)", turn.Model)
 	}
 }
 
@@ -47,5 +51,8 @@ func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 
 	if turn.Usage != nil {
 		t.Errorf("Usage = %+v, want nil", turn.Usage)
+	}
+	if turn.Model != nil {
+		t.Errorf("Model = %v, want nil (DAG turns carry no orchestrator model)", turn.Model)
 	}
 }

@@ -40,6 +40,14 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
+	// The orchestrator's model is stamped on the turn row at run end (ADK's
+	// event storage drops ModelVersion) and must round-trip into TurnContent.
+	if err := st.SetTurnModel(ctx, c.ID, "t1", "gpt-oss-120b"); err != nil {
+		t.Fatalf("SetTurnModel: %v", err)
+	}
+	if turns, err := st.GetTurnsWithContent(ctx, "quack", "local", c.ID); err != nil || len(turns) != 1 || turns[0].Model != "gpt-oss-120b" {
+		t.Fatalf("GetTurnsWithContent model round-trip: %+v err=%v", turns, err)
+	}
 	if err := st.SaveDagPlan(ctx, c.ID, "p1", "t1", `{"nodes":[]}`); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}

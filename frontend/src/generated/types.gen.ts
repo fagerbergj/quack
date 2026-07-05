@@ -48,6 +48,11 @@ export type Turn = {
     input: TurnInput;
     output: Array<OutputItem>;
     usage?: Usage;
+    /**
+     * Model that produced the orchestrator's own reply this turn. Absent for DAG turns (their models are per-node in DagNodeState).
+     *
+     */
+    model?: string;
 };
 
 export type TurnInput = {
