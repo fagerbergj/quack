@@ -13,7 +13,7 @@ func TestCommandTree(t *testing.T) {
 	root := newRootCmd()
 
 	want := map[string][]string{
-		"chat":   {"new", "resume", "list", "delete", "export", "stop", "node"},
+		"chat":   {"new", "send", "show", "list", "delete", "export", "stop", "node"},
 		"server": {"run", "init", "use", "add", "list", "remove"},
 		"api":    nil,
 	}
@@ -38,6 +38,11 @@ func TestCommandTree(t *testing.T) {
 		t.Errorf("chat node stop not registered: %v", err)
 	}
 
+	// `chat resume` was removed with the TUI (superseded by `chat show` + `chat send`).
+	if c, _, _ := root.Find([]string{"chat", "resume"}); c != nil && c.Name() == "resume" {
+		t.Error("chat resume should not be registered — the TUI (and its resume verb) is gone")
+	}
+
 	// version prints the stamp and does not error.
 	var out bytes.Buffer
 	root.SetOut(&out)
@@ -47,5 +52,24 @@ func TestCommandTree(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got != version {
 		t.Errorf("version printed %q, want %q", got, version)
+	}
+}
+
+// TestBareCommandPrintsHelp: `quack` with no args and no -p prints the root
+// help text (pointing at -p / chat send / chat show) and does not error — no
+// TUI to launch.
+func TestBareCommandPrintsHelp(t *testing.T) {
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs(nil)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("bare quack errored: %v", err)
+	}
+	s := out.String()
+	for _, want := range []string{"quack -p", "chat send", "chat show"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("help output missing %q:\n%s", want, s)
+		}
 	}
 }
