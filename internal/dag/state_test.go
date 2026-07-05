@@ -54,13 +54,13 @@ func TestAllowedTargets(t *testing.T) {
 		from NodeStatus
 		want []NodeStatus
 	}{
-		{"queued", StatusQueued, []NodeStatus{StatusCancelled, StatusFailed, StatusRunning}},
+		{"queued", StatusQueued, []NodeStatus{StatusCancelled, StatusFailed, StatusQueued, StatusRunning}},
 		{"running", StatusRunning, []NodeStatus{StatusCancelled, StatusDone, StatusFailed, StatusNeedsInput, StatusRunning}},
 		{"needs_input", StatusNeedsInput, []NodeStatus{StatusCancelled, StatusRunning}},
 		{"done", StatusDone, []NodeStatus{StatusQueued}},
 		{"failed", StatusFailed, []NodeStatus{StatusQueued}},
 		{"cancelled", StatusCancelled, []NodeStatus{StatusQueued}},
-		{"empty defaults to queued", "", []NodeStatus{StatusCancelled, StatusFailed, StatusRunning}},
+		{"empty defaults to queued", "", []NodeStatus{StatusCancelled, StatusFailed, StatusQueued, StatusRunning}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

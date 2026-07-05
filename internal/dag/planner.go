@@ -108,15 +108,31 @@ func assemble(nodes []RawNode, agents []AgentInfo) (*Plan, error) {
 	// complete set (redundant serial edges are harmless — TopoSort dedups).
 	if len(plan.Nodes) > 1 {
 		var nonSynth []string
+		hasSynth := false
 		for _, n := range plan.Nodes {
 			if n.AgentName != "synthesizer" {
 				nonSynth = append(nonSynth, n.ID)
+			} else {
+				hasSynth = true
 			}
 		}
 		for i, n := range plan.Nodes {
 			if n.AgentName == "synthesizer" {
 				plan.Nodes[i].DependsOn = nonSynth
 			}
+		}
+		// Harden: a multi-node plan with NO synthesizer and ≥2 terminal nodes
+		// can't run as a native graph (single-terminal rule — nativegraph.go).
+		// The orchestrator sometimes omits the fan-in entirely; append one
+		// rather than failing the whole run. Skipped when the roster has no
+		// synthesizer (the graph build will then reject multi-terminal plans).
+		if !hasSynth && known["synthesizer"] && len(terminalIDs(plan.Nodes)) > 1 {
+			plan.Nodes = append(plan.Nodes, Node{
+				ID:        "synthesize",
+				AgentName: "synthesizer",
+				Task:      "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
+				DependsOn: nonSynth,
+			})
 		}
 	}
 

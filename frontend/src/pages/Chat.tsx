@@ -85,7 +85,12 @@ export default function Chat() {
       // Reconnect to a run still in progress (e.g. this browser after a refresh):
       // the POST body stream is gone, so subscribe to the hub. attach no-ops if
       // this client already streams (it posted the run) — no double-subscribe.
-      if (isTurnInProgress(detail.turns[detail.turns.length - 1])) {
+      // detail.status is the hub's authoritative "a run is live" signal and is
+      // true through EVERY phase (planning, queued nodes, streaming) — the DAG
+      // check alone missed pre-DAG phases (no quack:dag item persisted yet), so
+      // a refresh during planning never reconnected. The DAG check stays as a
+      // fallback for a restarted server whose in-memory hub state died with it.
+      if (detail.status === 'running' || isTurnInProgress(detail.turns[detail.turns.length - 1])) {
         store.attach(activeChatId)
       }
     }).catch(() => {})
@@ -376,7 +381,7 @@ export default function Chat() {
                         {liveDone ? (
                           <details className="rounded-lg border border-gray-200 dark:border-gray-700">
                             <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                              ▸ Research steps
+                              Research steps
                             </summary>
                             <div className="p-2 space-y-3">
                               {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}

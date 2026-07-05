@@ -890,6 +890,11 @@ func (h *Handler) persistNodeEvent(planID string, ev stream.SSEEvent) {
 	var to dag.NodeStatus
 	n := store.DagNode{PlanID: planID}
 	switch d := ev.Data.(type) {
+	case stream.NodeQueuedData:
+		// Persist the row at queue time so a reloaded chat (and `chat show`)
+		// sees the node as queued rather than status-less until it starts.
+		nodeID, to = d.NodeID, dag.StatusQueued
+		n.NodeID, n.Status = d.NodeID, string(to)
 	case stream.NodeStartData:
 		nodeID, to = d.NodeID, dag.StatusRunning
 		n.NodeID, n.Status, n.StartedAt = d.NodeID, string(to), &t

@@ -30,6 +30,7 @@ const (
 //	cancelled   → queued (retry)
 var transitions = map[NodeStatus]map[NodeStatus]bool{
 	StatusQueued: {
+		StatusQueued:    true, // idempotent re-queue (initial persist, retry fan-out)
 		StatusRunning:   true,
 		StatusCancelled: true,
 		StatusFailed:    true,

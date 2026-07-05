@@ -97,3 +97,23 @@ func TopoSort(p Plan) ([][]Node, error) {
 	}
 	return layers, nil
 }
+
+// terminalIDs returns the IDs of nodes no other node depends on — the plan's
+// terminal (output-producing) nodes. A runnable native graph has exactly one
+// (see buildPlanGraph); the planner uses this to append a synthesizer fan-in
+// when the model omitted it.
+func terminalIDs(nodes []Node) []string {
+	hasSuccessor := map[string]bool{}
+	for _, n := range nodes {
+		for _, dep := range n.DependsOn {
+			hasSuccessor[dep] = true
+		}
+	}
+	var out []string
+	for _, n := range nodes {
+		if !hasSuccessor[n.ID] {
+			out = append(out, n.ID)
+		}
+	}
+	return out
+}
