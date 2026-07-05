@@ -8,9 +8,11 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem } from '../generated'
+import type { Turn, DagOutputItem, NodeStatus } from '../generated'
 
-export type NodeStatus = 'queued' | 'running' | 'done' | 'failed' | 'needs_input'
+// Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
+// unchanged — the generated enum is now the one source of truth for node states.
+export type { NodeStatus }
 
 export interface NodeState {
   status: NodeStatus
@@ -179,15 +181,29 @@ export class ChatStore {
     )
   }
 
+  // stop cancels the chat's active run by response id (the id captured from
+  // the run's opening response_created event) — a no-op if that id hasn't
+  // arrived yet (the client also aborts its own connection either way).
   stop(chatId: string): void {
-    fetch(`/api/v1/chats/${chatId}/stream`, { method: 'DELETE' }).catch(() => {})
+    const responseId = this.states.get(chatId)?.live?.id
+    if (responseId) {
+      fetch(`/api/v1/chats/${chatId}/responses/${responseId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      }).catch(() => {})
+    }
     this.controllers.get(chatId)?.abort()
   }
 
   // cancelNode stops one running node; the rest of the DAG keeps going
   // (continue-but-warn). The local stream stays open.
   cancelNode(chatId: string, nodeId: string): void {
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}`, { method: 'DELETE' }).catch(() => {})
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' }),
+    }).catch(() => {})
   }
 
   // steerNode interrupts one running node and re-runs it with new guidance against
@@ -196,17 +212,20 @@ export class ChatStore {
   steerNode(chatId: string, nodeId: string, guidance: string): void {
     const g = guidance.trim()
     if (!g) return
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/steer`, {
-      method: 'POST',
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ guidance: g }),
+      body: JSON.stringify({ status: 'running', guidance: g }),
     }).catch(() => {})
   }
 
-  // retryNode re-runs a FINISHED (failed or done) node and its descendants, reusing
-  // the stored outputs of the rest. Optional guidance is folded into the node's task.
-  // The re-run streams like a normal turn: the affected subgraph is reset to queued
-  // (answer + runs cleared) so the incoming node events rebuild it in place.
+  // retryNode re-runs a FINISHED (failed/done/cancelled) node and its
+  // descendants, reusing the stored outputs of the rest. Optional guidance is
+  // folded into the node's task. The PUT itself returns immediately (an
+  // optimistic "queued" state); the re-run happens in the background and its
+  // progress streams over the chat's GET .../stream relay — the affected
+  // subgraph is reset to queued locally (answer + runs cleared) so the
+  // incoming node events rebuild it in place once that subscription is live.
   retryNode(chatId: string, nodeId: string, guidance?: string): void {
     const s = this.states.get(chatId)
     if (!s?.live?.dag || s.live.streaming) return
@@ -222,12 +241,22 @@ export class ChatStore {
     }
     this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const g = guidance?.trim()
-    void this.runStream(chatId, signal => fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/retry`, {
-      method: 'POST',
+    const generation = this.bumpGeneration(chatId)
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(g ? { guidance: g } : {}),
-      signal,
-    }))
+      body: JSON.stringify(g ? { status: 'queued', guidance: g } : { status: 'queued' }),
+    })
+      .then(res => {
+        if (!res.ok) throw new Error(`retry failed: HTTP ${res.status}`)
+        this.subscribeToStream(chatId, generation)
+      })
+      .catch((err: unknown) => {
+        const cur = this.states.get(chatId)
+        if (!cur?.live) return
+        const msg = (err as Error)?.message || 'retry failed'
+        this.write(chatId, { ...cur, error: msg, live: { ...cur.live, streaming: false } })
+      })
   }
 
   isStreaming(chatId: string): boolean {
@@ -282,6 +311,15 @@ export class ChatStore {
     this.write(chatId, { ...cur, turns: cur.turns.slice(0, -1), live })
 
     const generation = this.bumpGeneration(chatId)
+    this.subscribeToStream(chatId, generation)
+  }
+
+  // subscribeToStream opens the GET .../stream EventSource and wires it through
+  // the same handlers the POST path uses — shared by attach() (reconnect to an
+  // in-progress run) and retryNode (watch a background re-run's progress, since
+  // its PUT no longer returns its own SSE body). Callers own seeding/resetting
+  // `live` beforehand; this only wires the subscription + teardown.
+  private subscribeToStream(chatId: string, generation: number): void {
     const es = new EventSource(`/api/v1/chats/${chatId}/stream`)
     const handlers: AgentStreamHandlers = {
       ...this.streamHandlers(chatId, msg => {
@@ -366,7 +404,7 @@ export class ChatStore {
         const dag = { ...s.live.dag, nodeStates: { ...s.live.dag.nodeStates, [nodeId]: { ...prev, ...patch } } }
         const allDone = dag.nodes.every(n => {
           const st = dag.nodeStates[n.id]?.status
-          return st === 'done' || st === 'failed'
+          return st === 'done' || st === 'failed' || st === 'cancelled'
         })
         if (allDone && !dag.finishedAt) dag.finishedAt = Date.now()
         this.write(chatId, { ...s, live: { ...s.live, dag } })
@@ -430,6 +468,13 @@ export class ChatStore {
         },
         onChatTitle: title => onTitle?.(title),
         onError,
+        // The very first event of a run: captures the response id so stop()
+        // can cancel this run by id (PUT .../responses/{id}/status).
+        onResponseCreated: responseId => {
+          const s = this.states.get(chatId)
+          if (!s?.live) return
+          this.write(chatId, { ...s, live: { ...s.live, id: responseId } })
+        },
         onDagPlan: plan => {
           const s = this.states.get(chatId)
           if (!s?.live) return
@@ -470,6 +515,13 @@ export class ChatStore {
         onNodeFailed: (nodeId, error) => {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
+        },
+        onNodeCancelled: nodeId => {
+          // The node was stopped by the user — rendered neutrally ("stopped"),
+          // not as a red failure (node_cancelled is a distinct event now, not
+          // inferred from a node_failed error string).
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeState(nodeId, { status: 'cancelled', finishedAt: Date.now(), error: undefined })
         },
         onNodeNeedsInput: (nodeId, _interruptId, message) => {
           // Mid-node HITL: the node paused to ask the user. Freeze its open runs

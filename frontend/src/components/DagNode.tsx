@@ -2,27 +2,21 @@ import { useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
-import { CANCELLED_ERROR, type DagNodeDef } from '../state/agentStream'
+import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
-function StatusBadge({ status, stopped }: { status: NodeStatus; stopped?: boolean }) {
-  if (stopped) {
-    return (
-      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-        stopped
-      </span>
-    )
-  }
+function StatusBadge({ status }: { status: NodeStatus }) {
   const styles: Record<NodeStatus, string> = {
     queued:  'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
     running: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400',
     needs_input: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
     done:    'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
     failed:  'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400',
+    cancelled: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
   }
   const labels: Record<NodeStatus, string> = {
     queued: 'queued', running: 'running…', done: 'done', failed: 'failed',
-    needs_input: 'waiting for you',
+    needs_input: 'waiting for you', cancelled: 'stopped',
   }
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${styles[status]}`}>
@@ -334,10 +328,8 @@ interface Props {
 export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry, onAnswer }: Props) {
   const running = state.status === 'running'
   const controllable = running || state.status === 'queued'
-  const finished = state.status === 'done' || state.status === 'failed'
-  // A user-cancelled node comes back as failed with this specific error; render it
-  // as a neutral "stopped" rather than a red failure.
-  const stopped = state.status === 'failed' && state.error === CANCELLED_ERROR
+  // Retry (→ queued) is legal from done, failed, or cancelled — see dag.CanTransition.
+  const finished = state.status === 'done' || state.status === 'failed' || state.status === 'cancelled'
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
 
@@ -352,7 +344,7 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
           {agentLabel(node.agent)}
         </span>
-        <StatusBadge status={state.status} stopped={stopped} />
+        <StatusBadge status={state.status} />
         {state.steers && state.steers.length > 0 && (
           <span
             className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
@@ -433,12 +425,17 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
       {/* Vetted answer (below the stage cards, for every node) */}
       <NodeAnswer answer={answer} />
 
-      {/* Failed / stopped state (a user-cancelled node reads neutrally, not as an error) */}
+      {/* Failed state */}
       {state.status === 'failed' && state.error && (
-        <div className={`px-4 py-2 text-xs ${stopped
-          ? 'text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40'
-          : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20'}`}>
+        <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
           {state.error}
+        </div>
+      )}
+
+      {/* Stopped by the user (node_cancelled) — rendered neutrally, not as an error */}
+      {state.status === 'cancelled' && (
+        <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40">
+          Stopped by you
         </div>
       )}
     </div>

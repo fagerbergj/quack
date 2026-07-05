@@ -196,17 +196,17 @@ describe('ChatStore — mid-node steering', () => {
     expect(answer).toBe('REVISED ANSWER (sourced)')
   })
 
-  it('steerNode POSTs guidance; cancelNode DELETEs the node', () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+  it('steerNode and cancelNode PUT the node status endpoint', () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
     store.steerNode('c', 'a', '  do X  ')
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/steer',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ guidance: 'do X' }) }),
+      '/api/v1/chats/c/nodes/a/status',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'running', guidance: 'do X' }) }),
     )
     store.cancelNode('c', 'a')
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a',
-      expect.objectContaining({ method: 'DELETE' }),
+      '/api/v1/chats/c/nodes/a/status',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) }),
     )
   })
 
@@ -216,7 +216,10 @@ describe('ChatStore — mid-node steering', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('retryNode resets the target + descendants, keeps the rest, and POSTs to /retry', async () => {
+  it('retryNode resets the target + descendants, PUTs the node status endpoint, then watches progress via GET /stream', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+
     // Seed a live DAG: a → b, a done (with an answer), b failed.
     const sse = [
       `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }, { id: 'b', agent: 'r', task: 't', depends_on: ['a'] }], edges: [{ from: 'a', to: 'b' }] })}\n\n`,
@@ -229,7 +232,7 @@ describe('ChatStore — mid-node steering', () => {
     await store.submit('c', 'hello')
     expect(store.get('c').live?.dag?.nodeStates['b']?.status).toBe('failed')
 
-    fetchMock.mockResolvedValueOnce(makeStream('event: done\ndata: {}\n\n'))
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
     store.retryNode('c', 'b', '  focus on X  ')
 
     // Synchronous reset: b (the target) cleared; a (upstream, not downstream of b) kept.
@@ -238,11 +241,14 @@ describe('ChatStore — mid-node steering', () => {
     expect(dag?.nodeStates['b']?.status).toBe('queued')
     expect(dag?.nodeAnswer['a']).toContain('A-ANSWER')
 
-    await new Promise(r => setTimeout(r, 0)) // let runStream fire the POST
+    await new Promise(r => setTimeout(r, 0)) // let the PUT's .then() fire
     expect(fetchMock).toHaveBeenLastCalledWith(
-      '/api/v1/chats/c/nodes/b/retry',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ guidance: 'focus on X' }) }),
+      '/api/v1/chats/c/nodes/b/status',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'queued', guidance: 'focus on X' }) }),
     )
+    // The re-run's progress streams over GET /stream, not the PUT's own body.
+    const es = FakeEventSource.last!
+    expect(es.url).toBe('/api/v1/chats/c/stream')
   })
 
   // Timers anchor to the server's start time (epoch ms), not Date.now() at event
