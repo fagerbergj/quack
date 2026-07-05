@@ -313,9 +313,18 @@ components:
     # Chat
     # -------------------------------------------------------------------------
 
+    ChatStatus:
+      type: string
+      description: >
+        A chat's derived state: `running` while a turn is actively streaming,
+        `needs_input` when the last turn paused on an unanswered question (a
+        mid-node ask or a top-level clarification), `failed` when the last
+        turn's DAG has a failed node and no answer text followed, else `idle`.
+      enum: [running, needs_input, failed, idle]
+
     ChatSummary:
       type: object
-      required: [id, system_prompt, created_at, updated_at]
+      required: [id, system_prompt, created_at, updated_at, status]
       properties:
         id:
           type: string
@@ -329,6 +338,11 @@ components:
         updated_at:
           type: string
           format: date-time
+        status:
+          $ref: "#/components/schemas/ChatStatus"
+        pending_question:
+          type: string
+          description: The unanswered question blocking the chat, present only when status is `needs_input`.
 
     ChatDetail:
       allOf:

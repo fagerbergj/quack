@@ -29,6 +29,30 @@ func (e AgentActivityOutputItemType) Valid() bool {
 	}
 }
 
+// Defines values for ChatStatus.
+const (
+	Failed     ChatStatus = "failed"
+	Idle       ChatStatus = "idle"
+	NeedsInput ChatStatus = "needs_input"
+	Running    ChatStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ChatStatus enum.
+func (e ChatStatus) Valid() bool {
+	switch e {
+	case Failed:
+		return true
+	case Idle:
+		return true
+	case NeedsInput:
+		return true
+	case Running:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DagOutputItemType.
 const (
 	QuackDag DagOutputItemType = "quack:dag"
@@ -138,12 +162,18 @@ type AgentActivityOutputItemType string
 
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
-	CreatedAt    time.Time `json:"created_at"`
-	Id           string    `json:"id"`
-	SystemPrompt string    `json:"system_prompt"`
-	Title        *string   `json:"title,omitempty"`
-	Turns        []Turn    `json:"turns"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+
+	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
+	PendingQuestion *string `json:"pending_question,omitempty"`
+
+	// Status A chat's derived state: `running` while a turn is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	Status       ChatStatus `json:"status"`
+	SystemPrompt string     `json:"system_prompt"`
+	Title        *string    `json:"title,omitempty"`
+	Turns        []Turn     `json:"turns"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // ChatList defines model for ChatList.
@@ -151,13 +181,22 @@ type ChatList struct {
 	Data []ChatSummary `json:"data"`
 }
 
+// ChatStatus A chat's derived state: `running` while a turn is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+type ChatStatus string
+
 // ChatSummary defines model for ChatSummary.
 type ChatSummary struct {
-	CreatedAt    time.Time `json:"created_at"`
-	Id           string    `json:"id"`
-	SystemPrompt string    `json:"system_prompt"`
-	Title        *string   `json:"title,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+
+	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
+	PendingQuestion *string `json:"pending_question,omitempty"`
+
+	// Status A chat's derived state: `running` while a turn is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	Status       ChatStatus `json:"status"`
+	SystemPrompt string     `json:"system_prompt"`
+	Title        *string    `json:"title,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // ContentPart defines model for ContentPart.
