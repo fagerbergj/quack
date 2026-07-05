@@ -142,7 +142,7 @@ func (s *DagStream) Finish() {
 		// A user-cancelled node reads "Stopped by you"; a node that produced NO answer
 		// surfaces as a loud node_failed (not a quiet node_done) so the gap is never silent.
 		if s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
-			s.yield(stream.NodeFailed(n.ID, stream.CancelledError), nil)
+			s.yield(stream.NodeCancelled(n.ID), nil)
 			continue
 		}
 		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
@@ -293,7 +293,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 			}
 			switch {
 			case s.cancelled != nil && s.cancelled(node):
-				if !s.emit(stream.NodeFailed(node, stream.CancelledError)) {
+				if !s.emit(stream.NodeCancelled(node)) {
 					return false
 				}
 			case out != "":

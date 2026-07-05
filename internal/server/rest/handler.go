@@ -5,6 +5,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -29,6 +31,14 @@ const titleInstruction = "Generate a concise chat title (3–6 words, no punctua
 
 const runTimeout = 2 * time.Hour
 
+// activeRun is the live handle to a chat's in-flight run: its response id (the
+// turn id, surfaced in the stream's opening response_created event) and the
+// cancel func PUT .../responses/{response_id}/status invokes by id.
+type activeRun struct {
+	responseID string
+	cancel     context.CancelFunc
+}
+
 // Handler implements schema.ServerInterface backed by the store + orchestrator.
 type Handler struct {
 	store         *store.Store
@@ -36,7 +46,7 @@ type Handler struct {
 	titler        model.LLM
 	hub           *stream.Hub // fans a chat's run to extra subscribers (other devices)
 	eventLog      *eventLog   // durably persists the run stream, backing replay across restarts
-	activeCancels sync.Map    // chatID → context.CancelFunc
+	activeCancels sync.Map    // chatID → *activeRun
 }
 
 // NewHandler builds a REST handler.
@@ -216,8 +226,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		return
 	}
 
+	// Generate a stable turn ID before the run so the DAG plan can reference it,
+	// and so it can be surfaced as this run's response_id (the very first event
+	// below) — the id a client names in PUT .../responses/{response_id}/status
+	// to cancel this run.
+	turnID := uuid.NewString()
+	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
+
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
-	h.activeCancels.Store(chatID, cancelRun)
+	h.activeCancels.Store(chatID, &activeRun{responseID: turnID, cancel: cancelRun})
 	defer func() {
 		cancelRun()
 		h.activeCancels.Delete(chatID)
@@ -241,9 +258,14 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		h.eventLog.append(chatID, seq, ev)
 	}
 
-	// Generate a stable turn ID before the run so the DAG plan can reference it.
-	turnID := uuid.NewString()
-	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
+	// response_created is always the very first event of the stream. clientGone
+	// tracks whether the direct write to THIS client still succeeds — publish
+	// (hub + durable log) always continues regardless, for other subscribers.
+	clientGone := false
+	publish(stream.ResponseCreated(turnID))
+	if sendErr := sse.send(stream.ResponseCreated(turnID)); sendErr != nil {
+		clientGone = true
+	}
 
 	titleCh := make(chan string, 1)
 	go func() {
@@ -260,7 +282,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		titleCh <- title
 	}()
 
-	clientGone := false
 	trySendTitle := func() {
 		select {
 		case title, ok := <-titleCh:
@@ -320,93 +341,182 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	_ = h.store.Touch(runCtx, chatID)
 }
 
-func (h *Handler) CancelChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
-	if cancel, ok := h.activeCancels.Load(chatID); ok {
-		cancel.(context.CancelFunc)()
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// CancelNode stops a single running node of the chat's active run; the rest of
-// the DAG keeps going (continue-but-warn). No-op if no such node is active.
-func (h *Handler) CancelNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
-	h.orch.CancelNode(chatID, nodeID)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// SteerNode interrupts a single running node and re-runs it with new guidance
-// against its same session (prior tool calls/results retained). No-op if no such
-// node is active. The re-run streams over the chat's existing SSE connection.
-func (h *Handler) SteerNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
-	var body schema.SteerNodeBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Guidance) == "" {
+// UpdateResponseStatus cancels the chat's active run — but only when
+// response_id names that run (the id surfaced in its opening response_created
+// event); a stale or already-finished id 404s rather than silently no-op'ing.
+func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, responseID schema.ResponseID) {
+	var body schema.ResponseStatusUpdateBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	h.orch.SteerNode(chatID, nodeID, body.Guidance)
+	if body.Status != schema.ResponseStatusCancelled {
+		http.Error(w, "unsupported target status", http.StatusBadRequest)
+		return
+	}
+	v, ok := h.activeCancels.Load(chatID)
+	run, _ := v.(*activeRun)
+	if !ok || run == nil || run.responseID != responseID {
+		http.Error(w, "no active run with this response id", http.StatusNotFound)
+		return
+	}
+	run.cancel()
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RetryNode re-runs a FINISHED node (failed or done) and its descendants, reusing
-// the stored outputs of every other node, and streams the re-execution as SSE.
-// Optional guidance is folded into the node's task. The new node states are
-// persisted (DagNode store) and the new terminal answer replaces the chat's answer.
-func (h *Handler) RetryNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
-	var body schema.RetryNodeBody
-	_ = json.NewDecoder(r.Body).Decode(&body) // guidance is optional; empty body is fine
-	guidance := ""
-	if body.Guidance != nil {
-		guidance = *body.Guidance
-	}
-
-	// The plan itself is loaded from session state by the orchestrator (the real
-	// dag.Plan). Here we just need the plan_id (for the node outputs) + the stored
-	// outputs to reuse, and to confirm the node exists.
-	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
-	if err != nil || dp == nil {
-		http.Error(w, "no plan to retry for this chat", http.StatusNotFound)
+// UpdateNodeStatus transitions one DAG node's status — replacing the old
+// cancel/steer/retry RPC verbs with a single resource-oriented PUT naming the
+// TARGET status. Every write routes through dag.CanTransition: an illegal
+// transition from the node's current (persisted) status 409s naming the legal
+// targets.
+func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	var body schema.NodeStatusUpdateBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	nodes, _ := h.store.GetDagNodes(r.Context(), dp.ID)
-	seeded := make(map[string]string, len(nodes))
-	found := false
-	for _, n := range nodes {
-		if n.NodeID == nodeID {
-			found = true
-		}
-		if n.Output != "" {
-			seeded[n.NodeID] = n.Output
+	guidance := ""
+	if body.Guidance != nil {
+		guidance = strings.TrimSpace(*body.Guidance)
+	}
+	target := dag.NodeStatus(body.Status)
+
+	// The plan itself is loaded from session state by the orchestrator (the real
+	// dag.Plan) when it actually runs. Here we just need the plan/node defs (to
+	// confirm the node exists) and the persisted outputs a retry reuses.
+	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
+	if err != nil || dp == nil {
+		http.Error(w, "no plan for this chat", http.StatusNotFound)
+		return
+	}
+	var planData stream.DagPlanData
+	if err := json.Unmarshal([]byte(dp.PlanJSON), &planData); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	nodeFound := false
+	for _, n := range planData.Nodes {
+		if n.ID == nodeID {
+			nodeFound = true
+			break
 		}
 	}
-	if !found {
+	if !nodeFound {
 		http.Error(w, "no such node in the plan", http.StatusNotFound)
 		return
 	}
 
-	sse, ok := newSSEWriter(w)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+	dn, err := h.store.GetDagNode(r.Context(), dp.ID, nodeID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
-	h.activeCancels.Store(chatID, cancelRun)
-	defer func() {
-		cancelRun()
-		h.activeCancels.Delete(chatID)
-	}()
+	current := dag.StatusQueued
+	if dn != nil {
+		current = dag.NodeStatus(dn.Status)
+	}
 
-	for ev, err := range h.orch.RetryNode(runCtx, userID, chatID, seeded, nodeID, guidance) {
-		if err != nil {
-			_ = sse.send(stream.Errorf(err.Error()))
-			break
-		}
-		h.persistNodeEvent(dp.ID, ev) // update the re-run nodes' persisted state
-		if sendErr := sse.send(ev); sendErr != nil {
-			break
+	if target == dag.StatusRunning && guidance == "" {
+		http.Error(w, "guidance is required to steer a running node", http.StatusBadRequest)
+		return
+	}
+	if !dag.CanTransition(current, target) {
+		writeJSON(w, http.StatusConflict, schema.TransitionError{
+			Error:   fmt.Sprintf("illegal transition: %s -> %s", current, target),
+			Current: schema.NodeStatus(current),
+			Allowed: allowedStatuses(current),
+		})
+		return
+	}
+
+	switch target {
+	case dag.StatusCancelled:
+		// Cooperative: actually takes effect at the node's next gate-stage
+		// boundary and is durably reflected via the node_cancelled SSE event
+		// (persistNodeEvent then writes the store row) — but the transition was
+		// accepted, so the response optimistically reports the target status,
+		// same as retry below. No-op server-side if the node isn't currently
+		// live (e.g. still queued, not yet dispatched) — same as the old DELETE
+		// endpoint's documented no-op.
+		h.orch.CancelNode(chatID, nodeID)
+		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
+	case dag.StatusRunning:
+		h.orch.SteerNode(chatID, nodeID, guidance)
+		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusRunning))
+	case dag.StatusQueued:
+		h.retryNodeAsync(dp, chatID, nodeID, guidance)
+		// The re-run is optimistically queued; its progress streams over the
+		// chat's existing hub/event-log relay (GET .../stream), same as any run.
+		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+	}
+}
+
+// optimisticNodeState builds a PUT node-status response body from the node's
+// persisted row (nil when it has no row yet — implicitly dag.StatusQueued),
+// with Status overridden to the just-accepted target — the transition was
+// legal and accepted even though propagation (cancel/steer) is cooperative and
+// completes asynchronously via the SSE stream.
+func optimisticNodeState(dn *store.DagNode, target dag.NodeStatus) schema.DagNodeState {
+	var ns schema.DagNodeState
+	if dn != nil {
+		ns = dagNodeState(*dn)
+	}
+	ns.Status = schema.NodeStatus(target)
+	return ns
+}
+
+// allowedStatuses converts dag.AllowedTargets to the wire enum for a 409 body.
+func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
+	targets := dag.AllowedTargets(from)
+	out := make([]schema.NodeStatus, len(targets))
+	for i, t := range targets {
+		out[i] = schema.NodeStatus(t)
+	}
+	return out
+}
+
+// retryNodeAsync re-runs nodeID and its descendants in the background, reusing
+// the rest of the plan's stored outputs. It does not stream its own HTTP
+// response (the PUT that triggered it already returned) — progress publishes
+// through the same hub + durable event log a GET .../stream subscriber already
+// watches, exactly like a fresh run.
+func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance string) {
+	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
+	seeded := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		if n.Output != "" {
+			seeded[n.NodeID] = n.Output
 		}
 	}
-	_ = sse.send(stream.Done())
-	_ = h.store.Touch(runCtx, chatID)
+	go func() {
+		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+		h.activeCancels.Store(chatID, &activeRun{responseID: dp.TurnID, cancel: cancelRun})
+		defer func() {
+			cancelRun()
+			h.activeCancels.Delete(chatID)
+		}()
+		defer h.hub.Close(chatID)
+
+		h.eventLog.reset(runCtx, chatID)
+		var seq int64
+		publish := func(ev stream.SSEEvent) {
+			seq++
+			h.hub.Publish(chatID, seq, ev)
+			h.eventLog.append(chatID, seq, ev)
+		}
+		publish(stream.ResponseCreated(dp.TurnID))
+
+		for ev, err := range h.orch.RetryNode(runCtx, userID, chatID, seeded, nodeID, guidance) {
+			if err != nil {
+				publish(stream.Errorf(err.Error()))
+				break
+			}
+			h.persistNodeEvent(dp.ID, ev) // update the re-run nodes' persisted state
+			publish(ev)
+		}
+		publish(stream.Done())
+		_ = h.store.Touch(runCtx, chatID)
+	}()
 }
 
 // SubscribeChatStream connects an additional client to a chat's live (or
@@ -534,35 +644,12 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 			}
 			nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
 			for _, n := range tc.Nodes {
-				ns := schema.DagNodeState{
-					Status:           n.Status,
-					Model:            strPtr(n.Model),
-					FinishReason:     strPtr(n.FinishReason),
-					OutputPreview:    strPtr(n.OutputPreview),
-					Error:            strPtr(n.Error),
-					PromptTokens:     intPtr(int(n.PromptTokens)),
-					CompletionTokens: intPtr(int(n.CompletionTokens)),
-					ReasoningTokens:  intPtr(int(n.ReasoningTokens)),
-					TotalTokens:      intPtr(int(n.TotalTokens)),
-					ServerDurationMs: intPtr(int(n.DurationMs)),
-					JudgeRounds:      intPtr(int(n.JudgeRounds)),
-					JudgeFinalScore:  float64Ptr(n.JudgeFinalScore),
-					JudgePassed:      boolPtr(n.JudgePassed),
-				}
-				if n.StartedAt != nil {
-					ms := int(n.StartedAt.UnixMilli())
-					ns.StartedAtMs = &ms
-				}
-				if n.FinishedAt != nil {
-					ms := int(n.FinishedAt.UnixMilli())
-					ns.FinishedAtMs = &ms
-				}
-				nodeStates[n.NodeID] = ns
+				nodeStates[n.NodeID] = dagNodeState(n)
 			}
-			// DAG is completed if all nodes are done/failed, in_progress otherwise.
+			// DAG is completed if all nodes are done/failed/cancelled, in_progress otherwise.
 			dagStatus := schema.Completed
 			for _, ns := range nodeStates {
-				if ns.Status == "running" || ns.Status == "queued" {
+				if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput {
 					dagStatus = schema.InProgress
 					break
 				}
@@ -624,6 +711,35 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	}
 }
 
+// dagNodeState converts a store.DagNode (persisted) into the wire DagNodeState.
+// Shared by buildTurn (chat history) and UpdateNodeStatus (the PUT response).
+func dagNodeState(n store.DagNode) schema.DagNodeState {
+	ns := schema.DagNodeState{
+		Status:           schema.NodeStatus(n.Status),
+		Model:            strPtr(n.Model),
+		FinishReason:     strPtr(n.FinishReason),
+		OutputPreview:    strPtr(n.OutputPreview),
+		Error:            strPtr(n.Error),
+		PromptTokens:     intPtr(int(n.PromptTokens)),
+		CompletionTokens: intPtr(int(n.CompletionTokens)),
+		ReasoningTokens:  intPtr(int(n.ReasoningTokens)),
+		TotalTokens:      intPtr(int(n.TotalTokens)),
+		ServerDurationMs: intPtr(int(n.DurationMs)),
+		JudgeRounds:      intPtr(int(n.JudgeRounds)),
+		JudgeFinalScore:  float64Ptr(n.JudgeFinalScore),
+		JudgePassed:      boolPtr(n.JudgePassed),
+	}
+	if n.StartedAt != nil {
+		ms := int(n.StartedAt.UnixMilli())
+		ns.StartedAtMs = &ms
+	}
+	if n.FinishedAt != nil {
+		ms := int(n.FinishedAt.UnixMilli())
+		ns.FinishedAtMs = &ms
+	}
+	return ns
+}
+
 func strPtr(s string) *string {
 	if s == "" {
 		return nil
@@ -679,24 +795,54 @@ func httpError(w http.ResponseWriter, status int, err error) {
 	http.Error(w, err.Error(), status)
 }
 
-// persistNodeEvent upserts the persisted DagNode state for a node-lifecycle event
-// (running / done / failed). Ignores non-node events.
+// persistNodeEvent upserts the persisted DagNode state for a node-lifecycle
+// event (running / done / failed / needs_input / cancelled). Ignores non-node
+// events. Every write routes through dag.CanTransition: an illegal transition
+// from the node's current persisted status is a logged bug, not a silent
+// write — the write proceeds regardless, since the SSE event is ground truth
+// for what the executor actually did.
 func (h *Handler) persistNodeEvent(planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
-	up := func(n store.DagNode) { go func() { _ = h.store.UpsertDagNode(context.Background(), n) }() }
+	var nodeID string
+	var to dag.NodeStatus
+	n := store.DagNode{PlanID: planID}
 	switch d := ev.Data.(type) {
 	case stream.NodeStartData:
-		up(store.DagNode{NodeID: d.NodeID, PlanID: planID, Status: "running", StartedAt: &t})
+		nodeID, to = d.NodeID, dag.StatusRunning
+		n.NodeID, n.Status, n.StartedAt = d.NodeID, string(to), &t
 	case stream.NodeDoneData:
-		up(store.DagNode{
-			NodeID: d.NodeID, PlanID: planID, Status: "done",
-			OutputPreview: d.OutputPreview, Output: d.Output, FinishedAt: &t,
-			Model: d.Model, PromptTokens: d.PromptTokens, CompletionTokens: d.CompletionTokens,
-			ReasoningTokens: d.ReasoningTokens, TotalTokens: d.TotalTokens,
-			FinishReason: d.FinishReason, DurationMs: d.DurationMs,
-			JudgeRounds: d.JudgeRounds, JudgeFinalScore: d.JudgeFinalScore, JudgePassed: d.JudgePassed,
-		})
+		nodeID, to = d.NodeID, dag.StatusDone
+		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
+		n.OutputPreview, n.Output = d.OutputPreview, d.Output
+		n.Model, n.PromptTokens, n.CompletionTokens = d.Model, d.PromptTokens, d.CompletionTokens
+		n.ReasoningTokens, n.TotalTokens, n.FinishReason = d.ReasoningTokens, d.TotalTokens, d.FinishReason
+		n.DurationMs, n.JudgeRounds = d.DurationMs, d.JudgeRounds
+		n.JudgeFinalScore, n.JudgePassed = d.JudgeFinalScore, d.JudgePassed
 	case stream.NodeFailedData:
-		up(store.DagNode{NodeID: d.NodeID, PlanID: planID, Status: "failed", Error: d.Error, FinishedAt: &t})
+		nodeID, to = d.NodeID, dag.StatusFailed
+		n.NodeID, n.Status, n.Error, n.FinishedAt = d.NodeID, string(to), d.Error, &t
+	case stream.NodeNeedsInputData:
+		nodeID, to = d.NodeID, dag.StatusNeedsInput
+		n.NodeID, n.Status = d.NodeID, string(to)
+	case stream.NodeCancelledData:
+		nodeID, to = d.NodeID, dag.StatusCancelled
+		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
+	default:
+		return
 	}
+	go func() {
+		ctx := context.Background()
+		from := dag.StatusQueued
+		if prev, err := h.store.GetDagNode(ctx, planID, nodeID); err == nil && prev != nil {
+			from = dag.NodeStatus(prev.Status)
+		}
+		if !dag.CanTransition(from, to) {
+			slog.Warn("persistNodeEvent: illegal node-status transition", "component", "dag",
+				"plan_id", planID, "node_id", nodeID, "from", from, "to", to)
+		}
+		if err := h.store.UpsertDagNode(ctx, n); err != nil {
+			slog.Warn("persistNodeEvent: upsert failed", "component", "dag",
+				"plan_id", planID, "node_id", nodeID, "err", err)
+		}
+	}()
 }
