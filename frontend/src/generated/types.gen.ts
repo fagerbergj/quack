@@ -4,12 +4,23 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+/**
+ * A chat's derived state: `running` while a turn is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+ *
+ */
+export type ChatStatus = 'running' | 'needs_input' | 'failed' | 'idle';
+
 export type ChatSummary = {
     id: string;
     title?: string;
     system_prompt: string;
     created_at: string;
     updated_at: string;
+    status: ChatStatus;
+    /**
+     * The unanswered question blocking the chat, present only when status is `needs_input`.
+     */
+    pending_question?: string;
 };
 
 export type ChatDetail = ChatSummary & {

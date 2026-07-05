@@ -49,7 +49,7 @@ func TestBuildHistory(t *testing.T) {
 	appendEvent(t, svc, sess, "user", "Illinois", false)
 
 	o := &Orchestrator{sessions: svc}
-	got := buildHistory(o.priorEvents(ctx, userID, sessionID))
+	got := buildHistory(o.PriorEvents(ctx, userID, sessionID))
 
 	want := []dag.HistoryTurn{
 		{Role: "user", Text: "which Springfield?"},
@@ -69,7 +69,7 @@ func TestBuildHistory(t *testing.T) {
 // TestBuildHistoryEmptySession returns nil for a session that doesn't exist.
 func TestBuildHistoryEmptySession(t *testing.T) {
 	o := &Orchestrator{sessions: session.InMemoryService()}
-	if got := buildHistory(o.priorEvents(context.Background(), "u", "missing")); got != nil {
+	if got := buildHistory(o.PriorEvents(context.Background(), "u", "missing")); got != nil {
 		t.Errorf("buildHistory on missing session = %+v, want nil", got)
 	}
 }
@@ -86,10 +86,11 @@ func appendPartsEvent(t *testing.T, svc session.Service, sess session.Session, l
 	}
 }
 
-// TestPendingChoiceCallID verifies a pending get_user_choice call is detected
-// while unanswered and clears once a real answer (carrying the answer key)
-// follows — so the orchestrator resumes the right turn exactly once.
-func TestPendingChoiceCallID(t *testing.T) {
+// TestPendingChoice verifies a pending get_user_choice call (and its question
+// text) is detected while unanswered and clears once a real answer (carrying
+// the answer key) follows — so the orchestrator resumes the right turn exactly
+// once.
+func TestPendingChoice(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
 	const userID, sessionID, callID = "u1", "c1", "call-xyz"
@@ -101,27 +102,76 @@ func TestPendingChoiceCallID(t *testing.T) {
 	o := &Orchestrator{sessions: svc}
 
 	// No clarification yet → nothing pending.
-	if got := pendingChoiceCallID(o.priorEvents(ctx, userID, sessionID)); got != "" {
-		t.Errorf("fresh session pendingChoiceCallID = %q, want empty", got)
+	if id, q := pendingChoice(o.PriorEvents(ctx, userID, sessionID)); id != "" || q != "" {
+		t.Errorf("fresh session pendingChoice = (%q, %q), want empty", id, q)
 	}
 
 	// The orchestrator asks: a long-running choice call + its auto pending
 	// placeholder response (note: NO answer key).
 	appendPartsEvent(t, svc, sess, []string{callID},
-		&genai.Part{FunctionCall: &genai.FunctionCall{ID: callID, Name: tools.ChoiceToolName, Args: map[string]any{"options": []string{"Illinois", "Missouri"}}}})
+		&genai.Part{FunctionCall: &genai.FunctionCall{ID: callID, Name: tools.ChoiceToolName, Args: map[string]any{
+			"question": "which Springfield?", "options": []string{"Illinois", "Missouri"},
+		}}})
 	appendPartsEvent(t, svc, sess, nil,
 		&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: callID, Name: tools.ChoiceToolName, Response: map[string]any{"status": "pending"}}})
 
-	if got := pendingChoiceCallID(o.priorEvents(ctx, userID, sessionID)); got != callID {
-		t.Errorf("after ask, pendingChoiceCallID = %q, want %q", got, callID)
+	if id, q := pendingChoice(o.PriorEvents(ctx, userID, sessionID)); id != callID || q != "which Springfield?" {
+		t.Errorf("after ask, pendingChoice = (%q, %q), want (%q, %q)", id, q, callID, "which Springfield?")
 	}
 
 	// The user answers: a FunctionResponse carrying the answer key resolves it.
 	appendPartsEvent(t, svc, sess, nil,
 		&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: callID, Name: tools.ChoiceToolName, Response: map[string]any{tools.ChoiceAnswerKey: "Illinois"}}})
 
-	if got := pendingChoiceCallID(o.priorEvents(ctx, userID, sessionID)); got != "" {
-		t.Errorf("after answer, pendingChoiceCallID = %q, want empty", got)
+	if id, q := pendingChoice(o.PriorEvents(ctx, userID, sessionID)); id != "" || q != "" {
+		t.Errorf("after answer, pendingChoice = (%q, %q), want empty", id, q)
+	}
+}
+
+// TestLatestPendingQuestion verifies the shared helper (used by both Run's
+// resume dispatch and the REST status handler) reports a mid-node interrupt
+// with its node ID, a top-level clarification with just its message, and
+// nothing when neither is pending.
+func TestLatestPendingQuestion(t *testing.T) {
+	svc := session.InMemoryService()
+	ctx := context.Background()
+	const userID, sessionID, callID = "u1", "c1", "call-xyz"
+	resp, err := svc.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sess := resp.Session
+	o := &Orchestrator{sessions: svc}
+
+	if _, ok := LatestPendingQuestion(o.PriorEvents(ctx, userID, sessionID)); ok {
+		t.Fatal("fresh session: expected no pending question")
+	}
+
+	// A top-level clarification is pending.
+	appendPartsEvent(t, svc, sess, []string{callID},
+		&genai.Part{FunctionCall: &genai.FunctionCall{ID: callID, Name: tools.ChoiceToolName, Args: map[string]any{"question": "which Springfield?"}}})
+	appendPartsEvent(t, svc, sess, nil,
+		&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: callID, Name: tools.ChoiceToolName, Response: map[string]any{"status": "pending"}}})
+
+	pq, ok := LatestPendingQuestion(o.PriorEvents(ctx, userID, sessionID))
+	if !ok || pq.Message != "which Springfield?" {
+		t.Fatalf("got %+v ok=%v, want message %q", pq, ok, "which Springfield?")
+	}
+	if _, isNode := pq.NodeInterrupt(); isNode {
+		t.Fatal("a top-level clarification should not report as a node interrupt")
+	}
+
+	// A mid-node interrupt takes priority over a (stale, already-answered in
+	// this scenario it would be irrelevant) top-level clarification.
+	ev := &session.Event{}
+	ev.RequestedInput = &session.RequestInput{InterruptID: "hitl-n1-r1", Message: "which direction?"}
+	nodeEvents := append(append([]*session.Event{}, o.PriorEvents(ctx, userID, sessionID)...), ev)
+	pq, ok = LatestPendingQuestion(nodeEvents)
+	if !ok || pq.Message != "which direction?" {
+		t.Fatalf("got %+v ok=%v, want node message %q", pq, ok, "which direction?")
+	}
+	if pend, isNode := pq.NodeInterrupt(); !isNode || pend.nodeID != "n1" {
+		t.Fatalf("expected node interrupt for n1, got %+v isNode=%v", pend, isNode)
 	}
 }
 

@@ -106,7 +106,7 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 	}
 	out := schema.ChatList{Data: make([]schema.ChatSummary, 0, len(chats))}
 	for _, c := range chats {
-		out.Data = append(out.Data, toSummary(c))
+		out.Data = append(out.Data, h.toSummary(r.Context(), c))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -123,7 +123,7 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toSummary(*c))
+	writeJSON(w, http.StatusOK, h.toSummary(r.Context(), *c))
 }
 
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -141,13 +141,16 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
+	status, pendingQuestion := h.chatStatus(r.Context(), chatID, turns)
 	detail := schema.ChatDetail{
-		Id:           c.ID,
-		Title:        nonEmpty(c.Title),
-		SystemPrompt: c.SystemPrompt,
-		CreatedAt:    c.CreatedAt,
-		UpdatedAt:    c.UpdatedAt,
-		Turns:        make([]schema.Turn, 0, len(turns)),
+		Id:              c.ID,
+		Title:           nonEmpty(c.Title),
+		SystemPrompt:    c.SystemPrompt,
+		CreatedAt:       c.CreatedAt,
+		UpdatedAt:       c.UpdatedAt,
+		Status:          status,
+		PendingQuestion: pendingQuestion,
+		Turns:           make([]schema.Turn, 0, len(turns)),
 	}
 	for _, tc := range turns {
 		detail.Turns = append(detail.Turns, buildTurn(tc))
@@ -768,14 +771,61 @@ func float64Ptr(f float64) *float64 {
 	return &f
 }
 
-func toSummary(c store.Chat) schema.ChatSummary {
+// toSummary builds a ChatSummary, including its derived status. Loads the
+// chat's turns itself (an acceptable per-chat query in chat list — ponytail:
+// only worth batching if list gets slow); GetChat already has its turns loaded
+// and calls chatStatus directly instead.
+func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummary {
+	turns, _ := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, userID, c.ID)
+	status, pendingQuestion := h.chatStatus(ctx, c.ID, turns)
 	return schema.ChatSummary{
-		Id:           c.ID,
-		Title:        nonEmpty(c.Title),
-		SystemPrompt: c.SystemPrompt,
-		CreatedAt:    c.CreatedAt,
-		UpdatedAt:    c.UpdatedAt,
+		Id:              c.ID,
+		Title:           nonEmpty(c.Title),
+		SystemPrompt:    c.SystemPrompt,
+		CreatedAt:       c.CreatedAt,
+		UpdatedAt:       c.UpdatedAt,
+		Status:          status,
+		PendingQuestion: pendingQuestion,
 	}
+}
+
+// chatStatus computes a chat's derived status plus its pending question (set
+// only for needs_input):
+//
+//   - running — the hub has a live run for this chat.
+//   - needs_input — the chat's session history ends on an unanswered question.
+//     This MUST be (and is) the same scan the orchestrator's own resume path
+//     uses (orchestrator.LatestPendingQuestion over PriorEvents) — one place
+//     decides "is a question pending", so the API and the resume behavior can
+//     never disagree (see AGENTS.md's DRY requirement for chat status).
+//   - failed — the last turn's DAG has a failed node and no answer text
+//     followed it.
+//   - idle — none of the above.
+func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
+	if h.hub.Active(chatID) {
+		return schema.Running, nil
+	}
+	if pq, ok := orchestrator.LatestPendingQuestion(h.orch.PriorEvents(ctx, userID, chatID)); ok {
+		q := pq.Message
+		return schema.NeedsInput, &q
+	}
+	if n := len(turns); n > 0 {
+		last := turns[n-1]
+		if strings.TrimSpace(last.AsstText) == "" && hasFailedNode(last.Nodes) {
+			return schema.Failed, nil
+		}
+	}
+	return schema.Idle, nil
+}
+
+// hasFailedNode reports whether any node in a turn's DAG failed.
+func hasFailedNode(nodes []store.DagNode) bool {
+	for _, n := range nodes {
+		if n.Status == "failed" {
+			return true
+		}
+	}
+	return false
 }
 
 func nonEmpty(s string) *string {

@@ -71,6 +71,27 @@ func TestHubClose(t *testing.T) {
 	}
 }
 
+// Active reports true for an unpublished-yet topic only after Close, and false
+// again once a new run starts (mirrors the running/idle status flip).
+func TestHubActive(t *testing.T) {
+	h := NewHub()
+	if h.Active("c") {
+		t.Error("no topic yet: expected inactive")
+	}
+	h.Publish("c", 1, ev("a"))
+	if !h.Active("c") {
+		t.Error("published, not closed: expected active")
+	}
+	h.Close("c")
+	if h.Active("c") {
+		t.Error("closed: expected inactive")
+	}
+	h.Publish("c", 1, ev("new"))
+	if !h.Active("c") {
+		t.Error("new run published: expected active")
+	}
+}
+
 // The first publish after a run ends starts a fresh stream.
 func TestHubNewRunResets(t *testing.T) {
 	h := NewHub()
