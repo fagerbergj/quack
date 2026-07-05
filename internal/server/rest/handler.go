@@ -459,7 +459,18 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		h.orch.CancelNode(chatID, nodeID)
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusRunning:
-		h.orch.SteerNode(chatID, nodeID, guidance)
+		// Steer delivery is NOT optimistic: unlike cancel (whose no-op case is
+		// benign), a silently dropped steer looks like "steer doesn't work" —
+		// the signal only lands while the node has a live control, and a node
+		// that is mid-restart from a PREVIOUS steer has none. Tell the client.
+		if !h.orch.SteerNode(chatID, nodeID, guidance) {
+			writeJSON(w, http.StatusConflict, schema.TransitionError{
+				Error:   "node is not steerable right now (no live run — it may be restarting from an earlier steer or finishing); try again in a moment",
+				Current: schema.NodeStatus(current),
+				Allowed: allowedStatuses(current),
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusRunning))
 	case dag.StatusQueued:
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)

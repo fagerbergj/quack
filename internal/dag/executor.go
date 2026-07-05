@@ -93,6 +93,8 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
 			return e.controls.wasCancelled(cancelKey, nodeID)
+		}, func(nodeID string, gen int) string {
+			return e.controls.steerGuidance(cancelKey, nodeID, gen)
 		}),
 	}
 }
@@ -213,14 +215,16 @@ func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, no
 type dagStream struct {
 	agentByID map[string]string
 	yield     func(stream.SSEEvent, error) bool
-	outputs   map[string]string      // nodeID → captured output (== caller's nodeOutputs)
-	scoreOf   func(string) gateScore // reads a node's persisted judge result
-	cancelled func(string) bool      // nodeID → user-cancelled this run (→ "stopped", not "failed")
+	outputs   map[string]string        // nodeID → captured output (== caller's nodeOutputs)
+	scoreOf   func(string) gateScore   // reads a node's persisted judge result
+	cancelled func(string) bool        // nodeID → user-cancelled this run (→ "stopped", not "failed")
+	steerOf   func(string, int) string // nodeID + steer generation (the -sN run suffix) → delivered guidance
 
 	started     map[string]bool   // node_start emitted
 	doneEmitted map[string]bool   // node_done emitted
 	paused      map[string]bool   // node paused for user input this run (node_needs_input emitted)
 	curRun      map[string]string // nodeID → active worker runID
+	steerSeen   map[string]int    // nodeID → highest -sN steer generation announced (node_steered emitted)
 	usage       map[string]*runUsage
 	last        string // last non-empty output (terminal fallback)
 	stopped     bool
@@ -231,11 +235,11 @@ type runUsage struct {
 	model, finish                        string
 }
 
-func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool) *dagStream {
+func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
-		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled,
+		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, steerOf: steerOf,
 		started: map[string]bool{}, doneEmitted: map[string]bool{}, paused: map[string]bool{},
-		curRun: map[string]string{}, usage: map[string]*runUsage{},
+		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{},
 	}
 }
 
@@ -325,6 +329,20 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		}
 		s.curRun[node] = runID
 		s.usage[node] = &runUsage{}
+		// A -sN run suffix means the user steered the node and the gate restarted
+		// it (vetting's steer pickup). Announce each new generation exactly once as
+		// node_steered — the UI freezes the interrupted runs, re-queues the node,
+		// and records the guidance — before the re-run's agent_start.
+		if gen := steerGen(runID); gen > s.steerSeen[node] {
+			s.steerSeen[node] = gen
+			guidance := ""
+			if s.steerOf != nil {
+				guidance = s.steerOf(node, gen)
+			}
+			if !s.emit(stream.NodeSteered(node, guidance)) {
+				return false
+			}
+		}
 		st, rd := stageRound(runID)
 		if !s.emit(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: runID, Agent: s.agentByID[node], Stage: st, Round: rd,
@@ -589,4 +607,21 @@ func ensureTerminal(plan Plan, nodeOutputs map[string]string, fallback string) {
 			return
 		}
 	}
+}
+
+// steerGen extracts the steer generation from a run ID's trailing "-sN" suffix
+// (e.g. "worker-r0-s2" → 2); 0 when the run isn't a steered re-run.
+func steerGen(runID string) int {
+	i := strings.LastIndex(runID, "-s")
+	if i < 0 || i+2 >= len(runID) {
+		return 0
+	}
+	n := 0
+	for _, c := range runID[i+2:] {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }

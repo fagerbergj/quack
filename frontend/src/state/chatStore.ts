@@ -216,7 +216,25 @@ export class ChatStore {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'running', guidance: g }),
+    }).then(async res => {
+      // A dropped steer returns 409 (no live control — the node is between runs,
+      // e.g. restarting from an earlier steer). Surface it on the node rather
+      // than silently doing nothing ("steer doesn't work"); the note is
+      // overwritten by the node's next state update.
+      if (res.ok) return
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      this.markNodeError(chatId, nodeId, body.error || `steer rejected (HTTP ${res.status})`)
     }).catch(() => {})
+  }
+
+  // markNodeError annotates a live DAG node with a transient error note (used
+  // for rejected control actions — the next stream event for the node clears it).
+  private markNodeError(chatId: string, nodeId: string, msg: string): void {
+    const cur = this.get(chatId)
+    const dag = cur.live?.dag
+    if (!cur.live || !dag?.nodeStates[nodeId]) return
+    const nodeStates = { ...dag.nodeStates, [nodeId]: { ...dag.nodeStates[nodeId], error: msg } }
+    this.write(chatId, { ...cur, live: { ...cur.live, dag: { ...dag, nodeStates } } })
   }
 
   // retryNode re-runs a FINISHED (failed/done/cancelled) node and its

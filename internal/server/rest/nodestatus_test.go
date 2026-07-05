@@ -173,7 +173,13 @@ func TestUpdateNodeStatus_SteerWithoutGuidance400(t *testing.T) {
 	}
 }
 
-func TestUpdateNodeStatus_SteerRunningNode(t *testing.T) {
+// TestUpdateNodeStatus_SteerUndeliverable409: steer is NOT optimistic — the
+// node's persisted row says "running", but with no live control registered
+// (node between runs, e.g. mid-restart from an earlier steer) the signal has
+// nowhere to land, and pretending otherwise reads as "steer doesn't work"
+// (live e2e 2026-07-05: only one of several steers ever landed, silently).
+// Delivery success is exercised at the dag layer (control tests) and live e2e.
+func TestUpdateNodeStatus_SteerUndeliverable409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
@@ -183,8 +189,11 @@ func TestUpdateNodeStatus_SteerRunningNode(t *testing.T) {
 
 	guidance := "focus on cost"
 	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning, Guidance: &guidance})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (no live control to deliver to); body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not steerable") {
+		t.Errorf("409 body should explain the steer was dropped; body=%s", rec.Body.String())
 	}
 }
 

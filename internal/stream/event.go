@@ -271,6 +271,11 @@ type NodeSteeredData struct {
 	Guidance string `json:"guidance"`
 }
 
+// NodeSteered builds a node_steered event.
+func NodeSteered(nodeID, guidance string) SSEEvent {
+	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
+}
+
 // ChatTitleData is the `chat_title` event payload.
 type ChatTitleData struct {
 	Title string `json:"title"`

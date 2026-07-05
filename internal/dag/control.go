@@ -47,6 +47,7 @@ type runControls struct {
 	mu        sync.Mutex
 	m         map[string]map[string]*nodeControl // chatID → nodeID → control (live)
 	cancelled map[string]map[string]bool         // chatID → nodeID → user-cancelled; persists after the control is unregistered so the stream can mark the node "cancelled" (not "failed")
+	steers    map[string]map[string][]string     // chatID → nodeID → guidance per delivered steer, in order; generation N (the -sN run suffix) reads steers[N-1]
 }
 
 func newRunControls() *runControls {
@@ -68,6 +69,32 @@ func (r *runControls) resetCancelled(chatID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.cancelled, chatID)
+	delete(r.steers, chatID)
+}
+
+// recordSteer appends a delivered steer's guidance for the node, so the stream
+// can put the text on the node_steered event when the -sN re-run appears.
+func (r *runControls) recordSteer(chatID, nodeID, guidance string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.steers == nil {
+		r.steers = map[string]map[string][]string{}
+	}
+	if r.steers[chatID] == nil {
+		r.steers[chatID] = map[string][]string{}
+	}
+	r.steers[chatID][nodeID] = append(r.steers[chatID][nodeID], guidance)
+}
+
+// steerGuidance returns the guidance of the node's Nth steer (1-based — the -sN
+// run-ID suffix), or "" when unknown.
+func (r *runControls) steerGuidance(chatID, nodeID string, n int) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if g := r.steers[chatID][nodeID]; n >= 1 && n <= len(g) {
+		return g[n-1]
+	}
+	return ""
 }
 
 func (r *runControls) register(chatID, nodeID string) *nodeControl {
@@ -130,5 +157,6 @@ func (e *Executor) SteerNode(chatID, nodeID, guidance string) bool {
 		return false
 	}
 	c.setSteer(guidance)
+	e.controls.recordSteer(chatID, nodeID, guidance)
 	return true
 }
