@@ -248,6 +248,37 @@ func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 	}
 }
 
+// TestGroupSessionEvents_UsageAccumulation covers Turn.usage's data source: the
+// orchestrator's own model events carry UsageMetadata, summed per turn — while a
+// gate-internal node event's usage (already surfaced separately via DagNodeState)
+// must NOT leak into it, mirroring the asstText/toolCalls exclusion above.
+func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
+	orch1 := asstEvent(&genai.Part{Text: "thinking"})
+	orch1.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 30, CandidatesTokenCount: 5}
+	orch2 := asstEvent(&genai.Part{Text: "The answer."})
+	orch2.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 40, CandidatesTokenCount: 15, ThoughtsTokenCount: 2}
+
+	node := nodeEvent("n1/worker-r0@1", &genai.Part{Text: "raw draft"})
+	node.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 999, CandidatesTokenCount: 999}
+
+	events := []*session.Event{
+		userEvent("research X"),
+		orch1,
+		node,
+		orch2,
+	}
+
+	groups := groupSessionEvents(slices.Values(events))
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(groups))
+	}
+	g := groups[0]
+	if g.promptTokens != 70 || g.completionTokens != 20 || g.reasoningTokens != 2 {
+		t.Errorf("usage = prompt=%d completion=%d reasoning=%d, want 70/20/2 (node-scoped usage must not leak in)",
+			g.promptTokens, g.completionTokens, g.reasoningTokens)
+	}
+}
+
 // TestGroupSessionEvents_OrchestratorOwnReplyKept guards the regression: the
 // orchestrator's own conversational (no-DAG) reply carries NodeInfo (it's
 // AgentNode-wrapped too) but must still be captured — only gate-internal

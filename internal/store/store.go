@@ -98,6 +98,9 @@ type TurnContent struct {
 	ToolCalls []ToolCallRecord // orchestrator-level tool calls, in event order
 	Plan      *DagPlan
 	Nodes     []DagNode
+	// Usage is the orchestrator's own token usage for this turn (its conversational
+	// session — a DAG turn's per-node tokens are separate, surfaced via Nodes).
+	PromptTokens, CompletionTokens, ReasoningTokens int32
 }
 
 // ToolCallRecord is one orchestrator tool call recovered from the session events,
@@ -145,6 +148,10 @@ const orchestratorAuthor = "orchestrator"
 type turnGroup struct {
 	userText, asstText, asstThink string
 	toolCalls                     []ToolCallRecord
+	// Usage accumulated from the orchestrator's OWN model events in this turn
+	// (gate-internal node runs are excluded, same as asstText/toolCalls below —
+	// their tokens are already surfaced per-node via DagNodeState).
+	promptTokens, completionTokens, reasoningTokens int32
 }
 
 // groupSessionEvents buckets a session's events into per-turn groups, split on
@@ -201,6 +208,11 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		// wrapped in a workflow.AgentNode, so its own real replies carry NodeInfo too.
 		if ev.Author != orchestratorAuthor {
 			continue
+		}
+		if ev.UsageMetadata != nil {
+			cur.promptTokens += ev.UsageMetadata.PromptTokenCount
+			cur.completionTokens += ev.UsageMetadata.CandidatesTokenCount
+			cur.reasoningTokens += ev.UsageMetadata.ThoughtsTokenCount
 		}
 		for _, p := range ev.Content.Parts {
 			if p == nil {
@@ -491,6 +503,9 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 			tc.AsstText = groups[i].asstText
 			tc.AsstThink = groups[i].asstThink
 			tc.ToolCalls = groups[i].toolCalls
+			tc.PromptTokens = groups[i].promptTokens
+			tc.CompletionTokens = groups[i].completionTokens
+			tc.ReasoningTokens = groups[i].reasoningTokens
 		}
 		if plan := planByTurn[t.ID]; plan != nil {
 			tc.Plan = plan

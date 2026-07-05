@@ -616,11 +616,25 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		output = append(output, msgItem)
 	}
 
+	// Usage: the orchestrator's own token usage for this turn (recovered from the
+	// stored session events — UsageMetadata survives ADK's Postgres round-trip,
+	// unlike ModelVersion, which the storage layer drops; schema.Usage carries no
+	// model field, so that gap doesn't matter here). Nil when nothing was recorded
+	// (e.g. a turn that only ran a DAG, whose per-node tokens live on DagNodeState).
+	var usage *schema.Usage
+	if tc.PromptTokens > 0 || tc.CompletionTokens > 0 || tc.ReasoningTokens > 0 {
+		usage = &schema.Usage{
+			InputTokens:  intPtr(int(tc.PromptTokens)),
+			OutputTokens: intPtr(int(tc.CompletionTokens + tc.ReasoningTokens)),
+		}
+	}
+
 	return schema.Turn{
 		Id:        tc.ID,
 		CreatedAt: tc.CreatedAt,
 		Input:     schema.TurnInput{Role: schema.User, Content: tc.UserText},
 		Output:    output,
+		Usage:     usage,
 	}
 }
 

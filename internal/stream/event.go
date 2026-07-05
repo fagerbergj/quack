@@ -364,27 +364,38 @@ type Translator struct {
 // NewTranslator returns a Translator for one node stream.
 func NewTranslator() *Translator { return &Translator{} }
 
+// Usage returns the model/usage/finish-reason accumulated so far — either since
+// the currently-open run started, or (for a caller with no run/marker protocol,
+// e.g. the orchestrator's own un-gated direct-answer session) since the last time
+// a run opened and reset the counters, i.e. the whole stream fed to this
+// Translator. Safe to call at any point, including after Event has returned.
+func (t *Translator) Usage() (model string, prompt, completion, reasoning, total int32, finishReason string) {
+	return t.model, t.prompt, t.completion, t.reasoning, t.total, t.finish
+}
+
 // Event maps one ADK session event to zero or more wire events.
 func (t *Translator) Event(ev *session.Event) []SSEEvent {
 	if ev == nil {
 		return nil
 	}
 
-	// Accumulate this event's usage/model/finish into the current run; reported
-	// on the run's agent_complete. (Model events carry these; markers don't.)
-	if t.curRun != "" {
-		if ev.UsageMetadata != nil {
-			t.prompt += ev.UsageMetadata.PromptTokenCount
-			t.completion += ev.UsageMetadata.CandidatesTokenCount
-			t.reasoning += ev.UsageMetadata.ThoughtsTokenCount
-			t.total += ev.UsageMetadata.TotalTokenCount
-		}
-		if ev.ModelVersion != "" {
-			t.model = ev.ModelVersion
-		}
-		if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
-			t.finish = string(ev.FinishReason)
-		}
+	// Accumulate this event's usage/model/finish. Reported on the run's
+	// agent_complete when a marker-delimited run is open; a caller with no run
+	// concept at all — the orchestrator's own un-gated direct-answer session,
+	// which never emits agent_start/agent_complete markers — reads the running
+	// total straight off Usage() instead. Either way the counters reset to zero
+	// when a new run opens (below), so this is never double-counted.
+	if ev.UsageMetadata != nil {
+		t.prompt += ev.UsageMetadata.PromptTokenCount
+		t.completion += ev.UsageMetadata.CandidatesTokenCount
+		t.reasoning += ev.UsageMetadata.ThoughtsTokenCount
+		t.total += ev.UsageMetadata.TotalTokenCount
+	}
+	if ev.ModelVersion != "" {
+		t.model = ev.ModelVersion
+	}
+	if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
+		t.finish = string(ev.FinishReason)
 	}
 
 	if ev.Content == nil {
