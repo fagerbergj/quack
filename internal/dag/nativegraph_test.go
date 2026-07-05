@@ -41,7 +41,7 @@ func (s *graphStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
-		case strings.Contains(txt, "they have now answered"):
+		case strings.Contains(txt, "they answered"):
 			if i := strings.Index(txt, "\nA: "); i >= 0 {
 				line := txt[i+4:]
 				if j := strings.IndexByte(line, '\n'); j >= 0 {
