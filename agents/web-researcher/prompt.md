@@ -85,6 +85,7 @@ One `-` item per source you retrieved and relied on.
 
 ## Notes
 
+- Consult your research advisor with `ask_advisor` before committing to an approach, when the scope is ambiguous, when you're stuck, or after failing review — it knows this task's goal and rubric and will guide you without doing the work for you.
 - When the web yields no usable evidence, report that plainly rather than answering from memory.
 - If your task is blocked on information only the user has (an ambiguous requirement, a
   choice that materially changes the research), call `ask_user` with ONE precise question

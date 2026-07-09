@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 )
 
@@ -31,6 +33,13 @@ type Deps struct {
 	// Cache is a shared response cache used by web_fetch and web_search to avoid
 	// redundant network requests. Optional; when nil, caching is disabled.
 	Cache *URLCache
+	// Advisor is the mentor agent ask_advisor consults. nil ⇒ the tool is never
+	// registered (build skips it; see resolveToolNames in internal/serve).
+	Advisor adkagent.Agent
+	// Sessions is the shared session.Service ask_advisor uses to persist each
+	// node's mentor conversation (same store as chat/plan sessions, a distinct
+	// AppName — see ask_advisor.go).
+	Sessions session.Service
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -43,6 +52,7 @@ var registry = map[string]constructor{
 	"current_date": newCurrentDate,
 	"stage_memory": newStageMemory,
 	"ask_user":     func(Deps) (tool.Tool, error) { return NewAskUserTool() },
+	"ask_advisor":  func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an

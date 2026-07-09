@@ -225,9 +225,30 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		}
 	}
 
+	// Advisor: the worker's ask_advisor mentor tool, built once here (judge's
+	// model + the agents/advisor bundle, tool-less) so buildAgents can wire it
+	// into worker bundles that list ask_advisor. nil (tool absent) when gating
+	// is off or the build fails — never fails startup. Not added to the
+	// plannable roster — it's a tool, not a DAG node.
+	var advisorAgent adkagent.Agent
+	if cfg.Gates.JudgeEnabled() {
+		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
+			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model); merr != nil {
+				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
+			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
+				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
+			} else if built, aerr := agent.Build(ab, am, nil, nil, agent.Compaction{}, ""); aerr != nil {
+				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
+			} else {
+				advisorAgent = built
+				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
+			}
+		}
+	}
+
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore)
+	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -297,26 +318,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// non-gated (or gates-disabled) agent gets the zero Config (JudgeRounds=0), so
 	// RunGatedRefine runs the worker once and returns it ungated.
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
-	// Advisor: a formative consult run inside the gate before each worker draft
-	// (replaces the dropped self-critique). Built from the judge's model + the
-	// agents/advisor bundle; nil (skip the consult) when gating is off or it fails
-	// to build. Not added to the plannable roster — it's a gate helper, not a node.
-	var advisorAgent adkagent.Agent
-	if cfg.Gates.JudgeEnabled() {
-		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model); merr != nil {
-				slog.Warn("advisor model build failed; consult disabled", "component", "startup", "err", merr)
-			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
-				slog.Warn("advisor bundle load failed; consult disabled", "component", "startup", "err", berr)
-			} else if built, aerr := agent.Build(ab, am, nil, nil, agent.Compaction{}, ""); aerr != nil {
-				slog.Warn("advisor build failed; consult disabled", "component", "startup", "err", aerr)
-			} else {
-				advisorAgent = built
-				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
-			}
-		}
-	}
-	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, advisorAgent, judgeFactory, cfgFor, mediaAgents)
+	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS, userStore)
 
@@ -355,7 +357,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
 	// Derive the recall service, leaving it nil (not a non-nil interface wrapping
 	// a nil pointer) when memory is off. The gate takes the concrete *memory.Store
 	// directly (taskStore), so it has no such typed-nil hazard.
@@ -456,20 +458,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// (added to every agent when memory is on); load_memory is deliberate recall
 		// (opt-in via the agent's tools list). Strip load_memory from the builtin
 		// names regardless, so tools.Build never sees an unknown tool.
-		toolNames := make([]string, 0, len(ac.Tools))
-		wantLoadMemory := false
-		for _, t := range ac.Tools {
-			switch t {
-			case "load_memory":
-				wantLoadMemory = true // ADK-native; added below when memory is on
-				continue
-			case "stage_memory":
-				if taskMem == nil {
-					continue // memory off: don't build a sink that never commits
-				}
-			}
-			toolNames = append(toolNames, t)
-		}
+		toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskMem != nil, advisorAgent != nil)
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
@@ -477,6 +466,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Fetch:      tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
 				Summarizer: m,
 				Cache:      urlCache,
+				Advisor:    advisorAgent,
+				Sessions:   sessions,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, fmtErr(name, "tools: %v", err)
@@ -564,4 +555,33 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 
 func fmtErr(agentName, format string, args ...any) error {
 	return fmt.Errorf("agent %q: "+format, append([]any{agentName}, args...)...)
+}
+
+// resolveToolNames splits an agent bundle's configured tool names into the
+// builtin names tools.Build should actually construct, plus whether
+// load_memory (ADK-native, added separately by the caller) was requested.
+// Two names are gated on runtime availability rather than erroring when their
+// dependency is off, so one config file describes every topology:
+//   - stage_memory needs a task-memory store (taskMemAvailable).
+//   - ask_advisor needs the advisor agent to consult (advisorAvailable) —
+//     built only when gates.judge is enabled (see build's advisorAgent).
+func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string, wantLoadMemory bool) {
+	names = make([]string, 0, len(configured))
+	for _, t := range configured {
+		switch t {
+		case "load_memory":
+			wantLoadMemory = true // ADK-native; added below when memory is on
+			continue
+		case "stage_memory":
+			if !taskMemAvailable {
+				continue // memory off: don't build a sink that never commits
+			}
+		case "ask_advisor":
+			if !advisorAvailable {
+				continue // advisor disabled (judge off or advisor build failed): no mentor to consult
+			}
+		}
+		names = append(names, t)
+	}
+	return names, wantLoadMemory
 }

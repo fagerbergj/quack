@@ -10,7 +10,7 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `providers.local.api_key` (env `QUACK_LLM_API_KEY`) | `unused` | llama-swap needs no auth. |
 | `orchestrator.planner.inference` | provider `local`, model `gpt-oss-120b` | Strongest reasoner; plans the DAG once per request, so quality beats speed. |
 | `gates.deterministic_checks.max_rounds` | `4` | Free citation/length checks + cheap targeted revise cycles, run first. |
-| `gates.judge.model` | `gemma4-26b-a4b` | Independent rubric scorer (empty ⇒ judge disabled, and the advisor consult with it); cheaper stages still run. |
+| `gates.judge.model` | `gemma4-26b-a4b` | Independent rubric scorer (empty ⇒ judge disabled, and the ask_advisor tool with it); cheaper stages still run. |
 | `gates.judge.threshold` | `0.6` | Per-criterion pass bar — every rubric criterion must clear it (verdict score = the lowest criterion; no averaging or hard caps). |
 | `gates.judge.max_rounds` | `1` | Judge/revise rounds; bounds cost and keeps the node loop acyclic. |
 | `agents[web-researcher].inference` | provider `local`, model `qwen3.6-35b` | Fast, capable general worker for web research. |

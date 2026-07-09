@@ -404,6 +404,7 @@ func buildRevisionContent(constitution string, question *genai.Content, answer, 
 	var sb strings.Builder
 	sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
 		"Address the reviewer's feedback below: use your tools to fix the gaps — re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
+		"If you're unsure how to address this feedback, consult your advisor (ask_advisor) before revising — it knows this task's goal and can help you tell what actually needs to change. " +
 		"Then output only the corrected answer with no preamble or commentary.\n\n")
 	if constitution != "" {
 		sb.WriteString("Principles:\n")
