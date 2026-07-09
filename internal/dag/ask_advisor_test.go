@@ -10,6 +10,7 @@ package dag_test
 import (
 	"context"
 	"iter"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,7 +25,9 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -111,6 +114,10 @@ func newAdvisorTool(t *testing.T, advisorModel model.LLM, sessions session.Servi
 	t.Helper()
 	advisorAgent, err := llmagent.New(llmagent.Config{
 		Name: "advisor", Model: advisorModel, Description: "advisor", Instruction: "Advise.",
+		// ModeChat pinned, as production does via agent.BuildChat: the runner
+		// would otherwise force-set it with an unsynchronized write on this
+		// SHARED instance — a data race under concurrent consults.
+		Mode: llmagent.ModeChat,
 	})
 	if err != nil {
 		t.Fatalf("advisor agent: %v", err)
@@ -148,9 +155,10 @@ func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, session
 // ask_advisor again then writes the final answer. gHasTool routes submit_verdict
 // calls to the judge behavior regardless of the worker call counter.
 type draftReviseStub struct {
-	mu     sync.Mutex
-	calls  int
-	judged int
+	mu      sync.Mutex
+	calls   int
+	judged  int
+	reqText []string // full request text per worker call (debug/assertions)
 }
 
 func (*draftReviseStub) Name() string { return "draftReviseStub" }
@@ -172,6 +180,7 @@ func (s *draftReviseStub) GenerateContent(_ context.Context, req *model.LLMReque
 		s.mu.Lock()
 		s.calls++
 		n := s.calls
+		s.reqText = append(s.reqText, atAllText(req))
 		s.mu.Unlock()
 		switch n {
 		case 1:
@@ -401,5 +410,214 @@ func TestAskAdvisor_MemoryAcrossHITLPauseResume(t *testing.T) {
 	}
 	if !strings.Contains(postResumePrompt, "ADVICE-1") {
 		t.Errorf("post-resume consult missing the advisor's OWN pre-pause reply (session key not stable across resume); got:\n%s", postResumePrompt)
+	}
+}
+
+// ── A2A repro: production serves workers over A2A ───────────────────────────
+
+// TestAskAdvisor_OverA2A reproduces the LIVE failure (2026-07-09 22:29): in
+// production the worker is an A2A remote agent (internal/agent.Serve →
+// srv.Client()), so ask_advisor's handler executes inside the A2A SERVER's
+// runner — a different session (the A2A context session, AppName = the agent
+// name), whose events carry no NodeInfo and whose state has no gate-seeded
+// keys. Any identity mechanism that reads the calling runner's session/state/
+// path fails there deterministically. This test runs the full production
+// shape: gated node → A2A client → loopback A2A server → worker llmagent with
+// the REAL ask_advisor tool → judge-fail revision → second consult, and
+// asserts the mentor ran, was seeded, and remembered across rounds.
+func TestAskAdvisor_OverA2A(t *testing.T) {
+	stub := &draftReviseStub{}
+	advisor := &recordingAdvisor{}
+	// The REAL database-backed session service (sqlite dialect of the same ADK
+	// service Postgres uses in production) — so this covers the full production
+	// shape: durable DB sessions + the A2A hop. The 2026-07-09 live failure
+	// only reproduced with both.
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	sessions := st.Sessions
+	tl := newAdvisorTool(t, advisor, sessions)
+	worker, werr := llmagent.New(llmagent.Config{
+		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer.",
+		Tools: []tool.Tool{tl},
+	})
+	if werr != nil {
+		t.Fatalf("worker agent: %v", werr)
+	}
+	// Serve the worker over REAL loopback A2A with the SAME shared session
+	// service production uses for everything (internal/serve passes st.Sessions
+	// to agent.Serve, the executor, and tools.Deps.Sessions alike).
+	srv, err := quackagent.Serve(worker, sessions, nil)
+	if err != nil {
+		t.Fatalf("a2a serve: %v", err)
+	}
+	defer srv.Close()
+	client, err := srv.Client()
+	if err != nil {
+		t.Fatalf("a2a client: %v", err)
+	}
+
+	plan := dag.Plan{ID: "p", UserMessage: "x", Nodes: []dag.Node{
+		{ID: "n1", AgentName: "blk", Task: "do it", Rubric: "must be thorough"},
+	}}
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
+	paused, outputs, _ := runGraph(t, client, stub, sessions, plan, content, nil)
+	if paused {
+		t.Fatal("run should not pause")
+	}
+	if !strings.Contains(outputs["n1"], "revised answer") {
+		t.Fatalf("n1 output = %q, want the revision's answer", outputs["n1"])
+	}
+	// The remote worker must actually RECEIVE its node task: remoteagent builds
+	// its outbound message from session events only (RunNode input/UserContent
+	// is dropped), so without the gate's prompt-delivery event (vetting.
+	// emitPrompt) an A2A worker never sees "Your task: ..." at all.
+	stub.mu.Lock()
+	if len(stub.reqText) == 0 || !strings.Contains(stub.reqText[0], "Your task: do it") {
+		var first string
+		if len(stub.reqText) > 0 {
+			first = stub.reqText[0]
+		}
+		stub.mu.Unlock()
+		t.Fatalf("A2A worker's first request missing its node task (prompt not delivered over A2A); got:\n%s", first)
+	}
+	stub.mu.Unlock()
+
+	advisor.mu.Lock()
+	defer advisor.mu.Unlock()
+	if len(advisor.prompts) != 2 {
+		t.Fatalf("advisor called %d times over A2A, want 2 (draft + revision) — node identity failed on the A2A server side?", len(advisor.prompts))
+	}
+	if !strings.Contains(advisor.prompts[0], "do it") {
+		t.Errorf("A2A: advisor's 1st request missing the node task seed; got:\n%s", advisor.prompts[0])
+	}
+	if !strings.Contains(advisor.prompts[1], "DRAFT-REQUEST") || !strings.Contains(advisor.prompts[1], "ADVICE-1") {
+		t.Errorf("A2A: revision consult missing the draft round's consultation (no memory across rounds); got:\n%s", advisor.prompts[1])
+	}
+}
+
+// ── concurrency: same agent, two nodes, isolated mentor threads ─────────────
+
+// concConsultStub is one node's worker model: it consults ask_advisor twice
+// (distinct per-node request markers), then answers. One INSTANCE per node —
+// identifying the node from request TEXT is unreliable under concurrency
+// (co-located single-turn workers share the session, and ADK anchors their
+// "current turn" at the latest user-ROLE event, which a concurrent node's
+// tool response can hijack), so identity is fixed per instance instead.
+// The judge (submit_verdict) always passes. Safe for concurrent calls.
+type concConsultStub struct {
+	letter string
+	mu     sync.Mutex
+	calls  int
+}
+
+func (s *concConsultStub) Name() string { return "concConsultStub" + s.letter }
+
+func (s *concConsultStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if atHasTool(req, "submit_verdict") {
+			yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			return
+		}
+		s.mu.Lock()
+		s.calls++
+		n := s.calls
+		s.mu.Unlock()
+		switch n {
+		case 1:
+			yield(atCall("ask_advisor", map[string]any{"request": "REQ-" + s.letter + "-1"}), nil)
+		case 2:
+			yield(atCall("ask_advisor", map[string]any{"request": "REQ-" + s.letter + "-2"}), nil)
+		default:
+			yield(atText("answer-"+s.letter), nil)
+		}
+	}
+}
+
+// TestAskAdvisor_ConcurrentNodesIsolatedThreads: two nodes of the SAME agent
+// run concurrently (maxActive=2) and each consults its mentor twice. Each
+// node's SECOND consult must see its OWN first request and never the other
+// node's — i.e. the two mentor conversations are distinct advisor sessions
+// (the per-node thread token keys them; a shared or misrouted session would
+// leak REQ-A-* into B's prompt or vice versa).
+func TestAskAdvisor_ConcurrentNodesIsolatedThreads(t *testing.T) {
+	advisor := &recordingAdvisor{}
+	sessions := session.InMemoryService()
+	// ONE advisor + ONE tool instance shared by both workers — the advisor-
+	// session isolation under concurrency is exactly what's under test. The
+	// workers themselves are separate llmagent instances per node: ADK's
+	// RunLLMAgentAsNode mutates unsynchronized per-agent state (Mode/
+	// IncludeContents, llm_agent_wrapper.go), so a SHARED local llmagent
+	// across concurrent nodes races in ADK itself — a test-only hazard;
+	// production workers are A2A remote agents with no such state.
+	tl := newAdvisorTool(t, advisor, sessions)
+	mk := func(name string, m model.LLM) adkagent.Agent {
+		a, err := llmagent.New(llmagent.Config{
+			Name: name, Model: m, Description: name, Instruction: "ROLE:blk Answer.",
+			Tools: []tool.Tool{tl},
+		})
+		if err != nil {
+			t.Fatalf("worker agent %s: %v", name, err)
+		}
+		return a
+	}
+	stubA, stubB := &concConsultStub{letter: "A"}, &concConsultStub{letter: "B"}
+	// The synthesizer consults nothing (its stub starts past the consult calls).
+	stubS := &concConsultStub{letter: "S", calls: 2}
+	agents := map[string]adkagent.Agent{"blk-a": mk("blk-a", stubA), "blk-b": mk("blk-b", stubB), "blk-s": mk("blk-s", stubS)}
+	plan := dag.Plan{ID: "p", UserMessage: "x", Nodes: []dag.Node{
+		{ID: "na", AgentName: "blk-a", Task: "TASK-A", Rubric: "ra"},
+		{ID: "nb", AgentName: "blk-b", Task: "TASK-B", Rubric: "rb"},
+		{ID: "synth", AgentName: "blk-s", Task: "synth", DependsOn: []string{"na", "nb"}},
+	}}
+	ex := dag.NewExecutor(sessions, agents, nil,
+		vetting.NewJudgeFactory(stubA, nil),
+		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+	outputs := map[string]string{}
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
+	paused, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", "s", content,
+		func(stream.SSEEvent, error) bool { return true }, outputs, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if paused {
+		t.Fatal("run should not pause")
+	}
+	if outputs["na"] == "" || outputs["nb"] == "" {
+		t.Fatalf("outputs incomplete: %v", outputs)
+	}
+
+	advisor.mu.Lock()
+	defer advisor.mu.Unlock()
+	// 2 consults per researcher node (the synth's task contains both letters and
+	// routes as "B"; its calls land in B's counter AFTER B answered, so it never
+	// consults — calls 3+ answer immediately).
+	var secondA, secondB string
+	for _, pr := range advisor.prompts {
+		if strings.Contains(pr, "REQ-A-2") {
+			secondA = pr
+		}
+		if strings.Contains(pr, "REQ-B-2") {
+			secondB = pr
+		}
+	}
+	if secondA == "" || secondB == "" {
+		t.Fatalf("missing a second consult: %d advisor prompts", len(advisor.prompts))
+	}
+	if !strings.Contains(secondA, "REQ-A-1") {
+		t.Errorf("node A's 2nd consult missing its OWN 1st request:\n%s", secondA)
+	}
+	if strings.Contains(secondA, "REQ-B-1") || strings.Contains(secondA, "TASK-B") && !strings.Contains(secondA, "TASK-A") {
+		t.Errorf("node A's mentor thread contaminated by node B:\n%s", secondA)
+	}
+	if !strings.Contains(secondB, "REQ-B-1") {
+		t.Errorf("node B's 2nd consult missing its OWN 1st request:\n%s", secondB)
+	}
+	if strings.Contains(secondB, "REQ-A-1") {
+		t.Errorf("node B's mentor thread contaminated by node A:\n%s", secondB)
+	}
+	if strings.Contains(secondA, "REQ-B-2") || strings.Contains(secondB, "REQ-A-2") {
+		t.Error("mentor threads interleaved across concurrent nodes")
 	}
 }

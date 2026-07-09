@@ -237,7 +237,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
-			} else if built, aerr := agent.Build(ab, am, nil, nil, agent.Compaction{}, ""); aerr != nil {
+			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, agent.Compaction{}, ""); aerr != nil {
 				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
 			} else {
 				advisorAgent = built

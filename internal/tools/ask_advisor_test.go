@@ -20,7 +20,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
-	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // ── shared stub-model helpers (mirrors internal/dag's gCall/gText/gSysText —
@@ -67,18 +67,23 @@ func atAllText(req *model.LLMRequest) string {
 // ── harness: a gated dynamic node running a real worker AgentNode (with the
 // real ask_advisor tool attached) inside a minimal one-node graph, mirroring
 // the shape dag.newGatedNode builds in production (gated node → RunNode'd
-// worker) closely enough that tc.Path() during a tool call resolves the node
-// ID exactly as it would live. ──────────────────────────────────────────────
+// worker): the advisor-thread marker in the prompt + the registered
+// task/rubric are how the tool resolves its thread and seed. ────────────────
 
 // runAdvisorHarness runs one turn: a worker (using workerModel) calling into
 // the REAL ask_advisor tool bound to an advisor (using advisorModel) and the
-// given session.Service. task/rubric seed the node's session state exactly as
+// given session.Service. task/rubric are registered under the node's
+// advisor-thread token and the marker stamped into the prompt, exactly as
 // dag.newGatedNode does. Returns the worker's final answer text.
 func runAdvisorHarness(t *testing.T, workerModel, advisorModel model.LLM, sessions session.Service, nodeID, task, rubric string) string {
 	t.Helper()
 
 	advisorAgent, err := llmagent.New(llmagent.Config{
 		Name: "advisor", Model: advisorModel, Description: "advisor", Instruction: "Advise.",
+		// ModeChat pinned, as production does via agent.BuildChat: the runner
+		// would otherwise force-set it with an unsynchronized write on this
+		// SHARED instance — a data race under concurrent consults.
+		Mode: llmagent.ModeChat,
 	})
 	if err != nil {
 		t.Fatalf("advisor agent: %v", err)
@@ -101,11 +106,11 @@ func runAdvisorHarness(t *testing.T, workerModel, advisorModel model.LLM, sessio
 
 	gated := workflow.NewDynamicNode[any, string](nodeID,
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-			if st := ctx.State(); st != nil {
-				_ = st.Set(dag.NodeTaskStateKey+nodeID, task)
-				_ = st.Set(dag.NodeRubricStateKey+nodeID, rubric)
-			}
-			return workflow.RunNode[string](ctx, workerNode, "go",
+			token := vetting.AdvisorThreadToken("p", nodeID)
+			vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{Task: task, Rubric: rubric})
+			defer vetting.UnregisterAdvisorThread(token)
+			prompt := vetting.AdvisorThreadMarker(token) + "\n\ngo"
+			return workflow.RunNode[string](ctx, workerNode, prompt,
 				workflow.WithUseSubBranch(), workflow.WithRunID("worker-r0"))
 		}, workflow.NodeConfig{})
 
@@ -115,10 +120,6 @@ func runAdvisorHarness(t *testing.T, workerModel, advisorModel model.LLM, sessio
 	if err != nil {
 		t.Fatalf("workflow agent: %v", err)
 	}
-	// The main workflow run and ask_advisor's node-identity lookup MUST share
-	// the same session.Service (see nodeIDFromSession) — exactly how
-	// production wires it (internal/serve passes st.Sessions to both the
-	// executor and tools.Deps.Sessions).
 	r, err := runner.New(runner.Config{
 		AppName: "quack-test", Agent: wfAgent, SessionService: sessions, AutoCreateSession: true,
 	})
@@ -286,10 +287,9 @@ func TestAskAdvisor_SeededWithTaskAndRubric(t *testing.T) {
 // brokenAdvisorSessions wraps a real session.Service but fails every
 // Get/Create scoped to the advisor's own AppName — simulating a broken
 // advisor session store while the MAIN workflow session (a different
-// AppName) keeps working normally, exactly like nodeIDFromSession's lookup
-// (against the main session) needs to succeed for this to be a meaningful
-// test of consultAdvisor's OWN error handling rather than identity failing
-// first.
+// AppName) keeps working normally, so this exercises consultAdvisor's OWN
+// error handling (runner.Run failing against the store) rather than
+// anything upstream of it.
 type brokenAdvisorSessions struct {
 	session.Service
 }

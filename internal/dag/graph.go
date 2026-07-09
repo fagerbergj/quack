@@ -23,18 +23,6 @@ const (
 	gateRoundsKey = "quack.gate_rounds/"
 )
 
-// NodeTaskStateKey and NodeRubricStateKey are per-node session-state keys the
-// gated node seeds before running its worker. The worker's ask_advisor tool
-// (internal/tools) reads them on a node's FIRST consult to open the mentor's
-// session with "what this node is trying to achieve" — the tool is built once
-// per agent bundle at startup and shared across every node, so Task/Rubric
-// can't be closed over at construction; session state is how the per-run
-// value reaches it instead.
-const (
-	NodeTaskStateKey   = "quack.node_task/"
-	NodeRubricStateKey = "quack.node_rubric/"
-)
-
 // buildGateNodes builds one gated-worker node per plan node (node ID → node),
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
@@ -56,8 +44,12 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if err != nil {
 			return nil, nil, err
 		}
+		cfg := cfgFor(n.AgentName)
+		// Remote (A2A) workers never see RunNode input — the gate must deliver
+		// each prompt as a session event instead (see vetting.PromptEventNeeded).
+		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(ag)
 		node := n // capture per iteration
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -76,13 +68,20 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// input skeptically.
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, node, upstream, gateFailed)
-			// Seed the worker's ask_advisor tool with this node's task + rubric — the
-			// mentor's session opens knowing the desired outcome on its first consult
-			// (see NodeTaskStateKey/NodeRubricStateKey).
-			if st := ctx.State(); st != nil {
-				_ = st.Set(NodeTaskStateKey+node.ID, node.Task)
-				_ = st.Set(NodeRubricStateKey+node.ID, node.Rubric)
-			}
+			// Advisor-thread identity: stamp a per-node marker line into the worker's
+			// prompt — the ONE channel that reaches the ask_advisor tool even across
+			// the A2A hop (the tool executes in the A2A server's runner, where the
+			// calling node is otherwise invisible) — and register the node's task +
+			// rubric under the token so the tool seeds the mentor's session with the
+			// desired outcome on first consult. Trailing placement + last-match
+			// parsing keeps the token unambiguous even when foreign markers ride
+			// along (see vetting.AdvisorThreadMarker). Re-entering the node (HITL
+			// resume, retry) re-registers, so the deferred unregister can't strand a
+			// running consult. See vetting/advisor_thread.go.
+			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
+			vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{Task: node.Task, Rubric: node.Rubric})
+			defer vetting.UnregisterAdvisorThread(token)
+			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
 			// Thread the turn's media parts to a media-capable node's worker
 			// (image/audio); text-only nodes get nil (a plain string prompt).
 			atts := plan.Attachments

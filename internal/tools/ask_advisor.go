@@ -12,14 +12,22 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
-	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // advisorAppName namespaces the advisor's own persistent sessions in the
 // shared session.Service, distinct from the "quack" app the chat/plan
 // sessions use — so an advisor SessionID can never collide with a chat's.
 const advisorAppName = "quack-advisor"
+
+// advisorUserID is the fixed user for all advisor sessions. The thread token
+// in the session ID already uniquely identifies the conversation (plan +
+// node), and a fixed user sidesteps the client/server user-ID discontinuity
+// across the A2A hop: the tool executes in the A2A server's runner, whose
+// user is NOT the chat's, and may differ between the dispatch that drafts
+// and the one that revises.
+const advisorUserID = "advisor"
 
 // askAdvisorDescription is the relationship contract — the main lever for
 // healthy consultation frequency. Written from the mentorship research in
@@ -64,18 +72,27 @@ type askAdvisorResult struct {
 // tolerated defensively (production never registers the tool in that case —
 // see resolveToolNames in internal/serve) and always yields empty advice.
 //
-// The handler derives the calling node's identity from the tool context
-// (session id + NodeInfo path — same discipline the gate uses in
-// internal/vetting/node.go's pathHasNode; see nodeIDFromSession for why it
-// re-fetches the session rather than reading agent.Context.Path()/Session()
-// directly) and gets-or-creates a persistent PER-NODE advisor session keyed
-// by invocation + node, so the mentor's memory of this task's conversation
-// survives across gate rounds (draft → revision) and HITL pause/resume (both
-// keep the same invocation ID) but never interleaves between concurrent nodes
-// or across unrelated plan runs. On first creation the session opens with the
-// node's task + acceptance rubric (seeded from session state written by
-// dag.newGatedNode — see dag.NodeTaskStateKey/NodeRubricStateKey), so the
-// mentor knows the desired outcome from its very first reply.
+// The handler derives the calling node's identity from the advisor-thread
+// marker the gate stamps into every worker prompt (dag.newGatedNode →
+// vetting.AdvisorThreadMarker), read back out of tc.UserContent(). That is
+// the ONLY channel that survives the production A2A hop: the tool executes
+// inside the worker's A2A server runner (internal/agent.Serve), where the
+// calling runner's session, state, NodeInfo, and branch are all invisible —
+// but the prompt IS the inbound A2A message, and UserContent is fixed before
+// the model ever runs, so the read is deterministic and race-free (no
+// persisted-event scan — the live 2026-07-09 failure). The token keys a
+// persistent PER-NODE advisor session (`<plan>/<node>:advisor`), so the
+// mentor's memory survives gate rounds (draft → revision), steered re-runs,
+// and HITL pause/resume — the gate re-derives the same token from plan+node
+// every round — but never interleaves between concurrent nodes or across
+// plans. On a thread's first consult the session opens with the node's task +
+// acceptance rubric (from the registry dag.newGatedNode fills — see
+// vetting/advisor_thread.go), so the mentor knows the desired outcome from
+// its very first reply.
+//
+// A prompt WITHOUT a marker (the agent invoked directly, outside any gated
+// node) falls back to a per-conversation thread keyed by the calling app +
+// session — the mentor still works, it just isn't task-seeded.
 //
 // Errors (a broken session store, an advisor model failure) return empty
 // advice with a logged warning — best-effort, never fails the calling worker.
@@ -89,16 +106,11 @@ func NewAskAdvisorTool(advisor adkagent.Agent, sessions session.Service) (tool.T
 			if advisor == nil || sessions == nil {
 				return askAdvisorResult{}, nil
 			}
-			nodeID := nodeIDFromSession(tc, sessions)
-			if nodeID == "" {
-				slog.Warn("ask_advisor: could not derive node identity from the session; proceeding without advice",
-					"component", "tools")
-				return askAdvisorResult{}, nil
-			}
-			advice, err := consultAdvisor(tc, advisor, sessions, nodeID, args.Request)
+			token, seed := advisorThread(tc)
+			advice, err := consultAdvisor(tc, advisor, sessions, token, seed, args.Request)
 			if err != nil {
 				slog.Warn("ask_advisor: consult failed; proceeding without advice",
-					"component", "tools", "node", nodeID, "err", err)
+					"component", "tools", "thread", token, "err", err)
 				return askAdvisorResult{}, nil
 			}
 			return askAdvisorResult{Advice: advice}, nil
@@ -106,60 +118,50 @@ func NewAskAdvisorTool(advisor adkagent.Agent, sessions session.Service) (tool.T
 	)
 }
 
-// nodeIDFromSession derives the calling node's ID from the tool context.
-//
-// A tool context deliberately restricts what a tool can see of the running
-// graph: agent.Context.Path()/RunID() are empty inside a tool call (an
-// AgentNode-wrapped LlmAgent gets a FRESH InvocationContext for its own run —
-// see workflow/agent_node.go — that carries Session/Branch/InvocationID but
-// NOT the dynamic-node Path/RunID a live ctx.Path() would need), and
-// Session() is explicitly blocked (returns nil, logged "not supported").
-// SessionID()/UserID()/AppName()/FunctionCallID(), however, all resolve
-// correctly. So: re-fetch the session by those identifiers (same store, a
-// fresh session.Service.Get — sidesteps the Session() block entirely) and
-// find the FunctionCall event matching tc.FunctionCallID() — that is THIS
-// exact ask_advisor call, and the scheduler stamps every event a node's
-// worker emits with NodeInfo.Path (dynamicSubScheduler wraps the child's
-// yielded events), so that event's path names the calling node. Mirrors
-// vetting/node.go's pathHasNode/scanNodeAsks discipline (scan events, match
-// by a stable ID, read NodeInfo) — just via an independently-fetched session
-// instead of ctx.Session(), which a tool can't call directly.
-func nodeIDFromSession(tc adkagent.Context, sessions session.Service) string {
-	resp, err := sessions.Get(tc, &session.GetRequest{AppName: tc.AppName(), UserID: tc.UserID(), SessionID: tc.SessionID()})
-	if err != nil || resp == nil || resp.Session == nil {
+// advisorThread resolves the mentor conversation this call belongs to: the
+// thread token plus the seed text for a brand-new session. The gate's marker
+// in the prompt (tc.UserContent()) names the node's thread and keys the
+// registered task+rubric; without a marker (direct, un-gated invocation) the
+// thread falls back to the calling conversation itself, unseeded.
+func advisorThread(tc adkagent.Context) (token, seed string) {
+	if tok, ok := vetting.ParseAdvisorThread(contentText(tc.UserContent())); ok {
+		if task, found := vetting.LookupAdvisorThread(tok); found {
+			seed = seedText(task)
+		}
+		return tok, seed
+	}
+	return tc.AppName() + "/" + tc.SessionID(), ""
+}
+
+// contentText concatenates a content's plain-text parts.
+func contentText(c *genai.Content) string {
+	if c == nil {
 		return ""
 	}
-	fcID := tc.FunctionCallID()
-	for ev := range resp.Session.Events().All() {
-		if ev == nil || ev.Content == nil || ev.NodeInfo == nil {
-			continue
-		}
-		for _, p := range ev.Content.Parts {
-			if p != nil && p.FunctionCall != nil && p.FunctionCall.ID == fcID {
-				return nodeIDFromPath(ev.NodeInfo.Path)
-			}
+	var sb strings.Builder
+	for _, p := range c.Parts {
+		if p != nil && !p.Thought && p.Text != "" {
+			sb.WriteString(p.Text)
+			sb.WriteByte('\n')
 		}
 	}
-	return ""
+	return sb.String()
 }
 
 // consultAdvisor runs one advisor turn in its own isolated runner (mirrors how
 // the judge runs isolated — internal/vetting/judge.go) over a session PERSISTED
 // in the shared store (unlike the judge's throwaway in-memory one — the whole
-// point here is that the mentor remembers). tc doubles as the context.Context
-// for the run and as the source of the node's seeded task/rubric on first
-// creation (agent.Context embeds context.Context).
-func consultAdvisor(tc adkagent.Context, advisor adkagent.Agent, sessions session.Service, nodeID, request string) (string, error) {
-	userID := tc.UserID()
-	sessID := tc.InvocationID() + ":" + nodeID + ":advisor"
+// point here is that the mentor remembers). tc is only the context.Context for
+// the run (agent.Context embeds it); identity comes from token, and seed is
+// prepended to the first prompt of a brand-new thread.
+func consultAdvisor(tc adkagent.Context, advisor adkagent.Agent, sessions session.Service, token, seed, request string) (string, error) {
+	sessID := token + ":advisor"
 
-	// A Get failure (not found, or any other read error) means this is the
-	// first consult for this node this invocation — seed it. AutoCreateSession
-	// on the runner below does the actual Create; we only need to know here
-	// whether to prepend the seed text to the first prompt.
-	seed := ""
-	if _, err := sessions.Get(tc, &session.GetRequest{AppName: advisorAppName, UserID: userID, SessionID: sessID}); err != nil {
-		seed = seedText(tc, nodeID)
+	// A successful Get means the thread already exists — its history carries
+	// the seed from the first consult, so don't repeat it. AutoCreateSession
+	// on the runner below does the actual Create for a new thread.
+	if _, err := sessions.Get(tc, &session.GetRequest{AppName: advisorAppName, UserID: advisorUserID, SessionID: sessID}); err == nil {
+		seed = ""
 	}
 
 	r, err := runner.New(runner.Config{
@@ -176,7 +178,7 @@ func consultAdvisor(tc adkagent.Context, advisor adkagent.Agent, sessions sessio
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	var out strings.Builder
-	for ev, rerr := range r.Run(tc, userID, sessID, content, adkagent.RunConfig{}) {
+	for ev, rerr := range r.Run(tc, advisorUserID, sessID, content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return "", rerr
 		}
@@ -193,50 +195,22 @@ func consultAdvisor(tc adkagent.Context, advisor adkagent.Agent, sessions sessio
 }
 
 // seedText builds the mentor's opening context for a brand-new advisor
-// session: the node's task + acceptance rubric, read from session state
-// (written by dag.newGatedNode before the worker runs — the tool is built
-// once per agent bundle at startup and shared across every node, so Task/
-// Rubric can't be closed over at construction). Empty when neither is set
-// (e.g. a test harness that never seeded state) — the advisor still runs, it
-// just doesn't know the desired outcome up front.
-func seedText(tc adkagent.Context, nodeID string) string {
-	st := tc.State()
-	if st == nil {
-		return ""
-	}
-	task, _ := st.Get(dag.NodeTaskStateKey + nodeID)
-	rubric, _ := st.Get(dag.NodeRubricStateKey + nodeID)
-	taskStr, _ := task.(string)
-	rubricStr, _ := rubric.(string)
-	if taskStr == "" && rubricStr == "" {
+// thread: the node's task + acceptance rubric (registered by dag.newGatedNode
+// before the worker runs — the tool is built once per agent bundle at startup
+// and shared across every node, so Task/Rubric can't be closed over at
+// construction; the registry is how the per-run value reaches it). Empty when
+// neither field is set — the advisor still runs, it just doesn't know the
+// desired outcome up front.
+func seedText(t vetting.AdvisorTask) string {
+	if t.Task == "" && t.Rubric == "" {
 		return ""
 	}
 	var sb strings.Builder
 	sb.WriteString("You are advising on the following task for the rest of this session.\n\nTask:\n")
-	sb.WriteString(taskStr)
-	if rubricStr != "" {
+	sb.WriteString(t.Task)
+	if t.Rubric != "" {
 		sb.WriteString("\n\nAcceptance rubric (what a passing answer must satisfy):\n")
-		sb.WriteString(rubricStr)
+		sb.WriteString(t.Rubric)
 	}
 	return sb.String()
-}
-
-// nodeIDFromPath extracts the plan node's ID from an event's NodeInfo path —
-// e.g. "quack-plan-graph@1/n1@1/web-researcher@worker-r0" (or, without a
-// top-level wrapper, "n1/web-researcher@worker-r0") — the immediate parent
-// segment of the worker's own run segment, stripped of its "@run" suffix.
-// Works regardless of how deep the gated node itself is nested. Mirrors the
-// segName discipline in dag/executor.go and vetting/node.go's pathHasNode.
-// Empty when the path is too shallow to have a parent (the worker run
-// standalone, outside any gated node).
-func nodeIDFromPath(path string) string {
-	segs := strings.Split(path, "/")
-	if len(segs) < 2 {
-		return ""
-	}
-	seg := segs[len(segs)-2]
-	if i := strings.IndexByte(seg, '@'); i >= 0 {
-		seg = seg[:i]
-	}
-	return seg
 }
