@@ -152,7 +152,7 @@ func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 }
 
 // pathHasNode reports whether the event was emitted under the given graph node
-// (NodeInfo.Path segments are "name@run"; worker/advisor child runs nest below
+// (NodeInfo.Path segments are "name@run"; the worker's child runs nest below
 // the gated node's segment).
 func pathHasNode(ev *session.Event, nodeID string) bool {
 	if ev.NodeInfo == nil {
@@ -200,49 +200,9 @@ func replyString(reply any) string {
 	return fmt.Sprintf("%v", reply)
 }
 
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
-	// Advisor consult (formative, once per worker round). Best-effort: on error,
-	// proceed WITHOUT advice rather than fail the node. It runs via RunNode so it
-	// streams to the UI as a stage:advisor run (dagStream translates advisor-rN).
-	// Replaces the dropped self-critique stage — an independent second look at the
-	// approach before the worker commits.
-	//
-	// lastAdvice carries the advisor's OWN prior output forward across rounds
-	// within this invocation (draft → revision → revision …), so a later consult
-	// isn't a cold restart: the advisor sees what it already told the worker. This
-	// can't come for free from ADK's own session/branch mechanism — the AgentNode
-	// wrapper forces every LlmAgent into single-turn mode (IncludeContents:"none"),
-	// which discards session history regardless of branch, so we carry the memory
-	// ourselves instead. (It does NOT survive a HITL pause/resume — that's a fresh
-	// RunGatedRefine call — but the advisor doesn't run again on that path anyway;
-	// see the resumed branch below.)
-	var lastAdvice string
-	consult := func(runID, task string) string {
-		if advisorNode == nil {
-			return ""
-		}
-		req := "Advise on this task before it is attempted:\n\n" + task
-		if lastAdvice != "" {
-			req = "You advised on an earlier attempt at this task:\n\n" + lastAdvice +
-				"\n\n--- New context for this attempt ---\n" + task +
-				"\n\nGive updated advice: reinforce what still applies, drop what's already been addressed, flag anything new."
-		}
-		advice, aerr := runWorkerNode(ctx, advisorNode, req, runID)
-		if aerr != nil {
-			log.Warn("advisor consult failed; proceeding without advice", "run", runID, "err", aerr)
-			return ""
-		}
-		lastAdvice = advice
-		return advice
-	}
-	withAdvice := func(base, advice string) string {
-		if strings.TrimSpace(advice) == "" {
-			return base
-		}
-		return base + "\n\n--- Advisor guidance (consider before answering) ---\n" + advice
-	}
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	// The judge runs in its own isolated runner (off the workflow event stream), so
 	// its activity can't ride that stream. Forward it to the client as a stage:judge
@@ -297,7 +257,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 			}
 		}
 		if !resumed {
-			answer, err = runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0"+sfx, prompt)), attachments), "worker-r0"+sfx)
+			answer, err = runWorkerNode(ctx, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx)
 			if err != nil {
 				// Log at our boundary before returning: ADK's scheduler can swallow a
 				// node error into a silent empty completion, so this ERROR line (with the
@@ -395,8 +355,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 				break
 			}
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
-			advRun := fmt.Sprintf("advisor-r%d%s", round, sfx)
-			revised, rerr := runWorkerNode(ctx, workerNode, withAdvice(revisePrompt, consult(advRun, revisePrompt)), fmt.Sprintf("worker-r%d%s", round, sfx))
+			revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx))
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer

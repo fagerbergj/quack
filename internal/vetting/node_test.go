@@ -178,7 +178,7 @@ func newTestGatedNode(name string, worker adkagent.Agent, workerModel model.LLM,
 		if strings.TrimSpace(task) == "" {
 			task = contentPlainText(ctx.UserContent())
 		}
-		answer, _, err := RunGatedRefine(ctx, name, workerNode, nil, workerModel, judge, cfg, task, nil, nil, emit)
+		answer, _, err := RunGatedRefine(ctx, name, workerNode, workerModel, judge, cfg, task, nil, nil, emit)
 		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil

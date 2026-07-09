@@ -23,11 +23,23 @@ const (
 	gateRoundsKey = "quack.gate_rounds/"
 )
 
+// NodeTaskStateKey and NodeRubricStateKey are per-node session-state keys the
+// gated node seeds before running its worker. The worker's ask_advisor tool
+// (internal/tools) reads them on a node's FIRST consult to open the mentor's
+// session with "what this node is trying to achieve" — the tool is built once
+// per agent bundle at startup and shared across every node, so Task/Rubric
+// can't be closed over at construction; session state is how the per-run
+// value reaches it instead.
+const (
+	NodeTaskStateKey   = "quack.node_task/"
+	NodeRubricStateKey = "quack.node_rubric/"
+)
+
 // buildGateNodes builds one gated-worker node per plan node (node ID → node),
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
 // runDAG ignores them).
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -44,17 +56,8 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if err != nil {
 			return nil, nil, err
 		}
-		// The advisor (formative consult) is the same agent for every node; wrap it
-		// per node so concurrent nodes don't share one node instance. nil ⇒ the gate
-		// skips the consult (e.g. judge/advisor disabled).
-		var advisorNode workflow.Node
-		if advisor != nil {
-			if advisorNode, err = vetting.NewWorkerNode(advisor); err != nil {
-				return nil, nil, err
-			}
-		}
 		node := n // capture per iteration
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -64,7 +67,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 // FAILS (marks the node) on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
 // directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			upstream := upstreamFromInput(in, node.DependsOn)
@@ -73,6 +76,13 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// input skeptically.
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, node, upstream, gateFailed)
+			// Seed the worker's ask_advisor tool with this node's task + rubric — the
+			// mentor's session opens knowing the desired outcome on its first consult
+			// (see NodeTaskStateKey/NodeRubricStateKey).
+			if st := ctx.State(); st != nil {
+				_ = st.Set(NodeTaskStateKey+node.ID, node.Task)
+				_ = st.Set(NodeRubricStateKey+node.ID, node.Rubric)
+			}
 			// Thread the turn's media parts to a media-capable node's worker
 			// (image/audio); text-only nodes get nil (a plain string prompt).
 			atts := plan.Attachments
@@ -90,7 +100,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				ctrl = nc
 			}
 
-			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
+			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				// Empty → the node FAILS. The DAG continues (dependents see the gap via
 				// buildTask's ⚠ note) and the empty output drives a loud node_failed. A

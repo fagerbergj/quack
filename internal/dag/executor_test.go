@@ -185,7 +185,6 @@ func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 	)
 	evs := []*session.Event{
 		ev("quack-dag-p@1/n1@rr/web-researcher@worker-r0", &genai.Part{Text: "draft"}),
-		ev("quack-dag-p@1/n1@rr/web-researcher@advisor-r0-s1", &genai.Part{Text: "advice"}),
 		ev("quack-dag-p@1/n1@rr/web-researcher@worker-r0-s1", &genai.Part{Text: "steered draft"}),
 	}
 	for _, e := range evs {
@@ -200,7 +199,7 @@ func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 			steerIdx = i
 		}
 		if e.Name == stream.EventAgentStart {
-			if d, ok := e.Data.(stream.AgentStartData); ok && d.RunID == "advisor-r0-s1" {
+			if d, ok := e.Data.(stream.AgentStartData); ok && d.RunID == "worker-r0-s1" {
 				startIdx = i
 			}
 		}
