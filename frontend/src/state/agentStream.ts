@@ -10,7 +10,7 @@ export interface ConfirmationRequestPayload {
   payload: Record<string, unknown>
 }
 
-export type Stage = 'worker' | 'judge' | 'revise' | 'advisor'
+export type Stage = 'worker' | 'judge' | 'revise'
 
 // AgentStartPayload opens an agent run within a node.
 export interface AgentStartPayload {

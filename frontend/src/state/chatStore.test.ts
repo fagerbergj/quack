@@ -158,22 +158,14 @@ describe('ChatStore — mid-node steering', () => {
     expect(ns?.question).toBe('which direction?')
   })
 
-  it("a node's answer reflects only its LATEST worker/revise draft — advisor commentary never leaks in, and a revision replaces (doesn't concatenate with) the draft it revised", async () => {
+  it("a node's answer reflects only its LATEST worker/revise draft — judge commentary never leaks in, and a revision replaces (doesn't concatenate with) the draft it revised", async () => {
     const sse = [
       'event: dag_plan',
       'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
       '',
-      // Advisor consult runs first — its commentary must never reach the answer.
-      'event: agent_start',
-      'data: {"node_id":"a","run_id":"advisor-r0","agent":"advisor","stage":"advisor"}',
-      '',
-      'event: agent_token',
-      'data: {"node_id":"a","run_id":"advisor-r0","text":"Consider checking multiple sources."}',
-      '',
-      'event: agent_complete',
-      'data: {"node_id":"a","run_id":"advisor-r0","stage":"advisor"}',
-      '',
-      // Worker's first draft — this becomes the answer.
+      // Worker's first draft (an ask_advisor consult may have happened inside this
+      // same run as an ordinary tool call — not a separate stage) — this becomes
+      // the answer.
       'event: agent_start',
       'data: {"node_id":"a","run_id":"worker-r0","agent":"researcher","stage":"worker"}',
       '',
@@ -182,6 +174,16 @@ describe('ChatStore — mid-node steering', () => {
       '',
       'event: agent_complete',
       'data: {"node_id":"a","run_id":"worker-r0","stage":"worker"}',
+      '',
+      // Judge commentary runs between draft and revision — it must never reach the answer.
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","round":1}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"judge-r1","text":"Feedback: needs more sourcing."}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"judge-r1","stage":"judge","round":1}',
       '',
       // Judge fails it, triggering a revision — the revision REPLACES the draft.
       'event: agent_start',

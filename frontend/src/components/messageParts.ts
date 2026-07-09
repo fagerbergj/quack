@@ -7,7 +7,7 @@
 // no open-container heuristics. No JSX here so this stays trivially testable;
 // rendering lives in AgentParts.tsx / DagNode.tsx.
 
-export type Stage = 'worker' | 'judge' | 'revise' | 'advisor'
+export type Stage = 'worker' | 'judge' | 'revise'
 
 // agentLabel maps an agent bundle name to a human-readable display label. Shared
 // by DagNode's node header, per-run stage cards, and the bubble-attribution

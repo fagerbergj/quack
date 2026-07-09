@@ -60,12 +60,12 @@ function RunModel({ run }: { run: AgentRun }) {
 
 // ── per-run stage cards ──────────────────────────────────────────────────────
 
-// ResearchCard renders the worker stage (draft + finalize): its activity. The
+// ResearchCard renders the worker stage (draft + finalize): its activity —
+// including any ask_advisor consults, which show up as ordinary tool calls. The
 // node's vetted answer is rendered separately at the foot of the node (NodeAnswer),
 // so it sits below the judge rather than inside the worker card. Like every other
 // stage card it carries its own labeled header — without one, its activity rows
-// visually attach to whatever labeled card rendered above it (a running advisor
-// card made the ADVISOR look like it was doing the web searches).
+// visually attach to whatever labeled card rendered above it.
 function ResearchCard({ run, running }: { run: AgentRun; running: boolean }) {
   const empty = run.activity.length === 0
   if (empty) {
@@ -107,29 +107,6 @@ function NodeAnswer({ answer }: { answer: string }) {
         <AssistantText text={answer} />
       </div>
     </details>
-  )
-}
-
-// AdvisorCard renders the formative advisor consult that runs before the worker's
-// draft — a distinct labeled stage so its guidance reads as commentary, not (as an
-// unlabeled ResearchCard) something that could be mistaken for the node's answer.
-function AdvisorCard({ run, running }: { run: AgentRun; running: boolean }) {
-  return (
-    <div className="border-t border-gray-100 dark:border-gray-700">
-      <details open={running} className="not-prose">
-        <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
-            Advisor
-          </span>
-          {running && <Spinner />}
-          <RunModel run={run} />
-          <RunTimer run={run} />
-        </summary>
-        {run.activity.length > 0 && (
-          <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
-        )}
-      </details>
-    </div>
   )
 }
 
@@ -391,7 +368,6 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
       {runs.map((run, i) => {
         const runRunning = i === activeIdx
         switch (run.stage) {
-          case 'advisor': return <AdvisorCard key={run.runId} run={run} running={runRunning} />
           case 'judge':   return <JudgeCard key={run.runId} run={run} running={runRunning} />
           case 'revise':  return <RevisionCard key={run.runId} run={run} running={runRunning} />
           default:        return <ResearchCard key={run.runId} run={run} running={runRunning} />
