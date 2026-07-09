@@ -20,6 +20,13 @@ import (
 // design: a model gets one thing to learn, not a taxonomy of jail failures.
 var ErrEscape = errors.New("path escapes your workspace")
 
+// ErrInvalidUserID rejects a userID that cannot safely name one directory
+// component under the workspace root. Deliberately DISTINCT from ErrEscape:
+// a bad userID is a caller bug or a misconfigured identity source (an
+// operator's problem to fix), not a model-chosen path (which the model can
+// learn from and correct).
+var ErrInvalidUserID = errors.New("workspace: invalid user id")
+
 // Jail is one configured workspace root; per-user boundaries are derived from
 // it at resolve time (Resolve("alice", …) and Resolve("bob", …) never see each
 // other's files), so a single Jail serves every user.
@@ -56,9 +63,37 @@ func (j *Jail) Root() string { return j.root }
 
 // UserRoot returns the (unresolved-for-symlinks) jail directory for userID,
 // joined under the workspace root. It may not exist yet — callers that need it
-// to exist (e.g. write_file) create it themselves.
-func (j *Jail) UserRoot(userID string) string {
-	return filepath.Join(j.root, userID)
+// to exist (e.g. write_file) create it themselves. A userID that fails
+// validateUserID returns ErrInvalidUserID.
+func (j *Jail) UserRoot(userID string) (string, error) {
+	if err := validateUserID(userID); err != nil {
+		return "", err
+	}
+	return filepath.Join(j.root, userID), nil
+}
+
+// validateUserID is the jail-boundary guard shared by UserRoot and Resolve:
+// a userID must name exactly ONE directory component directly under the
+// workspace root, because Resolve joins it into the path RAW — an
+// attacker-influenced identity ("../other", "a/b", an absolute path) would
+// otherwise relocate the jail root itself, and the containment check would
+// then verify against the WRONG root. The rule is separator/dot-traversal
+// based, NOT an alphanumeric allowlist: real OIDC subjects like
+// "auth0|abc123" or "user@example.com" must pass.
+func validateUserID(userID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return ErrInvalidUserID
+	}
+	if userID == "." || userID == ".." {
+		return ErrInvalidUserID
+	}
+	if strings.ContainsRune(userID, '/') || strings.ContainsRune(userID, os.PathSeparator) {
+		return ErrInvalidUserID
+	}
+	if filepath.Clean(userID) != userID {
+		return ErrInvalidUserID
+	}
+	return nil
 }
 
 // Resolve is the ONE path-resolution function every filesystem/git tool uses:
@@ -67,15 +102,16 @@ func (j *Jail) UserRoot(userID string) string {
 // user's jail. Absolute relPath, `..` escapes, and symlinks pointing outside
 // the jail all fail identically with ErrEscape — "no exceptions" per the
 // isolation design. A symlink that stays inside the jail resolves and works
-// normally.
+// normally. userID is guarded first (validateUserID → ErrInvalidUserID): it
+// must be a single path component, or the jail root itself would relocate.
 func (j *Jail) Resolve(userID, relPath string) (string, error) {
-	if strings.TrimSpace(userID) == "" {
-		return "", fmt.Errorf("workspace: user id is empty")
+	userRoot, err := j.UserRoot(userID)
+	if err != nil {
+		return "", err
 	}
 	if filepath.IsAbs(relPath) {
 		return "", ErrEscape
 	}
-	userRoot := filepath.Join(j.root, userID)
 	joined := filepath.Join(userRoot, relPath)
 	if !withinRoot(userRoot, joined) {
 		return "", ErrEscape
