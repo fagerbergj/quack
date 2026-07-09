@@ -79,3 +79,9 @@ dag:
 server:
   addr: ":8080"
   topology: managed       # quack server brings up the stores + tears them down
+
+# Workspace defaults on (root ./workspace, default caps); not bound to any
+# agent's tools: list yet. check_commands empty ⇒ orchestrator-set checks
+# unavailable (a later PR).
+workspace:
+  root: ${QUACK_WORKSPACE_ROOT}

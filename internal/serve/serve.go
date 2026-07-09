@@ -41,7 +41,14 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// localUserID is the identity every filesystem/git tool's jail resolves
+// against — Quack is single-user today (mirrors the same constant in
+// internal/server/rest and internal/server/mcp); the OIDC subject replaces it
+// the day multi-user lands, with no change to the jail's path resolution.
+const localUserID = "local"
 
 //go:embed all:web/dist
 var webDist embed.FS
@@ -134,6 +141,16 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	addr = cfg.Server.Addr
 	if port != 0 {
 		addr = fmt.Sprintf(":%d", port)
+	}
+
+	// Workspace (filesystem/git tools' isolation boundary): one jail per server
+	// process, rooted at workspace.root (config.Load already defaulted it to
+	// ./workspace). Built unconditionally — cheap, and it means wiring is ready
+	// the moment an agent's tools: list requests read_file etc. (not yet done by
+	// any shipped agent — see .quack/plan-pr5-tool-schemas.md).
+	jail, err := workspace.NewJail(cfg.Workspace.Root)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("workspace init failed: %w", err)
 	}
 
 	// Managed topology: bring up the Postgres + Qdrant stores via docker compose
@@ -248,7 +265,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent)
+	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -357,7 +374,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
 	// Derive the recall service, leaving it nil (not a non-nil interface wrapping
 	// a nil pointer) when memory is off. The gate takes the concrete *memory.Store
 	// directly (taskStore), so it has no such typed-nil hazard.
@@ -372,6 +389,16 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	sort.Strings(names)
 
 	urlCache := tools.NewURLCache()
+
+	// Filesystem tool caps, converted once from config (defaults already
+	// applied by config.Load's validation).
+	workspaceCaps := workspace.Caps{
+		MaxReadBytes:   int64(cfg.Workspace.MaxReadKB) * 1024,
+		MaxWriteBytes:  int64(cfg.Workspace.MaxWriteKB) * 1024,
+		MaxResults:     cfg.Workspace.MaxResults,
+		MaxListEntries: cfg.Workspace.MaxListEntries,
+		Timeout:        time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
+	}
 
 	var judgeFactory vetting.JudgeFactory
 	var gateCfg vetting.Config
@@ -462,12 +489,15 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
-				WebSearch:  tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-				Fetch:      tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-				Summarizer: m,
-				Cache:      urlCache,
-				Advisor:    advisorAgent,
-				Sessions:   sessions,
+				WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
+				Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+				Summarizer:      m,
+				Cache:           urlCache,
+				Advisor:         advisorAgent,
+				Sessions:        sessions,
+				Workspace:       jail,
+				WorkspaceUserID: localUserID,
+				WorkspaceCaps:   workspaceCaps,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, fmtErr(name, "tools: %v", err)
