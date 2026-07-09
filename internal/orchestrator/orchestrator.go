@@ -180,13 +180,18 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// Persisted session, read BEFORE the runner appends this turn's user
 		// message — so it holds only earlier turns. Used for both the planner's
 		// history and pending-clarification detection below.
-		prior := o.priorEvents(ctx, userID, sessionID)
+		prior := o.PriorEvents(ctx, userID, sessionID)
 		// Mid-node HITL: if the previous turn parked a plan node waiting on the
 		// user, THIS message is the answer to that node's question — deliver it to
-		// the paused plan run and skip the orchestrator llmagent entirely.
-		if pend, ok := latestPendingNodeInterrupt(prior); ok {
-			o.resumeNodeRun(ctx, userID, sessionID, message, pend, yield)
-			return
+		// the paused plan run and skip the orchestrator llmagent entirely. The same
+		// scan (LatestPendingQuestion) backs the REST status handler's needs_input
+		// computation, so both agree on what "pending" means.
+		pending, hasPending := LatestPendingQuestion(prior)
+		if hasPending {
+			if pend, isNode := pending.NodeInterrupt(); isNode {
+				o.resumeNodeRun(ctx, userID, sessionID, message, pend, yield)
+				return
+			}
 		}
 		// Threaded to the planner so a re-plan after a clarifying exchange (or any
 		// follow-up) resolves references against what was already said.
@@ -236,6 +241,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
 			Toolsets:    toolsets,
+			// The orchestrator is a CONVERSATION, not a task node — but it runs
+			// wrapped in a workflow AgentNode, and AgentNode forces an unset mode
+			// to ModeSingleTurn (agent_node.go), which discards ALL session history
+			// from the request. That made every follow-up turn amnesiac: "I don't
+			// see a previously created plan in our conversation" one turn after
+			// delivering the plan. ModeChat keeps the full chat history.
+			Mode: llmagent.ModeChat,
 		})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: build agent: "+err.Error()), nil)
@@ -294,10 +306,10 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// this; we hand-roll it here. See ChoiceToolName's TODO.) Any attachments on
 		// a clarification-answer turn are dropped — answering a choice with a file is
 		// not a supported flow.
-		if callID := pendingChoiceCallID(prior); callID != "" {
+		if hasPending && pending.choiceCallID != "" {
 			content = &genai.Content{Role: "user", Parts: []*genai.Part{{
 				FunctionResponse: &genai.FunctionResponse{
-					ID:       callID,
+					ID:       pending.choiceCallID,
 					Name:     tools.ChoiceToolName,
 					Response: map[string]any{tools.ChoiceAnswerKey: message},
 				},
@@ -335,8 +347,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 				}
 			}
 		}
+		model, promptTokens, completionTokens, reasoningTokens, totalTokens, finishReason := translator.Usage()
 		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
 			RunID: orchRunID, Stage: stream.StageWorker,
+			Model: model, PromptTokens: promptTokens, CompletionTokens: completionTokens,
+			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, FinishReason: finishReason,
 		}}, nil)
 
 		// Phase 2: the llmagent committed a plan (execute tool) — run it as a
@@ -475,11 +490,13 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 	yield(stream.Done(), nil)
 }
 
-// priorEvents reads the persisted session's events (nil if the session is
-// missing). Called BEFORE the runner appends the current turn, so it holds only
-// earlier turns; shared by buildHistory and pendingChoiceCallID so one Run reads
-// the session once.
-func (o *Orchestrator) priorEvents(ctx context.Context, userID, sessionID string) []*session.Event {
+// PriorEvents reads a chat's persisted session events (nil if the session is
+// missing). Within Run, called BEFORE the runner appends the current turn, so it
+// holds only earlier turns; shared by buildHistory and LatestPendingQuestion so
+// one Run reads the session once. Exported so the REST status handler can read
+// the same events LatestPendingQuestion scans (DRY: one source of truth for
+// "what does the chat's history say is pending").
+func (o *Orchestrator) PriorEvents(ctx context.Context, userID, sessionID string) []*session.Event {
 	resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
 	if err != nil || resp == nil {
 		return nil
@@ -544,15 +561,15 @@ func buildHistory(events []*session.Event) []dag.HistoryTurn {
 	return turns
 }
 
-// pendingChoiceCallID returns the call ID of an unanswered get_user_choice
-// clarification in the prior events, or "" if none is awaiting an answer. It
-// scans for the most recent choice FunctionCall and clears it once a real answer
-// (a FunctionResponse carrying tools.ChoiceAnswerKey) follows. The framework
-// auto-emits a "pending" placeholder FunctionResponse for every long-running
-// call, so presence of a response alone does not mean answered — only one
-// carrying the answer key does.
-func pendingChoiceCallID(events []*session.Event) string {
-	var pendingID string
+// pendingChoice returns the call ID and question text of an unanswered
+// get_user_choice clarification in the prior events, or ("", "") if none is
+// awaiting an answer. It scans for the most recent choice FunctionCall and
+// clears it once a real answer (a FunctionResponse carrying
+// tools.ChoiceAnswerKey) follows. The framework auto-emits a "pending"
+// placeholder FunctionResponse for every long-running call, so presence of a
+// response alone does not mean answered — only one carrying the answer key does.
+func pendingChoice(events []*session.Event) (callID, question string) {
+	var pendingID, pendingQuestion string
 	for _, ev := range events {
 		if ev == nil || ev.Content == nil {
 			continue
@@ -563,15 +580,55 @@ func pendingChoiceCallID(events []*session.Event) string {
 			}
 			if p.FunctionCall != nil && p.FunctionCall.Name == tools.ChoiceToolName {
 				pendingID = p.FunctionCall.ID
+				if q, ok := p.FunctionCall.Args["question"].(string); ok {
+					pendingQuestion = q
+				}
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == tools.ChoiceToolName && p.FunctionResponse.ID == pendingID {
 				if _, answered := p.FunctionResponse.Response[tools.ChoiceAnswerKey]; answered {
 					pendingID = ""
+					pendingQuestion = ""
 				}
 			}
 		}
 	}
-	return pendingID
+	return pendingID, pendingQuestion
+}
+
+// PendingQuestion is an unanswered question blocking a chat's next turn: either a
+// paused plan node's mid-node ask (HITL) or the orchestrator's own top-level
+// get_user_choice clarification. This is the ONE place that scans a chat's
+// session events for "is a question pending, and what does it ask" — Run's
+// resume dispatch and the REST status handler's needs_input computation both
+// call LatestPendingQuestion instead of re-implementing the scan (see AGENTS.md).
+type PendingQuestion struct {
+	// Message is the question text to show the user.
+	Message string
+
+	node   pendingInterrupt // set + node()'s ok=true for a mid-node ask
+	isNode bool
+	// choiceCallID is the get_user_choice call ID to answer, set only when this
+	// pending question is a top-level clarification (isNode is false).
+	choiceCallID string
+}
+
+// NodeInterrupt reports the paused node's interrupt details (id, node ID,
+// message), used to resume the correct plan node. ok is false for a top-level
+// clarification.
+func (p PendingQuestion) NodeInterrupt() (pendingInterrupt, bool) { return p.node, p.isNode }
+
+// LatestPendingQuestion scans a chat's prior session events for the most recent
+// unanswered question a run is blocked on. A mid-node interrupt is checked
+// first — matching Run's dispatch order, where a paused node's answer always
+// resumes the graph directly rather than the orchestrator llmagent.
+func LatestPendingQuestion(events []*session.Event) (PendingQuestion, bool) {
+	if pend, ok := latestPendingNodeInterrupt(events); ok {
+		return PendingQuestion{Message: pend.message, node: pend, isNode: true}, true
+	}
+	if callID, question := pendingChoice(events); callID != "" {
+		return PendingQuestion{Message: question, choiceCallID: callID}, true
+	}
+	return PendingQuestion{}, false
 }
 
 // AgentClients is a convenience alias used by callers to pass the client map.

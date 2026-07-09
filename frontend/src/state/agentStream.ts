@@ -12,11 +12,6 @@ export interface ConfirmationRequestPayload {
 
 export type Stage = 'worker' | 'judge' | 'revise' | 'advisor'
 
-// The node_failed error string a user-cancelled node carries, so the UI renders it
-// neutrally ("stopped") instead of as a red failure. Must match the backend exactly
-// — keep in sync with internal/stream/event.go CancelledError.
-export const CANCELLED_ERROR = 'Stopped by you'
-
 // AgentStartPayload opens an agent run within a node.
 export interface AgentStartPayload {
   nodeId?: string
@@ -90,12 +85,19 @@ export interface AgentStreamHandlers {
   onChatTitle?: (title: string) => void
   onError?: (msg: string) => void
   onDone?: () => void
+  // response_created is the very first event of a run, naming the turn
+  // (response_id) so the client can cancel it via
+  // PUT /chats/{chat_id}/responses/{response_id}/status.
+  onResponseCreated?: (responseId: string) => void
   // DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
   onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
+  // The node was stopped by the user (PUT node status {"status":"cancelled"}) —
+  // rendered neutrally ("stopped"), distinct from a real gate failure.
+  onNodeCancelled?: (nodeId: string) => void
   onNodeSteered?: (nodeId: string, guidance: string) => void
   // A node paused to ask the user a question (mid-node HITL). The next message
   // sent on the chat is delivered to the node as the answer.
@@ -105,8 +107,8 @@ export interface AgentStreamHandlers {
 // Wire-level event names. Mirrors internal/stream/event.go.
 export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
-  'confirmation_request', 'chat_title', 'error', 'done',
-  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_steered', 'node_needs_input',
+  'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
+  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_steered', 'node_needs_input',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
 
@@ -202,6 +204,9 @@ export function dispatchAgentEvent(
     case 'done':
       handlers.onDone?.()
       return true
+    case 'response_created':
+      if (hasStringField(parsed, 'response_id')) handlers.onResponseCreated?.(parsed.response_id)
+      return true
     // DAG lifecycle events (M3)
     case 'dag_plan': {
       const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[]; started_at_ms?: number }
@@ -255,6 +260,9 @@ export function dispatchAgentEvent(
       }
       return true
     }
+    case 'node_cancelled':
+      if (hasStringField(parsed, 'node_id')) handlers.onNodeCancelled?.(parsed.node_id)
+      return true
     case 'node_steered': {
       const p = parsed as { node_id?: string; guidance?: string }
       if (typeof p.node_id === 'string') {

@@ -1,8 +1,10 @@
 // Command quack is Quack's one-binary CLI and server. `quack server run` runs the
 // REST + MCP API and the embedded SPA; the other verbs (`chat`, `api`, `server`)
-// drive a running server over HTTP + SSE. This file is the cobra wiring only —
-// command funcs stay thin and dispatch into internal/cli and internal/tui (see
-// the quack-cli skill); the leaf handlers are honest stubs until those land.
+// drive a running server over HTTP + SSE. There is no TUI: `-p`, `chat send`,
+// and `chat show` are the interface, and their pause/failure exit codes
+// (0/1/2 — see internal/cli's Report) make them pipeable and scriptable. This
+// file is the cobra wiring only — command funcs stay thin and dispatch into
+// internal/cli (see the quack-cli skill).
 package main
 
 import (
@@ -20,7 +22,6 @@ import (
 
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/serve"
-	"github.com/fagerbergj/quack/internal/tui"
 	"github.com/fagerbergj/quack/internal/wizard"
 )
 
@@ -42,18 +43,21 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "quack",
 		Short: "Quack — agentic research, one binary",
-		Long: "Quack is a one-binary CLI and server for agentic research.\n\n" +
-			"  quack init              get configured (run locally or connect to a server)\n" +
-			"  quack server run        run the API + SPA server (foreground)\n" +
-			"  quack                   open the interactive chat TUI\n" +
-			"  quack -p \"<prompt>\"      one-shot prompt, print and exit (no TUI)\n" +
-			"  quack chat|server|api   manage chats, the server, and raw API calls",
+		Long: "Quack is a one-binary CLI and server for agentic research. There is no TUI:\n" +
+			"-p, `chat send`, and `chat show` ARE the interface — pipeable, scriptable exit\n" +
+			"codes (0 answered, 1 failed, 2 paused on a question).\n\n" +
+			"  quack init                       get configured (run locally or connect to a server)\n" +
+			"  quack server run                 run the API + SPA server (foreground)\n" +
+			"  quack -p \"<prompt>\"               one-shot prompt, print and exit\n" +
+			"  quack chat new                   create a chat, print its id\n" +
+			"  quack chat send <id> \"<msg>\"      send a message (or answer a paused question)\n" +
+			"  quack chat show <id> [-f]         status snapshot, optionally follow the live run\n" +
+			"  quack chat list                  list chats with their status\n" +
+			"  quack chat|server|api            manage chats, the server, and raw API calls",
 		SilenceUsage: true, // a failing RunE is an error, not a usage mistake
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if printPrompt == "" {
-				return withClient(cmd, func(ctx context.Context, c *cli.Client, label string) error {
-					return tui.Run(ctx, c, "", "", label)
-				})
+				return cmd.Help()
 			}
 			server, _ := cmd.Flags().GetString("server")
 			target, stop, err := resolveTarget(cmd.Context(), server)
@@ -66,7 +70,10 @@ func newRootCmd() *cobra.Command {
 				events = cmd.ErrOrStderr() // pipeline trace → stderr; answer → stdout
 			}
 			attach, _ := cmd.Flags().GetStringSlice("attach")
-			return cli.PrintPrompt(cmd.Context(), cmd.OutOrStdout(), events, target, printPrompt, attach)
+			asJSON, _ := cmd.Flags().GetBool("json")
+			code := cli.PrintPrompt(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), events, target, printPrompt, attach, asJSON)
+			exitIfNonZero(code)
+			return nil
 		},
 	}
 	// Client context: which server to talk to. Resolution (flag → config → default)
@@ -75,9 +82,21 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVarP(&printPrompt, "print", "p", "", "one-shot prompt; print the result and exit (no TUI)")
 	root.Flags().Bool("events", false, "with -p: also print the pipeline event trace (plan, node lifecycle) to stderr")
 	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) — image/audio — to the prompt (repeatable)")
+	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
 	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd())
 	return root
+}
+
+// exitIfNonZero calls os.Exit(code) for a non-zero code — used by the
+// bulletproof-CLI commands (-p, chat send, chat show) whose exit codes (0
+// answered / 1 failed / 2 paused) don't fit cobra's error-only exit(1) model.
+// A zero code returns normally so deferred cleanup (e.g. an in-process
+// server's teardown) still runs.
+func exitIfNonZero(code int) {
+	if code != 0 {
+		os.Exit(code)
+	}
 }
 
 // newInitCmd: `quack init` — onboarding. Local (run quack here → server wizard
@@ -106,7 +125,8 @@ func newChatCmd() *cobra.Command {
 
 	c.AddCommand(
 		newChatNewCmd(),
-		newChatResumeCmd(),
+		newChatSendCmd(),
+		newChatShowCmd(),
 		newChatListCmd(),
 		newChatExportCmd(),
 		newChatStopCmd(),
@@ -116,72 +136,64 @@ func newChatCmd() *cobra.Command {
 	return c
 }
 
-// withClient resolves the target (remote or in-process duck), builds a client,
-// runs fn, and tears the in-process server down afterward. Used by the
-// interactive (TUI) commands, which need a live client for the whole session.
-func withClient(cmd *cobra.Command, fn func(ctx context.Context, c *cli.Client, serverLabel string) error) error {
-	server, _ := cmd.Flags().GetString("server")
-	label := serverLabel(server)
-	target, stop, err := resolveTarget(cmd.Context(), server)
-	if err != nil {
-		return err
-	}
-	defer stop()
-	c, err := cli.NewClient(target)
-	if err != nil {
-		return err
-	}
-	return fn(cmd.Context(), c, label)
-}
-
-// serverLabel describes the connection for the TUI header: the configured remote
-// URL, or "local (in-process)" when none is set (the duck runs in-process).
-func serverLabel(override string) string {
-	if cc, err := cli.LoadClient(); err == nil {
-		if url := cc.ActiveURL(override); url != "" {
-			return url
-		}
-	}
-	return "local (in-process)"
-}
-
 func newChatNewCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "new [prompt]",
-		Short: "Start a new interactive chat (optionally with a first prompt)",
-		Args:  cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withClient(cmd, func(ctx context.Context, c *cli.Client, label string) error {
-				return tui.Run(ctx, c, "", strings.Join(args, " "), label)
+		Use:   "new",
+		Short: "Create a chat and print its id (create-only — send the first message with `chat send`)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunChatNew(cmd.Context(), cmd.OutOrStdout(), t)
 			})
 		},
 	}
 }
 
-func newChatResumeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "resume [id]",
-		Short: "Resume a chat in the TUI (most recent if no id given)",
-		Args:  cobra.MaximumNArgs(1),
+// newChatSendCmd: `chat send <id> "<msg>"` — the non-interactive way to answer
+// a needs_input question or ask a follow-up (see internal/cli's Report for the
+// 0/1/2 exit-code semantics).
+func newChatSendCmd() *cobra.Command {
+	var asJSON, showEvents bool
+	var attach []string
+	c := &cobra.Command{
+		Use:   "send <id> <message>",
+		Short: "Send a non-interactive message to an existing chat (also how you answer a paused question)",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withClient(cmd, func(ctx context.Context, c *cli.Client, label string) error {
-				id := ""
-				if len(args) == 1 {
-					id = args[0]
-				} else {
-					chats, err := c.ListChats(ctx)
-					if err != nil {
-						return err
-					}
-					if len(chats) == 0 {
-						return fmt.Errorf("no chats yet — start one with `quack chat new`")
-					}
-					id = chats[0].Id // server orders most-recent first
-				}
-				return tui.Run(ctx, c, id, "", label)
+			return withTarget(cmd, func(t string) error {
+				code := cli.RunChatSend(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), t, args[0], args[1], attach, showEvents, asJSON)
+				exitIfNonZero(code)
+				return nil
 			})
 		},
 	}
+	asJSONFlag(c, &asJSON)
+	c.Flags().BoolVar(&showEvents, "events", false, "also print the pipeline event trace (plan, node lifecycle) to stderr")
+	c.Flags().StringSliceVar(&attach, "attach", nil, "attach file(s) — image/audio — to the message (repeatable)")
+	return c
+}
+
+// newChatShowCmd: `chat show <id>` — a status snapshot (id/title/status/pending
+// question, the last turn's per-node table, then its answer), or the full
+// ChatDetail with --json. -f/--follow attaches to the live stream after the
+// snapshot (replaces the TUI's live view).
+func newChatShowCmd() *cobra.Command {
+	var asJSON, follow bool
+	c := &cobra.Command{
+		Use:   "show <id>",
+		Short: "Show a chat's status snapshot (id/title/status/pending question, node table, last answer)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				code := cli.RunChatShow(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), t, args[0], asJSON, follow)
+				exitIfNonZero(code)
+				return nil
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	c.Flags().BoolVarP(&follow, "follow", "f", false, "after the snapshot, attach to the chat's live stream until the run ends")
+	return c
 }
 
 // withTarget runs fn against a resolved server (remote or in-process duck),

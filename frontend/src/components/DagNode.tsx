@@ -1,28 +1,22 @@
 import { useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import type { NodeState, NodeStatus } from '../state/chatStore'
-import type { AgentRun } from './messageParts'
-import { CANCELLED_ERROR, type DagNodeDef } from '../state/agentStream'
+import { agentLabel, type AgentRun } from './messageParts'
+import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
-function StatusBadge({ status, stopped }: { status: NodeStatus; stopped?: boolean }) {
-  if (stopped) {
-    return (
-      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-        stopped
-      </span>
-    )
-  }
+function StatusBadge({ status }: { status: NodeStatus }) {
   const styles: Record<NodeStatus, string> = {
     queued:  'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
     running: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400',
     needs_input: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
     done:    'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
     failed:  'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400',
+    cancelled: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
   }
   const labels: Record<NodeStatus, string> = {
     queued: 'queued', running: 'running…', done: 'done', failed: 'failed',
-    needs_input: 'waiting for you',
+    needs_input: 'waiting for you', cancelled: 'stopped',
   }
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${styles[status]}`}>
@@ -54,31 +48,48 @@ function RunTimer({ run }: { run: AgentRun }) {
     : null
 }
 
-function agentLabel(name: string): string {
-  if (name === 'web-researcher') return 'Web researcher'
-  if (name === 'synthesizer') return 'Synthesizer'
-  return name
+// RunModel shows the model that produced a run, once known (set on agent_complete).
+function RunModel({ run }: { run: AgentRun }) {
+  if (!run.model) return null
+  return (
+    <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[100px]" title={run.model}>
+      {run.model}
+    </span>
+  )
 }
 
 // ── per-run stage cards ──────────────────────────────────────────────────────
 
 // ResearchCard renders the worker stage (draft + finalize): its activity. The
 // node's vetted answer is rendered separately at the foot of the node (NodeAnswer),
-// so it sits below the judge rather than inside the worker card.
+// so it sits below the judge rather than inside the worker card. Like every other
+// stage card it carries its own labeled header — without one, its activity rows
+// visually attach to whatever labeled card rendered above it (a running advisor
+// card made the ADVISOR look like it was doing the web searches).
 function ResearchCard({ run, running }: { run: AgentRun; running: boolean }) {
   const empty = run.activity.length === 0
   if (empty) {
     return running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
   }
   return (
-    <details open={running} className="not-prose">
-      <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-        {running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
-      </summary>
-      <div className="px-4 pb-3">
-        <ActivityList activity={run.activity} />
-      </div>
-    </details>
+    <div className="border-t border-gray-100 dark:border-gray-700">
+      <details open={running} className="not-prose">
+        <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
+          <span className="text-[10px] font-semibold text-sky-600 dark:text-sky-400 uppercase tracking-wide">
+            Research
+          </span>
+          {running && <Spinner />}
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
+          </span>
+          <RunModel run={run} />
+          <RunTimer run={run} />
+        </summary>
+        <div className="px-4 pb-3">
+          <ActivityList activity={run.activity} />
+        </div>
+      </details>
+    </div>
   )
 }
 
@@ -111,6 +122,7 @@ function AdvisorCard({ run, running }: { run: AgentRun; running: boolean }) {
             Advisor
           </span>
           {running && <Spinner />}
+          <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
@@ -146,6 +158,7 @@ function JudgeCard({ run, running }: { run: AgentRun; running: boolean }) {
               {run.passed ? '✓' : '✗'} {(run.score * 100).toFixed(0)}%
             </span>
           )}
+          <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
@@ -169,6 +182,7 @@ function RevisionCard({ run, running }: { run: AgentRun; running: boolean }) {
             ↺ Revised · round {run.round}
           </span>
           {running && <Spinner />}
+          <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
@@ -282,40 +296,6 @@ function RetryControl({ nodeId, onRetry }: {
   )
 }
 
-// NodeAskPrompt renders a paused node's question (mid-node HITL) with an inline
-// answer box. The answer is sent as the next chat message — the backend routes it
-// to the paused node (see orchestrator resumeNodeRun).
-function NodeAskPrompt({ question, onAnswer }: {
-  question: string
-  onAnswer: (answer: string) => void
-}) {
-  const [text, setText] = useState('')
-  const send = () => {
-    const t = text.trim()
-    if (!t) return
-    onAnswer(t)
-    setText('')
-  }
-  return (
-    <div className="px-4 py-2 border-b border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/15">
-      <div className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1.5">
-        This agent needs your input: <span className="font-normal">{question}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <input
-          autoFocus
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send() } }}
-          placeholder="Type your answer…"
-          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-400"
-        />
-        <button onClick={send} className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline">answer</button>
-      </div>
-    </div>
-  )
-}
-
 // ── DagNode ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -327,17 +307,13 @@ interface Props {
   onStop?: (nodeId: string) => void
   onSteer?: (nodeId: string, guidance: string) => void
   onRetry?: (nodeId: string, guidance?: string) => void
-  // Answer a paused node's question (mid-node HITL); present on a live turn.
-  onAnswer?: (nodeId: string, answer: string) => void
 }
 
-export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry, onAnswer }: Props) {
+export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry }: Props) {
   const running = state.status === 'running'
   const controllable = running || state.status === 'queued'
-  const finished = state.status === 'done' || state.status === 'failed'
-  // A user-cancelled node comes back as failed with this specific error; render it
-  // as a neutral "stopped" rather than a red failure.
-  const stopped = state.status === 'failed' && state.error === CANCELLED_ERROR
+  // Retry (→ queued) is legal from done, failed, or cancelled — see dag.CanTransition.
+  const finished = state.status === 'done' || state.status === 'failed' || state.status === 'cancelled'
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
 
@@ -352,7 +328,7 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
           {agentLabel(node.agent)}
         </span>
-        <StatusBadge status={state.status} stopped={stopped} />
+        <StatusBadge status={state.status} />
         {state.steers && state.steers.length > 0 && (
           <span
             className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
@@ -381,12 +357,9 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
               ⚠ unvetted
             </span>
           )}
-          {(state.totalTokens != null && state.totalTokens > 0)
-            ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{state.totalTokens.toLocaleString()} tok</span>
-            : state.outputChars != null && state.outputChars > 0
-              ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">~{Math.round(state.outputChars / 4).toLocaleString()} tok</span>
-              : null
-          }
+          {state.totalTokens != null && state.totalTokens > 0 && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{state.totalTokens.toLocaleString()} tok</span>
+          )}
           {/* A finished node shows the server-measured duration (reconnect-proof);
               a running one ticks live from the server start time. */}
           {(state.finishedAt != null && state.serverDurationMs != null) ? (
@@ -414,11 +387,6 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
         <RetryControl nodeId={node.id} onRetry={onRetry} />
       )}
 
-      {/* Mid-node HITL: the node paused to ask the user a question */}
-      {state.status === 'needs_input' && state.question && onAnswer && (
-        <NodeAskPrompt question={state.question} onAnswer={a => onAnswer(node.id, a)} />
-      )}
-
       {/* Per-run stage cards */}
       {runs.map((run, i) => {
         const runRunning = i === activeIdx
@@ -433,12 +401,17 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
       {/* Vetted answer (below the stage cards, for every node) */}
       <NodeAnswer answer={answer} />
 
-      {/* Failed / stopped state (a user-cancelled node reads neutrally, not as an error) */}
+      {/* Failed state */}
       {state.status === 'failed' && state.error && (
-        <div className={`px-4 py-2 text-xs ${stopped
-          ? 'text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40'
-          : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20'}`}>
+        <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
           {state.error}
+        </div>
+      )}
+
+      {/* Stopped by the user (node_cancelled) — rendered neutrally, not as an error */}
+      {state.status === 'cancelled' && (
+        <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40">
+          Stopped by you
         </div>
       )}
     </div>

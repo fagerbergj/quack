@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CancelChatStreamData, CancelChatStreamResponses, CancelNodeData, CancelNodeResponses, CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, RetryNodeData, RetryNodeResponse, RetryNodeResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SteerNodeData, SteerNodeResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -78,10 +78,14 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
  * output item has been added; `node_queued` ({"node_id"}), `node_start`
  * ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
- * and `node_failed` ({"node_id","error"}) track node lifecycle.
+ * `node_failed` ({"node_id","error"}), and `node_cancelled` ({"node_id"})
+ * track node lifecycle.
  *
- * Lifecycle: `chat_title` ({"title"}) is sent once the title is generated;
- * `done` ({}) terminates the stream; `error` ({"error"}) signals failure.
+ * Lifecycle: `response_created` ({"response_id"}) is the very first event
+ * of the stream, naming the turn so a client can cancel this run via
+ * `PUT /chats/{chat_id}/responses/{response_id}/status`; `chat_title`
+ * ({"title"}) is sent once the title is generated; `done` ({}) terminates
+ * the stream; `error` ({"error"}) signals failure.
  *
  */
 export const sendChatMessage = <ThrowOnError extends boolean = false>(options: Options<SendChatMessageData, ThrowOnError, SendChatMessageResponse>): Promise<ServerSentEventsResult<SendChatMessageResponses>> => (options.client ?? client).sse.post<SendChatMessageResponses, unknown, ThrowOnError>({
@@ -104,15 +108,6 @@ export const sendChatMessage = <ThrowOnError extends boolean = false>(options: O
 export const getResponse = <ThrowOnError extends boolean = false>(options: Options<GetResponseData, ThrowOnError>): RequestResult<GetResponseResponses, GetResponseErrors, ThrowOnError> => (options.client ?? client).get<GetResponseResponses, GetResponseErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/responses/{response_id}', ...options });
 
 /**
- * Cancel an in-progress stream
- *
- * Cancels the active orchestrator run for this chat. No-op if no run is
- * in progress. The SSE client should also abort its connection.
- *
- */
-export const cancelChatStream = <ThrowOnError extends boolean = false>(options: Options<CancelChatStreamData, ThrowOnError>): RequestResult<CancelChatStreamResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
-
-/**
  * Subscribe to a chat's live response stream
  *
  * Connect to the SSE stream of a chat's in-progress (or just-completed) run
@@ -125,28 +120,30 @@ export const cancelChatStream = <ThrowOnError extends boolean = false>(options: 
 export const subscribeChatStream = <ThrowOnError extends boolean = false>(options: Options<SubscribeChatStreamData, ThrowOnError, SubscribeChatStreamResponse>): Promise<ServerSentEventsResult<SubscribeChatStreamResponses>> => (options.client ?? client).sse.get<SubscribeChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
 
 /**
- * Cancel a single running node of the chat's active run
+ * Transition a DAG node's status (cancel, retry, or steer)
  *
- * Stops one node of the chat's in-flight run. The rest of the DAG keeps
- * running (continue-but-warn: dependents are told the node's output is
- * missing). No-op if no such node is active.
+ * A single resource-oriented endpoint replacing the old cancel/steer/retry
+ * RPC verbs — the request body names the TARGET status:
+ *
+ * - `{"status":"cancelled"}` — cancel the node (legal from `queued`,
+ * `running`, or `needs_input`). No-op (200, unchanged state) if the node
+ * isn't currently live.
+ * - `{"status":"running","guidance":"..."}` — steer: interrupt a RUNNING
+ * node and re-run it against its SAME session (prior tool calls/results
+ * retained) with the supplied guidance. Only legal from `running`;
+ * `guidance` is required (400 without it).
+ * - `{"status":"queued","guidance":"..."}` — retry: re-run a finished node
+ * (and every node downstream of it) reusing the stored outputs of all
+ * other nodes. Only legal from `done`, `failed`, or `cancelled`.
+ * `guidance` is optional and folded into the node's task.
+ *
+ * An illegal transition (e.g. `done` → `running`) returns 409 naming the
+ * allowed target statuses. The re-run (steer/retry) streams over the
+ * chat's existing SSE connection — this endpoint does not open a new one.
  *
  */
-export const cancelNode = <ThrowOnError extends boolean = false>(options: Options<CancelNodeData, ThrowOnError>): RequestResult<CancelNodeResponses, unknown, ThrowOnError> => (options.client ?? client).delete<CancelNodeResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/nodes/{node_id}', ...options });
-
-/**
- * Interrupt a running node and re-run it with new guidance
- *
- * Interrupts one running node of the chat's in-flight run and re-runs it
- * against its SAME session — so the node's prior tool calls and results are
- * retained and the worker revises on top of them with the supplied guidance.
- * Dependents are untouched (they keep waiting for the re-run to finish).
- * No-op if no such node is active. Emits a node_steered event, then the
- * node's normal node_start → … → node_done sequence again.
- *
- */
-export const steerNode = <ThrowOnError extends boolean = false>(options: Options<SteerNodeData, ThrowOnError>): RequestResult<SteerNodeResponses, unknown, ThrowOnError> => (options.client ?? client).post<SteerNodeResponses, unknown, ThrowOnError>({
-    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/steer',
+export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: Options<UpdateNodeStatusData, ThrowOnError>): RequestResult<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError> => (options.client ?? client).put<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/status',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -155,17 +152,16 @@ export const steerNode = <ThrowOnError extends boolean = false>(options: Options
 });
 
 /**
- * Re-run a finished node and its descendants
+ * Cancel the chat's active run by response id
  *
- * Re-runs a FAILED or DONE node and every node downstream of it, reusing the
- * stored outputs of all other nodes, and streams the re-execution as
- * Server-Sent Events (the same event vocabulary as sendChatMessage). Optional
- * guidance is folded into the node's task (retry-with-guidance is steer, on a
- * finished node). The new terminal answer replaces the turn's answer.
+ * `{"status":"cancelled"}` cancels the active orchestrator run for this
+ * chat — only legal when response_id names the CURRENTLY active run (the
+ * id surfaced in the stream's opening `response_created` event). 404 if
+ * this response isn't the active run (already finished, or never was).
  *
  */
-export const retryNode = <ThrowOnError extends boolean = false>(options: Options<RetryNodeData, ThrowOnError, RetryNodeResponse>): Promise<ServerSentEventsResult<RetryNodeResponses>> => (options.client ?? client).sse.post<RetryNodeResponses, unknown, ThrowOnError>({
-    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/retry',
+export const updateResponseStatus = <ThrowOnError extends boolean = false>(options: Options<UpdateResponseStatusData, ThrowOnError>): RequestResult<UpdateResponseStatusResponses, UpdateResponseStatusErrors, ThrowOnError> => (options.client ?? client).put<UpdateResponseStatusResponses, UpdateResponseStatusErrors, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/responses/{response_id}/status',
     ...options,
     headers: {
         'Content-Type': 'application/json',

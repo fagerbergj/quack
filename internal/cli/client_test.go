@@ -43,12 +43,15 @@ func TestPrintPrompt(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	var out bytes.Buffer
-	if err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi", nil); err != nil {
-		t.Fatalf("PrintPrompt: %v", err)
+	var out, errOut bytes.Buffer
+	if code := PrintPrompt(context.Background(), &out, &errOut, nil, srv.URL, "hi", nil, false); code != 0 {
+		t.Fatalf("PrintPrompt exit = %d, want 0; stderr=%s", code, errOut.String())
 	}
 	if got := out.String(); got != "Hello world\n" {
 		t.Errorf("output = %q, want %q", got, "Hello world\n")
+	}
+	if got := errOut.String(); got != "chat: c1\n" {
+		t.Errorf("stderr = %q, want %q (chat id, separately capturable from the answer)", got, "chat: c1\n")
 	}
 }
 
@@ -103,8 +106,8 @@ func TestRunAPI(t *testing.T) {
 	}
 }
 
-// TestPrintPromptServerError: an `error` SSE event surfaces as a returned error
-// (so the command exits non-zero) and nothing is printed to stdout.
+// TestPrintPromptServerError: an `error` SSE event is a failure — exit 1, the
+// message on stderr, nothing on stdout (test case 6 in the PR spec).
 func TestPrintPromptServerError(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 
@@ -118,27 +121,76 @@ func TestPrintPromptServerError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	var out bytes.Buffer
-	err := PrintPrompt(context.Background(), &out, nil, srv.URL, "hi", nil)
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Errorf("err = %v, want it to contain the server error", err)
+	var out, errOut bytes.Buffer
+	code := PrintPrompt(context.Background(), &out, &errOut, nil, srv.URL, "hi", nil, false)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "boom") {
+		t.Errorf("stderr = %q, want it to contain the server error", errOut.String())
 	}
 	if out.Len() != 0 {
-		t.Errorf("nothing should be printed on error, got %q", out.String())
+		t.Errorf("nothing should be printed to stdout on failure, got %q", out.String())
 	}
 }
 
-// TestSteerNode posts the guidance to the node steer endpoint and accepts the
-// 204 the server returns (postJSON's 200-only check would reject it).
-func TestSteerNode(t *testing.T) {
-	var gotBody schema.SteerNodeBody
+// TestPrintPromptNeedsInput: a paused run (node_needs_input) prints `question:
+// <text>` on stdout, a hint on stderr, and exits 2 — --json mode reports the
+// same status/exit code via one JSON object.
+func TestPrintPromptNeedsInput(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/steer", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
+	mux.HandleFunc("/api/v1/chats", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(schema.ChatSummary{Id: "c1"})
+	})
+	mux.HandleFunc("/api/v1/chats/c1/responses", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "event: node_needs_input\ndata: {\"node_id\":\"n1\",\"message\":\"which region?\"}\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := PrintPrompt(context.Background(), &out, &errOut, nil, srv.URL, "hi", nil, false)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if got := strings.TrimSpace(out.String()); got != "question: which region?" {
+		t.Errorf("stdout = %q, want %q", got, "question: which region?")
+	}
+	if !strings.Contains(errOut.String(), "quack chat send c1") {
+		t.Errorf("stderr hint = %q, want it to name `chat send c1`", errOut.String())
+	}
+
+	// --json: same status/exit code, one object.
+	out.Reset()
+	errOut.Reset()
+	code = PrintPrompt(context.Background(), &out, &errOut, nil, srv.URL, "hi", nil, true)
+	if code != 2 {
+		t.Errorf("--json exit code = %d, want 2", code)
+	}
+	var res SendResult
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("--json output not valid JSON: %v\n%s", err, out.String())
+	}
+	if res.Status != StatusNeedsInput || res.Question != "which region?" {
+		t.Errorf("json result = %+v, want status needs_input, question %q", res, "which region?")
+	}
+}
+
+// TestSteerNode PUTs {"status":"running","guidance":...} to the node status
+// endpoint and accepts the 200 the server returns.
+func TestSteerNode(t *testing.T) {
+	var gotBody schema.NodeStatusUpdateBody
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %s, want PUT", r.Method)
 		}
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusRunning})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -147,8 +199,11 @@ func TestSteerNode(t *testing.T) {
 	if err := c.SteerNode(context.Background(), "c1", "n2", "focus on cost"); err != nil {
 		t.Fatalf("SteerNode: %v", err)
 	}
-	if gotBody.Guidance != "focus on cost" {
-		t.Errorf("server got guidance %q, want %q", gotBody.Guidance, "focus on cost")
+	if gotBody.Status != schema.NodeStatusRunning {
+		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusRunning)
+	}
+	if gotBody.Guidance == nil || *gotBody.Guidance != "focus on cost" {
+		t.Errorf("server got guidance %v, want %q", gotBody.Guidance, "focus on cost")
 	}
 }
 

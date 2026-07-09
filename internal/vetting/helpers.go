@@ -21,6 +21,16 @@ type Config struct {
 	Constitution        string  // global principles; prefixed in the judge prompt
 	Rubric              string  // scoring guide; global default or per-agent override
 
+	// RequireRetrieval marks an agent whose job is retrieval (its tool list
+	// includes web_search/web_fetch). For such an agent an answer produced with
+	// ZERO retrieval activity is deterministically ungrounded — either pure model
+	// memory or (live e2e 2026-07-05) a question to the user written as answer
+	// text instead of an ask_user call. The deterministic fold hard-fails it with
+	// feedback naming both ways out (research it, or ask_user). False for
+	// tool-less agents like the synthesizer, which legitimately re-cite upstream
+	// URLs without retrieving anything themselves.
+	RequireRetrieval bool
+
 	// Memory, when set, receives the agent's staged tradecraft on a judge pass
 	// (M6). nil disables the gated commit path.
 	// ponytail: the gated-commit-on-pass path is not yet wired into RunGatedRefine

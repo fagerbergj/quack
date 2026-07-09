@@ -92,7 +92,8 @@ func TestExecute_CancelNodeStopsBeforeJudge(t *testing.T) {
 	}
 }
 
-// nodeEnd returns the terminal event name (node_done / node_failed) for a node.
+// nodeEnd returns the terminal event name (node_done / node_failed / node_cancelled)
+// for a node.
 func nodeEnd(events []stream.SSEEvent, nodeID string) string {
 	for _, ev := range events {
 		switch d := ev.Data.(type) {
@@ -103,6 +104,10 @@ func nodeEnd(events []stream.SSEEvent, nodeID string) string {
 		case stream.NodeFailedData:
 			if d.NodeID == nodeID {
 				return stream.EventNodeFailed
+			}
+		case stream.NodeCancelledData:
+			if d.NodeID == nodeID {
+				return stream.EventNodeCancelled
 			}
 		}
 	}
@@ -137,8 +142,8 @@ func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
 	t.Run("without reset it leaks", func(t *testing.T) {
 		ex, plan := newRun()
 		events, _ := runPlanSSE(t, ex, plan, "s")
-		if got := nodeEnd(events, "n1"); got != stream.EventNodeFailed {
-			t.Errorf("n1 ended as %q; want the leak (node_failed) that proves reset matters", got)
+		if got := nodeEnd(events, "n1"); got != stream.EventNodeCancelled {
+			t.Errorf("n1 ended as %q; want the leak (node_cancelled) that proves reset matters", got)
 		}
 	})
 }

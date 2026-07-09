@@ -73,6 +73,15 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 	}
 }
 
+// Active reports whether a chat currently has a live (not yet Closed) run —
+// backs the REST status handler's `running` chat status.
+func (h *Hub) Active(key string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	t := h.topics[key]
+	return t != nil && !t.done
+}
+
 // Close marks the chat's run finished and closes its live subscriber channels
 // (subscribers see the channel close after draining). The replay buffer is kept
 // so a device opening the stream after completion still replays it, until the

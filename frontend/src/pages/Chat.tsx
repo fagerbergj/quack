@@ -1,14 +1,14 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, type ChatSummary } from '../api'
-import { AssistantText, ActivityList, Dots } from '../components/AgentParts'
-import { ChoicePrompt } from '../components/ChoicePrompt'
-import { DagView } from '../components/DagView'
+import { AssistantText, ActivityList, BubbleHeader, Dots } from '../components/AgentParts'
+import { QuestionBubble } from '../components/QuestionBubble'
+import { DagView, DagBubbleHeader } from '../components/DagView'
 import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, isTurnInProgress, type DagTurnState } from '../state/chatStore'
+import { activityFromTurn, isTurnInProgress, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 
@@ -16,12 +16,8 @@ import { AttachmentPreviews } from '../components/AttachmentUI'
 // Used as a fallback when the orchestrator presents no top-level text of its own —
 // the answer then lives in the last DAG node's nodeAnswer.
 function liveDagFinalText(dag: DagTurnState): string {
-  if (!dag.nodes.length) return ''
-  const hasSuccessor = new Set<string>()
-  for (const n of dag.nodes) for (const dep of n.depends_on ?? []) hasSuccessor.add(dep)
-  const finalNode = dag.nodes.find(n => !hasSuccessor.has(n.id))
-  if (!finalNode) return ''
-  return dag.nodeAnswer[finalNode.id] ?? ''
+  const finalId = terminalNodeId(dag.nodes)
+  return finalId != null ? (dag.nodeAnswer[finalId] ?? '') : ''
 }
 
 export default function Chat() {
@@ -89,7 +85,12 @@ export default function Chat() {
       // Reconnect to a run still in progress (e.g. this browser after a refresh):
       // the POST body stream is gone, so subscribe to the hub. attach no-ops if
       // this client already streams (it posted the run) — no double-subscribe.
-      if (isTurnInProgress(detail.turns[detail.turns.length - 1])) {
+      // detail.status is the hub's authoritative "a run is live" signal and is
+      // true through EVERY phase (planning, queued nodes, streaming) — the DAG
+      // check alone missed pre-DAG phases (no quack:dag item persisted yet), so
+      // a refresh during planning never reconnected. The DAG check stays as a
+      // fallback for a restarted server whose in-memory hub state died with it.
+      if (detail.status === 'running' || isTurnInProgress(detail.turns[detail.turns.length - 1])) {
         store.attach(activeChatId)
       }
     }).catch(() => {})
@@ -222,7 +223,10 @@ export default function Chat() {
   const liveIsChoiceAnswer = lastTurn ? pendingChoice(activityFromTurn(lastTurn)) != null : false
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
+    // overflow-hidden: the app owns ALL scrolling internally (messages pane,
+    // sidebar list); without it any over-tall child stretches the document and
+    // the page itself scrolls into blank space below the composer.
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
       {chatListOpen && (
         <div
           className="md:hidden fixed inset-0 z-30 bg-black/50"
@@ -282,7 +286,7 @@ export default function Chat() {
           </div>
         )}
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">
           {!activeChatId && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Select or start a chat
@@ -324,10 +328,13 @@ export default function Chat() {
             //  - no DAG: the orchestrator answered directly, so its text IS the reply.
             const liveText = liveDag ? (liveDagFinalText(liveDag) || liveTopText) : liveTopText
             // The orchestrator's own activity (deciding to research, plan/execute calls).
-            // get_user_choice is surfaced as the ChoicePrompt below, not as a raw tool block.
+            // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
             const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
             // A get_user_choice clarification awaiting an answer on the (paused) live turn.
             const choice = liveDone ? pendingChoice(liveTopRuns) : null
+            // A paused node's mid-node HITL question (only possible once the run has
+            // ended — the plan pauses the whole turn, so liveDone is implied).
+            const nodeQuestion = liveDag ? pendingNodeQuestion(liveDag) : undefined
             // Show spinner while streaming until something VISIBLE arrives (DAG,
             // answer text, or visible activity). Keyed on orchActivity, not run
             // count — the orchestrator's top-level run is created empty on the
@@ -338,9 +345,15 @@ export default function Chat() {
               answerText: liveTopText,
               visibleActivityCount: orchActivity.length,
             })
-            // Skip the bubble when there's nothing in it (e.g. a pending clarification
-            // at rest) — the ChoicePrompt renders on its own below.
-            const hasLiveBubbleContent = showSpinner || !!liveDag || !!liveText || orchActivity.length > 0
+            // Answer-bubble attribution: a DAG turn credits its terminal node (agent +
+            // that node's own model/tokens); a plain reply credits the orchestrator,
+            // whose own top-level run carries its model/usage once complete (item 1).
+            const orchRun = liveTopRuns.find(r => r.runId === 'orchestrator')
+            const answerAttribution = liveDag
+              ? dagAnswerAttribution(liveDag)
+              : { agent: 'orchestrator', model: orchRun?.model, tokens: orchRun?.totalTokens }
+            // Skip the answer bubble when there's nothing in it yet.
+            const hasAnswerBubble = showSpinner || (liveDag ? !!liveText : (orchActivity.length > 0 || !!liveTopText))
             const isChoiceAnswer = liveIsChoiceAnswer
             const copyKey = `live-${live.userText.slice(0, 20)}`
             return (
@@ -358,46 +371,58 @@ export default function Chat() {
                     </div>
                   </div>
                 )}
-                {/* Assistant response */}
+                {/* Assistant response: DAG bubble → node question → answer bubble, as siblings */}
                 <div className="flex justify-start">
-                  <div className={liveDag ? 'w-full' : 'w-auto'}>
-                    {hasLiveBubbleContent && (
+                  <div className={liveDag ? 'w-full space-y-3' : 'w-auto space-y-3'}>
+                    {liveDag && (
+                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+                        <DagBubbleHeader dag={liveDag} />
+                        {/* The orchestrator agent wraps the DAG: show its own
+                            activity (deciding to research, the plan/execute calls)
+                            alongside the DAG. While running both are visible; once
+                            done they collapse into "Research steps". */}
+                        {liveDone ? (
+                          <details className="rounded-lg border border-gray-200 dark:border-gray-700">
+                            <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                              Research steps
+                            </summary>
+                            <div className="p-2 space-y-3">
+                              {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
+                              <DagView dag={liveDag} onRetryNode={handleRetryNode} />
+                            </div>
+                          </details>
+                        ) : (
+                          <div className="space-y-3">
+                            {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
+                            <DagView dag={liveDag} onStopNode={handleStopNode} onSteerNode={handleSteerNode} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {nodeQuestion && (
+                      <QuestionBubble
+                        agent={nodeQuestion.agent}
+                        question={nodeQuestion.question}
+                        disabled={submittingChoice}
+                        onSelect={answer => handleAnswerNode(nodeQuestion.nodeId, answer)}
+                      />
+                    )}
+                    {hasAnswerBubble && (
                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
                       {showSpinner ? (
                         <Dots className="h-5" size="w-2 h-2" />
                       ) : liveDag ? (
-                        <>
-                          {/* The orchestrator agent wraps the DAG: show its own
-                              activity (deciding to research, the plan/execute calls)
-                              alongside the DAG. While running both are visible; once
-                              done they collapse into "Research steps" so only the
-                              final answer remains. */}
-                          {liveDone ? (
-                            <details className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                              <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                                ▸ Research steps
-                              </summary>
-                              <div className="p-2 space-y-3">
-                                {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                                <DagView dag={liveDag} onRetryNode={handleRetryNode} onAnswerNode={handleAnswerNode} />
-                              </div>
-                            </details>
-                          ) : (
-                            <div className="space-y-3">
-                              {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                              <DagView dag={liveDag} onStopNode={handleStopNode} onSteerNode={handleSteerNode} />
-                            </div>
-                          )}
-                          {liveText && (
-                            <div className={liveDone ? '' : 'mt-4 pt-4 border-t border-gray-100 dark:border-gray-700'}>
-                              <AssistantText text={liveText} />
-                            </div>
-                          )}
-                        </>
+                        liveText && (
+                          <>
+                            <BubbleHeader agent={answerAttribution?.agent ?? 'orchestrator'} model={answerAttribution?.model} tokens={answerAttribution?.tokens} />
+                            <AssistantText text={liveText} />
+                          </>
+                        )
                       ) : (
                         // No DAG: orchestrator answered directly (conversational or
                         // tool-based research where DAG events don't reach the frontend).
                         <div>
+                          <BubbleHeader agent="orchestrator" model={answerAttribution?.model} tokens={answerAttribution?.tokens} />
                           {orchActivity.length > 0 && (
                             <ActivityList activity={orchActivity} />
                           )}
@@ -410,7 +435,8 @@ export default function Chat() {
                     </div>
                     )}
                     {choice && (
-                      <ChoicePrompt
+                      <QuestionBubble
+                        agent="orchestrator"
                         question={choice.question}
                         options={choice.options}
                         disabled={submittingChoice}

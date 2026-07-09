@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { DagNode } from './DagNode'
-import type { DagTurnState, NodeState } from '../state/chatStore'
+import { terminalNodeId, dagTotalTokens, type DagTurnState, type NodeState } from '../state/chatStore'
 import type { AgentRun } from './messageParts'
 import { LiveTimer } from '../utils/timer'
 
@@ -32,15 +32,6 @@ function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): 
   return layers
 }
 
-// finalNodeId returns the terminal node (no successors).
-function finalNodeId(nodeIds: string[], dependsOnMap: Record<string, string[]>): string | null {
-  const hasSucessor = new Set<string>()
-  for (const id of nodeIds) {
-    for (const dep of (dependsOnMap[id] ?? [])) hasSucessor.add(dep)
-  }
-  return nodeIds.find(id => !hasSucessor.has(id)) ?? null
-}
-
 interface Props {
   dag: DagTurnState
   // Present only for a live, streaming run: per-node controls (stop / steer).
@@ -49,18 +40,29 @@ interface Props {
   // Retry a finished node (failed or done) + its downstream. Present when the turn
   // is the live one and not currently streaming.
   onRetryNode?: (nodeId: string, guidance?: string) => void
-  // Answer a paused node's question (mid-node HITL).
-  onAnswerNode?: (nodeId: string, answer: string) => void
 }
 
-export function DagView({ dag, onStopNode, onSteerNode, onRetryNode, onAnswerNode }: Props) {
+// DagBubbleHeader is the DAG bubble's compact header — its own attribution line,
+// separate from the answer bubble's (which credits the terminal node instead).
+export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
+  const tokens = dagTotalTokens(dag)
+  return (
+    <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-400 dark:text-gray-500">
+      <span className="font-semibold text-gray-500 dark:text-gray-400">Research plan</span>
+      <span>· {dag.nodes.length} node{dag.nodes.length === 1 ? '' : 's'}</span>
+      {tokens > 0 && <span className="tabular-nums">· {tokens.toLocaleString()} tok</span>}
+    </div>
+  )
+}
+
+export function DagView({ dag, onStopNode, onSteerNode, onRetryNode }: Props) {
   const nodeMap = Object.fromEntries(dag.nodes.map(n => [n.id, n]))
   const dependsOnMap: Record<string, string[]> = {}
   for (const n of dag.nodes) dependsOnMap[n.id] = n.depends_on ?? []
 
   const nodeIds = dag.nodes.map(n => n.id)
   const layers = topoLayers(nodeIds, dependsOnMap)
-  const finalId = finalNodeId(nodeIds, dependsOnMap)
+  const finalId = terminalNodeId(dag.nodes)
 
   const getState = (id: string): NodeState =>
     dag.nodeStates[id] ?? { status: 'queued' }
@@ -69,7 +71,7 @@ export function DagView({ dag, onStopNode, onSteerNode, onRetryNode, onAnswerNod
   const getAnswer = (id: string): string =>
     dag.nodeAnswer[id] ?? ''
 
-  const totalTokens = dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
+  const totalTokens = dagTotalTokens(dag)
 
   const [copied, setCopied] = useState(false)
   const copyDag = useCallback(() => {
@@ -100,7 +102,6 @@ export function DagView({ dag, onStopNode, onSteerNode, onRetryNode, onAnswerNod
                   onStop={onStopNode}
                   onSteer={onSteerNode}
                   onRetry={onRetryNode}
-                  onAnswer={onAnswerNode}
                 />
               </div>
             ))}

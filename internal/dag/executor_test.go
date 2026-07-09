@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"fmt"
 	"testing"
 
 	"google.golang.org/adk/v2/session"
@@ -18,6 +19,7 @@ func drive(evs []*session.Event, agentByID map[string]string, score gateScore) [
 		map[string]string{},
 		func(string) gateScore { return score },
 		func(string) bool { return false },
+		func(string, int) string { return "" },
 	)
 	for _, ev := range evs {
 		ds.handle(ev)
@@ -165,4 +167,51 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestDagStream_SteeredRunEmitsNodeSteered: the first event of a -sN steered
+// re-run announces node_steered (with the delivered guidance) BEFORE the run's
+// agent_start — each generation exactly once. Regression: live e2e 2026-07-05,
+// steers landed server-side but the UI never heard about them (no emitter).
+func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
+	agentByID := map[string]string{"n1": "web-researcher"}
+	var got []stream.SSEEvent
+	ds := newDagStream(agentByID,
+		func(e stream.SSEEvent, _ error) bool { got = append(got, e); return true },
+		map[string]string{},
+		func(string) gateScore { return gateScore{} },
+		func(string) bool { return false },
+		func(node string, gen int) string { return fmt.Sprintf("guidance-%s-%d", node, gen) },
+	)
+	evs := []*session.Event{
+		ev("quack-dag-p@1/n1@rr/web-researcher@worker-r0", &genai.Part{Text: "draft"}),
+		ev("quack-dag-p@1/n1@rr/web-researcher@advisor-r0-s1", &genai.Part{Text: "advice"}),
+		ev("quack-dag-p@1/n1@rr/web-researcher@worker-r0-s1", &genai.Part{Text: "steered draft"}),
+	}
+	for _, e := range evs {
+		ds.handle(e)
+	}
+
+	var steered []stream.NodeSteeredData
+	steerIdx, startIdx := -1, -1
+	for i, e := range got {
+		if d, ok := e.Data.(stream.NodeSteeredData); ok {
+			steered = append(steered, d)
+			steerIdx = i
+		}
+		if e.Name == stream.EventAgentStart {
+			if d, ok := e.Data.(stream.AgentStartData); ok && d.RunID == "advisor-r0-s1" {
+				startIdx = i
+			}
+		}
+	}
+	if len(steered) != 1 {
+		t.Fatalf("node_steered emitted %d times, want exactly 1 (once per generation); events=%v", len(steered), names(got))
+	}
+	if steered[0].NodeID != "n1" || steered[0].Guidance != "guidance-n1-1" {
+		t.Errorf("node_steered = %+v, want node n1 with the delivered guidance", steered[0])
+	}
+	if steerIdx > startIdx {
+		t.Errorf("node_steered (idx %d) must precede the steered run's agent_start (idx %d)", steerIdx, startIdx)
+	}
 }

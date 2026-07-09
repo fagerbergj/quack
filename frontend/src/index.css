@@ -33,6 +33,15 @@
   --color-blue-950: #1a1f45;
 }
 
+/* The app owns all scrolling (messages pane, sidebar list). The page itself
+   must NEVER scroll: without this, wheel input that hits an inner scroller's
+   end CHAINS to the document, and any stray layout overflow lets the viewport
+   sail past the composer into blank space. */
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

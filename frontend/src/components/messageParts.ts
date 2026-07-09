@@ -9,6 +9,16 @@
 
 export type Stage = 'worker' | 'judge' | 'revise' | 'advisor'
 
+// agentLabel maps an agent bundle name to a human-readable display label. Shared
+// by DagNode's node header, per-run stage cards, and the bubble-attribution
+// header (BubbleHeader / QuestionBubble) so an agent reads the same everywhere.
+export function agentLabel(name: string): string {
+  if (name === 'web-researcher') return 'Web researcher'
+  if (name === 'synthesizer') return 'Synthesizer'
+  if (name === 'orchestrator') return 'Orchestrator'
+  return name
+}
+
 // ToolCall is one tool invocation within a run; result fills in when it returns.
 export interface ToolCall {
   callId: string

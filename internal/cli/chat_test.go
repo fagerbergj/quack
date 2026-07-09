@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,37 +12,6 @@ import (
 
 	"github.com/fagerbergj/quack/internal/schema"
 )
-
-// TestDagInProgress: the resume gate is true only when a DAG output item is still
-// in_progress — completed DAGs (incl. restart-failed runs) and DAG-less turns are
-// not re-attached.
-func TestDagInProgress(t *testing.T) {
-	dag := func(status schema.ItemStatus) schema.OutputItem {
-		var it schema.OutputItem
-		_ = it.FromDagOutputItem(schema.DagOutputItem{Status: status})
-		return it
-	}
-	var msg schema.OutputItem
-	_ = msg.FromMessageOutputItem(schema.MessageOutputItem{})
-
-	cases := []struct {
-		name  string
-		items []schema.OutputItem
-		want  bool
-	}{
-		{"in_progress", []schema.OutputItem{dag(schema.InProgress)}, true},
-		{"completed", []schema.OutputItem{dag(schema.Completed)}, false},
-		{"no dag", []schema.OutputItem{msg}, false},
-		{"empty", nil, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := DagInProgress(tc.items); got != tc.want {
-				t.Errorf("DagInProgress = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
 
 // TestSubscribe drives the resume transport: a GET to the chat's stream endpoint
 // whose SSE events arrive on the channel in order, closing on stream end.
@@ -72,7 +42,7 @@ func TestSubscribe(t *testing.T) {
 // generated-union parsing (message output item → text) the export path relies on.
 const chatDetailJSON = `{
   "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
-  "system_prompt":"","title":"Greeting",
+  "system_prompt":"","title":"Greeting","status":"idle",
   "turns":[{"id":"t1","created_at":"2026-01-01T00:00:00Z",
     "input":{"role":"user","content":"hi there"},
     "output":[
@@ -88,8 +58,8 @@ func TestRunChatList(t *testing.T) {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"First","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T03:04:00Z","system_prompt":""},
-			{"id":"c2","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":""}
+			{"id":"c1","title":"First","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T03:04:00Z","system_prompt":"","status":"idle"},
+			{"id":"c2","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -99,10 +69,53 @@ func TestRunChatList(t *testing.T) {
 		t.Fatalf("RunChatList: %v", err)
 	}
 	s := out.String()
-	for _, want := range []string{"ID", "TITLE", "c1", "First", "c2", "(untitled)"} {
+	for _, want := range []string{"ID", "TITLE", "STATUS", "c1", "First", "c2", "(untitled)"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("list output missing %q:\n%s", want, s)
 		}
+	}
+}
+
+// TestRunChatListStatuses covers the plan's test case 1: STATUS renders for all
+// four ChatStatus values and each row is uniquely grep-able by its status (e.g.
+// `grep needs_input` matches exactly the c2 row, not c1's "idle" or c4's
+// "failed").
+func TestRunChatListStatuses(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"data":[
+			{"id":"c1","title":"Idle one","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+			{"id":"c2","title":"Waiting","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"needs_input","pending_question":"which region?"},
+			{"id":"c3","title":"Live","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running"},
+			{"id":"c4","title":"Broke","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"failed"}
+		]}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunChatList(context.Background(), &out, srv.URL, false); err != nil {
+		t.Fatalf("RunChatList: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	byStatus := map[string]string{}
+	for _, status := range []string{"idle", "needs_input", "running", "failed"} {
+		var matches []string
+		for _, l := range lines {
+			if strings.Contains(l, status) {
+				matches = append(matches, l)
+			}
+		}
+		if len(matches) != 1 {
+			t.Fatalf("grep %q matched %d lines, want exactly 1:\n%s", status, len(matches), out.String())
+		}
+		byStatus[status] = matches[0]
+	}
+	if !strings.Contains(byStatus["needs_input"], "c2") {
+		t.Errorf("needs_input row = %q, want it to be c2's row", byStatus["needs_input"])
+	}
+	// The pending question itself is NOT in the list table (chat show/--json's job).
+	if strings.Contains(out.String(), "which region?") {
+		t.Error("list table should not include the pending question text")
 	}
 }
 
@@ -195,10 +208,13 @@ func TestRunChatDelete(t *testing.T) {
 func TestRunNodeStop(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var hit string
+	var gotBody schema.NodeStatusUpdateBody
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
+		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/nodes/n2/status" {
 			hit = r.URL.Path
-			w.WriteHeader(http.StatusNoContent)
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusCancelled})
 			return
 		}
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -208,8 +224,11 @@ func TestRunNodeStop(t *testing.T) {
 	if err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "n2"); err != nil {
 		t.Fatal(err)
 	}
-	if hit != "/api/v1/chats/c1/nodes/n2" {
-		t.Errorf("node stop hit %q, want /api/v1/chats/c1/nodes/n2", hit)
+	if hit != "/api/v1/chats/c1/nodes/n2/status" {
+		t.Errorf("node stop hit %q, want /api/v1/chats/c1/nodes/n2/status", hit)
+	}
+	if gotBody.Status != schema.NodeStatusCancelled {
+		t.Errorf("node stop sent status %q, want %q", gotBody.Status, schema.NodeStatusCancelled)
 	}
 }
 
@@ -217,11 +236,17 @@ func TestRunChatStop(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var cancelled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/chats/c1/stream" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/chats/c1":
+			_ = json.NewEncoder(w).Encode(schema.ChatDetail{
+				Turns: []schema.Turn{{Id: "t1"}},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/responses/t1/status":
 			cancelled = true
-			return
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
@@ -229,6 +254,6 @@ func TestRunChatStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !cancelled {
-		t.Error("stop should DELETE the stream")
+		t.Error("stop should PUT the response status to cancelled")
 	}
 }

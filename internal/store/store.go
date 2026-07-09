@@ -21,6 +21,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/fagerbergj/quack/internal/dag"
 )
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
@@ -39,6 +41,11 @@ type ChatTurn struct {
 	ChatID    string    `gorm:"index" json:"chat_id"`
 	Seq       int       `json:"seq"`
 	CreatedAt time.Time `json:"created_at"`
+	// Model is the model that produced the orchestrator's own plain reply this
+	// turn, stamped from the live stream at run end (ADK's event storage drops
+	// ModelVersion on read, so it can't be recovered from session events later).
+	// Empty for DAG turns — their models live per-node on DagNode.
+	Model string `json:"model,omitempty"`
 }
 
 // DagPlan stores the JSON-encoded plan for a chat turn so the DAG can be
@@ -64,11 +71,14 @@ type ChatEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// DagNode stores the execution state of one DAG node.
+// DagNode stores the execution state of one DAG node. Status is the string
+// value of a dag.NodeStatus (queued | running | needs_input | done | failed |
+// cancelled); every write to this field routes through dag.CanTransition (see
+// internal/server/rest/handler.go persistNodeEvent and UpdateNodeStatus).
 type DagNode struct {
 	NodeID        string `gorm:"primaryKey;column:node_id" json:"node_id"`
 	PlanID        string `gorm:"primaryKey;column:plan_id" json:"plan_id"`
-	Status        string `json:"status"` // queued | running | done | failed
+	Status        string `json:"status"` // dag.NodeStatus value
 	OutputPreview string `json:"output_preview"`
 	// Output is the node's FULL vetted text (OutputPreview is truncated to 250
 	// chars for display).
@@ -98,6 +108,12 @@ type TurnContent struct {
 	ToolCalls []ToolCallRecord // orchestrator-level tool calls, in event order
 	Plan      *DagPlan
 	Nodes     []DagNode
+	// Usage is the orchestrator's own token usage for this turn (its conversational
+	// session — a DAG turn's per-node tokens are separate, surfaced via Nodes).
+	PromptTokens, CompletionTokens, ReasoningTokens int32
+	// Model is the orchestrator's own model for a plain-reply turn (from the
+	// ChatTurn row, stamped at run end); empty for DAG turns.
+	Model string
 }
 
 // ToolCallRecord is one orchestrator tool call recovered from the session events,
@@ -145,6 +161,10 @@ const orchestratorAuthor = "orchestrator"
 type turnGroup struct {
 	userText, asstText, asstThink string
 	toolCalls                     []ToolCallRecord
+	// Usage accumulated from the orchestrator's OWN model events in this turn
+	// (gate-internal node runs are excluded, same as asstText/toolCalls below —
+	// their tokens are already surfaced per-node via DagNodeState).
+	promptTokens, completionTokens, reasoningTokens int32
 }
 
 // groupSessionEvents buckets a session's events into per-turn groups, split on
@@ -201,6 +221,11 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		// wrapped in a workflow.AgentNode, so its own real replies carry NodeInfo too.
 		if ev.Author != orchestratorAuthor {
 			continue
+		}
+		if ev.UsageMetadata != nil {
+			cur.promptTokens += ev.UsageMetadata.PromptTokenCount
+			cur.completionTokens += ev.UsageMetadata.CandidatesTokenCount
+			cur.reasoningTokens += ev.UsageMetadata.ThoughtsTokenCount
 		}
 		for _, p := range ev.Content.Parts {
 			if p == nil {
@@ -369,6 +394,15 @@ func (s *Store) SaveTurn(ctx context.Context, chatID, turnID string) error {
 	return s.db.WithContext(ctx).Create(t).Error
 }
 
+// SetTurnModel stamps the model that produced the orchestrator's own reply on
+// the turn row. Called at run end from the live stream's accumulated
+// ModelVersion — the only place it exists, since ADK's event storage drops it.
+func (s *Store) SetTurnModel(ctx context.Context, chatID, turnID, model string) error {
+	return s.db.WithContext(ctx).Model(&ChatTurn{}).
+		Where("id = ? AND chat_id = ?", turnID, chatID).
+		Update("model", model).Error
+}
+
 // ListTurns returns all turns for a chat ordered by sequence.
 func (s *Store) ListTurns(ctx context.Context, chatID string) ([]ChatTurn, error) {
 	var turns []ChatTurn
@@ -430,11 +464,14 @@ func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64
 // FailStaleDagNodes marks any node still queued/running as failed. Called at
 // server startup: a fresh process has no in-flight runs, so such rows are
 // orphans from a previous process killed mid-run — without this they show as
-// running forever in the UI.
+// running forever in the UI. queued→failed and running→failed are both legal
+// per dag.CanTransition; a bulk SQL UPDATE can't invoke it per row, so the
+// source/target statuses are named via the dag constants instead of literals
+// to keep the one enum as the single source of truth.
 func (s *Store) FailStaleDagNodes(ctx context.Context) (int64, error) {
 	res := s.db.WithContext(ctx).Model(&DagNode{}).
-		Where("status IN ?", []string{"queued", "running"}).
-		Updates(map[string]any{"status": "failed", "error": "server restarted mid-run"})
+		Where("status IN ?", []string{string(dag.StatusQueued), string(dag.StatusRunning)}).
+		Updates(map[string]any{"status": string(dag.StatusFailed), "error": "server restarted mid-run"})
 	return res.RowsAffected, res.Error
 }
 
@@ -443,6 +480,20 @@ func (s *Store) GetDagNodes(ctx context.Context, planID string) ([]DagNode, erro
 	var nodes []DagNode
 	err := s.db.WithContext(ctx).Where("plan_id = ?", planID).Find(&nodes).Error
 	return nodes, err
+}
+
+// GetDagNode returns one node's persisted state, or (nil, nil) if it has no
+// row yet (a node that hasn't started is implicitly dag.StatusQueued).
+func (s *Store) GetDagNode(ctx context.Context, planID, nodeID string) (*DagNode, error) {
+	var n DagNode
+	err := s.db.WithContext(ctx).Where("plan_id = ? AND node_id = ?", planID, nodeID).First(&n).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
 }
 
 // GetLatestDagPlan returns the most-recent DAG plan for a chat (the one a retry
@@ -485,12 +536,15 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
-		tc := TurnContent{ID: t.ID, CreatedAt: t.CreatedAt}
+		tc := TurnContent{ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model}
 		if i < len(groups) {
 			tc.UserText = groups[i].userText
 			tc.AsstText = groups[i].asstText
 			tc.AsstThink = groups[i].asstThink
 			tc.ToolCalls = groups[i].toolCalls
+			tc.PromptTokens = groups[i].promptTokens
+			tc.CompletionTokens = groups[i].completionTokens
+			tc.ReasoningTokens = groups[i].reasoningTokens
 		}
 		if plan := planByTurn[t.ID]; plan != nil {
 			tc.Plan = plan

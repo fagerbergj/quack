@@ -12,8 +12,11 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// RunChatList is `quack chat list`: a table of chats (id, title, updated), or raw
-// JSON with --json. Empty list points at the next step.
+// RunChatList is `quack chat list`: a table of chats (id, title, status,
+// updated), or raw JSON with --json. STATUS is one of the four ChatStatus
+// values (running/needs_input/failed/idle) so the row is grep-able
+// (`grep needs_input`); the pending question itself is `chat show`/--json's
+// job — this table stays narrow. Empty list points at the next step.
 func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool) error {
 	c, err := NewClient(server)
 	if err != nil {
@@ -31,11 +34,27 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool)
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTITLE\tUPDATED")
+	fmt.Fprintln(tw, "ID\tTITLE\tSTATUS\tUPDATED")
 	for _, ch := range chats {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", ch.Id, chatTitle(ch.Title), ch.UpdatedAt.Local().Format("2006-01-02 15:04"))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", ch.Id, chatTitle(ch.Title), ch.Status, ch.UpdatedAt.Local().Format("2006-01-02 15:04"))
 	}
 	return tw.Flush()
+}
+
+// RunChatNew is `quack chat new`: create a chat and print its id to stdout —
+// create-only, no TUI, no first-message send (that's `chat send`/`-p`'s job,
+// one send path).
+func RunChatNew(ctx context.Context, out io.Writer, server string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	id, err := c.CreateChat(ctx, "")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, id)
+	return nil
 }
 
 // RunChatExport is `quack chat export <id>`: a readable transcript, or raw JSON
@@ -65,13 +84,28 @@ func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON
 }
 
 // RunChatStop is `quack chat stop <id>`: cancel the active run (no-op if none).
+// Cancelling by response id is the server's only cancel path now, so this
+// looks up the chat's latest turn (the in-progress run, if any) first.
 func RunChatStop(ctx context.Context, out io.Writer, server, id string) error {
 	c, err := NewClient(server)
 	if err != nil {
 		return err
 	}
-	if err := c.CancelRun(ctx, id); err != nil {
+	detail, err := c.GetChat(ctx, id)
+	if err != nil {
 		return notFoundAs(err, id)
+	}
+	if len(detail.Turns) == 0 {
+		fmt.Fprintf(out, "No active run on chat %s.\n", id)
+		return nil
+	}
+	responseID := detail.Turns[len(detail.Turns)-1].Id
+	if err := c.CancelRun(ctx, id, responseID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			fmt.Fprintf(out, "No active run on chat %s.\n", id)
+			return nil
+		}
+		return err
 	}
 	fmt.Fprintf(out, "Stopped any active run on chat %s.\n", id)
 	return nil
@@ -124,7 +158,7 @@ func chatTitle(t *string) string {
 }
 
 // AssistantText concatenates the text of every message output item in a turn,
-// skipping DAG and activity items. Shared by export and the TUI's resume loader.
+// skipping DAG and activity items. Shared by export and chat show.
 func AssistantText(items []schema.OutputItem) string {
 	var sb strings.Builder
 	for _, it := range items {
@@ -139,22 +173,6 @@ func AssistantText(items []schema.OutputItem) string {
 		}
 	}
 	return sb.String()
-}
-
-// DagInProgress reports whether a turn's output holds a DAG still running (status
-// in_progress). The TUI's resume loader uses it to decide whether to re-attach to
-// the live stream — a finished run replays from history alone. After a server
-// restart, FailStaleDagNodes has flipped orphaned nodes to failed, so the DAG
-// reads completed and we don't re-attach to a dead run.
-func DagInProgress(items []schema.OutputItem) bool {
-	for _, it := range items {
-		d, err := it.AsDagOutputItem()
-		if err != nil || string(d.Type) != "quack:dag" {
-			continue
-		}
-		return d.Status == schema.InProgress
-	}
-	return false
 }
 
 // notFoundAs turns the client's ErrNotFound into a chat-specific message.

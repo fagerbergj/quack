@@ -90,3 +90,8 @@ One `-` item per source you retrieved and relied on.
   choice that materially changes the research), call `ask_user` with ONE precise question
   and stop; their answer will be delivered back to you. Never ask when a sensible default
   or your own research can resolve it.
+- Questions to the user MUST be `ask_user` tool calls. NEVER write a question to the user
+  as your answer text — plain text is delivered as your FINAL answer, the user cannot
+  reply to it, and the task fails. If your task says to ask the user something, your very
+  first action is the `ask_user` call: no searching first, no preamble, no restating the
+  question in prose.

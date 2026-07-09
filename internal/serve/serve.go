@@ -525,6 +525,15 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// memGuidance above). Such agents commit on a judge pass even when they
 			// staged nothing, so Commit's answer-extraction still runs.
 			agentGateCfg.CommitMemory = taskStore != nil && memGuidance != ""
+			// A retrieval agent (web tools in its list) must actually retrieve —
+			// a zero-activity answer hard-fails the deterministic fold instead of
+			// sailing to the judge ungraded (see vetting.Config.RequireRetrieval).
+			for _, tn := range ac.Tools {
+				if tn == "web_search" || tn == "web_fetch" {
+					agentGateCfg.RequireRetrieval = true
+					break
+				}
+			}
 			if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
 				return nil, nil, servers, nil, nil, fmtErr(name, "rubric: %v", err)
 			} else if override != "" {
@@ -546,7 +555,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		clientMap[name] = client
 		modelMap[name] = m
-		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL)
+		// tools listed here is the definitive record of what the agent can call —
+		// when a worker "didn't use its tool", check this line first.
+		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL, "tools", ac.Tools)
 	}
 	return clientMap, modelMap, servers, judgeFactory, gateCfgs, nil
 }

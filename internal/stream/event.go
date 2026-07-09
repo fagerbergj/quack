@@ -56,9 +56,10 @@ const (
 	EventAgentToken      = "agent_token"
 	EventAgentComplete   = "agent_complete"
 
-	EventChatTitle = "chat_title"
-	EventError     = "error"
-	EventDone      = "done"
+	EventChatTitle       = "chat_title"
+	EventError           = "error"
+	EventDone            = "done"
+	EventResponseCreated = "response_created"
 
 	// DAG / static structure.
 	EventDagPlan        = "dag_plan"
@@ -67,6 +68,7 @@ const (
 	EventNodeDone       = "node_done"
 	EventNodeNeedsInput = "node_needs_input"
 	EventNodeFailed     = "node_failed"
+	EventNodeCancelled  = "node_cancelled"
 	EventNodeSteered    = "node_steered"
 )
 
@@ -249,6 +251,18 @@ type NodeFailedData struct {
 	Error  string `json:"error"`
 }
 
+// NodeCancelledData is the `node_cancelled` event payload: the node was
+// stopped by the user (via PUT node status {"status":"cancelled"}), rendered
+// neutrally ("stopped"), never as a red failure.
+type NodeCancelledData struct {
+	NodeID string `json:"node_id"`
+}
+
+// NodeCancelled builds a node_cancelled event.
+func NodeCancelled(nodeID string) SSEEvent {
+	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID}}
+}
+
 // NodeSteeredData is the `node_steered` event payload: the user interrupted the
 // node and it is about to re-run with this guidance (its prior session — tool
 // calls and results — is retained). A fresh node_start … node_done follows.
@@ -257,12 +271,29 @@ type NodeSteeredData struct {
 	Guidance string `json:"guidance"`
 }
 
+// NodeSteered builds a node_steered event.
+func NodeSteered(nodeID, guidance string) SSEEvent {
+	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
+}
+
 // ChatTitleData is the `chat_title` event payload.
 type ChatTitleData struct {
 	Title string `json:"title"`
 }
 
 // ── event constructors ───────────────────────────────────────────────────────
+
+// ResponseCreatedData is the `response_created` event payload: the very first
+// event of a run, naming the turn (response_id) so a client can cancel it via
+// PUT /chats/{chat_id}/responses/{response_id}/status.
+type ResponseCreatedData struct {
+	ResponseID string `json:"response_id"`
+}
+
+// ResponseCreated builds the response_created event that opens a run.
+func ResponseCreated(responseID string) SSEEvent {
+	return SSEEvent{Name: EventResponseCreated, Data: ResponseCreatedData{ResponseID: responseID}}
+}
 
 // DagPlan builds a dag_plan event carrying the full plan structure. StartedAtMs is
 // stamped now (the run's start), so a reconnecting client's total timer is anchored
@@ -301,11 +332,6 @@ type NodeNeedsInputData struct {
 func NodeNeedsInput(nodeID, interruptID, message string) SSEEvent {
 	return SSEEvent{Name: EventNodeNeedsInput, Data: NodeNeedsInputData{NodeID: nodeID, InterruptID: interruptID, Message: message}}
 }
-
-// CancelledError is the node_failed error string that flags a user-cancelled node
-// (rendered neutrally as "stopped", not red). The frontend matches on it exactly —
-// keep in sync with frontend/src/state/agentStream.ts CANCELLED_ERROR.
-const CancelledError = "Stopped by you"
 
 // NodeFailed builds a node_failed event.
 func NodeFailed(nodeID, errMsg string) SSEEvent {
@@ -364,27 +390,38 @@ type Translator struct {
 // NewTranslator returns a Translator for one node stream.
 func NewTranslator() *Translator { return &Translator{} }
 
+// Usage returns the model/usage/finish-reason accumulated so far — either since
+// the currently-open run started, or (for a caller with no run/marker protocol,
+// e.g. the orchestrator's own un-gated direct-answer session) since the last time
+// a run opened and reset the counters, i.e. the whole stream fed to this
+// Translator. Safe to call at any point, including after Event has returned.
+func (t *Translator) Usage() (model string, prompt, completion, reasoning, total int32, finishReason string) {
+	return t.model, t.prompt, t.completion, t.reasoning, t.total, t.finish
+}
+
 // Event maps one ADK session event to zero or more wire events.
 func (t *Translator) Event(ev *session.Event) []SSEEvent {
 	if ev == nil {
 		return nil
 	}
 
-	// Accumulate this event's usage/model/finish into the current run; reported
-	// on the run's agent_complete. (Model events carry these; markers don't.)
-	if t.curRun != "" {
-		if ev.UsageMetadata != nil {
-			t.prompt += ev.UsageMetadata.PromptTokenCount
-			t.completion += ev.UsageMetadata.CandidatesTokenCount
-			t.reasoning += ev.UsageMetadata.ThoughtsTokenCount
-			t.total += ev.UsageMetadata.TotalTokenCount
-		}
-		if ev.ModelVersion != "" {
-			t.model = ev.ModelVersion
-		}
-		if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
-			t.finish = string(ev.FinishReason)
-		}
+	// Accumulate this event's usage/model/finish. Reported on the run's
+	// agent_complete when a marker-delimited run is open; a caller with no run
+	// concept at all — the orchestrator's own un-gated direct-answer session,
+	// which never emits agent_start/agent_complete markers — reads the running
+	// total straight off Usage() instead. Either way the counters reset to zero
+	// when a new run opens (below), so this is never double-counted.
+	if ev.UsageMetadata != nil {
+		t.prompt += ev.UsageMetadata.PromptTokenCount
+		t.completion += ev.UsageMetadata.CandidatesTokenCount
+		t.reasoning += ev.UsageMetadata.ThoughtsTokenCount
+		t.total += ev.UsageMetadata.TotalTokenCount
+	}
+	if ev.ModelVersion != "" {
+		t.model = ev.ModelVersion
+	}
+	if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
+		t.finish = string(ev.FinishReason)
 	}
 
 	if ev.Content == nil {

@@ -387,7 +387,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 				emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
 				return answer, res, nil
 			}
-			v = foldDeterministic(v, answer, act)
+			v = foldDeterministic(v, answer, act, cfg)
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: v.Feedback, Rounds: round}
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
@@ -520,14 +520,24 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 }
 
 // foldDeterministic folds the code-owned criteria (citation backing, answer
-// length) into the judge's verdict and re-aggregates (weakest-link). Mirrors the
-// deterministic fold in gate.run's judge stage.
-func foldDeterministic(v verdict, answer string, act workerActivity) verdict {
+// length, retrieval grounding) into the judge's verdict and re-aggregates
+// (weakest-link). Mirrors the deterministic fold in gate.run's judge stage.
+func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
 	}
 	if ls := lengthScore(answer); ls < 1.0 {
 		v.Criteria["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf("deterministic: %d chars", len(strings.TrimSpace(answer)))}
+	}
+	// A retrieval agent that performed ZERO retrieval cannot have a grounded
+	// answer — it either answered from model memory (its citations, if any, are
+	// unverifiable) or wrote a question to the user as answer text instead of
+	// calling ask_user. Hard weakest-link fail with feedback naming both ways
+	// out; citationScore abstains in this case (no activity to grade against),
+	// which previously let exactly these answers sail through to the judge.
+	if cfg.RequireRetrieval && len(act.fetched) == 0 && len(act.seen) == 0 {
+		v.Criteria["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session — " +
+			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
 	if det, details, hasCites := citationScore(answer, act); hasCites {
 		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited URL(s), mean backing %.2f", len(details), det)}

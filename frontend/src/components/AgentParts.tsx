@@ -7,6 +7,7 @@ import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import type { Activity, ToolCall } from './messageParts'
+import { agentLabel } from './messageParts'
 import { summarizeArgs, prettyJSON } from './toolFormat'
 
 // Answer text is Markdown that may embed a little raw HTML — notably the
@@ -65,6 +66,24 @@ export function AssistantText({ text }: { text: string }) {
         rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
         components={{ pre: CopyablePre }}
       >{text}</ReactMarkdown>
+    </div>
+  )
+}
+
+// BubbleHeader is the compact author line atop an assistant bubble: who produced
+// it, what model, and how many tokens it cost. Shared by the answer bubble (a DAG
+// turn's terminal node, or the orchestrator's own plain reply) — real usage only,
+// no estimate: model/tokens are simply omitted when not (yet) known.
+export function BubbleHeader({ agent, model, tokens }: { agent: string; model?: string; tokens?: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-400 dark:text-gray-500">
+      <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
+      {model && (
+        <span className="font-mono truncate max-w-[160px]" title={model}>{model}</span>
+      )}
+      {tokens != null && tokens > 0 && (
+        <span className="tabular-nums">{tokens.toLocaleString()} tok</span>
+      )}
     </div>
   )
 }

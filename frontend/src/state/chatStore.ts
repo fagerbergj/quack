@@ -8,9 +8,11 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem } from '../generated'
+import type { Turn, DagOutputItem, NodeStatus } from '../generated'
 
-export type NodeStatus = 'queued' | 'running' | 'done' | 'failed' | 'needs_input'
+// Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
+// unchanged — the generated enum is now the one source of truth for node states.
+export type { NodeStatus }
 
 export interface NodeState {
   status: NodeStatus
@@ -179,15 +181,29 @@ export class ChatStore {
     )
   }
 
+  // stop cancels the chat's active run by response id (the id captured from
+  // the run's opening response_created event) — a no-op if that id hasn't
+  // arrived yet (the client also aborts its own connection either way).
   stop(chatId: string): void {
-    fetch(`/api/v1/chats/${chatId}/stream`, { method: 'DELETE' }).catch(() => {})
+    const responseId = this.states.get(chatId)?.live?.id
+    if (responseId) {
+      fetch(`/api/v1/chats/${chatId}/responses/${responseId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      }).catch(() => {})
+    }
     this.controllers.get(chatId)?.abort()
   }
 
   // cancelNode stops one running node; the rest of the DAG keeps going
   // (continue-but-warn). The local stream stays open.
   cancelNode(chatId: string, nodeId: string): void {
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}`, { method: 'DELETE' }).catch(() => {})
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' }),
+    }).catch(() => {})
   }
 
   // steerNode interrupts one running node and re-runs it with new guidance against
@@ -196,17 +212,38 @@ export class ChatStore {
   steerNode(chatId: string, nodeId: string, guidance: string): void {
     const g = guidance.trim()
     if (!g) return
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/steer`, {
-      method: 'POST',
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ guidance: g }),
+      body: JSON.stringify({ status: 'running', guidance: g }),
+    }).then(async res => {
+      // A dropped steer returns 409 (no live control — the node is between runs,
+      // e.g. restarting from an earlier steer). Surface it on the node rather
+      // than silently doing nothing ("steer doesn't work"); the note is
+      // overwritten by the node's next state update.
+      if (res.ok) return
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      this.markNodeError(chatId, nodeId, body.error || `steer rejected (HTTP ${res.status})`)
     }).catch(() => {})
   }
 
-  // retryNode re-runs a FINISHED (failed or done) node and its descendants, reusing
-  // the stored outputs of the rest. Optional guidance is folded into the node's task.
-  // The re-run streams like a normal turn: the affected subgraph is reset to queued
-  // (answer + runs cleared) so the incoming node events rebuild it in place.
+  // markNodeError annotates a live DAG node with a transient error note (used
+  // for rejected control actions — the next stream event for the node clears it).
+  private markNodeError(chatId: string, nodeId: string, msg: string): void {
+    const cur = this.get(chatId)
+    const dag = cur.live?.dag
+    if (!cur.live || !dag?.nodeStates[nodeId]) return
+    const nodeStates = { ...dag.nodeStates, [nodeId]: { ...dag.nodeStates[nodeId], error: msg } }
+    this.write(chatId, { ...cur, live: { ...cur.live, dag: { ...dag, nodeStates } } })
+  }
+
+  // retryNode re-runs a FINISHED (failed/done/cancelled) node and its
+  // descendants, reusing the stored outputs of the rest. Optional guidance is
+  // folded into the node's task. The PUT itself returns immediately (an
+  // optimistic "queued" state); the re-run happens in the background and its
+  // progress streams over the chat's GET .../stream relay — the affected
+  // subgraph is reset to queued locally (answer + runs cleared) so the
+  // incoming node events rebuild it in place once that subscription is live.
   retryNode(chatId: string, nodeId: string, guidance?: string): void {
     const s = this.states.get(chatId)
     if (!s?.live?.dag || s.live.streaming) return
@@ -222,12 +259,22 @@ export class ChatStore {
     }
     this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const g = guidance?.trim()
-    void this.runStream(chatId, signal => fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/retry`, {
-      method: 'POST',
+    const generation = this.bumpGeneration(chatId)
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(g ? { guidance: g } : {}),
-      signal,
-    }))
+      body: JSON.stringify(g ? { status: 'queued', guidance: g } : { status: 'queued' }),
+    })
+      .then(res => {
+        if (!res.ok) throw new Error(`retry failed: HTTP ${res.status}`)
+        this.subscribeToStream(chatId, generation)
+      })
+      .catch((err: unknown) => {
+        const cur = this.states.get(chatId)
+        if (!cur?.live) return
+        const msg = (err as Error)?.message || 'retry failed'
+        this.write(chatId, { ...cur, error: msg, live: { ...cur.live, streaming: false } })
+      })
   }
 
   isStreaming(chatId: string): boolean {
@@ -282,6 +329,15 @@ export class ChatStore {
     this.write(chatId, { ...cur, turns: cur.turns.slice(0, -1), live })
 
     const generation = this.bumpGeneration(chatId)
+    this.subscribeToStream(chatId, generation)
+  }
+
+  // subscribeToStream opens the GET .../stream EventSource and wires it through
+  // the same handlers the POST path uses — shared by attach() (reconnect to an
+  // in-progress run) and retryNode (watch a background re-run's progress, since
+  // its PUT no longer returns its own SSE body). Callers own seeding/resetting
+  // `live` beforehand; this only wires the subscription + teardown.
+  private subscribeToStream(chatId: string, generation: number): void {
     const es = new EventSource(`/api/v1/chats/${chatId}/stream`)
     const handlers: AgentStreamHandlers = {
       ...this.streamHandlers(chatId, msg => {
@@ -366,7 +422,7 @@ export class ChatStore {
         const dag = { ...s.live.dag, nodeStates: { ...s.live.dag.nodeStates, [nodeId]: { ...prev, ...patch } } }
         const allDone = dag.nodes.every(n => {
           const st = dag.nodeStates[n.id]?.status
-          return st === 'done' || st === 'failed'
+          return st === 'done' || st === 'failed' || st === 'cancelled'
         })
         if (allDone && !dag.finishedAt) dag.finishedAt = Date.now()
         this.write(chatId, { ...s, live: { ...s.live, dag } })
@@ -430,6 +486,13 @@ export class ChatStore {
         },
         onChatTitle: title => onTitle?.(title),
         onError,
+        // The very first event of a run: captures the response id so stop()
+        // can cancel this run by id (PUT .../responses/{id}/status).
+        onResponseCreated: responseId => {
+          const s = this.states.get(chatId)
+          if (!s?.live) return
+          this.write(chatId, { ...s, live: { ...s.live, id: responseId } })
+        },
         onDagPlan: plan => {
           const s = this.states.get(chatId)
           if (!s?.live) return
@@ -470,6 +533,13 @@ export class ChatStore {
         onNodeFailed: (nodeId, error) => {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
+        },
+        onNodeCancelled: nodeId => {
+          // The node was stopped by the user — rendered neutrally ("stopped"),
+          // not as a red failure (node_cancelled is a distinct event now, not
+          // inferred from a node_failed error string).
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeState(nodeId, { status: 'cancelled', finishedAt: Date.now(), error: undefined })
         },
         onNodeNeedsInput: (nodeId, _interruptId, message) => {
           // Mid-node HITL: the node paused to ask the user. Freeze its open runs
@@ -565,4 +635,73 @@ export function textFromTurn(turn: Turn): string {
     }
   }
   return ''
+}
+
+// ── answer-bubble attribution ────────────────────────────────────────────────
+// Every assistant bubble is authored by someone: a DAG turn's answer is really
+// produced by the terminal node's agent, a plain reply by the orchestrator
+// itself. These helpers compute that attribution (agent + model + tokens) for
+// both a live DagTurnState and a persisted Turn, shared by TurnView and Chat.
+
+export interface Attribution {
+  agent: string
+  model?: string
+  tokens?: number
+}
+
+// terminalNodeId returns the DAG's terminal node — the one with no successor,
+// whose answer IS the turn's response. Shared by DagView's topology rendering
+// and the answer-bubble attribution (which node actually produced this answer).
+export function terminalNodeId(nodes: DagNodeDef[]): string | undefined {
+  const hasSuccessor = new Set<string>()
+  for (const n of nodes) for (const dep of n.depends_on ?? []) hasSuccessor.add(dep)
+  return nodes.find(n => !hasSuccessor.has(n.id))?.id
+}
+
+// dagTotalTokens sums total_tokens across every node in a DAG — the DAG bubble
+// header's token count.
+export function dagTotalTokens(dag: DagTurnState): number {
+  return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
+}
+
+// dagAnswerAttribution is the answer bubble's header for a DAG turn: the
+// terminal node's agent + that node's own model/tokens (not the DAG-wide total).
+export function dagAnswerAttribution(dag: DagTurnState): Attribution | undefined {
+  const id = terminalNodeId(dag.nodes)
+  if (id == null) return undefined
+  const node = dag.nodes.find(n => n.id === id)
+  if (!node) return undefined
+  const state = dag.nodeStates[id]
+  return { agent: node.agent, model: state?.model, tokens: state?.totalTokens }
+}
+
+// turnUsageTotal sums a persisted Turn's usage (input + output tokens), or
+// undefined when usage wasn't recorded (e.g. a DAG-only turn — its tokens are
+// surfaced per-node instead) or is all-zero.
+export function turnUsageTotal(turn: Turn): number | undefined {
+  const u = turn.usage
+  if (!u) return undefined
+  const total = (u.input_tokens ?? 0) + (u.output_tokens ?? 0)
+  return total > 0 ? total : undefined
+}
+
+// plainReplyAttribution is the answer bubble's header for a reloaded plain-reply
+// turn: the orchestrator, with the actual model persisted on the turn row at run
+// end (turn.model — never the currently-configured model, which could silently
+// rewrite history) and the turn's total tokens — matching the live stream.
+export function plainReplyAttribution(turn: Turn): Attribution {
+  return { agent: 'orchestrator', model: turn.model, tokens: turnUsageTotal(turn) }
+}
+
+// pendingNodeQuestion finds a paused mid-node HITL question awaiting an answer
+// in a live DAG — the node's own conversation-level "question bubble" (as
+// opposed to the orchestrator's get_user_choice, surfaced via pendingChoice).
+export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent: string; question: string } | undefined {
+  for (const n of dag.nodes) {
+    const st = dag.nodeStates[n.id]
+    if (st?.status === 'needs_input' && st.question) {
+      return { nodeId: n.id, agent: n.agent, question: st.question }
+    }
+  }
+  return undefined
 }

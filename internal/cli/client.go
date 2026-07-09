@@ -65,24 +65,34 @@ func (c *Client) DeleteChat(ctx context.Context, id string) error {
 	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id)
 }
 
-// CancelRun cancels the active orchestrator run for a chat (no-op if none).
-func (c *Client) CancelRun(ctx context.Context, id string) error {
-	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id+"/stream")
+// CancelRun cancels the chat's active run by response id (the id surfaced in
+// the run's opening response_created SSE event) — only legal while that
+// response is the active run; a stale/finished id 404s.
+func (c *Client) CancelRun(ctx context.Context, chatID, responseID string) error {
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status",
+		schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 }
 
 // CancelNode stops one running node of a chat's active run; the rest of the DAG
 // continues (continue-but-warn). No-op if no such node is active.
 func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
-	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+chatID+"/nodes/"+nodeID)
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
 }
 
 // SteerNode interrupts one running node and re-runs it with new guidance against
 // its same session (prior tool calls/results retained). No-op if no such node is
 // active. The re-run streams over the chat's existing SSE connection.
 func (c *Client) SteerNode(ctx context.Context, chatID, nodeID, guidance string) error {
-	body, _ := json.Marshal(schema.SteerNodeBody{Guidance: guidance})
-	path := "/api/v1/chats/" + chatID + "/nodes/" + nodeID + "/steer"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning, Guidance: &guidance})
+}
+
+// putStatus PUTs body (a *StatusUpdateBody schema type) to path — the shared
+// shape of the node/response status-transition endpoints.
+func (c *Client) putStatus(ctx context.Context, path string, body any) error {
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -92,8 +102,11 @@ func (c *Client) SteerNode(ctx context.Context, chatID, nodeID, guidance string)
 		return c.reachErr(err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("POST %s: server returned %s", path, resp.Status)
+		return fmt.Errorf("PUT %s: server returned %s", path, resp.Status)
 	}
 	return nil
 }
@@ -399,111 +412,6 @@ func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 	return flush() // a final event may not be terminated by a blank line
 }
 
-// PrintPrompt runs one prompt against the server and streams the assistant's
-// reply to out (no TUI) — this is `quack -p`. The visible answer is agent_token
-// text with no node_id (the top-level orchestrator reply); node-scoped tokens are
-// intermediate research output and are not printed. stdout stays clean for pipes;
-// the caller routes errors to stderr.
-// PrintPrompt runs a one-shot prompt and prints the final answer to out. For a
-// conversational reply the orchestrator streams the answer directly; for a
-// research query the answer is the terminal DAG node's output (which the
-// orchestrator delivers). When events is non-nil, a compact per-event trace of
-// the pipeline (plan, node lifecycle, errors) is written there (stderr) — so a
-// research run is observable, not silent.
-func PrintPrompt(ctx context.Context, out, events io.Writer, server, prompt string, attachPaths []string) error {
-	c, err := NewClient(server)
-	if err != nil {
-		return err
-	}
-	chatID, err := c.CreateChat(ctx, "")
-	if err != nil {
-		return err
-	}
-	var streamErr error
-	var orch strings.Builder       // orchestrator's own streamed answer (node_id == "")
-	nodeOut := map[string]string{} // node_id → latest output (research answers)
-	successor := map[string]bool{} // node_id that some other node depends on
-	var lastNode string            // last node to finish (terminal completes last)
-	onEvent := func(ev SSEEvent) error {
-		if events != nil {
-			data := string(ev.Data)
-			if len(data) > 200 {
-				data = data[:200] + "…"
-			}
-			fmt.Fprintf(events, "  «%s» %s\n", ev.Name, data)
-		}
-		switch ev.Name {
-		case "dag_plan":
-			var d struct {
-				Edges []struct{ From, To string } `json:"edges"`
-			}
-			if json.Unmarshal(ev.Data, &d) == nil {
-				for _, e := range d.Edges {
-					successor[e.From] = true
-				}
-			}
-		case "agent_token":
-			var d struct {
-				NodeID string `json:"node_id"`
-				Text   string `json:"text"`
-			}
-			if json.Unmarshal(ev.Data, &d) == nil && d.NodeID == "" && d.Text != "" {
-				orch.WriteString(d.Text)
-			}
-		case "node_done":
-			var d struct {
-				NodeID        string `json:"node_id"`
-				Output        string `json:"output"`
-				OutputPreview string `json:"output_preview"`
-			}
-			if json.Unmarshal(ev.Data, &d) == nil && d.NodeID != "" {
-				o := d.Output
-				if o == "" {
-					o = d.OutputPreview
-				}
-				nodeOut[d.NodeID] = o
-				lastNode = d.NodeID
-			}
-		case "error":
-			var d struct {
-				Error string `json:"error"`
-			}
-			_ = json.Unmarshal(ev.Data, &d)
-			streamErr = fmt.Errorf("server error: %s", d.Error)
-		}
-		return nil
-	}
-	if len(attachPaths) > 0 {
-		err = c.SendMessageWithFiles(ctx, chatID, prompt, attachPaths, onEvent)
-	} else {
-		err = c.SendMessage(ctx, chatID, prompt, onEvent)
-	}
-	if err != nil {
-		return err
-	}
-	if streamErr != nil {
-		return streamErr
-	}
-
-	// Final answer: the terminal DAG node's output when a plan ran (the last node
-	// to finish is the terminal — it depends on the others), falling back to any
-	// no-successor node with output, and only then to the orchestrator's own reply
-	// (a direct, no-DAG answer). Preferring the orchestrator first was wrong: its
-	// interstitial reasoning (e.g. "let me re-plan") would shadow the real answer.
-	answer := strings.TrimSpace(nodeOut[lastNode])
-	if answer == "" {
-		for id, o := range nodeOut {
-			if !successor[id] && strings.TrimSpace(o) != "" {
-				answer = strings.TrimSpace(o)
-				break
-			}
-		}
-	}
-	if answer == "" {
-		answer = strings.TrimSpace(orch.String())
-	}
-	if strings.TrimSpace(answer) != "" {
-		fmt.Fprintln(out, strings.TrimSpace(answer))
-	}
-	return nil
-}
+// PrintPrompt (`quack -p`) and RunChatSend (`quack chat send`) live in send.go,
+// built on SendMessage/SendMessageWithFiles below — they share one
+// classify-the-outcome path (streamState) so their pause/failure semantics agree.
