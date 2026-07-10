@@ -171,7 +171,11 @@ workspace:
   # code-implementer node's `checks` (§4) — the trust gate runs these against
   # the node's own workdir after each draft. Empty = checks unavailable (the
   # planner is told to omit `checks` entirely).
-  check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]
+  # check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]
+  check_commands: []            # command PREFIXES plan nodes may use as deterministic gate checks.
+                                # Empty (default) = checks unavailable. Enable ONLY when the server's
+                                # runtime actually has the toolchain — the shipped Docker image does NOT
+                                # (git only); a check whose binary is missing fails the node closed.
 
   # Deployment-level per-host HTTPS git credentials — ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos
