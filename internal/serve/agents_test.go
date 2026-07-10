@@ -1,10 +1,12 @@
 package serve
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // TestAgentBundlesLoad guards that every agent bundle referenced by the shipped
@@ -29,6 +31,35 @@ func TestAgentBundlesLoad(t *testing.T) {
 	for _, b := range bundles {
 		if _, err := agent.LoadBundle("../../" + b); err != nil {
 			t.Errorf("bundle %q failed to load: %v", b, err)
+		}
+	}
+}
+
+// TestCodeImplementerBundle pins the new bundle's specifics beyond the generic
+// sweep above: the card's name matches its config key (buildAgents keys gate
+// configs by that name), and its rubric.md override loads non-empty — the
+// exact path buildAgents takes (vetting.LoadBundleRubric) to replace the
+// default config/rubric.md with the code-quality one for this agent.
+func TestCodeImplementerBundle(t *testing.T) {
+	b, err := agent.LoadBundle("../../agents/code-implementer")
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if b.Card.Name != "code-implementer" {
+		t.Errorf("card name = %q, want %q", b.Card.Name, "code-implementer")
+	}
+	rubric, err := vetting.LoadBundleRubric("../../agents/code-implementer")
+	if err != nil {
+		t.Fatalf("LoadBundleRubric: %v", err)
+	}
+	if rubric == "" {
+		t.Fatal("rubric override is empty — buildAgents would silently fall back to the default rubric")
+	}
+	// Spot-check the rubric carries both halves of its contract: the research
+	// criteria and the first-class ponytail section.
+	for _, marker := range []string{"checks_pass", "yagni_speculative_generality", "diff_minimality", "deletion_over_addition", "native_first", "weakest-link"} {
+		if !strings.Contains(rubric, marker) {
+			t.Errorf("rubric missing expected marker %q", marker)
 		}
 	}
 }

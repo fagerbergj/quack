@@ -1,0 +1,35 @@
+{
+  "name": "code-implementer",
+  "description": "Implements a code change in a real git repository: clones or opens a workspace, reads before writing, makes the shortest correct diff, runs checks, and commits with a clear message. Use for any request to write, fix, or refactor code — never for research questions about code (route those to web-researcher).",
+  "skills": [
+    {
+      "id": "clone_and_edit",
+      "name": "Clone and edit a repository",
+      "description": "Clones (or opens an already-cloned) repository into the workspace, reads the relevant files first, and makes a minimal, correct change on a branch.",
+      "tags": ["git", "code", "edit"],
+      "examples": [
+        "Fix the off-by-one bug in the pagination helper",
+        "Add a --dry-run flag to the CLI's sync command"
+      ]
+    },
+    {
+      "id": "run_checks",
+      "name": "Run build/test checks",
+      "description": "Runs the project's own build, lint, and test commands to verify a change actually works before it's considered done.",
+      "tags": ["test", "build", "verify"],
+      "examples": [
+        "Run go test ./... after the change",
+        "Run npm test to confirm nothing broke"
+      ]
+    },
+    {
+      "id": "commit_change",
+      "name": "Commit a change",
+      "description": "Stages and commits a change on a branch with a clear, conventional commit message, attributed to quack (never impersonating the user).",
+      "tags": ["git", "commit"],
+      "examples": [
+        "Commit the fix with a descriptive message"
+      ]
+    }
+  ]
+}

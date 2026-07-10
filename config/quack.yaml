@@ -51,7 +51,17 @@ agents:
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor]
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor,
+            git_clone, read_file, list_dir, glob, grep]  # read-only fs + clone, so research can pull a repo apart
+  code-implementer:
+    bundle: agents/code-implementer   # prompt.md (ponytail ladder) + rubric.md (code-quality research + ponytail criteria)
+    provider: default
+    model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
+    context_window: 65536
+    tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
+            git_clone, git_status, git_diff, git_log, git_commit, git_branch,
+            git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
+            run_command, ask_advisor, ask_user]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
@@ -156,10 +166,12 @@ workspace:
   max_write_kb: 2048               # write_file per-call cap; oversized writes error (no truncated field to signal it)
   max_results: 200                # grep/glob hits per call
   max_list_entries: 500           # list_dir entries per call
-  timeout_seconds: 60             # per git/check invocation
-  # check_commands: allowed command PREFIXES for orchestrator-set gate checks
-  # (later PR). Empty (default) = checks unavailable.
-  # check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]
+  timeout_seconds: 60             # per git/check/run_command invocation
+  # check_commands: allowed command PREFIXES the planner may complete into a
+  # code-implementer node's `checks` (§4) — the trust gate runs these against
+  # the node's own workdir after each draft. Empty = checks unavailable (the
+  # planner is told to omit `checks` entirely).
+  check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]
 
   # Deployment-level per-host HTTPS git credentials — ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos
@@ -181,4 +193,5 @@ workspace:
     delete_path: judge
     git_rebase: judge
     git_push: judge+confirm
+    run_command: judge+confirm   # honest limit: the jail confines cwd, not what the program does
     # run_command: judge+confirm   # reserved for the code-implementer PR

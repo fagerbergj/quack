@@ -84,6 +84,8 @@ services:
       QUACK_LLM_API_KEY: ${QUACK_LLM_API_KEY:-unused}
       QUACK_ORCH_MODEL: ${QUACK_ORCH_MODEL:-qwen3.6-35b}
       QUACK_RESEARCHER_MODEL: ${QUACK_RESEARCHER_MODEL:-qwen3.6-35b}
+      # Empty default = the app falls back to QUACK_RESEARCHER_MODEL (one warm model).
+      QUACK_CODER_MODEL: ${QUACK_CODER_MODEL:-}
       QUACK_MEDIA_MODEL: ${QUACK_MEDIA_MODEL:-qwen3-omni-30b}
       QUACK_IMAGE_MODEL: ${QUACK_IMAGE_MODEL:-qwen3-vl-32b}
       # Independent judge model for the trust gate (empty disables vetting).
