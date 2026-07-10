@@ -398,15 +398,21 @@ func (o *Orchestrator) stashedPlan(ctx context.Context, userID, chatID string) (
 }
 
 // pendingInterrupt is an unanswered mid-node HITL request from a prior turn: the
-// node asked the user a question and its plan run parked awaiting the answer.
+// node asked the user a question (or proposed a guarded operation awaiting
+// approve/deny) and its plan run parked awaiting the answer.
 type pendingInterrupt struct {
-	id      string // adk_request_input interrupt ID ("hitl-<node>-r<round>")
+	id      string // adk_request_input interrupt ID ("hitl-<node>-r<round>" or "confirm-<node>-r<round>")
 	nodeID  string
 	message string
 }
 
-// hitlIDRe parses the gate's round-stable interrupt IDs (vetting.hitlInterruptID).
-var hitlIDRe = regexp.MustCompile(`^hitl-(.+)-r\d+$`)
+// hitlIDRe parses the gate's round-stable interrupt IDs: "hitl-" for a free-
+// text ask_user question (vetting.hitlInterruptID) and "confirm-" for the
+// guard ladder's approve/deny pause (vetting.confirmInterruptID) — both ride
+// the identical workflow.ResumeOrRequestInput/adk_request_input pause/resume
+// mechanism, so resumeNodeRun's delivery needs no confirm-specific branch;
+// only this pattern (and, for display, the node's own message text) differs.
+var hitlIDRe = regexp.MustCompile(`^(?:hitl|confirm)-(.+)-r\d+$`)
 
 // latestPendingNodeInterrupt scans prior session events for the most recent
 // mid-node HITL request that no user FunctionResponse has answered. When one
