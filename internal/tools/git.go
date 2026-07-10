@@ -28,13 +28,93 @@ const maxGitOutputBytes = 64 * 1024
 // defaultCloneDepth is git_clone's default shallow depth when `depth` is unset.
 const defaultCloneDepth = 1
 
-// GitAskpassTokenEnv is the env var quack sets ONLY on a git child process that
-// needs to authenticate: git-askpass mode (cmd/quack's hidden `git-askpass`
-// command) reads it and prints its value as the credential. Never set on the
-// quack server process itself — only injected per git.exec.Command invocation
-// (see gitEnv) — so it never appears in `ps` output for the long-lived quack
-// process, only for the short-lived git child.
-const GitAskpassTokenEnv = "QUACK_GIT_ASKPASS_TOKEN"
+// GitAskpassTokenEnv / GitAskpassUserEnv are the env vars quack sets ONLY on a
+// git child process that needs to authenticate: askpass mode reads them to
+// answer git's credential prompts. Never set on the quack server process
+// itself — only injected per git exec.Command invocation (see gitEnv) — so
+// they never appear in `ps` output for the long-lived quack process, only for
+// the short-lived git child.
+const (
+	GitAskpassTokenEnv = "QUACK_GIT_ASKPASS_TOKEN"
+	GitAskpassUserEnv  = "QUACK_GIT_ASKPASS_USERNAME"
+)
+
+// GitAskpassLinkName is the basename of the symlink the git tools maintain at
+// the workspace root, pointing at the quack binary itself. GIT_ASKPASS must be
+// a SINGLE executable path — git execs it directly with the prompt as one
+// argument, with NO shell splitting of the value (setting it to
+// "<binary> git-askpass" makes git look for a file literally named
+// "quack git-askpass"; this exact failure shipped once). The symlink gives the
+// binary a second name, and cmd/quack's main dispatches on
+// filepath.Base(os.Args[0]) == GitAskpassLinkName BEFORE cobra (the busybox
+// argv[0] pattern) — a real executable path, no shell, no secret on disk.
+const GitAskpassLinkName = ".quack-askpass"
+
+// GitAskpassAnswer answers one git credential prompt (git's two-call
+// protocol: it invokes askpass once with a "Username for '<url>':" prompt and
+// once with "Password for '<url>':") from the child-process-only env vars.
+// Username prompts get the configured username (default x-access-token);
+// anything else — password prompts, or a prompt-less probe — gets the token.
+// Shared by the argv[0]-dispatch askpass mode and the hidden cobra
+// subcommand (cmd/quack/git_askpass.go).
+func GitAskpassAnswer(prompt string) string {
+	if strings.Contains(strings.ToLower(prompt), "username") {
+		return os.Getenv(GitAskpassUserEnv)
+	}
+	return os.Getenv(GitAskpassTokenEnv)
+}
+
+// ensureAskpassLink guarantees <root>/.quack-askpass is a symlink to the
+// current quack binary, creating or repairing it as needed (a stale link —
+// e.g. after the binary moved between deployments — is replaced). Returns the
+// absolute link path for GIT_ASKPASS. Tolerates concurrent creation: if
+// another goroutine wins the Symlink race, the winner's link is verified and
+// used.
+func ensureAskpassLink(root string) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("git: resolve own binary path for GIT_ASKPASS: %w", err)
+	}
+	link := filepath.Join(root, GitAskpassLinkName)
+	if dest, err := os.Readlink(link); err == nil && dest == self {
+		return link, nil
+	}
+	_ = os.Remove(link) // stale target, or not a symlink — replace
+	if err := os.Symlink(self, link); err != nil {
+		// A concurrent creator may have won; accept its link if it's correct.
+		if dest, rerr := os.Readlink(link); rerr == nil && dest == self {
+			return link, nil
+		}
+		return "", fmt.Errorf("git: create askpass symlink %q: %w", link, err)
+	}
+	return link, nil
+}
+
+// gitAuth is a resolved credential ready for injection into one git child
+// process: the credential plus the askpass symlink path GIT_ASKPASS points at.
+type gitAuth struct {
+	cred    GitCredential
+	askpass string
+}
+
+// authFor resolves the credential for rawURL's host (credentialFor) and, when
+// one exists, ensures the askpass symlink so the returned auth is directly
+// injectable. nil (no error) when no credential is configured for the host —
+// the operation proceeds unauthenticated. A symlink failure is an error, not
+// a silent unauthenticated fallback: the caller asked for an authenticated
+// operation and degrading it quietly would just yield a confusing 401/prompt
+// failure from git instead.
+func (b gitBinding) authFor(rawURL string) (*gitAuth, error) {
+	cred := b.credentialFor(rawURL)
+	if cred == nil {
+		return nil, nil
+	}
+	link, err := ensureAskpassLink(b.jail.Root())
+	if err != nil {
+		return nil, err
+	}
+	return &gitAuth{cred: *cred, askpass: link}, nil
+}
 
 // GitCredential is one deployment-level per-host HTTPS credential
 // (workspace.git_credentials in quack.yaml — see internal/config). Matching is
@@ -120,32 +200,27 @@ func gitBinaryPath() (string, error) {
 // what's on the host), a minimal PATH (just enough to find git's own helper
 // binaries, e.g. git-remote-https), and HOME pinned inside the caller's own
 // jail (so git never touches — or is influenced by — anything outside it).
-// When cred is non-nil, GIT_ASKPASS points back at THIS quack binary in its
-// hidden `git-askpass` mode, and the token travels ONLY as an env var on this
-// one child process (GitAskpassTokenEnv) — never written to disk, never in a
-// URL, never in `ps` output for the long-lived server process. GIT_ASKPASS is
-// given as "<path> git-askpass" — git splits an askpass command on whitespace
-// (no shell involved); this is safe because quack's own binary path is always
-// space-free in every deployment we ship (the Docker image entrypoint is
-// `/quack`).
-func gitEnv(home string, cred *GitCredential) ([]string, error) {
+// When auth is non-nil, GIT_ASKPASS points at the workspace-root symlink back
+// to THIS quack binary (see GitAskpassLinkName — git execs the value DIRECTLY
+// as a single program path, so it must be a real executable, never
+// "<binary> <subcommand>"), and the username/token travel ONLY as env vars on
+// this one child process — never written to disk, never in a URL, never in
+// `ps` output for the long-lived server process.
+func gitEnv(home string, auth *gitAuth) []string {
 	env := []string{
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"PATH=/usr/bin:/bin",
 		"HOME=" + home,
 	}
-	if cred != nil {
-		self, err := os.Executable()
-		if err != nil {
-			return nil, fmt.Errorf("git: resolve own binary path for GIT_ASKPASS: %w", err)
-		}
+	if auth != nil {
 		env = append(env,
-			"GIT_ASKPASS="+self+" git-askpass",
-			GitAskpassTokenEnv+"="+cred.Token,
+			"GIT_ASKPASS="+auth.askpass,
+			GitAskpassUserEnv+"="+auth.cred.Username,
+			GitAskpassTokenEnv+"="+auth.cred.Token,
 		)
 	}
-	return env, nil
+	return env
 }
 
 // capOutput truncates s to max bytes, the git tools' shared "output caps"
@@ -164,9 +239,9 @@ func capOutput(s string, max int) string {
 // force-push or an arbitrary --upload-pack unexpressible, not merely
 // filtered), cwd pinned to dir (which callers resolve through the jail before
 // calling this), env scrubbed (gitEnv), a per-call timeout from caps, and
-// output capped. cred, when non-nil, is injected via GIT_ASKPASS for this one
-// invocation only.
-func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps, cred *GitCredential) (stdout, stderr string, err error) {
+// output capped. auth, when non-nil, is injected via GIT_ASKPASS for this one
+// invocation only (see gitEnv / authFor).
+func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
 	bin, err := gitBinaryPath()
 	if err != nil {
 		return "", "", err
@@ -178,10 +253,7 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	env, err := gitEnv(dir, cred)
-	if err != nil {
-		return "", "", err
-	}
+	env := gitEnv(dir, auth)
 	cmd := exec.CommandContext(cctx, bin, argv...)
 	cmd.Dir = dir
 	cmd.Env = env
@@ -309,8 +381,11 @@ func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
 	}
 	argv = append(argv, a.URL, target)
 
-	cred := b.credentialFor(a.URL)
-	if _, _, err := runGit(context.Background(), userRoot, argv, b.caps, cred); err != nil {
+	auth, err := b.authFor(a.URL)
+	if err != nil {
+		return gitCloneResult{}, err
+	}
+	if _, _, err := runGit(context.Background(), userRoot, argv, b.caps, auth); err != nil {
 		return gitCloneResult{}, err
 	}
 
@@ -749,11 +824,14 @@ func (b gitBinding) gitPush(a gitPushArgs) (gitPushResult, error) {
 	if err != nil {
 		return gitPushResult{}, err
 	}
-	cred := b.credentialFor(remoteURL)
-	if cred == nil {
+	auth, err := b.authFor(remoteURL)
+	if err != nil {
+		return gitPushResult{}, err
+	}
+	if auth == nil {
 		return gitPushResult{}, fmt.Errorf("git_push: no credential configured for this remote's host (see workspace.git_credentials)")
 	}
-	if _, _, err := runGit(context.Background(), dir, []string{"push", "--quiet", "origin", branch}, b.caps, cred); err != nil {
+	if _, _, err := runGit(context.Background(), dir, []string{"push", "--quiet", "origin", branch}, b.caps, auth); err != nil {
 		return gitPushResult{}, err
 	}
 	sha, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--short", branch}, b.caps, nil)
@@ -946,7 +1024,10 @@ func (b gitBinding) gitPull(a gitPullArgs) (gitPullResult, error) {
 	if err != nil {
 		return gitPullResult{}, err
 	}
-	cred := b.credentialFor(remoteURL)
+	auth, err := b.authFor(remoteURL)
+	if err != nil {
+		return gitPullResult{}, err
+	}
 
 	rebase := a.Rebase == nil || *a.Rebase
 	argv := []string{"pull", "--quiet"}
@@ -955,7 +1036,7 @@ func (b gitBinding) gitPull(a gitPullArgs) (gitPullResult, error) {
 	}
 	argv = append(argv, "origin", branch)
 
-	if _, _, pullErr := runGit(context.Background(), dir, argv, b.caps, cred); pullErr != nil {
+	if _, _, pullErr := runGit(context.Background(), dir, argv, b.caps, auth); pullErr != nil {
 		conflicts, cerr := abortOnConflict(dir, b.caps, rebase)
 		if cerr != nil {
 			return gitPullResult{}, fmt.Errorf("git_pull: %w (and abort failed: %v)", pullErr, cerr)
@@ -1018,13 +1099,15 @@ func (b gitBinding) gitRebase(a gitRebaseArgs) (gitRebaseResult, error) {
 		}
 	}
 	remoteURL, rerr := gitRemoteURL(dir, b.caps)
-	var cred *GitCredential
+	var auth *gitAuth
 	if rerr == nil {
-		cred = b.credentialFor(remoteURL)
+		// Best-effort auth too: an askpass-symlink failure here degrades to an
+		// unauthenticated fetch, matching the best-effort fetch below.
+		auth, _ = b.authFor(remoteURL)
 	}
 	// Best-effort fetch: a purely-local rebase target (e.g. onto a local branch,
 	// no remote configured) should still work, so a fetch failure here is not fatal.
-	_, _, _ = runGit(context.Background(), dir, []string{"fetch", "--quiet", "origin"}, b.caps, cred)
+	_, _, _ = runGit(context.Background(), dir, []string{"fetch", "--quiet", "origin"}, b.caps, auth)
 
 	if _, _, rbErr := runGit(context.Background(), dir, []string{"rebase", a.Onto}, b.caps, nil); rbErr != nil {
 		conflicts, cerr := abortOnConflict(dir, b.caps, true)
