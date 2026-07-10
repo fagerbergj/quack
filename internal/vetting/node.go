@@ -315,7 +315,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// mechanism, a distinct interrupt-ID namespace ("confirm-" vs "hitl-").
 			if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); len(cscan.turns) > cscan.pauses {
 				t := cscan.turns[len(cscan.turns)-1]
-				msg := fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".\n\nArguments: %v", t.tool, t.args)
+				// Prefer the guard's own hint — it carries call-specific warnings
+				// (e.g. "this DIFFERS from the previously approved operation").
+				question := t.hint
+				if question == "" {
+					question = fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", t.tool)
+				}
+				msg := fmt.Sprintf("%s\n\nArguments: %v", question, t.args)
 				log.Info("worker proposed a guarded operation; pausing node", "tool", t.tool, "round", cscan.pauses+1)
 				_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
 					InterruptID: confirmInterruptID(nodeID, cscan.pauses+1),

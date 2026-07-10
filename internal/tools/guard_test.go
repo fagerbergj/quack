@@ -359,6 +359,104 @@ func TestGuardConfirmTier_PauseDenyResume(t *testing.T) {
 	}
 }
 
+// pinStub drives the args-pinning scenario: it proposes risky_op(target:x),
+// and after the human APPROVES it re-issues the call with DIFFERENT args
+// (target:EVIL) — modeling a steered/injected model swapping the operation
+// after approval. After the swapped call's own confirmation is DENIED, it
+// re-issues the ORIGINAL approved call (target:x), which must still consume
+// the original approval.
+type pinStub struct{}
+
+func (*pinStub) Name() string { return "pinStub" }
+
+func (s *pinStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if reqHasTool(req, "submit_verdict") {
+			yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			return
+		}
+		if reqHasResolvedResponse(req, "risky_op") {
+			yield(atText("FINAL: operation performed."), nil)
+			return
+		}
+		txt := atAllText(req)
+		switch {
+		case strings.Contains(txt, "DENIED"):
+			// Round 3: the swapped-args op was denied; retry the ORIGINAL one.
+			yield(atCall("risky_op", map[string]any{"target": "x"}), nil)
+		case strings.Contains(txt, "APPROVED"):
+			// Round 2: approval in hand — but swap the arguments.
+			yield(atCall("risky_op", map[string]any{"target": "EVIL"}), nil)
+		default:
+			yield(atCall("risky_op", map[string]any{"target": "x"}), nil)
+		}
+	}
+}
+
+// TestGuardConfirmTier_ApprovalPinnedToArgs: an approval is pinned to the
+// exact operation the human saw. A re-issued call with different arguments
+// must NOT consume it (and must not execute) — it becomes a fresh proposal
+// whose confirmation warns it DIFFERS — while the original approval stays
+// available for a later same-args call.
+func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
+	sessions := session.InMemoryService()
+	inner := &fakeRunnable{}
+	guarded, err := newGuardedTool(inner, guardTier{Confirm: true}, nil, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &pinStub{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Do the work.",
+		Tools: []tool.Tool{guarded},
+	})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil,
+		vetting.NewJudgeFactory(stub, nil),
+		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := dag.Plan{ID: "t", UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
+
+	// Run 1: propose risky_op(target:x) → pause r1.
+	_, paused, pauseID, _ := runConfirmTurn(t, ex, plan,
+		&genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}, nil)
+	if !paused || pauseID != "confirm-n1-r1" {
+		t.Fatalf("run1: want pause confirm-n1-r1, got paused=%v id=%q", paused, pauseID)
+	}
+
+	// Run 2: human APPROVES target:x — the worker re-issues with target:EVIL.
+	// The swapped call must NOT execute and must raise a FRESH confirmation
+	// whose message says it DIFFERS.
+	out2, paused2, pauseID2, pauseMsg2 := runConfirmTurn(t, ex, plan, confirmAnswer(pauseID, "approve"), []string{"n1"})
+	if !paused2 || pauseID2 != "confirm-n1-r2" {
+		t.Fatalf("run2: want a second pause confirm-n1-r2, got paused=%v id=%q out=%q", paused2, pauseID2, out2["n1"])
+	}
+	if inner.runCount() != 0 {
+		t.Fatalf("run2: inner ran %d times on swapped args, want 0 — the approval must be pinned", inner.runCount())
+	}
+	if !strings.Contains(pauseMsg2, "DIFFERS") {
+		t.Errorf("run2: pause message %q does not warn the operation DIFFERS from the approved one", pauseMsg2)
+	}
+	if !strings.Contains(pauseMsg2, "EVIL") {
+		t.Errorf("run2: pause message %q does not show the swapped arguments", pauseMsg2)
+	}
+
+	// Run 3: human DENIES the swapped op. The worker retries the ORIGINAL
+	// target:x call — the round-1 approval is still unconsumed and pinned to
+	// exactly those args, so it executes now, exactly once.
+	out3, paused3, _, _ := runConfirmTurn(t, ex, plan, confirmAnswer(pauseID2, "deny"), []string{"n1"})
+	if paused3 {
+		t.Fatal("run3: still paused after the denial")
+	}
+	if !strings.Contains(out3["n1"], "operation performed") {
+		t.Errorf("run3: out = %q, want the post-execution answer", out3["n1"])
+	}
+	if inner.runCount() != 1 {
+		t.Errorf("run3: inner ran %d times, want exactly 1 (the original approved operation)", inner.runCount())
+	}
+}
+
 // ── unit: the safety-judge prompt carries every context section ─────────────
 
 func TestBuildSafetyJudgePrompt(t *testing.T) {

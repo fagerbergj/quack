@@ -130,8 +130,16 @@ func (g *guardedTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) err
 func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	m, _ := args.(map[string]any)
 
+	// mismatch: a resolved-but-unconsumed decision exists for this tool with
+	// DIFFERENT arguments than this call's. The decision is pinned to the
+	// exact operation the human approved (vetting.ConfirmDecision), so this
+	// call falls through as a brand-new proposal — full judge tier, fresh
+	// confirmation — and the hint below tells the human it differs.
+	var mismatch bool
 	if g.tier.Confirm {
-		if approved, checked := g.confirmDecision(ctx); checked {
+		approved, matched, mm := g.confirmDecision(ctx, m)
+		mismatch = mm
+		if matched {
 			if !approved {
 				return markResolved(guardRefusal("denied by user confirmation")), nil
 			}
@@ -168,8 +176,12 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 		// standard "requires confirmation" error, and SkipSummarization ends
 		// the worker's turn so the gate sees an empty draft + the pending
 		// confirmation, exactly like an ask_user pause.
-		if err := ctx.RequestConfirmation(
-			fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", g.Name()), nil); err != nil {
+		hint := fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", g.Name())
+		if mismatch {
+			hint = fmt.Sprintf("Approve running %s? NOTE: this operation DIFFERS from the one you previously "+
+				"approved for this tool — review its arguments carefully. Reply \"approve\" or \"deny\".", g.Name())
+		}
+		if err := ctx.RequestConfirmation(hint, nil); err != nil {
 			return nil, err
 		}
 		ctx.Actions().SkipSummarization = true
@@ -186,20 +198,22 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 // confirmDecision re-fetches this call's session (agent.Context.Session() is
 // blocked inside a dynamic worker node — see ask_advisor.go's
 // nodeIDFromSession doc) and asks vetting.ConfirmDecision whether the CURRENT
-// call is the resolution of a just-answered confirm pause.
-func (g *guardedTool) confirmDecision(ctx agent.Context) (approved, checked bool) {
+// call — this exact tool name + arguments — is the resolution of a
+// just-answered confirm pause. mismatched reports a live decision pinned to
+// DIFFERENT arguments (see Run).
+func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (approved, matched, mismatched bool) {
 	if g.sessions == nil {
-		return false, false
+		return false, false, false
 	}
 	nodeID := nodeIDFromSession(ctx, g.sessions)
 	if nodeID == "" {
-		return false, false
+		return false, false, false
 	}
 	resp, err := g.sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
 	if err != nil || resp == nil || resp.Session == nil {
-		return false, false
+		return false, false, false
 	}
-	return vetting.ConfirmDecision(resp.Session, ctx.InvocationID(), nodeID)
+	return vetting.ConfirmDecision(resp.Session, ctx.InvocationID(), nodeID, g.Name(), args)
 }
 
 // runSafetyJudge invokes the judge tier, best-effort-deriving the node's task
