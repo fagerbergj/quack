@@ -105,6 +105,10 @@ var registry = map[string]constructor{
 	"git_worktree_remove": newGitWorktreeRemove,
 	"git_pull":            newGitPull,
 	"git_rebase":          newGitRebase,
+	// run_command (internal/tools/run_command.go), bound to (userID, jail, caps)
+	// like the fs tools — executes via the SAME jailed argv runner the trust
+	// gate's per-node deterministic checks use (internal/workspace.RunArgv).
+	"run_command": newRunCommand,
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an
