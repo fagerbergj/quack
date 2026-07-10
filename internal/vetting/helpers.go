@@ -10,6 +10,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/memory"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // Config carries the per-agent trust-gate settings consumed by RunGatedRefine
@@ -53,6 +54,28 @@ type Config struct {
 	// into another's request (caught by
 	// TestAskAdvisor_ConcurrentNodesIsolatedThreads).
 	DeliverPromptEvent bool
+
+	// Checks are per-node, orchestrator-set deterministic gate commands (§4 of
+	// .quack/plan-pr5-tool-schemas.md) — stamped onto a PER-NODE copy of this
+	// Config by dag.buildGateNodes from the plan node's own Checks (already
+	// plan-time validated: every entry prefix-matches a configured
+	// workspace.check_commands entry and contains no shell metacharacters).
+	// Empty for every node that doesn't opt in (research, synthesis) and for
+	// every agent's BASE Config (see FromConfig) — this field only ever gets a
+	// value per-node, never per-agent.
+	Checks []string
+	// Workdir is the workspace-relative directory Checks run in (the node's
+	// repo, e.g. "repo" after a git_clone). Ignored when Checks is empty.
+	Workdir string
+	// Workspace/WorkspaceUserID/WorkspaceCaps are the SAME jail, identity, and
+	// caps the fs/git/run_command tools use (internal/workspace) — wired once
+	// onto the base Config in internal/serve's buildAgents, so a node's Checks
+	// execute through the identical isolation boundary its own tool calls did
+	// (see checksPassCriterion in checks.go). nil Workspace with non-empty
+	// Checks fails closed rather than running unjailed.
+	Workspace       *workspace.Jail
+	WorkspaceUserID string
+	WorkspaceCaps   workspace.Caps
 }
 
 // PromptEventNeeded reports whether worker prompts must be delivered as
@@ -80,14 +103,32 @@ type fetchRecord struct {
 	sample string
 }
 
-// workerActivity summarises the worker's retrieval (reconstructed from session
-// events by activityFromSession). Passed to the judge + deterministic citation
-// check so neither can falsely claim no retrieval happened.
+// workerActivity summarises the worker's retrieval AND workspace operations
+// (reconstructed from session events by activityFromSession). Passed to the
+// judge + deterministic citation check so neither can falsely claim no
+// retrieval happened — and, via the workspace ledger, so the judge can check
+// the answer's CLAIMS against what the worker actually did (live e2e
+// 2026-07-10: a coder claimed "Committing…" + quoted README lines; ground
+// truth had zero commits and no such README content — both invisible to a
+// judge whose activity context recorded only web_search/web_fetch).
 type workerActivity struct {
-	searches []string               // every web_search query
-	fetched  map[string]fetchRecord // URL → sample for web_fetch calls that returned content
-	seen     map[string]string      // URL → search snippet for surfaced-but-not-fetched URLs
-	staged   []memory.Candidate     // memory candidates staged via stage_memory (M6)
+	searches  []string               // every web_search query
+	fetched   map[string]fetchRecord // URL → sample for web_fetch calls that returned content
+	seen      map[string]string      // URL → search snippet for surfaced-but-not-fetched URLs
+	staged    []memory.Candidate     // memory candidates staged via stage_memory (M6)
+	workspace []wsOp                 // fs/git/run_command operations, in session order (see ledger.go)
+}
+
+// wsOp is one workspace operation the worker actually performed — a completed
+// call/response pair for an fs, git, or run_command tool. detail is a
+// one-line summary (key args → key result fields, or "FAILED: …"); sample is
+// read_file's head-of-content excerpt (fetchRecord-style), letting the judge
+// spot-check quoted file content exactly as fetched-page samples let it
+// spot-check web quotes.
+type wsOp struct {
+	tool   string
+	detail string
+	sample string
 }
 
 // contentPlainText concatenates the plain-text parts of a content.

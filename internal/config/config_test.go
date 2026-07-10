@@ -623,3 +623,52 @@ gates: { rubric: r, deterministic_checks: { max_rounds: -1 }, judge: { provider:
 		}
 	}
 }
+
+// TestCoderModelFallsBackToResearcherModel proves agents.code-implementer's
+// model (${QUACK_CODER_MODEL}) resolves to QUACK_RESEARCHER_MODEL's value
+// when QUACK_CODER_MODEL is unset — the documented (config/quack.yaml) but,
+// before this, unenforced fallback; see expandEnv.
+func TestCoderModelFallsBackToResearcherModel(t *testing.T) {
+	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
+	// Deliberately NOT setting QUACK_CODER_MODEL.
+	c, err := Load(writeTemp(t, baseConfig+`
+agents:
+  code-implementer: { bundle: agents/code-implementer, provider: default, model: ${QUACK_CODER_MODEL}, tools: [] }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c.Agents["code-implementer"].Model; got != "researcher-model" {
+		t.Errorf("code-implementer model = %q, want fallback to QUACK_RESEARCHER_MODEL %q", got, "researcher-model")
+	}
+}
+
+// TestCoderModelExplicitOverridesFallback proves an explicitly-set
+// QUACK_CODER_MODEL wins over the QUACK_RESEARCHER_MODEL fallback.
+func TestCoderModelExplicitOverridesFallback(t *testing.T) {
+	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
+	t.Setenv("QUACK_CODER_MODEL", "coder-model")
+	c, err := Load(writeTemp(t, baseConfig+`
+agents:
+  code-implementer: { bundle: agents/code-implementer, provider: default, model: ${QUACK_CODER_MODEL}, tools: [] }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c.Agents["code-implementer"].Model; got != "coder-model" {
+		t.Errorf("code-implementer model = %q, want explicit QUACK_CODER_MODEL %q", got, "coder-model")
+	}
+}
+
+// TestCoderModelEmptyWithNoResearcherModelEither proves the fallback chain's
+// end state (both env vars unset) is a normal "empty model" validation
+// error, not a panic or a silent pass — expandEnv has no third fallback.
+func TestCoderModelEmptyWithNoResearcherModelEither(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+agents:
+  code-implementer: { bundle: agents/code-implementer, provider: default, model: ${QUACK_CODER_MODEL}, tools: [] }
+`))
+	if err == nil {
+		t.Fatal("Load: want error (empty model) when neither QUACK_CODER_MODEL nor QUACK_RESEARCHER_MODEL is set")
+	}
+}

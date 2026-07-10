@@ -39,6 +39,15 @@ type Node struct {
 	Task      string
 	Rubric    string
 	DependsOn []string // IDs of predecessor nodes
+	// Checks are orchestrator-set deterministic gate commands (see
+	// .quack/plan-pr5-tool-schemas.md §4) the trust gate runs against this
+	// node's output — plan-time validated (Planner.Build / assemble) against
+	// workspace.check_commands; empty for every node that doesn't opt in
+	// (research, synthesis).
+	Checks []string
+	// Workdir is the workspace-relative directory Checks run in (the node's
+	// repo, e.g. "repo" after a git_clone). Ignored when Checks is empty.
+	Workdir string
 }
 
 // TopoSort returns the plan's nodes grouped into layers. Nodes in layer 0

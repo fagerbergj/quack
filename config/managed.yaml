@@ -49,7 +49,17 @@ agents:
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
-    tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
+    tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor,
+            git_clone, read_file, list_dir, glob, grep]
+  code-implementer:
+    bundle: agents/code-implementer
+    provider: default
+    model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
+    context_window: 65536
+    tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
+            git_clone, git_status, git_diff, git_log, git_commit, git_branch,
+            git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
+            run_command, ask_advisor]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
@@ -81,9 +91,12 @@ server:
   topology: managed       # quack server brings up the stores + tears them down
 
 # Workspace defaults on (root ./workspace, default caps). check_commands empty
-# ⇒ orchestrator-set checks unavailable (a later PR). git_credentials empty ⇒
-# public repos only (keyless path); git_push off; guards use the shipped
-# defaults (delete_path/git_rebase: judge, git_push: judge+confirm).
+# ⇒ orchestrator-set checks unavailable — this keyless/no-container preset
+# doesn't assume a go/node toolchain is even present; set it explicitly (e.g.
+# ["go build", "go test"]) once you know what's on the host. git_credentials
+# empty ⇒ public repos only (keyless path); git_push off; guards use the
+# shipped defaults (delete_path/git_rebase: judge, git_push/run_command:
+# judge+confirm).
 workspace:
   root: ${QUACK_WORKSPACE_ROOT}
   git_push: false
@@ -91,3 +104,4 @@ workspace:
     delete_path: judge
     git_rebase: judge
     git_push: judge+confirm
+    run_command: judge+confirm

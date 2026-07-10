@@ -33,12 +33,20 @@ type planResult struct {
 // user request, stamped so nodes get the full ask (not the orchestrator's
 // paraphrase).
 func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string) (tool.Tool, error) {
+	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) — omit `checks`."
+	if cc := planner.CheckCommands(); len(cc) > 0 {
+		checksDesc = fmt.Sprintf("Optionally set `checks` (commands the trust gate runs against a "+
+			"code-implementer node's output — a failing check hard-fails vetting and its output feeds the "+
+			"revise prompt) and `workdir` (the workspace-relative repo dir checks run in). Each check must be "+
+			"exactly, or extend with a space, one of these allowed prefixes: %s.", strings.Join(cc, ", "))
+	}
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
 			Name: "plan",
 			Description: "Tool to run a DAG of specialist agents. Load the plan-work skill first, then YOU author " +
 				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained — the " +
 				"agent sees only this text), depends_on: [ids it needs output from]}. Optionally a `rubric`. " +
+				checksDesc + " " +
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
 				"directly. If validation fails, fix the nodes and call again.",
 		},

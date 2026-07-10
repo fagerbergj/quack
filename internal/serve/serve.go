@@ -50,6 +50,30 @@ import (
 // the day multi-user lands, with no change to the jail's path resolution.
 const localUserID = "local"
 
+// vendorSkillsDir is the vendored ponytail skill library — a git submodule
+// (github.com/DietrichGebert/ponytail, pinned by .gitmodules) whose skills/
+// dir holds SKILL.md skills in exactly the layout the shipped skills/ library
+// uses. Merged into the skill toolset as a second, lower-priority source when
+// present on disk (newSkillSource); absent (submodule not initialized, or an
+// installed binary outside the repo) the primary source alone serves — no
+// error, the ponytail skills are just unavailable. Run
+// `git submodule update --init` (or clone with --recursive) to populate it.
+const vendorSkillsDir = ".agents/vendor/ponytail/skills"
+
+// newSkillSource builds the skill toolset's Source: the shipped skills/
+// library (disk-then-embedded via bundledir) plus, when vendorDir exists on
+// disk, the vendored skills merged in behind it (primary wins on any name
+// collision by mergedSource's query order; duplicate names across sources are
+// a startup error, which is the right loudness for a vendoring mistake).
+func newSkillSource(vendorDir string) skill.Source {
+	primary := skill.NewFileSystemSource(bundledir.SubFS("skills"))
+	if st, err := os.Stat(vendorDir); err != nil || !st.IsDir() {
+		return primary
+	}
+	slog.Info("vendored skills merged into the skill library", "component", "startup", "dir", vendorDir)
+	return skill.NewMergedSource(primary, skill.NewFileSystemSource(os.DirFS(vendorDir)))
+}
+
 //go:embed all:web/dist
 var webDist embed.FS
 
@@ -189,8 +213,9 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// Load skills once at startup; pass the toolset to every specialist agent so
 	// all agents can call load_skill / list_skills / load_skill_resource. Skills
 	// resolve from disk in cwd first (live repo edits) then the embedded copy,
-	// so an installed binary works from any directory.
-	skillSrc := skill.NewFileSystemSource(bundledir.SubFS("skills"))
+	// so an installed binary works from any directory; the vendored ponytail
+	// library (a git submodule — see vendorSkillsDir) merges in when present.
+	skillSrc := newSkillSource(vendorSkillsDir)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("skills toolset init failed: %w", err)
@@ -330,7 +355,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	}
 	orchSysPrompt := promptbuilder.Orchestrator(rosterSB.String(), []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
 
-	planner := dag.NewPlanner(agentInfos)
+	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands)
 	// cfgFor supplies the per-agent trust-gate config to the graph executor; a
 	// non-gated (or gates-disabled) agent gets the zero Config (JudgeRounds=0), so
 	// RunGatedRefine runs the worker once and returns it ungated.
@@ -416,6 +441,13 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// The trust gate commits vetted tradecraft on a judge pass (M6). nil
 		// *memory.Store when memory is off — the gate's nil check handles it.
 		gateCfg.Memory = taskStore
+		// §4's per-node deterministic checks execute through the SAME jail,
+		// identity, and caps every fs/git/run_command tool call already uses —
+		// wired onto the BASE Config here so every gated agent's per-node copy
+		// (dag.buildGateNodes) inherits it; only Checks/Workdir vary per node.
+		gateCfg.Workspace = jail
+		gateCfg.WorkspaceUserID = localUserID
+		gateCfg.WorkspaceCaps = workspaceCaps
 		// The judge model is only built when the judge stage is active; the
 		// deterministic + self-critique stages run without it. One-shot judge (no
 		// web tools): citation backing is now checked deterministically in code, so

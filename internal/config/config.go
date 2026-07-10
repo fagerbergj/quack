@@ -419,6 +419,32 @@ func validateNoLiteralTokens(raw string) error {
 	return nil
 }
 
+// coderModelFallbackEnv/researcherModelEnv implement agents.code-implementer's
+// documented model fallback (config/quack.yaml, §6 of
+// .quack/plan-pr5-tool-schemas.md): QUACK_CODER_MODEL, or QUACK_RESEARCHER_MODEL
+// when unset, so a deployment that hasn't picked a dedicated coder model still
+// gets a working code-implementer for free. Go's os.Expand has no ${A:-$B}
+// syntax (unlike docker-compose's ${VAR:-default}, which QUACK_MEDIA_MODEL
+// uses for a hardcoded literal default), so the chaining is done in the
+// mapping function itself.
+const (
+	coderModelFallbackEnv = "QUACK_CODER_MODEL"
+	researcherModelEnv    = "QUACK_RESEARCHER_MODEL"
+)
+
+// expandEnv is Load's os.Expand mapping function: every ${VAR} resolves to
+// its environment value, except QUACK_CODER_MODEL, which falls back to
+// QUACK_RESEARCHER_MODEL when unset (see coderModelFallbackEnv).
+func expandEnv(key string) string {
+	if key == coderModelFallbackEnv {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+		return os.Getenv(researcherModelEnv)
+	}
+	return os.Getenv(key)
+}
+
 // Load reads the YAML at path, expands ${ENV} references, and validates it.
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -428,7 +454,7 @@ func Load(path string) (*Config, error) {
 	if err := validateNoLiteralTokens(string(raw)); err != nil {
 		return nil, err
 	}
-	expanded := os.Expand(string(raw), os.Getenv)
+	expanded := os.Expand(string(raw), expandEnv)
 
 	var c Config
 	if err := yaml.Unmarshal([]byte(expanded), &c); err != nil {

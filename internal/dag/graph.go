@@ -44,11 +44,19 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if err != nil {
 			return nil, nil, err
 		}
+		// cfgFor returns a fresh Config copy (map-of-struct lookup) — safe to
+		// stamp this node's own fields onto it without affecting other nodes
+		// sharing the same agent.
 		cfg := cfgFor(n.AgentName)
 		// Remote (A2A) workers never see RunNode input — the gate must deliver
 		// each prompt as a session event instead (see vetting.PromptEventNeeded).
 		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(ag)
 		node := n // capture per iteration
+		// Orchestrator-set deterministic gate checks (§4): the deterministic
+		// stage (vetting.checksPassCriterion) reads these off Config, not off
+		// the plan node directly, so it stays plan/executor-agnostic.
+		cfg.Checks = node.Checks
+		cfg.Workdir = node.Workdir
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID)
 	}
 	return nodesByID, subAgents, nil
