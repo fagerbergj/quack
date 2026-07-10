@@ -143,3 +143,20 @@ server:
   # available. Tool backends (search/fetch) are NOT managed — set them via the
   # tools below (kind: exa for keyless, kind: direct for fetch).
   # topology: managed
+
+# The agents' working disk (filesystem/git tools). One configured root; a
+# per-user jail lives under it (<root>/<user_id>/ — "local" today, the OIDC
+# subject later). Not bound to any agent's tools: list yet — see
+# .quack/plan-pr5-tool-schemas.md. Every field is optional; omitting this
+# section entirely still gets a working jail rooted at ./workspace with the
+# defaults below.
+workspace:
+  root: ${QUACK_WORKSPACE_ROOT}   # default ./workspace (compose: the volume mountpoint)
+  max_read_kb: 256                # read_file per-call cap; oversized reads truncate, never error
+  max_write_kb: 2048               # write_file per-call cap; oversized writes error (no truncated field to signal it)
+  max_results: 200                # grep/glob hits per call
+  max_list_entries: 500           # list_dir entries per call
+  timeout_seconds: 60             # per git/check invocation (consumed by later PRs)
+  # check_commands: allowed command PREFIXES for orchestrator-set gate checks
+  # (later PR). Empty (default) = checks unavailable.
+  # check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]

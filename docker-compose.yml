@@ -104,12 +104,21 @@ services:
       QUACK_EMBED_MODEL: ${QUACK_EMBED_MODEL:-qwen3-embed}
       # User memory is enabled by binding commit_memory to the orchestrator in
       # config/quack.yaml (no env toggle).
+      # Filesystem/git tools' jail (workspace: section in quack.yaml). NOT a
+      # bind mount to the host — a named volume, so it survives `docker compose
+      # up --build` (an image rebuild must never wipe agent-written user code;
+      # we rebuild the image constantly during e2e, so this would bite
+      # immediately). Not yet bound to any agent's tools: list.
+      QUACK_WORKSPACE_ROOT: /workspace
     # Host 8080 is taken by SearXNG above, so the app is published on 8081.
     ports:
       - "8081:8080"
+    volumes:
+      - quack-workspace:/workspace
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
   quack-pgdata:
   quack-qdrant:
+  quack-workspace:

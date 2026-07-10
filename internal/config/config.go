@@ -22,6 +22,41 @@ type Config struct {
 	Gates        GatesConfig               `yaml:"gates"`
 	Dag          DagConfig                 `yaml:"dag"`
 	Server       ServerConfig              `yaml:"server"`
+	Workspace    WorkspaceConfig           `yaml:"workspace"` // agents' working disk (filesystem/git tools)
+}
+
+// Workspace defaults (see WorkspaceConfig). Every field is optional; a
+// config with no workspace: section at all still gets a working (default)
+// filesystem jail rooted at ./workspace.
+const (
+	defaultWorkspaceRoot           = "./workspace"
+	defaultWorkspaceMaxReadKB      = 256
+	defaultWorkspaceMaxWriteKB     = 2048
+	defaultWorkspaceMaxResults     = 200
+	defaultWorkspaceMaxListEntries = 500
+	defaultWorkspaceTimeoutSeconds = 60
+)
+
+// WorkspaceConfig is the agents' working disk: one configured root, with a
+// per-user jail under it (<root>/<user_id>/ — see internal/workspace.Jail)
+// that filesystem and git tools resolve every path through. Only root + the
+// caps are consumed by this PR's filesystem tools; check_commands is parsed
+// and validated for shape here but its ENFORCEMENT (the orchestrator-set
+// deterministic gate checks) is a later PR — see .quack/plan-pr5-tool-schemas.md §4.
+type WorkspaceConfig struct {
+	Root string `yaml:"root"` // default ./workspace (compose: the volume mountpoint)
+	// Caps — all optional with defaults below; a capped result sets
+	// truncated:true, it never errors (write_file is the one exception: an
+	// oversized write errors, since its result carries no truncated field).
+	MaxReadKB      int `yaml:"max_read_kb"`      // default 256
+	MaxWriteKB     int `yaml:"max_write_kb"`     // default 2048
+	MaxResults     int `yaml:"max_results"`      // default 200 (grep/glob hits per call)
+	MaxListEntries int `yaml:"max_list_entries"` // default 500 (list_dir entries per call)
+	TimeoutSeconds int `yaml:"timeout_seconds"`  // default 60; per git/check invocation (later PRs)
+	// CheckCommands are the allowed command PREFIXES the planner may complete
+	// into per-node checks (§4 of the design doc). Empty (default) means checks
+	// are unavailable; consumed by a later PR, not this one.
+	CheckCommands []string `yaml:"check_commands"`
 }
 
 // SessionConfig binds the ADK session + chat persistence to a named store and
@@ -488,6 +523,37 @@ func (c *Config) validate() error {
 		// "" behaves as external (just run); only managed orchestrates.
 	default:
 		return fmt.Errorf("config: server.topology %q is unknown (use embedded, managed, or external)", c.Server.Topology)
+	}
+	if err := c.Workspace.applyDefaults(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// applyDefaults fills in unset workspace caps and validates the ones that
+// were set. Every field is optional — a config with no workspace: section at
+// all still ends up with a fully-defaulted WorkspaceConfig.
+func (w *WorkspaceConfig) applyDefaults() error {
+	if w.Root == "" {
+		w.Root = defaultWorkspaceRoot
+	}
+	if w.MaxReadKB == 0 {
+		w.MaxReadKB = defaultWorkspaceMaxReadKB
+	}
+	if w.MaxWriteKB == 0 {
+		w.MaxWriteKB = defaultWorkspaceMaxWriteKB
+	}
+	if w.MaxResults == 0 {
+		w.MaxResults = defaultWorkspaceMaxResults
+	}
+	if w.MaxListEntries == 0 {
+		w.MaxListEntries = defaultWorkspaceMaxListEntries
+	}
+	if w.TimeoutSeconds == 0 {
+		w.TimeoutSeconds = defaultWorkspaceTimeoutSeconds
+	}
+	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 {
+		return fmt.Errorf("config: workspace caps must be >= 0")
 	}
 	return nil
 }

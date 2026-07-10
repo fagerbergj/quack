@@ -13,6 +13,8 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // Deps are the shared dependencies injected into built-in tools.
@@ -40,6 +42,19 @@ type Deps struct {
 	// node's mentor conversation (same store as chat/plan sessions, a distinct
 	// AppName — see ask_advisor.go).
 	Sessions session.Service
+	// Workspace is the filesystem jail the fs.go tools (read_file, write_file,
+	// edit_file, list_dir, glob, grep, delete_path) resolve every path
+	// through. nil ⇒ those tools are never registered (build errors clearly if
+	// an agent's tools: list requests one anyway; see internal/serve).
+	Workspace *workspace.Jail
+	// WorkspaceUserID is the identity fs tools are bound to at construction
+	// (the isolation model's "no identity parsing inside tool handlers" rule).
+	// Quack is single-user today, so this is always the "local" constant
+	// (internal/server/rest and internal/server/mcp use the same constant).
+	WorkspaceUserID string
+	// WorkspaceCaps bounds fs tool calls (read/write bytes, grep/glob/list
+	// result caps). Zero value ⇒ workspace.DefaultCaps().
+	WorkspaceCaps workspace.Caps
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -53,6 +68,15 @@ var registry = map[string]constructor{
 	"stage_memory": newStageMemory,
 	"ask_user":     func(Deps) (tool.Tool, error) { return NewAskUserTool() },
 	"ask_advisor":  func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
+	// Filesystem tools (internal/tools/fs.go), all bound to (userID, jail) —
+	// see fsBinding / newFSBinding.
+	"read_file":   newReadFile,
+	"write_file":  newWriteFile,
+	"edit_file":   newEditFile,
+	"list_dir":    newListDir,
+	"glob":        newGlob,
+	"grep":        newGrep,
+	"delete_path": newDeletePath,
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an

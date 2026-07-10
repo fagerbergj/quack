@@ -377,6 +377,90 @@ func TestManagedConfigLoads(t *testing.T) {
 	}
 }
 
+// TestWorkspaceDefaults proves a config with no workspace: section at all
+// still gets a fully-defaulted WorkspaceConfig (root + every cap).
+func TestWorkspaceDefaults(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := c.Workspace
+	if w.Root != "./workspace" {
+		t.Errorf("Root = %q, want ./workspace", w.Root)
+	}
+	if w.MaxReadKB != 256 {
+		t.Errorf("MaxReadKB = %d, want 256", w.MaxReadKB)
+	}
+	if w.MaxWriteKB != 2048 {
+		t.Errorf("MaxWriteKB = %d, want 2048", w.MaxWriteKB)
+	}
+	if w.MaxResults != 200 {
+		t.Errorf("MaxResults = %d, want 200", w.MaxResults)
+	}
+	if w.MaxListEntries != 500 {
+		t.Errorf("MaxListEntries = %d, want 500", w.MaxListEntries)
+	}
+	if w.TimeoutSeconds != 60 {
+		t.Errorf("TimeoutSeconds = %d, want 60", w.TimeoutSeconds)
+	}
+	if len(w.CheckCommands) != 0 {
+		t.Errorf("CheckCommands = %v, want empty (checks unavailable by default)", w.CheckCommands)
+	}
+}
+
+// TestWorkspaceParsesOverrides proves every workspace: field round-trips
+// (the yaml gotcha this guards against: yaml.Unmarshal silently ignores
+// unknown/misspelled keys, so a wrong field name would parse clean but leave
+// the default in place — this test would catch that).
+func TestWorkspaceParsesOverrides(t *testing.T) {
+	t.Setenv("QUACK_WORKSPACE_ROOT", "/data/workspace")
+	c, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  root: ${QUACK_WORKSPACE_ROOT}
+  max_read_kb: 64
+  max_write_kb: 512
+  max_results: 50
+  max_list_entries: 100
+  timeout_seconds: 30
+  check_commands: ["go build", "go test"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := c.Workspace
+	if w.Root != "/data/workspace" {
+		t.Errorf("Root = %q, want interpolated /data/workspace", w.Root)
+	}
+	if w.MaxReadKB != 64 {
+		t.Errorf("MaxReadKB = %d, want 64", w.MaxReadKB)
+	}
+	if w.MaxWriteKB != 512 {
+		t.Errorf("MaxWriteKB = %d, want 512", w.MaxWriteKB)
+	}
+	if w.MaxResults != 50 {
+		t.Errorf("MaxResults = %d, want 50", w.MaxResults)
+	}
+	if w.MaxListEntries != 100 {
+		t.Errorf("MaxListEntries = %d, want 100", w.MaxListEntries)
+	}
+	if w.TimeoutSeconds != 30 {
+		t.Errorf("TimeoutSeconds = %d, want 30", w.TimeoutSeconds)
+	}
+	if len(w.CheckCommands) != 2 || w.CheckCommands[0] != "go build" || w.CheckCommands[1] != "go test" {
+		t.Errorf("CheckCommands = %v, want [go build, go test]", w.CheckCommands)
+	}
+}
+
+func TestWorkspaceRejectsNegativeCaps(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  max_read_kb: -1
+`))
+	if err == nil {
+		t.Fatal("expected error for a negative workspace cap")
+	}
+}
+
 func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// No gates block ⇒ vetting disabled, config still valid.
 	c, err := Load(writeTemp(t, baseConfig))
