@@ -217,9 +217,11 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 // ---------------------------------------------------------------------------
 
 type gitCloneArgs struct {
-	URL   string `json:"url"`
-	Dir   string `json:"dir,omitempty"`
-	Depth int    `json:"depth,omitempty"` // default 1 (shallow); 0 = full
+	URL string `json:"url"`
+	Dir string `json:"dir,omitempty"`
+	// Depth is a pointer so an EXPLICIT 0 ("full history") is distinguishable
+	// from absent ("default shallow depth 1") — the schema's contract.
+	Depth *int `json:"depth,omitempty"` // default 1 (shallow); 0 = full
 }
 
 type gitCloneResult struct {
@@ -297,9 +299,9 @@ func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
 		return gitCloneResult{}, fmt.Errorf("git_clone: create workspace dir: %w", err)
 	}
 
-	depth := a.Depth
-	if depth == 0 {
-		depth = defaultCloneDepth
+	depth := defaultCloneDepth // absent → shallow
+	if a.Depth != nil {
+		depth = *a.Depth // explicit 0 (or negative) → full history
 	}
 	argv := []string{"clone", "--quiet"}
 	if depth > 0 {
