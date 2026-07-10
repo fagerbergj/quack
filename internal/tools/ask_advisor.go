@@ -1,9 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"strings"
+	"sync"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/runner"
@@ -148,20 +152,90 @@ func contentText(c *genai.Content) string {
 	return sb.String()
 }
 
-// consultAdvisor runs one advisor turn in its own isolated runner (mirrors how
-// the judge runs isolated — internal/vetting/judge.go) over a session PERSISTED
-// in the shared store (unlike the judge's throwaway in-memory one — the whole
-// point here is that the mentor remembers). tc is only the context.Context for
-// the run (agent.Context embeds it); identity comes from token, and seed is
-// prepended to the first prompt of a brand-new thread.
-func consultAdvisor(tc adkagent.Context, advisor adkagent.Agent, sessions session.Service, token, seed, request string) (string, error) {
+// advisorThreadLocks serializes consults PER THREAD TOKEN. ADK executes a
+// model turn's function calls in concurrent goroutines (llminternal/
+// base_flow.go handleFunctionCalls), so one worker turn can fire two
+// ask_advisor calls at once — two runner lifecycles (Get/Create → append)
+// each holding its own localSession snapshot of the SAME advisor session row.
+// Under the database service's optimistic locking the loser's append dies
+// with "stale session error" (live 2026-07-09 22:29), the create race dies
+// with a UNIQUE violation, and a double Get-miss double-seeds the thread.
+// Serializing per token removes all three at the source and is the right
+// conversation shape anyway (two simultaneous questions to one mentor are
+// sequential turns); consults on DIFFERENT threads (concurrent nodes) don't
+// contend. Entries are tiny and reusable; they are not deleted.
+var advisorThreadLocks sync.Map
+
+func advisorThreadLock(token string) *sync.Mutex {
+	mu, _ := advisorThreadLocks.LoadOrStore(token, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+// isSessionConflict reports whether err is a transient optimistic-concurrency
+// conflict on the advisor session row: the database service's stale-session
+// check (session/database/service.go applyEvent) or the create race's UNIQUE
+// violation. These are retry-by-design; anything else is a real failure.
+func isSessionConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "stale session error") ||
+		strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "duplicate key value") // Postgres' unique-violation wording
+}
+
+// consultAdvisor runs one advisor turn for the given thread, serialized per
+// token and with a small bounded retry on optimistic-locking conflicts
+// (re-fetch + re-run; the seed check re-runs each attempt so a retried first
+// consult can't double-seed). The per-token lock prevents same-process
+// conflicts outright; the retry covers what it can't (e.g. Postgres rounds
+// timestamp(6) half-up on write while the snapshot's UnixMicro() truncates,
+// so a freshly created row can read ~1µs newer than its own snapshot).
+func consultAdvisor(ctx context.Context, advisor adkagent.Agent, sessions session.Service, token, seed, request string) (string, error) {
+	mu := advisorThreadLock(token)
+	mu.Lock()
+	defer mu.Unlock()
+
+	var lastErr error
+	for attempt := 0; attempt <= 2; attempt++ {
+		if attempt > 0 {
+			// Small jittered backoff before re-fetching (25–75ms).
+			select {
+			case <-time.After(25*time.Millisecond + time.Duration(rand.Int64N(50))*time.Millisecond):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+			slog.Debug("ask_advisor: retrying after session conflict",
+				"component", "tools", "thread", token, "attempt", attempt, "err", lastErr)
+		}
+		advice, err := consultOnce(ctx, advisor, sessions, token, seed, request)
+		if err == nil {
+			return advice, nil
+		}
+		if !isSessionConflict(err) {
+			return "", err
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+// consultOnce is a single consult attempt: check/seed the thread, run the
+// advisor in its own isolated runner (mirrors how the judge runs isolated —
+// internal/vetting/judge.go) over a session PERSISTED in the shared store
+// (unlike the judge's throwaway in-memory one — the whole point here is that
+// the mentor remembers). Identity comes from token; seed is prepended to the
+// first prompt of a brand-new thread.
+func consultOnce(ctx context.Context, advisor adkagent.Agent, sessions session.Service, token, seed, request string) (string, error) {
 	sessID := token + ":advisor"
 
 	// A successful Get means the thread already exists — its history carries
 	// the seed from the first consult, so don't repeat it. AutoCreateSession
 	// on the runner below does the actual Create for a new thread.
-	if _, err := sessions.Get(tc, &session.GetRequest{AppName: advisorAppName, UserID: advisorUserID, SessionID: sessID}); err == nil {
-		seed = ""
+	seedThis := seed
+	if _, err := sessions.Get(ctx, &session.GetRequest{AppName: advisorAppName, UserID: advisorUserID, SessionID: sessID}); err == nil {
+		seedThis = ""
 	}
 
 	r, err := runner.New(runner.Config{
@@ -172,13 +246,13 @@ func consultAdvisor(tc adkagent.Context, advisor adkagent.Agent, sessions sessio
 	}
 
 	prompt := request
-	if seed != "" {
-		prompt = seed + "\n\n---\n\nThe worker's request:\n" + request
+	if seedThis != "" {
+		prompt = seedThis + "\n\n---\n\nThe worker's request:\n" + request
 	}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	var out strings.Builder
-	for ev, rerr := range r.Run(tc, advisorUserID, sessID, content, adkagent.RunConfig{}) {
+	for ev, rerr := range r.Run(ctx, advisorUserID, sessID, content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return "", rerr
 		}
