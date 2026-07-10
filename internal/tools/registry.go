@@ -55,6 +55,21 @@ type Deps struct {
 	// WorkspaceCaps bounds fs tool calls (read/write bytes, grep/glob/list
 	// result caps). Zero value ⇒ workspace.DefaultCaps().
 	WorkspaceCaps workspace.Caps
+	// GitCredentials are the deployment-level per-host HTTPS credentials git
+	// tools authenticate with (workspace.git_credentials). Empty ⇒ git
+	// operations proceed unauthenticated (public repos only).
+	GitCredentials []GitCredential
+	// GitPush gates the git_push tool (workspace.git_push, default false) —
+	// the one outward-facing, non-undoable git operation.
+	GitPush bool
+	// Guards maps a tool name to its guard tier (workspace.guards: none |
+	// judge | confirm | judge+confirm). A tool with no entry is unguarded
+	// (Tier 0 walls — the jail, argv-only exec, etc. — still always apply).
+	Guards map[string]string
+	// SafetyJudge backs the guard ladder's judge tier: an independent model
+	// call that allows/denies a proposed operation. nil ⇒ a tool configured
+	// for a judge tier fails closed at build time (see buildGuarded).
+	SafetyJudge SafetyJudge
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -77,6 +92,19 @@ var registry = map[string]constructor{
 	"glob":        newGlob,
 	"grep":        newGrep,
 	"delete_path": newDeletePath,
+	// Git tools (internal/tools/git.go), all bound to (userID, jail,
+	// credentials, push-enabled) — see gitBinding / newGitBinding.
+	"git_clone":           newGitClone,
+	"git_status":          newGitStatus,
+	"git_diff":            newGitDiff,
+	"git_log":             newGitLog,
+	"git_commit":          newGitCommit,
+	"git_branch":          newGitBranch,
+	"git_push":            newGitPush,
+	"git_worktree_create": newGitWorktreeCreate,
+	"git_worktree_remove": newGitWorktreeRemove,
+	"git_pull":            newGitPull,
+	"git_rebase":          newGitRebase,
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an
@@ -97,6 +125,12 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		t, err := ctor(d)
 		if err != nil {
 			return nil, fmt.Errorf("tools: build %q: %w", name, err)
+		}
+		if tier, guarded := parseGuardTier(d.Guards[name]); guarded {
+			t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions)
+			if err != nil {
+				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
+			}
 		}
 		out = append(out, t)
 	}
