@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -395,13 +396,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				return answer, res, nil
 			}
 			v = foldDeterministic(v, answer, act, cfg)
-			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: v.Feedback, Rounds: round}
+			feedback := composeFeedback(v, cfg.Threshold)
+			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
 			if res.Passed || round >= cfg.JudgeRounds {
 				break
 			}
-			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
+			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act))
 			revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), promptEmit)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
@@ -593,7 +595,40 @@ func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config)
 	if det, details, hasCites := citationScore(answer, act); hasCites {
 		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited URL(s), mean backing %.2f", len(details), det)}
 	}
+	// §4: orchestrator-set deterministic gate checks (a code-implementer
+	// node's `go build`/`go test`/… commands) — untouched for a node with no
+	// Checks configured (research, synthesis).
+	if len(cfg.Checks) > 0 {
+		v.Criteria["checks_pass"] = checksPassCriterion(cfg)
+	}
 	return aggregateVerdict(v)
+}
+
+// composeFeedback merges the judge's own narrative Feedback with the Reasons
+// of any criterion scoring below threshold — a deterministic criterion's
+// Reason (grounded_in_retrieval, checks_pass, …) is set by code the judge
+// never saw, so without this the revise prompt would carry a numeric fail
+// with no explanation of what actually needs to change (see §4: "the revise
+// prompt therefore contains the actual compiler/test failure").
+func composeFeedback(v verdict, threshold float64) string {
+	var extra []string
+	for name, c := range v.Criteria {
+		if c.Score < threshold && strings.TrimSpace(c.Reason) != "" {
+			extra = append(extra, fmt.Sprintf("- %s: %s", name, c.Reason))
+		}
+	}
+	if len(extra) == 0 {
+		return v.Feedback
+	}
+	sort.Strings(extra) // stable order across runs (map iteration is random)
+	var sb strings.Builder
+	if strings.TrimSpace(v.Feedback) != "" {
+		sb.WriteString(v.Feedback)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("Deterministic check failures:\n")
+	sb.WriteString(strings.Join(extra, "\n"))
+	return sb.String()
 }
 
 // activityFromSession reconstructs the worker's retrieval activity (web_search

@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // AgentInfo describes one available agent (name + description) — the roster the
@@ -22,10 +24,24 @@ type AgentInfo struct {
 // synthesizer's dependencies.
 type Planner struct {
 	agents []AgentInfo
+	// checkCommands are the allowed check-command PREFIXES (workspace.
+	// check_commands) a node's `checks` may complete into — see §4 of
+	// .quack/plan-pr5-tool-schemas.md. Empty (default) means checks are
+	// unavailable: any node that sets `checks` is rejected at plan time.
+	checkCommands []string
 }
 
-// NewPlanner returns a Planner over the available agent roster.
-func NewPlanner(agents []AgentInfo) *Planner { return &Planner{agents: agents} }
+// NewPlanner returns a Planner over the available agent roster and the
+// configured check-command prefixes (workspace.check_commands; may be empty).
+func NewPlanner(agents []AgentInfo, checkCommands []string) *Planner {
+	return &Planner{agents: agents, checkCommands: checkCommands}
+}
+
+// CheckCommands returns the configured check-command prefixes (may be empty).
+// The plan tool's description (internal/tools/plan.go) reads this to tell the
+// orchestrator model what's available, so a plan node's `checks` are filled
+// in against operator-approved prefixes rather than invented.
+func (p *Planner) CheckCommands() []string { return p.checkCommands }
 
 // RawNode is one DAG node the orchestrator submits to the plan tool.
 type RawNode struct {
@@ -34,6 +50,14 @@ type RawNode struct {
 	Task      string   `json:"task"`
 	Rubric    string   `json:"rubric,omitempty"`
 	DependsOn []string `json:"depends_on"`
+	// Checks are orchestrator-set deterministic gate commands (§4): each MUST
+	// prefix-match a configured workspace.check_commands entry and contain no
+	// shell metacharacters — validated at plan time (assemble/validateChecks),
+	// never at run time. Typically set only on code-implementer nodes.
+	Checks []string `json:"checks,omitempty"`
+	// Workdir is the workspace-relative directory Checks run in (the node's
+	// repo). Ignored when Checks is empty.
+	Workdir string `json:"workdir,omitempty"`
 }
 
 // Build validates the submitted nodes into a Plan and stamps the turn context.
@@ -41,7 +65,7 @@ type RawNode struct {
 // current media — all threaded to every node by the executor. Returns an error
 // (no silent fallback) so the orchestrator can fix and re-submit.
 func (p *Planner) Build(nodes []RawNode, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
-	plan, err := assemble(nodes, p.agents)
+	plan, err := assemble(nodes, p.agents, p.checkCommands)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +96,7 @@ func AttachmentDesc(parts []*genai.Part) string {
 
 // assemble validates nodes against the agent roster, hardens the synthesizer's
 // dependencies, and checks acyclicity.
-func assemble(nodes []RawNode, agents []AgentInfo) (*Plan, error) {
+func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string) (*Plan, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
 	}
@@ -92,6 +116,11 @@ func assemble(nodes []RawNode, agents []AgentInfo) (*Plan, error) {
 		if !known[n.Agent] {
 			return nil, fmt.Errorf("unknown agent %q for node %q", n.Agent, n.ID)
 		}
+		if len(n.Checks) > 0 {
+			if err := validateChecks(n.Checks, checkCommands); err != nil {
+				return nil, fmt.Errorf("node %q: %w", n.ID, err)
+			}
+		}
 		ids[n.ID] = true
 		plan.Nodes = append(plan.Nodes, Node{
 			ID:        n.ID,
@@ -99,6 +128,8 @@ func assemble(nodes []RawNode, agents []AgentInfo) (*Plan, error) {
 			Task:      n.Task,
 			Rubric:    n.Rubric,
 			DependsOn: n.DependsOn,
+			Checks:    n.Checks,
+			Workdir:   n.Workdir,
 		})
 	}
 
@@ -140,4 +171,44 @@ func assemble(nodes []RawNode, agents []AgentInfo) (*Plan, error) {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// validateChecks enforces §4's plan-time rule: every check must PREFIX-MATCH a
+// configured workspace.check_commands entry (the planner fills in arguments to
+// an operator-approved prefix; it never invents an executable command) and
+// contain no shell metacharacters (checks run as argv only — no shell, see
+// internal/workspace.ContainsShellMetachar). An empty checkCommands (the
+// default) means checks are unavailable at all — a plan node that sets them
+// is rejected with a targeted, fixable error rather than silently dropped or
+// run unchecked.
+func validateChecks(checks, checkCommands []string) error {
+	if len(checkCommands) == 0 {
+		return fmt.Errorf("checks are unavailable (workspace.check_commands is empty) — omit `checks`")
+	}
+	for _, c := range checks {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			return fmt.Errorf("empty check command")
+		}
+		if workspace.ContainsShellMetachar(c) {
+			return fmt.Errorf("check %q contains a shell metacharacter — checks run as argv only, no shell", c)
+		}
+		if !matchesCheckPrefix(c, checkCommands) {
+			return fmt.Errorf("check %q does not match any configured workspace.check_commands prefix (%s)",
+				c, strings.Join(checkCommands, ", "))
+		}
+	}
+	return nil
+}
+
+// matchesCheckPrefix reports whether check IS one of prefixes, or extends one
+// with a space-separated continuation (e.g. "go test ./..." extends "go
+// test"; "go testing" does not).
+func matchesCheckPrefix(check string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if check == p || strings.HasPrefix(check, p+" ") {
+			return true
+		}
+	}
+	return false
 }

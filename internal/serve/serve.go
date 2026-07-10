@@ -330,7 +330,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	}
 	orchSysPrompt := promptbuilder.Orchestrator(rosterSB.String(), []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
 
-	planner := dag.NewPlanner(agentInfos)
+	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands)
 	// cfgFor supplies the per-agent trust-gate config to the graph executor; a
 	// non-gated (or gates-disabled) agent gets the zero Config (JudgeRounds=0), so
 	// RunGatedRefine runs the worker once and returns it ungated.
@@ -416,6 +416,13 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// The trust gate commits vetted tradecraft on a judge pass (M6). nil
 		// *memory.Store when memory is off — the gate's nil check handles it.
 		gateCfg.Memory = taskStore
+		// §4's per-node deterministic checks execute through the SAME jail,
+		// identity, and caps every fs/git/run_command tool call already uses —
+		// wired onto the BASE Config here so every gated agent's per-node copy
+		// (dag.buildGateNodes) inherits it; only Checks/Workdir vary per node.
+		gateCfg.Workspace = jail
+		gateCfg.WorkspaceUserID = localUserID
+		gateCfg.WorkspaceCaps = workspaceCaps
 		// The judge model is only built when the judge stage is active; the
 		// deterministic + self-critique stages run without it. One-shot judge (no
 		// web tools): citation backing is now checked deterministically in code, so

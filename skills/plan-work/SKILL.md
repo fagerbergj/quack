@@ -21,6 +21,7 @@ Match the request to a known shape first; fall back to the general rules below.
 | Single topic | ONE `web-researcher` node, no synthesizer |
 | Several distinct topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
+| Write/fix/refactor code in a repo | ONE `code-implementer` node, with `checks` + `workdir` when checks are available (see Code checks) |
 
 ## How to build the DAG
 
@@ -52,6 +53,30 @@ Work through these in order:
    into explicit content. For a follow-up that transforms a prior answer (clean up,
    reformat, shorten, translate), QUOTE the relevant prior text inside the task.
 
+## Code checks (`checks` + `workdir` on a node)
+
+A `code-implementer` node can carry `checks`: commands the trust gate runs
+against the node's work after each draft — a failing check hard-fails vetting
+and its real compiler/test output feeds the revise prompt, so the implementer
+iterates against actual failures, not a reviewer's paraphrase.
+
+Rules:
+
+- The `plan` tool's description lists the **allowed command prefixes** for this
+  deployment. Each check must be exactly one of those prefixes, or extend one
+  with arguments after a space (`go test` → `go test ./...`). Anything else —
+  including any shell metacharacter (`| & ; $ < > \` ( )`) — rejects the whole
+  plan at submission.
+- If the description says checks are **unavailable** (no prefixes configured),
+  OMIT `checks` and `workdir` entirely.
+- Set `workdir` to the workspace-relative directory the checks should run in —
+  the repo the node clones or edits (e.g. `repo`, matching the `dir` its task
+  tells it to clone into). Name that directory explicitly in the task text so
+  the node and the checks agree on it.
+- Give a code node the checks that actually verify its change (typically a
+  build + the tests nearest the change), not every prefix available. Research
+  and synthesis nodes never carry checks.
+
 ## Media routing
 
 When the user message contains `[User attached: ...]`, pick ONE media agent:
@@ -68,5 +93,6 @@ instruction. If a factual question is also asked, chain: media node → `web-res
 ## Submitting
 
 Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional
-`rubric`). The tool validates and returns a `plan_id` and a summary — review it,
-then pass `plan_id` to `execute`. If validation fails, fix the nodes and call again.
+`rubric`; optional `checks` + `workdir` on a code node — see Code checks). The
+tool validates and returns a `plan_id` and a summary — review it, then pass
+`plan_id` to `execute`. If validation fails, fix the nodes and call again.
