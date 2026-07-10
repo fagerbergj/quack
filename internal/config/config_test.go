@@ -461,6 +461,103 @@ workspace:
 	}
 }
 
+// TestGitCredentialsParsesAndDefaultsUsername proves git_credentials round-trips
+// (the ${VAR} value interpolates, an omitted username defaults to
+// x-access-token) and git_push/guards parse.
+func TestGitCredentialsParsesAndDefaultsUsername(t *testing.T) {
+	t.Setenv("QUACK_GITHUB_TOKEN", "ghp_secret123")
+	c, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  git_push: true
+  git_credentials:
+    - host: github.com
+      token: ${QUACK_GITHUB_TOKEN}
+    - host: gitlab.example.com
+      username: custom-user
+      token: ${QUACK_GITHUB_TOKEN}
+  guards:
+    delete_path: judge
+    git_push: judge+confirm
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Workspace.GitPush {
+		t.Error("GitPush = false, want true")
+	}
+	if len(c.Workspace.GitCredentials) != 2 {
+		t.Fatalf("GitCredentials = %v, want 2 entries", c.Workspace.GitCredentials)
+	}
+	first := c.Workspace.GitCredentials[0]
+	if first.Host != "github.com" || first.Token != "ghp_secret123" {
+		t.Errorf("first credential = %+v, want host github.com token ghp_secret123", first)
+	}
+	if first.Username != "x-access-token" {
+		t.Errorf("Username = %q, want default x-access-token", first.Username)
+	}
+	second := c.Workspace.GitCredentials[1]
+	if second.Username != "custom-user" {
+		t.Errorf("Username = %q, want custom-user (explicit, not defaulted)", second.Username)
+	}
+	if c.Workspace.Guards["delete_path"] != "judge" {
+		t.Errorf("Guards[delete_path] = %q, want judge", c.Workspace.Guards["delete_path"])
+	}
+	if c.Workspace.Guards["git_push"] != "judge+confirm" {
+		t.Errorf("Guards[git_push] = %q, want judge+confirm", c.Workspace.Guards["git_push"])
+	}
+}
+
+func TestGitCredentialsRejectsEmptyHost(t *testing.T) {
+	t.Setenv("QUACK_GITHUB_TOKEN", "ghp_secret123")
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  git_credentials:
+    - token: ${QUACK_GITHUB_TOKEN}
+`))
+	if err == nil {
+		t.Fatal("expected error for a git_credentials entry with no host")
+	}
+}
+
+func TestGuardsRejectsUnknownTier(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  guards:
+    delete_path: yolo
+`))
+	if err == nil {
+		t.Fatal("expected error for an unknown guard tier")
+	}
+}
+
+// TestGitCredentialTokenRejectsLiteralValue is the mechanical raw-YAML check:
+// a token: value that isn't an ${VAR} reference is a startup error, not a
+// silent leak — checked BEFORE ${VAR} expansion (see validateNoLiteralTokens).
+func TestGitCredentialTokenRejectsLiteralValue(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  git_credentials:
+    - host: github.com
+      token: ghp_this_is_a_literal_secret
+`))
+	if err == nil {
+		t.Fatal("expected error for a literal token value")
+	}
+}
+
+func TestGitCredentialTokenAllowsEnvReference(t *testing.T) {
+	t.Setenv("QUACK_GITHUB_TOKEN", "ghp_ok")
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  git_credentials:
+    - host: github.com
+      token: ${QUACK_GITHUB_TOKEN}
+`))
+	if err != nil {
+		t.Fatalf("unexpected error for a proper ${VAR} token: %v", err)
+	}
+}
+
 func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// No gates block ⇒ vetting disabled, config still valid.
 	c, err := Load(writeTemp(t, baseConfig))

@@ -22,11 +22,21 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack ./cmd/quack
 
-# 3) Minimal runtime. The :nonroot variant runs as UID 65532 — safe here because
-# the server makes no runtime filesystem writes (all state goes to Postgres) and
-# binds the unprivileged port 8080. ponytail: mutable tag is fine for a
-# locally/self-hosted build; pin to a digest only once a release image is published.
-FROM gcr.io/distroless/static-debian12:nonroot
+# 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
+# binary, which dynamically links against libcurl/libssl/libpcre2/zlib — those
+# don't exist in distroless/static (no libc at all) and hand-copying git's
+# shared-library closure into distroless/base is fragile and unmaintainable
+# (ponytail: wrap the OS's own package manager, don't reimplement it). So the
+# runtime base is debian:bookworm-slim with git installed via apt, still
+# non-root via an explicit UID (65532, matching the prior distroless:nonroot
+# convention) — a deliberate size/attack-surface tradeoff for a real userland,
+# not a downgrade in the properties that actually matter here (non-root,
+# unprivileged port, no runtime writes outside the workspace volume).
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 WORKDIR /
 COPY --from=backend /quack /quack
 # The config directory: quack.yaml plus files it references by relative path
@@ -39,5 +49,6 @@ COPY agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY skills/ /skills/
 ENV QUACK_CONFIG=/config/quack.yaml
+USER nonroot
 EXPOSE 8080
 ENTRYPOINT ["/quack"]

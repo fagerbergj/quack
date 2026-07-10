@@ -266,6 +266,25 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 		}
 		if !resumed {
+			if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); cscan.pauses > 0 {
+				if reply, ok := ctx.ResumedInput(confirmInterruptID(nodeID, cscan.pauses)); ok {
+					resumed = true
+					turns := cscan.turns
+					if n := len(turns); n > 0 && turns[n-1].answer == "" {
+						turns[n-1].answer = replyString(reply)
+					}
+					log.Info("node resumed with confirm decision", "round", cscan.pauses)
+					answer, err = runWorkerNode(ctx, workerNode,
+						workerInput(withConfirmDecision(prompt, turns), attachments),
+						fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), promptEmit)
+					if err != nil {
+						log.Error("post-decision worker run failed", "err", err)
+						return "", GateResult{}, err
+					}
+				}
+			}
+		}
+		if !resumed {
 			answer, err = runWorkerNode(ctx, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, promptEmit)
 			if err != nil {
 				// Log at our boundary before returning: ADK's scheduler can swallow a
@@ -288,6 +307,25 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
 					InterruptID: hitlInterruptID(nodeID, scan.pauses+1),
 					Message:     q,
+				})
+				return "", GateResult{}, ierr // ErrNodeInterrupted → park
+			}
+			// Guard-ladder pause: the worker called a confirm-tiered tool
+			// (internal/tools/guard.go) that returned the pending marker. Same park
+			// mechanism, a distinct interrupt-ID namespace ("confirm-" vs "hitl-").
+			if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); len(cscan.turns) > cscan.pauses {
+				t := cscan.turns[len(cscan.turns)-1]
+				// Prefer the guard's own hint — it carries call-specific warnings
+				// (e.g. "this DIFFERS from the previously approved operation").
+				question := t.hint
+				if question == "" {
+					question = fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", t.tool)
+				}
+				msg := fmt.Sprintf("%s\n\nArguments: %v", question, t.args)
+				log.Info("worker proposed a guarded operation; pausing node", "tool", t.tool, "round", cscan.pauses+1)
+				_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
+					InterruptID: confirmInterruptID(nodeID, cscan.pauses+1),
+					Message:     msg,
 				})
 				return "", GateResult{}, ierr // ErrNodeInterrupted → park
 			}

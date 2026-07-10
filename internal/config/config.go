@@ -7,6 +7,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -57,7 +59,33 @@ type WorkspaceConfig struct {
 	// into per-node checks (§4 of the design doc). Empty (default) means checks
 	// are unavailable; consumed by a later PR, not this one.
 	CheckCommands []string `yaml:"check_commands"`
+	// GitCredentials are deployment-level per-host HTTPS git credentials (one
+	// identity per host — a PAT, configured like every other secret). Empty
+	// (default) ⇒ public repos only. Token MUST be an ${VAR} env reference in
+	// the raw YAML — see validateNoLiteralTokens.
+	GitCredentials []GitCredentialConfig `yaml:"git_credentials"`
+	// GitPush gates the git_push tool (default false) — the one outward-facing,
+	// non-undoable git operation in the set.
+	GitPush bool `yaml:"git_push"`
+	// Guards maps a tool name to its guard-ladder tier: none (default,
+	// unlisted) | judge | confirm | judge+confirm. See §4b of the design doc.
+	Guards map[string]string `yaml:"guards"`
 }
+
+// GitCredentialConfig is one deployment-level per-host HTTPS git credential.
+type GitCredentialConfig struct {
+	Host     string `yaml:"host"`
+	Username string `yaml:"username"` // default "x-access-token" (GitHub PATs use this)
+	Token    string `yaml:"token"`    // MUST be ${VAR} in the raw YAML — never a literal secret
+}
+
+// defaultGitCredentialUsername is used when a git_credentials entry omits
+// username (GitHub PATs authenticate with any non-empty username by
+// convention; x-access-token is GitHub's own recommended placeholder).
+const defaultGitCredentialUsername = "x-access-token"
+
+// validGuardTiers are the only values workspace.guards may map a tool to.
+var validGuardTiers = map[string]bool{"none": true, "judge": true, "confirm": true, "judge+confirm": true}
 
 // SessionConfig binds the ADK session + chat persistence to a named store and
 // holds context-compaction settings (compaction operates over session history).
@@ -363,11 +391,42 @@ const (
 // Managed reports whether serve should orchestrate the stores via docker compose.
 func (s ServerConfig) Managed() bool { return s.Topology == TopologyManaged }
 
+// literalTokenRe matches a YAML `token:` mapping entry's raw value (before
+// ${VAR} expansion), e.g. `  token: ${QUACK_GITHUB_TOKEN}` or `token: "abc"`.
+// Only the value is captured.
+var literalTokenRe = regexp.MustCompile(`(?m)^\s*token:\s*(.+?)\s*$`)
+
+// envRefRe matches a bare ${VAR_NAME} env reference with nothing else around it.
+var envRefRe = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
+
+// validateNoLiteralTokens is a MECHANICAL, syntactic check on the RAW config
+// text (before os.Expand interpolates ${VAR} references) — a git credential's
+// `token:` value must be exactly an ${VAR} env reference, so a literal secret
+// pasted into quack.yaml is a startup error, never a silent leak. This must
+// run on the raw text: by the time YAML is parsed, os.Expand has already
+// replaced ${VAR} with its value (or "" if unset), so the distinction between
+// "a literal token" and "an env reference" would already be lost.
+func validateNoLiteralTokens(raw string) error {
+	for _, m := range literalTokenRe.FindAllStringSubmatch(raw, -1) {
+		val := strings.Trim(m[1], `"'`)
+		if val == "" {
+			continue // an empty token: line is not a literal secret
+		}
+		if !envRefRe.MatchString(val) {
+			return fmt.Errorf("config: workspace.git_credentials token must be an ${VAR} env reference, not a literal value (got %q)", m[1])
+		}
+	}
+	return nil
+}
+
 // Load reads the YAML at path, expands ${ENV} references, and validates it.
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
+	}
+	if err := validateNoLiteralTokens(string(raw)); err != nil {
+		return nil, err
 	}
 	expanded := os.Expand(string(raw), os.Getenv)
 
@@ -554,6 +613,19 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	}
 	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 {
 		return fmt.Errorf("config: workspace caps must be >= 0")
+	}
+	for i, gc := range w.GitCredentials {
+		if strings.TrimSpace(gc.Host) == "" {
+			return fmt.Errorf("config: workspace.git_credentials[%d] has an empty host", i)
+		}
+		if gc.Username == "" {
+			w.GitCredentials[i].Username = defaultGitCredentialUsername
+		}
+	}
+	for tool, tier := range w.Guards {
+		if !validGuardTiers[tier] {
+			return fmt.Errorf("config: workspace.guards[%q] has unknown tier %q (want none, judge, confirm, or judge+confirm)", tool, tier)
+		}
 	}
 	return nil
 }

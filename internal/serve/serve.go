@@ -402,6 +402,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 
 	var judgeFactory vetting.JudgeFactory
 	var gateCfg vetting.Config
+	// safetyJudge backs the guard ladder's judge tier (internal/tools/guard.go):
+	// an independent single-shot allow/deny call reusing the SAME judge
+	// model/provider as the trust gate's judge stage (gates.judge) — see the
+	// design doc §4b. nil when the judge stage is off; a tool configured for a
+	// judge tier then fails closed at call time (guardedTool.Run), not silently.
+	var safetyJudge tools.SafetyJudge
 	if cfg.Gates.Enabled() {
 		var err error
 		if gateCfg, err = vetting.FromConfig(cfg.Gates); err != nil {
@@ -425,10 +431,19 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, nil)
+			safetyJudge = tools.NewSafetyJudge(judge)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,
 			"judge", cfg.Gates.Judge.Model, "judge_rounds", gateCfg.JudgeRounds, "threshold", gateCfg.Threshold)
+	}
+
+	// Git tools' deployment-level credentials + push switch (workspace.*, §4b/
+	// "Git auth" of the design doc). GitCredentials is empty when unconfigured
+	// (public repos only); config.Load already enforced token: ${VAR}-only.
+	gitCredentials := make([]tools.GitCredential, len(cfg.Workspace.GitCredentials))
+	for i, gc := range cfg.Workspace.GitCredentials {
+		gitCredentials[i] = tools.GitCredential{Host: gc.Host, Username: gc.Username, Token: gc.Token}
 	}
 
 	// Build the compaction summariser once and share it across every gated agent.
@@ -498,6 +513,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Workspace:       jail,
 				WorkspaceUserID: localUserID,
 				WorkspaceCaps:   workspaceCaps,
+				GitCredentials:  gitCredentials,
+				GitPush:         cfg.Workspace.GitPush,
+				Guards:          cfg.Workspace.Guards,
+				SafetyJudge:     safetyJudge,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, fmtErr(name, "tools: %v", err)
