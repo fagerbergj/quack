@@ -18,7 +18,7 @@ require (
 	github.com/qdrant/go-client v1.18.3
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/adk/v2 v2.0.0
-	google.golang.org/genai v1.62.0
+	google.golang.org/genai v1.63.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.2
