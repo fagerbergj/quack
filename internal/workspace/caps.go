@@ -15,10 +15,14 @@ type Caps struct {
 	MaxResults int
 	// MaxListEntries caps how many entries list_dir returns per call.
 	MaxListEntries int
-	// Timeout bounds a single git/check invocation (unused by the filesystem
-	// tools in this PR; consumed by the git tools and orchestrator-set checks
-	// added in later PRs).
+	// Timeout bounds a single git/check/run_command invocation.
 	Timeout time.Duration
+	// MaxOutputBytes caps how much combined stdout/stderr RunArgv returns per
+	// call — consumed by run_command and the trust gate's per-node
+	// deterministic checks (both go through RunArgv). Distinct from git's own
+	// dedicated maxGitOutputBytes (internal/tools/git.go), which predates this
+	// and stays git-specific.
+	MaxOutputBytes int64
 }
 
 // DefaultCaps returns the isolation model's documented defaults.
@@ -29,5 +33,6 @@ func DefaultCaps() Caps {
 		MaxResults:     200,
 		MaxListEntries: 500,
 		Timeout:        60 * time.Second,
+		MaxOutputBytes: 64 * 1024,
 	}
 }
