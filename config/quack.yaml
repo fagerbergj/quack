@@ -156,7 +156,29 @@ workspace:
   max_write_kb: 2048               # write_file per-call cap; oversized writes error (no truncated field to signal it)
   max_results: 200                # grep/glob hits per call
   max_list_entries: 500           # list_dir entries per call
-  timeout_seconds: 60             # per git/check invocation (consumed by later PRs)
+  timeout_seconds: 60             # per git/check invocation
   # check_commands: allowed command PREFIXES for orchestrator-set gate checks
   # (later PR). Empty (default) = checks unavailable.
   # check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]
+
+  # Deployment-level per-host HTTPS git credentials — ONE identity per host (a
+  # PAT), configured like every other secret. Empty (default) = public repos
+  # only. `token` MUST be an ${VAR} env reference (a literal secret here is a
+  # startup error, not a silent leak — see docs/configuration.md).
+  # git_credentials:
+  #   - host: github.com
+  #     username: x-access-token       # default; GitHub PATs use this
+  #     token: ${QUACK_GITHUB_TOKEN}
+
+  # git_push gates the git_push tool — the one outward-facing, non-undoable
+  # git operation in the set. Off by default even with a credential configured.
+  git_push: false
+
+  # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
+  # confirm | judge+confirm. Tier-0 walls (the jail, argv-only exec, no shell,
+  # no force-push/push-to-main) always apply regardless of guard tier.
+  guards:
+    delete_path: judge
+    git_rebase: judge
+    git_push: judge+confirm
+    # run_command: judge+confirm   # reserved for the code-implementer PR
