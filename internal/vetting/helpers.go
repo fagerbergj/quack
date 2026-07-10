@@ -1,9 +1,12 @@
 package vetting
 
 import (
+	"iter"
 	"strings"
 	"unicode/utf8"
 
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/memory"
@@ -38,6 +41,31 @@ type Config struct {
 	Memory *memory.Store
 	// CommitMemory marks this agent as a task-memory participant.
 	CommitMemory bool
+
+	// DeliverPromptEvent makes the gate write each worker prompt into the
+	// session as a gate-authored event right before the worker run (see
+	// emitPrompt). Set via PromptEventNeeded: true for REMOTE (A2A) workers,
+	// which build their outbound message from session events only and would
+	// otherwise never see their prompt; false for local llmagents, which take
+	// the RunNode input natively — for them the extra user-role event would be
+	// worse than redundant: a concurrent node's prompt event shifts a
+	// single-turn llmagent's "current turn" anchor, leaking one node's prompt
+	// into another's request (caught by
+	// TestAskAdvisor_ConcurrentNodesIsolatedThreads).
+	DeliverPromptEvent bool
+}
+
+// PromptEventNeeded reports whether worker prompts must be delivered as
+// session events for this agent (Config.DeliverPromptEvent): true unless the
+// agent implements the node-runner interface AgentNode feeds RunNode input
+// through (only llmagent does; remote A2A agents don't — they build their
+// message from session events instead. See emitPrompt).
+func PromptEventNeeded(ag adkagent.Agent) bool {
+	type nodeRunner interface {
+		RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.Event, error]
+	}
+	_, ok := ag.(nodeRunner)
+	return !ok
 }
 
 // maxEmptyRetries bounds the empty-answer recovery re-invocations in RunGatedRefine.

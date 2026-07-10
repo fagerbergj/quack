@@ -89,20 +89,6 @@ export const FinalNodeDone: Story = {
   },
 }
 
-export const AdvisorRunning: Story = {
-  render: () => (
-    <DagNode
-      node={wrNode}
-      state={{ status: 'running', startedAt: Date.now() - 8_000 }}
-      runs={[
-        { runId: 'adv', agent: 'advisor', stage: 'advisor', done: false, activity: [{ kind: 'thinking', text: 'Considering what could go wrong with this task before the worker starts…' }] },
-      ]}
-      answer=""
-      isFinal={false}
-    />
-  ),
-}
-
 export const JudgeRunning: Story = {
   render: () => (
     <DagNode
@@ -119,13 +105,12 @@ export const JudgeRunning: Story = {
 }
 
 // Every stage card shows the model that produced it (RunModel, next to the timer) —
-// each stage can run a different model (e.g. a cheaper advisor/judge model).
+// each stage can run a different model (e.g. a cheaper judge model).
 export const JudgeRoundsAllDone: Story = {
   args: {
     node: wrNode,
     state: { status: 'done', startedAt: 0, finishedAt: 62_000, totalTokens: 3_421, model: 'qwen3-30b-a3b' },
     runs: [
-      { runId: 'adv', agent: 'advisor', stage: 'advisor', done: true, activity: [], model: 'qwen3-4b' },
       { ...workerDone(researchActivity), model: 'qwen3-30b-a3b' },
       { ...judgeRun(1, 0.52, false, 'Add a source URL for the weather claim.'), model: 'gemma3-27b' },
       { runId: 'rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, model: 'qwen3-30b-a3b', activity: [{ kind: 'tool', tool: { callId: 'rc1', name: 'web_fetch', args: { url: 'https://example.com/met' }, result: 'Met Éireann climate averages…', done: true } }] },

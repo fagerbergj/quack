@@ -79,7 +79,7 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent: %v", err)
 	}
-	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag, "synthesizer": ag}, nil, nil,
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag, "synthesizer": ag}, nil,
 		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "p", UserMessage: "go", Nodes: []Node{
 		{ID: "n1", AgentName: "blk", Task: "ASK-TASK"},

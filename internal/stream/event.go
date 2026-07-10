@@ -31,10 +31,9 @@ const transferTool = "transfer_to_agent"
 
 // Stage names label what an agent run is doing within a node.
 const (
-	StageWorker  = "worker"
-	StageJudge   = "judge"
-	StageRevise  = "revise"
-	StageAdvisor = "advisor" // formative consult before a worker draft
+	StageWorker = "worker"
+	StageJudge  = "judge"
+	StageRevise = "revise"
 )
 
 // Gate marker tool names: the gate yields these as function-response parts to
@@ -85,7 +84,7 @@ type AgentStartData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
 	Agent  string `json:"agent"`
-	Stage  string `json:"stage"` // worker | advisor | judge | revise
+	Stage  string `json:"stage"` // worker | judge | revise
 	Round  int    `json:"round,omitempty"`
 }
 
@@ -123,7 +122,7 @@ type AgentToolResultData struct {
 }
 
 // AgentCompleteData closes an agent run. Fields are populated by stage: model +
-// usage + finish_reason for model runs (worker/advisor/revise), score/passed/
+// usage + finish_reason for model runs (worker/revise), score/passed/
 // feedback for judge, and status/reason when a run was not completed normally
 // (e.g. the judge was unavailable).
 type AgentCompleteData struct {

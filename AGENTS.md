@@ -125,7 +125,6 @@ agents/<name>/
 
 ```
 dag_plan → node_queued → node_start
-  → [agent_start (stage: advisor) … agent_complete]   (formative consult, before the draft)
   → agent_start (stage: worker)
   → agent_thinking / agent_tool_call / agent_tool_result / agent_token
   → agent_complete
@@ -135,7 +134,7 @@ dag_plan → node_queued → node_start
 done
 ```
 
-`stream.Translator` converts raw ADK session events into this vocabulary. The `stage` field on `agent_start`/`agent_complete` (`worker`, `advisor`, `judge`, `revise`) lets the frontend group runs inside a node.
+`stream.Translator` converts raw ADK session events into this vocabulary. The `stage` field on `agent_start`/`agent_complete` (`worker`, `judge`, `revise`) lets the frontend group runs inside a node. A worker's `ask_advisor` consults (internal/tools/ask_advisor.go) are NOT a separate stage — they surface as ordinary `agent_tool_call`/`agent_tool_result` activity within the worker's own run.
 
 ### HTTP server (`internal/server/`)
 

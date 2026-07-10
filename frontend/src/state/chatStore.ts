@@ -433,11 +433,13 @@ export class ChatStore {
 
       // ANSWER_STAGES are the stages whose streamed text IS the node's answer: the
       // initial worker draft AND each revision (which fully replaces the prior
-      // draft). Advisor/judge/self-refine are internal gate commentary, never the
-      // answer. A node can go through several worker-stage runs now (mid-node HITL
-      // re-asks, each re-entering as a fresh 'worker'-stage run) — resetAnswer below
-      // clears the accumulator per run so those don't concatenate together, and a
-      // revision doesn't glue onto the judge-rejected draft it replaces.
+      // draft). Judge is internal gate commentary, never the answer (as are any
+      // ask_advisor consults — those are ordinary tool calls inside a worker/revise
+      // run, not a separate stage, so they never reach this check at all). A node
+      // can go through several worker-stage runs now (mid-node HITL re-asks, each
+      // re-entering as a fresh 'worker'-stage run) — resetAnswer below clears the
+      // accumulator per run so those don't concatenate together, and a revision
+      // doesn't glue onto the judge-rejected draft it replaces.
       const ANSWER_STAGES: ReadonlySet<Stage> = new Set(['worker', 'revise'])
       const resetAnswer = (nodeId: string | undefined, stage: Stage) => {
         if (!nodeId || !ANSWER_STAGES.has(stage)) return
@@ -465,9 +467,9 @@ export class ChatStore {
         onAgentToken: (runId, text, nid) => {
           if (!nid) { updateTopLevelText(text); return }
           // Only an answer-stage run's text belongs in the node's answer box. The
-          // advisor consult and the judge are internal gate commentary shown as
-          // their own runs — without this, they leaked into the answer (e.g. a
-          // failed node still displayed the advisor's critique as its "answer").
+          // judge is internal gate commentary shown as its own run — without this,
+          // it leaked into the answer (e.g. a failed node still displayed the
+          // judge's critique as its "answer").
           const st = this.states.get(chatId)
           const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
           if (run && !ANSWER_STAGES.has(run.stage)) return

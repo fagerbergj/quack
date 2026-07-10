@@ -27,7 +27,7 @@ const (
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
 // runDAG ignores them).
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -44,17 +44,12 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if err != nil {
 			return nil, nil, err
 		}
-		// The advisor (formative consult) is the same agent for every node; wrap it
-		// per node so concurrent nodes don't share one node instance. nil ⇒ the gate
-		// skips the consult (e.g. judge/advisor disabled).
-		var advisorNode workflow.Node
-		if advisor != nil {
-			if advisorNode, err = vetting.NewWorkerNode(advisor); err != nil {
-				return nil, nil, err
-			}
-		}
+		cfg := cfgFor(n.AgentName)
+		// Remote (A2A) workers never see RunNode input — the gate must deliver
+		// each prompt as a session event instead (see vetting.PromptEventNeeded).
+		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(ag)
 		node := n // capture per iteration
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], advisorNode, judge, cfgFor(node.AgentName), mediaAgents, controls, chatID)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -64,7 +59,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 // FAILS (marks the node) on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
 // directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, advisorNode workflow.Node, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			upstream := upstreamFromInput(in, node.DependsOn)
@@ -73,6 +68,20 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// input skeptically.
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, node, upstream, gateFailed)
+			// Advisor-thread identity: stamp a per-node marker line into the worker's
+			// prompt — the ONE channel that reaches the ask_advisor tool even across
+			// the A2A hop (the tool executes in the A2A server's runner, where the
+			// calling node is otherwise invisible) — and register the node's task +
+			// rubric under the token so the tool seeds the mentor's session with the
+			// desired outcome on first consult. Trailing placement + last-match
+			// parsing keeps the token unambiguous even when foreign markers ride
+			// along (see vetting.AdvisorThreadMarker). Re-entering the node (HITL
+			// resume, retry) re-registers, so the deferred unregister can't strand a
+			// running consult. See vetting/advisor_thread.go.
+			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
+			vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{Task: node.Task, Rubric: node.Rubric})
+			defer vetting.UnregisterAdvisorThread(token)
+			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
 			// Thread the turn's media parts to a media-capable node's worker
 			// (image/audio); text-only nodes get nil (a plain string prompt).
 			atts := plan.Attachments
@@ -90,7 +99,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				ctrl = nc
 			}
 
-			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, advisorNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
+			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				// Empty → the node FAILS. The DAG continues (dependents see the gap via
 				// buildTask's ⚠ note) and the empty output drives a loud node_failed. A

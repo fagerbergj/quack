@@ -152,7 +152,7 @@ func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 }
 
 // pathHasNode reports whether the event was emitted under the given graph node
-// (NodeInfo.Path segments are "name@run"; worker/advisor child runs nest below
+// (NodeInfo.Path segments are "name@run"; the worker's child runs nest below
 // the gated node's segment).
 func pathHasNode(ev *session.Event, nodeID string) bool {
 	if ev.NodeInfo == nil {
@@ -200,55 +200,24 @@ func replyString(reply any) string {
 	return fmt.Sprintf("%v", reply)
 }
 
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
-	// Advisor consult (formative, once per worker round). Best-effort: on error,
-	// proceed WITHOUT advice rather than fail the node. It runs via RunNode so it
-	// streams to the UI as a stage:advisor run (dagStream translates advisor-rN).
-	// Replaces the dropped self-critique stage — an independent second look at the
-	// approach before the worker commits.
-	//
-	// lastAdvice carries the advisor's OWN prior output forward across rounds
-	// within this invocation (draft → revision → revision …), so a later consult
-	// isn't a cold restart: the advisor sees what it already told the worker. This
-	// can't come for free from ADK's own session/branch mechanism — the AgentNode
-	// wrapper forces every LlmAgent into single-turn mode (IncludeContents:"none"),
-	// which discards session history regardless of branch, so we carry the memory
-	// ourselves instead. (It does NOT survive a HITL pause/resume — that's a fresh
-	// RunGatedRefine call — but the advisor doesn't run again on that path anyway;
-	// see the resumed branch below.)
-	var lastAdvice string
-	consult := func(runID, task string) string {
-		if advisorNode == nil {
-			return ""
-		}
-		req := "Advise on this task before it is attempted:\n\n" + task
-		if lastAdvice != "" {
-			req = "You advised on an earlier attempt at this task:\n\n" + lastAdvice +
-				"\n\n--- New context for this attempt ---\n" + task +
-				"\n\nGive updated advice: reinforce what still applies, drop what's already been addressed, flag anything new."
-		}
-		advice, aerr := runWorkerNode(ctx, advisorNode, req, runID)
-		if aerr != nil {
-			log.Warn("advisor consult failed; proceeding without advice", "run", runID, "err", aerr)
-			return ""
-		}
-		lastAdvice = advice
-		return advice
-	}
-	withAdvice := func(base, advice string) string {
-		if strings.TrimSpace(advice) == "" {
-			return base
-		}
-		return base + "\n\n--- Advisor guidance (consider before answering) ---\n" + advice
-	}
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	// The judge runs in its own isolated runner (off the workflow event stream), so
 	// its activity can't ride that stream. Forward it to the client as a stage:judge
 	// run via the SSE sink injected on ctx (executor.Execute) — SSE-only, never
 	// written to the session, so it can't re-poison a downstream node's request.
 	sink, _ := stream.YieldFromContext(ctx)
+
+	// promptEmit delivers each worker prompt as a session event, but ONLY for
+	// agents that can't take RunNode input natively (remote A2A workers — see
+	// Config.DeliverPromptEvent). nil disables emitPrompt for local llmagents,
+	// whose single-turn contents a stray user-role event would contaminate.
+	promptEmit := emit
+	if !cfg.DeliverPromptEvent {
+		promptEmit = nil
+	}
 
 	// Per-node steer/cancel (M5b), cooperative at gate-stage boundaries: ADK v2
 	// can't cancel a single model call mid-flight without breaking event streaming,
@@ -289,7 +258,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 				log.Info("node resumed with user answer", "round", scan.pauses)
 				answer, err = runWorkerNode(ctx, workerNode,
 					workerInput(withUserAnswer(prompt, turns), attachments),
-					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx))
+					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), promptEmit)
 				if err != nil {
 					log.Error("post-answer worker run failed", "err", err)
 					return "", GateResult{}, err
@@ -297,7 +266,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 			}
 		}
 		if !resumed {
-			answer, err = runWorkerNode(ctx, workerNode, workerInput(withAdvice(prompt, consult("advisor-r0"+sfx, prompt)), attachments), "worker-r0"+sfx)
+			answer, err = runWorkerNode(ctx, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, promptEmit)
 			if err != nil {
 				// Log at our boundary before returning: ADK's scheduler can swallow a
 				// node error into a silent empty completion, so this ERROR line (with the
@@ -395,8 +364,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode, advisorNode
 				break
 			}
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, v.Feedback, act))
-			advRun := fmt.Sprintf("advisor-r%d%s", round, sfx)
-			revised, rerr := runWorkerNode(ctx, workerNode, withAdvice(revisePrompt, consult(advRun, revisePrompt)), fmt.Sprintf("worker-r%d%s", round, sfx))
+			revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), promptEmit)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
@@ -474,8 +442,53 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 	return &genai.Content{Role: "user", Parts: append([]*genai.Part{{Text: prompt}}, attachments...)}
 }
 
-func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string) (string, error) {
+// gatePromptAuthor authors the prompt-delivery events emitPrompt writes. NOT
+// "user" (a user-authored event would split a chat turn in store.
+// groupSessionEvents and confuse the runner's turn detection) and never an
+// agent's name (remoteagent presents foreign-authored events to the remote
+// model as user messages — exactly what a prompt should be).
+const gatePromptAuthor = "quack-gate"
+
+// emitPrompt writes the worker's prompt into the session as a gate-authored
+// event, immediately before the RunNode that consumes it. A LOCAL llmagent
+// worker doesn't need it (node-mode llmagents take the RunNode input
+// directly), but production workers are A2A REMOTE agents, and those build
+// their outbound message from SESSION EVENTS ONLY — remoteagent's newMessage
+// reads ctx.Session().Events() and drops RunNode input/UserContent on the
+// floor (only llmagent implements the NodeRunner interface AgentNode would
+// deliver input through). Without this event a remote worker never sees its
+// node's task prompt at all, and a follow-up round whose session tail is
+// empty SKIPS the dispatch entirely (an empty outbound message short-circuits
+// in remoteagent). The emit → scheduler handshake → runner AppendEvent chain
+// completes before emit returns, so the event is durably in the session
+// before the dispatch that needs it — no ordering race.
+//
+// The event is filtered everywhere else by its author/branch: the chat store
+// skips non-orchestrator authors, the orchestrator's own history is branch-
+// filtered, and the dagStream translates it to (at most) the node's
+// node_start.
+func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any) {
+	if emit == nil {
+		return
+	}
+	ev := session.NewEvent(ctx, ctx.InvocationID())
+	ev.Author = gatePromptAuthor
+	switch v := input.(type) {
+	case string:
+		ev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: v}}}
+	case *genai.Content:
+		ev.Content = v
+	default:
+		return
+	}
+	if err := emit(ev); err != nil {
+		slog.Warn("prompt event emit failed; a remote worker may not see its task", "component", "vetting", "err", err)
+	}
+}
+
+func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string, emit func(*session.Event) error) (string, error) {
 	t0 := time.Now()
+	emitPrompt(ctx, emit, input)
 	out, err := workflow.RunNode[string](ctx, workerNode, input,
 		workflow.WithUseSubBranch(), workflow.WithRunID(runID))
 	if err != nil {

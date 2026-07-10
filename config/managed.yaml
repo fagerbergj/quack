@@ -49,7 +49,7 @@ agents:
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
-    tools: [web_search, web_fetch, summarize, current_date, stage_memory]
+    tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

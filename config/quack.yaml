@@ -51,7 +51,7 @@ agents:
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
@@ -101,13 +101,14 @@ tools:
 # own round budget (a stage with max_rounds:0 is skipped):
 #   1. deterministic_checks — free code checks (citation backing + length) that
 #      drive cheap targeted revisions to drop fabricated citations up front.
-#   2. advisor — a formative consult (a separate agent, agents/advisor) gives the
-#      worker guidance BEFORE it drafts. Not a gates.* toggle: it reuses the
-#      judge's provider/model and is enabled whenever the judge is (see below).
-#   3. judge — an independent model scores the answer; the worker revises on fail.
+#   2. judge — an independent model scores the answer; the worker revises on fail.
 # Deterministic citation/length scores are always folded into the judge's verdict.
-# Leave judge.model empty to disable the judge (and the advisor); the cheaper
-# deterministic_checks stage still runs.
+# The advisor (agents/advisor) is NOT a gate stage — it's a tool (ask_advisor,
+# see agents' tools: lists) the worker calls at its own discretion. It reuses
+# the judge's provider/model and is only registered on worker bundles that list
+# it when the judge is enabled (see below): leave judge.model empty to disable
+# both the judge and ask_advisor; the cheaper deterministic_checks stage still
+# runs.
 gates:
   constitution_path: config/constitution.md   # global principles, used for the advisor + judge
   rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.md in their bundle)

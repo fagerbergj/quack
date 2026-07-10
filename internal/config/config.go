@@ -67,9 +67,13 @@ type DagConfig struct {
 //   - deterministic_checks — free code checks (citation backing, length) that
 //     drive cheap targeted revisions before any expensive stage runs.
 //   - judge — an independent model scores the answer against the rubric and the
-//     worker revises on a fail. A formative advisor consult also runs before
-//     each worker draft whenever the judge is enabled (reuses its
-//     provider/model; not a separate gates.* toggle — see internal/serve).
+//     worker revises on a fail.
+//
+// The advisor (agents/advisor) is NOT a gate stage: it's the ask_advisor tool,
+// which a worker calls at its own discretion (see internal/tools/ask_advisor.go).
+// It reuses the judge's provider/model and is only registered on worker
+// bundles whose tools: list it when the judge is enabled — not a separate
+// gates.* toggle (see internal/serve's advisorAgent + resolveToolNames).
 //
 // The gate is optional: when no stage is active it is disabled and agents are
 // served unwrapped. constitution/rubric are shared by the advisor and judge.

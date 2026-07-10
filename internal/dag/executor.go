@@ -23,7 +23,6 @@ type Executor struct {
 	sessions    session.Service
 	agents      map[string]adkagent.Agent             // agent name → built (plain) agent
 	models      map[string]model.LLM                  // agent name → raw model (for the tool-less empty-recovery writer)
-	advisor     adkagent.Agent                        // formative advisor consulted per refine round; nil = disabled
 	judge       vetting.JudgeFactory                  // independent judge factory
 	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
 	mediaAgents map[string]bool                       // agents accepting image/audio parts
@@ -161,7 +160,7 @@ func (s *DagStream) Finish() {
 // freshly re-run). Per-node guidance should already be folded into the plan's node
 // Task by the caller.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.advisor, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -171,8 +170,8 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate — the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.
-func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, advisor adkagent.Agent, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, models: models, advisor: advisor, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
+func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
+	return &Executor{sessions: sessions, agents: agents, models: models, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 
 // gateScore is a node's trust-gate result read back from workflow session state.
@@ -317,10 +316,11 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	// A worker-run child event (path segment "…@worker-rN"): stream its activity as
 	// a run under the node.
 	runID := segRun(last)
-	// worker-rN = the gated worker's draft/revision; advisor-rN = the formative
-	// advisor consult (both run via RunNode on this stream). Anything else (e.g. a
-	// worker's own sub-agent tool run) isn't a node-level run — skip it.
-	if !strings.HasPrefix(runID, "worker") && !strings.HasPrefix(runID, "advisor") {
+	// worker-rN = the gated worker's draft/revision (run via RunNode on this
+	// stream). Anything else (e.g. a worker's own sub-agent tool run) isn't a
+	// node-level run — skip it. An ask_advisor consult is just an ordinary tool
+	// call WITHIN this run — it doesn't get its own runID/prefix.
+	if !strings.HasPrefix(runID, "worker") {
 		return true
 	}
 	if s.curRun[node] != runID {
@@ -495,14 +495,11 @@ func segRun(seg string) string {
 	return ""
 }
 
-// stageRound maps a run ID to its SSE stage + round: advisor-rN is the formative
-// advisor consult; worker-r0 is the initial worker draft; worker-rN (N≥1) is a
-// revision; worker-finalize-* is an empty-answer write-up (a worker stage).
+// stageRound maps a run ID to its SSE stage + round: worker-r0 is the initial
+// worker draft; worker-rN (N≥1) is a revision; worker-finalize-* is an
+// empty-answer write-up (a worker stage).
 func stageRound(runID string) (string, int) {
-	switch {
-	case strings.HasPrefix(runID, "advisor-r"):
-		return stream.StageAdvisor, toInt(runID[len("advisor-r"):])
-	case strings.HasPrefix(runID, "worker-r"):
+	if strings.HasPrefix(runID, "worker-r") {
 		if n := toInt(runID[len("worker-r"):]); n > 0 {
 			return stream.StageRevise, n
 		}

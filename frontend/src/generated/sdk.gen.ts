@@ -58,11 +58,13 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  *
  * The model is flat and agent-centric: the DAG (dag_plan + node_* events) is
  * the static structure, and within each node the trust gate runs a SEQUENCE
- * of agent invocations ("runs") — an optional formative advisor consult, the
- * worker draft, each judge round, and each revision. Every run is delimited
- * by `agent_start` / `agent_complete` and carries a `run_id` + `stage`
- * (`worker` | `advisor` | `judge` | `revise`); its activity references
- * that `run_id`. Clients group runs by `node_id` and pair tools by `call_id`.
+ * of agent invocations ("runs") — the worker draft, each judge round, and
+ * each revision. Every run is delimited by `agent_start` / `agent_complete`
+ * and carries a `run_id` + `stage` (`worker` | `judge` | `revise`); its
+ * activity references that `run_id`. Clients group runs by `node_id` and
+ * pair tools by `call_id`. A worker's advisor consultations (`ask_advisor`)
+ * are NOT a separate stage — they surface as ordinary tool activity
+ * (`agent_tool_call` / `agent_tool_result`) within the worker's own run.
  *
  * Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round"})
  * opens a run; `agent_thinking` ({"node_id","run_id","text"}) is reasoning;
