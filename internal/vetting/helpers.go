@@ -103,14 +103,32 @@ type fetchRecord struct {
 	sample string
 }
 
-// workerActivity summarises the worker's retrieval (reconstructed from session
-// events by activityFromSession). Passed to the judge + deterministic citation
-// check so neither can falsely claim no retrieval happened.
+// workerActivity summarises the worker's retrieval AND workspace operations
+// (reconstructed from session events by activityFromSession). Passed to the
+// judge + deterministic citation check so neither can falsely claim no
+// retrieval happened — and, via the workspace ledger, so the judge can check
+// the answer's CLAIMS against what the worker actually did (live e2e
+// 2026-07-10: a coder claimed "Committing…" + quoted README lines; ground
+// truth had zero commits and no such README content — both invisible to a
+// judge whose activity context recorded only web_search/web_fetch).
 type workerActivity struct {
-	searches []string               // every web_search query
-	fetched  map[string]fetchRecord // URL → sample for web_fetch calls that returned content
-	seen     map[string]string      // URL → search snippet for surfaced-but-not-fetched URLs
-	staged   []memory.Candidate     // memory candidates staged via stage_memory (M6)
+	searches  []string               // every web_search query
+	fetched   map[string]fetchRecord // URL → sample for web_fetch calls that returned content
+	seen      map[string]string      // URL → search snippet for surfaced-but-not-fetched URLs
+	staged    []memory.Candidate     // memory candidates staged via stage_memory (M6)
+	workspace []wsOp                 // fs/git/run_command operations, in session order (see ledger.go)
+}
+
+// wsOp is one workspace operation the worker actually performed — a completed
+// call/response pair for an fs, git, or run_command tool. detail is a
+// one-line summary (key args → key result fields, or "FAILED: …"); sample is
+// read_file's head-of-content excerpt (fetchRecord-style), letting the judge
+// spot-check quoted file content exactly as fetched-page samples let it
+// spot-check web quotes.
+type wsOp struct {
+	tool   string
+	detail string
+	sample string
 }
 
 // contentPlainText concatenates the plain-text parts of a content.

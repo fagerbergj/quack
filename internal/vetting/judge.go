@@ -129,12 +129,16 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 }
 
 // buildJudgePrompt is the user message handed to the agentic judge: the
-// constitution + rubric, the question, and the answer to judge. The judge does
-// NOT see the worker's retrieval, so the rubric tells it to judge grounding by
-// the presence of inline citations and never to treat unfamiliar/recent cited
-// facts as fabricated — its own world knowledge is stale (see reference-guided
-// source verification as a future improvement).
-func buildJudgePrompt(constitution, rubric string, question *genai.Content, answer string) string {
+// constitution + rubric, the question, the worker's WORKSPACE ledger (when it
+// performed any fs/git/run_command operations — see ledger.go), and the answer
+// to judge. The judge does NOT see the worker's web retrieval, so the rubric
+// tells it to judge grounding by the presence of inline citations and never to
+// treat unfamiliar/recent cited facts as fabricated — its own world knowledge
+// is stale. Workspace operations are different: the ledger IS ground truth
+// (reconstructed from session events, not from the worker's narration), so a
+// claims_match_activity rubric criterion can hard-fail an answer asserting an
+// operation the ledger doesn't contain (the live-e2e fabricated-commit hole).
+func buildJudgePrompt(constitution, rubric string, question *genai.Content, answer string, act workerActivity) string {
 	var sb strings.Builder
 	if constitution != "" {
 		sb.WriteString("Principles:\n")
@@ -145,6 +149,10 @@ func buildJudgePrompt(constitution, rubric string, question *genai.Content, answ
 	sb.WriteString(rubric)
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(questionText(question))
+	if ws := buildWorkspaceSection(act); ws != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(ws)
+	}
 	sb.WriteString("\n\nAnswer to judge:\n")
 	sb.WriteString(answer)
 	return sb.String()
@@ -159,7 +167,7 @@ func buildJudgePrompt(constitution, rubric string, question *genai.Content, answ
 // The verdict is captured structurally via submit_verdict (sink). If the judge
 // ends without calling it, runJudgeAgent falls back to parsing any text it
 // emitted, and failing that returns an error so the gate degrades gracefully.
-func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, emit func(*genai.Part) bool) (verdict, error) {
+func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
 	var sink verdict
 	judgeAgent, err := factory(&sink)
 	if err != nil {
@@ -183,7 +191,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer)}}
+	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer, act)}}
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {
 			parts = append(parts, p)
@@ -377,20 +385,32 @@ func lengthScore(answer string) float64 {
 // worker performed. An empty return means no retrieval happened (non-web agent
 // or a session where all fetches failed) — the section is omitted entirely.
 func buildActivitySection(act workerActivity) string {
-	if len(act.searches) == 0 && len(act.fetched) == 0 {
+	if len(act.searches) == 0 && len(act.fetched) == 0 && len(act.workspace) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("Session activity (retrieval the worker performed — do not contradict this):\n")
-	for _, q := range act.searches {
-		sb.WriteString("  • web_search: \"")
-		sb.WriteString(q)
-		sb.WriteString("\"\n")
+	if len(act.searches) > 0 || len(act.fetched) > 0 {
+		sb.WriteString("Session activity (retrieval the worker performed — do not contradict this):\n")
+		for _, q := range act.searches {
+			sb.WriteString("  • web_search: \"")
+			sb.WriteString(q)
+			sb.WriteString("\"\n")
+		}
+		for u := range act.fetched {
+			sb.WriteString("  • web_fetch: ")
+			sb.WriteString(u)
+			sb.WriteString("\n")
+		}
 	}
-	for u := range act.fetched {
-		sb.WriteString("  • web_fetch: ")
-		sb.WriteString(u)
-		sb.WriteString("\n")
+	// Workspace ledger (ledger.go): the fs/git/run_command operations the
+	// worker actually performed — in the revise prompt it reminds the worker
+	// what it has (and has NOT) already done, so a revision doesn't repeat the
+	// original's claimed-but-never-performed operations.
+	if ws := buildWorkspaceSection(act); ws != "" {
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(ws)
 	}
 	return sb.String()
 }

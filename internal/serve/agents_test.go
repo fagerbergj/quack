@@ -55,11 +55,20 @@ func TestCodeImplementerBundle(t *testing.T) {
 	if rubric == "" {
 		t.Fatal("rubric override is empty — buildAgents would silently fall back to the default rubric")
 	}
-	// Spot-check the rubric carries both halves of its contract: the research
-	// criteria and the first-class ponytail section.
-	for _, marker := range []string{"checks_pass", "yagni_speculative_generality", "diff_minimality", "deletion_over_addition", "native_first", "weakest-link"} {
+	// Spot-check the rubric carries all three parts of its contract: the
+	// research criteria, the first-class ponytail section, and the
+	// claims-vs-ledger fabrication criterion (live e2e 2026-07-10).
+	for _, marker := range []string{"checks_pass", "yagni_speculative_generality", "diff_minimality", "deletion_over_addition", "native_first", "weakest-link",
+		"claims_match_activity", "Workspace activity", "ledger"} {
 		if !strings.Contains(rubric, marker) {
 			t.Errorf("rubric missing expected marker %q", marker)
+		}
+	}
+	// The prompt carries the anti-fabrication hard rule that pairs with the
+	// judge's claims_match_activity criterion.
+	for _, marker := range []string{"Never state an operation happened", "Finish the WORK before writing the answer"} {
+		if !strings.Contains(b.Prompt, marker) {
+			t.Errorf("prompt missing expected hard-rule marker %q", marker)
 		}
 	}
 }

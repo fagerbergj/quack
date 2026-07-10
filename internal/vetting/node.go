@@ -387,7 +387,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			act := activityFromSession(ctx.Session())
 			runID := fmt.Sprintf("judge-r%d", round)
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
-			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, judgePartEmitter(sink, nodeID, runID))
+			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, act, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
 				// ERROR, not Warn: a judge failure means the answer is going out
 				// UNVETTED — that must be loud in the logs, not buried.
@@ -632,16 +632,20 @@ func composeFeedback(v verdict, threshold float64) string {
 }
 
 // activityFromSession reconstructs the worker's retrieval activity (web_search
-// queries, fetched URLs, searched URLs) from the workflow session events. It
-// replaces the legacy live-stream capture in gate.runWorker: web_fetch calls are
+// queries, fetched URLs, searched URLs) AND its workspace-operation ledger
+// (fs/git/run_command calls — see ledger.go) from the workflow session events.
+// It replaces the legacy live-stream capture in gate.runWorker: calls are
 // paired to their responses by call ID, and web_search results feed the "seen"
-// set. Consumed by the deterministic citation check.
+// set. Consumed by the deterministic citation check, the judge prompt's
+// workspace section (claims-vs-activity), and the revise/finalize prompts.
 func activityFromSession(sess session.Session) workerActivity {
 	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}}
 	if sess == nil {
 		return act
 	}
-	pending := map[string]string{} // web_fetch call ID → URL
+	pending := map[string]string{}           // web_fetch call ID → URL
+	pendingWs := map[string]map[string]any{} // workspace-tool call ID → args (see ledger.go)
+	pendingWsTool := map[string]string{}     // workspace-tool call ID → tool name
 	for ev := range sess.Events().All() {
 		if ev == nil || ev.Content == nil {
 			continue
@@ -664,6 +668,11 @@ func activityFromSession(sess session.Session) workerActivity {
 					if cand, ok := stagedCandidate(p.FunctionCall); ok {
 						act.staged = append(act.staged, cand)
 					}
+				default:
+					if isWorkspaceTool(p.FunctionCall.Name) {
+						pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
+						pendingWsTool[p.FunctionCall.ID] = p.FunctionCall.Name
+					}
 				}
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_fetch" {
@@ -676,6 +685,17 @@ func activityFromSession(sess session.Session) workerActivity {
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_search" {
 				recordSearchResults(act.seen, p.FunctionResponse.Response)
+			}
+			if p.FunctionResponse != nil && isWorkspaceTool(p.FunctionResponse.Name) {
+				// Only a completed call/response pair enters the ledger — an
+				// operation with no response never happened as far as claims go.
+				// Failures ARE recorded (recordWsOp marks them FAILED): "the tests
+				// passed" claimed over a failed run must be contradictable.
+				if args, known := pendingWs[p.FunctionResponse.ID]; known && pendingWsTool[p.FunctionResponse.ID] == p.FunctionResponse.Name {
+					delete(pendingWs, p.FunctionResponse.ID)
+					delete(pendingWsTool, p.FunctionResponse.ID)
+					act.workspace = append(act.workspace, recordWsOp(p.FunctionResponse.Name, args, p.FunctionResponse.Response))
+				}
 			}
 		}
 	}
