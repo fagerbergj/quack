@@ -26,7 +26,6 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 
-	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -205,7 +204,7 @@ func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (a
 	if g.sessions == nil {
 		return false, false, false
 	}
-	nodeID := nodeIDFromSession(ctx, g.sessions)
+	nodeID := guardNodeID(ctx)
 	if nodeID == "" {
 		return false, false, false
 	}
@@ -227,25 +226,38 @@ func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (al
 	}
 	var task, activity string
 	if g.sessions != nil {
-		if nodeID := nodeIDFromSession(ctx, g.sessions); nodeID != "" {
-			task = taskFromState(ctx, nodeID)
+		if token, nodeID := guardThread(ctx); nodeID != "" {
+			if at, found := vetting.LookupAdvisorThread(token); found {
+				task = at.Task
+			}
 			activity = recentActivity(ctx, g.sessions, nodeID)
 		}
 	}
 	return g.judge(ctx, "", task, g.Name(), args, activity)
 }
 
-// taskFromState reads the node's task from session state (written by
-// dag.newGatedNode before the worker runs), mirroring ask_advisor.go's
-// seedText — best-effort, "" if unset.
-func taskFromState(ctx agent.Context, nodeID string) string {
-	st := ctx.State()
-	if st == nil {
-		return ""
+// guardThread resolves the gated node this call runs under, from the same
+// prompt marker ask_advisor uses (vetting.AdvisorThreadMarker — the ONE
+// identity channel that survives the A2A hop; see advisor_thread.go). token is
+// the full plan/node thread token (keys the registered task for the safety
+// judge); nodeID is its node segment (keys the confirm scan). Both empty for a
+// direct, un-gated invocation — the guard then runs with no task context and
+// no confirm history, which fails toward MORE restriction, never less.
+func guardThread(tc agent.Context) (token, nodeID string) {
+	tok, ok := vetting.ParseAdvisorThread(contentText(tc.UserContent()))
+	if !ok {
+		return "", ""
 	}
-	task, _ := st.Get(dag.NodeTaskStateKey + nodeID)
-	s, _ := task.(string)
-	return s
+	if i := strings.LastIndex(tok, "/"); i >= 0 && i+1 < len(tok) {
+		return tok, tok[i+1:]
+	}
+	return tok, ""
+}
+
+// guardNodeID is guardThread reduced to the node segment.
+func guardNodeID(tc agent.Context) string {
+	_, nodeID := guardThread(tc)
+	return nodeID
 }
 
 // recentActivity summarizes the last few tool calls this node made this
