@@ -35,6 +35,11 @@ Example requests:
 
 ## Implementation
 
+> **Cloning:** use `git clone --recursive` (or run `git submodule update --init` after a plain
+> clone) — the code-implementer's coding-discipline skills are a vendored git submodule at
+> `.agents/vendor/ponytail`, merged into the runtime skill library when present. Without it the
+> server still runs; those skills are just unavailable.
+
 Quack is a Go monorepo built on **[Google ADK for Go][adk]**. Clients hand it a request through a
 gateway, and from there the **orchestrator** plans a DAG of agents. A small **custom executor**
 runs each node as an ADK agent, wrapping every one in an adversarial generate→critique→revise→judge
