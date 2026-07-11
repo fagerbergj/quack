@@ -1,7 +1,8 @@
 // Package orchestrator is Quack's request entrypoint. It runs as a real ADK
 // llmagent with two tools: plan (decomposes a query into a DAG) and execute
 // (runs the DAG). Simple conversational queries are answered directly by the
-// agent without calling either tool; research queries go through plan → execute.
+// agent without calling either tool; work needing specialists (web research,
+// code implementation, media reading) goes through plan → execute.
 package orchestrator
 
 import (
@@ -39,7 +40,8 @@ const AppName = "quack"
 const orchestratorName = "orchestrator"
 
 // Orchestrator is a real ADK llmagent that decides whether to answer directly
-// from session context or to call plan → execute for web research.
+// from session context or to call plan → execute, routing work to the right
+// specialist (web research, code implementation, media reading).
 type Orchestrator struct {
 	sessions  session.Service
 	model     model.LLM
@@ -236,7 +238,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 
 		ag, err := llmagent.New(llmagent.Config{
 			Name:        orchestratorName,
-			Description: "Routes research requests to specialist agents and answers conversational queries directly.",
+			Description: "Routes requests to the right specialist agents — web research, code implementation, media reading — and answers conversational queries directly.",
 			Model:       o.model,
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
@@ -288,8 +290,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// event up through this stream without going through the ADK session pipeline.
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
 
-		// Tell the orchestrator (in text) that media is attached so it routes to
-		// research/plan rather than claiming it cannot see the file. The raw bytes
+		// Tell the orchestrator (in text) that media is attached so it plans the
+		// work rather than claiming it cannot see the file. The raw bytes
 		// reach the media-capable node via the plan tool → planner → executor.
 		text := message
 		if desc := dag.AttachmentDesc(attachments); desc != "" {

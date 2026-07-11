@@ -34,7 +34,7 @@ func NewAskUserTool() (tool.Tool, error) {
 				"only they have (a credential-free choice, an ambiguous requirement, a preference that " +
 				"materially changes the work). The run pauses until they answer; their answer is delivered " +
 				"back to you. Ask at most one precise question, and NEVER use this when a sensible default " +
-				"or your own research can resolve the ambiguity.",
+				"or your own work can resolve the ambiguity.",
 		},
 		func(tc agent.Context, _ askUserArgs) (askUserResult, error) {
 			// End the worker's turn so the gate sees the ask (an empty draft with the

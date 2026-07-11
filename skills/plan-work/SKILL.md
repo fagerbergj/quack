@@ -18,10 +18,16 @@ Match the request to a known shape first; fall back to the general rules below.
 
 | Request | DAG shape |
 | --- | --- |
-| Single topic | ONE `web-researcher` node, no synthesizer |
-| Several distinct topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
+| Single information topic | ONE `web-researcher` node, no synthesizer |
+| Several distinct information topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
 | Write/fix/refactor code in a repo | ONE `code-implementer` node, with `checks` + `workdir` when checks are available (see Code checks) |
+
+Route by what the node must DO, not by topic: any node that must change code,
+commit, or push is `code-implementer` work — never `web-researcher`, which
+cannot commit and whose vetting expects web citations. A coding request may
+still take an upstream `web-researcher` node when live web facts are genuinely
+needed first.
 
 ## How to build the DAG
 
@@ -32,7 +38,7 @@ Work through these in order:
    year explicitly (today's date is in your Environment section) rather than relying
    on training data.
 
-2. **Choose the shape.** One focused job per researcher — a single question or a few
+2. **Choose the shape.** One focused job per node — a single question or a few
    tightly-related sub-questions. Never pack unrelated topics into one node
    ("research X, Y, and Z"); split them. A task that reads as a list of unrelated
    things is overloaded.
@@ -44,7 +50,7 @@ Work through these in order:
 4. **Wire dependencies.** `depends_on: []` only when nodes are TRULY independent
    (each answerable without the other's output). Use `depends_on: [id]` when a node
    needs another's specific output (find which models exist, THEN look up their
-   specs). The `synthesizer` depends on ALL research nodes (the plan tool enforces
+   specs). The `synthesizer` depends on ALL other nodes (the plan tool enforces
    this, but author it correctly anyway).
 
 5. **Write self-contained tasks** — the rule that most often breaks plans. Each node

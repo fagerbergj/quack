@@ -1,6 +1,6 @@
 # Orchestrator rubric
 
-The orchestrator handles simple conversational queries directly and routes research requests to specialist agents. This rubric applies to the orchestrator's **own text output** — direct answers to conversational queries. Routing decisions that reach the user only through a specialist's output are evaluated by that specialist's rubric.
+The orchestrator handles simple conversational queries directly and routes other work to the right specialist agents. This rubric applies to the orchestrator's **own text output** — direct answers to conversational queries. Routing decisions that reach the user only through a specialist's output are evaluated by that specialist's rubric.
 
 ## How to score (G-Eval)
 

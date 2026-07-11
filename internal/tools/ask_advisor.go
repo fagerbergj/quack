@@ -39,7 +39,7 @@ const advisorUserID = "advisor"
 // guidance): availability + honest, direct feedback + a real memory of the
 // relationship (no re-briefing), when a good advisee consults, and what a
 // good request looks like.
-const askAdvisorDescription = "Consult your research advisor: a mentor who already knows this task's goal " +
+const askAdvisorDescription = "Consult your advisor: a mentor who already knows this task's goal " +
 	"and its acceptance rubric, and is always available to help you reach it — without doing the work for " +
 	"you. The relationship works like a good academic advising relationship: honest and direct feedback " +
 	"(it will tell you plainly when an approach is off track, too broad, too narrow, or missing something — " +
@@ -70,8 +70,8 @@ type askAdvisorResult struct {
 	Advice string `json:"advice"`
 }
 
-// NewAskAdvisorTool returns ask_advisor: a worker consults its research
-// advisor at its own discretion, as many times as it likes. Construction
+// NewAskAdvisorTool returns ask_advisor: a worker consults its advisor at
+// its own discretion, as many times as it likes. Construction
 // takes the advisor agent and the shared session.Service; a nil advisor is
 // tolerated defensively (production never registers the tool in that case —
 // see resolveToolNames in internal/serve) and always yields empty advice.

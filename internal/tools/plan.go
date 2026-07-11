@@ -95,7 +95,7 @@ func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
 
 // summarizePlan renders the plan for the model to review before executing: each
 // node's id, agent, dependencies, AND its full task text, so the model can judge
-// the decomposition (Is any researcher overloaded? Is shared work duplicated
+// the decomposition (Is any node overloaded? Is shared work duplicated
 // instead of extracted into an upstream node? Are the dependencies right?) and
 // re-plan if it isn't good. Informational only — execution uses the cached plan.
 func summarizePlan(p *dag.Plan) string {
