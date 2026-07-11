@@ -275,9 +275,16 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		}
 
 		r, err := runner.New(runner.Config{
-			AppName:           AppName,
-			Agent:             wf,
-			SessionService:    o.sessions,
+			AppName: AppName,
+			Agent:   wf,
+			// The CONVERSATION view, not the raw session: the plan graph runs in
+			// this same session, and with Mode: ModeChat the llmagent would
+			// otherwise rebuild its request from every worker/gate event a heavy
+			// run left behind (110K-token follow-up requests — see
+			// sessionfilter.go). Writes pass through unfiltered; only this
+			// runner's reads are dieted. The plan/retry/resume runners and all
+			// direct o.sessions reads stay raw.
+			SessionService:    conversationSessions{o.sessions},
 			MemoryService:     memSvc,
 			AutoCreateSession: true,
 		})
