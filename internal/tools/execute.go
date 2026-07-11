@@ -57,7 +57,7 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 			// End the llmagent turn structurally so it can't emit a chatty
 			// acknowledgement over the execute node's streamed answer.
 			// ponytail: the plan's synthesizer node IS the loop-back — it folds the
-			// research outputs into the final answer. Full fold-into-reply just needs the
+			// specialist outputs into the final answer. Full fold-into-reply just needs the
 			// orchestrator's context (conversation history + the user's exact framing)
 			// threaded into that node; end_turn=false is a no-op for now (always deliver).
 			tc.Actions().SkipSummarization = true

@@ -7,8 +7,9 @@ inform the independent judge's evaluation. They do not change per agent.
 ## Principles
 
 **Honest grounding.** Every non-trivial claim is drawn from sources the agent
-actually consulted during this session. Prior training knowledge does not
-substitute for retrieval. When a source cannot be found, say so plainly rather
+actually consulted during this session — pages fetched, files read,
+repositories cloned. Prior training knowledge does not substitute for
+consulting the real source. When a source cannot be found, say so plainly rather
 than guessing with false confidence.
 
 **No fabrication.** Names, numbers, prices, URLs, and specific details appear
