@@ -529,38 +529,109 @@ func TestGitBranchListAndCreate(t *testing.T) {
 // gitEnv / GIT_ASKPASS injection shape
 // ---------------------------------------------------------------------------
 
-func TestGitEnvInjectsAskpassOnlyWithCredential(t *testing.T) {
-	env, err := gitEnv("/home/x", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
+	env := gitEnv("/home/x", nil)
 	for _, e := range env {
-		if strings.HasPrefix(e, "GIT_ASKPASS=") || strings.HasPrefix(e, GitAskpassTokenEnv+"=") {
-			t.Errorf("no-credential env unexpectedly contains %q", e)
+		if strings.HasPrefix(e, "GIT_ASKPASS=") || strings.HasPrefix(e, GitAskpassTokenEnv+"=") || strings.HasPrefix(e, GitAskpassUserEnv+"=") {
+			t.Errorf("no-auth env unexpectedly contains %q", e)
 		}
 	}
 
-	env2, err := gitEnv("/home/x", &GitCredential{Host: "github.com", Username: "x-access-token", Token: "secret"})
+	auth := &gitAuth{
+		cred:    GitCredential{Host: "github.com", Username: "x-access-token", Token: "secret"},
+		askpass: "/workspace/" + GitAskpassLinkName,
+	}
+	env2 := gitEnv("/home/x", auth)
+	want := map[string]bool{
+		// GIT_ASKPASS must be EXACTLY the executable symlink path — git execs
+		// the value directly as one program, so any "<path> <arg>" form is a
+		// broken (unexecutable) configuration. This is the regression guard
+		// for the live "cannot exec 'quack git-askpass'" failure.
+		"GIT_ASKPASS=/workspace/" + GitAskpassLinkName: false,
+		GitAskpassUserEnv + "=x-access-token":          false,
+		GitAskpassTokenEnv + "=secret":                 false,
+	}
+	for _, e := range env2 {
+		if _, ok := want[e]; ok {
+			want[e] = true
+		}
+		if strings.HasPrefix(e, "GIT_ASKPASS=") && strings.Contains(e, " ") {
+			t.Errorf("GIT_ASKPASS value contains a space (unexecutable by git): %q", e)
+		}
+	}
+	for k, seen := range want {
+		if !seen {
+			t.Errorf("auth env missing %q (got %v)", k, env2)
+		}
+	}
+}
+
+// TestEnsureAskpassLink: the symlink is created pointing at the current
+// executable, is stable across calls, and a stale link (pointing elsewhere)
+// is repaired.
+func TestEnsureAskpassLink(t *testing.T) {
+	root := t.TempDir()
+	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawAskpass, sawToken bool
-	for _, e := range env2 {
-		if strings.HasPrefix(e, "GIT_ASKPASS=") {
-			sawAskpass = true
-			if !strings.Contains(e, "git-askpass") {
-				t.Errorf("GIT_ASKPASS = %q, want it to invoke the git-askpass mode", e)
-			}
-		}
-		if e == GitAskpassTokenEnv+"=secret" {
-			sawToken = true
-		}
+
+	link, err := ensureAskpassLink(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !sawAskpass {
-		t.Error("expected GIT_ASKPASS to be set when a credential is supplied")
+	if link != filepath.Join(root, GitAskpassLinkName) {
+		t.Errorf("link path = %q, want it at the workspace root under %q", link, GitAskpassLinkName)
 	}
-	if !sawToken {
-		t.Error("expected the token env var to carry the credential's token")
+	if dest, err := os.Readlink(link); err != nil || dest != self {
+		t.Errorf("link -> %q (err=%v), want the current executable %q", dest, err, self)
+	}
+
+	// Idempotent second call.
+	link2, err := ensureAskpassLink(root)
+	if err != nil || link2 != link {
+		t.Errorf("second call = (%q, %v), want the same link", link2, err)
+	}
+
+	// Stale link (binary moved) gets repaired.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/nonexistent/old-quack", link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureAskpassLink(root); err != nil {
+		t.Fatal(err)
+	}
+	if dest, err := os.Readlink(link); err != nil || dest != self {
+		t.Errorf("stale link not repaired: -> %q (err=%v), want %q", dest, err, self)
+	}
+}
+
+// TestAuthForCreatesAskpassLink: resolving a credentialed host yields an auth
+// whose askpass path is a live symlink to this executable; a credential-less
+// host yields nil auth and no error.
+func TestAuthForCreatesAskpassLink(t *testing.T) {
+	b := newTestGitBinding(t)
+	b.credentials = []GitCredential{{Host: "github.com", Username: "u", Token: "tok"}}
+
+	auth, err := b.authFor("https://github.com/a/b.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth == nil {
+		t.Fatal("expected auth for a credentialed host")
+	}
+	if auth.cred.Username != "u" || auth.cred.Token != "tok" {
+		t.Errorf("auth.cred = %+v", auth.cred)
+	}
+	if fi, err := os.Lstat(auth.askpass); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("askpass %q is not a symlink (err=%v)", auth.askpass, err)
+	}
+
+	none, err := b.authFor("https://elsewhere.com/a/b.git")
+	if err != nil || none != nil {
+		t.Errorf("uncredentialed host: auth=%v err=%v, want nil/nil", none, err)
 	}
 }
 

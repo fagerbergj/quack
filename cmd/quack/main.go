@@ -33,6 +33,14 @@ import (
 var version = "dev"
 
 func main() {
+	// GIT_ASKPASS mode, dispatched on argv[0] BEFORE cobra: when this binary
+	// is exec'd through the workspace askpass symlink (git runs $GIT_ASKPASS
+	// directly as one program path — see cmd/quack/git_askpass.go), answer
+	// git's credential prompt and exit.
+	if isGitAskpassInvocation() {
+		gitAskpassMain(os.Args, os.Stdout)
+		return
+	}
 	if err := newRootCmd().Execute(); err != nil {
 		os.Exit(1) // cobra has already printed the error to stderr
 	}
