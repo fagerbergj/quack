@@ -42,17 +42,47 @@ func TestRunCommandBasic(t *testing.T) {
 func TestRunCommandRejectsShellMetachars(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	for _, cmd := range []string{
-		"echo hi | grep h",
 		"echo hi; rm -rf /",
 		"echo $HOME",
 		"echo `whoami`",
 		"echo hi > out.txt",
+		"cat < in.txt",
 		"echo hi && echo bye",
 		"(echo hi)",
 	} {
 		if _, err := b.runCommand(runCommandArgs{Dir: "", Command: cmd}); err == nil {
 			t.Errorf("runCommand(%q): want error (shell metacharacter), got nil", cmd)
 		}
+	}
+}
+
+func TestRunCommandAcceptsNativePipes(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	ensureUserRoot(t, b)
+	res, err := b.runCommand(runCommandArgs{Dir: "", Command: "printf 'b\\na\\nc\\n' | sort | head -2"})
+	if err != nil {
+		t.Fatalf("runCommand(pipeline): %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0 (output: %q)", res.ExitCode, res.Output)
+	}
+	if !strings.Contains(res.Output, "a") || strings.Contains(res.Output, "c") {
+		t.Errorf("Output = %q, want the sorted head only", res.Output)
+	}
+}
+
+func TestRunCommandPipefailSurfacesStageFailure(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	ensureUserRoot(t, b)
+	res, err := b.runCommand(runCommandArgs{Dir: "", Command: "false | cat"})
+	if err != nil {
+		t.Fatalf("runCommand: %v", err)
+	}
+	if res.ExitCode == 0 {
+		t.Error("ExitCode = 0, want non-zero (pipefail)")
+	}
+	if !strings.Contains(res.Output, "stage 1 of 2") {
+		t.Errorf("Output = %q, want the failing stage named", res.Output)
 	}
 }
 
@@ -117,10 +147,14 @@ func TestRunCommandRejectsEmpty(t *testing.T) {
 	}
 }
 
-// sanity: workspace.ContainsShellMetachar/SplitArgv are exercised directly in
-// internal/workspace/exec_test.go; this just confirms run_command wires them up.
+// sanity: workspace.ContainsShellMetachar/SplitPipeline are exercised directly
+// in internal/workspace/exec_test.go; this just confirms run_command wires
+// them up (pipes pass, the rest of the metachar set still rejects).
 func TestRunCommandUsesWorkspaceValidation(t *testing.T) {
-	if !workspace.ContainsShellMetachar("a|b") {
+	if workspace.ContainsShellMetachar("a|b") {
+		t.Fatal("sanity: pipes must not be metachars (they run natively)")
+	}
+	if !workspace.ContainsShellMetachar("a;b") {
 		t.Fatal("sanity: ContainsShellMetachar broken")
 	}
 }
