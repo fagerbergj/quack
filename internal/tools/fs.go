@@ -56,7 +56,7 @@ func newFSBinding(d Deps) (fsBinding, error) {
 		return fsBinding{}, fmt.Errorf("tools: filesystem tools require a WorkspaceUserID")
 	}
 	caps := d.WorkspaceCaps
-	if (caps == workspace.Caps{}) {
+	if caps.IsZero() {
 		caps = workspace.DefaultCaps()
 	}
 	return fsBinding{userID: userID, jail: d.Workspace, caps: caps}, nil

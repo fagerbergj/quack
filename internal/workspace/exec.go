@@ -174,6 +174,16 @@ type ExecResult struct {
 // PATH) is the isolation goal, not hiding the toolchain from itself.
 const execEnvPath = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
 
+// childPath is execEnvPath plus the operator-configured extra directories
+// (Caps.ExtraPath / workspace.exec_path) — extras go FIRST so a configured
+// toolchain (nvm's node) wins over a stale system one.
+func childPath(caps Caps) string {
+	if len(caps.ExtraPath) == 0 {
+		return execEnvPath
+	}
+	return strings.Join(caps.ExtraPath, ":") + ":" + execEnvPath
+}
+
 // RunArgv executes argv[0] with argv[1:] as a subprocess: exec.Command argv
 // arrays ONLY, never a shell. The caller has already rejected shell
 // metacharacters and split the command itself (ContainsShellMetachar /
@@ -213,7 +223,7 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 
 	cmd := exec.CommandContext(cctx, bin, argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + execEnvPath, "HOME=" + dir}
+	cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + dir}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -291,7 +301,7 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 		}
 		cmd := exec.CommandContext(cctx, bin, argv[1:]...)
 		cmd.Dir = dir
-		cmd.Env = []string{"PATH=" + execEnvPath, "HOME=" + dir}
+		cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + dir}
 		stderrs[i] = &bytes.Buffer{}
 		cmd.Stderr = stderrs[i]
 		cmds[i] = cmd

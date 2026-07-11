@@ -151,7 +151,7 @@ func newGitBinding(d Deps) (gitBinding, error) {
 		return gitBinding{}, fmt.Errorf("tools: git tools require a WorkspaceUserID")
 	}
 	caps := d.WorkspaceCaps
-	if (caps == workspace.Caps{}) {
+	if caps.IsZero() {
 		caps = workspace.DefaultCaps()
 	}
 	return gitBinding{
@@ -206,11 +206,22 @@ func gitBinaryPath() (string, error) {
 // "<binary> <subcommand>"), and the username/token travel ONLY as env vars on
 // this one child process — never written to disk, never in a URL, never in
 // `ps` output for the long-lived server process.
-func gitEnv(home string, auth *gitAuth) []string {
+// gitChildPath mirrors workspace's childPath for git children: the fixed
+// minimal PATH plus the operator's workspace.exec_path extras (a git hook or
+// filter may legitimately need the configured toolchain).
+func gitChildPath(caps workspace.Caps) string {
+	base := "/usr/bin:/bin"
+	if len(caps.ExtraPath) == 0 {
+		return base
+	}
+	return strings.Join(caps.ExtraPath, ":") + ":" + base
+}
+
+func gitEnv(home string, caps workspace.Caps, auth *gitAuth) []string {
 	env := []string{
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
-		"PATH=/usr/bin:/bin",
+		"PATH=" + gitChildPath(caps),
 		"HOME=" + home,
 	}
 	if auth != nil {
@@ -253,7 +264,7 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	env := gitEnv(dir, auth)
+	env := gitEnv(dir, caps, auth)
 	cmd := exec.CommandContext(cctx, bin, argv...)
 	cmd.Dir = dir
 	cmd.Env = env

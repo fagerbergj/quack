@@ -314,3 +314,16 @@ func TestRunPipelineMissingBinaryErrors(t *testing.T) {
 		t.Fatal("RunPipeline: want error for a missing stage binary")
 	}
 }
+
+// TestChildPathExtras: workspace.exec_path extras go FIRST (a configured
+// toolchain wins over a stale system one); empty extras = the fixed PATH alone.
+func TestChildPathExtras(t *testing.T) {
+	if got := childPath(Caps{}); got != execEnvPath {
+		t.Errorf("childPath(no extras) = %q, want %q", got, execEnvPath)
+	}
+	got := childPath(Caps{ExtraPath: []string{"/opt/nvm/bin", "/opt/asdf/shims"}})
+	want := "/opt/nvm/bin:/opt/asdf/shims:" + execEnvPath
+	if got != want {
+		t.Errorf("childPath(extras) = %q, want %q", got, want)
+	}
+}

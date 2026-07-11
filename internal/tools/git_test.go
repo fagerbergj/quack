@@ -530,7 +530,7 @@ func TestGitBranchListAndCreate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
-	env := gitEnv("/home/x", nil)
+	env := gitEnv("/home/x", workspace.Caps{}, nil)
 	for _, e := range env {
 		if strings.HasPrefix(e, "GIT_ASKPASS=") || strings.HasPrefix(e, GitAskpassTokenEnv+"=") || strings.HasPrefix(e, GitAskpassUserEnv+"=") {
 			t.Errorf("no-auth env unexpectedly contains %q", e)
@@ -541,7 +541,7 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 		cred:    GitCredential{Host: "github.com", Username: "x-access-token", Token: "secret"},
 		askpass: "/workspace/" + GitAskpassLinkName,
 	}
-	env2 := gitEnv("/home/x", auth)
+	env2 := gitEnv("/home/x", workspace.Caps{}, auth)
 	want := map[string]bool{
 		// GIT_ASKPASS must be EXACTLY the executable symlink path — git execs
 		// the value directly as one program, so any "<path> <arg>" form is a

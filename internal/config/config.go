@@ -59,6 +59,11 @@ type WorkspaceConfig struct {
 	// into per-node checks (§4 of the design doc). Empty (default) means checks
 	// are unavailable; consumed by a later PR, not this one.
 	CheckCommands []string `yaml:"check_commands"`
+	// ExecPath lists extra directories appended (first) to the hermetic child
+	// PATH for run_command, gate checks, and git children — the operator's
+	// knob for toolchains living outside the fixed system dirs (nvm, asdf,
+	// custom prefixes). Empty (default) = the fixed PATH alone.
+	ExecPath []string `yaml:"exec_path"`
 	// GitCredentials are deployment-level per-host HTTPS git credentials (one
 	// identity per host — a PAT, configured like every other secret). Empty
 	// (default) ⇒ public repos only. Token MUST be an ${VAR} env reference in

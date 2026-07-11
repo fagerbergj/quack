@@ -23,6 +23,12 @@ type Caps struct {
 	// dedicated maxGitOutputBytes (internal/tools/git.go), which predates this
 	// and stays git-specific.
 	MaxOutputBytes int64
+	// ExtraPath is appended to the hermetic child PATH (execEnvPath) for
+	// RunArgv/RunPipeline children AND git children — the operator's knob for
+	// host toolchains living outside the fixed directories (nvm, asdf, custom
+	// prefixes). Configured via workspace.exec_path. Empty = the fixed PATH
+	// alone, exactly as before.
+	ExtraPath []string
 }
 
 // DefaultCaps returns the isolation model's documented defaults.
@@ -35,4 +41,11 @@ func DefaultCaps() Caps {
 		Timeout:        60 * time.Second,
 		MaxOutputBytes: 64 * 1024,
 	}
+}
+
+// IsZero reports an entirely-unset Caps (callers substitute DefaultCaps).
+// Needed because ExtraPath makes Caps non-comparable with ==.
+func (c Caps) IsZero() bool {
+	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
+		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 && len(c.ExtraPath) == 0
 }

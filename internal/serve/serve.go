@@ -423,6 +423,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		MaxResults:     cfg.Workspace.MaxResults,
 		MaxListEntries: cfg.Workspace.MaxListEntries,
 		Timeout:        time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
+		ExtraPath:      cfg.Workspace.ExecPath,
 	}
 
 	var judgeFactory vetting.JudgeFactory
