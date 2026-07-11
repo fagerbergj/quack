@@ -1,10 +1,12 @@
 package vetting
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 )
 
@@ -157,5 +159,102 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 	got = buildJudgePrompt("", "rubric text", questionContent("q"), "a", workerActivity{})
 	if strings.Contains(got, "Workspace activity") {
 		t.Errorf("judge prompt should carry no workspace section without ops:\n%s", got)
+	}
+}
+
+// TestGitCloneCountsAsRetrieval reenacts the live routing-failure's second
+// half (2026-07-10): a node following the research-git-repos flow CLONES a
+// repo instead of web-fetching it, then cites the repo URL — citationScore
+// scored it 0.00 backing because git_clone landed in neither fetched nor
+// seen. A successful clone must enter act.seen (seen-tier credit, 0.75; the
+// repo's whole contents are locally available), and the ledger entry is
+// unchanged.
+func TestGitCloneCountsAsRetrieval(t *testing.T) {
+	svc := session.InMemoryService()
+	ctx := context.Background()
+	resp, err := svc.Create(ctx, &session.CreateRequest{AppName: "t", UserID: "u", SessionID: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := resp.Session
+
+	const repoURL = "https://github.com/example/repo"
+	call := session.NewEvent(ctx, "test")
+	call.Author = "coder"
+	call.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{
+		FunctionCall: &genai.FunctionCall{ID: "c1", Name: "git_clone",
+			Args: map[string]any{"url": repoURL, "dir": "repo"}},
+	}}}
+	if err := svc.AppendEvent(ctx, sess, call); err != nil {
+		t.Fatal(err)
+	}
+	respEv := session.NewEvent(ctx, "test")
+	respEv.Author = "coder"
+	respEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{
+		FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "git_clone",
+			Response: map[string]any{"dir": "repo", "head": "abc123", "default_branch": "main"}},
+	}}}
+	if err := svc.AppendEvent(ctx, sess, respEv); err != nil {
+		t.Fatal(err)
+	}
+
+	act := activityFromSession(sess)
+
+	// The clone URL is retrieval: seen-tier.
+	if _, ok := act.seen[repoURL]; !ok {
+		t.Fatalf("act.seen missing the cloned repo URL; seen=%v", act.seen)
+	}
+	// citationScore gives a citation of the cloned repo nonzero backing.
+	answer := "The repo's entrypoint is documented in [the repository](" + repoURL + ")."
+	score, details, ok := citationScore(answer, act)
+	if !ok {
+		t.Fatal("citationScore abstained despite recorded retrieval")
+	}
+	if score <= 0 {
+		t.Errorf("citationScore = %v, want nonzero backing for the cloned repo URL (details: %+v)", score, details)
+	}
+	// Ledger behavior unchanged: the git_clone op is still recorded.
+	if len(act.workspace) != 1 || act.workspace[0].tool != "git_clone" {
+		t.Errorf("workspace ledger = %+v, want the git_clone op recorded", act.workspace)
+	}
+}
+
+// TestGitCloneFailureGetsNoRetrievalCredit: a FAILED clone stays out of the
+// seen set (nothing was retrieved) while still appearing in the ledger as a
+// FAILED op the judge can hold against claims.
+func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
+	svc := session.InMemoryService()
+	ctx := context.Background()
+	resp, err := svc.Create(ctx, &session.CreateRequest{AppName: "t", UserID: "u", SessionID: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := resp.Session
+
+	const repoURL = "https://github.com/example/missing"
+	call := session.NewEvent(ctx, "test")
+	call.Author = "coder"
+	call.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{
+		FunctionCall: &genai.FunctionCall{ID: "c1", Name: "git_clone", Args: map[string]any{"url": repoURL}},
+	}}}
+	if err := svc.AppendEvent(ctx, sess, call); err != nil {
+		t.Fatal(err)
+	}
+	respEv := session.NewEvent(ctx, "test")
+	respEv.Author = "coder"
+	respEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{
+		FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "git_clone",
+			Response: map[string]any{"error": "repository not found"}},
+	}}}
+	if err := svc.AppendEvent(ctx, sess, respEv); err != nil {
+		t.Fatal(err)
+	}
+
+	act := activityFromSession(sess)
+	if _, ok := act.seen[repoURL]; ok {
+		t.Error("a FAILED clone must not earn retrieval credit")
+	}
+	if len(act.workspace) != 1 || !strings.Contains(act.workspace[0].detail, "FAILED") {
+		t.Errorf("workspace ledger = %+v, want the FAILED git_clone recorded", act.workspace)
 	}
 }

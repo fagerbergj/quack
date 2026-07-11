@@ -695,6 +695,23 @@ func activityFromSession(sess session.Session) workerActivity {
 					delete(pendingWs, p.FunctionResponse.ID)
 					delete(pendingWsTool, p.FunctionResponse.ID)
 					act.workspace = append(act.workspace, recordWsOp(p.FunctionResponse.Name, args, p.FunctionResponse.Response))
+					// A successful clone IS retrieval: the whole repository is now
+					// local, strictly more consulted than a search-result snippet.
+					// Enter its URL into the seen set so citing the cloned repo
+					// gets seen-tier citation credit and same-host file links get
+					// host-tier — without this, a node following the
+					// research-git-repos flow (clone + read instead of web_fetch)
+					// scored 0.00 backing on the very repo it had cloned (live
+					// failure 2026-07-10).
+					if p.FunctionResponse.Name == "git_clone" {
+						if _, failed := p.FunctionResponse.Response["error"]; !failed {
+							if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
+								if _, exists := act.seen[strings.TrimSpace(u)]; !exists {
+									act.seen[strings.TrimSpace(u)] = "cloned repository (full contents available locally)"
+								}
+							}
+						}
+					}
 				}
 			}
 		}
