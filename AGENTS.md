@@ -138,7 +138,7 @@ done
 
 ### HTTP server (`internal/server/`)
 
-- `router.go` — mounts MCP at `/api/v1/research/mcp`, registers generated chi routes, serves the embedded SPA for everything else.
+- `router.go` — mounts MCP at `/api/v1/mcp`, registers generated chi routes, serves the embedded SPA for everything else.
 - `rest/` — concrete HTTP handler that implements the generated `StrictServerInterface`.
 - `mcp/` — MCP Streamable-HTTP server.
 - The SPA (`frontend/dist`) is embedded into `cmd/server/web/dist` at build time (`make frontend-build`).

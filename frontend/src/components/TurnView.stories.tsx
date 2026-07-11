@@ -58,7 +58,7 @@ type Story = StoryObj<typeof TurnView>
 // A plain Q&A turn: user bubble + a markdown answer with Copy/Download.
 export const Basic: Story = { args: { turn: ANSWER } }
 
-// A research turn: collapsed "Research steps" DAG above the synthesized answer.
+// A research turn: collapsed "Steps" DAG above the synthesized answer.
 export const WithResearch: Story = { args: { turn: RESEARCH } }
 
 // The pending indicator shown the instant a follow-up is submitted, before the first

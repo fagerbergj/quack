@@ -50,8 +50,9 @@ func newRootCmd() *cobra.Command {
 	var printPrompt string
 	root := &cobra.Command{
 		Use:   "quack",
-		Short: "Quack — agentic research, one binary",
-		Long: "Quack is a one-binary CLI and server for agentic research. There is no TUI:\n" +
+		Short: "Quack — specialist AI agents, one binary",
+		Long: "Quack is a one-binary CLI and server for agent-driven work — web research,\n" +
+			"coding, and more. There is no TUI:\n" +
 			"-p, `chat send`, and `chat show` ARE the interface — pipeable, scriptable exit\n" +
 			"codes (0 answered, 1 failed, 2 paused on a question).\n\n" +
 			"  quack init                       get configured (run locally or connect to a server)\n" +

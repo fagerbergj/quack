@@ -60,13 +60,13 @@ function RunModel({ run }: { run: AgentRun }) {
 
 // ── per-run stage cards ──────────────────────────────────────────────────────
 
-// ResearchCard renders the worker stage (draft + finalize): its activity —
+// WorkerCard renders the worker stage (draft + finalize): its activity —
 // including any ask_advisor consults, which show up as ordinary tool calls. The
 // node's vetted answer is rendered separately at the foot of the node (NodeAnswer),
 // so it sits below the judge rather than inside the worker card. Like every other
 // stage card it carries its own labeled header — without one, its activity rows
 // visually attach to whatever labeled card rendered above it.
-function ResearchCard({ run, running }: { run: AgentRun; running: boolean }) {
+function WorkerCard({ run, running }: { run: AgentRun; running: boolean }) {
   const empty = run.activity.length === 0
   if (empty) {
     return running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
@@ -76,7 +76,7 @@ function ResearchCard({ run, running }: { run: AgentRun; running: boolean }) {
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
           <span className="text-[10px] font-semibold text-sky-600 dark:text-sky-400 uppercase tracking-wide">
-            Research
+            Work
           </span>
           {running && <Spinner />}
           <span className="text-xs text-gray-400 dark:text-gray-500">
@@ -370,7 +370,7 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
         switch (run.stage) {
           case 'judge':   return <JudgeCard key={run.runId} run={run} running={runRunning} />
           case 'revise':  return <RevisionCard key={run.runId} run={run} running={runRunning} />
-          default:        return <ResearchCard key={run.runId} run={run} running={runRunning} />
+          default:        return <WorkerCard key={run.runId} run={run} running={runRunning} />
         }
       })}
 

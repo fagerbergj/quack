@@ -106,7 +106,7 @@ export const TurnView = memo(function TurnView({
               <DagBubbleHeader dag={dagState} />
               <details className="rounded-lg border border-gray-200 dark:border-gray-700">
                 <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                  Research steps
+                  Steps
                 </summary>
                 <div className="p-2 space-y-3">
                   {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
