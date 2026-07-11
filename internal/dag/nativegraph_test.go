@@ -72,18 +72,29 @@ func (s *graphStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 // from both outputs.
 func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 	stub := &graphStub{}
-	ag, err := llmagent.New(llmagent.Config{
-		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer.",
-		Tools: []tool.Tool{newAskTool(t)},
-	})
-	if err != nil {
-		t.Fatalf("agent: %v", err)
+	// One llmagent instance PER concurrent node: a single local single-turn
+	// llmagent shared across concurrently-running nodes races inside ADK itself
+	// (a concurrent node's activity shifts the shared instance's "current turn"
+	// anchor, leaking one node's prompt into another's request — the CI-flake
+	// signature was n2 pausing on n1's ask). Test-harness-only: production
+	// workers are remote (A2A), one instance per server. Same mitigation the
+	// ask_advisor concurrency test uses.
+	mk := func(name string) adkagent.Agent {
+		a, err := llmagent.New(llmagent.Config{
+			Name: name, Model: stub, Description: name, Instruction: "ROLE:blk Answer.",
+			Tools: []tool.Tool{newAskTool(t)},
+		})
+		if err != nil {
+			t.Fatalf("agent %s: %v", name, err)
+		}
+		return a
 	}
-	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag, "synthesizer": ag}, nil,
+	ex := NewExecutor(session.InMemoryService(),
+		map[string]adkagent.Agent{"blk1": mk("blk1"), "blk2": mk("blk2"), "synthesizer": mk("synthesizer")}, nil,
 		vetting.NewJudgeFactory(stub, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "p", UserMessage: "go", Nodes: []Node{
-		{ID: "n1", AgentName: "blk", Task: "ASK-TASK"},
-		{ID: "n2", AgentName: "blk", Task: "PLAIN-TASK"},
+		{ID: "n1", AgentName: "blk1", Task: "ASK-TASK"},
+		{ID: "n2", AgentName: "blk2", Task: "PLAIN-TASK"},
 		{ID: "synth", AgentName: "synthesizer", Task: "SYNTH-TASK", DependsOn: []string{"n1", "n2"}},
 	}}
 
