@@ -166,7 +166,10 @@ workspace:
   max_write_kb: 2048               # write_file per-call cap; oversized writes error (no truncated field to signal it)
   max_results: 200                # grep/glob hits per call
   max_list_entries: 500           # list_dir entries per call
-  timeout_seconds: 60             # per git/check/run_command invocation
+  timeout_seconds: 60
+  # exec_path: ["/home/user/.nvm/versions/node/v22.22.3/bin"]  # extra PATH dirs for
+  #                               # run_command/checks/git children — for toolchains
+  #                               # outside the fixed system dirs (nvm, asdf).             # per git/check/run_command invocation
   # check_commands: allowed command PREFIXES the planner may complete into a
   # code-implementer node's `checks` (§4) — the trust gate runs these against
   # the node's own workdir after each draft. Empty = checks unavailable (the

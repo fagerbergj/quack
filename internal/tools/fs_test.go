@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -446,7 +447,7 @@ func TestNewFSBindingDefaultsCaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.caps != workspace.DefaultCaps() {
+	if !reflect.DeepEqual(b.caps, workspace.DefaultCaps()) {
 		t.Errorf("caps = %+v, want DefaultCaps()", b.caps)
 	}
 }
