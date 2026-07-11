@@ -17,7 +17,7 @@ import (
 )
 
 // MCPPath is where the Streamable-HTTP MCP server is mounted.
-const MCPPath = "/api/v1/research/mcp"
+const MCPPath = "/api/v1/mcp"
 
 // Options configure the router.
 type Options struct {

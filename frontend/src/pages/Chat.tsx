@@ -380,11 +380,11 @@ export default function Chat() {
                         {/* The orchestrator agent wraps the DAG: show its own
                             activity (deciding to research, the plan/execute calls)
                             alongside the DAG. While running both are visible; once
-                            done they collapse into "Research steps". */}
+                            done they collapse into "Steps". */}
                         {liveDone ? (
                           <details className="rounded-lg border border-gray-200 dark:border-gray-700">
                             <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                              Research steps
+                              Steps
                             </summary>
                             <div className="p-2 space-y-3">
                               {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}

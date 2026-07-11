@@ -48,7 +48,7 @@ export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
   const tokens = dagTotalTokens(dag)
   return (
     <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-400 dark:text-gray-500">
-      <span className="font-semibold text-gray-500 dark:text-gray-400">Research plan</span>
+      <span className="font-semibold text-gray-500 dark:text-gray-400">Plan</span>
       <span>· {dag.nodes.length} node{dag.nodes.length === 1 ? '' : 's'}</span>
       {tokens > 0 && <span className="tabular-nums">· {tokens.toLocaleString()} tok</span>}
     </div>
