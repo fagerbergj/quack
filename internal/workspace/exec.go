@@ -10,15 +10,19 @@ import (
 )
 
 // shellMetachars are the characters whose presence in a raw command string
-// signals shell-interpretation intent (pipe, background, redirect, command/
-// variable substitution, subshell). Rejected wherever a command string is
-// accepted for jailed argv-only execution — run_command's `command` arg
-// (internal/tools) and a plan node's `checks` (internal/dag's planner) — so a
-// shell escape is unexpressible, not merely filtered by heuristic: RunArgv
-// never opens a shell to interpret them either way, but rejecting them at
-// parse time gives the model (or the planner) a clear, early error instead of
-// a confusing "argument" to some other program.
-const shellMetachars = "|&;$<>`()"
+// signals shell-interpretation intent (backgrounding, command chaining,
+// redirects, command/variable substitution, subshells). Rejected wherever a
+// command string is accepted for jailed argv-only execution — run_command's
+// `command` arg (internal/tools) and a plan node's `checks` (internal/dag's
+// planner) — so a shell escape is unexpressible, not merely filtered by
+// heuristic: RunArgv/RunPipeline never open a shell to interpret them either
+// way, but rejecting them at parse time gives the model (or the planner) a
+// clear, early error instead of a confusing "argument" to some other program.
+//
+// `|` is deliberately NOT in this set: pipes don't need a shell — SplitPipeline
+// splits a pipeline on unquoted `|` and RunPipeline chains the stages as plain
+// argv processes connected by real pipes. The rest stay unexpressible.
+const shellMetachars = "&;$<>`()"
 
 // ContainsShellMetachar reports whether s contains a shell metacharacter. See
 // the shellMetachars doc comment for why these are rejected outright.
@@ -92,6 +96,60 @@ func SplitArgv(s string) ([]string, error) {
 		return nil, fmt.Errorf("workspace: empty command")
 	}
 	return argv, nil
+}
+
+// SplitPipeline splits s into pipeline stages on UNQUOTED `|` characters —
+// the same quote/escape rules as SplitArgv (a `|` inside quotes, or escaped
+// with a backslash, is a literal argument character) — then word-splits each
+// stage through SplitArgv. An empty stage (leading/trailing/double pipe) is
+// an error. A command with no pipe returns exactly one stage, so callers can
+// use SplitPipeline unconditionally.
+func SplitPipeline(s string) ([][]string, error) {
+	var rawStages []string
+	var cur strings.Builder
+	var quote rune
+	esc := false
+	for _, r := range s {
+		switch {
+		case esc:
+			cur.WriteRune(r)
+			esc = false
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else if quote == '"' && r == '\\' {
+				esc = true
+				cur.WriteRune(r) // keep for SplitArgv to interpret
+				continue
+			}
+			cur.WriteRune(r)
+		case r == '\\':
+			esc = true
+			cur.WriteRune(r) // keep for SplitArgv to interpret
+		case r == '\'' || r == '"':
+			quote = r
+			cur.WriteRune(r)
+		case r == '|':
+			rawStages = append(rawStages, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	rawStages = append(rawStages, cur.String())
+
+	stages := make([][]string, 0, len(rawStages))
+	for _, raw := range rawStages {
+		if strings.TrimSpace(raw) == "" {
+			return nil, fmt.Errorf("workspace: empty pipeline stage (leading, trailing, or doubled |)")
+		}
+		argv, err := SplitArgv(raw)
+		if err != nil {
+			return nil, err
+		}
+		stages = append(stages, argv)
+	}
+	return stages, nil
 }
 
 // ExecResult is one argv-only command execution's outcome. A non-zero
@@ -183,6 +241,128 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 		}
 	}
 	return ExecResult{ExitCode: exitCode, Output: out}, nil
+}
+
+// RunPipeline executes stages as a native pipeline: each stage is a plain
+// argv process (exec.CommandContext — still never a shell), stage N's stdout
+// connected to stage N+1's stdin by a real pipe. All stages share the jailed
+// cwd, the scrubbed env, and ONE overall timeout (a deadline kills the whole
+// pipeline). A single-stage pipeline delegates to RunArgv — one runner.
+//
+// Semantics chosen deliberately:
+//   - Exit code is PIPEFAIL: the LAST non-zero stage's code; 0 only when every
+//     stage succeeds (bash's `set -o pipefail` — a failing producer can't be
+//     masked by a succeeding tail like `| head`).
+//   - Output is the LAST stage's stdout plus every stage's stderr (each
+//     prefixed with its stage when non-empty), tail-capped; failing stages are
+//     named ("[pipeline] stage N of M (cmd) exited K") so the model sees WHICH
+//     program failed, not just a code.
+//   - A SIGPIPE-shaped death (a producer killed because its consumer exited
+//     early, e.g. `grep -r … | head -5`) is still just an exit code here; the
+//     model sees it named and can judge whether it mattered.
+//
+// Like RunArgv, err is reserved for launch failures and timeouts; stage exit
+// codes are results, not errors.
+func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) (ExecResult, error) {
+	if len(stages) == 0 {
+		return ExecResult{}, fmt.Errorf("workspace: empty pipeline")
+	}
+	if len(stages) == 1 {
+		return RunArgv(ctx, dir, stages[0], caps)
+	}
+	timeout := caps.Timeout
+	if timeout <= 0 {
+		timeout = DefaultCaps().Timeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Resolve every binary up front (see RunArgv's LookPath rationale) so a
+	// missing program is one clean error before anything starts.
+	cmds := make([]*exec.Cmd, len(stages))
+	stderrs := make([]*bytes.Buffer, len(stages)) // one buffer per stage: exec copies stderr on its own goroutine, so a shared buffer would race
+	for i, argv := range stages {
+		if len(argv) == 0 {
+			return ExecResult{}, fmt.Errorf("workspace: empty pipeline stage")
+		}
+		bin, err := exec.LookPath(argv[0])
+		if err != nil {
+			return ExecResult{}, fmt.Errorf("workspace: %q not found: %w", argv[0], err)
+		}
+		cmd := exec.CommandContext(cctx, bin, argv[1:]...)
+		cmd.Dir = dir
+		cmd.Env = []string{"PATH=" + execEnvPath, "HOME=" + dir}
+		stderrs[i] = &bytes.Buffer{}
+		cmd.Stderr = stderrs[i]
+		cmds[i] = cmd
+	}
+	var stdout bytes.Buffer
+	cmds[len(cmds)-1].Stdout = &stdout
+	for i := 1; i < len(cmds); i++ {
+		pipe, err := cmds[i-1].StdoutPipe()
+		if err != nil {
+			return ExecResult{}, fmt.Errorf("workspace: pipeline pipe: %w", err)
+		}
+		cmds[i].Stdin = pipe
+	}
+
+	for i, cmd := range cmds {
+		if err := cmd.Start(); err != nil {
+			// Reap anything already started so nothing leaks.
+			for _, prev := range cmds[:i] {
+				_ = prev.Process.Kill()
+				_ = prev.Wait()
+			}
+			return ExecResult{}, fmt.Errorf("workspace: start %v: %w", stages[i], err)
+		}
+	}
+
+	// Wait in pipeline order. A stage's non-zero exit (including being killed
+	// because its consumer closed the pipe early) is a result, not an error;
+	// only non-exit failures abort.
+	exitCode := 0
+	var failNotes []string
+	for i, cmd := range cmds {
+		waitErr := cmd.Wait()
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		if waitErr != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(waitErr, &exitErr) && cctx.Err() != context.DeadlineExceeded {
+				return ExecResult{}, fmt.Errorf("workspace: run %v: %w", stages[i], waitErr)
+			}
+		}
+		if code != 0 {
+			exitCode = code // pipefail: last non-zero wins
+			failNotes = append(failNotes, fmt.Sprintf("[pipeline] stage %d of %d (%s) exited %d",
+				i+1, len(cmds), strings.Join(stages[i], " "), code))
+		}
+	}
+
+	var out strings.Builder
+	out.WriteString(stdout.String())
+	for i, eb := range stderrs {
+		if eb.Len() == 0 {
+			continue
+		}
+		fmt.Fprintf(&out, "\n[stage %d stderr] %s", i+1, strings.TrimRight(eb.String(), "\n"))
+	}
+	for _, note := range failNotes {
+		out.WriteString("\n")
+		out.WriteString(note)
+	}
+	maxOut := caps.MaxOutputBytes
+	if maxOut <= 0 {
+		maxOut = DefaultCaps().MaxOutputBytes
+	}
+	res := ExecResult{ExitCode: exitCode, Output: capTail(out.String(), maxOut)}
+	if cctx.Err() == context.DeadlineExceeded {
+		res.TimedOut = true
+		return res, fmt.Errorf("workspace: pipeline timed out after %s", timeout)
+	}
+	return res, nil
 }
 
 // capTail truncates s to max bytes, keeping the TAIL — a compiler/test

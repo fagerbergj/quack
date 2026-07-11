@@ -9,15 +9,16 @@ import (
 
 // checksPassCriterion is the GATE side of §4 (orchestrator-set deterministic
 // gates): it runs cfg.Checks — already plan-time validated argv-safe commands
-// (see dag/planner.go's validateChecks) — via the SAME jailed argv runner
-// run_command uses (workspace.RunArgv), stopping at the first failure. Called
-// from foldDeterministic (node.go) exactly like grounded_in_retrieval: a
-// failing check folds in as criterion `checks_pass` with Score 0
-// (weakest-link — one failing check sinks the round on its own) and a Reason
-// naming the command plus its output tail, so composeFeedback (node.go)
-// carries the actual compiler/test failure into the revise prompt. All checks
-// passing scores 1. Only called when len(cfg.Checks) > 0 — a node without
-// checks is entirely untouched by this criterion.
+// (see dag/planner.go's validateChecks) — via the SAME jailed runner
+// run_command uses (workspace.RunPipeline; pipes are native, everything else
+// a shell would interpret stays unexpressible), stopping at the first
+// failure. Called from foldDeterministic (node.go) exactly like
+// grounded_in_retrieval: a failing check folds in as criterion `checks_pass`
+// with Score 0 (weakest-link — one failing check sinks the round on its own)
+// and a Reason naming the command plus its output tail, so composeFeedback
+// (node.go) carries the actual compiler/test failure into the revise prompt.
+// All checks passing scores 1. Only called when len(cfg.Checks) > 0 — a node
+// without checks is entirely untouched by this criterion.
 func checksPassCriterion(cfg Config) criterionScore {
 	if cfg.Workspace == nil {
 		// A node with Checks set but no workspace wired up is a config/wiring
@@ -31,11 +32,11 @@ func checksPassCriterion(cfg Config) criterionScore {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: checks workdir %q: %v", cfg.Workdir, err)}
 	}
 	for _, check := range cfg.Checks {
-		argv, err := workspace.SplitArgv(check)
+		stages, err := workspace.SplitPipeline(check)
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}
 		}
-		res, err := workspace.RunArgv(context.Background(), dir, argv, cfg.WorkspaceCaps)
+		res, err := workspace.RunPipeline(context.Background(), dir, stages, cfg.WorkspaceCaps)
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}
 		}

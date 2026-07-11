@@ -68,3 +68,34 @@ func TestSafetyJudgeNoVerdictIsError(t *testing.T) {
 		t.Fatal("expected an error when the judge never calls submit_safety_verdict (the guard then fails closed)")
 	}
 }
+
+// TestSafetyJudgeInstructionCalibration pins the recalibrated system prompt's
+// load-bearing content (live usage 2026-07-10: the judge re-litigated the
+// sandbox, denying anything destructive-LOOKING): the you-are-not-the-sandbox
+// walls paragraph, the deny-only-for list, and both allow and deny calibration
+// examples. If someone rewrites the prompt and drops one of these anchors, the
+// judge drifts back to pattern-matching on syntax.
+func TestSafetyJudgeInstructionCalibration(t *testing.T) {
+	for _, want := range []string{
+		// The walls paragraph: the judge is not the sandbox.
+		"You are NOT the sandbox",
+		"workspace jail",
+		"argv-only with no shell",
+		// No syntax-pattern denials.
+		"Do NOT deny",
+		"could be dangerous in general",
+		// The exhaustive deny grounds.
+		"Deny ONLY for",
+		"outside or contradicting the user's task",
+		"not the task's own artifact",
+		"external destination",
+		"scope escalation",
+		// Calibration examples — at least one anchor per direction.
+		"ALLOW: rm -rf node_modules",
+		"DENY: git_push when the task is read-only research",
+	} {
+		if !strings.Contains(safetyJudgeInstruction, want) {
+			t.Errorf("safetyJudgeInstruction missing calibration anchor %q", want)
+		}
+	}
+}

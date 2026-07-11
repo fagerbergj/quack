@@ -145,6 +145,22 @@ func TestBuildRejectsCheckWithShellMetachar(t *testing.T) {
 	}
 }
 
+func TestBuildAcceptsPipedCheckUnderMatchingPrefix(t *testing.T) {
+	// Pipes are native (workspace.RunPipeline), not shell metachars — a piped
+	// check under an allowed prefix passes plan-time validation.
+	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
+	plan, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x",
+			Checks: []string{"go vet ./... | head -50"}, Workdir: "repo"},
+	}, nil, "m", nil)
+	if err != nil {
+		t.Fatalf("Build: piped check should validate: %v", err)
+	}
+	if got := plan.Nodes[0].Checks[0]; got != "go vet ./... | head -50" {
+		t.Errorf("check = %q, want the pipeline preserved verbatim", got)
+	}
+}
+
 func TestBuildRejectsChecksLookingLikeAPrefixButNotSeparated(t *testing.T) {
 	// "go testing" must NOT match the "go test" prefix — HasPrefix without a
 	// space/exact-match boundary would wrongly accept it.

@@ -64,9 +64,9 @@ Rules:
 
 - The `plan` tool's description lists the **allowed command prefixes** for this
   deployment. Each check must be exactly one of those prefixes, or extend one
-  with arguments after a space (`go test` → `go test ./...`). Anything else —
-  including any shell metacharacter (`| & ; $ < > \` ( )`) — rejects the whole
-  plan at submission.
+  with arguments after a space (`go test` → `go test ./...`). Pipes are fine
+  (`go vet ./... | head -50` — run natively, no shell). Anything else a shell
+  would interpret (`& ; $ < > \` ( )`) rejects the whole plan at submission.
 - If the description says checks are **unavailable** (no prefixes configured),
   OMIT `checks` and `workdir` entirely.
 - Set `workdir` to the workspace-relative directory the checks should run in —
