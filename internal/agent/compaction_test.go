@@ -264,6 +264,144 @@ func TestMeasuredUsageTriggers(t *testing.T) {
 	}
 }
 
+// The live-failure regression: recordUsage pairs the measured prompt tokens
+// with the estimate stashed by the previous callback, and the resulting ratio
+// makes the NEXT callback compact a request whose raw bytes/4 estimate is under
+// budget but whose calibrated (real) size is over.
+func TestCalibrationRecordedAndApplied(t *testing.T) {
+	ctx := newFakeCtx()
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	// budget = 60_000 - 20_000 = 40_000 real tokens.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Prune: false, Enabled: true})
+
+	// Turn 1: under budget, no-op — but the raw estimate (10_000) is stashed.
+	small := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, strings.Repeat("a", 40_000))}}
+	if _, err := cb(ctx, small); err != nil {
+		t.Fatalf("first callback err: %v", err)
+	}
+	if got := intState(ctx, estimateKey); got != 10_000 {
+		t.Fatalf("estimate not stashed for calibration: got %d, want 10000", got)
+	}
+	// Provider measures 30_000 real prompt tokens (dense content + system prompt
+	// + tool schemas the estimate can't see): ratio = 3.0.
+	recordUsage()(ctx, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 30_000},
+	}, nil)
+	if got := calibrationRatio(ctx); got != 3.0 {
+		t.Fatalf("calibrationRatio = %v; want 3.0", got)
+	}
+
+	// Turn 2: raw estimate ~15_000 (under the 40_000 budget, so the old code
+	// no-op'd and the provider 400'd) but calibrated ~45_000 is over → compacts.
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 20; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if est := estimateTokens(contents); est > 40_000 {
+		t.Fatalf("test precondition broken: raw estimate %d not under budget", est)
+	}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("second callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("calibrated over-budget request did not compact: summariser calls=%d", llm.calls)
+	}
+}
+
+// The post-prune "did we free enough?" check uses the calibrated value: a prune
+// that brings the RAW estimate under budget but leaves the calibrated size over
+// must fall through to summarisation instead of declaring victory.
+func TestPostPruneCheckIsCalibrated(t *testing.T) {
+	ctx := newFakeCtx()
+	// Ratio 2.0: measured 20_000 vs stashed estimate 10_000.
+	if err := ctx.state.Set(estimateKey, 10_000); err != nil {
+		t.Fatal(err)
+	}
+	recordUsage()(ctx, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 20_000},
+	}, nil)
+
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	// budget = 80_000 - 20_000 = 60_000 real tokens.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 80_000, Prune: true, Enabled: true})
+
+	// 12 old tool fetches of 40k chars (10k est tokens) each ⇒ raw est ~120k.
+	// prune protects the most recent ~40k est tokens and blanks the rest, landing
+	// the raw estimate around 40k (< 60k budget) — but calibrated ~80k is over.
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 12; i++ {
+		contents = append(contents, toolCall("web_fetch", "c"))
+		contents = append(contents, toolResult("web_fetch", "c", 40_000))
+	}
+	for i := 0; i < 3; i++ {
+		contents = append(contents, textContent(genai.RoleModel, "done with fetch batch"))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	est := estimateTokens(req.Contents)
+	if llm.calls != 1 {
+		t.Fatalf("post-prune raw estimate %d passed the gate; calibrated check must summarise (calls=%d)", est, llm.calls)
+	}
+}
+
+// Absurd measured/estimate ratios are clamped, and the ratio never drops below
+// 1.0 (calibration must never shrink the raw estimate).
+func TestCalibrationClamped(t *testing.T) {
+	ctx := newFakeCtx()
+	// Measured below estimate (media-free overcount): floor at 1.0.
+	if err := ctx.state.Set(estimateKey, 10_000); err != nil {
+		t.Fatal(err)
+	}
+	recordUsage()(ctx, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 1_000},
+	}, nil)
+	if got := calibrationRatio(ctx); got != minCalibrationRatio {
+		t.Fatalf("ratio %v below floor; want %v", got, minCalibrationRatio)
+	}
+	// Tiny request dominated by tool-schema overhead: ceiling caps it.
+	if err := ctx.state.Set(estimateKey, 10); err != nil {
+		t.Fatal(err)
+	}
+	recordUsage()(ctx, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 100_000},
+	}, nil)
+	if got := calibrationRatio(ctx); got != maxCalibrationRatio {
+		t.Fatalf("ratio %v above ceiling; want %v", got, maxCalibrationRatio)
+	}
+	// A zero estimate records no ratio at all (degenerate divide guarded).
+	fresh := newFakeCtx()
+	if err := fresh.state.Set(estimateKey, 0); err != nil {
+		t.Fatal(err)
+	}
+	recordUsage()(fresh, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 5_000},
+	}, nil)
+	if _, err := fresh.state.Get(calibrationKey); err == nil {
+		t.Fatal("ratio recorded from a zero estimate")
+	}
+}
+
+// First turn (no measurement yet): the conservative default ratio applies, and
+// a comfortably under-budget request is still a pure no-op.
+func TestCalibrationDefaultBeforeMeasurement(t *testing.T) {
+	ctx := newFakeCtx()
+	if got := calibrationRatio(ctx); got != defaultCalibrationRatio {
+		t.Fatalf("calibrationRatio before measurement = %v; want default %v", got, defaultCalibrationRatio)
+	}
+	llm := &fakeLLM{text: "S"}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 1_000_000, Prune: true, Enabled: true})
+	req := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, "task")}}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 0 || len(req.Contents) != 1 {
+		t.Fatalf("first-turn under-budget request was not a no-op: calls=%d len=%d", llm.calls, len(req.Contents))
+	}
+}
+
 // Once the anchored summary covers the older prefix, a later over-budget turn
 // whose live tail still fits is served from the stored summary with NO new
 // summariser call (fixes the "re-summarise every turn" cost).
