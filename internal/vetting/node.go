@@ -385,7 +385,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if res.Passed || round >= cfg.JudgeRounds {
 				break
 			}
-			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act))
+			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act, citationOnlyFailure(v, cfg.Threshold)))
 			revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), promptEmit)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
@@ -701,6 +701,25 @@ func composeFeedback(v verdict, threshold float64) string {
 	sb.WriteString("Deterministic check failures:\n")
 	sb.WriteString(strings.Join(extra, "\n"))
 	return sb.String()
+}
+
+// citationOnlyFailure reports whether the ONLY criterion below threshold is
+// cites_sources — i.e. the answer is substantively fine and just needs its
+// already-retrieved URLs attached to the claims. When true the revise prompt
+// tells the worker to do a formatting pass (attach the URLs it already has),
+// NOT to re-research: extra fetches to fix a pure-citation fail waste tokens.
+func citationOnlyFailure(v verdict, threshold float64) bool {
+	failing := 0
+	citesFailed := false
+	for name, c := range v.Criteria {
+		if c.Score < threshold {
+			failing++
+			if name == "cites_sources" {
+				citesFailed = true
+			}
+		}
+	}
+	return citesFailed && failing == 1
 }
 
 // activityFromSession reconstructs the worker's retrieval activity (web_search

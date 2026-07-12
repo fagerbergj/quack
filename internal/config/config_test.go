@@ -306,6 +306,37 @@ func TestAgentConfigIsGated(t *testing.T) {
 	}
 }
 
+func TestLoadParsesPerAgentJudgeRounds(t *testing.T) {
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  code-implementer:
+    bundle: agents/code-implementer
+    provider: default
+    model: c-model
+    judge_rounds: 8
+  synthesizer:
+    bundle: agents/synthesizer
+    provider: default
+    model: s-model
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Agents["code-implementer"].JudgeRounds; got != 8 {
+		t.Errorf("code-implementer judge_rounds = %d, want 8", got)
+	}
+	// Unset ⇒ 0, the sentinel that means "inherit the global default".
+	if got := c.Agents["synthesizer"].JudgeRounds; got != 0 {
+		t.Errorf("unset judge_rounds = %d, want 0 (inherit global)", got)
+	}
+}
+
 func TestLoadRejectsAgentWithUnknownProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 agents:

@@ -49,6 +49,7 @@ agents:
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
+    judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor,
             git_clone, read_file, list_dir, glob, grep]
   code-implementer:
@@ -56,6 +57,7 @@ agents:
     provider: default
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
+    judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
     tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
             git_clone, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
@@ -65,6 +67,7 @@ agents:
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
+    judge_rounds: 1             # just combines already-vetted upstream node outputs; re-revising is low value
     tools: []
 
 tools:

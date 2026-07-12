@@ -113,6 +113,106 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 }
 
+// TestGatedWorkerNode_SingleRoundNoRevise asserts the loop semantics at
+// JudgeRounds=1: the judge scores the draft ONCE and, on a fail, the node
+// returns the (un-revised) draft under continue-but-warn — no revise cycle
+// runs. This is the per-agent economics the web-researcher/synthesizer rely on.
+func TestGatedWorkerNode_SingleRoundNoRevise(t *testing.T) {
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10"}
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	var final string
+	for ev, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if ev == nil {
+			continue
+		}
+		if s, ok := ev.Output.(string); ok && strings.TrimSpace(s) != "" {
+			final = s
+		}
+		if ev.Content != nil {
+			for _, p := range ev.Content.Parts {
+				if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil && strings.TrimSpace(p.Text) != "" {
+					final = p.Text
+				}
+			}
+		}
+	}
+
+	// The draft failed the judge, but with one round there's no revision — the
+	// draft is surfaced as-is.
+	if strings.Contains(final, "revised") {
+		t.Fatalf("single-round gate must not revise; got a revised answer: %q", final)
+	}
+	if stub.workerCalls != 1 {
+		t.Errorf("worker calls = %d, want 1 (draft only, no revise)", stub.workerCalls)
+	}
+	if stub.judgeCalls != 1 {
+		t.Errorf("judge calls = %d, want 1 (judged once, no second round)", stub.judgeCalls)
+	}
+}
+
+// TestCitationOnlyFailure covers the trigger for the targeted citation-only
+// revise directive: it fires only when cites_sources is the SOLE failing
+// criterion.
+func TestCitationOnlyFailure(t *testing.T) {
+	const th = 0.7
+	tests := []struct {
+		name string
+		crit map[string]criterionScore
+		want bool
+	}{
+		{"cites only", map[string]criterionScore{
+			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.2},
+		}, true},
+		{"cites plus another fail", map[string]criterionScore{
+			"grounded": {Score: 0.3}, "cites_sources": {Score: 0.2},
+		}, false},
+		{"other fail only", map[string]criterionScore{
+			"grounded": {Score: 0.3}, "cites_sources": {Score: 0.9},
+		}, false},
+		{"all pass", map[string]criterionScore{
+			"grounded": {Score: 0.9}, "cites_sources": {Score: 0.9},
+		}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := citationOnlyFailure(verdict{Criteria: tt.crit}, th); got != tt.want {
+				t.Errorf("citationOnlyFailure = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- stub helpers ---
 
 func stubHasTool(req *model.LLMRequest, name string) bool {
