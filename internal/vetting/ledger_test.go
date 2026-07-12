@@ -166,9 +166,9 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 // half (2026-07-10): a node following the research-git-repos flow CLONES a
 // repo instead of web-fetching it, then cites the repo URL — citationScore
 // scored it 0.00 backing because git_clone landed in neither fetched nor
-// seen. A successful clone must enter act.seen (seen-tier credit, 0.75; the
-// repo's whole contents are locally available), and the ledger entry is
-// unchanged.
+// seen. A successful clone must enter act.clonedRepos/clonedDirs (full-backing
+// credit: the repo's whole contents are locally available), and the ledger
+// entry is unchanged.
 func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
@@ -200,18 +200,21 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 
 	act := activityFromSession(sess)
 
-	// The clone URL is retrieval: seen-tier.
-	if _, ok := act.seen[repoURL]; !ok {
-		t.Fatalf("act.seen missing the cloned repo URL; seen=%v", act.seen)
+	// The clone is recorded structurally: URL + local dir.
+	if len(act.clonedRepos) != 1 || act.clonedRepos[0] != repoURL {
+		t.Fatalf("act.clonedRepos = %v, want [%s]", act.clonedRepos, repoURL)
 	}
-	// citationScore gives a citation of the cloned repo nonzero backing.
+	if len(act.clonedDirs) != 1 || act.clonedDirs[0] != "repo" {
+		t.Fatalf("act.clonedDirs = %v, want [repo]", act.clonedDirs)
+	}
+	// citationScore gives a citation of the cloned repo full backing.
 	answer := "The repo's entrypoint is documented in [the repository](" + repoURL + ")."
 	score, details, ok := citationScore(answer, act)
 	if !ok {
 		t.Fatal("citationScore abstained despite recorded retrieval")
 	}
-	if score <= 0 {
-		t.Errorf("citationScore = %v, want nonzero backing for the cloned repo URL (details: %+v)", score, details)
+	if score != 1.0 {
+		t.Errorf("citationScore = %v, want 1.0 backing for the cloned repo URL (details: %+v)", score, details)
 	}
 	// Ledger behavior unchanged: the git_clone op is still recorded.
 	if len(act.workspace) != 1 || act.workspace[0].tool != "git_clone" {
@@ -219,9 +222,9 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	}
 }
 
-// TestGitCloneFailureGetsNoRetrievalCredit: a FAILED clone stays out of the
-// seen set (nothing was retrieved) while still appearing in the ledger as a
-// FAILED op the judge can hold against claims.
+// TestGitCloneFailureGetsNoRetrievalCredit: a FAILED clone earns no grounding
+// (nothing was retrieved) while still appearing in the ledger as a FAILED op
+// the judge can hold against claims.
 func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
@@ -251,8 +254,8 @@ func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
 	}
 
 	act := activityFromSession(sess)
-	if _, ok := act.seen[repoURL]; ok {
-		t.Error("a FAILED clone must not earn retrieval credit")
+	if len(act.clonedRepos) != 0 || len(act.clonedDirs) != 0 {
+		t.Errorf("a FAILED clone must not earn retrieval credit (clonedRepos=%v clonedDirs=%v)", act.clonedRepos, act.clonedDirs)
 	}
 	if len(act.workspace) != 1 || !strings.Contains(act.workspace[0].detail, "FAILED") {
 		t.Errorf("workspace ledger = %+v, want the FAILED git_clone recorded", act.workspace)

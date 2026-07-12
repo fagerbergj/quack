@@ -607,12 +607,15 @@ func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config)
 	// calling ask_user. Hard weakest-link fail with feedback naming both ways
 	// out; citationScore abstains in this case (no activity to grade against),
 	// which previously let exactly these answers sail through to the judge.
-	if cfg.RequireRetrieval && len(act.fetched) == 0 && len(act.seen) == 0 {
+	// A clone or a local file read is retrieval too (cloned-repo grounding):
+	// a coding node that consulted the repo on disk instead of the web is not
+	// answering from model memory.
+	if cfg.RequireRetrieval && len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(act.paths) == 0 {
 		v.Criteria["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session — " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
 	if det, details, hasCites := citationScore(answer, act); hasCites {
-		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited URL(s), mean backing %.2f", len(details), det)}
+		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), det)}
 	}
 	// §4: orchestrator-set deterministic gate checks (a code-implementer
 	// node's `go build`/`go test`/… commands) — untouched for a node with no
@@ -658,7 +661,7 @@ func composeFeedback(v verdict, threshold float64) string {
 // set. Consumed by the deterministic citation check, the judge prompt's
 // workspace section (claims-vs-activity), and the revise/finalize prompts.
 func activityFromSession(sess session.Session) workerActivity {
-	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}}
+	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
 	if sess == nil {
 		return act
 	}
@@ -714,19 +717,39 @@ func activityFromSession(sess session.Session) workerActivity {
 					delete(pendingWs, p.FunctionResponse.ID)
 					delete(pendingWsTool, p.FunctionResponse.ID)
 					act.workspace = append(act.workspace, recordWsOp(p.FunctionResponse.Name, args, p.FunctionResponse.Response))
-					// A successful clone IS retrieval: the whole repository is now
-					// local, strictly more consulted than a search-result snippet.
-					// Enter its URL into the seen set so citing the cloned repo
-					// gets seen-tier citation credit and same-host file links get
-					// host-tier — without this, a node following the
-					// research-git-repos flow (clone + read instead of web_fetch)
-					// scored 0.00 backing on the very repo it had cloned (live
-					// failure 2026-07-10).
-					if p.FunctionResponse.Name == "git_clone" {
-						if _, failed := p.FunctionResponse.Response["error"]; !failed {
+					// Structured grounding capture (successful ops only — a FAILED
+					// clone/read retrieved nothing and backs no citation, though it
+					// stays in the ledger above for claim-checking).
+					if _, failed := p.FunctionResponse.Response["error"]; !failed {
+						switch p.FunctionResponse.Name {
+						case "git_clone":
+							// A successful clone IS retrieval: the whole repository is
+							// now local, strictly more consulted than a search-result
+							// snippet. citationScore gives full backing to the repo URL,
+							// to URLs under it (blob/tree links), and to local paths
+							// inside the clone dir — without this, a node following the
+							// research-git-repos flow (clone + read instead of
+							// web_fetch) scored 0.25 backing on files of the very repo
+							// it had cloned (live failures 2026-07-10, 2026-07-12).
 							if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
-								if _, exists := act.seen[strings.TrimSpace(u)]; !exists {
-									act.seen[strings.TrimSpace(u)] = "cloned repository (full contents available locally)"
+								act.clonedRepos = append(act.clonedRepos, strings.TrimSpace(u))
+							}
+							dir, _ := p.FunctionResponse.Response["dir"].(string)
+							if strings.TrimSpace(dir) == "" {
+								dir, _ = args["dir"].(string)
+							}
+							if d := normalizePath(dir); d != "" {
+								act.clonedDirs = append(act.clonedDirs, d)
+							}
+						case "read_file", "write_file", "edit_file", "delete_path":
+							// Repo-exploration/coding answers cite the files they worked
+							// on ([games-repo/app/games.ts](games-repo/app/games.ts)),
+							// not web pages — that's correct behavior, and citationScore
+							// backs such a path only if it appears here or under a
+							// cloned dir.
+							if pth, ok := args["path"].(string); ok {
+								if np := normalizePath(pth); np != "" {
+									act.paths[np] = true
 								}
 							}
 						}

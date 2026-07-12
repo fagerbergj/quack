@@ -261,34 +261,46 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	return verdict{}, fmt.Errorf("vetting: judge ended without a verdict")
 }
 
-// markdownLinkRe extracts inline Markdown link targets: [text](https://…)
-var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\((https?://[^)\s]+)\)`)
+// markdownLinkRe extracts inline Markdown link targets — web URLs AND local
+// paths ([games-repo/app/games.ts](games-repo/app/games.ts)): repo-exploration
+// and coding nodes cite the files they read, not web pages.
+var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 
-// citationScore deterministically grades how well each cited URL in the answer
-// is backed by what the worker actually retrieved this session — no model
-// involved, so it can't "reason wrong" about a string match the way a small
-// judge model does. Each cited URL is scored in layers:
+// citationScore deterministically grades how well each cited link target in
+// the answer is backed by what the worker actually retrieved this session — no
+// model involved, so it can't "reason wrong" about a string match the way a
+// small judge model does. Each cited web URL is scored in layers:
 //
 //	exact URL fetched   → 1.00   (the worker read this exact page)
+//	at/under a cloned repo → 1.00 (the whole repo is on local disk — every
+//	                              blob/tree/file link under it is retrieved
+//	                              material by construction)
 //	exact URL searched  → 0.75   (this exact URL appeared in search results)
 //	same host fetched   → 0.50   (a different page on this host was fetched)
 //	same host searched  → 0.25   (the host showed up in search results)
 //	neither             → 0.00   (the worker never encountered this URL or host)
 //
+// A cited LOCAL path (a link target with no scheme) is fully backed (1.00) when
+// the ledger saw it (read/write/edit/delete) or it lies under a git_clone'd
+// dir, else unbacked (0.00) — a path the worker never touched is as fabricated
+// as a URL it never encountered. Non-web schemes (mailto:) and pure in-document
+// anchors are skipped: not citations we can grade.
+//
 // URLs are normalized (lowercased scheme+host, fragment dropped, trailing slash
 // trimmed) before matching so cosmetic differences don't cost points. The
-// returned score is the mean across distinct cited URLs; details carries the
-// per-URL breakdown for logging/feedback. ok is false when the answer cites no
-// URLs (caller decides how to treat an uncited answer).
+// returned score is the mean across distinct cited targets; details carries the
+// per-target breakdown for logging/feedback. ok is false when the answer cites
+// nothing gradeable (caller decides how to treat an uncited answer).
 func citationScore(answer string, act workerActivity) (score float64, details []citationDetail, ok bool) {
-	// No retrieval recorded (a non-web agent like the synthesizer, which re-cites
-	// URLs from its upstream inputs) → we can't grade backing, so don't override;
-	// leave the model's cites_sources judgment in place.
-	if len(act.fetched) == 0 && len(act.seen) == 0 {
+	// No retrieval or workspace-path activity recorded (a non-web agent like the
+	// synthesizer, which re-cites URLs from its upstream inputs) → we can't grade
+	// backing, so don't override; leave the model's cites_sources judgment in place.
+	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(act.paths) == 0 {
 		return 0, nil, false
 	}
 	fetchedURL, fetchedHost := normalizedSets(slices.Collect(maps.Keys(act.fetched)))
 	seenURL, seenHost := normalizedSets(slices.Collect(maps.Keys(act.seen)))
+	cloneNorms := normalizedCloneURLs(act.clonedRepos)
 
 	dedup := make(map[string]struct{})
 	var sum float64
@@ -296,29 +308,53 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		if len(m) < 2 {
 			continue
 		}
-		norm, host := normalizeURL(m[1])
-		if norm == "" {
+		target := strings.TrimSpace(m[1])
+		u, err := url.Parse(target)
+		if err != nil || target == "" {
 			continue
 		}
-		if _, dup := dedup[norm]; dup {
-			continue
-		}
-		dedup[norm] = struct{}{}
 
+		var key string
 		var s float64
 		switch {
-		case fetchedURL[norm]:
-			s = 1.00
-		case seenURL[norm]:
-			s = 0.75
-		case host != "" && fetchedHost[host]:
-			s = 0.50
-		case host != "" && seenHost[host]:
-			s = 0.25
+		case u.Scheme == "http" || u.Scheme == "https":
+			norm, host := normalizeURL(target)
+			if norm == "" {
+				continue
+			}
+			key = norm
+			switch {
+			case fetchedURL[norm]:
+				s = 1.00
+			case underClonedRepo(norm, cloneNorms):
+				s = 1.00
+			case seenURL[norm]:
+				s = 0.75
+			case host != "" && fetchedHost[host]:
+				s = 0.50
+			case host != "" && seenHost[host]:
+				s = 0.25
+			default:
+				s = 0.00
+			}
+		case u.Scheme != "":
+			continue // mailto:, ftp:, … — not a gradeable citation
 		default:
-			s = 0.00
+			// Local path. u.Path drops a fragment ([x](file.md#L4)) and query.
+			np := normalizePath(u.Path)
+			if np == "" {
+				continue // pure in-document anchor like (#section)
+			}
+			key = np
+			if act.paths[np] || underClonedDir(np, act.clonedDirs) {
+				s = 1.00
+			}
 		}
-		details = append(details, citationDetail{url: m[1], score: s})
+		if _, dup := dedup[key]; dup {
+			continue
+		}
+		dedup[key] = struct{}{}
+		details = append(details, citationDetail{url: target, score: s})
 		sum += s
 	}
 	if len(details) == 0 {
@@ -327,7 +363,60 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 	return sum / float64(len(details)), details, true
 }
 
-// citationDetail is one cited URL's deterministic backing score.
+// normalizedCloneURLs normalizes clone URLs for prefix matching: normalizeURL
+// plus a trailing ".git" trim, so https://host/org/repo.git backs a cite of
+// https://host/org/repo/blob/main/README.md.
+func normalizedCloneURLs(clones []string) []string {
+	out := make([]string, 0, len(clones))
+	for _, c := range clones {
+		n, _ := normalizeURL(c)
+		if n = strings.TrimSuffix(n, ".git"); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// underClonedRepo reports whether a normalized cited URL points AT or UNDER a
+// cloned repo. Segment-aware: the "/" appended to the clone URL means a clone
+// of …/org/repo does NOT back …/org/repo-two.
+func underClonedRepo(norm string, cloneNorms []string) bool {
+	n := strings.TrimSuffix(norm, ".git")
+	for _, c := range cloneNorms {
+		if n == c || strings.HasPrefix(n, c+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizePath trims the cosmetic variance in a workspace-relative path
+// ("./x", trailing "/"). Known ceiling: pure string normalization — no
+// symlink/".." resolution, and a repo-relative cite ("app/x.ts") does not
+// match its clone-dir-prefixed ledger entry ("repo/app/x.ts"). Good enough in
+// practice: workers cite the same path string they passed to read_file.
+func normalizePath(p string) string {
+	p = strings.TrimSpace(p)
+	for strings.HasPrefix(p, "./") {
+		p = p[2:]
+	}
+	return strings.TrimRight(p, "/")
+}
+
+// underClonedDir reports whether a normalized local path is one of, or lies
+// under, a git_clone'd dir (segment-aware, like underClonedRepo). Every file
+// in a cloned repo is retrieved material by construction.
+func underClonedDir(np string, cloneDirs []string) bool {
+	for _, d := range cloneDirs {
+		if np == d || strings.HasPrefix(np, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// citationDetail is one cited link target's (URL or local path) deterministic
+// backing score.
 type citationDetail struct {
 	url   string
 	score float64
