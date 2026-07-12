@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,31 +57,95 @@ func newRunCommand(d Deps) (tool.Tool, error) {
 	)
 }
 
-// runCommand is run_command's logic: validate (no shell metacharacters;
-// pipeline-split on unquoted `|`), resolve `dir` through the jail, then
-// execute via the SAME runner the trust gate's deterministic checks use
-// (workspace.RunPipeline) — one internal runner, two consumers (see
-// .quack/plan-pr5-tool-schemas.md §4/§4b).
+// stripCDPrefix recognizes the worker-LLM habit of opening a command with
+// `cd <path> && <rest>` — a shell re-statement of the `dir` argument that
+// would otherwise trip the metachar wall on `&&` and burn a revise round
+// (observed live: `cd repo && npx vitest run …` with dir already "repo").
+// Only a single LEADING `cd` with a bare, unquoted, metachar-free path is
+// stripped; a quoted path (`cd "my dir" &&`) is left alone — the metachar
+// wall's coaching error still fires for that rarity, which is acceptable.
+// Everything after the first `&&` is returned verbatim, so further chaining
+// (`cd x && y && z`) still hits the wall: only the cd prefix is special.
+func stripCDPrefix(command string) (target, rest string, ok bool) {
+	s := strings.TrimSpace(command)
+	if !strings.HasPrefix(s, "cd") {
+		return "", "", false
+	}
+	s = s[2:]
+	if s == "" || (s[0] != ' ' && s[0] != '\t') {
+		return "", "", false // "cdrecord …" etc., not a cd
+	}
+	s = strings.TrimLeft(s, " \t")
+	i := strings.IndexAny(s, " \t")
+	if i < 0 {
+		return "", "", false // bare `cd x` — no `&&`, not the idiom
+	}
+	target = s[:i]
+	rest = strings.TrimSpace(s[i:])
+	if !strings.HasPrefix(rest, "&&") {
+		return "", "", false // `cd x; y` and friends — the wall handles them
+	}
+	rest = strings.TrimSpace(rest[2:])
+	if target == "" || rest == "" ||
+		strings.HasPrefix(target, "'") || strings.HasPrefix(target, `"`) ||
+		strings.ContainsRune(target, '|') || workspace.ContainsShellMetachar(target) {
+		return "", "", false
+	}
+	return target, rest, true
+}
+
+// runCommand is run_command's logic: normalize two rejected-but-harmless
+// shell idioms the worker LLM habitually emits (a leading `cd X &&` folds
+// into the dir resolution; a standalone `2>&1` is dropped — output is already
+// combined), then validate (no shell metacharacters; pipeline-split on
+// unquoted `|`), resolve `dir` through the jail, and execute via the SAME
+// runner the trust gate's deterministic checks use (workspace.RunPipeline) —
+// one internal runner, two consumers (see .quack/plan-pr5-tool-schemas.md
+// §4/§4b). The normalization is run_command-only: the gate's checks come from
+// operator config, not an LLM, and keep their exact semantics.
 func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 	if strings.TrimSpace(a.Command) == "" {
 		return runCommandResult{}, fmt.Errorf("run_command: command must not be empty")
 	}
-	if workspace.ContainsShellMetachar(a.Command) {
+	command, dirArg := a.Command, a.Dir
+	if target, rest, ok := stripCDPrefix(command); ok {
+		command = rest
+		switch {
+		case strings.TrimSpace(dirArg) == "":
+			dirArg = target // `cd` supplies the missing dir argument
+		case filepath.IsAbs(target):
+			dirArg = target // let jail.Resolve reject it exactly as a dir argument would be
+		case filepath.Clean(dirArg) == filepath.Clean(target):
+			// dir already names the cd target (the habit re-states it) —
+			// don't double repo to repo/repo.
+		default:
+			// Shell semantics: the cd runs from dir, so a relative target
+			// composes under it. `..` components survive the Join and are
+			// judged by the jail like any other dir argument.
+			dirArg = filepath.Join(dirArg, target)
+		}
+	}
+	command = workspace.StripStderrMerge(command)
+	if strings.TrimSpace(command) == "" {
+		return runCommandResult{}, fmt.Errorf("run_command: command must not be empty")
+	}
+	if workspace.ContainsShellMetachar(command) {
 		return runCommandResult{}, fmt.Errorf(
 			"run_command: command contains a shell metacharacter (& ; $ < > ` ( )) — run_command never invokes a " +
 				"shell; pipes are supported natively, but redirects, backgrounding, subshells, and substitution are " +
-				"unavailable")
+				"unavailable. Use the `dir` argument instead of a 'cd X &&' prefix; stderr is already merged into " +
+				"the output (drop '2>&1'); write output to a file with the write_file tool instead of '>'")
 	}
-	stages, err := workspace.SplitPipeline(a.Command)
+	stages, err := workspace.SplitPipeline(command)
 	if err != nil {
 		return runCommandResult{}, fmt.Errorf("run_command: %w", err)
 	}
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.jail.Resolve(b.userID, dirArg)
 	if err != nil {
 		return runCommandResult{}, err
 	}
 	if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
-		return runCommandResult{}, fmt.Errorf("run_command: %q is not a directory", a.Dir)
+		return runCommandResult{}, fmt.Errorf("run_command: %q is not a directory", dirArg)
 	}
 
 	t0 := time.Now()
@@ -90,6 +155,6 @@ func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 		return runCommandResult{}, fmt.Errorf("run_command: %w", err)
 	}
 	slog.Info("workspace exec", "component", "tools", "tool", "run_command",
-		"user", b.userID, "dir", a.Dir, "command", a.Command, "stages", len(stages), "exit", res.ExitCode, "duration_ms", dur)
+		"user", b.userID, "dir", dirArg, "command", command, "stages", len(stages), "exit", res.ExitCode, "duration_ms", dur)
 	return runCommandResult{ExitCode: res.ExitCode, Output: res.Output, DurationMs: dur}, nil
 }

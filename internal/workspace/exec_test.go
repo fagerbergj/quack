@@ -102,6 +102,30 @@ func TestSplitPipelineEmptyStageErrors(t *testing.T) {
 	}
 }
 
+func TestStripStderrMerge(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"npm test 2>&1 | tail -40", "npm test | tail -40"},
+		{"npx vitest run --reporter=verbose 2>&1 | tail -40", "npx vitest run --reporter=verbose | tail -40"},
+		{"npm test 2>&1", "npm test"},
+		{"2>&1 npm test", "npm test"},
+		{"npm test", "npm test"},
+		// Quoted `2>&1` is a literal argument — untouched (quote chars intact).
+		{`echo "2>&1"`, `echo "2>&1"`},
+		{"echo '2>&1'", "echo '2>&1'"},
+		{"grep '2>&1 in text' file", "grep '2>&1 in text' file"},
+		// Not a standalone token — left alone (the metachar wall handles it).
+		{"npm test 2>&1|tail", "npm test 2>&1|tail"},
+	}
+	for _, c := range cases {
+		if got := StripStderrMerge(c.in); got != c.want {
+			t.Errorf("StripStderrMerge(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestSplitArgv(t *testing.T) {
 	cases := []struct {
 		s    string

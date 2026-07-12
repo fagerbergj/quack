@@ -2,6 +2,7 @@ package tools
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -144,6 +145,125 @@ func TestRunCommandRejectsEmpty(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	if _, err := b.runCommand(runCommandArgs{Dir: "", Command: "   "}); err == nil {
 		t.Fatal("runCommand(empty command): want error")
+	}
+}
+
+// TestRunCommandCDPrefixNormalization covers the live-observed LLM habit of
+// re-stating the dir argument as a `cd X &&` prefix: the prefix folds into
+// dir resolution instead of tripping the metachar wall.
+func TestRunCommandCDPrefixNormalization(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	root := ensureUserRoot(t, b)
+	for _, sub := range []string{"repo", "a/b"} {
+		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name          string
+		dir           string
+		command       string
+		wantCwdSuffix string
+	}{
+		{"dir restated by cd — no doubling", "repo", "cd repo && pwd", "/repo"},
+		{"empty dir — cd supplies it", "", "cd repo && pwd", "/repo"},
+		{"nested cd target", "", "cd a/b && pwd", "/a/b"},
+		{"cd composes under dir", "a", "cd b && pwd", "/a/b"},
+		// The exact live failure shape: both idioms in one command.
+		{"cd prefix plus 2>&1", "repo", "cd repo && pwd 2>&1", "/repo"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := b.runCommand(runCommandArgs{Dir: c.dir, Command: c.command})
+			if err != nil {
+				t.Fatalf("runCommand(dir=%q, %q): %v", c.dir, c.command, err)
+			}
+			cwd := strings.TrimSpace(res.Output)
+			if !strings.HasSuffix(cwd, c.wantCwdSuffix) {
+				t.Errorf("cwd = %q, want suffix %q", cwd, c.wantCwdSuffix)
+			}
+			if strings.HasSuffix(cwd, "/repo/repo") {
+				t.Errorf("cwd = %q: dir doubled", cwd)
+			}
+		})
+	}
+}
+
+func TestRunCommandCDPrefixJailStillApplies(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	ensureUserRoot(t, b)
+	if _, err := b.runCommand(runCommandArgs{Dir: "", Command: "cd .. && pwd"}); err == nil {
+		t.Fatal("runCommand(cd .. && pwd): want jail rejection")
+	} else if !strings.Contains(err.Error(), "escapes your workspace") {
+		t.Errorf("err = %v, want an escape rejection", err)
+	}
+}
+
+// Only a single leading `cd X &&` is special — everything else still hits
+// the metachar wall.
+func TestRunCommandCDPrefixOnlyStripsThePrefix(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	ensureUserRoot(t, b)
+	for _, cmd := range []string{
+		"cd repo && echo a && echo b", // chained && beyond the prefix
+		"cd repo; echo hi",            // semicolon, not &&
+		"echo hi && cd repo",          // cd not leading
+	} {
+		if _, err := b.runCommand(runCommandArgs{Dir: "", Command: cmd}); err == nil {
+			t.Errorf("runCommand(%q): want metachar rejection, got nil", cmd)
+		}
+	}
+}
+
+func TestRunCommandStderrMergeTokenDropped(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	ensureUserRoot(t, b)
+	// `2>&1` is a no-op for us (RunArgv merges stderr; RunPipeline appends
+	// each stage's stderr to the output) — it must be dropped, not rejected,
+	// and the pipeline must run.
+	res, err := b.runCommand(runCommandArgs{Dir: "", Command: "printf 'a\\nb\\nc\\n' 2>&1 | head -1"})
+	if err != nil {
+		t.Fatalf("runCommand: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0 (output: %q)", res.ExitCode, res.Output)
+	}
+	if !strings.Contains(res.Output, "a") || strings.Contains(res.Output, "c") {
+		t.Errorf("Output = %q, want head of the piped output", res.Output)
+	}
+	// Single-stage: stderr really is merged into the output without 2>&1.
+	res, err = b.runCommand(runCommandArgs{Dir: "", Command: "ls --definitely-bogus-flag 2>&1"})
+	if err != nil {
+		t.Fatalf("runCommand: %v", err)
+	}
+	if res.ExitCode == 0 {
+		t.Error("ExitCode = 0, want non-zero")
+	}
+	if res.Output == "" {
+		t.Error("Output empty, want ls's stderr merged in")
+	}
+}
+
+func TestRunCommandQuotedStderrMergeUntouched(t *testing.T) {
+	// A quoted "2>&1" is a literal argument, not the idiom — it is NOT
+	// stripped, so the string still (correctly) trips the metachar wall.
+	b := newTestBinding(t, "u1")
+	ensureUserRoot(t, b)
+	if _, err := b.runCommand(runCommandArgs{Dir: "", Command: `echo "2>&1"`}); err == nil {
+		t.Fatal(`runCommand(echo "2>&1"): want metachar rejection`)
+	}
+}
+
+func TestRunCommandMetacharErrorCoachesIdioms(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	_, err := b.runCommand(runCommandArgs{Dir: "", Command: "npm test > out.txt"})
+	if err == nil {
+		t.Fatal("runCommand(redirect): want error")
+	}
+	for _, want := range []string{"dir", "cd X &&", "2>&1", "write_file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want coaching mention of %q", err, want)
+		}
 	}
 }
 
