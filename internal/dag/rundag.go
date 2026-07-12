@@ -62,7 +62,12 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 				}
 				mu.Unlock()
 
-				out, rerr := workflow.RunNode[string](ctx, gateNodes[nid], in)
+				// WithUseSubBranch gives each retried gate node its own branch (the
+				// native graph's scheduler does the same for plan nodes) so that
+				// concurrently re-run nodes' events stay branch-distinguishable — the
+				// A2A worker's outbound-message branch filter (internal/agent/a2a.go)
+				// depends on it to keep one node's traffic out of a sibling's request.
+				out, rerr := workflow.RunNode[string](ctx, gateNodes[nid], in, workflow.WithUseSubBranch())
 				if rerr != nil {
 					errs[i] = rerr
 					return

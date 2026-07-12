@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
@@ -178,8 +179,27 @@ func (s *A2AServer) Client() (adkagent.Agent, error) {
 // reaches the wire. Only this session's SERIALIZED-FOR-A2A copy is affected;
 // the shared session quack's own gate scans (scanNodeConfirms/scanNodeAsks)
 // keeps the real FunctionCall/FunctionResponse events untouched.
-func sanitizeWorkflowPlumbingPart(_ context.Context, adkEvent *session.Event, part *genai.Part) (*a2a.Part, error) {
+func sanitizeWorkflowPlumbingPart(ctx context.Context, adkEvent *session.Event, part *genai.Part) (*a2a.Part, error) {
 	if part == nil {
+		return nil, nil
+	}
+	// Branch hygiene: drop events that belong to a DIFFERENT branch of the
+	// shared workflow session. Every plan node runs in ONE session, and
+	// remoteagent's history sweep (toMissingRemoteSessionParts) sends the remote
+	// worker EVERY event since its own last response with NO branch filtering —
+	// so a concurrently-running sibling node's gate prompt, ask/confirm plumbing,
+	// and relayed worker activity would all be textified ("For context: …") into
+	// this node's outbound message: one node's task contaminating another's
+	// request (the A2A twin of the local-llmagent leak fixed by the worker-run
+	// isolation scope in vetting/node.go, and of the orchestrator-side leak
+	// fixed by orchestrator/sessionfilter.go). The converter is the one seam
+	// quack controls on this path, and ctx here is the remote agent's
+	// InvocationContext, which carries the current worker run's branch — apply
+	// ADK's own eventBelongsToBranch rule: keep branchless (invocation-shared)
+	// events, the current branch, and ancestors; drop everything else (sibling
+	// nodes, this node's own earlier runs — each run's gate prompt is
+	// self-contained, so nothing is lost).
+	if ic, ok := ctx.(interface{ Branch() string }); ok && !eventBelongsToBranch(ic.Branch(), adkEvent) {
 		return nil, nil
 	}
 	switch {
@@ -190,4 +210,15 @@ func sanitizeWorkflowPlumbingPart(_ context.Context, adkEvent *session.Event, pa
 	default:
 		return adka2a.ToA2APart(part, adkEvent.LongRunningToolIDs)
 	}
+}
+
+// eventBelongsToBranch mirrors ADK's branch-visibility rule (adk/v2
+// internal/llminternal/contents_processor.go): an event is visible to the
+// current branch when either side is branchless, the branches match exactly,
+// or the event's branch is a dot-delimited ancestor of the current one.
+func eventBelongsToBranch(invocationBranch string, ev *session.Event) bool {
+	if invocationBranch == "" || ev.Branch == "" || ev.Branch == invocationBranch {
+		return true
+	}
+	return strings.HasPrefix(invocationBranch, ev.Branch+".")
 }

@@ -529,8 +529,27 @@ func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any
 func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string, emit func(*session.Event) error) (string, error) {
 	t0 := time.Now()
 	emitPrompt(ctx, emit, input)
+	// WithIsolationScopeFromNodePath: every plan node shares ONE workflow
+	// session, and a LOCAL single-turn llmagent worker picks its "current turn"
+	// pivot by scanning that session's tail for the latest user/foreign-authored
+	// event WITHOUT branch filtering (ADK v2.0.0
+	// llminternal.buildContentsCurrentTurnContextOnly — branch is only applied
+	// AFTER the pivot). A concurrently-running sibling node's event landing at
+	// the tail therefore steals the pivot, and everything before it — including
+	// THIS worker's own node-input prompt (seeded as a synthetic user event) —
+	// falls out of the request window; the branch filter then removes the
+	// sibling's events too, leaving the worker an EMPTY request (CI flake:
+	// TestRunPlanAsGraph_HITLPauseResume, n2 "asking n1's question"). The pivot
+	// scan DOES honour isolation scope, so scoping each worker run to its own
+	// node path makes sibling events invisible to it. Scope is inert for remote
+	// (A2A) workers — remoteagent ignores IsolationScope; their sibling leak is
+	// fixed read-side in internal/agent/a2a.go's part converter instead. Known
+	// ADK quirk of scope+single_turn: the node input is ALSO prepended from
+	// UserContent, so a local llmagent sees its prompt twice — harmless, and
+	// local llmagent workers exist only in tests (production workers are A2A).
 	out, err := workflow.RunNode[string](ctx, workerNode, input,
-		workflow.WithUseSubBranch(), workflow.WithRunID(runID))
+		workflow.WithUseSubBranch(), workflow.WithRunID(runID),
+		workflow.WithIsolationScopeFromNodePath())
 	if err != nil {
 		return "", err
 	}

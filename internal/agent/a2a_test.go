@@ -233,3 +233,52 @@ func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
 		t.Errorf("answer = %q, want it to contain the worker's %q", answer, "pong")
 	}
 }
+
+// branchCtx fakes the remote agent's InvocationContext for the part converter:
+// a plain context that also reports the current run's branch, which is all
+// sanitizeWorkflowPlumbingPart reads off it.
+type branchCtx struct {
+	context.Context
+	branch string
+}
+
+func (b branchCtx) Branch() string { return b.branch }
+
+// TestSanitizePart_DropsForeignBranchEvents: the converter must drop parts of
+// events from a SIBLING node's branch (the shared-session leak: without this,
+// remoteagent's history sweep folds a concurrently-running node's prompt and
+// plumbing into this node's outbound message), while keeping branchless events,
+// the current branch, and ancestors.
+func TestSanitizePart_DropsForeignBranchEvents(t *testing.T) {
+	cur := "n1@1.researcher@worker-r0"
+	textPart := &genai.Part{Text: "some content"}
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		evBranch string
+		want     bool // want a non-nil converted part
+	}{
+		{"sibling node dropped", branchCtx{context.Background(), cur}, "n2@1", false},
+		{"sibling worker dropped", branchCtx{context.Background(), cur}, "n2@1.researcher@worker-r0", false},
+		{"own earlier run dropped", branchCtx{branch: cur, Context: context.Background()}, "n1@1.researcher@worker-r1", false},
+		{"prefix without dot boundary dropped", branchCtx{context.Background(), "n1@10.researcher@worker-r0"}, "n1@1", false},
+		{"branchless kept", branchCtx{context.Background(), cur}, "", true},
+		{"exact branch kept", branchCtx{context.Background(), cur}, cur, true},
+		{"ancestor kept", branchCtx{context.Background(), cur}, "n1@1", true},
+		{"unbranched invocation keeps all", branchCtx{context.Background(), ""}, "n2@1", true},
+		{"plain context keeps all", context.Background(), "n2@1", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := &session.Event{Branch: tc.evBranch}
+			ev.Author = "quack-gate"
+			got, err := sanitizeWorkflowPlumbingPart(tc.ctx, ev, textPart)
+			if err != nil {
+				t.Fatalf("convert: %v", err)
+			}
+			if (got != nil) != tc.want {
+				t.Errorf("converted part present = %v, want %v", got != nil, tc.want)
+			}
+		})
+	}
+}
