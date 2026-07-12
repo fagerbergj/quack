@@ -348,10 +348,11 @@ func TestPostPruneCheckIsCalibrated(t *testing.T) {
 }
 
 // Absurd measured/estimate ratios are clamped, and the ratio never drops below
-// 1.0 (calibration must never shrink the raw estimate).
+// the safety floor (calibration must never shrink the estimate below the
+// first-turn default — undercounting is the fatal mode).
 func TestCalibrationClamped(t *testing.T) {
 	ctx := newFakeCtx()
-	// Measured below estimate (media-free overcount): floor at 1.0.
+	// Measured below estimate (media-free overcount): floor at minCalibrationRatio.
 	if err := ctx.state.Set(estimateKey, 10_000); err != nil {
 		t.Fatal(err)
 	}
@@ -381,6 +382,76 @@ func TestCalibrationClamped(t *testing.T) {
 	}, nil)
 	if _, err := fresh.state.Get(calibrationKey); err == nil {
 		t.Fatal("ratio recorded from a zero estimate")
+	}
+}
+
+// Regression for the ratio=1 death spiral (live failure 2026-07-12): a turn
+// whose measured prompt tokens land AT OR BELOW the raw bytes/4 estimate (prose
+// the provider tokenizes more efficiently than 4 chars/token) must not drag the
+// trusted calibration below the first-turn safety default. Before the fix the
+// floor was 1.0, so such a turn stored 1.0 and every later code-dense revise
+// round undercounted (the estimate can't see the system prompt + tool schemas)
+// and 400'd. The floor is now pinned to defaultCalibrationRatio.
+func TestCalibrationNeverBelowDefault(t *testing.T) {
+	ctx := newFakeCtx()
+	if err := ctx.state.Set(estimateKey, 10_000); err != nil {
+		t.Fatal(err)
+	}
+	// measured (9_000) < estimate (10_000) ⇒ raw ratio 0.9.
+	recordUsage()(ctx, &model.LLMResponse{
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 9_000},
+	}, nil)
+	if got := calibrationRatio(ctx); got < defaultCalibrationRatio {
+		t.Fatalf("degenerate measured≤estimate turn trusted ratio %v, below the safety default %v (the ratio=1 anomaly)", got, defaultCalibrationRatio)
+	}
+	if minCalibrationRatio != defaultCalibrationRatio {
+		t.Fatalf("floor (%v) must equal the default (%v) so no measurement drops below the safety margin", minCalibrationRatio, defaultCalibrationRatio)
+	}
+}
+
+// The contents[0] backstop: an oversized self-contained task/revise prompt —
+// which prune and summarise both leave verbatim — is middle-truncated to fit,
+// so contents[0] alone can never strand the session on a 400 (the revise-round
+// spiral). Non-text parts are preserved; the head keeps a usable core.
+func TestTruncateOversizedHead(t *testing.T) {
+	llm := &fakeLLM{text: "S"}
+	// budget = 60_000 - 20_000 = 40_000 real tokens; default ratio 1.3.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Prune: true, Enabled: true})
+
+	// A single huge task content (~50k tokens estimate ⇒ ~65k calibrated) with no
+	// tail to summarise: only the head backstop can save it.
+	huge := strings.Repeat("x", 200_000) // 50k est tokens
+	img := &genai.Part{InlineData: &genai.Blob{MIMEType: "image/png", Data: make([]byte, 1024)}}
+	req := &model.LLMRequest{Contents: []*genai.Content{{
+		Role:  genai.RoleUser,
+		Parts: []*genai.Part{{Text: huge}, img},
+	}}}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if len(req.Contents) != 1 {
+		t.Fatalf("expected the single task content, got %d", len(req.Contents))
+	}
+	got := estimateTokens(req.Contents)
+	if calibrated(got, defaultCalibrationRatio) > usable(60_000) {
+		t.Fatalf("oversized head not truncated under budget: calibrated %d > %d", calibrated(got, defaultCalibrationRatio), usable(60_000))
+	}
+	text := req.Contents[0].Parts[0].Text
+	if !strings.Contains(text, "elided to fit the context window") {
+		t.Fatalf("truncation marker missing from truncated head")
+	}
+	if !strings.HasPrefix(text, "xxxx") {
+		t.Fatalf("head core not preserved")
+	}
+	// The media part survives the collapse.
+	var hasImg bool
+	for _, p := range req.Contents[0].Parts {
+		if p.InlineData != nil {
+			hasImg = true
+		}
+	}
+	if !hasImg {
+		t.Fatalf("non-text (media) part dropped by head truncation")
 	}
 }
 
