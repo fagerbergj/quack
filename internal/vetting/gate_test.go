@@ -76,6 +76,68 @@ func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 	}
 }
 
+// TestCitationScoreClonedRepoGrounding reenacts the live failure (2026-07-12):
+// an explore-repo node cloned a repo, read files inside it via read_file, and
+// cited (a) a blob URL under the cloned repo and (b) local file paths — honest,
+// fully-grounded citations that scored 0.25 mean backing and sank a node the
+// judge had passed. Cloned-repo grounding is full backing; fabrication
+// (un-cloned repos, untouched paths) still scores 0.
+func TestCitationScoreClonedRepoGrounding(t *testing.T) {
+	answer := strings.Join([]string{
+		"[README.md](https://github.com/fagerbergj/games/blob/main/README.md)", // URL under the cloned repo → 1.0
+		"[games.ts](games-repo/app/games.ts)",                                  // local path actually read → 1.0
+		"[board.ts](games-repo/lib/board.ts)",                                  // untouched but under the clone dir → 1.0
+		"[readme](games-repo/README.md#usage)",                                 // fragment dropped, under clone dir → 1.0
+		"[fabricated](docs/never-touched.md)",                                  // path never touched → 0.0
+		"[not-that-dir](games-repo-extra/x.ts)",                                // segment boundary: not under games-repo → 0.0
+		"[other-repo](https://github.com/fagerbergj/games-extra)",              // segment boundary: clone of …/games doesn't back …/games-extra → 0.0
+		"[uncloned](https://github.com/other/thing)",                           // URL to a repo never cloned → 0.0
+	}, " ")
+	act := workerActivity{
+		clonedRepos: []string{"https://github.com/fagerbergj/games.git"}, // .git suffix normalized away
+		clonedDirs:  []string{"games-repo"},
+		paths:       map[string]bool{"games-repo/app/games.ts": true},
+	}
+
+	score, details, ok := citationScore(answer, act)
+	if !ok {
+		t.Fatal("citationScore abstained despite recorded clone/read activity")
+	}
+	want := map[string]float64{
+		"https://github.com/fagerbergj/games/blob/main/README.md": 1.0,
+		"games-repo/app/games.ts":                                 1.0,
+		"games-repo/lib/board.ts":                                 1.0,
+		"games-repo/README.md#usage":                              1.0,
+		"docs/never-touched.md":                                   0.0,
+		"games-repo-extra/x.ts":                                   0.0,
+		"https://github.com/fagerbergj/games-extra":               0.0,
+		"https://github.com/other/thing":                          0.0,
+	}
+	got := map[string]float64{}
+	for _, d := range details {
+		got[d.url] = d.score
+	}
+	for target, w := range want {
+		if got[target] != w {
+			t.Errorf("citation %s scored %.2f, want %.2f", target, got[target], w)
+		}
+	}
+	if wantMean := 4.0 / 8.0; score != wantMean {
+		t.Errorf("mean score = %.3f, want %.3f (details: %+v)", score, wantMean, details)
+	}
+}
+
+// TestCitationScoreSkipsAnchorsAndNonWebSchemes: in-document anchors and
+// mailto: targets are not citations — they must not enter the mean at all.
+func TestCitationScoreSkipsAnchorsAndNonWebSchemes(t *testing.T) {
+	answer := "[sec](#usage) [mail](mailto:a@b.com) [real](repo/file.go)"
+	act := workerActivity{paths: map[string]bool{"repo/file.go": true}}
+	score, details, ok := citationScore(answer, act)
+	if !ok || len(details) != 1 || score != 1.0 {
+		t.Errorf("score=%.2f details=%+v ok=%v, want 1.0 with exactly the path graded", score, details, ok)
+	}
+}
+
 func TestCitationScoreNoCitations(t *testing.T) {
 	_, _, ok := citationScore("A plain answer with no links.", workerActivity{})
 	if ok {
@@ -280,6 +342,22 @@ func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 	}
 	if got.Score != 0.9 {
 		t.Errorf("score = %v, want 0.9 (untouched)", got.Score)
+	}
+}
+
+// TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval: a coding node
+// that consulted the repo on disk (clone and/or reads) instead of the web is
+// grounded — grounded_in_retrieval must not fire on zero web activity alone.
+func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
+	for name, act := range map[string]workerActivity{
+		"clone": {clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}},
+		"reads": {paths: map[string]bool{"repo/main.go": true}},
+	} {
+		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+		got := foldDeterministic(v, "The entrypoint is [main.go](repo/main.go).", act, Config{RequireRetrieval: true})
+		if _, present := got.Criteria["grounded_in_retrieval"]; present {
+			t.Errorf("%s: grounded_in_retrieval penalty applied despite workspace grounding", name)
+		}
 	}
 }
 

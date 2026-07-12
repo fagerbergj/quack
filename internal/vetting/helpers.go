@@ -117,6 +117,16 @@ type workerActivity struct {
 	seen      map[string]string      // URL → search snippet for surfaced-but-not-fetched URLs
 	staged    []memory.Candidate     // memory candidates staged via stage_memory (M6)
 	workspace []wsOp                 // fs/git/run_command operations, in session order (see ledger.go)
+
+	// Cloned-repo grounding (live failure 2026-07-12: an explore-repo node
+	// cloned a repo, read ~10 files, cited them — and cites_sources scored
+	// 0.25, sinking a node the judge called excellent). A successful git_clone
+	// puts the ENTIRE repo on local disk: every file in it is retrieved
+	// material by construction, so citations of URLs under the repo and of
+	// local paths inside the clone dir are real grounding, not fabrication.
+	clonedRepos []string        // successful git_clone URLs
+	clonedDirs  []string        // the local dirs those clones landed in (normalizePath'd)
+	paths       map[string]bool // paths of successful fs ops (read/write/edit/delete), normalizePath'd
 }
 
 // wsOp is one workspace operation the worker actually performed — a completed
