@@ -155,11 +155,15 @@ func (s *multiRoundStub) GenerateContent(_ context.Context, req *model.LLMReques
 			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
 			return
 		}
+		// Route on which answers are present, not on occurrence counts: a scoped
+		// single-turn worker's request carries the prompt twice (ADK prepends the
+		// node input alongside the seeded user event), so counting "\nA: " would
+		// double-count.
 		txt := gUserText(req)
-		switch strings.Count(txt, "\nA: ") {
-		case 0:
+		switch {
+		case !strings.Contains(txt, "A: north"):
 			yield(gCall(vetting.AskToolName, map[string]any{"question": "which direction?"}), nil)
-		case 1:
+		case !strings.Contains(txt, "A: coastal"):
 			yield(gCall(vetting.AskToolName, map[string]any{"question": "which region?"}), nil)
 		default:
 			s.mu.Lock()

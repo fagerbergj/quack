@@ -72,16 +72,18 @@ func (s *graphStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 // from both outputs.
 func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 	stub := &graphStub{}
-	// One llmagent instance PER concurrent node: a single local single-turn
-	// llmagent shared across concurrently-running nodes races inside ADK itself
-	// (a concurrent node's activity shifts the shared instance's "current turn"
-	// anchor, leaking one node's prompt into another's request — the CI-flake
-	// signature was n2 pausing on n1's ask). Test-harness-only: production
-	// workers are remote (A2A), one instance per server. Same mitigation the
-	// ask_advisor concurrency test uses.
+	// One llmagent instance PER concurrent node (production shape: one agent per
+	// A2A server), each on its own model-stub routing. The CI flake this test
+	// once suffered (n2 "pausing on n1's question", plainRuns=0) was NOT an
+	// instance-sharing race: all nodes share ONE workflow session, and ADK's
+	// single-turn "current turn" pivot scan ignores branches, so a concurrent
+	// sibling's tail event evicted this worker's own seeded prompt from its
+	// request (the stub then saw an EMPTY request and fell through to its
+	// ask_user default). Fixed for real by the per-run isolation scope in
+	// vetting.runWorkerNode — see the comment there.
 	mk := func(name string) adkagent.Agent {
 		a, err := llmagent.New(llmagent.Config{
-			Name: name, Model: stub, Description: name, Instruction: "ROLE:blk Answer.",
+			Name: name, Model: stub, Description: name, Instruction: "ROLE:" + name + " Answer.",
 			Tools: []tool.Tool{newAskTool(t)},
 		})
 		if err != nil {
