@@ -42,6 +42,28 @@ type fsBinding struct {
 	userID string
 	jail   *workspace.Jail
 	caps   workspace.Caps
+	// cwd is the session working directory (jail-relative, "" = jail root) a
+	// per-call copy carries — set by withCwd from ctx state, so the shared
+	// startup-constructed binding stays immutable and its zero value ("") is
+	// exactly today's root-relative behaviour. Every path this binding resolves
+	// goes through resolve, which applies cwd (joinCwd) before Jail.Resolve.
+	cwd string
+}
+
+// withCwd returns a copy of b whose cwd is the session working directory read
+// from ctx state — the one place the durable cwd enters a tool call. A value
+// receiver makes the copy; the original binding is never mutated.
+func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
+	b.cwd = cwdFromState(ctx)
+	return b
+}
+
+// resolve is the cwd-aware Jail.Resolve every fs tool uses in place of a raw
+// b.jail.Resolve(b.userID, p): a relative p resolves against b.cwd, a "/"-
+// prefixed p against the jail root (see joinCwd), and containment is still
+// enforced by Jail.Resolve — a cwd + path can never escape the jail.
+func (b fsBinding) resolve(p string) (string, error) {
+	return b.jail.Resolve(b.userID, joinCwd(b.cwd, p))
 }
 
 // newFSBinding resolves Deps into an fsBinding, defaulting caps when unset.
@@ -111,7 +133,7 @@ func newReadFile(d Deps) (tool.Tool, error) {
 				"was returned — never an error, call again with a later offset. Binary files are rejected.",
 				defaultReadLimit),
 		},
-		func(_ agent.Context, a readFileArgs) (readFileResult, error) { return b.readFile(a) },
+		func(ctx agent.Context, a readFileArgs) (readFileResult, error) { return b.withCwd(ctx).readFile(a) },
 	)
 }
 
@@ -124,7 +146,7 @@ func newReadFile(d Deps) (tool.Tool, error) {
 // byte-capped file it is a lower bound on the file's true line count —
 // `truncated: true` signals that.
 func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
-	real, err := b.jail.Resolve(b.userID, a.Path)
+	real, err := b.resolve(a.Path)
 	if err != nil {
 		return readFileResult{}, err
 	}
@@ -211,7 +233,7 @@ func newWriteFile(d Deps) (tool.Tool, error) {
 				"an existing file is allowed (`created` reports false when it overwrote). Content over %d bytes "+
 				"is rejected — split large writes across multiple calls.", b.caps.MaxWriteBytes),
 		},
-		func(_ agent.Context, a writeFileArgs) (writeFileResult, error) { return b.writeFile(a) },
+		func(ctx agent.Context, a writeFileArgs) (writeFileResult, error) { return b.withCwd(ctx).writeFile(a) },
 	)
 }
 
@@ -225,7 +247,7 @@ func (b fsBinding) writeFile(a writeFileArgs) (writeFileResult, error) {
 		return writeFileResult{}, fmt.Errorf("write_file: content is %d bytes, over the %d byte limit",
 			len(a.Content), b.caps.MaxWriteBytes)
 	}
-	real, err := b.jail.Resolve(b.userID, a.Path)
+	real, err := b.resolve(a.Path)
 	if err != nil {
 		return writeFileResult{}, err
 	}
@@ -271,7 +293,7 @@ func newEditFile(d Deps) (tool.Tool, error) {
 				"once and `replace_all` isn't set: make `old` more specific to target one occurrence, or pass " +
 				"`replace_all: true` to replace every occurrence.",
 		},
-		func(_ agent.Context, a editFileArgs) (editFileResult, error) { return b.editFile(a) },
+		func(ctx agent.Context, a editFileArgs) (editFileResult, error) { return b.withCwd(ctx).editFile(a) },
 	)
 }
 
@@ -281,7 +303,7 @@ func (b fsBinding) editFile(a editFileArgs) (editFileResult, error) {
 	if a.Old == "" {
 		return editFileResult{}, fmt.Errorf("edit_file: old must not be empty")
 	}
-	real, err := b.jail.Resolve(b.userID, a.Path)
+	real, err := b.resolve(a.Path)
 	if err != nil {
 		return editFileResult{}, err
 	}
@@ -350,15 +372,17 @@ func newListDir(d Deps) (tool.Tool, error) {
 				"paths are workspace-relative. Caps at %d entries; `truncated: true` means more exist — narrow "+
 				"`path`, or use `glob`/`grep` instead.", b.caps.MaxListEntries),
 		},
-		func(_ agent.Context, a listDirArgs) (listDirResult, error) { return b.listDir(a) },
+		func(ctx agent.Context, a listDirArgs) (listDirResult, error) { return b.withCwd(ctx).listDir(a) },
 	)
 }
 
 // listDir is list_dir's logic: a depth-bounded walk under `path`, returning
-// workspace-relative entry paths (so a result is directly reusable as another
-// call's `path`), capped at caps.MaxListEntries.
+// cwd-relative entry paths (so a result is directly reusable as another call's
+// `path`), capped at caps.MaxListEntries. Entries re-root against the working
+// directory (relRoot = the cwd dir, = jail root when no cd), keeping the
+// round-trip (list_dir → read_file a listed path) consistent under a cwd.
 func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
-	base, err := b.jail.Resolve(b.userID, a.Path)
+	base, err := b.resolve(a.Path)
 	if err != nil {
 		return listDirResult{}, err
 	}
@@ -369,7 +393,7 @@ func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
 	if !info.IsDir() {
 		return listDirResult{}, fmt.Errorf("list_dir: %q is not a directory", a.Path)
 	}
-	userRoot, err := b.jail.Resolve(b.userID, "")
+	relRoot, err := b.resolve("")
 	if err != nil {
 		return listDirResult{}, err
 	}
@@ -405,7 +429,7 @@ func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
 			}
 			return nil
 		}
-		relToRoot, rerr := filepath.Rel(userRoot, p)
+		relToRoot, rerr := filepath.Rel(relRoot, p)
 		if rerr != nil {
 			return rerr
 		}
@@ -452,7 +476,7 @@ func newGlob(d Deps) (tool.Tool, error) {
 				"workspace-relative. Caps at %d results; `truncated: true` means more exist — narrow the "+
 				"pattern.", b.caps.MaxResults),
 		},
-		func(_ agent.Context, a globArgs) (globResult, error) { return b.glob(a) },
+		func(ctx agent.Context, a globArgs) (globResult, error) { return b.withCwd(ctx).glob(a) },
 	)
 }
 
@@ -462,7 +486,7 @@ func (b fsBinding) glob(a globArgs) (globResult, error) {
 	if strings.TrimSpace(a.Pattern) == "" {
 		return globResult{}, fmt.Errorf("glob: pattern is empty")
 	}
-	base, err := b.jail.Resolve(b.userID, a.Path)
+	base, err := b.resolve(a.Path)
 	if err != nil {
 		return globResult{}, err
 	}
@@ -524,7 +548,7 @@ func newGrep(d Deps) (tool.Tool, error) {
 				"Binary files are skipped. Caps at %d matches; `truncated: true` means more exist — narrow the "+
 				"pattern or path.", b.caps.MaxResults),
 		},
-		func(_ agent.Context, a grepArgs) (grepResult, error) { return b.grep(a) },
+		func(ctx agent.Context, a grepArgs) (grepResult, error) { return b.withCwd(ctx).grep(a) },
 	)
 }
 
@@ -535,11 +559,11 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 	if err != nil {
 		return grepResult{}, fmt.Errorf("grep: invalid pattern: %w", err)
 	}
-	base, err := b.jail.Resolve(b.userID, a.Path)
+	base, err := b.resolve(a.Path)
 	if err != nil {
 		return grepResult{}, err
 	}
-	userRoot, err := b.jail.Resolve(b.userID, "")
+	relRoot, err := b.resolve("") // cwd dir (= jail root without a cd): match paths re-root against it
 	if err != nil {
 		return grepResult{}, err
 	}
@@ -572,7 +596,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 		if ferr != nil {
 			return nil // unreadable or binary file: skip silently
 		}
-		relToRoot, rerr := filepath.Rel(userRoot, p)
+		relToRoot, rerr := filepath.Rel(relRoot, p)
 		if rerr != nil {
 			return rerr
 		}
@@ -646,7 +670,9 @@ func newDeletePath(d Deps) (tool.Tool, error) {
 				"since the delete is unrecoverable; without it, deleting a non-empty directory errors instead of " +
 				"silently doing nothing.",
 		},
-		func(_ agent.Context, a deletePathArgs) (deletePathResult, error) { return b.deletePath(a) },
+		func(ctx agent.Context, a deletePathArgs) (deletePathResult, error) {
+			return b.withCwd(ctx).deletePath(a)
+		},
 	)
 }
 
@@ -654,7 +680,7 @@ func newDeletePath(d Deps) (tool.Tool, error) {
 // unconditionally; a non-empty directory requires `recursive: true` or errors
 // loudly instead of silently no-op'ing.
 func (b fsBinding) deletePath(a deletePathArgs) (deletePathResult, error) {
-	real, err := b.jail.Resolve(b.userID, a.Path)
+	real, err := b.resolve(a.Path)
 	if err != nil {
 		return deletePathResult{}, err
 	}

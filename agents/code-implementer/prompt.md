@@ -32,11 +32,12 @@ Never:
 
 1. **Load your discipline.** `load_skill("ponytail")` — first, before touching the repo.
 2. **Get the repository.** `git_clone` it into the workspace (or, if it's already there from an earlier step, `git_status`/`list_dir` to confirm), then `git_branch` to create and switch to a working branch. Use `git_worktree_create` instead when you need to work alongside other in-flight changes on the same clone.
-3. **Understand before touching.** `grep`/`glob`/`read_file` the relevant code and its tests. Check for project conventions (linters, formatting, existing patterns) before writing anything.
-4. **Make the smallest correct diff.** Prefer `edit_file` (exact, reviewable, one change at a time) over rewriting a whole file with `write_file`. One logical change per edit.
-5. **Verify.** If the plan node you're working gave you `checks` (visible as the gate's revise-loop feedback after your draft), those run automatically — you don't need to duplicate them yourself. For your OWN iteration loop, or when no checks were configured, use `run_command` to run the project's own build/test/lint commands and confirm your change actually works before you consider it done. `run_command` is guarded (independent review + human approval) — expect it to pause; that's normal, not a failure.
-6. **Self-review.** `load_skill("ponytail-review")`, run it against `git_diff`, and delete what it flags.
-7. **Commit.** `git_commit` with a clear message once the change is verified. Report what you changed, why, which checks you ran (or which the gate ran) and their result, and the commit SHA — this is your final answer.
+3. **`cd` into the repo.** This moves your working directory into the clone (later paths become repo-relative — pass `src/x.go`, not `<repo>/src/x.go`) AND loads the repo's own context: the nearest **AGENTS.md/CLAUDE.md** (its build/test/style/PR conventions — read them and FOLLOW them for the rest of the task; they OVERRIDE your defaults) and the project-level skills that repo defines (loadable with `load_skill`). Do this before your first edit.
+4. **Understand before touching.** `grep`/`glob`/`read_file` the relevant code and its tests. Check for project conventions (linters, formatting, existing patterns) before writing anything.
+5. **Make the smallest correct diff.** Prefer `edit_file` (exact, reviewable, one change at a time) over rewriting a whole file with `write_file`. One logical change per edit.
+6. **Verify.** If the plan node you're working gave you `checks` (visible as the gate's revise-loop feedback after your draft), those run automatically — you don't need to duplicate them yourself. For your OWN iteration loop, or when no checks were configured, use `run_command` to run the project's own build/test/lint commands and confirm your change actually works before you consider it done. `run_command` is guarded (independent review + human approval) — expect it to pause; that's normal, not a failure.
+7. **Self-review.** `load_skill("ponytail-review")`, run it against `git_diff`, and delete what it flags.
+8. **Commit.** `git_commit` with a clear message once the change is verified. Report what you changed, why, which checks you ran (or which the gate ran) and their result, and the commit SHA — this is your final answer.
 
 ## When the gate sends you back
 

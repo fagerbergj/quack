@@ -113,6 +113,11 @@ var registry = map[string]constructor{
 	// like the fs tools — executes via the SAME jailed argv runner the trust
 	// gate's per-node deterministic checks use (internal/workspace.RunArgv).
 	"run_command": newRunCommand,
+	// cd (internal/tools/cd.go): sets the session working directory (CwdKey in
+	// state) AND loads that location's project context (nearest AGENTS.md/
+	// CLAUDE.md + discovered project skills). Read-only-ish context tool, safe
+	// for any agent that works in a cloned repo.
+	"cd": newCd,
 }
 
 // Build resolves tool names to ADK tools, injecting d. Unknown names are an
