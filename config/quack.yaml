@@ -74,7 +74,10 @@ agents:
     # load_skill/list_skills are auto-registered on every agent (see internal/serve/serve.go), so they're not listed here.
     # load_memory/stage_memory + the bundle's memory.md turn on task memory (M6): recall project conventions/decisions,
     # stage durable ones as it learns them — safe on a worker (its review is gate-judged, unlike the independent judge).
-    tools: [read_file, list_dir, glob, grep,
+    # web_fetch (no web_search): verify a specific external claim (API contract, library doc, known-vuln pattern) —
+    # "verify don't trust" past the repo. It flips on the gate's RequireRetrieval, but read_file already satisfies that,
+    # so a normal review that reads the changed files is fine; web_fetch does not force every review to fetch.
+    tools: [read_file, list_dir, glob, grep, web_fetch,
             git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer

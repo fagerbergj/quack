@@ -70,7 +70,8 @@ agents:
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
     # READ-ONLY: no write/edit/commit/push/delete/run_command. load_skill/list_skills are auto-registered.
     # load_memory/stage_memory + memory.md turn on task memory (M6): recall/stage durable project conventions & decisions.
-    tools: [read_file, list_dir, glob, grep,
+    # web_fetch (no web_search): verify a specific external claim; RequireRetrieval is already met by read_file.
+    tools: [read_file, list_dir, glob, grep, web_fetch,
             git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer

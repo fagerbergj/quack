@@ -48,10 +48,14 @@ Check each against the actual diff before you accept it.
 
 ### 3. Read the diff AND the surrounding code
 
-The diff alone lies by omission. `read_file` the whole function or file when a
-change's correctness depends on its context — the caller, the invariant two
-methods up, the error the callee can return. Grep for other call sites a
-signature change affects. Judge the change in the code it actually lives in.
+Use `git_diff` to see *what* changed — but never review from the diff hunks
+alone. A hunk shows a handful of lines with a sliver of context and hides
+everything a real judgment needs: the caller, the invariant two methods up, the
+error the callee can return, the lock the function is supposed to hold.
+**`read_file` the full files the change touches**, not just the changed lines,
+and grep for other call sites a signature change affects. Judge the change in
+the code it actually lives in — a four-line diff can be correct in isolation and
+wrong for the function it sits inside.
 
 ### 4. Evaluate by priority — spend attention where it matters
 
