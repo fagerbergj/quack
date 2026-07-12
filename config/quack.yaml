@@ -72,8 +72,10 @@ agents:
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty to close a gate gap
     # READ-ONLY: reviews code, never modifies it — no write_file/edit_file/git_commit/git_push/delete_path/run_command.
     # load_skill/list_skills are auto-registered on every agent (see internal/serve/serve.go), so they're not listed here.
+    # load_memory/stage_memory + the bundle's memory.md turn on task memory (M6): recall project conventions/decisions,
+    # stage durable ones as it learns them — safe on a worker (its review is gate-judged, unlike the independent judge).
     tools: [read_file, list_dir, glob, grep,
-            git_clone, git_status, git_diff, git_log, ask_user]
+            git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
