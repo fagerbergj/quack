@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/fagerbergj/quack/internal/extension"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server/rest"
 )
@@ -21,9 +22,10 @@ const MCPPath = "/api/v1/mcp"
 
 // Options configure the router.
 type Options struct {
-	REST *rest.Handler
-	MCP  http.Handler // optional Streamable-HTTP MCP handler
-	SPA  fs.FS        // optional embedded frontend dist
+	REST       *rest.Handler
+	MCP        http.Handler          // optional Streamable-HTTP MCP handler
+	SPA        fs.FS                 // optional embedded frontend dist
+	Extensions []extension.Extension // optional inbound routes (e.g. GitHub webhook)
 }
 
 // New builds the HTTP handler.
@@ -35,6 +37,13 @@ func New(opts Options) http.Handler {
 	if opts.MCP != nil {
 		r.Handle(MCPPath, opts.MCP)
 		r.Handle(MCPPath+"/*", opts.MCP)
+	}
+
+	// Extension inbound routes (webhooks/callbacks), mounted as raw handlers —
+	// same as MCP, NOT via the OpenAPI codegen (their payloads are the external
+	// system's schema, not quack's client API contract).
+	for _, ext := range opts.Extensions {
+		ext.RegisterRoutes(r)
 	}
 
 	// Generated REST routing (registers /health + chat endpoints on r).

@@ -31,6 +31,8 @@ import (
 	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/extension"
+	"github.com/fagerbergj/quack/internal/github"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -210,6 +212,27 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
 
+	// GitHub extension (off unless extensions.github is configured). Built here,
+	// BEFORE the agents, so its App can serve as the dynamic git-credential
+	// source and its Tools() join every agent's tool set. The webhook Runner is
+	// bound after the orchestrator exists (below).
+	var githubApp *github.App
+	var extTools []tool.Tool
+	var gitTokenSource tools.GitTokenSource
+	if gh := cfg.Extensions.GitHub; gh != nil {
+		pem, kerr := github.LoadPrivateKey(gh.PrivateKey, gh.PrivateKeyPath)
+		if kerr != nil {
+			return nil, nil, "", kerr
+		}
+		githubApp, err = github.NewApp(gh.AppID, pem)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("github extension init failed: %w", err)
+		}
+		extTools = githubApp.Tools()
+		gitTokenSource = githubApp // App implements tools.GitTokenSource
+		slog.Info("github extension enabled", "component", "startup", "app_id", gh.AppID, "mention", gh.Mention)
+	}
+
 	// Load skills once at startup; pass the toolset to every specialist agent so
 	// all agents can call load_skill / list_skills / load_skill_resource. Skills
 	// resolve from disk in cwd first (live repo edits) then the embedded copy,
@@ -290,7 +313,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail)
+	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -369,10 +392,18 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
 	}
 
+	// Now the orchestrator exists, bind it as the extension's webhook Runner and
+	// mount the extension's inbound routes.
+	var extensions []extension.Extension
+	if githubApp != nil {
+		extensions = append(extensions, github.NewExtension(githubApp, *cfg.Extensions.GitHub, orch))
+	}
+
 	handler = server.New(server.Options{
-		REST: rest.NewHandler(st, orch, llm),
-		MCP:  mcpserver.Handler(orch),
-		SPA:  spa,
+		REST:       rest.NewHandler(st, orch, llm),
+		MCP:        mcpserver.Handler(orch),
+		SPA:        spa,
+		Extensions: extensions,
 	})
 	return handler, runCleanups, addr, nil
 }
@@ -399,7 +430,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
 	// Derive the recall service, leaving it nil (not a non-nil interface wrapping
 	// a nil pointer) when memory is off. The gate takes the concrete *memory.Store
 	// directly (taskStore), so it has no such typed-nil hazard.
@@ -585,6 +616,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				WorkspaceUserID: localUserID,
 				WorkspaceCaps:   workspaceCaps,
 				GitCredentials:  gitCredentials,
+				GitTokenSource:  gitTokenSource,
 				GitPush:         cfg.Workspace.GitPush,
 				Guards:          cfg.Workspace.Guards,
 				SafetyJudge:     safetyJudge,
@@ -593,6 +625,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, servers, nil, nil, fmtErr(name, "tools: %v", err)
 			}
 		}
+		// Extension outbound tools (e.g. github_comment / github_pull_request)
+		// join every agent's tool set, alongside the builtins and skill toolset.
+		builtins = append(builtins, extTools...)
 
 		bundle, err := agent.LoadBundle(ac.Bundle)
 		if err != nil {
