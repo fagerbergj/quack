@@ -119,3 +119,22 @@ workspace:
     git_rebase: judge
     git_push: judge+confirm
     run_command: judge+confirm
+
+# GitHub App extension: webhook receiver + App-authed git creds + the App-mention
+# trigger. Uncomment and set the env vars to enable it on this deployment. Uses the
+# App CLIENT ID as the JWT issuer (the App's CLIENT SECRET is unused — that's OAuth
+# only) and the private key inline as PEM contents via env (private_key_path is the
+# alternative for a mounted .pem file). Secrets MUST be ${VAR} refs — a literal is a
+# startup error.
+#
+# Kept COMMENTED (not active): the block is validated at load, and a present-but-
+# empty section (env vars unset) is a boot error — it requires an issuer, a private
+# key, and a webhook_secret. So an operator uncomments it only once those env vars
+# are actually set, rather than shipping a config that fails to boot without them.
+# extensions:
+#   github:
+#     client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
+#     private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY}    # PEM contents via env
+#     # private_key_path: /run/secrets/quack-app.pem  # alternative: a mounted .pem
+#     webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
+#     mention: "@quack"
