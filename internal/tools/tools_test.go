@@ -1,19 +1,35 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 )
+
+// emptyOKRoundTripper answers every request with an empty 200, standing in for a
+// reachable page that yields no readable text without a browser render.
+type emptyOKRoundTripper struct{}
+
+func (emptyOKRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    r,
+	}, nil
+}
 
 func TestRegistryBuild(t *testing.T) {
 	if _, err := Build([]string{"web_fetch"}, Deps{Fetch: Backend{URL: "http://x"}}); err != nil {
@@ -108,20 +124,15 @@ func TestFetchReadableDirect(t *testing.T) {
 }
 
 func TestCrawl4AIMarkdown(t *testing.T) {
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/md") {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/crawl") {
 			t.Errorf("unexpected crawl4ai call: %s %s", r.Method, r.URL.Path)
 		}
-		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
-		if body["url"] == "" {
-			t.Error("md request missing url")
-		}
-		if body["f"] != "fit" {
-			t.Errorf("md request filter = %v, want fit", body["f"])
-		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"markdown":"# Rendered\n\n[a link](https://example.com/x)","success":true}`)
+		io.WriteString(w, `{"success":true,"results":[{"success":true,"markdown":{`+
+			`"fit_markdown":"# Rendered\n\n[a link](https://example.com/x)","raw_markdown":"raw"}}]}`)
 	}))
 	defer srv.Close()
 
@@ -130,23 +141,34 @@ func TestCrawl4AIMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(text, "[a link](https://example.com/x)") {
-		t.Errorf("crawl4aiMarkdown = %q, want the markdown with its link", text)
+		t.Errorf("crawl4aiMarkdown = %q, want the fit markdown with its link", text)
+	}
+	// The settle-wait is the whole point of the fix: the request must carry the
+	// crawler_config that tells crawl4ai to wait for the page to stop navigating.
+	params, _ := gotBody["crawler_config"].(map[string]any)
+	if params != nil {
+		params, _ = params["params"].(map[string]any)
+	}
+	if params == nil {
+		t.Fatalf("crawl request missing crawler_config.params; body = %v", gotBody)
+	}
+	if params["wait_until"] != crawl4aiWaitUntil {
+		t.Errorf("wait_until = %v, want %q", params["wait_until"], crawl4aiWaitUntil)
+	}
+	if params["delay_before_return_html"] == nil {
+		t.Error("crawl request missing delay_before_return_html settle delay")
+	}
+	if params["page_timeout"] == nil {
+		t.Error("crawl request missing page_timeout bound")
 	}
 }
 
 func TestCrawl4AIMarkdownFitFallsBackToRaw(t *testing.T) {
-	var calls []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
-		filter, _ := body["f"].(string)
-		calls = append(calls, filter)
 		w.Header().Set("Content-Type", "application/json")
-		if filter == "fit" {
-			io.WriteString(w, `{"markdown":"   ","success":true}`) // fit pruned everything
-			return
-		}
-		io.WriteString(w, `{"markdown":"raw body text","success":true}`)
+		// fit pruned everything; raw still has the body.
+		io.WriteString(w, `{"success":true,"results":[{"success":true,"markdown":{`+
+			`"fit_markdown":"   ","raw_markdown":"raw body text"}}]}`)
 	}))
 	defer srv.Close()
 
@@ -157,9 +179,70 @@ func TestCrawl4AIMarkdownFitFallsBackToRaw(t *testing.T) {
 	if text != "raw body text" {
 		t.Errorf("crawl4aiMarkdown = %q, want the raw fallback", text)
 	}
-	if len(calls) != 2 || calls[0] != "fit" || calls[1] != "raw" {
-		t.Errorf("filter calls = %v, want [fit raw]", calls)
+}
+
+// TestFetchViaRenderFailureDegrades: a crawl4ai 500 on a page the direct GET could
+// reach (but which had no readable text without a browser) must not fail the whole
+// fetch — it degrades to an honest, clearly-marked render-unavailable result, with
+// a WARN logged, so one flaky dynamic page doesn't sink a research node.
+func TestFetchViaRenderFailureDegrades(t *testing.T) {
+	render := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Page.content: page is navigating and changing the content", http.StatusInternalServerError)
+	}))
+	defer render.Close()
+
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+
+	d := Deps{Guarded: &http.Client{Transport: emptyOKRoundTripper{}}}
+	renderer := &crawl4aiRenderer{client: render.Client(), base: render.URL}
+	// A non-blocked literal IP so validateResolvedHost passes and the render backend
+	// is actually consulted (and 500s).
+	u, _ := url.Parse("http://93.184.216.34/")
+
+	got, err := fetchVia(context.Background(), d, renderer, u, u.String())
+	if err != nil {
+		t.Fatalf("render 500 hard-failed the fetch: %v", err)
 	}
+	if !strings.Contains(got, "render backend could not retrieve") {
+		t.Errorf("degraded result = %q, want a clearly-marked render-unavailable message", got)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "render backend failed") {
+		t.Errorf("expected a WARN log for the render failure; logs = %q", logs.String())
+	}
+}
+
+// TestFetchViaTargetFailureStillErrors: a genuine target failure (direct GET errors)
+// is never masked as success, even when the render backend also fails.
+func TestFetchViaTargetFailureStillErrors(t *testing.T) {
+	render := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer render.Close()
+
+	// Direct GET returns 404 → derr != nil, so this is a real fetch failure.
+	d := Deps{Guarded: &http.Client{Transport: statusRoundTripper{http.StatusNotFound}}}
+	renderer := &crawl4aiRenderer{client: render.Client(), base: render.URL}
+	u, _ := url.Parse("http://93.184.216.34/")
+
+	if _, err := fetchVia(context.Background(), d, renderer, u, u.String()); err == nil {
+		t.Error("a 404 target with a failed render must still error, not degrade to success")
+	}
+}
+
+// statusRoundTripper answers every request with the given status and an empty body.
+type statusRoundTripper struct{ code int }
+
+func (s statusRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: s.code,
+		Status:     http.StatusText(s.code),
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    r,
+	}, nil
 }
 
 func TestShapeFetchResultHeadAndOffset(t *testing.T) {
