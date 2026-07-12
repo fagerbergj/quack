@@ -24,6 +24,10 @@ const runUserID = "github"
 // runTimeout bounds a single webhook-driven orchestrator run.
 const runTimeout = 2 * time.Hour
 
+// reactionTimeout bounds the deterministic 👀 acknowledgment reaction on a
+// mention — a quick, best-effort POST that must not linger.
+const reactionTimeout = 10 * time.Second
+
 // Runner is the subset of the orchestrator the webhook needs: dispatch a run
 // and read its final answer. Defined here (not imported) so the extension stays
 // decoupled from the orchestrator package.

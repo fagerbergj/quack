@@ -1,6 +1,9 @@
 // Package github is quack's GitHub App extension (see docs/github-app.md): it
 // authenticates as a GitHub App, exposes outbound tools (github_comment,
-// github_pull_request) and a git-credential source authed with the App's
+// github_pull_request, the review-draft tools github_add_review_comment /
+// github_list_review_comments / github_delete_review_comment / github_submit_review,
+// and the discussion tools github_list_pr_comments / github_reply_to_review_comment /
+// github_react_to_comment) and a git-credential source authed with the App's
 // per-installation token, and mounts an inbound, signature-verified webhook
 // route that dispatches orchestrator runs on issue-comment mentions.
 //
@@ -19,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,11 +48,44 @@ type App struct {
 	mu       sync.Mutex
 	tokens   map[int64]cachedToken // installation id → token
 	installs map[string]int64      // "owner/repo" → installation id (stable; cached forever)
+
+	// Review-draft state. A PR review is built up comment-by-comment (each
+	// location-validated against the diff at add time) then submitted as one
+	// review — see the github_*_review_comment / github_submit_review tools.
+	// Ceiling: this state is process-local and ephemeral — a review is drafted
+	// and submitted within a single agent run in one process, so a plain
+	// in-memory map is enough. ponytail: the GitHub-native "pending review"
+	// (create-review-without-event, add-comments, submit-later) would survive a
+	// restart / multiple processes — reach for it only if drafts ever need to
+	// outlive a run; don't build it now.
+	reviewMu sync.Mutex
+	drafts   map[string][]reviewComment // "owner/repo#n" → pending inline comments
+	diffs    map[string]cachedDiff      // "owner/repo#n" → parsed commentable positions
 }
 
 type cachedToken struct {
 	token   string
 	expires time.Time
+}
+
+// diffTTL bounds how long a fetched PR diff's commentable positions are reused,
+// so repeated add-comment calls in one review don't re-fetch every time while a
+// PR that gains commits mid-review is still picked up reasonably soon.
+const diffTTL = 30 * time.Second
+
+// cachedDiff holds a PR's commentable line positions per file, plus when it was
+// fetched (for diffTTL expiry).
+type cachedDiff struct {
+	files   map[string]diffPositions
+	fetched time.Time
+}
+
+// diffPositions is the set of lines that can carry an inline review comment on
+// each side of one file's diff: right = new-file line numbers (added + context),
+// left = old-file line numbers (removed + context).
+type diffPositions struct {
+	right map[int]bool
+	left  map[int]bool
 }
 
 // NewApp builds an App from a JWT issuer and a PEM private key (contents, not a
@@ -68,6 +105,8 @@ func NewApp(issuer, pemKey string) (*App, error) {
 		http:     &http.Client{Timeout: 20 * time.Second},
 		tokens:   map[int64]cachedToken{},
 		installs: map[string]int64{},
+		drafts:   map[string][]reviewComment{},
+		diffs:    map[string]cachedDiff{},
 	}, nil
 }
 
@@ -243,4 +282,310 @@ func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, b
 		return "", err
 	}
 	return out.HTMLURL, nil
+}
+
+// createReview submits one PR review (a summary body + a verdict event, plus any
+// inline path/line comments) using the repo's installation token. It returns the
+// review's html_url and id. GitHub 422s if an inline comment's path/line isn't
+// part of the PR diff — that message is surfaced verbatim by doJSON.
+func (a *App) createReview(ctx context.Context, owner, repo string, number int, event, bodyText string, comments []reviewComment) (string, int64, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return "", 0, err
+	}
+	var out struct {
+		ID      int64  `json:"id"`
+		HTMLURL string `json:"html_url"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repo, number)
+	reqBody := map[string]any{"event": event, "body": bodyText}
+	if len(comments) > 0 {
+		reqBody["comments"] = comments
+	}
+	if err := a.doJSON(ctx, http.MethodPost, path, "token "+tok, reqBody, &out); err != nil {
+		return "", 0, err
+	}
+	return out.HTMLURL, out.ID, nil
+}
+
+// draftKey is the process-local key for one PR's review draft / cached diff.
+func draftKey(owner, repo string, number int) string {
+	return fmt.Sprintf("%s/%s#%d", owner, repo, number)
+}
+
+// commentablePositions returns the set of commentable inline positions per file
+// for a PR, fetched from GET /pulls/{n}/files and cached for diffTTL so repeated
+// add-comment calls in one review don't re-fetch each time.
+func (a *App) commentablePositions(ctx context.Context, owner, repo string, number int) (map[string]diffPositions, error) {
+	key := draftKey(owner, repo, number)
+	a.reviewMu.Lock()
+	if cd, ok := a.diffs[key]; ok && time.Since(cd.fetched) < diffTTL {
+		a.reviewMu.Unlock()
+		return cd.files, nil
+	}
+	a.reviewMu.Unlock()
+
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	// per_page=100 covers all but the largest PRs; a file beyond page 1 simply
+	// won't validate (the add tool then reports it as not in the diff) — an
+	// acceptable ceiling for a self-hosted reviewer.
+	var files []struct {
+		Filename string `json:"filename"`
+		Patch    string `json:"patch"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/files?per_page=100", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &files); err != nil {
+		return nil, err
+	}
+	positions := make(map[string]diffPositions, len(files))
+	for _, f := range files {
+		if f.Patch == "" { // binary / too-large files carry no patch
+			continue
+		}
+		positions[f.Filename] = parsePatch(f.Patch)
+	}
+	a.reviewMu.Lock()
+	a.diffs[key] = cachedDiff{files: positions, fetched: time.Now()}
+	a.reviewMu.Unlock()
+	return positions, nil
+}
+
+// draftAdd appends a validated comment to a PR's draft and returns its index.
+func (a *App) draftAdd(owner, repo string, number int, c reviewComment) int {
+	key := draftKey(owner, repo, number)
+	a.reviewMu.Lock()
+	defer a.reviewMu.Unlock()
+	a.drafts[key] = append(a.drafts[key], c)
+	return len(a.drafts[key]) - 1
+}
+
+// draftList returns a copy of a PR's current draft comments.
+func (a *App) draftList(owner, repo string, number int) []reviewComment {
+	key := draftKey(owner, repo, number)
+	a.reviewMu.Lock()
+	defer a.reviewMu.Unlock()
+	out := make([]reviewComment, len(a.drafts[key]))
+	copy(out, a.drafts[key])
+	return out
+}
+
+// draftDelete removes the comment at index from a PR's draft. ok is false if the
+// index is out of range. Remaining comments shift down (their indices change).
+func (a *App) draftDelete(owner, repo string, number, index int) bool {
+	key := draftKey(owner, repo, number)
+	a.reviewMu.Lock()
+	defer a.reviewMu.Unlock()
+	d := a.drafts[key]
+	if index < 0 || index >= len(d) {
+		return false
+	}
+	a.drafts[key] = append(d[:index], d[index+1:]...)
+	return true
+}
+
+// draftTake returns a PR's draft comments and clears the draft — used at submit.
+func (a *App) draftTake(owner, repo string, number int) []reviewComment {
+	key := draftKey(owner, repo, number)
+	a.reviewMu.Lock()
+	defer a.reviewMu.Unlock()
+	d := a.drafts[key]
+	delete(a.drafts, key)
+	return d
+}
+
+// parsePatch turns one file's unified-diff patch (from the pulls/files API) into
+// the set of commentable line numbers on each side. Right = added ('+') and
+// context (' ') lines by new-file number; left = removed ('-') and context lines
+// by old-file number.
+func parsePatch(patch string) diffPositions {
+	pos := diffPositions{right: map[int]bool{}, left: map[int]bool{}}
+	var oldLine, newLine int
+	for _, ln := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(ln, "@@") {
+			oldLine, newLine = parseHunkHeader(ln)
+			continue
+		}
+		if ln == "" {
+			continue
+		}
+		switch ln[0] {
+		case '+':
+			pos.right[newLine] = true
+			newLine++
+		case '-':
+			pos.left[oldLine] = true
+			oldLine++
+		case '\\': // "\ No newline at end of file"
+		default: // context line
+			pos.right[newLine] = true
+			pos.left[oldLine] = true
+			oldLine++
+			newLine++
+		}
+	}
+	return pos
+}
+
+// parseHunkHeader reads the start lines from a hunk header like
+// "@@ -12,7 +15,8 @@ func foo()" → (12, 15). A missing count ("@@ -1 +1 @@") is fine.
+func parseHunkHeader(h string) (oldStart, newStart int) {
+	for _, f := range strings.Fields(h) {
+		switch {
+		case strings.HasPrefix(f, "-"):
+			oldStart = atoiBeforeComma(f[1:])
+		case strings.HasPrefix(f, "+"):
+			newStart = atoiBeforeComma(f[1:])
+		}
+	}
+	return
+}
+
+func atoiBeforeComma(s string) int {
+	if i := strings.IndexByte(s, ','); i >= 0 {
+		s = s[:i]
+	}
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// --- Reading & reacting to existing PR discussion ---
+
+// prDiscussion is a PR's existing conversation, so the reviewer sees prior
+// context before adding its own: inline review comments, top-level conversation
+// comments, and submitted reviews.
+type prDiscussion struct {
+	ReviewComments []reviewCommentView `json:"review_comments"`
+	Comments       []commentView       `json:"comments"`
+	Reviews        []reviewView        `json:"reviews"`
+}
+
+// reviewCommentView is one inline review comment (from pulls/{n}/comments).
+type reviewCommentView struct {
+	ID          int64  `json:"id"`
+	Path        string `json:"path"`
+	Line        int    `json:"line"`
+	Body        string `json:"body"`
+	User        string `json:"user"`
+	InReplyToID int64  `json:"in_reply_to_id,omitempty"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// commentView is one top-level conversation comment (from issues/{n}/comments).
+type commentView struct {
+	ID        int64  `json:"id"`
+	Body      string `json:"body"`
+	User      string `json:"user"`
+	CreatedAt string `json:"created_at"`
+}
+
+// reviewView is one submitted review (from pulls/{n}/reviews).
+type reviewView struct {
+	ID          int64  `json:"id"`
+	Body        string `json:"body"`
+	State       string `json:"state"`
+	User        string `json:"user"`
+	SubmittedAt string `json:"submitted_at"`
+}
+
+// listPRDiscussion fetches a PR's inline review comments, conversation comments,
+// and submitted reviews (three GETs), flattening GitHub's nested user object to a
+// login string.
+func (a *App) listPRDiscussion(ctx context.Context, owner, repo string, number int) (prDiscussion, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return prDiscussion{}, err
+	}
+	authz := "token " + tok
+	var out prDiscussion
+
+	var rawReviewComments []struct {
+		ID          int64     `json:"id"`
+		Path        string    `json:"path"`
+		Line        int       `json:"line"`
+		Body        string    `json:"body"`
+		User        ghUserRef `json:"user"`
+		InReplyToID int64     `json:"in_reply_to_id"`
+		CreatedAt   string    `json:"created_at"`
+	}
+	if err := a.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/pulls/%d/comments?per_page=100", owner, repo, number), authz, nil, &rawReviewComments); err != nil {
+		return prDiscussion{}, err
+	}
+	for _, c := range rawReviewComments {
+		out.ReviewComments = append(out.ReviewComments, reviewCommentView{
+			ID: c.ID, Path: c.Path, Line: c.Line, Body: c.Body, User: c.User.Login, InReplyToID: c.InReplyToID, CreatedAt: c.CreatedAt,
+		})
+	}
+
+	var rawComments []struct {
+		ID        int64     `json:"id"`
+		Body      string    `json:"body"`
+		User      ghUserRef `json:"user"`
+		CreatedAt string    `json:"created_at"`
+	}
+	if err := a.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, number), authz, nil, &rawComments); err != nil {
+		return prDiscussion{}, err
+	}
+	for _, c := range rawComments {
+		out.Comments = append(out.Comments, commentView{ID: c.ID, Body: c.Body, User: c.User.Login, CreatedAt: c.CreatedAt})
+	}
+
+	var rawReviews []struct {
+		ID          int64     `json:"id"`
+		Body        string    `json:"body"`
+		State       string    `json:"state"`
+		User        ghUserRef `json:"user"`
+		SubmittedAt string    `json:"submitted_at"`
+	}
+	if err := a.doJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews?per_page=100", owner, repo, number), authz, nil, &rawReviews); err != nil {
+		return prDiscussion{}, err
+	}
+	for _, r := range rawReviews {
+		out.Reviews = append(out.Reviews, reviewView{ID: r.ID, Body: r.Body, State: r.State, User: r.User.Login, SubmittedAt: r.SubmittedAt})
+	}
+	return out, nil
+}
+
+// ghUserRef decodes GitHub's nested user object down to its login.
+type ghUserRef struct {
+	Login string `json:"login"`
+}
+
+// replyToReviewComment posts an in-thread reply to an existing inline review
+// comment via the dedicated replies endpoint, returning the new comment's id and
+// html_url.
+func (a *App) replyToReviewComment(ctx context.Context, owner, repo string, number int, commentID int64, bodyText string) (int64, string, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return 0, "", err
+	}
+	var out struct {
+		ID      int64  `json:"id"`
+		HTMLURL string `json:"html_url"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments/%d/replies", owner, repo, number, commentID)
+	if err := a.doJSON(ctx, http.MethodPost, path, "token "+tok, map[string]string{"body": bodyText}, &out); err != nil {
+		return 0, "", err
+	}
+	return out.ID, out.HTMLURL, nil
+}
+
+// reactToComment adds an emoji reaction to a review comment or a conversation
+// (issue) comment, returning the reaction id. commentPath selects the endpoint
+// family (pulls/comments vs issues/comments).
+func (a *App) reactToComment(ctx context.Context, owner, repo, commentPath string, commentID int64, content string) (int64, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/%s/comments/%d/reactions", owner, repo, commentPath, commentID)
+	if err := a.doJSON(ctx, http.MethodPost, path, "token "+tok, map[string]string{"content": content}, &out); err != nil {
+		return 0, err
+	}
+	return out.ID, nil
 }

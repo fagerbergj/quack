@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"iter"
@@ -59,6 +60,9 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 			fmt.Fprint(w, `{"id":5}`)
 		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
 			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated) // deterministic 👀 ack; ignored by these tests
+			fmt.Fprint(w, `{"id":1}`)
 		case strings.HasSuffix(r.URL.Path, "/comments"):
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
@@ -73,8 +77,20 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 func issueCommentBody(commentBody string) []byte {
 	return []byte(fmt.Sprintf(`{
 		"action":"created",
-		"comment":{"body":%q,"user":{"login":"alice"}},
+		"comment":{"id":999,"body":%q,"user":{"login":"alice"}},
 		"issue":{"number":7},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5}
+	}`, commentBody))
+}
+
+// pullCommentBody is issueCommentBody but the issue is a pull request (GitHub
+// marks PR comments with a non-null issue.pull_request).
+func pullCommentBody(commentBody string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"action":"created",
+		"comment":{"id":999,"body":%q,"user":{"login":"alice"}},
+		"issue":{"number":7,"pull_request":{}},
 		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
 		"installation":{"id":5}
 	}`, commentBody))
@@ -203,6 +219,120 @@ func TestHandleWebhookAcksBeforeRunFinishes(t *testing.T) {
 		t.Fatal("handler blocked on the run instead of acking fast")
 	}
 	close(runner.block) // let the (blocked) dispatch goroutine finish
+}
+
+func TestHandleWebhookMentionPostsEyesReaction(t *testing.T) {
+	reacted := make(chan string, 1) // path + body of the reaction POST
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+			reacted <- r.URL.Path + " " + string(body)
+		default:
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done"}
+	ext := newTestExtension(t, runner, srv.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack take a look")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+
+	select {
+	case got := <-reacted:
+		if !strings.Contains(got, "/repos/acme/widgets/issues/comments/999/reactions") {
+			t.Errorf("reaction hit wrong endpoint: %q", got)
+		}
+		if !strings.Contains(got, `"content":"eyes"`) {
+			t.Errorf("reaction content should be eyes; got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no 👀 reaction was posted on the mention")
+	}
+}
+
+func TestAckReactionFailureDoesNotBlockRun(t *testing.T) {
+	posted := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			http.Error(w, "boom", http.StatusInternalServerError) // reaction fails
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "handled"}
+	ext := newTestExtension(t, runner, srv.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack do it")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	// The run must still be dispatched and its answer posted despite the failed reaction.
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a failed 👀 reaction blocked the run dispatch")
+	}
+}
+
+func TestRunMessageReviewAwareForPR(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msg := ext.runMessage(pr, "review this, focusing on the auth path")
+	for _, want := range []string{
+		"focusing on the auth path", // user's verbatim request preserved
+		"pull_number=7",             // the PR/issue number surfaced for the review tools
+		"github_add_review_comment",
+		"github_submit_review",
+		"github_list_pr_comments",
+		"github_pull_request", // implement-path guidance still present
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("PR run message missing %q\n---\n%s", want, msg)
+		}
+	}
+
+	// A non-PR issue stays implement-only: no review-tool guidance.
+	var issue issueCommentPayload
+	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	imsg := ext.runMessage(issue, "add a feature")
+	if strings.Contains(imsg, "github_submit_review") || strings.Contains(imsg, "pull_number=") {
+		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
+	}
+	if !strings.Contains(imsg, "github_pull_request") {
+		t.Errorf("issue run message should keep implement-path guidance:\n%s", imsg)
+	}
 }
 
 func TestVerifySignature(t *testing.T) {

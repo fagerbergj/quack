@@ -32,6 +32,16 @@ Before looking critically at any line, learn what the change is *for*.
   to grasp the intent before the details.
 - If you can't tell what the change is meant to do, that's your first finding
   (a `question:`), not a licence to guess.
+- **Understand the PR's current state before forming your review.** Read what
+  has already been said: on a GitHub PR, `github_list_pr_comments` returns the
+  existing inline comments, the conversation, and prior submitted reviews. And
+  recall this repo's settled decisions and conventions with `load_memory`. Know
+  what ground has already been covered so your review adds to it.
+- **Do not re-raise anything already settled or already discussed.** A resolved
+  thread, a maintainer-accepted explanation, a prior ruling ("we do X here
+  because Y") is closed — applying it and moving on is the point of remembering
+  it. If you genuinely disagree with a settled decision, note the concern *once*
+  and move on; don't reopen the same debate every review.
 
 ### 2. Verify the claims — don't trust them
 
@@ -120,6 +130,19 @@ Don't scatter line-by-line comments. Deliver:
    comments, say explicitly that they're non-blocking.
 
 Cite findings by `path:line` so the author can jump straight to them.
+
+On a GitHub PR, deliver this as one native review: record each finding as an
+inline comment (`github_add_review_comment`, path+line) the moment you spot it —
+the draft is your durable memory against context compaction — then
+`github_submit_review` once with the summary body and the event matching your
+verdict. Reply in-thread (`github_reply_to_review_comment`) when you're
+responding to an existing comment rather than opening a new thread.
+
+**Close loops with a reaction, not a comment.** To acknowledge a point, signal
+agreement, or say "seen / handled", add an emoji reaction
+(`github_react_to_comment` — 👍 / 👀 / 🚀) instead of writing another comment. It
+closes the loop with near-zero words and low reader load. Reserve comment text
+for substantive findings.
 
 ## Why this order
 

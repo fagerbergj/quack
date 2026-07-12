@@ -6,7 +6,13 @@ and replies on the issue/PR. This is quack's first **Extension** — a bundled
 unit that owns one auth context and contributes in both directions:
 
 - **Outbound** — tools the agent calls, authed as the App installation token:
-  `github_comment` (post a comment) and `github_pull_request` (open a PR). The
+  `github_comment` (post a comment), `github_pull_request` (open a PR), the
+  **review-draft** tools (`github_add_review_comment` / `github_list_review_comments`
+  / `github_delete_review_comment` / `github_submit_review`) that build up one
+  native PR review with inline comments, and the **discussion** tools
+  (`github_list_pr_comments` / `github_reply_to_review_comment` /
+  `github_react_to_comment`) that read and react to a PR's existing threads (see
+  [Review tools](#review-tools)). The
   existing git tools (`git_clone` / `git_push` / …) also authenticate through
   this extension's installation token instead of a static PAT while it is
   active.
@@ -27,6 +33,65 @@ issue_comment "@quack add a Flappy Bird game and open a PR"   (inbound webhook)
 
 ---
 
+## Review tools
+
+The code-reviewer submits its findings as **one native GitHub PR review** —
+inline comments anchored to file+line, plus a summary and a verdict — instead of
+a scatter of separate conversation comments. It builds that review up with four
+CRUD tools backed by a process-local, per-PR draft:
+
+| Tool | Args | Effect |
+|------|------|--------|
+| `github_add_review_comment` | `owner`, `repo`, `pull_number`, `path`, `line`, `body`, optional `side` (`LEFT`/`RIGHT`, default `RIGHT`), optional `start_line`+`start_side` (multi-line range) | Validates the location against the PR diff, then appends the comment to the draft. Returns its index + draft size. |
+| `github_list_review_comments` | `owner`, `repo`, `pull_number` | Returns the pending draft comments, each with its index. |
+| `github_delete_review_comment` | `owner`, `repo`, `pull_number`, `index` | Removes one draft comment (edit = delete + re-add). Remaining indices shift down. |
+| `github_submit_review` | `owner`, `repo`, `pull_number`, `body`, `event` (`COMMENT`/`REQUEST_CHANGES`/`APPROVE`) | Posts the whole draft as one review (`POST /pulls/{n}/reviews`) and clears it. |
+
+**Deterministic inline-location validation.** `github_add_review_comment` fetches
+the PR diff (`GET /repos/{owner}/{repo}/pulls/{n}/files`, cached briefly per PR)
+and checks that `path` is a changed file and `line` is a commentable line in that
+file's diff hunks (added/context lines on the `RIGHT` side, removed/context on the
+`LEFT`). If not, it rejects the comment with a clear error naming the problem and
+the commentable line range — so a bad line ref is caught **at add time**, when the
+agent can fix it, rather than 422-ing the whole review at submit. Because every
+drafted comment was already location-validated, `github_submit_review` can't 422
+on a bad line.
+
+**Why a draft store, not one batch call.** The draft is the reviewer's
+*externalized memory*. A single "collect every finding then submit once" call
+fails when the agent's context is compacted mid-review (older findings summarized
+or dropped) — by submit time it may have forgotten half of them. Recording each
+finding the moment it's spotted persists it outside the context window. The store
+is process-local and ephemeral (a review is drafted and submitted within one agent
+run in one process); the upgrade path, if drafts ever need to outlive a run, is
+GitHub's native *pending review* (create-review-without-event → add comments →
+submit later) — not built today.
+
+### Reading & reacting to existing discussion
+
+So the reviewer sees prior context before adding its own (and doesn't repeat what
+was already said), three more tools read and react to a PR's existing threads:
+
+| Tool | Args | Effect |
+|------|------|--------|
+| `github_list_pr_comments` | `owner`, `repo`, `pull_number` | Returns the PR's existing inline review comments (path/line/body/user/in_reply_to_id), conversation comments, and submitted reviews (body/state/user). |
+| `github_reply_to_review_comment` | `owner`, `repo`, `pull_number`, `comment_id`, `body` | Posts an in-thread reply to an existing inline review comment (`POST /pulls/{n}/comments/{id}/replies`). |
+| `github_react_to_comment` | `owner`, `repo`, `comment_id`, `comment_type` (`review_comment`/`issue_comment`), `content` (`+1`/`-1`/`laugh`/`hooray`/`confused`/`heart`/`rocket`/`eyes`) | Adds an emoji reaction — a low-cost way to close a loop (acknowledge/agree/"seen") without writing a comment. |
+
+**Deterministic 👀 on mention.** Independent of the model, the webhook handler
+reacts with 👀 (eyes) to the mentioning comment the instant a valid `@quack`
+mention arrives — a code-level "quack saw it, it's on it" that doesn't wait on the
+run. It reuses the reaction HTTP path (`reactToComment`, shared with
+`github_react_to_comment`) and is best-effort: a failed reaction is logged at WARN
+and never blocks the run dispatch.
+
+**Follow-up (not built): resolving a review thread.** Marking a review thread
+*resolved* is GitHub **GraphQL**-only (`resolveReviewThread` mutation) — there is
+no REST equivalent. The tools here are all REST; thread resolution is a documented
+follow-up, skipped for now.
+
+---
+
 ## Design (spec)
 
 ### Scope (in)
@@ -41,7 +106,11 @@ issue_comment "@quack add a Flappy Bird game and open a PR"   (inbound webhook)
 - **One trigger**: `issue_comment` `created` whose body contains the mention
   (default `@quack`). Task = the text after the mention. Applies to both
   issues and PRs (GitHub sends PR comments as `issue_comment`).
-- **Outbound tools**: `github_comment`, `github_pull_request`.
+- **Outbound tools**: `github_comment`, `github_pull_request`, the review-draft
+  CRUD (`github_add_review_comment`, `github_list_review_comments`,
+  `github_delete_review_comment`, `github_submit_review`), and the discussion
+  tools (`github_list_pr_comments`, `github_reply_to_review_comment`,
+  `github_react_to_comment`).
 - **Git-credential integration**: the App is a dynamic git credential source
   for `github.com` (installation token, cached), resolved from the clone/remote
   URL. The static-PAT path (`workspace.git_credentials`) still works and wins
