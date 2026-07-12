@@ -2,12 +2,30 @@ package dag
 
 import (
 	"fmt"
+	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/workspace"
+)
+
+// implementerAgent is the well-known bundle name (config key agents/code-implementer)
+// of the only specialist that can change, commit, and push code. Referenced by name
+// the same way assemble() hardcodes "synthesizer" — the roster is name-keyed and both
+// roles carry a fixed contract the plan validation depends on.
+const implementerAgent = "code-implementer"
+
+// implVerbRe matches an imperative code verb ("add a game", "implement X", "fix the
+// bug"). deliveryRe matches a version-control / delivery term that means the ask is
+// to SHIP the code, not merely describe it. The implementation-intent backstop
+// (checkImplementationRouting) fires only when BOTH match, keeping pure-research
+// requests ("how does X work", "what are the top 3 Y") from ever tripping it.
+var (
+	implVerbRe = regexp.MustCompile(`(?i)\b(add|implement|create|write|fix|refactor|build|port|migrate|scaffold|generate)\b`)
+	deliveryRe = regexp.MustCompile(`(?i)(pull[ -]?request|\bpr\b|\bcommit\b|\bpush\b|\bbranch\b|\bmerge\b)`)
 )
 
 // AgentInfo describes one available agent (name + description) — the roster the
@@ -69,10 +87,64 @@ func (p *Planner) Build(nodes []RawNode, history []HistoryTurn, message string, 
 	if err != nil {
 		return nil, err
 	}
+	if err := p.checkImplementationRouting(plan, message); err != nil {
+		return nil, err
+	}
 	plan.History = history
 	plan.UserMessage = message
 	plan.Attachments = attachments
 	return plan, nil
+}
+
+// checkImplementationRouting is the deterministic backstop for the (observed,
+// non-deterministic) failure where the orchestrator collapses a "implement X and
+// open a PR" request into a lone web-researcher analyze node and calls the run
+// done after merely describing the repo — the code is never written, committed,
+// or pushed. When the request reads as implement-AND-deliver (implementationIntent)
+// yet the plan has ZERO code-implementer nodes, the plan is malformed: reject it
+// with a targeted, fixable error so the orchestrator re-authors the DAG (its own
+// re-plan loop is the retry budget; the plan tool tells it to "fix the nodes and
+// call again"). A loud WARN also surfaces every firing for operators.
+//
+// Only a backstop for the obvious case — the plan-work skill guidance carries the
+// rest. The intent heuristic can't catch every phrasing and can't read intent
+// across a multi-turn conversation; it is deliberately conservative (verb AND
+// delivery term) so a correct research plan is never wrongly rejected.
+func (p *Planner) checkImplementationRouting(plan *Plan, message string) error {
+	// Meaningful only when the roster actually offers a code-implementer AND the
+	// request reads as implement-and-deliver.
+	hasImplementer := false
+	for _, a := range p.agents {
+		if a.Name == implementerAgent {
+			hasImplementer = true
+			break
+		}
+	}
+	if !hasImplementer || !implementationIntent(message) {
+		return nil
+	}
+	for _, n := range plan.Nodes {
+		if n.AgentName == implementerAgent {
+			return nil
+		}
+	}
+	slog.Warn("plan rejected: implement-and-deliver request has no code-implementer node",
+		"component", "planner", "message", message)
+	return fmt.Errorf("this request asks to implement and deliver code (commit/push/open a PR) "+
+		"but the plan has no %s node. The terminal deliverable MUST be a %s node whose task is to "+
+		"clone the repo, study its conventions, implement the change with tests, run the repo's "+
+		"checks, commit, push a branch, and open the PR — a repo analysis is a feeder step, never "+
+		"the deliverable. Re-author the plan with a %s node and call again.",
+		implementerAgent, implementerAgent, implementerAgent)
+}
+
+// implementationIntent reports whether message asks for code to be implemented AND
+// shipped (committed / pushed / PR'd) — the shape that MUST route to a
+// code-implementer node. It requires BOTH an imperative code verb AND a
+// version-control/delivery term, so a pure-research request never trips it. See the
+// implVerbRe/deliveryRe comment for the known ceiling.
+func implementationIntent(message string) bool {
+	return implVerbRe.MatchString(message) && deliveryRe.MatchString(message)
 }
 
 // AttachmentDesc returns a human-readable description of the attachment list

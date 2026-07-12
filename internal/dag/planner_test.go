@@ -95,6 +95,82 @@ func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Implementation-routing backstop: an implement-and-deliver request whose plan
+// has no code-implementer node is malformed. Regression: live e2e single-analyze-
+// node failure ("Add a Flappy Bird game ... and open it as a PR" collapsed to a
+// lone web-researcher analyze node — the code was never written, committed, or
+// pushed).
+// ---------------------------------------------------------------------------
+
+const flappyPR = "Add a Flappy Bird game to the repo and open it as a pull request."
+
+func TestBuildRejectsImplementationWithoutImplementerNode(t *testing.T) {
+	p := testPlanner()
+	// The orchestrator's malformed plan: a lone web-researcher "analyze" node.
+	_, err := p.Build([]RawNode{
+		{ID: "analyze-repo", Agent: "web-researcher", Task: "Analyze the GitHub repository and report its file tree, technologies, and build/lint/test commands."},
+	}, nil, flappyPR, nil)
+	if err == nil {
+		t.Fatal("Build: expected rejection — implement-and-deliver request with no code-implementer node")
+	}
+}
+
+func TestBuildAcceptsImplementationWithImplementerNode(t *testing.T) {
+	p := testPlanner()
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "Clone the repo, implement Flappy Bird with tests, commit, push a branch, and open a PR."},
+	}, nil, flappyPR, nil)
+	if err != nil {
+		t.Fatalf("Build: a plan WITH a code-implementer node must pass: %v", err)
+	}
+}
+
+// A pure-research request with no code-implementer node must NOT be flagged — the
+// backstop is conservative and never rejects a correct research plan.
+func TestBuildDoesNotFlagResearchWithoutImplementerNode(t *testing.T) {
+	p := testPlanner()
+	_, err := p.Build([]RawNode{
+		{ID: "r", Agent: "web-researcher", Task: "What are the top 3 open-source game engines in 2026?"},
+	}, nil, "What are the top 3 open-source game engines in 2026?", nil)
+	if err != nil {
+		t.Fatalf("Build: a pure-research plan must not be flagged: %v", err)
+	}
+}
+
+// When the roster has no code-implementer, the backstop is inert — a deployment
+// without that agent must not have every coding-shaped request rejected.
+func TestBuildImplementationBackstopInertWithoutImplementerAgent(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "synthesizer"}}, nil)
+	_, err := p.Build([]RawNode{
+		{ID: "r", Agent: "web-researcher", Task: "analyze the repo"},
+	}, nil, flappyPR, nil)
+	if err != nil {
+		t.Fatalf("Build: backstop must be inert when the roster has no code-implementer: %v", err)
+	}
+}
+
+func TestImplementationIntent(t *testing.T) {
+	cases := map[string]bool{
+		"Add a Flappy Bird game to the repo and open it as a pull request.": true,
+		"Implement feature X in repo R and open a PR":                       true,
+		"Fix the login bug and push a branch":                               true,
+		"Create a script and commit it":                                     true,
+		"refactor the parser and merge the change":                          true,
+		// Pure research — no delivery/VCS term.
+		"What are the top 3 game engines in 2026?": false,
+		"How does the Flappy Bird physics work?":   false,
+		"Summarize the latest React release notes": false,
+		// Delivery term but no code verb — still not implementation intent.
+		"Explain what a pull request is": false,
+	}
+	for msg, want := range cases {
+		if got := implementationIntent(msg); got != want {
+			t.Errorf("implementationIntent(%q) = %v, want %v", msg, got, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // §4: orchestrator-set deterministic gate checks — plan-time validation.
 // ---------------------------------------------------------------------------
 
