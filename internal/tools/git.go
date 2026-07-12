@@ -198,8 +198,12 @@ func gitBinaryPath() (string, error) {
 // terminal-prompt fallback (a hung askpass prompt would otherwise block the
 // server), no system/global gitconfig (hermetic — behavior never depends on
 // what's on the host), a minimal PATH (just enough to find git's own helper
-// binaries, e.g. git-remote-https), and HOME pinned inside the caller's own
-// jail (so git never touches — or is influenced by — anything outside it).
+// binaries, e.g. git-remote-https), and HOME pinned to caps.HomeDir when set
+// (the isolated per-user home OUTSIDE any cloned repo — see workspace.Jail.
+// HomeDir), falling back to the repo dir itself only when unset. Pinning HOME
+// to the repo dir unconditionally was the live bug this closes: a global git
+// config/credential write (or a git hook shelling out to npm/pip) would land
+// straight inside the repo tree, right where `git add -A` could sweep it up.
 // When auth is non-nil, GIT_ASKPASS points at the workspace-root symlink back
 // to THIS quack binary (see GitAskpassLinkName — git execs the value DIRECTLY
 // as a single program path, so it must be a real executable, never
@@ -217,7 +221,11 @@ func gitChildPath(caps workspace.Caps) string {
 	return strings.Join(caps.ExtraPath, ":") + ":" + base
 }
 
-func gitEnv(home string, caps workspace.Caps, auth *gitAuth) []string {
+func gitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
+	home := caps.HomeDir
+	if home == "" {
+		home = dir
+	}
 	env := []string{
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
@@ -644,6 +652,13 @@ type gitCommitArgs struct {
 	Dir     string `json:"dir"`
 	Message string `json:"message"`
 	AddAll  *bool  `json:"add_all,omitempty"` // default true
+	// Paths, when non-empty, stages exactly these workspace-relative paths
+	// (`git add -- <paths>`) instead of `git add -A`'s blind "everything in
+	// the tree" sweep — the escape hatch for a large but genuinely intentional
+	// commit (vendoring, an initial scaffold): naming a path explicitly is
+	// itself the sign the staging was deliberate, so it bypasses
+	// maxAddAllFiles (see gitCommit). Ignored when AddAll is false.
+	Paths []string `json:"paths,omitempty"`
 }
 
 type gitCommitResult struct {
@@ -659,6 +674,21 @@ const (
 	gitCommitAuthorEmail = "agent@quack.local"
 )
 
+// maxAddAllFiles is the bulk-commit sanity wall: a blind `git add -A` that
+// stages more files than this in one commit almost certainly swept in
+// something outside the intended change. Root cause of the live incident
+// this guards against: a hermetic child's $HOME was pinned to the task's own
+// cwd (the target repo), so `npm ci` wrote its cache directly into the repo
+// tree, and `git add -A` then staged 1,261 cache files alongside 8 real ones
+// in a single commit (see internal/workspace's HomeDir fix for the other half
+// of this — this wall is the deterministic backstop for whatever still slips
+// through, or a repo dirtied by something other than this run). Deliberately
+// a plain count, not judge/LLM guidance — the user's own framing draws this
+// line: commit NAME/message quality is judge territory (see agents/
+// code-implementer/rubric.md's commit_hygiene), but "did we just stage a
+// thousand files nobody asked for" is a fact a threshold answers directly.
+const maxAddAllFiles = 100
+
 func newGitCommit(d Deps) (tool.Tool, error) {
 	b, err := newGitBinding(d)
 	if err != nil {
@@ -669,7 +699,10 @@ func newGitCommit(d Deps) (tool.Tool, error) {
 			Name: "git_commit",
 			Description: fmt.Sprintf("Commit staged (or, by default, all) changes. `add_all` defaults to true "+
 				"(stages everything before committing); pass false to commit only what's already staged. "+
-				"Every commit is attributed to %s <%s> — not the user.", gitCommitAuthorName, gitCommitAuthorEmail),
+				"A blind add_all that would stage more than %d files is refused — pass `paths` naming exactly what "+
+				"to stage instead (e.g. for an intentionally large commit like vendoring). "+
+				"Every commit is attributed to %s <%s> — not the user.",
+				maxAddAllFiles, gitCommitAuthorName, gitCommitAuthorEmail),
 		},
 		func(_ agent.Context, a gitCommitArgs) (gitCommitResult, error) { return b.gitCommit(a) },
 	)
@@ -684,8 +717,13 @@ func (b gitBinding) gitCommit(a gitCommitArgs) (gitCommitResult, error) {
 		return gitCommitResult{}, fmt.Errorf("git_commit: message must not be empty")
 	}
 	addAll := a.AddAll == nil || *a.AddAll
+	scoped := len(a.Paths) > 0 // explicit allowlist: caller named exactly what to stage
 	if addAll {
-		if _, _, err := runGit(context.Background(), dir, []string{"add", "-A"}, b.caps, nil); err != nil {
+		argv := []string{"add", "-A"}
+		if scoped {
+			argv = append([]string{"add", "--"}, a.Paths...)
+		}
+		if _, _, err := runGit(context.Background(), dir, argv, b.caps, nil); err != nil {
 			return gitCommitResult{}, err
 		}
 	}
@@ -698,6 +736,16 @@ func (b gitBinding) gitCommit(a gitCommitArgs) (gitCommitResult, error) {
 		if strings.TrimSpace(ln) != "" {
 			filesChanged++
 		}
+	}
+	// Bulk-commit sanity wall — only the blind add_all path (no explicit
+	// `paths`) is gated; see maxAddAllFiles.
+	if addAll && !scoped && filesChanged > maxAddAllFiles {
+		_, _, _ = runGit(context.Background(), dir, []string{"reset"}, b.caps, nil) // best-effort: unstage, leave the tree as we found it
+		return gitCommitResult{}, fmt.Errorf(
+			"git_commit: add_all staged %d files, over the %d-file sanity limit — this usually means something "+
+				"outside the intended change got swept in (a build/cache directory, an unrelated tree). Run "+
+				"git_status to see what's staged; if this commit is genuinely meant to be this large, retry with "+
+				"`paths` naming exactly what to stage instead of add_all", filesChanged, maxAddAllFiles)
 	}
 	argv := []string{
 		"-c", "user.name=" + gitCommitAuthorName,

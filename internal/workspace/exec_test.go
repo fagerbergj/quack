@@ -177,6 +177,71 @@ func TestRunArgvCwdIsPinned(t *testing.T) {
 	}
 }
 
+func TestChildHomeFallsBackToDirWhenCapsHomeUnset(t *testing.T) {
+	if got := childHome("/some/repo", Caps{}); got != "/some/repo" {
+		t.Errorf("childHome(no HomeDir) = %q, want the cwd itself (/some/repo)", got)
+	}
+}
+
+func TestChildHomeUsesCapsHomeDirWhenSet(t *testing.T) {
+	got := childHome("/some/repo", Caps{HomeDir: "/isolated/home"})
+	if got != "/isolated/home" {
+		t.Errorf("childHome(HomeDir set) = %q, want /isolated/home (never the repo dir)", got)
+	}
+}
+
+// TestRunArgvHomeIsolatedFromCwd is the regression test for the live bug: a
+// coding task's cwd IS the target repo, so HOME must NEVER default to it once
+// Caps.HomeDir is wired up — otherwise a child tool (npm, pip, …) writing its
+// own cache to $HOME writes it straight into the repo, where git_commit's
+// add_all can sweep it up.
+func TestRunArgvHomeIsolatedFromCwd(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	caps := DefaultCaps()
+	caps.HomeDir = homeDir
+
+	res, err := RunArgv(context.Background(), repoDir, []string{"sh", "-c", "echo $HOME"}, caps)
+	if err != nil {
+		t.Fatalf("RunArgv: %v", err)
+	}
+	got := strings.TrimSpace(res.Output)
+	if got != homeDir {
+		t.Errorf("child HOME = %q, want isolated homeDir %q", got, homeDir)
+	}
+	if got == repoDir {
+		t.Error("child HOME resolved to the repo's own cwd — the isolation this fix exists for is broken")
+	}
+}
+
+// TestRunArgvHomeDefaultsToDirWithoutCapsHomeDir preserves the pre-fix
+// behavior for any caller (or test) that hasn't wired Caps.HomeDir up.
+func TestRunArgvHomeDefaultsToDirWithoutCapsHomeDir(t *testing.T) {
+	dir := t.TempDir()
+	res, err := RunArgv(context.Background(), dir, []string{"sh", "-c", "echo $HOME"}, DefaultCaps())
+	if err != nil {
+		t.Fatalf("RunArgv: %v", err)
+	}
+	if got := strings.TrimSpace(res.Output); got != dir {
+		t.Errorf("child HOME = %q, want dir %q (fallback when Caps.HomeDir is unset)", got, dir)
+	}
+}
+
+func TestRunPipelineHomeIsolatedFromCwd(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	caps := DefaultCaps()
+	caps.HomeDir = homeDir
+
+	res, err := RunPipeline(context.Background(), repoDir, [][]string{{"sh", "-c", "echo $HOME"}, {"cat"}}, caps)
+	if err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if got := strings.TrimSpace(res.Output); got != homeDir {
+		t.Errorf("child HOME = %q, want isolated homeDir %q", got, homeDir)
+	}
+}
+
 func TestRunArgvTimeout(t *testing.T) {
 	caps := DefaultCaps()
 	caps.Timeout = 50 * time.Millisecond

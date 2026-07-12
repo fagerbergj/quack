@@ -72,6 +72,32 @@ func (j *Jail) UserRoot(userID string) (string, error) {
 	return filepath.Join(j.root, userID), nil
 }
 
+// homeDirName is the dot-prefixed sibling directory HomeDir creates under a
+// user's jail root — dot-prefixed so it reads unmistakably as infrastructure,
+// not a cloned repo, in a directory listing.
+const homeDirName = ".quack-home"
+
+// HomeDir returns (creating it if necessary) userID's dedicated $HOME for
+// spawned child processes (run_command, checks, git — see workspace.Caps.
+// HomeDir and internal/workspace/exec.go). It is a SIBLING of the user's
+// cloned repos under <root>/<userID>/, never nested inside one — the fix for
+// a live bug where HOME was pinned to a coding task's own cwd (the target
+// repo itself), so `npm ci` wrote its cache directly into the repo tree and a
+// later `git_commit`'s `add_all` swept up thousands of cache files alongside
+// the real change. Created with 0o700 (a user's toolchain cache/config is not
+// world- or other-user-readable).
+func (j *Jail) HomeDir(userID string) (string, error) {
+	userRoot, err := j.UserRoot(userID)
+	if err != nil {
+		return "", err
+	}
+	home := filepath.Join(userRoot, homeDirName)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return "", fmt.Errorf("workspace: create home dir %q: %w", home, err)
+	}
+	return home, nil
+}
+
 // validateUserID is the jail-boundary guard shared by UserRoot and Resolve:
 // a userID must name exactly ONE directory component directly under the
 // workspace root, because Resolve joins it into the path RAW — an

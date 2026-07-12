@@ -485,6 +485,87 @@ commented-out code, or now-unreachable branches behind.
 
 ---
 
+## Delivery — does the change actually land, and land legibly
+
+The criteria above score the code itself. These two score the OUTWARD-FACING
+half of the job: whether the change was delivered the way the task needed,
+and whether a human reading the git history later can tell what happened and
+why. Judge substance over form here too — a scrappy but accurate branch name
+and commit message beat a slick one that oversells the change. Naming
+conventions are guidance, not a fixed format: don't penalize a
+repo-appropriate style choice (e.g. a repo with no `feat:`/`fix:` convention
+doesn't need one invented) as long as the message is genuinely descriptive of
+what changed and why.
+
+### `commit_hygiene`
+
+The branch name and commit message(s) are specific to THIS change, and the
+commit is scoped to what the task actually needed — not a blind sweep of
+everything sitting in the working tree.
+
+**Evaluation steps.**
+1. Check the branch name (from the `git_branch`/`git_commit` ledger entries):
+   does it name the actual change (`fix-pagination-off-by-one`,
+   `add-dry-run-flag`), or is it generic/placeholder (`fix`, `update`,
+   `patch`, `wip`)?
+2. Check the commit message: does the subject say WHAT changed, and does the
+   body (if any) say WHY — the motivating bug or requirement — or is it
+   content-free ("changes", "updates", "wip")?
+3. Check commit scope via `files_changed` and the diff: does the file count
+   and the files touched plausibly match what the task required, or does it
+   look like it swept in files never mentioned in the task or the worker's
+   own narration? A `git_commit` call that the ledger shows was REJECTED for
+   staging too many files, followed by a scoped retry (explicit `paths`)
+   that succeeded, is not a defect — that's the deterministic bulk-commit
+   wall working as designed; score the commit that actually landed.
+4. If the ledger shows no branch was ever created (a commit landed on
+   whatever branch was already checked out), treat that as a hygiene gap
+   unless the task explicitly said to work on an existing branch.
+
+**Scoring bands.**
+- **7–10** — branch and commit message are both specific to the change, and
+  the commit's file scope plausibly matches the task.
+- **4–6** — one of branch/message is generic or thin, or the commit carries
+  a small amount of scope creep, but nothing that obscures what happened.
+- **0–3** — the branch name or commit message is a meaningless placeholder
+  (`fix`, `update`, `wip`), OR the commit swept in files with no plausible
+  connection to the task.
+
+---
+
+### `task_completeness`
+
+The change is delivered as far as the task actually required — not just
+"code compiles and is committed locally" when the task implies more (pushing
+the branch, opening a PR, applying a change now rather than merely proposing
+it).
+
+**Evaluation steps.**
+1. From the task description, decide what "done" means here: many tasks are
+   genuinely satisfied by a local commit on a branch; others explicitly or
+   implicitly need a pushed branch or an opened PR ("open a PR for…", "ship
+   this", "push a fix").
+2. Check the workspace activity ledger for the operations that outward step
+   actually requires: a pushed branch needs a `git_push` entry (a
+   `git_commit` alone is not a push); an opened PR needs a `run_command`
+   entry that actually invoked the PR-creation command (e.g. `gh pr create`)
+   with a successful exit code — not just a claim in the answer text.
+3. An answer that honestly stops short and says why (e.g. "committed
+   locally; `git_push` is disabled in this deployment") is NOT a failure
+   here — score the delivery that was actually possible, and penalize only a
+   false claim of completion or an unexplained shortfall.
+
+**Scoring bands.**
+- **7–10** — every delivery step the task required (and that was possible
+  given the worker's tools/permissions) actually happened, per the ledger.
+- **4–6** — the core code change landed, but one delivery step the task
+  plausibly needed (a push, a PR) is missing with no explanation.
+- **0–3** — the answer claims a delivery step (pushed, opened a PR, merged)
+  with no corresponding ledger entry, or stops at "wrote the code" when the
+  task clearly asked for it to be proposed or shipped.
+
+---
+
 ## Aggregation
 
 Each criterion is an **independent requirement**, scored 0–10 and

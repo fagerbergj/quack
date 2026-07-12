@@ -29,6 +29,17 @@ type Caps struct {
 	// prefixes). Configured via workspace.exec_path. Empty = the fixed PATH
 	// alone, exactly as before.
 	ExtraPath []string
+	// HomeDir is the $HOME every RunArgv/RunPipeline/git child sees, when set —
+	// a per-user directory OUTSIDE any cloned/target repo tree (see
+	// workspace.Jail.HomeDir), so a toolchain's own cache/config writes (npm's
+	// _cacache, pip's cache, ~/.gitconfig) land there instead of inside a git
+	// working tree. Empty falls back to the child's own cwd (the LIVE bug this
+	// closes: `npm ci` with HOME=cwd wrote its cache straight into a cloned
+	// repo, and git_commit's `add_all` swept up 1,261 cache files alongside 8
+	// real ones — see internal/tools/git.go's bulk-commit sanity wall for the
+	// other half of this fix). Wired once from internal/serve's buildAgents;
+	// nothing here computes it — Caps only carries the resolved value.
+	HomeDir string
 }
 
 // DefaultCaps returns the isolation model's documented defaults.
@@ -44,8 +55,9 @@ func DefaultCaps() Caps {
 }
 
 // IsZero reports an entirely-unset Caps (callers substitute DefaultCaps).
-// Needed because ExtraPath makes Caps non-comparable with ==.
+// Needed because ExtraPath/HomeDir make Caps non-comparable with ==.
 func (c Caps) IsZero() bool {
 	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
-		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 && len(c.ExtraPath) == 0
+		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 &&
+		len(c.ExtraPath) == 0 && c.HomeDir == ""
 }

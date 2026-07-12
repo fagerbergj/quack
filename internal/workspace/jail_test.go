@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -195,6 +196,78 @@ func TestResolveRootItselfWorks(t *testing.T) {
 	}
 	if got2 != want {
 		t.Errorf("Resolve(\".\") = %q, want %q", got2, want)
+	}
+}
+
+func TestJailHomeDirIsSiblingNotNestedInARepo(t *testing.T) {
+	j := newTestJail(t)
+	// Simulate a cloned repo living directly under the user's jail root, the
+	// way git_clone's default `dir` (the repo name) does.
+	repoDir, err := j.Resolve("alice", "myrepo")
+	if err != nil {
+		t.Fatalf("Resolve(myrepo): %v", err)
+	}
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home, err := j.HomeDir("alice")
+	if err != nil {
+		t.Fatalf("HomeDir: %v", err)
+	}
+	if strings.HasPrefix(home, repoDir+string(filepath.Separator)) || home == repoDir {
+		t.Fatalf("HomeDir %q is nested inside the cloned repo %q — must be a sibling", home, repoDir)
+	}
+	userRoot, err := j.UserRoot("alice")
+	if err != nil {
+		t.Fatalf("UserRoot: %v", err)
+	}
+	if !strings.HasPrefix(home, userRoot+string(filepath.Separator)) {
+		t.Errorf("HomeDir %q is not under the user's own jail root %q", home, userRoot)
+	}
+}
+
+func TestJailHomeDirCreatesDirectory(t *testing.T) {
+	j := newTestJail(t)
+	home, err := j.HomeDir("alice")
+	if err != nil {
+		t.Fatalf("HomeDir: %v", err)
+	}
+	info, err := os.Stat(home)
+	if err != nil {
+		t.Fatalf("HomeDir did not create %q: %v", home, err)
+	}
+	if !info.IsDir() {
+		t.Errorf("HomeDir %q is not a directory", home)
+	}
+}
+
+func TestJailHomeDirIsStableAcrossCalls(t *testing.T) {
+	j := newTestJail(t)
+	home1, err := j.HomeDir("alice")
+	if err != nil {
+		t.Fatalf("HomeDir: %v", err)
+	}
+	home2, err := j.HomeDir("alice")
+	if err != nil {
+		t.Fatalf("HomeDir (2nd call): %v", err)
+	}
+	if home1 != home2 {
+		t.Errorf("HomeDir not stable: %q vs %q", home1, home2)
+	}
+}
+
+func TestJailHomeDirPerUserIsolated(t *testing.T) {
+	j := newTestJail(t)
+	alice, err := j.HomeDir("alice")
+	if err != nil {
+		t.Fatalf("HomeDir(alice): %v", err)
+	}
+	bob, err := j.HomeDir("bob")
+	if err != nil {
+		t.Fatalf("HomeDir(bob): %v", err)
+	}
+	if alice == bob {
+		t.Errorf("HomeDir(alice) == HomeDir(bob) = %q, want distinct per-user homes", alice)
 	}
 }
 

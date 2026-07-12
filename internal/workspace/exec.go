@@ -184,12 +184,27 @@ func childPath(caps Caps) string {
 	return strings.Join(caps.ExtraPath, ":") + ":" + execEnvPath
 }
 
+// childHome is the $HOME every RunArgv/RunPipeline child sees: caps.HomeDir
+// when the caller wired one up (the isolated per-user home OUTSIDE any cloned
+// repo tree — see Jail.HomeDir), falling back to the task's own cwd only when
+// unset (a caller/test that hasn't wired isolation up). Pinning HOME to dir
+// was the LIVE bug: a coding task's cwd IS the target repo, so a child tool
+// (npm, pip, …) writing its own cache to $HOME wrote it straight into the
+// repo, and git_commit's add_all then swept the cache up as if it were part
+// of the change.
+func childHome(dir string, caps Caps) string {
+	if caps.HomeDir != "" {
+		return caps.HomeDir
+	}
+	return dir
+}
+
 // RunArgv executes argv[0] with argv[1:] as a subprocess: exec.Command argv
 // arrays ONLY, never a shell. The caller has already rejected shell
 // metacharacters and split the command itself (ContainsShellMetachar /
 // SplitArgv) — this is the LAST wall: even a validated argv never touches
 // /bin/sh. cwd is pinned to dir (callers resolve it through a Jail first), the
-// child's environment is scrubbed (execEnvPath + HOME=dir), a per-call
+// child's environment is scrubbed (execEnvPath + HOME=childHome(dir,caps)), a per-call
 // timeout comes from caps (DefaultCaps when unset), and output is
 // tail-capped. Shared by run_command (internal/tools) and the trust gate's
 // per-node deterministic `checks` (internal/vetting/checks.go) — ONE runner,
@@ -223,7 +238,7 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 
 	cmd := exec.CommandContext(cctx, bin, argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + dir}
+	cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -301,7 +316,7 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 		}
 		cmd := exec.CommandContext(cctx, bin, argv[1:]...)
 		cmd.Dir = dir
-		cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + dir}
+		cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
 		stderrs[i] = &bytes.Buffer{}
 		cmd.Stderr = stderrs[i]
 		cmds[i] = cmd
