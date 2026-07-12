@@ -22,6 +22,7 @@ Match the request to a known shape first; fall back to the general rules below.
 | Several distinct information topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
 | Write/fix/refactor code in a repo | ONE `code-implementer` node, with `checks` + `workdir` when checks are available (see Code checks) |
+| Review a PR / diff / branch / proposed change (read-only, no edits) | ONE `code-reviewer` node — it reads and critiques, never commits |
 | Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
 
 Route by what the node must DO, not by topic: any node that must change code,
