@@ -608,6 +608,29 @@ extensions:
 	if c.Extensions.GitHub.Mention != "@quack" {
 		t.Errorf("mention default = %q; want @quack", c.Extensions.GitHub.Mention)
 	}
+	// app_id only ⇒ Issuer is the stringified App ID.
+	if got := c.Extensions.GitHub.Issuer(); got != "12345" {
+		t.Errorf("Issuer() = %q; want 12345", got)
+	}
+}
+
+func TestGitHubExtensionClientIDIssuer(t *testing.T) {
+	t.Setenv("QUACK_GH_KEY", "pem")
+	t.Setenv("QUACK_GH_SECRET", "s3cret")
+	// client_id is GitHub's recommended issuer and a valid alternative to app_id.
+	c, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    client_id: Iv23liExample
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := c.Extensions.GitHub.Issuer(); got != "Iv23liExample" {
+		t.Errorf("Issuer() = %q; want Iv23liExample", got)
+	}
 }
 
 func TestGitHubExtensionRejectsLiteralSecrets(t *testing.T) {
@@ -633,7 +656,7 @@ extensions:
 func TestGitHubExtensionRequiresFields(t *testing.T) {
 	t.Setenv("QUACK_GH_KEY", "pem")
 	t.Setenv("QUACK_GH_SECRET", "s3cret")
-	// Missing app_id.
+	// Missing both app_id and client_id.
 	_, err := Load(writeTemp(t, baseConfig+`
 extensions:
   github:
@@ -641,7 +664,19 @@ extensions:
     webhook_secret: ${QUACK_GH_SECRET}
 `))
 	if err == nil {
-		t.Fatal("expected error for missing app_id")
+		t.Fatal("expected error for missing issuer (app_id/client_id)")
+	}
+	// Both app_id and client_id set ⇒ ambiguous, rejected.
+	_, err = Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    client_id: Iv23liExample
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+`))
+	if err == nil {
+		t.Fatal("expected error when both app_id and client_id are set")
 	}
 	// Missing private key entirely.
 	_, err = Load(writeTemp(t, baseConfig+`

@@ -36,7 +36,7 @@ const tokenSkew = 60 * time.Second
 // App authenticates as a GitHub App and mints/caches per-installation access
 // tokens. Safe for concurrent use.
 type App struct {
-	appID   int64
+	issuer  string // JWT `iss`: the App's Client ID (recommended) or stringified App ID
 	key     *rsa.PrivateKey
 	apiBase string
 	http    *http.Client
@@ -51,15 +51,18 @@ type cachedToken struct {
 	expires time.Time
 }
 
-// NewApp builds an App from an app id and a PEM private key (contents, not a
-// path). The key is parsed once at startup; a bad key is a clear startup error.
-func NewApp(appID int64, pemKey string) (*App, error) {
+// NewApp builds an App from a JWT issuer and a PEM private key (contents, not a
+// path). The issuer is the App's Client ID (GitHub's recommended `iss`) or its
+// stringified App ID — see config.GitHubExtensionConfig.Issuer. GitHub accepts
+// either as the App JWT issuer. The key is parsed once at startup; a bad key is
+// a clear startup error.
+func NewApp(issuer, pemKey string) (*App, error) {
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(pemKey))
 	if err != nil {
 		return nil, fmt.Errorf("github: parse private key: %w", err)
 	}
 	return &App{
-		appID:    appID,
+		issuer:   issuer,
 		key:      key,
 		apiBase:  defaultAPIBase,
 		http:     &http.Client{Timeout: 20 * time.Second},
@@ -81,12 +84,13 @@ func LoadPrivateKey(inline, path string) (string, error) {
 	return string(b), nil
 }
 
-// appJWT mints a short-lived (≤10 min) RS256 App JWT: iss = app id, iat backdated
-// 60s to tolerate clock skew, exp 9 minutes out (under GitHub's 10-minute cap).
+// appJWT mints a short-lived (≤10 min) RS256 App JWT: iss = the App's issuer
+// (Client ID or App ID), iat backdated 60s to tolerate clock skew, exp 9 minutes
+// out (under GitHub's 10-minute cap).
 func (a *App) appJWT() (string, error) {
 	now := time.Now()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
-		Issuer:    fmt.Sprintf("%d", a.appID),
+		Issuer:    a.issuer,
 		IssuedAt:  jwt.NewNumericDate(now.Add(-60 * time.Second)),
 		ExpiresAt: jwt.NewNumericDate(now.Add(9 * time.Minute)),
 	})

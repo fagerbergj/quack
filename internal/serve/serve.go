@@ -224,13 +224,13 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		if kerr != nil {
 			return nil, nil, "", kerr
 		}
-		githubApp, err = github.NewApp(gh.AppID, pem)
+		githubApp, err = github.NewApp(gh.Issuer(), pem)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("github extension init failed: %w", err)
 		}
 		extTools = githubApp.Tools()
 		gitTokenSource = githubApp // App implements tools.GitTokenSource
-		slog.Info("github extension enabled", "component", "startup", "app_id", gh.AppID, "mention", gh.Mention)
+		slog.Info("github extension enabled", "component", "startup", "issuer", gh.Issuer(), "mention", gh.Mention)
 	}
 
 	// Load skills once at startup; pass the toolset to every specialist agent so
