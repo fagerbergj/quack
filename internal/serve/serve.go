@@ -686,6 +686,14 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				agentGateCfg.Rubric = override
 				slog.Info("using per-agent rubric from bundle", "component", "startup", "agent", name)
 			}
+			// Per-agent judge/revise round budget (0 ⇒ inherit the global default).
+			// The economics differ by agent: research converges in one round (extra
+			// rounds burn tokens re-fetching), whereas coding genuinely needs the
+			// judge+revise grind to iterate until tests pass.
+			if ac.JudgeRounds > 0 {
+				agentGateCfg.JudgeRounds = ac.JudgeRounds
+			}
+			slog.Info("per-agent trust gate config", "component", "startup", "agent", name, "judge_rounds", agentGateCfg.JudgeRounds)
 			gateCfgs[name] = agentGateCfg
 		}
 

@@ -211,6 +211,7 @@ type AgentConfig struct {
 	Tools         []string `yaml:"tools"`          // built-in tool names (kind: builtin)
 	Inputs        []string `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
 	Gated         *bool    `yaml:"gated"`          // wrap in the trust gate? default true; set false for side-effecting/action agents
+	JudgeRounds   int      `yaml:"judge_rounds"`   // per-agent judge/revise round budget; 0 ⇒ inherit gates.judge.max_rounds
 }
 
 // IsGated reports whether the agent runs under the trust gate (default true).

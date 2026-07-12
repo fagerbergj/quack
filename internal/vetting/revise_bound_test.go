@@ -51,7 +51,7 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 		act.workspace = append(act.workspace, wsOp{tool: "read_file", detail: huge('L', 400), sample: huge('S', 300)})
 	}
 
-	got := contentPlainText(buildRevisionContent("principles", question, answer, feedback, act))
+	got := contentPlainText(buildRevisionContent("principles", question, answer, feedback, act, false))
 
 	// Fixed scaffolding (directive + principles + labels) plus the four capped
 	// sections plus the markers — comfortably under a documented ceiling.
@@ -65,7 +65,7 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 
 	// Small inputs pass through unmodified.
 	smallQ := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "what is 2+2?"}}}
-	small := contentPlainText(buildRevisionContent("", smallQ, "4", "be precise", workerActivity{}))
+	small := contentPlainText(buildRevisionContent("", smallQ, "4", "be precise", workerActivity{}, false))
 	if strings.Contains(small, "truncated to fit the context window") {
 		t.Fatalf("small revise inputs were needlessly truncated: %q", small)
 	}
