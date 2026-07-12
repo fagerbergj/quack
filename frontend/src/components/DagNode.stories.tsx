@@ -153,3 +153,39 @@ export const Failed: Story = {
     isFinal: false,
   },
 }
+
+// Demonstrates Feature 1 (height-lock) in context: a long answer is capped with a
+// Show more toggle, and a many-round node stays scannable because each round is a
+// collapsed card. Open the Work card to see the edit_file diff render (Feature 2).
+const codeNode: DagNodeDef = {
+  id: 'code', agent: 'web-researcher',
+  task: 'Refactor greet() to support a loud flag and add a test.', depends_on: [],
+}
+const longAnswer = ['# Refactor complete', '', ...Array.from({ length: 24 }, (_, i) =>
+  `${i + 1}. Applied change ${i + 1}: adjusted the greeting builder and covered it with a case.`)].join('\n')
+
+export const LongContentManyRounds: Story = {
+  args: {
+    node: codeNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 88_000, totalTokens: 6_120, model: 'qwen3-30b-a3b' },
+    runs: [
+      { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, model: 'qwen3-30b-a3b', activity: [
+        { kind: 'thinking', text: 'I will change the signature and update the body, then run the tests.' },
+        { kind: 'tool', tool: { callId: 't1', name: 'edit_file', done: true,
+          args: { path: 'internal/greet/greet.go', old: 'func greet(name string) string {\n\treturn "Hello, " + name\n}', new: 'func greet(name string, loud bool) string {\n\tg := "Hello, " + name\n\tif loud {\n\t\tg += "!"\n\t}\n\treturn g\n}' },
+          result: { replacements: 1 } } },
+        { kind: 'tool', tool: { callId: 't2', name: 'run_command', done: true,
+          args: { dir: '.', command: 'go test ./...' }, result: { exit_code: 0, output: 'ok\tgithub.com/fagerbergj/quack/internal/greet\t0.11s', duration_ms: 130 } } },
+      ] },
+      judgeRun(1, 0.48, false, 'The loud path is untested. Add a case asserting the "!" suffix.'),
+      { runId: 'rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, model: 'qwen3-30b-a3b', activity: [
+        { kind: 'tool', tool: { callId: 't3', name: 'write_file', done: true, args: { path: 'internal/greet/greet_test.go', content: 'package greet\n\nimport "testing"\n\nfunc TestLoud(t *testing.T) { /* … */ }' }, result: { created: true } } },
+      ] },
+      judgeRun(2, 0.6, false, 'Closer, but assert the exact output.'),
+      { runId: 'rev2', agent: 'web-researcher', stage: 'revise', round: 2, done: true, model: 'qwen3-30b-a3b', activity: [] },
+      judgeRun(3, 0.86, true, ''),
+    ],
+    answer: longAnswer,
+    isFinal: true,
+  },
+}
