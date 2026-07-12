@@ -463,10 +463,14 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gateCfg.WorkspaceUserID = localUserID
 		gateCfg.WorkspaceCaps = workspaceCaps
 		// The judge model is only built when the judge stage is active; the
-		// deterministic + self-critique stages run without it. One-shot judge (no
-		// web tools): citation backing is now checked deterministically in code, so
-		// the judge scores in a single pass instead of an agentic re-fetch loop
-		// (a multi-step re-fetch loop is wasted work for ~no gain).
+		// deterministic + self-critique stages run without it. Citation backing is
+		// checked deterministically in code, so the judge no longer carries web
+		// tools (a re-fetch loop is wasted work for ~no gain). It IS given the
+		// four read-only workspace tools when a jail is configured, so a coding
+		// node's judge can OPEN the files the worker wrote/changed and score code
+		// quality from the real source instead of blindly trusting the answer's
+		// self-report. Read-only by construction — never write_file/edit_file/
+		// delete_path/git_*/run_command; the judge must not mutate or run anything.
 		if cfg.Gates.JudgeEnabled() {
 			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
 			if !ok {
@@ -476,7 +480,18 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if err != nil {
 				return nil, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
-			judgeFactory = vetting.NewJudgeFactory(judge, nil)
+			var judgeReadTools []tool.Tool
+			if jail != nil {
+				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
+					Workspace:       jail,
+					WorkspaceUserID: localUserID,
+					WorkspaceCaps:   workspaceCaps,
+				})
+				if err != nil {
+					return nil, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
+				}
+			}
+			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools)
 			safetyJudge = tools.NewSafetyJudge(judge)
 		}
 		slog.Info("trust gate enabled", "component", "startup",

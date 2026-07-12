@@ -8,8 +8,11 @@ section — minimalism, YAGNI-as-defect, and diff discipline are scored exactly
 like any other quality dimension, not treated as a style preference.
 
 Score the **diff and the resulting code**, not the commit message or the
-worker's narration. When the task is a small, targeted fix, most criteria
-below should score high near-trivially — a tiny correct diff is not
+worker's narration. When you have read-only workspace tools (read_file,
+list_dir, glob, grep), OPEN the files the worker touched and ground every
+quality score in what they actually contain — do not infer code quality from
+the answer's description of it. When the task is a small, targeted fix, most
+criteria below should score high near-trivially — a tiny correct diff is not
 "under-engineered," it is the target outcome.
 
 ## How to score (G-Eval)

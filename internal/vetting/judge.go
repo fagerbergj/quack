@@ -29,26 +29,50 @@ const (
 	submitVerdictTool = "submit_verdict"
 
 	// defaultJudgeMaxIterations bounds the judge's agentic tool loop (model
-	// turns per round) when Config.JudgeMaxIterations is unset.
-	defaultJudgeMaxIterations = 6
+	// turns per round) when Config.JudgeMaxIterations is unset. It is high
+	// enough for a code-quality judge to open a handful of changed files
+	// (read_file/grep/list_dir each cost one model turn) before it calls
+	// submit_verdict; a tool-less research judge still submits on turn one, so
+	// the extra headroom is free there.
+	defaultJudgeMaxIterations = 10
 
-	// judgeAgentBehaviour is the behaviour layer of the agentic judge's system
+	// judgeBehaviour* compose the behaviour layer of the agentic judge's system
 	// prompt (promptbuilder.Judge wraps it with identity, tools, and environment
-	// layers, exactly like a specialist agent's prompt.md). Unlike the old
-	// one-shot scorer it tells the judge to verify the answer with its own tools
-	// (re-fetching cited URLs, checking claims) before scoring, then to terminate
-	// by calling submit_verdict — never by emitting JSON text. Per-criterion
+	// layers, exactly like a specialist agent's prompt.md). The middle clause
+	// varies with whether the judge was wired with read-only workspace tools:
+	// judgeBehaviour(hasReadTools) picks it. Either way the judge terminates by
+	// calling submit_verdict — never by emitting JSON text. Per-criterion
 	// reason-before-score (G-Eval) keeps the scoring disciplined; the caller
 	// re-derives the overall score as the lowest criterion in aggregateVerdict.
-	judgeAgentBehaviour = "You did NOT write the answer being evaluated, and you must not trust its assertions. " +
-		"You have no tools. Judge the answer on its own merits against the rubric. " +
-		"If an image is attached to this message, you can see it — use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
+	judgeBehaviourHead = "You did NOT write the answer being evaluated, and you must not trust its assertions. "
+
+	// judgeNoToolsClause is the middle clause for a tool-less judge (pure-research
+	// deployments with no workspace jail): it scores on the answer's own merits.
+	judgeNoToolsClause = "You have no tools. Judge the answer on its own merits against the rubric. "
+
+	// judgeReadToolsClause is the middle clause when the judge holds the read-only
+	// workspace tools (read_file, list_dir, glob, grep). It tells the judge to
+	// OPEN the real artifacts and ground code-quality scores in them rather than
+	// the worker's self-report, while staying bounded and strictly read-only.
+	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. When the answer involves code or other workspace work, USE them to ground your quality scores in the real artifacts rather than trusting the worker's self-report — the workspace ledger below lists the paths the worker touched, so read_file those files, grep for patterns, and list_dir to inspect structure, then judge the ACTUAL code (correctness, edge cases, test thoroughness, matching the repo's existing conventions, the logic/render split) instead of the answer's description of it. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. Read only what you need to reach a verdict — inspect the changed files, do not spelunk the whole tree. For a pure-research answer with no workspace work you won't need them. "
+
+	judgeBehaviourTail = "If an image is attached to this message, you can see it — use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
 		"Do NOT try to verify which URLs were fetched — citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. " +
 		"CRITICAL: the agent retrieved live web content that you do not have, and your own world knowledge is stale and incomplete. NEVER treat a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training — an unfamiliar title, name, product, or event is NOT evidence of fabrication. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. When a claim carries an inline citation, treat it as grounded. " +
 		"Score EVERY criterion the rubric names — no more, no fewer. For each, reason in one or two sentences, then assign an INTEGER score from 0 to 10 using the rubric's scoring bands (10 = the criterion is fully met, 0 = total failure; use the intermediate values for partial quality — do not snap to 0, 5, or 10). Judge substance, not style: length and fluent prose earn no credit. Each criterion is an independent requirement: the answer's overall score is its WEAKEST criterion, so a single failing criterion sinks it — do not let a strong dimension excuse a failing one. " +
 		"When — and only when — you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {reason, score}), `score` (the lowest of your criterion scores), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
 		"Do NOT write the verdict as prose or JSON in your reply — calling submit_verdict is the only way to finish."
 )
+
+// judgeBehaviour assembles the judge's behaviour prompt, selecting the middle
+// clause by whether the judge was wired with read-only workspace tools.
+func judgeBehaviour(hasReadTools bool) string {
+	clause := judgeNoToolsClause
+	if hasReadTools {
+		clause = judgeReadToolsClause
+	}
+	return judgeBehaviourHead + clause + judgeBehaviourTail
+}
 
 // criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
 // The judge scores each criterion on the rubric's 0–10 integer scale; the score
@@ -74,28 +98,36 @@ type verdict struct {
 // JudgeFactory builds a fresh agentic judge bound to sink: when the judge calls
 // the submit_verdict tool, its arguments are written into sink. A new judge is
 // built per round so each round's submit_verdict binds a clean sink. The factory
-// closes over the judge model and the judge's verification tools (web_search,
-// web_fetch); see NewJudgeFactory.
+// closes over the judge model and the judge's read-only workspace tools (built
+// ONCE — they're jailed at construction and carry no per-round state); see
+// NewJudgeFactory.
 type JudgeFactory func(sink *verdict) (adkagent.Agent, error)
 
 // NewJudgeFactory returns a JudgeFactory that builds the agentic judge as an ADK
-// llmagent with judgeModel, the supplied verification webTools (web_search,
-// web_fetch), and a per-round submit_verdict tool bound to the caller's sink.
-func NewJudgeFactory(judgeModel model.LLM, webTools []tool.Tool) JudgeFactory {
+// llmagent with judgeModel, the supplied read-only workspace tools (read_file,
+// list_dir, glob, grep — so the judge can OPEN the files a coding worker wrote
+// and score code quality from the real source, not the worker's self-report),
+// and a per-round submit_verdict tool bound to the caller's sink. Pass no read
+// tools for a pure-research deployment: the judge then scores one-shot from the
+// answer text alone. The read tools MUST be read-only — never wire write_file,
+// edit_file, delete_path, git_*, or run_command; the judge must not mutate the
+// workspace or run anything.
+func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool) JudgeFactory {
+	behaviour := judgeBehaviour(len(readTools) > 0)
 	return func(sink *verdict) (adkagent.Agent, error) {
 		submit, err := newSubmitVerdictTool(sink)
 		if err != nil {
 			return nil, err
 		}
-		judgeTools := make([]tool.Tool, 0, len(webTools)+1)
-		judgeTools = append(judgeTools, webTools...)
+		judgeTools := make([]tool.Tool, 0, len(readTools)+1)
+		judgeTools = append(judgeTools, readTools...)
 		judgeTools = append(judgeTools, submit)
 		return llmagent.New(llmagent.Config{
 			Name:        "judge",
 			Description: "independent skeptical verifier",
 			Model:       judgeModel,
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-				return promptbuilder.Judge(judgeTools, judgeAgentBehaviour), nil
+				return promptbuilder.Judge(judgeTools, behaviour), nil
 			},
 			Tools: judgeTools,
 		})
