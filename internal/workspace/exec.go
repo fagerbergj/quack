@@ -98,6 +98,65 @@ func SplitArgv(s string) ([]string, error) {
 	return argv, nil
 }
 
+// StripStderrMerge removes every standalone, unquoted `2>&1` token from s.
+// The token is a shell habit worker LLMs carry into run_command that is a
+// pure no-op here — RunArgv already merges stderr into stdout, and
+// RunPipeline appends every stage's stderr to the output — yet its `>` and
+// `&` would trip the metachar wall and burn a revise round. Tokens are split
+// on unquoted whitespace with the same quote/escape rules as SplitArgv, so a
+// quoted "2>&1" (a literal argument) is untouched; each token's ORIGINAL text
+// (quotes and escapes intact) is what gets rejoined, so the result feeds
+// SplitPipeline/SplitArgv unchanged apart from the dropped tokens (and
+// collapsed inter-token whitespace). Called ONLY on run_command's
+// LLM-authored command string (internal/tools/run_command.go) — the gate's
+// operator-configured checks (internal/vetting/checks.go) and the planner's
+// plan-time validation are deliberately not normalized.
+func StripStderrMerge(s string) string {
+	var fields []string
+	var cur strings.Builder
+	var quote rune
+	esc := false
+	flush := func() {
+		if cur.Len() > 0 {
+			fields = append(fields, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, r := range s {
+		switch {
+		case esc:
+			cur.WriteRune(r)
+			esc = false
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else if quote == '"' && r == '\\' {
+				esc = true
+			}
+			cur.WriteRune(r)
+		case r == '\\':
+			esc = true
+			cur.WriteRune(r)
+		case r == '\'' || r == '"':
+			quote = r
+			cur.WriteRune(r)
+		case r == ' ' || r == '\t' || r == '\n':
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	kept := fields[:0]
+	for _, f := range fields {
+		if f == "2>&1" { // a quoted token retains its quote chars, so it can never equal this
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return strings.Join(kept, " ")
+}
+
 // SplitPipeline splits s into pipeline stages on UNQUOTED `|` characters —
 // the same quote/escape rules as SplitArgv (a `|` inside quotes, or escaped
 // with a backslash, is a literal argument character) — then word-splits each
