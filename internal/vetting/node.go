@@ -297,11 +297,19 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 
 		// HITL pause: the worker just called ask_user (a fresh ask beyond the pauses
-		// already requested) and ended its turn without an answer. Park the NODE via
+		// already requested) and ended its turn. Park the NODE via
 		// ResumeOrRequestInput — first pass emits the request event and returns
 		// ErrNodeInterrupted (propagated up; NOT a failure, no empty-recovery); on the
 		// answer turn ADK re-enters the node and the resume branch above runs instead.
-		if strings.TrimSpace(answer) == "" && emit != nil {
+		//
+		// This runs REGARDLESS of whether the draft is empty. A chatty model asks
+		// AND writes draft text in the SAME turn (observed live: code-implementer
+		// called ask_user with a real design question yet also emitted a draft, so
+		// the ask silently dropped and the un-answered draft sailed to the judge).
+		// Any draft text from THIS turn is discarded on the pause: it was written
+		// WITHOUT the user's answer, and the resume path re-runs the worker with the
+		// full Q&A folded in via withUserAnswer — so nothing of value is lost.
+		if emit != nil {
 			if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); len(scan.turns) > scan.pauses {
 				q := scan.turns[len(scan.turns)-1].question
 				log.Info("worker asked the user; pausing node", "question", q, "round", scan.pauses+1)
