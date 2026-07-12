@@ -21,6 +21,7 @@ const maxWebhookBody = 5 << 20 // 5 MiB
 type issueCommentPayload struct {
 	Action  string `json:"action"`
 	Comment struct {
+		ID   int64  `json:"id"`
 		Body string `json:"body"`
 		User struct {
 			Login string `json:"login"`
@@ -81,8 +82,26 @@ func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	slog.Info("github webhook received", "component", "github",
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
 		"user", p.Comment.User.Login, "installation", p.Installation.ID)
+	go e.ackReaction(p) // instant 👀 "quack saw it", independent of the model run
 	go e.dispatch(p, task)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// ackReaction posts a deterministic 👀 (eyes) reaction on the mentioning comment
+// as an instant, code-level acknowledgment that quack saw the mention — it does
+// not wait on the model. Best effort: a failure is logged at WARN and never
+// blocks the run dispatch (the reaction is a nicety, not a gate).
+func (e *Extension) ackReaction(p issueCommentPayload) {
+	if p.Comment.ID == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
+	defer cancel()
+	owner, repo := p.Repository.Owner.Login, p.Repository.Name
+	if _, err := e.app.reactToComment(ctx, owner, repo, "issues", p.Comment.ID, "eyes"); err != nil {
+		slog.Warn("github ack reaction failed", "component", "github",
+			"repo", owner+"/"+repo, "comment", p.Comment.ID, "err", err)
+	}
 }
 
 // triggerTask decides whether a comment triggers a run and extracts the task
@@ -149,12 +168,15 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number)
 }
 
-// runMessage frames the task for the orchestrator: what was asked, where the
-// repo is, and how to act (clone via git tools — auth is the installation token
-// — and for code changes push a branch and open a PR with github_pull_request).
+// runMessage frames the task for the orchestrator: the user's verbatim request
+// (kept front-and-center — it carries their focus), where the repo is, and how to
+// act. It gives BOTH paths — review and implement — since the orchestrator routes
+// review-vs-change from the request; when the mention is on a PR it also surfaces
+// the pull_number the review tools need (a PR shares its issue number).
 func (e *Extension) runMessage(p issueCommentPayload, task string) string {
+	isPR := p.Issue.PullRequest != nil
 	kind := "issue"
-	if p.Issue.PullRequest != nil {
+	if isPR {
 		kind = "pull request"
 	}
 	owner, repo := p.Repository.Owner.Login, p.Repository.Name
@@ -168,10 +190,15 @@ func (e *Extension) runMessage(p issueCommentPayload, task string) string {
 	fmt.Fprintf(&b, "Their request:\n%s\n\n", task)
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q); clone it from %s using git_clone (authentication is handled for you). ",
 		owner, repo, base, p.Repository.CloneURL)
+	if isPR {
+		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d). ", p.Issue.Number, p.Issue.Number)
+		fmt.Fprintf(&b, "If the request is to REVIEW this PR: read its changes (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). ",
+			owner, repo, p.Issue.Number, p.Issue.Number)
+	}
 	b.WriteString("If the task needs code changes, create a branch, commit your work, push it with git_push, then open a pull request with github_pull_request ")
 	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q). ", owner, repo, base)
 	fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
 		owner, repo, p.Issue.Number)
-	b.WriteString("Answer concisely and reference any branch or PR you created.")
+	b.WriteString("Answer concisely and reference any branch, PR, or review you created.")
 	return b.String()
 }
