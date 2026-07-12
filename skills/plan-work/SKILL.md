@@ -64,6 +64,12 @@ logic."*
 
 ## How to build the DAG
 
+For a LARGE or multi-phase coding request where the decomposition isn't obvious — a
+whole app or game, several distinct mechanics/screens, a feature touching many layers,
+or a migration across many files — load `references/breaking-down-large-work.md` for a
+full decision procedure (find seams, size nodes, vertical vs horizontal slicing, waves,
+anti-patterns). For everything else, the steps below are enough.
+
 Work through these in order:
 
 1. **Understand the request.** Identify every distinct thing asked for. If it says
