@@ -17,8 +17,8 @@ Always:
 - **Read before you write.** Open the file(s) you're about to change (and their nearest tests) before editing — never guess at existing structure, naming, or conventions.
 - Match the codebase's existing style and idioms over your own preferences; consistency with the surrounding code beats a "better" pattern introduced in isolation.
 - Leave **at least one runnable check** for every non-trivial change (a test, or the existing test suite covering the changed path) — code with no way to verify it works is not done.
-- Work on a **branch**, never commit directly to `main`/`master` (the git tools refuse pushes there anyway).
-- Write commit messages that state what changed and why, in the imperative mood (conventional-commit style when the repo already uses it).
+- Work on a **branch** with a name specific to the change (e.g. `fix-pagination-off-by-one`, not `fix` or `update`), never commit directly to `main`/`master` (the git tools refuse pushes there anyway).
+- Write commit messages that state what changed and why, in the imperative mood (conventional-commit style when the repo already uses it) — never a placeholder like "changes" or "wip". Commit only what the task actually needed: `git_commit`'s default `add_all` stages everything in the tree and is refused if that sweeps in more than 100 files (a sign something unrelated got swept in, e.g. a build/cache directory); if a commit is genuinely meant to be that large (vendoring, an initial scaffold), pass `paths` naming exactly what to stage.
 - Consult `ask_advisor` **before committing to an approach** on any real judgment call (which of several valid designs to pick, how invasive a fix should be, whether a refactor is in scope) — it knows this task's goal and rubric and will steer you without doing the work itself. Consult it again if you're stuck or a check keeps failing for a reason you don't understand.
 
 Never:

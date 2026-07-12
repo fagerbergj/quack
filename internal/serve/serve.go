@@ -425,6 +425,19 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		Timeout:        time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
 		ExtraPath:      cfg.Workspace.ExecPath,
 	}
+	// A dedicated $HOME for run_command/checks/git children, OUTSIDE the
+	// user's cloned repos (a sibling under their jail root — see Jail.
+	// HomeDir) — never the task's own cwd. Fixes a live bug: HOME pinned to a
+	// coding task's cwd (the target repo itself) meant `npm ci` wrote its
+	// cache directly into the repo tree, and git_commit's add_all then swept
+	// the cache up alongside the real change (1,261 garbage files in one
+	// commit). Wired onto workspaceCaps so every consumer (fs/git/run_command
+	// tools AND the trust gate's deterministic checks) gets it for free.
+	homeDir, err := jail.HomeDir(localUserID)
+	if err != nil {
+		return nil, nil, nil, nil, nil, fmt.Errorf("workspace home dir init failed: %w", err)
+	}
+	workspaceCaps.HomeDir = homeDir
 
 	var judgeFactory vetting.JudgeFactory
 	var gateCfg vetting.Config

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -215,6 +216,114 @@ func TestGitCommitEmptyMessageRejected(t *testing.T) {
 	cloneIntoJail(t, b, bare, "repo")
 	if _, err := b.gitCommit(gitCommitArgs{Dir: "repo", Message: "  "}); err == nil {
 		t.Error("expected error for an empty commit message")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// git_commit's bulk-commit sanity wall (maxAddAllFiles): the deterministic
+// guard against a blind `add_all` sweeping in garbage — the live incident
+// this closes staged 1,261 npm-cache files alongside 8 real ones in one
+// commit (see internal/workspace's HomeDir isolation fix for the OTHER half).
+// ---------------------------------------------------------------------------
+
+// writeManyFiles creates n small files directly under dir (flat, so a single
+// `git add -A` stages exactly n new paths).
+func writeManyFiles(t *testing.T, dir string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("garbage-file-%d.txt", i))
+		if err := os.WriteFile(name, []byte("junk\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestGitCommitAddAllRefusesOverFileCountLimit(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	target := cloneIntoJail(t, b, bare, "repo")
+
+	writeManyFiles(t, target, maxAddAllFiles+1)
+
+	_, err := b.gitCommit(gitCommitArgs{Dir: "repo", Message: "sweep everything"})
+	if err == nil {
+		t.Fatal("gitCommit: expected the bulk-commit sanity wall to refuse, got nil error")
+	}
+	if !strings.Contains(err.Error(), "sanity limit") {
+		t.Errorf("error = %v, want it to mention the sanity limit", err)
+	}
+
+	// The refusal must leave the tree unstaged (best-effort `git reset`), not
+	// a half-staged mess a caller has to clean up by hand.
+	st, statusErr := b.gitStatus(gitStatusArgs{Dir: "repo"})
+	if statusErr != nil {
+		t.Fatal(statusErr)
+	}
+	for _, c := range st.Changes {
+		if c.State == "A" {
+			t.Errorf("file %q is still staged after the wall refused the commit", c.Path)
+		}
+	}
+}
+
+func TestGitCommitAddAllUnderLimitSucceeds(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	target := cloneIntoJail(t, b, bare, "repo")
+
+	writeManyFiles(t, target, maxAddAllFiles-1)
+
+	res, err := b.gitCommit(gitCommitArgs{Dir: "repo", Message: "a large but under-limit commit"})
+	if err != nil {
+		t.Fatalf("gitCommit: unexpected error under the limit: %v", err)
+	}
+	if res.FilesChanged != maxAddAllFiles-1 {
+		t.Errorf("FilesChanged = %d, want %d", res.FilesChanged, maxAddAllFiles-1)
+	}
+}
+
+func TestGitCommitPathsEscapeHatchBypassesTheWall(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	target := cloneIntoJail(t, b, bare, "repo")
+
+	// A big, intentional tree (e.g. "vendoring") the caller explicitly names —
+	// plus an UNRELATED stray file that must NOT be swept in, proving `paths`
+	// really does scope the stage rather than just silencing the wall.
+	vendorDir := filepath.Join(target, "vendor")
+	if err := os.MkdirAll(vendorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeManyFiles(t, vendorDir, maxAddAllFiles+1)
+	if err := os.WriteFile(filepath.Join(target, "unrelated.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := b.gitCommit(gitCommitArgs{Dir: "repo", Message: "vendor third-party deps", Paths: []string{"vendor"}})
+	if err != nil {
+		t.Fatalf("gitCommit with explicit paths: unexpected error over the limit: %v", err)
+	}
+	if res.FilesChanged != maxAddAllFiles+1 {
+		t.Errorf("FilesChanged = %d, want %d (vendor/ only)", res.FilesChanged, maxAddAllFiles+1)
+	}
+
+	// The unrelated stray file must still be untracked — `paths` scoped the
+	// stage to vendor/ only, it didn't just disable the wall for add -A.
+	st, err := b.gitStatus(gitStatusArgs{Dir: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range st.Changes {
+		if c.Path == "unrelated.txt" && c.State == "??" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("unrelated.txt should remain untracked after a paths-scoped commit of vendor/ only")
 	}
 }
 
