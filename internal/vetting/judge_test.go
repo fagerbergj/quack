@@ -100,7 +100,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls int32
 			readTool := newSpyReadTool(t, tc.body, &calls)
-			factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{readTool})
+			factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{readTool}, nil)
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 				"I implemented game.go", workerActivity{}, func(*genai.Part) bool { return true })
@@ -112,6 +112,117 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 			}
 			if v.Score != tc.wantScore {
 				t.Errorf("verdict score = %v, want %v (should reflect the file body)", v.Score, tc.wantScore)
+			}
+		})
+	}
+}
+
+// fakeToolset is a minimal tool.Toolset exposing a single scripted skill tool,
+// standing in for the real skilltoolset so the skill-loading path is hermetic.
+type fakeToolset struct{ tools []tool.Tool }
+
+func (f fakeToolset) Name() string { return "fake-skills" }
+func (f fakeToolset) Tools(_ adkagent.ReadonlyContext) ([]tool.Tool, error) {
+	return f.tools, nil
+}
+
+// skillLoadArgs/skillLoadResult mirror load_skill's minimal shape.
+type skillLoadArgs struct {
+	Name string `json:"name"`
+}
+type skillLoadResult struct {
+	Instructions string `json:"instructions"`
+}
+
+// newSpyLoadSkillTool returns a stand-in load_skill tool that returns body and
+// bumps calls each time the judge invokes it — proving the skill toolset reaches
+// the judge and is callable before submit_verdict.
+func newSpyLoadSkillTool(t *testing.T, body string, calls *int32) tool.Tool {
+	t.Helper()
+	lt, err := functiontool.New[skillLoadArgs, skillLoadResult](
+		functiontool.Config{Name: "load_skill", Description: "Load a skill's full instructions before applying it."},
+		func(_ adkagent.Context, _ skillLoadArgs) (skillLoadResult, error) {
+			atomic.AddInt32(calls, 1)
+			return skillLoadResult{Instructions: body}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("spy load_skill tool: %v", err)
+	}
+	return lt
+}
+
+// skillResponseContent extracts the instructions a prior load_skill call
+// returned into the judge's request, so the scripted judge can react to them.
+func skillResponseContent(req *model.LLMRequest) (string, bool) {
+	for _, c := range req.Contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == "load_skill" {
+				if v, ok := p.FunctionResponse.Response["instructions"].(string); ok {
+					return v, true
+				}
+				return "", true
+			}
+		}
+	}
+	return "", false
+}
+
+// skillJudge first loads a review skill, then — once it has the skill's
+// instructions back — submits a verdict whose score is DERIVED from them (pass
+// iff the skill mandates a test). This proves the judge grounds its score in a
+// skill it loaded agentically, using the same skill library the worker had.
+type skillJudge struct{}
+
+func (skillJudge) Name() string { return "skill-judge" }
+
+func (skillJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if instr, seen := skillResponseContent(req); seen {
+			score := 0.3
+			if strings.Contains(instr, "require a test") {
+				score = 0.9
+			}
+			yield(stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "graded against the loaded skill"}), nil)
+			return
+		}
+		yield(stubCall("load_skill", map[string]any{"name": "ponytail-review"}), nil)
+	}
+}
+
+// TestJudgeLoadsSkillBeforeVerdict proves the skill toolset reaches the judge
+// and is callable: the judge loads a review skill, then scores against its
+// principles (a skill that mandates tests yields a higher score than one that
+// does not) before calling submit_verdict.
+func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
+	cases := []struct {
+		name      string
+		skillBody string
+		wantScore float64
+	}{
+		{"skill without test mandate", "review for clarity", 0.3},
+		{"skill mandates a test", "review code and require a test for every change", 0.9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			skillTool := newSpyLoadSkillTool(t, tc.skillBody, &calls)
+			ts := fakeToolset{tools: []tool.Tool{skillTool}}
+			factory := NewJudgeFactory(skillJudge{}, nil, []tool.Toolset{ts})
+			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
+			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
+				"I implemented game.go", workerActivity{}, func(*genai.Part) bool { return true })
+			if err != nil {
+				t.Fatalf("runJudgeAgent: %v", err)
+			}
+			if atomic.LoadInt32(&calls) != 1 {
+				t.Errorf("load_skill calls = %d, want 1 (judge must load the skill)", calls)
+			}
+			if v.Score != tc.wantScore {
+				t.Errorf("verdict score = %v, want %v (should reflect the loaded skill)", v.Score, tc.wantScore)
 			}
 		})
 	}
@@ -133,7 +244,7 @@ func (oneShotJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bo
 // one-shot judge when no read tools are supplied (backward compat / research
 // deployments with no workspace jail).
 func TestJudgeNoReadToolsOneShot(t *testing.T) {
-	factory := NewJudgeFactory(oneShotJudge{}, nil)
+	factory := NewJudgeFactory(oneShotJudge{}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 		"Paris.", workerActivity{}, func(*genai.Part) bool { return true })
@@ -149,12 +260,20 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 // tools clause appears only when the judge holds read tools, and the no-tools
 // clause only when it does not.
 func TestJudgeBehaviourSelectsClause(t *testing.T) {
-	with := judgeBehaviour(true)
+	with := judgeBehaviour(true, false)
 	if !strings.Contains(with, "read-only workspace tools") || strings.Contains(with, "You have no tools") {
 		t.Errorf("read-tools behaviour missing its clause: %q", with)
 	}
-	without := judgeBehaviour(false)
+	without := judgeBehaviour(false, false)
 	if !strings.Contains(without, "You have no tools") || strings.Contains(without, "read-only workspace tools") {
 		t.Errorf("no-tools behaviour missing its clause: %q", without)
+	}
+	// The skills clause appears only when the judge holds the skill toolset.
+	withSkills := judgeBehaviour(false, true)
+	if !strings.Contains(withSkills, "skill tools") || !strings.Contains(withSkills, "load a relevant") {
+		t.Errorf("with-skills behaviour missing its clause: %q", withSkills)
+	}
+	if strings.Contains(without, "skill tools") {
+		t.Errorf("no-skills behaviour must not mention skill tools: %q", without)
 	}
 }

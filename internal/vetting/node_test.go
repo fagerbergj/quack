@@ -61,7 +61,7 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score the answer 0-10"}
-	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil), cfg)
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}

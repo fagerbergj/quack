@@ -137,7 +137,7 @@ func newAdvisorTool(t *testing.T, advisorModel model.LLM, sessions session.Servi
 func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, sessions session.Service, plan dag.Plan, content *genai.Content, resumeNodes []string) (paused bool, outputs map[string]string, events []stream.SSEEvent) {
 	t.Helper()
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil,
-		vetting.NewJudgeFactory(judgeModel, nil),
+		vetting.NewJudgeFactory(judgeModel, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs = map[string]string{}
 	yield := func(ev stream.SSEEvent, _ error) bool { events = append(events, ev); return true }
@@ -572,7 +572,7 @@ func TestAskAdvisor_ConcurrentNodesIsolatedThreads(t *testing.T) {
 		{ID: "synth", AgentName: "blk-s", Task: "synth", DependsOn: []string{"na", "nb"}},
 	}}
 	ex := dag.NewExecutor(sessions, agents, nil,
-		vetting.NewJudgeFactory(stubA, nil),
+		vetting.NewJudgeFactory(stubA, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs := map[string]string{}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
