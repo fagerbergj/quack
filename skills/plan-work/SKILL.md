@@ -23,6 +23,7 @@ Match the request to a known shape first; fall back to the general rules below.
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
 | Write/fix/refactor code in a repo | ONE `code-implementer` node, with `checks` + `workdir` when checks are available (see Code checks) |
 | Review a PR / diff / branch / proposed change (read-only, no edits) | ONE `code-reviewer` node — it reads and critiques, never commits |
+| Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
 | Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
 
 Route by what the node must DO, not by topic: any node that must change code,
@@ -30,6 +31,18 @@ commit, or push is `code-implementer` work — never `web-researcher`, which
 cannot commit and whose vetting expects web citations. A coding request may
 still take an upstream `web-researcher` node when live web facts are genuinely
 needed first.
+
+A node that must **understand a codebase** (explore/analyze a repo's structure,
+conventions, or how something is implemented — read-only, no edits) is
+`code-explorer` work, NOT `web-researcher`: the explorer's sources are the files
+it reads (cited `<repo>@<path>`), and it's judged on exploration quality —
+code-grounding, accuracy, usefulness — not on web citations. Routing repo-
+understanding to `web-researcher` fails it against a web-citation rubric it can
+never satisfy. (For a single-repo *coding* task, still prefer folding "understand
+the repo" INTO the `code-implementer`'s own task rather than a separate node —
+see Implement-and-deliver below; reach for a standalone `code-explorer` node when
+understanding the repo IS the deliverable, or when several downstream nodes share
+the same repo understanding.)
 
 ## Implement-and-deliver requests
 

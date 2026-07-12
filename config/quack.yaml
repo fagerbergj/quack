@@ -79,6 +79,20 @@ agents:
     # so a normal review that reads the changed files is fine; web_fetch does not force every review to fetch.
     tools: [read_file, list_dir, glob, grep, web_fetch,
             cd, git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+  code-explorer:
+    bundle: agents/code-explorer      # prompt.md (read-only explorer, research-git-repos) + rubric.md (grades EXPLORATION: code-grounding/accuracy/usefulness, NOT web citations) + memory.md (repo layout/conventions)
+    provider: default
+    model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
+    context_window: 65536
+    judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap
+    # READ-ONLY: understands a repo, never changes it — NO write/edit/commit/push/delete/run_command.
+    # No web_search/web_fetch: its sources are the FILES it reads (cited <repo>@<path>), not web pages — so
+    # RequireRetrieval does NOT fire (only web tools flip it; see internal/serve/serve.go) and it's judged by
+    # its bundle rubric (exploration quality), not the web-researcher's harsh web-citation bar.
+    # load_skill/list_skills are auto-registered. load_memory/stage_memory + memory.md turn on task memory (M6):
+    # recall/stage durable repo layout & conventions so repeat exploration of the same repo is faster.
+    tools: [read_file, list_dir, glob, grep,
+            cd, git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

@@ -73,6 +73,17 @@ agents:
     # web_fetch (no web_search): verify a specific external claim; RequireRetrieval is already met by read_file.
     tools: [read_file, list_dir, glob, grep, web_fetch,
             cd, git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+  code-explorer:
+    bundle: agents/code-explorer      # read-only explorer; rubric grades EXPLORATION quality (code-grounding/accuracy/usefulness), not web citations
+    provider: default
+    model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
+    context_window: 65536
+    judge_rounds: 2             # exploration is largely one-pass; 2 rounds is plenty
+    # READ-ONLY: no write/edit/commit/push/delete/run_command. No web tools — its sources are the files it reads
+    # (<repo>@<path>), so RequireRetrieval does NOT fire and it's judged by its bundle's exploration rubric.
+    # load_memory/stage_memory + memory.md turn on task memory (M6): recall/stage durable repo layout & conventions.
+    tools: [read_file, list_dir, glob, grep,
+            cd, git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
