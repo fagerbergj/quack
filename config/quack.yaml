@@ -220,3 +220,23 @@ workspace:
     git_push: judge+confirm
     run_command: judge+confirm   # honest limit: the jail confines cwd, not what the program does
     # run_command: judge+confirm   # reserved for the code-implementer PR
+
+# Bundled integrations (inbound + outbound). Optional; each is off unless its
+# sub-section is present. Commented out here because dev/local runs typically
+# have no GitHub App — uncomment and set the env vars to enable it.
+#
+# extensions.github wires the GitHub App extension: a webhook receiver, App-authed
+# git credentials, and the App-mention trigger. It needs EXACTLY ONE issuer
+# (client_id — GitHub's recommendation — or the legacy numeric app_id) and EXACTLY
+# ONE private-key source (inline private_key PEM via ${VAR}, or private_key_path to
+# a mounted .pem). The App's CLIENT SECRET is NOT used (that's OAuth only). Secrets
+# (private_key, webhook_secret) MUST be ${VAR} env references — a literal is a
+# startup error. A present-but-empty block fails to boot, so keep it commented
+# until the env vars are actually set.
+# extensions:
+#   github:
+#     client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
+#     private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY}    # PEM contents via env
+#     # private_key_path: /run/secrets/quack-app.pem  # alternative: a mounted .pem
+#     webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
+#     mention: "@quack"
