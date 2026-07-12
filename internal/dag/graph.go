@@ -87,7 +87,16 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// resume, retry) re-registers, so the deferred unregister can't strand a
 			// running consult. See vetting/advisor_thread.go.
 			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
-			vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{Task: node.Task, Rubric: node.Rubric})
+			// The registration also carries THIS workflow session's coordinates +
+			// invocation so guard-ladder tools (internal/tools/guard.go) can scan
+			// the workflow session for confirm decisions even when they execute
+			// inside the A2A server's runner (whose own context session holds no
+			// gate events — see vetting.AdvisorTask).
+			task := vetting.AdvisorTask{Task: node.Task, Rubric: node.Rubric, InvocationID: ctx.InvocationID()}
+			if sess := ctx.Session(); sess != nil {
+				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
+			}
+			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
 			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
 			// Thread the turn's media parts to a media-capable node's worker

@@ -194,25 +194,53 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	return result, nil
 }
 
-// confirmDecision re-fetches this call's session (agent.Context.Session() is
-// blocked inside a dynamic worker node — see ask_advisor.go's
-// nodeIDFromSession doc) and asks vetting.ConfirmDecision whether the CURRENT
-// call — this exact tool name + arguments — is the resolution of a
-// just-answered confirm pause. mismatched reports a live decision pinned to
-// DIFFERENT arguments (see Run).
+// confirmDecision fetches the WORKFLOW session — where every confirm event
+// lives (the adk_request_confirmation calls, the human's resume
+// FunctionResponse, and the GuardResolvedKey consumption markers) — and asks
+// vetting.ConfirmDecision whether the CURRENT call (this exact tool name +
+// arguments) is the resolution of a just-answered confirm pause. mismatched
+// reports a live decision pinned to DIFFERENT arguments (see Run).
+//
+// The session coordinates come from the guard-thread registry (guardSession),
+// NEVER from this tool context's own AppName()/UserID()/SessionID(): over the
+// A2A hop the tool executes inside the A2A server's runner, where those name
+// the A2A context session — a fresh per-round session that holds none of the
+// gate's events. Scanning it found nothing, so every approved re-issue looked
+// like a brand-new proposal and re-asked for confirmation forever (a live
+// failure). The gate registers the workflow coordinates per thread token at
+// node entry (dag.newGatedNode → vetting.RegisterAdvisorThread), for
+// co-located and A2A workers alike — one lookup path.
 func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (approved, matched, mismatched bool) {
 	if g.sessions == nil {
 		return false, false, false
 	}
-	nodeID := guardNodeID(ctx)
+	sess, invocationID, nodeID := g.guardSession(ctx)
+	if sess == nil {
+		return false, false, false
+	}
+	return vetting.ConfirmDecision(sess, invocationID, nodeID, g.Name(), args)
+}
+
+// guardSession resolves the calling node's WORKFLOW session + invocation +
+// node ID: the thread token from the prompt marker (guardThread) keys the
+// registry entry the gate wrote at node entry, which carries the workflow
+// session's coordinates. nil session when this call runs outside any gated
+// node (no marker / no registration) — the guard then has no confirm history
+// and no task context, which fails toward MORE restriction, never less.
+func (g *guardedTool) guardSession(ctx agent.Context) (sess session.Session, invocationID, nodeID string) {
+	token, nodeID := guardThread(ctx)
 	if nodeID == "" {
-		return false, false, false
+		return nil, "", ""
 	}
-	resp, err := g.sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
+	at, ok := vetting.LookupAdvisorThread(token)
+	if !ok || at.SessionID == "" {
+		return nil, "", ""
+	}
+	resp, err := g.sessions.Get(ctx, &session.GetRequest{AppName: at.AppName, UserID: at.UserID, SessionID: at.SessionID})
 	if err != nil || resp == nil || resp.Session == nil {
-		return false, false, false
+		return nil, "", ""
 	}
-	return vetting.ConfirmDecision(resp.Session, ctx.InvocationID(), nodeID, g.Name(), args)
+	return resp.Session, at.InvocationID, nodeID
 }
 
 // runSafetyJudge invokes the judge tier, best-effort-deriving the node's task
@@ -230,7 +258,12 @@ func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (al
 			if at, found := vetting.LookupAdvisorThread(token); found {
 				task = at.Task
 			}
-			activity = recentActivity(ctx, g.sessions, nodeID)
+			// The activity summary must come from the WORKFLOW session too — the
+			// A2A context session this tool may be running under holds only the
+			// current dispatch (see confirmDecision).
+			if sess, invocationID, _ := g.guardSession(ctx); sess != nil {
+				activity = recentActivity(sess, invocationID)
+			}
 		}
 	}
 	return g.judge(ctx, "", task, g.Name(), args, activity)
@@ -254,22 +287,12 @@ func guardThread(tc agent.Context) (token, nodeID string) {
 	return tok, ""
 }
 
-// guardNodeID is guardThread reduced to the node segment.
-func guardNodeID(tc agent.Context) string {
-	_, nodeID := guardThread(tc)
-	return nodeID
-}
-
-// recentActivity summarizes the last few tool calls this node made this
-// invocation, for the safety judge's context.
-func recentActivity(ctx agent.Context, sessions session.Service, nodeID string) string {
-	resp, err := sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
-	if err != nil || resp == nil || resp.Session == nil {
-		return ""
-	}
+// recentActivity summarizes the last few tool calls this invocation made in
+// the WORKFLOW session (see guardSession), for the safety judge's context.
+func recentActivity(sess session.Session, invocationID string) string {
 	var calls []string
-	for ev := range resp.Session.Events().All() {
-		if ev == nil || ev.Content == nil || ev.InvocationID != ctx.InvocationID() {
+	for ev := range sess.Events().All() {
+		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
 			continue
 		}
 		for _, p := range ev.Content.Parts {
