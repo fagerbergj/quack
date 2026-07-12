@@ -24,9 +24,14 @@ import (
 //  2. compact — if still over budget, summarise the older turns via a separate
 //     summariser model into an anchored summary kept in session state.
 //
-// Token counts are estimated as bytes/charsPerToken; an exact tokenizer round
-// trip per model turn isn't worth it (see [llama-swap tokenize endpoint] if it
-// ever needs to be exact).
+// Token counts are estimated as bytes/charsPerToken, then CALIBRATED by the
+// measured/estimated ratio of the previous turn (see calibrationRatio): the raw
+// estimate undercounts code-dense content (~3 chars/token or worse for
+// symbols/JSON) and cannot see the system instruction + tool declarations the
+// framework appends outside req.Contents, which together made the callback
+// declare victory at an estimated ~40k while the provider counted 66k and
+// 400'd. An exact tokenizer round trip per model turn isn't worth it (see
+// [llama-swap tokenize endpoint] if it ever needs to be exact).
 const (
 	charsPerToken = 4
 
@@ -44,7 +49,25 @@ const (
 	summaryStateKey  = "quack.compaction.summary"
 	summaryCoversKey = "quack.compaction.summary_covers" // # leading messages the summary folds in
 	measuredInputKey = "quack.compaction.measured_input" // last provider-reported prompt tokens
+	estimateKey      = "quack.compaction.last_estimate"  // raw estimate of the request as sent (paired with the measurement by recordUsage)
+	calibrationKey   = "quack.compaction.calibration"    // measured/estimated ratio from the last completed turn
 	prunedStub       = "[earlier tool output elided to fit the context window]"
+
+	// Calibration ratio bounds. The floor is 1.0 because calibration must never
+	// make the estimate SMALLER than raw bytes/4 — undercounting is the failure
+	// mode (a provider 400 kills the node's session for good; over-compaction
+	// merely costs context). The ceiling caps freak ratios (a tiny request whose
+	// measurement is dominated by tool schemas, or a media turn the estimate
+	// doesn't count) so a single skewed turn can't force pathological
+	// over-compaction forever — the ratio is re-measured every turn anyway.
+	minCalibrationRatio = 1.0
+	maxCalibrationRatio = 8.0
+	// Before any measurement exists (first model call of a session) we apply a
+	// mildly conservative default rather than trusting bytes/4: chars/4 already
+	// runs slightly under on prose and badly under on code, and the first
+	// request carries the full unseen system-prompt + tool-schema overhead.
+	// Triggering compaction a touch early is survivable; overflowing is not.
+	defaultCalibrationRatio = 1.3
 )
 
 // Compaction carries the per-agent compaction settings into Build.
@@ -75,35 +98,62 @@ func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 		if budget <= 0 || req == nil {
 			return nil, nil
 		}
-		if measuredInput(ctx) < budget && estimateTokens(req.Contents) <= budget {
-			return nil, nil
-		}
-		if c.Prune {
-			if freed := prune(req.Contents); freed > 0 {
-				slog.Debug("compaction pruned tokens", "component", "agent", "freed", freed, "session", ctx.SessionID())
-			}
-			if estimateTokens(req.Contents) <= budget {
-				return nil, nil
-			}
-		}
-		// Reuse fast-path: session events are append-only, so the summary's
-		// coverage boundary is a stable index. If the anchored summary plus the
-		// live tail since it still fits, reapply it with NO summariser call — only
-		// re-summarise when that tail has itself grown past budget.
-		if prev, n := readSummary(ctx); prev != "" && n > 1 && n <= len(req.Contents) {
-			reused := append([]*genai.Content{mergeTaskSummary(req.Contents[0], prev)}, req.Contents[n:]...)
-			if estimateTokens(reused) <= budget {
-				req.Contents = reused
-				slog.Debug("compaction reused anchored summary; no summariser call", "component", "agent", "covers_msgs", n, "session", ctx.SessionID())
-				return nil, nil
-			}
-		}
-		preserve := min(max(budget/4, minPreserveTokens), maxPreserveTokens)
-		if out, ok := compact(ctx, c.Summarizer, req.Contents, preserve); ok {
-			req.Contents = out
-			slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
+		enforceBudget(ctx, c, budget, req)
+		// Stash the raw estimate of the request AS SENT (post-compaction), so
+		// recordUsage can pair it with the provider's measured prompt tokens and
+		// refresh the calibration ratio for the next turn.
+		if err := ctx.State().Set(estimateKey, estimateTokens(req.Contents)); err != nil {
+			slog.Warn("compaction: record estimate", "component", "agent", "err", err)
 		}
 		return nil, nil
+	}
+}
+
+// enforceBudget runs the prune → reuse-summary → summarise ladder, mutating
+// req.Contents in place. Every "did we free enough?" comparison uses the
+// CALIBRATED estimate, not raw bytes/4: the ratio folds in both the true
+// tokenizer density of the session's content and the fixed request overhead
+// (system instruction + tool declarations) that estimateTokens can't see —
+// there's no need to model the overhead separately.
+func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LLMRequest) {
+	ratio := calibrationRatio(ctx)
+	if measuredInput(ctx) < budget && calibrated(estimateTokens(req.Contents), ratio) <= budget {
+		return
+	}
+	if c.Prune {
+		if freed := prune(req.Contents); freed > 0 {
+			slog.Debug("compaction pruned tokens", "component", "agent", "freed", freed, "session", ctx.SessionID())
+		}
+		if calibrated(estimateTokens(req.Contents), ratio) <= budget {
+			return
+		}
+	}
+	// Reuse fast-path: session events are append-only, so the summary's
+	// coverage boundary is a stable index. If the anchored summary plus the
+	// live tail since it still fits, reapply it with NO summariser call — only
+	// re-summarise when that tail has itself grown past budget.
+	if prev, n := readSummary(ctx); prev != "" && n > 1 && n <= len(req.Contents) {
+		reused := append([]*genai.Content{mergeTaskSummary(req.Contents[0], prev)}, req.Contents[n:]...)
+		if calibrated(estimateTokens(reused), ratio) <= budget {
+			req.Contents = reused
+			slog.Debug("compaction reused anchored summary; no summariser call", "component", "agent", "covers_msgs", n, "session", ctx.SessionID())
+			return
+		}
+	}
+	// preserve is budgeted in real tokens (budget is real), but splitHead sums
+	// raw bytes/4 sizes — convert to estimate-space by dividing by the ratio so
+	// the preserved tail doesn't overflow the budget once calibrated back.
+	preserve := int(float64(min(max(budget/4, minPreserveTokens), maxPreserveTokens)) / ratio)
+	if out, ok := compact(ctx, c.Summarizer, req.Contents, preserve); ok {
+		req.Contents = out
+		slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
+	}
+	// Compaction is out of moves; a calibrated size still over budget predicts a
+	// hard provider 400 next (which permanently strands the session), so this is
+	// worth a Warn even though the request is still sent.
+	if got := calibrated(estimateTokens(req.Contents), ratio); got > budget {
+		slog.Warn("compaction could not bring request under budget; context overflow likely",
+			"component", "agent", "calibrated_tokens", got, "budget", budget, "ratio", ratio, "session", ctx.SessionID())
 	}
 }
 
@@ -303,9 +353,20 @@ func summarizeHead(ctx context.Context, summarizer model.LLM, prompt string) (st
 // before the next turn). The model itself is unchanged — we return (nil, nil).
 func recordUsage() llmagent.AfterModelCallback {
 	return func(ctx adkagent.Context, resp *model.LLMResponse, err error) (*model.LLMResponse, error) {
-		if err == nil && resp != nil && resp.UsageMetadata != nil && resp.UsageMetadata.PromptTokenCount > 0 {
-			if e := ctx.State().Set(measuredInputKey, int(resp.UsageMetadata.PromptTokenCount)); e != nil {
-				slog.Warn("compaction: record usage", "component", "agent", "err", e)
+		if err != nil || resp == nil || resp.UsageMetadata == nil || resp.UsageMetadata.PromptTokenCount <= 0 {
+			return nil, nil
+		}
+		measured := int(resp.UsageMetadata.PromptTokenCount)
+		if e := ctx.State().Set(measuredInputKey, measured); e != nil {
+			slog.Warn("compaction: record usage", "component", "agent", "err", e)
+		}
+		// Calibrate the estimator: the BeforeModelCallback stashed the raw
+		// estimate for this same request, so measured/estimate is the true
+		// correction factor for this session's content mix + fixed overhead.
+		if est := intState(ctx, estimateKey); est > 0 {
+			ratio := clampRatio(float64(measured) / float64(est))
+			if e := ctx.State().Set(calibrationKey, ratio); e != nil {
+				slog.Warn("compaction: record calibration", "component", "agent", "err", e)
 			}
 		}
 		return nil, nil
@@ -314,6 +375,33 @@ func recordUsage() llmagent.AfterModelCallback {
 
 // measuredInput returns the last provider-reported prompt-token count, or 0.
 func measuredInput(ctx adkagent.Context) int { return intState(ctx, measuredInputKey) }
+
+// calibrationRatio returns the measured/estimated prompt-token ratio recorded
+// from the last completed turn, clamped, or defaultCalibrationRatio before any
+// measurement exists.
+func calibrationRatio(ctx adkagent.Context) float64 {
+	v, err := ctx.State().Get(calibrationKey)
+	if err != nil {
+		return defaultCalibrationRatio
+	}
+	switch r := v.(type) {
+	case float64:
+		return clampRatio(r)
+	case int: // tolerate an int round-trip, as intState does
+		return clampRatio(float64(r))
+	default:
+		return defaultCalibrationRatio
+	}
+}
+
+func clampRatio(r float64) float64 {
+	return min(max(r, minCalibrationRatio), maxCalibrationRatio)
+}
+
+// calibrated scales a raw bytes/4 estimate into approximate real prompt tokens.
+func calibrated(estimate int, ratio float64) int {
+	return int(float64(estimate) * ratio)
+}
 
 // readSummary returns the anchored summary and how many leading messages it folds
 // in (0 if none yet).
