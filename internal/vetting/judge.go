@@ -31,16 +31,19 @@ const (
 	// defaultJudgeMaxIterations bounds the judge's agentic tool loop (model
 	// turns per round) when Config.JudgeMaxIterations is unset. It is high
 	// enough for a code-quality judge to open a handful of changed files
-	// (read_file/grep/list_dir each cost one model turn) before it calls
+	// (read_file/grep/list_dir each cost one model turn) AND load a review skill
+	// (list_skills + load_skill cost a turn or two more) before it calls
 	// submit_verdict; a tool-less research judge still submits on turn one, so
-	// the extra headroom is free there.
-	defaultJudgeMaxIterations = 10
+	// the extra headroom is free there. The cap only exists so a judge that never
+	// calls submit_verdict can't loop forever.
+	defaultJudgeMaxIterations = 14
 
 	// judgeBehaviour* compose the behaviour layer of the agentic judge's system
 	// prompt (promptbuilder.Judge wraps it with identity, tools, and environment
 	// layers, exactly like a specialist agent's prompt.md). The middle clause
-	// varies with whether the judge was wired with read-only workspace tools:
-	// judgeBehaviour(hasReadTools) picks it. Either way the judge terminates by
+	// varies with whether the judge was wired with read-only workspace tools;
+	// judgeBehaviour(hasReadTools, hasSkills) picks it and appends the skills
+	// clause when the judge holds the skill toolset. Either way it terminates by
 	// calling submit_verdict — never by emitting JSON text. Per-criterion
 	// reason-before-score (G-Eval) keeps the scoring disciplined; the caller
 	// re-derives the overall score as the lowest criterion in aggregateVerdict.
@@ -56,6 +59,16 @@ const (
 	// the worker's self-report, while staying bounded and strictly read-only.
 	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. When the answer involves code or other workspace work, USE them to ground your quality scores in the real artifacts rather than trusting the worker's self-report — the workspace ledger below lists the paths the worker touched, so read_file those files, grep for patterns, and list_dir to inspect structure, then judge the ACTUAL code (correctness, edge cases, test thoroughness, matching the repo's existing conventions, the logic/render split) instead of the answer's description of it. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. Read only what you need to reach a verdict — inspect the changed files, do not spelunk the whole tree. For a pure-research answer with no workspace work you won't need them. "
 
+	// judgeSkillsClause is appended when the judge holds the skill toolset
+	// (list_skills / load_skill / load_skill_resource — the SAME tools the worker
+	// had). Rather than statically baking review principles into this prompt, the
+	// judge can agentically pull up whatever quality/review skill is relevant per
+	// case and score against the same principles the worker was told to follow, so
+	// its judgment auto-reflects the current skill library as skills evolve.
+	// Deliberately optional and bounded: the judge uses judgment, need not load a
+	// skill every time, and still terminates with exactly one submit_verdict.
+	judgeSkillsClause = "You also have skill tools (list_skills, load_skill, load_skill_resource) — the same skills the worker could use. When it helps, load a relevant review or quality skill (for example a code-review skill like `ponytail-review`, or call list_skills to see what is available) so you can ground your quality assessment in the SAME principles the worker was told to follow, rather than principles baked into this prompt. This is OPTIONAL and bounded: use your judgment, do not load a skill on every case, load at most what you need to reach a verdict, and still finish with exactly one submit_verdict call. "
+
 	judgeBehaviourTail = "If an image is attached to this message, you can see it — use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
 		"Do NOT try to verify which URLs were fetched — citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. " +
 		"CRITICAL: the agent retrieved live web content that you do not have, and your own world knowledge is stale and incomplete. NEVER treat a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training — an unfamiliar title, name, product, or event is NOT evidence of fabrication. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. When a claim carries an inline citation, treat it as grounded. " +
@@ -64,14 +77,19 @@ const (
 		"Do NOT write the verdict as prose or JSON in your reply — calling submit_verdict is the only way to finish."
 )
 
-// judgeBehaviour assembles the judge's behaviour prompt, selecting the middle
-// clause by whether the judge was wired with read-only workspace tools.
-func judgeBehaviour(hasReadTools bool) string {
+// judgeBehaviour assembles the judge's behaviour prompt: the middle clause is
+// selected by whether the judge was wired with read-only workspace tools, and
+// the skills clause is appended when the judge holds the skill toolset.
+func judgeBehaviour(hasReadTools, hasSkills bool) string {
 	clause := judgeNoToolsClause
 	if hasReadTools {
 		clause = judgeReadToolsClause
 	}
-	return judgeBehaviourHead + clause + judgeBehaviourTail
+	skills := ""
+	if hasSkills {
+		skills = judgeSkillsClause
+	}
+	return judgeBehaviourHead + clause + skills + judgeBehaviourTail
 }
 
 // criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
@@ -107,13 +125,18 @@ type JudgeFactory func(sink *verdict) (adkagent.Agent, error)
 // llmagent with judgeModel, the supplied read-only workspace tools (read_file,
 // list_dir, glob, grep — so the judge can OPEN the files a coding worker wrote
 // and score code quality from the real source, not the worker's self-report),
-// and a per-round submit_verdict tool bound to the caller's sink. Pass no read
-// tools for a pure-research deployment: the judge then scores one-shot from the
-// answer text alone. The read tools MUST be read-only — never wire write_file,
-// edit_file, delete_path, git_*, or run_command; the judge must not mutate the
-// workspace or run anything.
-func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool) JudgeFactory {
-	behaviour := judgeBehaviour(len(readTools) > 0)
+// the supplied skill toolsets (load_skill / list_skills / load_skill_resource —
+// the SAME skills the worker had, so the judge can pull up a relevant quality/
+// review skill and score against the same principles the worker followed), and a
+// per-round submit_verdict tool bound to the caller's sink. Pass no read tools
+// and no skillsets for a pure-research deployment: the judge then scores one-shot
+// from the answer text alone. Passing nil/empty for either behaves exactly as if
+// that capability were absent. The read tools MUST be read-only — never wire
+// write_file, edit_file, delete_path, git_*, or run_command; the judge must not
+// mutate the workspace or run anything. Skill lookups are read-only content
+// fetches, so they are safe in the judge's isolated runner.
+func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
+	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
 	return func(sink *verdict) (adkagent.Agent, error) {
 		submit, err := newSubmitVerdictTool(sink)
 		if err != nil {
@@ -129,7 +152,8 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool) JudgeFactory {
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
 				return promptbuilder.Judge(judgeTools, behaviour), nil
 			},
-			Tools: judgeTools,
+			Tools:    judgeTools,
+			Toolsets: skillsets,
 		})
 	}
 }

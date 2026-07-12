@@ -30,7 +30,7 @@ func TestExecute_JudgeStreamsAsStageJudge(t *testing.T) {
 		"r2":    mk("r2", "ROLE:r2"),
 		"synth": mk("synth", "ROLE:synth"),
 	}
-	judge := vetting.NewJudgeFactory(stub, nil)
+	judge := vetting.NewJudgeFactory(stub, nil, nil)
 	cfgFor := func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }
 	ex := NewExecutor(session.InMemoryService(), agents, nil, judge, cfgFor, nil)
 

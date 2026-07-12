@@ -66,7 +66,7 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 		}
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"coder": ag}, nil,
-		vetting.NewJudgeFactory(stub, nil), cfgFor, nil)
+		vetting.NewJudgeFactory(stub, nil, nil), cfgFor, nil)
 
 	// Single-terminal native graph rule (nativegraph.go): the three
 	// independent-checks nodes are roots (no DependsOn between each other —

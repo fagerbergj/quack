@@ -491,7 +491,17 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					return nil, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
 				}
 			}
-			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools)
+			// The judge also gets the SAME skill toolset the workers hold, so it
+			// can agentically load a relevant review/quality skill (e.g.
+			// ponytail-review) and ground its judgment in the same principles the
+			// worker followed, rather than those principles being statically baked
+			// into the judge prompt. Skill lookups are read-only content fetches,
+			// safe in the judge's isolated runner.
+			var judgeSkillsets []tool.Toolset
+			if skillTS != nil {
+				judgeSkillsets = []tool.Toolset{skillTS}
+			}
+			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
 			safetyJudge = tools.NewSafetyJudge(judge)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
