@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
+import { Expandable } from './Expandable'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import { agentLabel, type AgentRun } from './messageParts'
 import { type DagNodeDef } from '../state/agentStream'
@@ -104,7 +105,9 @@ function NodeAnswer({ answer }: { answer: string }) {
         answer
       </summary>
       <div className="px-4 pb-3">
-        <AssistantText text={answer} />
+        <Expandable maxHeight={360}>
+          <AssistantText text={answer} />
+        </Expandable>
       </div>
     </details>
   )
@@ -144,7 +147,9 @@ function JudgeCard({ run, running }: { run: AgentRun; running: boolean }) {
       </details>
       {/* Fail reason always visible (not hidden behind the collapsed card). */}
       {run.done && run.feedback && run.feedback !== 'None' && (
-        <div className="px-4 pt-0 pb-2 text-[11px] text-gray-500 dark:text-gray-400 italic">{run.feedback}</div>
+        <div className="px-4 pt-0 pb-2 text-[11px] text-gray-500 dark:text-gray-400 italic">
+          <Expandable maxHeight={120}>{run.feedback}</Expandable>
+        </div>
       )}
     </div>
   )

@@ -5,10 +5,12 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github-dark.css'
-import type { ComponentPropsWithoutRef, ReactNode } from 'react'
+import type { ComponentPropsWithoutRef } from 'react'
 import type { Activity, ToolCall } from './messageParts'
 import { agentLabel } from './messageParts'
-import { summarizeArgs, prettyJSON } from './toolFormat'
+import { summarizeArgs } from './toolFormat'
+import { Expandable } from './Expandable'
+import { ToolCallView } from './ToolCallView'
 
 // Answer text is Markdown that may embed a little raw HTML — notably the
 // collapsible `<details><summary>Sources</summary>…</details>` block the
@@ -114,22 +116,26 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
   )
 }
 
-// ThinkBlock renders reasoning as a collapsed block.
+// ThinkBlock renders reasoning as a collapsed block. Long reasoning is
+// height-locked (Expandable) so a verbose chain-of-thought stays scannable.
 function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="my-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 not-prose">
       <summary className="cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
         thinking
       </summary>
-      <div className="px-3 pb-3 pt-1 text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap font-mono">
-        {text}
+      <div className="px-3 pb-3 pt-1 text-xs text-gray-600 dark:text-gray-300">
+        <Expandable maxHeight={200} fade="from-gray-50 dark:from-gray-900/40">
+          <div className="whitespace-pre-wrap font-mono">{text}</div>
+        </Expandable>
       </div>
     </details>
   )
 }
 
 // ToolBlock renders a tool call as a collapsed block: name + args summary;
-// expanded shows args and the result (or "running…" until it returns).
+// expanded shows a per-tool rich view (ToolCallView) — a diff for edit_file, a
+// formatted view for the other common tools, a tidy fallback otherwise.
 export function ToolBlock({ tool }: { tool: ToolCall }) {
   const argSummary = summarizeArgs(tool.args)
   return (
@@ -139,26 +145,10 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
         {argSummary && <span className="text-gray-500 dark:text-gray-400 truncate">{argSummary}</span>}
         {!tool.done && <Dots className="ml-auto" />}
       </summary>
-      <div className="px-3 pb-3 pt-1 space-y-2 text-xs">
-        <Section label="args">
-          <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono">{prettyJSON(tool.args)}</pre>
-        </Section>
-        {tool.done && (
-          <Section label="result">
-            <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-80 overflow-y-auto">{prettyJSON(tool.result)}</pre>
-          </Section>
-        )}
+      <div className="px-3 pb-3 pt-1 text-xs">
+        <ToolCallView tool={tool} />
       </div>
     </details>
-  )
-}
-
-function Section({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-0.5">{label}</div>
-      {children}
-    </div>
   )
 }
 
