@@ -97,15 +97,34 @@ type gitAuth struct {
 	askpass string
 }
 
-// authFor resolves the credential for rawURL's host (credentialFor) and, when
-// one exists, ensures the askpass symlink so the returned auth is directly
-// injectable. nil (no error) when no credential is configured for the host —
-// the operation proceeds unauthenticated. A symlink failure is an error, not
-// a silent unauthenticated fallback: the caller asked for an authenticated
+// GitTokenSource dynamically mints a per-host git credential for a clone/remote
+// URL — e.g. a GitHub App installation token, resolved from the URL's
+// owner/repo and cached until shortly before expiry (see internal/github). It
+// is consulted by authFor ONLY when no static workspace.git_credentials entry
+// matches, so the static-PAT path stays backward compatible and wins. Returning
+// (nil, nil) means "not my host" and the operation proceeds unauthenticated.
+type GitTokenSource interface {
+	GitCredential(ctx context.Context, rawURL string) (*GitCredential, error)
+}
+
+// authFor resolves the credential for rawURL's host — a static
+// workspace.git_credentials entry first (credentialFor), else a dynamic
+// GitTokenSource (the extension seam, e.g. a GitHub App installation token) —
+// and, when one exists, ensures the askpass symlink so the returned auth is
+// directly injectable. nil (no error) when no credential resolves for the host:
+// the operation proceeds unauthenticated. A symlink failure is an error, not a
+// silent unauthenticated fallback: the caller asked for an authenticated
 // operation and degrading it quietly would just yield a confusing 401/prompt
 // failure from git instead.
 func (b gitBinding) authFor(rawURL string) (*gitAuth, error) {
 	cred := b.credentialFor(rawURL)
+	if cred == nil && b.tokenSource != nil {
+		c, err := b.tokenSource.GitCredential(context.Background(), rawURL)
+		if err != nil {
+			return nil, err
+		}
+		cred = c
+	}
 	if cred == nil {
 		return nil, nil
 	}
@@ -135,6 +154,7 @@ type gitBinding struct {
 	jail        *workspace.Jail
 	caps        workspace.Caps
 	credentials []GitCredential
+	tokenSource GitTokenSource // optional dynamic credential source (extension seam)
 	allowPush   bool
 }
 
@@ -156,7 +176,7 @@ func newGitBinding(d Deps) (gitBinding, error) {
 	}
 	return gitBinding{
 		userID: userID, jail: d.Workspace, caps: caps,
-		credentials: d.GitCredentials, allowPush: d.GitPush,
+		credentials: d.GitCredentials, tokenSource: d.GitTokenSource, allowPush: d.GitPush,
 	}, nil
 }
 

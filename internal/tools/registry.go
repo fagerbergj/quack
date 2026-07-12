@@ -62,6 +62,10 @@ type Deps struct {
 	// GitPush gates the git_push tool (workspace.git_push, default false) —
 	// the one outward-facing, non-undoable git operation.
 	GitPush bool
+	// GitTokenSource is an optional dynamic per-host credential source consulted
+	// when no static GitCredentials entry matches — the extension seam (e.g. a
+	// GitHub App installation token). nil ⇒ static credentials only.
+	GitTokenSource GitTokenSource
 	// Guards maps a tool name to its guard tier (workspace.guards: none |
 	// judge | confirm | judge+confirm). A tool with no entry is unguarded
 	// (Tier 0 walls — the jail, argv-only exec, etc. — still always apply).

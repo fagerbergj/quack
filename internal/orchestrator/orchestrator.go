@@ -646,5 +646,30 @@ func LatestPendingQuestion(events []*session.Event) (PendingQuestion, bool) {
 	return PendingQuestion{}, false
 }
 
+// LatestAnswer returns the final assistant (model) text persisted for a session
+// — the answer of the last completed run. Both a plain reply (the llmagent's own
+// message) and a DAG run (persistAnswer's appended terminal answer) are authored
+// by the orchestrator, so the most recent orchestrator-authored text is the
+// answer. Used by out-of-band drivers (the GitHub extension's webhook) that call
+// Run and need its result after the stream drains. Empty when none is found.
+func (o *Orchestrator) LatestAnswer(ctx context.Context, userID, sessionID string) string {
+	var latest string
+	for _, ev := range o.PriorEvents(ctx, userID, sessionID) {
+		if ev == nil || ev.Content == nil || ev.Author != orchestratorName {
+			continue
+		}
+		var sb strings.Builder
+		for _, p := range ev.Content.Parts {
+			if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+				sb.WriteString(p.Text)
+			}
+		}
+		if t := strings.TrimSpace(sb.String()); t != "" {
+			latest = t // later events win; last one is the most recent answer
+		}
+	}
+	return latest
+}
+
 // AgentClients is a convenience alias used by callers to pass the client map.
 type AgentClients = map[string]adkagent.Agent

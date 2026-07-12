@@ -24,8 +24,31 @@ type Config struct {
 	Gates        GatesConfig               `yaml:"gates"`
 	Dag          DagConfig                 `yaml:"dag"`
 	Server       ServerConfig              `yaml:"server"`
-	Workspace    WorkspaceConfig           `yaml:"workspace"` // agents' working disk (filesystem/git tools)
+	Workspace    WorkspaceConfig           `yaml:"workspace"`  // agents' working disk (filesystem/git tools)
+	Extensions   ExtensionsConfig          `yaml:"extensions"` // bundled inbound+outbound integrations (e.g. GitHub App)
 }
+
+// ExtensionsConfig holds the optional bundled integrations. Each is off unless
+// its sub-section is present (a nil pointer = not built, no tools, no route).
+type ExtensionsConfig struct {
+	GitHub *GitHubExtensionConfig `yaml:"github"`
+}
+
+// GitHubExtensionConfig configures the GitHub App extension (internal/github).
+// Secrets (private_key, webhook_secret) MUST be ${VAR} env references in the raw
+// YAML — a literal is a startup error (validateNoLiteralTokens). Provide the
+// private key EITHER inline via private_key (${VAR} whose value is the PEM) OR
+// by private_key_path (a filesystem path to the .pem).
+type GitHubExtensionConfig struct {
+	AppID          int64  `yaml:"app_id"`
+	PrivateKey     string `yaml:"private_key"`      // PEM contents via ${VAR}
+	PrivateKeyPath string `yaml:"private_key_path"` // path to a .pem file (alternative to private_key)
+	WebhookSecret  string `yaml:"webhook_secret"`   // ${VAR}
+	Mention        string `yaml:"mention"`          // trigger phrase, default "@quack"
+}
+
+// defaultMention is the trigger phrase when github.mention is unset.
+const defaultMention = "@quack"
 
 // Workspace defaults (see WorkspaceConfig). Every field is optional; a
 // config with no workspace: section at all still gets a working (default)
@@ -396,10 +419,12 @@ const (
 // Managed reports whether serve should orchestrate the stores via docker compose.
 func (s ServerConfig) Managed() bool { return s.Topology == TopologyManaged }
 
-// literalTokenRe matches a YAML `token:` mapping entry's raw value (before
-// ${VAR} expansion), e.g. `  token: ${QUACK_GITHUB_TOKEN}` or `token: "abc"`.
-// Only the value is captured.
-var literalTokenRe = regexp.MustCompile(`(?m)^\s*token:\s*(.+?)\s*$`)
+// literalTokenRe matches a raw secret mapping entry's value (before ${VAR}
+// expansion), e.g. `  token: ${QUACK_GITHUB_TOKEN}` or `webhook_secret: "abc"`.
+// Covers every field that must be an env reference, never a literal:
+// git-credential `token`, plus the GitHub extension's `private_key` and
+// `webhook_secret`. Only the value is captured.
+var literalTokenRe = regexp.MustCompile(`(?m)^\s*(?:token|private_key|webhook_secret):\s*(.+?)\s*$`)
 
 // envRefRe matches a bare ${VAR_NAME} env reference with nothing else around it.
 var envRefRe = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
@@ -418,7 +443,7 @@ func validateNoLiteralTokens(raw string) error {
 			continue // an empty token: line is not a literal secret
 		}
 		if !envRefRe.MatchString(val) {
-			return fmt.Errorf("config: workspace.git_credentials token must be an ${VAR} env reference, not a literal value (got %q)", m[1])
+			return fmt.Errorf("config: secret values (token / private_key / webhook_secret) must be an ${VAR} env reference, not a literal value (got %q)", m[1])
 		}
 	}
 	return nil
@@ -616,6 +641,33 @@ func (c *Config) validate() error {
 	}
 	if err := c.Workspace.applyDefaults(); err != nil {
 		return err
+	}
+	if err := c.Extensions.GitHub.applyDefaults(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// applyDefaults validates and defaults the GitHub extension config. A nil
+// receiver (no extensions.github section) is a no-op — the extension is off.
+func (g *GitHubExtensionConfig) applyDefaults() error {
+	if g == nil {
+		return nil
+	}
+	if g.AppID == 0 {
+		return fmt.Errorf("config: extensions.github.app_id is required")
+	}
+	if g.PrivateKey == "" && g.PrivateKeyPath == "" {
+		return fmt.Errorf("config: extensions.github needs one of private_key or private_key_path")
+	}
+	if g.PrivateKey != "" && g.PrivateKeyPath != "" {
+		return fmt.Errorf("config: extensions.github sets both private_key and private_key_path; use one")
+	}
+	if g.WebhookSecret == "" {
+		return fmt.Errorf("config: extensions.github.webhook_secret is required")
+	}
+	if g.Mention == "" {
+		g.Mention = defaultMention
 	}
 	return nil
 }

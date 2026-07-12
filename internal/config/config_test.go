@@ -558,6 +558,72 @@ workspace:
 	}
 }
 
+func TestGitHubExtensionValidatesAndDefaults(t *testing.T) {
+	t.Setenv("QUACK_GH_KEY", "pem")
+	t.Setenv("QUACK_GH_SECRET", "s3cret")
+	c, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 12345
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.Extensions.GitHub == nil || c.Extensions.GitHub.AppID != 12345 {
+		t.Fatal("github extension not parsed")
+	}
+	if c.Extensions.GitHub.Mention != "@quack" {
+		t.Errorf("mention default = %q; want @quack", c.Extensions.GitHub.Mention)
+	}
+}
+
+func TestGitHubExtensionRejectsLiteralSecrets(t *testing.T) {
+	// webhook_secret / private_key must be ${VAR}, never a literal (same rule as
+	// git-credential tokens; checked before ${VAR} expansion).
+	for _, field := range []string{
+		"webhook_secret: hunter2",
+		"private_key: -----BEGIN-----",
+	} {
+		_, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    private_key: ${X}
+    webhook_secret: ${Y}
+    `+field+"\n"))
+		if err == nil {
+			t.Fatalf("expected error for literal secret %q", field)
+		}
+	}
+}
+
+func TestGitHubExtensionRequiresFields(t *testing.T) {
+	t.Setenv("QUACK_GH_KEY", "pem")
+	t.Setenv("QUACK_GH_SECRET", "s3cret")
+	// Missing app_id.
+	_, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+`))
+	if err == nil {
+		t.Fatal("expected error for missing app_id")
+	}
+	// Missing private key entirely.
+	_, err = Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    webhook_secret: ${QUACK_GH_SECRET}
+`))
+	if err == nil {
+		t.Fatal("expected error for missing private key")
+	}
+}
+
 func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// No gates block ⇒ vetting disabled, config still valid.
 	c, err := Load(writeTemp(t, baseConfig))

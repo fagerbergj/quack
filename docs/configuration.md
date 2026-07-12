@@ -53,6 +53,7 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 | `auth.oidc.jwks_url` (env `OIDC_JWKS_URL`) | Authentik JWKS URL | Keys used to verify bearer tokens. |
 | `auth.trusted_headers.user` | `X-authentik-username` | Identity header the gateway's forward-auth injects. |
 | `auth.trusted_headers.groups` | `X-authentik-groups` | Groups header the gateway injects. |
+| `extensions.github` | absent (off) | The GitHub App extension — inbound webhook (`/api/v1/github/webhook`) + outbound tools (`github_comment`, `github_pull_request`) + git auth via the App installation token. Keys: `app_id`, one of `private_key` (`${VAR}` PEM) / `private_key_path`, `webhook_secret` (`${VAR}`) and `mention` (default `@quack`). Secrets must be `${VAR}` references (a literal is a startup error). Full setup + the non-interactive guard policy: [`docs/github-app.md`](github-app.md). |
 
 Specialist agents are referenced as external [A2A AgentCard](https://a2a-protocol.org/latest/specification/)
 JSON files (`agents[].card`), not inlined.
