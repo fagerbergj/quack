@@ -22,12 +22,44 @@ Match the request to a known shape first; fall back to the general rules below.
 | Several distinct information topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
 | Write/fix/refactor code in a repo | ONE `code-implementer` node, with `checks` + `workdir` when checks are available (see Code checks) |
+| Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
 
 Route by what the node must DO, not by topic: any node that must change code,
 commit, or push is `code-implementer` work — never `web-researcher`, which
 cannot commit and whose vetting expects web citations. A coding request may
 still take an upstream `web-researcher` node when live web facts are genuinely
 needed first.
+
+## Implement-and-deliver requests
+
+When the request is to **create / add / implement / write / fix / build** code AND
+**commit / push / open a PR / submit** it, the DELIVERABLE is the committed-and-pushed
+code and the opened PR — NOT an analysis of how one would do it. Two rules:
+
+- The **terminal** node MUST be a `code-implementer` node, and its `task` MUST cover
+  the full end-to-end deliverable: clone the repo, study its conventions, implement
+  the change with test coverage, make it pass the repo's checks, commit, push a
+  branch, and open the PR.
+- A "understand the repo / its conventions" step is at most an UPSTREAM feeder node —
+  NEVER the terminal node and NEVER a substitute for the implementation. For a
+  single-repo coding task, prefer folding "understand the repo" INTO the
+  code-implementer's own task: it has `git_clone` + `read_file` + `grep` and is told
+  to explore before writing, so a separate analyze node is usually redundant.
+
+Worked example — input: *"Add a Flappy Bird game to repo R and open it as a PR; it
+must fit the repo's conventions, pass its checks, and include tests for the game
+logic."*
+
+- CORRECT — ONE `code-implementer` node: task = "Clone R, study its structure and
+  conventions, implement a Flappy Bird game that fits them with tests for the game
+  logic, run the repo's typecheck/lint/tests until green, commit, push a branch, and
+  open a pull request." (Add `checks` + `workdir` when the repo's check commands are
+  available.)
+- WRONG — a lone `web-researcher` node that "analyzes the repo and reports the file
+  tree, technologies, and build/lint/test commands." It fails because the deliverable
+  was the code and the PR, not a report; `web-researcher` cannot clone-edit-commit-push,
+  and the run "completes" having done none of the actual work. (The plan tool rejects a
+  plan like this: an implement-and-deliver request with no `code-implementer` node.)
 
 ## How to build the DAG
 
