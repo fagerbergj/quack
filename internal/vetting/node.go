@@ -296,48 +296,22 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 		}
 
-		// HITL pause: the worker just called ask_user (a fresh ask beyond the pauses
-		// already requested) and ended its turn. Park the NODE via
-		// ResumeOrRequestInput — first pass emits the request event and returns
-		// ErrNodeInterrupted (propagated up; NOT a failure, no empty-recovery); on the
-		// answer turn ADK re-enters the node and the resume branch above runs instead.
+		// HITL / guard pause: the worker's just-finished turn may have raised a
+		// fresh ask_user question or a guard-ladder confirmation (beyond what the
+		// gate already paused for) and ended without a real answer. Park the NODE
+		// so ADK routes the human's answer/decision back here on the next turn.
 		//
-		// This runs REGARDLESS of whether the draft is empty. A chatty model asks
-		// AND writes draft text in the SAME turn (observed live: code-implementer
-		// called ask_user with a real design question yet also emitted a draft, so
-		// the ask silently dropped and the un-answered draft sailed to the judge).
-		// Any draft text from THIS turn is discarded on the pause: it was written
-		// WITHOUT the user's answer, and the resume path re-runs the worker with the
-		// full Q&A folded in via withUserAnswer — so nothing of value is lost.
-		if emit != nil {
-			if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); len(scan.turns) > scan.pauses {
-				q := scan.turns[len(scan.turns)-1].question
-				log.Info("worker asked the user; pausing node", "question", q, "round", scan.pauses+1)
-				_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
-					InterruptID: hitlInterruptID(nodeID, scan.pauses+1),
-					Message:     q,
-				})
-				return "", GateResult{}, ierr // ErrNodeInterrupted → park
-			}
-			// Guard-ladder pause: the worker called a confirm-tiered tool
-			// (internal/tools/guard.go) that returned the pending marker. Same park
-			// mechanism, a distinct interrupt-ID namespace ("confirm-" vs "hitl-").
-			if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); len(cscan.turns) > cscan.pauses {
-				t := cscan.turns[len(cscan.turns)-1]
-				// Prefer the guard's own hint — it carries call-specific warnings
-				// (e.g. "this DIFFERS from the previously approved operation").
-				question := t.hint
-				if question == "" {
-					question = fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", t.tool)
-				}
-				msg := fmt.Sprintf("%s\n\nArguments: %v", question, t.args)
-				log.Info("worker proposed a guarded operation; pausing node", "tool", t.tool, "round", cscan.pauses+1)
-				_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
-					InterruptID: confirmInterruptID(nodeID, cscan.pauses+1),
-					Message:     msg,
-				})
-				return "", GateResult{}, ierr // ErrNodeInterrupted → park
-			}
+		// Runs REGARDLESS of whether the draft is empty. A chatty model asks (or
+		// proposes a guarded op) AND writes draft text in the SAME turn (observed
+		// live: code-implementer called ask_user with a real design question yet
+		// also emitted a draft). Any draft text from THIS turn is discarded on the
+		// pause: it was written WITHOUT the user's answer/decision, and the resume
+		// path re-runs the worker with the full Q&A / decision folded in — so
+		// nothing of value is lost. The SAME check runs after every revise round
+		// below (see the judge loop) — a worker often proposes its guarded delivery
+		// step only after the judge flags the draft incomplete.
+		if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
+			return "", GateResult{}, ierr // ErrNodeInterrupted → park
 		}
 
 		// Empty-answer recovery: the worker sometimes ends a turn with no answer text
@@ -417,6 +391,21 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
 			}
+			// A revision can ITSELF raise a fresh ask_user or guard-ladder
+			// confirmation — a worker commonly proposes the outward-facing,
+			// confirm-tiered delivery step (e.g. git_commit + git_push) only AFTER
+			// the judge flags the task incomplete, i.e. during a late revise round.
+			// The draft-time pause check above never sees that, so without this the
+			// unconfirmed operation is silently skipped and the incomplete answer
+			// sails to the next judge round (live safety bug 2026-07-12: a
+			// code-implementer proposed git_push in worker-r3, the confirm pause
+			// never fired, and the judge passed the unpushed answer at 0.7 — no
+			// human ever approved the push). Park the node exactly as the draft-time
+			// check does; the empty revise output is discarded, and on resume the
+			// worker re-runs with the decision folded in.
+			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
+				return "", GateResult{}, ierr // ErrNodeInterrupted → park
+			}
 			if strings.TrimSpace(revised) != "" {
 				answer = revised
 			}
@@ -432,6 +421,59 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 		return answer, res, nil
 	}
+}
+
+// pauseIfWorkerRaisedHITL parks the node when the worker's latest turn raised a
+// NEW ask_user question or guard-ladder confirmation beyond what the gate has
+// already paused for. It re-derives the FULL ask/confirm history from session
+// events (scanNodeAsks/scanNodeConfirms), so "new" is len(turns) > pauses —
+// robust to node-ID reuse and resume re-entry. Returns paused=true (with the
+// ErrNodeInterrupted sentinel to propagate) when it parked, false otherwise.
+//
+// It MUST run after EVERY worker run — the initial draft, each resume run, AND
+// each revise round — because a worker frequently proposes its outward-facing,
+// guard-confirmed delivery step (git_commit + git_push) only once the judge has
+// pushed back that the task is incomplete, i.e. during a LATE revision. A check
+// that ran solely after the initial draft never saw that confirmation, so the
+// unconfirmed (and incomplete) answer sailed straight to the judge and no human
+// ever approved the operation (live safety bug 2026-07-12).
+//
+// ask_user is checked before the guard confirmation: an interactive question is
+// the more specific signal, and a single turn raising both is not a shape any
+// worker prompt produces.
+func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*session.Event) error, log *slog.Logger) (bool, error) {
+	if emit == nil {
+		return false, nil
+	}
+	if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); len(scan.turns) > scan.pauses {
+		q := scan.turns[len(scan.turns)-1].question
+		log.Info("worker asked the user; pausing node", "question", q, "round", scan.pauses+1)
+		_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
+			InterruptID: hitlInterruptID(nodeID, scan.pauses+1),
+			Message:     q,
+		})
+		return true, ierr
+	}
+	// Guard-ladder pause: the worker called a confirm-tiered tool
+	// (internal/tools/guard.go) that returned the pending marker. Same park
+	// mechanism, a distinct interrupt-ID namespace ("confirm-" vs "hitl-").
+	if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); len(cscan.turns) > cscan.pauses {
+		t := cscan.turns[len(cscan.turns)-1]
+		// Prefer the guard's own hint — it carries call-specific warnings
+		// (e.g. "this DIFFERS from the previously approved operation").
+		question := t.hint
+		if question == "" {
+			question = fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", t.tool)
+		}
+		msg := fmt.Sprintf("%s\n\nArguments: %v", question, t.args)
+		log.Info("worker proposed a guarded operation; pausing node", "tool", t.tool, "round", cscan.pauses+1)
+		_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
+			InterruptID: confirmInterruptID(nodeID, cscan.pauses+1),
+			Message:     msg,
+		})
+		return true, ierr
+	}
+	return false, nil
 }
 
 // stagedCandidate parses a stage_memory tool call's args (content + optional

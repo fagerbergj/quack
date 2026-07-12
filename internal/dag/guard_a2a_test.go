@@ -252,6 +252,152 @@ func TestGuardConfirm_OverA2A_ApprovalConsumed(t *testing.T) {
 	}
 }
 
+// guardReviseA2AStub raises the guard confirmation only during a JUDGE-FAIL
+// REVISION, not on the initial draft — mirroring the live safety bug
+// (2026-07-12): the code-implementer wrote code on its first draft, the judge
+// flagged it incomplete ("not delivered"), and only THEN, in the revise round
+// (worker-r3), did the worker commit and call git_push (the confirm-tiered
+// tool). The gate's pause check ran solely after the initial draft, so the
+// confirmation was never surfaced and the unconfirmed answer sailed to the
+// judge, which passed it. This stub reproduces that shape over A2A:
+//   - judge round 1 FAILS (forcing a revision); later rounds pass;
+//   - the DRAFT worker turn writes a plain answer with NO guarded op;
+//   - the REVISION worker turn proposes delete_path (→ confirm pause);
+//   - post-approval, the same call re-issues and executes; then a final answer.
+type guardReviseA2AStub struct {
+	mu     sync.Mutex
+	calls  int
+	judged int
+}
+
+func (*guardReviseA2AStub) Name() string { return "guardReviseA2AStub" }
+
+func (s *guardReviseA2AStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if atHasTool(req, "submit_verdict") {
+			s.mu.Lock()
+			s.judged++
+			n := s.judged
+			s.mu.Unlock()
+			if n == 1 { // fail the first judge round so the gate revises
+				yield(atCall("submit_verdict", map[string]any{"score": 0.3, "feedback": "not delivered yet"}), nil)
+			} else {
+				yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			}
+			return
+		}
+		// Post-approval re-issue has executed for real → write the final answer.
+		if reqHasResolvedGuardResponse(req, "delete_path") {
+			yield(atText("FINAL: deletion performed."), nil)
+			return
+		}
+		txt := atAllText(req)
+		switch {
+		case strings.Contains(txt, "APPROVED"): // resumed with the approval
+			yield(atCall("delete_path", map[string]any{"path": "victim.txt"}), nil)
+			return
+		case strings.Contains(txt, "DENIED"):
+			yield(atText("FINAL: completed without deleting."), nil)
+			return
+		}
+		s.mu.Lock()
+		s.calls++
+		n := s.calls
+		s.mu.Unlock()
+		if n == 1 { // the DRAFT: coded, but proposes no guarded operation
+			yield(atText("draft: implemented the feature; not yet delivered"), nil)
+			return
+		}
+		// The REVISION (and any later plain worker turn): propose the guarded op.
+		yield(atCall("delete_path", map[string]any{"path": "victim.txt"}), nil)
+	}
+}
+
+// TestGuardConfirm_OverA2A_RaisedDuringRevision is the regression for the live
+// confirm-pause safety bug: a guard confirmation proposed in a REVISE round (not
+// the initial draft) must still pause the node. Before the fix, the gate scanned
+// for ask/confirm turns only after the initial draft, so a revision's git_push-
+// style confirmation was silently dropped and the incomplete answer completed
+// without human approval. After the fix, run1 pauses; approving it executes the
+// operation exactly once.
+func TestGuardConfirm_OverA2A_RaisedDuringRevision(t *testing.T) {
+	stub := &guardReviseA2AStub{}
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	sessions := st.Sessions
+
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJail: %v", err)
+	}
+	writeJailFile(t, jail, "u1", "victim.txt")
+
+	builtins, err := tools.Build([]string{"delete_path"}, tools.Deps{
+		Workspace:       jail,
+		WorkspaceUserID: "u1",
+		Sessions:        sessions,
+		Guards:          map[string]string{"delete_path": "confirm"},
+	})
+	if err != nil {
+		t.Fatalf("tools.Build: %v", err)
+	}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Do the work.",
+		Tools: []tool.Tool{builtins[0]},
+	})
+	if err != nil {
+		t.Fatalf("worker agent: %v", err)
+	}
+	srv, err := quackagent.Serve(worker, sessions, nil)
+	if err != nil {
+		t.Fatalf("a2a serve: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	client, err := srv.Client()
+	if err != nil {
+		t.Fatalf("a2a client: %v", err)
+	}
+
+	plan := dag.Plan{ID: "p", UserMessage: "x", Nodes: []dag.Node{
+		{ID: "n1", AgentName: "blk", Task: "clean up the workspace", Rubric: "workspace tidy"},
+	}}
+	run := func(content *genai.Content, resume []string) (bool, map[string]string, []stream.SSEEvent) {
+		return runGraph(t, client, stub, sessions, plan, content, resume)
+	}
+
+	// Run 1: draft (plain) → judge fail → revision proposes delete → MUST pause.
+	paused, out1, ev1 := run(&genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}, nil)
+	if !paused {
+		t.Fatalf("run1: the confirmation was raised in the REVISION and never paused the node (the live bug); out=%q", out1["n1"])
+	}
+	pauseID, pauseMsg := pauseFromEvents(ev1)
+	if pauseID != "confirm-n1-r1" {
+		t.Fatalf("run1: interrupt = %q, want confirm-n1-r1", pauseID)
+	}
+	if !strings.Contains(pauseMsg, "delete_path") {
+		t.Errorf("run1: pause message %q does not name the operation", pauseMsg)
+	}
+	if !jailFileExists(t, jail, "u1", "victim.txt") {
+		t.Fatal("run1: victim.txt deleted before approval")
+	}
+
+	// Run 2: approve → the operation executes exactly once and the run completes.
+	paused2, out2, ev2 := run(confirmResume(pauseID, "approve"), []string{"n1"})
+	if paused2 {
+		id2, msg2 := pauseFromEvents(ev2)
+		t.Fatalf("run2: paused AGAIN (%q: %q) — approval not consumed", id2, msg2)
+	}
+	if !strings.Contains(out2["n1"], "deletion performed") {
+		t.Errorf("run2: out = %q, want the post-execution answer", out2["n1"])
+	}
+	if jailFileExists(t, jail, "u1", "victim.txt") {
+		t.Error("run2: victim.txt still exists — the approved operation never executed")
+	}
+}
+
 // TestGuardConfirm_OverA2A_DifferentArgsReProposes: args-pinning still holds
 // over the A2A hop — an approved-then-swapped-args call must NOT execute and
 // must raise a fresh confirmation that warns it DIFFERS.
