@@ -504,11 +504,49 @@ func buildActivitySection(act workerActivity) string {
 	return sb.String()
 }
 
+// Caps on the individually-unbounded sections of the revise / finalize prompt.
+// That prompt becomes contents[0] of the worker's next request, which context
+// compaction structurally CANNOT touch (prune/summarise leave contents[0]
+// verbatim) — so an unbounded revise prompt is the one input that can push a
+// request past the model window with no recovery, spiral into an empty draft →
+// tool-less recovery → judge 0 → a bigger revise prompt, and strand the node
+// (live failure 2026-07-12: an implement node whose revise prompt inlined the
+// full upstream explore-repo report + the previous answer verbatim). A coding
+// worker has the repo on disk and its own session/tools, so a bounded excerpt
+// (head+tail, with a marker) carries the intent without a 20k-token replay.
+const (
+	maxOriginalQuestionChars = 24_000 // ~6k tokens: the task prompt (embeds upstream node outputs)
+	maxPreviousAnswerChars   = 16_000 // ~4k tokens: the worker's prior draft
+	maxActivitySectionChars  = 32_000 // ~8k tokens: retrieval list + workspace ledger
+	maxFeedbackChars         = 16_000 // ~4k tokens: judge narrative + a failing check's output tail
+)
+
+// boundExcerpt keeps s's head and tail around a loud truncation marker when it
+// exceeds maxChars, so no single section can blow the revise/finalize prompt
+// (contents[0]) past the model window. Head+tail preserves both the opening
+// framing and the closing detail (a task's acceptance criteria, a ledger's most
+// recent ops, a test log's final failure). Input within the cap passes through
+// untouched. Slightly favours the head (task framing) at 60/40.
+func boundExcerpt(s string, maxChars int) string {
+	if len(s) <= maxChars {
+		return s
+	}
+	const marker = "\n\n…[excerpt truncated to fit the context window — the full material is in your own session/tools; re-read the files if you need more detail]…\n\n"
+	keep := maxChars - len(marker)
+	if keep <= 0 {
+		return strings.ToValidUTF8(s[:maxChars], "")
+	}
+	head := keep * 3 / 5
+	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
+}
+
 // buildRevisionContent constructs the user message for the agentic, session-
 // continuing revision: the worker is re-invoked (continuing its own session and
 // tools) to address the judge's feedback, then output only the corrected answer.
 // It mirrors buildCritiqueContent but is driven by the reviewer's feedback rather
-// than a generic self-critique.
+// than a generic self-critique. Every embedded section is bounded (boundExcerpt)
+// so this prompt — the next request's uncompactable contents[0] — can't overflow
+// the model window (see the cap constants above).
 func buildRevisionContent(constitution string, question *genai.Content, answer, feedback string, act workerActivity) *genai.Content {
 	var sb strings.Builder
 	sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
@@ -521,16 +559,16 @@ func buildRevisionContent(constitution string, question *genai.Content, answer, 
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString("Reviewer feedback to address:\n")
-	sb.WriteString(feedback)
+	sb.WriteString(boundExcerpt(feedback, maxFeedbackChars))
 	sb.WriteString("\n\n")
 	if section := buildActivitySection(act); section != "" {
-		sb.WriteString(section)
+		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("Original question:\n")
-	sb.WriteString(questionText(question))
+	sb.WriteString(boundExcerpt(questionText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\nYour previous answer:\n")
-	sb.WriteString(answer)
+	sb.WriteString(boundExcerpt(answer, maxPreviousAnswerChars))
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
@@ -545,11 +583,11 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 		"make sure you close all of your reasoning/thinking and tool-call blocks and continue " +
 		"your research. Output only the answer with no preamble or commentary.\n\n")
 	if section := buildActivitySection(act); section != "" {
-		sb.WriteString(section)
+		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("Question:\n")
-	sb.WriteString(questionText(question))
+	sb.WriteString(boundExcerpt(questionText(question), maxOriginalQuestionChars))
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 

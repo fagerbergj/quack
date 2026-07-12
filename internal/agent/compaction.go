@@ -53,20 +53,32 @@ const (
 	calibrationKey   = "quack.compaction.calibration"    // measured/estimated ratio from the last completed turn
 	prunedStub       = "[earlier tool output elided to fit the context window]"
 
-	// Calibration ratio bounds. The floor is 1.0 because calibration must never
-	// make the estimate SMALLER than raw bytes/4 — undercounting is the failure
-	// mode (a provider 400 kills the node's session for good; over-compaction
-	// merely costs context). The ceiling caps freak ratios (a tiny request whose
-	// measurement is dominated by tool schemas, or a media turn the estimate
-	// doesn't count) so a single skewed turn can't force pathological
-	// over-compaction forever — the ratio is re-measured every turn anyway.
-	minCalibrationRatio = 1.0
+	// Calibration ratio bounds. The floor is the DEFAULT (not 1.0) on purpose:
+	// undercounting is the fatal failure mode — a provider 400 strands the
+	// node's session for good, while over-compaction merely costs context — and
+	// the raw bytes/4 estimate structurally CANNOT see the system-instruction +
+	// tool-schema overhead the provider bills, an overhead that only grows as a
+	// session accretes tools/history. A turn whose measured prompt tokens happen
+	// to land at or below the estimate (prose the provider tokenizes more
+	// efficiently than 4 chars/token, a whitespace/markup-heavy turn) would, with
+	// a 1.0 floor, store calibration 1.0 and then trust it FOREVER — the estimate
+	// stops being inflated at all and the very next code-dense revise round
+	// undercounts and 400s (live spiral 2026-07-12: implement node, ratio=1,
+	// calibrated_tokens≈54k over a 45k budget, judge rounds 4–6 each dead in ~1m).
+	// So we never trust a factor below the 1.3 safety margin; a real measurement
+	// only ever scales the estimate UP from there. The ceiling caps freak ratios
+	// (a tiny request whose measurement is dominated by tool schemas, or a media
+	// turn the estimate doesn't count) so a single skewed turn can't force
+	// pathological over-compaction forever — the ratio is re-measured every turn.
+	minCalibrationRatio = defaultCalibrationRatio
 	maxCalibrationRatio = 8.0
 	// Before any measurement exists (first model call of a session) we apply a
 	// mildly conservative default rather than trusting bytes/4: chars/4 already
 	// runs slightly under on prose and badly under on code, and the first
 	// request carries the full unseen system-prompt + tool-schema overhead.
 	// Triggering compaction a touch early is survivable; overflowing is not.
+	// minCalibrationRatio is pinned to this so a degenerate measured≤estimate
+	// turn can never drag the trusted ratio below the first-turn safety margin.
 	defaultCalibrationRatio = 1.3
 )
 
@@ -148,6 +160,22 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 		req.Contents = out
 		slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
 	}
+	// Last-resort backstop: prune and summarise both leave contents[0] verbatim
+	// (it's the self-contained task / revise prompt), so if contents[0] ALONE
+	// overflows the budget nothing above could have helped and the request is
+	// unsendable — the provider 400s and the session is stranded for good (the
+	// revise-round spiral, live failure 2026-07-12). Truncate the MIDDLE of an
+	// oversized contents[0] with a loud marker: losing the middle of an over-long
+	// task beats a dead session, and the worker still has its tools + (for a
+	// coding node) the repo on disk. Primary defence is not building a pathological
+	// contents[0] in the first place (see vetting.buildRevisionContent bounds);
+	// this only fires if some prompt still balloons past the window.
+	if got := calibrated(estimateTokens(req.Contents), ratio); got > budget {
+		if truncateHeadToFit(req.Contents, budget, ratio) {
+			slog.Warn("compaction truncated an oversized task/revise prompt (contents[0]) as a last resort",
+				"component", "agent", "budget", budget, "ratio", ratio, "session", ctx.SessionID())
+		}
+	}
 	// Compaction is out of moves; a calibrated size still over budget predicts a
 	// hard provider 400 next (which permanently strands the session), so this is
 	// worth a Warn even though the request is still sent.
@@ -155,6 +183,64 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 		slog.Warn("compaction could not bring request under budget; context overflow likely",
 			"component", "agent", "calibrated_tokens", got, "budget", budget, "ratio", ratio, "session", ctx.SessionID())
 	}
+}
+
+// truncateHeadToFit truncates the middle of contents[0] when it alone exceeds
+// the budget, leaving room for the verbatim tail. contents[0] is never touched
+// by prune/summarise, so an oversized one is otherwise unrecoverable. Returns
+// true if it truncated. Non-text parts (media attachments) are preserved.
+func truncateHeadToFit(contents []*genai.Content, budget int, ratio float64) bool {
+	if len(contents) == 0 || contents[0] == nil {
+		return false
+	}
+	// Head budget in estimate (bytes/4) space: the real budget converted back
+	// through the ratio, minus what the verbatim tail already occupies. Never let
+	// it drop below minPreserveTokens so the head keeps a usable core.
+	headBudgetEst := int(float64(budget)/ratio) - estimateTokens(contents[1:])
+	if headBudgetEst < minPreserveTokens {
+		headBudgetEst = minPreserveTokens
+	}
+	headMaxChars := headBudgetEst * charsPerToken
+	if contentBytes(contents[0]) <= headMaxChars {
+		return false // the head already fits; the overflow is in the (protected) tail
+	}
+	contents[0] = truncateContentMiddle(contents[0], headMaxChars)
+	return true
+}
+
+// truncateContentMiddle collapses c's text parts into one head+marker+tail text
+// part fitting maxChars, preserving non-text (media) parts. Middle-out so both
+// the opening (instructions) and the closing (acceptance criteria / question)
+// of an over-long task survive.
+func truncateContentMiddle(c *genai.Content, maxChars int) *genai.Content {
+	var text strings.Builder
+	var nonText []*genai.Part
+	for _, p := range c.Parts {
+		switch {
+		case p == nil:
+		case p.Text != "":
+			text.WriteString(p.Text)
+		default:
+			nonText = append(nonText, p)
+		}
+	}
+	parts := append([]*genai.Part{{Text: truncateMiddle(text.String(), maxChars)}}, nonText...)
+	return &genai.Content{Role: c.Role, Parts: parts}
+}
+
+// truncateMiddle keeps the head and tail of s around a loud elision marker when
+// s exceeds maxChars; otherwise returns s unchanged.
+func truncateMiddle(s string, maxChars int) string {
+	if len(s) <= maxChars || maxChars <= 0 {
+		return s
+	}
+	const marker = "\n\n…[middle elided to fit the context window — re-read the source files/tools if you need the full detail]…\n\n"
+	keep := maxChars - len(marker)
+	if keep <= 0 {
+		return strings.ToValidUTF8(s[:maxChars], "")
+	}
+	head := keep / 2
+	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
 // prune blanks the payloads of old FunctionResponse parts (tool outputs the
