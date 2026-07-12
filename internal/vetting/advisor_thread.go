@@ -63,11 +63,26 @@ func ParseAdvisorThread(text string) (token string, ok bool) {
 	return ms[len(ms)-1][1], true
 }
 
-// AdvisorTask is what the mentor is told on first consult: the node's task
-// and its acceptance rubric (the desired outcome).
+// AdvisorTask is what the mentor is told on first consult — the node's task
+// and its acceptance rubric (the desired outcome) — plus the WORKFLOW session
+// coordinates the guard ladder needs (internal/tools/guard.go): over the A2A
+// hop a guarded tool executes inside the A2A SERVER's runner, whose own
+// ctx.AppName()/UserID()/SessionID()/InvocationID() name the A2A context
+// session — a fresh, per-round session that holds NONE of the confirm
+// pause/resume events (adk_request_confirmation calls, the human's resume
+// FunctionResponse, GuardResolvedKey consumption markers all live in the
+// workflow/chat session). The gate registers these coordinates here (it runs
+// workflow-side and knows them), and the guard looks them up by the same
+// thread token to scan the RIGHT session. Registered identically for
+// co-located workers, so there is exactly one lookup path.
 type AdvisorTask struct {
 	Task   string
 	Rubric string
+	// Workflow session coordinates + invocation, for guard-ladder scans.
+	AppName      string
+	UserID       string
+	SessionID    string
+	InvocationID string
 }
 
 // advisorThreads is the process-local token → AdvisorTask registry. Written

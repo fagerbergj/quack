@@ -21,6 +21,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"google.golang.org/genai"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/remoteagent/v2"
@@ -28,6 +29,7 @@ import (
 	"google.golang.org/adk/v2/runner"
 	adka2a "google.golang.org/adk/v2/server/adka2a/v2"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/workflow"
 )
 
 // invokePath is where each agent's A2A JSON-RPC endpoint is mounted.
@@ -142,6 +144,50 @@ func (s *A2AServer) Client() (adkagent.Agent, error) {
 		Description:               s.Card.Description,
 		AgentCard:                 s.Card,
 		ClientProvider:            remoteagent.NewA2AClientProvider(factory),
+		GenAIPartConverter:        sanitizeWorkflowPlumbingPart,
 		RemoteTaskCleanupCallback: func(context.Context, *a2a.AgentCard, remoteagent.A2AClient, a2a.TaskInfo, error) {},
 	})
+}
+
+// sanitizeWorkflowPlumbingPart is a remoteagent.A2AConfig.GenAIPartConverter
+// that neutralizes a node-level HITL/confirm pause's own resume plumbing (a
+// workflow.WorkflowInputFunctionCallName "adk_request_input" FunctionCall or
+// FunctionResponse — see vetting/confirm.go's confirmInterruptID and
+// nativegraph.go's workflowInputResponses) before it crosses the A2A wire.
+//
+// Root cause (live bug: an approved confirm/HITL decision resumed over A2A
+// never reached the worker — the node just went silently empty): remoteagent's
+// own history sweep (toMissingRemoteSessionParts) renders every event NOT
+// authored "user" or by the remote agent itself as descriptive text, but
+// passes a "user"-authored event through VERBATIM. The human's resume answer
+// IS delivered as a "user"-authored event (correctly — it is genuinely the
+// human's turn), while the ORIGINAL adk_request_input FunctionCall it answers
+// is authored by the plan-graph wrapper — neither "user" nor the remote agent
+// — so THAT event gets textified. The result: a raw FunctionResponse crosses
+// the wire with no FunctionCall anywhere in the swept history to pair it to.
+// The remote server's own content builder requires that pairing for the most
+// recent response and errors ("no function call event found for function
+// responses ids") when it can't find one; ADK's flow machinery swallows that
+// error into a silent empty completion rather than surfacing it, so the
+// worker never re-runs at all and the gate's empty-answer recovery kicks in
+// with no writer model configured.
+//
+// Fix: recognize the same marker by FunctionCall/FunctionResponse Name and
+// render it as descriptive text ourselves — exactly what the sweep already
+// does for the request half of the pair — so no orphaned function part ever
+// reaches the wire. Only this session's SERIALIZED-FOR-A2A copy is affected;
+// the shared session quack's own gate scans (scanNodeConfirms/scanNodeAsks)
+// keeps the real FunctionCall/FunctionResponse events untouched.
+func sanitizeWorkflowPlumbingPart(_ context.Context, adkEvent *session.Event, part *genai.Part) (*a2a.Part, error) {
+	if part == nil {
+		return nil, nil
+	}
+	switch {
+	case part.FunctionCall != nil && part.FunctionCall.Name == workflow.WorkflowInputFunctionCallName:
+		return a2a.NewTextPart(fmt.Sprintf("[%s] asked: %v", adkEvent.Author, part.FunctionCall.Args)), nil
+	case part.FunctionResponse != nil && part.FunctionResponse.Name == workflow.WorkflowInputFunctionCallName:
+		return a2a.NewTextPart(fmt.Sprintf("[%s] answered: %v", adkEvent.Author, part.FunctionResponse.Response)), nil
+	default:
+		return adka2a.ToA2APart(part, adkEvent.LongRunningToolIDs)
+	}
 }
