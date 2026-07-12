@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -84,6 +85,8 @@ type fetcher interface {
 type directFetcher struct{}
 
 func (directFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
+	// tc is used only as a context.Context (the fetch engine has no agent-specific
+	// needs), so fetchVia takes the narrower context.Context and stays unit-testable.
 	return fetchVia(tc, d, nil, u, target)
 }
 
@@ -250,8 +253,8 @@ func capFetchReturn(s string) string {
 // fetchVia is the shared fetch engine for both impls. It first tries a direct
 // GET; if that is thin, failed, or bot-walled, it falls back to the render backend
 // (renderer is nil for the basic impl, which therefore stops after the direct GET).
-func fetchVia(tc agent.Context, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
-	text, derr := fetchReadable(tc, d.Guarded, target)
+func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
+	text, derr := fetchReadable(ctx, d.Guarded, target)
 	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
 		return text, nil
 	}
@@ -265,8 +268,8 @@ func fetchVia(tc agent.Context, d Deps, renderer PageRenderer, u *url.URL, targe
 	var rendered string
 	var rerr error
 	if renderer != nil {
-		if rerr = validateResolvedHost(tc, u.Hostname()); rerr == nil {
-			rendered, rerr = renderer.Render(tc, target)
+		if rerr = validateResolvedHost(ctx, u.Hostname()); rerr == nil {
+			rendered, rerr = renderer.Render(ctx, target)
 			if rerr == nil && strings.TrimSpace(rendered) != "" && !looksLikeBotWall(rendered) {
 				return rendered, nil
 			}
@@ -285,6 +288,25 @@ func fetchVia(tc agent.Context, d Deps, renderer PageRenderer, u *url.URL, targe
 	if strings.TrimSpace(text) != "" {
 		return text, nil
 	}
+
+	// Graceful degradation for a render-backend failure. The render backend
+	// (crawl4ai) is a flaky *enhancement* over the direct GET — dynamic pages make
+	// it 500 ("page is navigating and changing content"), time out, etc. When it
+	// fails but the target itself was reachable (the direct GET returned no error,
+	// just too-thin/empty content), one flaky page must not sink the whole research
+	// node: log it and return an honest, clearly-marked "render unavailable" result
+	// the worker can note and route around, instead of propagating crawl4ai's error.
+	// A genuine target failure (derr != nil: 404, unreachable host) still errors
+	// below, so we never dress a real fetch failure up as success.
+	if renderer != nil && rerr != nil && derr == nil {
+		slog.Warn("web_fetch: render backend failed; degrading to render-unavailable result",
+			"component", "tools", "url", target, "error", rerr)
+		return fmt.Sprintf("[web_fetch: render backend could not retrieve %s (%v). "+
+			"The page reached its server but returned no readable text without a browser render, "+
+			"and the render backend failed. Treat this source as unavailable and try another.]",
+			target, rerr), nil
+	}
+
 	switch {
 	case derr != nil && rerr != nil:
 		return "", fmt.Errorf("web_fetch: %s unreadable: direct GET failed (%v); render failed (%v)", target, derr, rerr)
