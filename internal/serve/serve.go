@@ -40,6 +40,7 @@ import (
 	"github.com/fagerbergj/quack/internal/server"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
 	"github.com/fagerbergj/quack/internal/server/rest"
+	"github.com/fagerbergj/quack/internal/skillsource"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -238,7 +239,12 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// resolve from disk in cwd first (live repo edits) then the embedded copy,
 	// so an installed binary works from any directory; the vendored ponytail
 	// library (a git submodule — see vendorSkillsDir) merges in when present.
-	skillSrc := newSkillSource(vendorSkillsDir)
+	// Project-aware: on top of the built-in library (shipped + vendored), also
+	// surface a cloned repo's own .agents/skills / .claude/skills at load_skill
+	// time (discovered in the jail per query). Built-in ALWAYS wins a name
+	// collision — a cloned repo can't hijack a core skill; project skills are
+	// purely additive (see internal/skillsource).
+	skillSrc := skillsource.New(newSkillSource(vendorSkillsDir), jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("skills toolset init failed: %w", err)

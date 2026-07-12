@@ -53,7 +53,9 @@ func newRunCommand(d Deps) (tool.Tool, error) {
 	}
 	return functiontool.New[runCommandArgs, runCommandResult](
 		functiontool.Config{Name: "run_command", Description: runCommandDescription},
-		func(_ agent.Context, a runCommandArgs) (runCommandResult, error) { return b.runCommand(a) },
+		func(ctx agent.Context, a runCommandArgs) (runCommandResult, error) {
+			return b.withCwd(ctx).runCommand(a)
+		},
 	)
 }
 
@@ -140,7 +142,13 @@ func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 	if err != nil {
 		return runCommandResult{}, fmt.Errorf("run_command: %w", err)
 	}
-	dir, err := b.jail.Resolve(b.userID, dirArg)
+	// Apply the session cwd ONCE to the final dir argument (after the #154
+	// `cd X &&` fold above already produced dirArg). The in-command `cd` and
+	// the session cwd never double-apply the SAME cwd: the fold shapes dirArg,
+	// then b.resolve joins the session cwd onto it a single time. A redundant
+	// in-command `cd` composes on top exactly as a shell would (dir="" is the
+	// common case — it resolves straight to the session cwd).
+	dir, err := b.resolve(dirArg)
 	if err != nil {
 		return runCommandResult{}, err
 	}

@@ -151,8 +151,15 @@ func TestWriteFileOversizedErrors(t *testing.T) {
 
 func TestWriteFileRejectsEscape(t *testing.T) {
 	b := newTestBinding(t, "u1")
-	if _, err := b.writeFile(writeFileArgs{Path: "/etc/passwd", Content: "x"}); err == nil {
-		t.Fatal("expected an escape error for an absolute path")
+	// A `..` climb out of the jail is still rejected.
+	if _, err := b.writeFile(writeFileArgs{Path: "../escape.txt", Content: "x"}); err == nil {
+		t.Fatal("expected an escape error for a `..` climb")
+	}
+	// A leading "/" is now the jail-ROOT-relative escape hatch (see joinCwd), not
+	// an OS-absolute path: it resolves INSIDE the jail (<root>/etc/passwd), so it
+	// writes a contained file rather than escaping.
+	if _, err := b.writeFile(writeFileArgs{Path: "/etc/passwd", Content: "x"}); err != nil {
+		t.Fatalf("leading-slash path should resolve inside the jail, got %v", err)
 	}
 }
 

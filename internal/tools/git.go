@@ -156,6 +156,25 @@ type gitBinding struct {
 	credentials []GitCredential
 	tokenSource GitTokenSource // optional dynamic credential source (extension seam)
 	allowPush   bool
+	// cwd is the session working directory (jail-relative, "" = jail root) a
+	// per-call copy carries — set by withCwd from ctx state, mirroring fsBinding.
+	// A relative `dir`/`path` a git tool takes resolves against it (resolve).
+	cwd string
+}
+
+// withCwd returns a copy of b whose cwd is the session working directory read
+// from ctx state (mirrors fsBinding.withCwd). Value receiver ⇒ copy; the shared
+// binding is never mutated.
+func (b gitBinding) withCwd(ctx agent.Context) gitBinding {
+	b.cwd = cwdFromState(ctx)
+	return b
+}
+
+// resolve is the cwd-aware Jail.Resolve every git tool uses for its `dir`/`path`
+// argument: relative to b.cwd, "/"-prefixed to the jail root (joinCwd), always
+// containment-checked by Jail.Resolve.
+func (b gitBinding) resolve(p string) (string, error) {
+	return b.jail.Resolve(b.userID, joinCwd(b.cwd, p))
 }
 
 // newGitBinding resolves Deps into a gitBinding, defaulting caps when unset.
@@ -354,7 +373,7 @@ func newGitClone(d Deps) (tool.Tool, error) {
 				"private repos instead. `dir` (workspace-relative) defaults to the repo name; `depth` defaults to " +
 				"1 (a shallow clone) — pass 0 for full history.",
 		},
-		func(_ agent.Context, a gitCloneArgs) (gitCloneResult, error) { return b.gitClone(a) },
+		func(ctx agent.Context, a gitCloneArgs) (gitCloneResult, error) { return b.withCwd(ctx).gitClone(a) },
 	)
 }
 
@@ -396,17 +415,17 @@ func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
 	if dir == "" {
 		dir = defaultCloneDir(u)
 	}
-	target, err := b.jail.Resolve(b.userID, dir)
+	target, err := b.resolve(dir)
 	if err != nil {
 		return gitCloneResult{}, err
 	}
-	userRoot, err := b.jail.Resolve(b.userID, "")
+	relRoot, err := b.resolve("")
 	if err != nil {
 		return gitCloneResult{}, err
 	}
 	// A brand-new user's jail dir may not exist yet (the jail resolves paths
 	// without creating them), and runGit's cwd must exist before git runs.
-	if err := os.MkdirAll(userRoot, 0o755); err != nil {
+	if err := os.MkdirAll(relRoot, 0o755); err != nil {
 		return gitCloneResult{}, fmt.Errorf("git_clone: create workspace dir: %w", err)
 	}
 
@@ -424,7 +443,7 @@ func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
 	if err != nil {
 		return gitCloneResult{}, err
 	}
-	if _, _, err := runGit(context.Background(), userRoot, argv, b.caps, auth); err != nil {
+	if _, _, err := runGit(context.Background(), relRoot, argv, b.caps, auth); err != nil {
 		return gitCloneResult{}, err
 	}
 
@@ -432,7 +451,7 @@ func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
 	if err != nil {
 		return gitCloneResult{}, err
 	}
-	relDir, err := filepath.Rel(userRoot, target)
+	relDir, err := filepath.Rel(relRoot, target)
 	if err != nil {
 		relDir = dir
 	}
@@ -483,12 +502,12 @@ func newGitStatus(d Deps) (tool.Tool, error) {
 			Name:        "git_status",
 			Description: "Show a repository's current branch and working-tree changes. `dir` is the workspace-relative repo root.",
 		},
-		func(_ agent.Context, a gitStatusArgs) (gitStatusResult, error) { return b.gitStatus(a) },
+		func(ctx agent.Context, a gitStatusArgs) (gitStatusResult, error) { return b.withCwd(ctx).gitStatus(a) },
 	)
 }
 
 func (b gitBinding) gitStatus(a gitStatusArgs) (gitStatusResult, error) {
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitStatusResult{}, err
 	}
@@ -557,12 +576,12 @@ func newGitDiff(d Deps) (tool.Tool, error) {
 			Description: "Show a diff. `ref` defaults to the worktree vs HEAD (uncommitted changes); pass a " +
 				"commit/branch to diff against it instead (e.g. `HEAD~1`, `main`). `path` scopes the diff to one file.",
 		},
-		func(_ agent.Context, a gitDiffArgs) (gitDiffResult, error) { return b.gitDiff(a) },
+		func(ctx agent.Context, a gitDiffArgs) (gitDiffResult, error) { return b.withCwd(ctx).gitDiff(a) },
 	)
 }
 
 func (b gitBinding) gitDiff(a gitDiffArgs) (gitDiffResult, error) {
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitDiffResult{}, err
 	}
@@ -622,12 +641,12 @@ func newGitLog(d Deps) (tool.Tool, error) {
 			Name:        "git_log",
 			Description: "Show recent commits. `n` defaults to 20. `path` scopes the log to one file's history.",
 		},
-		func(_ agent.Context, a gitLogArgs) (gitLogResult, error) { return b.gitLog(a) },
+		func(ctx agent.Context, a gitLogArgs) (gitLogResult, error) { return b.withCwd(ctx).gitLog(a) },
 	)
 }
 
 func (b gitBinding) gitLog(a gitLogArgs) (gitLogResult, error) {
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitLogResult{}, err
 	}
@@ -724,12 +743,12 @@ func newGitCommit(d Deps) (tool.Tool, error) {
 				"Every commit is attributed to %s <%s> — not the user.",
 				maxAddAllFiles, gitCommitAuthorName, gitCommitAuthorEmail),
 		},
-		func(_ agent.Context, a gitCommitArgs) (gitCommitResult, error) { return b.gitCommit(a) },
+		func(ctx agent.Context, a gitCommitArgs) (gitCommitResult, error) { return b.withCwd(ctx).gitCommit(a) },
 	)
 }
 
 func (b gitBinding) gitCommit(a gitCommitArgs) (gitCommitResult, error) {
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitCommitResult{}, err
 	}
@@ -809,12 +828,12 @@ func newGitBranch(d Deps) (tool.Tool, error) {
 			Description: "List branches, or create+switch to a new one. Pass `name` to create a new branch " +
 				"(optionally `from` a base ref, default HEAD) and switch to it; omit `name` to just list.",
 		},
-		func(_ agent.Context, a gitBranchArgs) (gitBranchResult, error) { return b.gitBranch(a) },
+		func(ctx agent.Context, a gitBranchArgs) (gitBranchResult, error) { return b.withCwd(ctx).gitBranch(a) },
 	)
 }
 
 func (b gitBinding) gitBranch(a gitBranchArgs) (gitBranchResult, error) {
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitBranchResult{}, err
 	}
@@ -876,7 +895,7 @@ func newGitPush(d Deps) (tool.Tool, error) {
 				"(workspace.git_push: true to enable); requires a configured credential for the remote's host; " +
 				"NEVER force-pushes; pushing to main/master is always rejected — propose via a branch instead.",
 		},
-		func(_ agent.Context, a gitPushArgs) (gitPushResult, error) { return b.gitPush(a) },
+		func(ctx agent.Context, a gitPushArgs) (gitPushResult, error) { return b.withCwd(ctx).gitPush(a) },
 	)
 }
 
@@ -884,7 +903,7 @@ func (b gitBinding) gitPush(a gitPushArgs) (gitPushResult, error) {
 	if !b.allowPush {
 		return gitPushResult{}, fmt.Errorf("git_push: disabled — set workspace.git_push: true to enable")
 	}
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitPushResult{}, err
 	}
@@ -958,8 +977,8 @@ func newGitWorktreeCreate(d Deps) (tool.Tool, error) {
 			Description: "Create a new git worktree with a new branch. `path` (workspace-relative) defaults to " +
 				"`<repo>-wt-<branch>`, a sibling of the repo; `from` (default HEAD) is the base ref for the new branch.",
 		},
-		func(_ agent.Context, a gitWorktreeCreateArgs) (gitWorktreeCreateResult, error) {
-			return b.gitWorktreeCreate(a)
+		func(ctx agent.Context, a gitWorktreeCreateArgs) (gitWorktreeCreateResult, error) {
+			return b.withCwd(ctx).gitWorktreeCreate(a)
 		},
 	)
 }
@@ -968,7 +987,7 @@ func (b gitBinding) gitWorktreeCreate(a gitWorktreeCreateArgs) (gitWorktreeCreat
 	if strings.TrimSpace(a.Branch) == "" {
 		return gitWorktreeCreateResult{}, fmt.Errorf("git_worktree_create: branch must not be empty")
 	}
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitWorktreeCreateResult{}, err
 	}
@@ -976,11 +995,11 @@ func (b gitBinding) gitWorktreeCreate(a gitWorktreeCreateArgs) (gitWorktreeCreat
 	if relPath == "" {
 		relPath = filepath.ToSlash(filepath.Join(filepath.Dir(a.Dir), filepath.Base(a.Dir)+"-wt-"+a.Branch))
 	}
-	wtPath, err := b.jail.Resolve(b.userID, relPath)
+	wtPath, err := b.resolve(relPath)
 	if err != nil {
 		return gitWorktreeCreateResult{}, err
 	}
-	userRoot, err := b.jail.Resolve(b.userID, "")
+	relRoot, err := b.resolve("")
 	if err != nil {
 		return gitWorktreeCreateResult{}, err
 	}
@@ -991,7 +1010,7 @@ func (b gitBinding) gitWorktreeCreate(a gitWorktreeCreateArgs) (gitWorktreeCreat
 	if _, _, err := runGit(context.Background(), dir, argv, b.caps, nil); err != nil {
 		return gitWorktreeCreateResult{}, err
 	}
-	relOut, err := filepath.Rel(userRoot, wtPath)
+	relOut, err := filepath.Rel(relRoot, wtPath)
 	if err != nil {
 		relOut = relPath
 	}
@@ -1019,18 +1038,18 @@ func newGitWorktreeRemove(d Deps) (tool.Tool, error) {
 			Description: "Remove a git worktree. Refuses (errors) if the worktree has uncommitted changes — " +
 				"delete or commit them first if you truly mean to discard it.",
 		},
-		func(_ agent.Context, a gitWorktreeRemoveArgs) (gitWorktreeRemoveResult, error) {
-			return b.gitWorktreeRemove(a)
+		func(ctx agent.Context, a gitWorktreeRemoveArgs) (gitWorktreeRemoveResult, error) {
+			return b.withCwd(ctx).gitWorktreeRemove(a)
 		},
 	)
 }
 
 func (b gitBinding) gitWorktreeRemove(a gitWorktreeRemoveArgs) (gitWorktreeRemoveResult, error) {
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitWorktreeRemoveResult{}, err
 	}
-	wtPath, err := b.jail.Resolve(b.userID, a.Path)
+	wtPath, err := b.resolve(a.Path)
 	if err != nil {
 		return gitWorktreeRemoveResult{}, err
 	}
@@ -1080,12 +1099,12 @@ func newGitPull(d Deps) (tool.Tool, error) {
 				"conflicting files are listed — resolve by inspecting them with your other tools and retrying, " +
 				"never mid-conflict.",
 		},
-		func(_ agent.Context, a gitPullArgs) (gitPullResult, error) { return b.gitPull(a) },
+		func(ctx agent.Context, a gitPullArgs) (gitPullResult, error) { return b.withCwd(ctx).gitPull(a) },
 	)
 }
 
 func (b gitBinding) gitPull(a gitPullArgs) (gitPullResult, error) {
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitPullResult{}, err
 	}
@@ -1160,7 +1179,7 @@ func newGitRebase(d Deps) (tool.Tool, error) {
 				"fetched first). On a conflict the rebase is automatically ABORTED (the repo is left exactly as " +
 				"it was) and the conflicting files are listed. Never interactive — there is no editor to drive.",
 		},
-		func(_ agent.Context, a gitRebaseArgs) (gitRebaseResult, error) { return b.gitRebase(a) },
+		func(ctx agent.Context, a gitRebaseArgs) (gitRebaseResult, error) { return b.withCwd(ctx).gitRebase(a) },
 	)
 }
 
@@ -1168,7 +1187,7 @@ func (b gitBinding) gitRebase(a gitRebaseArgs) (gitRebaseResult, error) {
 	if strings.TrimSpace(a.Onto) == "" {
 		return gitRebaseResult{}, fmt.Errorf("git_rebase: onto must not be empty")
 	}
-	dir, err := b.jail.Resolve(b.userID, a.Dir)
+	dir, err := b.resolve(a.Dir)
 	if err != nil {
 		return gitRebaseResult{}, err
 	}

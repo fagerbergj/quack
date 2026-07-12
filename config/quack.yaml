@@ -53,7 +53,7 @@ agents:
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor,
-            git_clone, read_file, list_dir, glob, grep]  # read-only fs + clone, so research can pull a repo apart
+            git_clone, cd, read_file, list_dir, glob, grep]  # read-only fs + clone, so research can pull a repo apart
   code-implementer:
     bundle: agents/code-implementer   # prompt.md (ponytail ladder) + rubric.md (code-quality research + ponytail criteria)
     provider: default
@@ -61,7 +61,7 @@ agents:
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
     tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
-            git_clone, git_status, git_diff, git_log, git_commit, git_branch,
+            cd, git_clone, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
             run_command, ask_advisor, ask_user]
   code-reviewer:
@@ -78,7 +78,7 @@ agents:
     # "verify don't trust" past the repo. It flips on the gate's RequireRetrieval, but read_file already satisfies that,
     # so a normal review that reads the changed files is fine; web_fetch does not force every review to fetch.
     tools: [read_file, list_dir, glob, grep, web_fetch,
-            git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+            cd, git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
