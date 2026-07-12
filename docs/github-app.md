@@ -100,7 +100,7 @@ issue_comment "@quack add a Flappy Bird game and open a PR"   (inbound webhook)
    invoked.
 3. `X-GitHub-Event: star` (unhandled) → `200`, no-op.
 4. Tampered body (signature computed over different bytes) → `401`, no-op.
-5. App auth: JWT carries `iss`=app id and a ≤10-min expiry; the installation
+5. App auth: JWT carries `iss`=the configured issuer (client id or app id) and a ≤10-min expiry; the installation
    token exchange hits the stubbed endpoint once, and a second call within
    expiry is served from cache (no re-fetch).
 
@@ -186,17 +186,21 @@ downloads. Keep it secret.
 ### 5. Install the App
 
 App page → **Install App** → pick the account/org → choose the target repos.
-Note the **App ID** (App page → *About*).
+Note the **Client ID** (`Iv23li…`) and **App ID** (both on the App page →
+*About*). Either identifies the App as the JWT issuer; GitHub now recommends the
+Client ID.
 
 ### 6. Configure quack
 
 Add an `extensions.github` section to `quack.yaml`. Secrets are `${ENV}`
-references (a literal is a startup error):
+references (a literal is a startup error). Provide **exactly one** issuer —
+`client_id` (recommended) or `app_id`:
 
 ```yaml
 extensions:
   github:
-    app_id: 123456
+    client_id: Iv23liExample     # recommended issuer (App page → About), OR:
+    # app_id: 123456             # legacy alternative — set exactly one, not both
     # ONE of these two:
     private_key_path: /run/secrets/quack-github.pem   # path to the .pem, OR
     private_key: ${QUACK_GITHUB_PRIVATE_KEY}          # PEM contents via env
@@ -217,6 +221,12 @@ export QUACK_GITHUB_WEBHOOK_SECRET='the-secret-you-set-in-step-1'
 # if using private_key (not private_key_path):
 export QUACK_GITHUB_PRIVATE_KEY="$(cat quack-github.pem)"
 ```
+
+The App's **client secret is NOT used** — quack authenticates as the App by
+signing a JWT with the private key (App auth), not via the OAuth
+client-id/client-secret flow. Only `client_id` (or `app_id`) and the private key
+are configured; `client_id` and `app_id` are identifiers, not secrets, so they
+may be literals.
 
 The installation token becomes the git credential automatically: when a tool
 clones/pushes a `github.com` URL and no static credential matches, the

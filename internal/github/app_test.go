@@ -29,36 +29,42 @@ func testKeyPEM(t *testing.T) (string, *rsa.PublicKey) {
 }
 
 func TestAppJWTClaims(t *testing.T) {
-	keyPEM, pub := testKeyPEM(t)
-	app, err := NewApp(424242, keyPEM)
-	if err != nil {
-		t.Fatalf("NewApp: %v", err)
-	}
-	tokStr, err := app.appJWT()
-	if err != nil {
-		t.Fatalf("appJWT: %v", err)
-	}
-	var claims jwt.RegisteredClaims
-	_, err = jwt.ParseWithClaims(tokStr, &claims, func(*jwt.Token) (any, error) { return pub, nil })
-	if err != nil {
-		t.Fatalf("parse jwt: %v", err)
-	}
-	if claims.Issuer != "424242" {
-		t.Errorf("iss = %q; want 424242", claims.Issuer)
-	}
-	// exp must be in the future and at most 10 minutes out (GitHub's cap).
-	d := time.Until(claims.ExpiresAt.Time)
-	if d <= 0 || d > 10*time.Minute {
-		t.Errorf("exp in %s; want (0, 10m]", d)
-	}
-	// iat backdated to tolerate clock skew.
-	if !claims.IssuedAt.Time.Before(time.Now()) {
-		t.Errorf("iat = %v; want backdated", claims.IssuedAt.Time)
+	// The issuer is passed through verbatim as `iss` — GitHub accepts either a
+	// stringified App ID (legacy) or a Client ID (recommended).
+	for _, issuer := range []string{"424242", "Iv23liAbCdEfGhIjKlMn"} {
+		t.Run(issuer, func(t *testing.T) {
+			keyPEM, pub := testKeyPEM(t)
+			app, err := NewApp(issuer, keyPEM)
+			if err != nil {
+				t.Fatalf("NewApp: %v", err)
+			}
+			tokStr, err := app.appJWT()
+			if err != nil {
+				t.Fatalf("appJWT: %v", err)
+			}
+			var claims jwt.RegisteredClaims
+			_, err = jwt.ParseWithClaims(tokStr, &claims, func(*jwt.Token) (any, error) { return pub, nil })
+			if err != nil {
+				t.Fatalf("parse jwt: %v", err)
+			}
+			if claims.Issuer != issuer {
+				t.Errorf("iss = %q; want %q", claims.Issuer, issuer)
+			}
+			// exp must be in the future and at most 10 minutes out (GitHub's cap).
+			d := time.Until(claims.ExpiresAt.Time)
+			if d <= 0 || d > 10*time.Minute {
+				t.Errorf("exp in %s; want (0, 10m]", d)
+			}
+			// iat backdated to tolerate clock skew.
+			if !claims.IssuedAt.Time.Before(time.Now()) {
+				t.Errorf("iat = %v; want backdated", claims.IssuedAt.Time)
+			}
+		})
 	}
 }
 
 func TestNewAppRejectsBadKey(t *testing.T) {
-	if _, err := NewApp(1, "not a pem"); err == nil {
+	if _, err := NewApp("1", "not a pem"); err == nil {
 		t.Fatal("expected error for a bad private key")
 	}
 }
@@ -75,7 +81,7 @@ func TestInstallationTokenCaching(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	app, err := NewApp(1, keyPEM)
+	app, err := NewApp("1", keyPEM)
 	if err != nil {
 		t.Fatalf("NewApp: %v", err)
 	}
@@ -107,7 +113,7 @@ func TestInstallationForRepoCaching(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	app, err := NewApp(1, keyPEM)
+	app, err := NewApp("1", keyPEM)
 	if err != nil {
 		t.Fatalf("NewApp: %v", err)
 	}

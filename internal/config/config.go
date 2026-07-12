@@ -40,7 +40,12 @@ type ExtensionsConfig struct {
 // private key EITHER inline via private_key (${VAR} whose value is the PEM) OR
 // by private_key_path (a filesystem path to the .pem).
 type GitHubExtensionConfig struct {
-	AppID          int64  `yaml:"app_id"`
+	// Exactly one of ClientID or AppID identifies the App as the JWT issuer.
+	// ClientID (e.g. "Iv23li…") is GitHub's recommended issuer and the credential
+	// it surfaces most prominently; AppID (numeric) is the backward-compatible
+	// alternative. Neither is a secret — literals are fine. See Issuer().
+	ClientID       string `yaml:"client_id"`        // GitHub App Client ID; recommended JWT issuer
+	AppID          int64  `yaml:"app_id"`           // numeric App ID; legacy issuer (alternative to client_id)
 	PrivateKey     string `yaml:"private_key"`      // PEM contents via ${VAR}
 	PrivateKeyPath string `yaml:"private_key_path"` // path to a .pem file (alternative to private_key)
 	WebhookSecret  string `yaml:"webhook_secret"`   // ${VAR}
@@ -655,8 +660,13 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	if g == nil {
 		return nil
 	}
-	if g.AppID == 0 {
-		return fmt.Errorf("config: extensions.github.app_id is required")
+	// Exactly one issuer. Requiring exactly one (rather than letting one silently
+	// win) surfaces a misconfiguration instead of hiding it.
+	switch {
+	case g.ClientID == "" && g.AppID == 0:
+		return fmt.Errorf("config: extensions.github needs one of client_id (recommended) or app_id")
+	case g.ClientID != "" && g.AppID != 0:
+		return fmt.Errorf("config: extensions.github sets both client_id and app_id; use one (client_id recommended)")
 	}
 	if g.PrivateKey == "" && g.PrivateKeyPath == "" {
 		return fmt.Errorf("config: extensions.github needs one of private_key or private_key_path")
@@ -671,6 +681,16 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 		g.Mention = defaultMention
 	}
 	return nil
+}
+
+// Issuer returns the value for the App JWT's `iss` claim: the Client ID when set
+// (GitHub's recommended issuer), otherwise the stringified App ID. applyDefaults
+// guarantees exactly one of the two is set.
+func (g *GitHubExtensionConfig) Issuer() string {
+	if g.ClientID != "" {
+		return g.ClientID
+	}
+	return fmt.Sprintf("%d", g.AppID)
 }
 
 // applyDefaults fills in unset workspace caps and validates the ones that

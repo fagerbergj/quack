@@ -93,7 +93,7 @@ func signedRequest(event string, body []byte) *http.Request {
 func newTestExtension(t *testing.T, runner Runner, apiBase string) *Extension {
 	t.Helper()
 	keyPEM, _ := testKeyPEM(t)
-	app, err := NewApp(1, keyPEM)
+	app, err := NewApp("1", keyPEM)
 	if err != nil {
 		t.Fatalf("NewApp: %v", err)
 	}
