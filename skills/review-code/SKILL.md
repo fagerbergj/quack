@@ -1,0 +1,133 @@
+---
+name: review-code
+description: >
+  The repeatable process for reviewing a code change: understand the change's
+  intent before critiquing, read the diff AND the surrounding code, verify the
+  change's claims and tests rather than trusting them, categorize each finding
+  by severity, and structure the written review. Load whenever the task is to
+  review a pull request, diff, branch, or proposed code change — before you
+  start reading the diff.
+---
+
+# Review code: understand → verify → categorize → structure
+
+A good review improves the codebase's health — it is not a symptom scan of the
+diff. Reviewing lines in isolation misses the design flaw, trusts a test that
+never fails, and buries the one real bug under style nits. This process reviews
+the change the way it will actually be lived with.
+
+Do not write a single finding until step 2: you cannot judge a change you don't
+yet understand.
+
+## The workflow
+
+### 1. Understand the intent and context first
+
+Before looking critically at any line, learn what the change is *for*.
+
+- Read the PR description / linked issue / commit messages. State in one
+  sentence what problem this change claims to solve and how.
+- Get the change in front of you: `git_diff` (or `git_log` for the branch's
+  commits). Take a broad view first — which files were added, deleted, moved —
+  to grasp the intent before the details.
+- If you can't tell what the change is meant to do, that's your first finding
+  (a `question:`), not a licence to guess.
+
+### 2. Verify the claims — don't trust them
+
+"This fixes X", "this improves performance", "the tests cover it" are claims.
+Check each against the actual diff before you accept it.
+
+- Does the code actually do what the description says? Trace the changed path
+  and confirm the stated behavior is really there.
+- Is the change in the right part of the system, or bolted somewhere
+  convenient? A four-line change can be correct in isolation yet wrong for
+  where it lives.
+- Never assert behavior about code you didn't open. `read_file` the file before
+  claiming what it does — a finding about code you never read is fabrication.
+
+### 3. Read the diff AND the surrounding code
+
+The diff alone lies by omission. `read_file` the whole function or file when a
+change's correctness depends on its context — the caller, the invariant two
+methods up, the error the callee can return. Grep for other call sites a
+signature change affects. Judge the change in the code it actually lives in.
+
+### 4. Evaluate by priority — spend attention where it matters
+
+Weight your scrutiny by impact on code health, top-down:
+
+1. **Design & context** — Does this belong here, now? Watch for
+   over-engineering: abstraction or flexibility for a hypothetical future need,
+   not a present one. If you find a fundamental design flaw, say so
+   *immediately* — don't finish the whole diff first; catching it early spares
+   the author wasted work.
+2. **Correctness** — Think like a user. Edge cases (empty input, network
+   failure), concurrency (races, deadlocks), unhandled error paths.
+3. **Security** — Injection, missing authorization, secret handling, unsafe
+   input. A real security flaw is blocking.
+4. **Tests** — see step 5; tests get their own pass.
+5. **Complexity & readability** — If you must trace every variable to
+   understand a function, it's too complex; ask the author to simplify.
+6. **Naming, docs, style (lowest)** — Usually nits. On style, the project's
+   linter/style guide is the authority; if there's none, accept the author's
+   preference — don't invent one.
+
+### 5. Check the tests as rigorously as the code
+
+Tests are not self-validating — a human must confirm they check for meaningful
+failure.
+
+- Walk the new tests alongside the new logic: **would they actually fail if the
+  code were broken?** A test that passes no matter what is worse than none.
+- Do they cover the new branches, the edge cases, and the failure modes — or
+  only the happy path?
+- New behavior with no test is a `blocking:` gap, not a nit.
+
+### 6. Categorize every finding by severity
+
+Label each finding so the author isn't overwhelmed (Conventional Comments):
+
+- **`blocking:`** — a definite bug, security hole, or major design flaw; must be
+  fixed before merge.
+- **`suggestion:`** — an improvement; state *why* it's better. Non-blocking
+  unless you give a compelling reason.
+- **`nit:`** — trivial, preference-based; NEVER blocks.
+- **`question:`** — you suspect a problem but aren't sure; asking resolves it
+  faster than demanding a change.
+- **`praise:`** — something genuinely well done. Leave at least one sincere one.
+
+Add a decoration when it sharpens the point: `blocking (security):`,
+`suggestion (performance):`. Explain the *why* on every non-trivial finding —
+the principle or risk — so it's actionable and the author learns.
+
+### 7. Structure the written review and state a verdict
+
+Don't scatter line-by-line comments. Deliver:
+
+1. **Summary** — a high-level, constructive takeaway that sets the tone and
+   states your verdict (e.g. "Solid approach overall; two correctness issues to
+   resolve before merge").
+2. **Blocking issues** first, then **suggestions**, then **nits**, then
+   **praise** — grouped by severity so the author fixes what matters first.
+3. **Verdict** — *request changes* if any blocking issue stands; *approve* once
+   they're resolved. Favor approving a change that clearly improves code health
+   over holding it hostage to nits — and if you approve with non-blocking
+   comments, say explicitly that they're non-blocking.
+
+Cite findings by `path:line` so the author can jump straight to them.
+
+## Why this order
+
+Understanding comes first because you can't judge a change you don't grasp.
+Verification comes before critique because a review that trusts the author's
+claims is a rubber stamp. Severity comes before structure because the author's
+time is finite — block on what's genuinely wrong, and let the rest be
+suggestions.
+
+## When this is lighter
+
+A tiny, self-evidently correct change (a typo fix, a version bump, a one-line
+guard) doesn't need the full pass — verify it does what it says, check nothing
+else broke, and approve. The full loop is for any change whose correctness,
+design, or test coverage isn't immediately obvious — which is most of them.

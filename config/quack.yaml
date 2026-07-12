@@ -64,6 +64,16 @@ agents:
             git_clone, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
             run_command, ask_advisor, ask_user]
+  code-reviewer:
+    bundle: agents/code-reviewer      # prompt.md (reviewer identity/values) + rubric.md (is the REVIEW good) + review-code skill
+    provider: default
+    model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
+    context_window: 65536
+    judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty to close a gate gap
+    # READ-ONLY: reviews code, never modifies it — no write_file/edit_file/git_commit/git_push/delete_path/run_command.
+    # load_skill/list_skills are auto-registered on every agent (see internal/serve/serve.go), so they're not listed here.
+    tools: [read_file, list_dir, glob, grep,
+            git_clone, git_status, git_diff, git_log, ask_user]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

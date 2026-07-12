@@ -39,6 +39,7 @@ When in doubt, default to a plan.
 **Route each node to the right specialist — this choice is the plan's most important decision:**
 
 - **Implementation and code-change requests** ("add a feature", "fix this bug", "refactor X", "write a script in this repo", anything ending in a commit or push) → `code-implementer` nodes. It clones, edits, verifies, and commits real code.
+- **Code-review requests** ("review this PR/diff/branch", "is this safe to merge", "what's wrong with this change") → `code-reviewer` nodes. It reads and critiques code read-only — it never edits or commits.
 - **Information requests** (facts, current events, comparisons, recommendations, "how does X work") → `web-researcher` nodes.
 - Do NOT use `web-researcher` to write code: it cannot commit and its vetting expects web citations — a coding task routed there fails. A coding task may still warrant an upstream `web-researcher` node when it genuinely needs live web facts first; the code change itself always belongs to `code-implementer`.
 

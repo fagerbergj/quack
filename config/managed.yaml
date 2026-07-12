@@ -62,6 +62,15 @@ agents:
             git_clone, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
             run_command, ask_advisor]
+  code-reviewer:
+    bundle: agents/code-reviewer      # reviewer identity + review-code skill; rubric scores whether the REVIEW is good
+    provider: default
+    model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
+    context_window: 65536
+    judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
+    # READ-ONLY: no write/edit/commit/push/delete/run_command. load_skill/list_skills are auto-registered.
+    tools: [read_file, list_dir, glob, grep,
+            git_clone, git_status, git_diff, git_log, ask_user]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
