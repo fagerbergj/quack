@@ -23,14 +23,21 @@ var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 
+	// The vendored ponytail skills are a git SUBMODULE (see .gitmodules and
+	// serve.go's vendorSkillsDir). CI and the Docker build initialise it; a plain
+	// `git worktree add` does not. Without it we cannot tell "the prompt names a
+	// skill we never ship" (a real bug) from "this checkout just hasn't inited the
+	// submodule" (a local artifact) — so skip rather than cry wolf at every dev.
+	vendor := filepath.Join(root, ".agents", "vendor", "ponytail", "skills")
+	if st, err := os.Stat(vendor); err != nil || !st.IsDir() {
+		t.Skip("vendored skills submodule not initialised (git submodule update --init); cannot verify vendored skill references")
+	}
+
 	shipped := map[string]bool{}
-	for _, dir := range []string{
-		filepath.Join(root, "skills"),
-		filepath.Join(root, ".agents", "vendor", "ponytail", "skills"),
-	} {
+	for _, dir := range []string{filepath.Join(root, "skills"), vendor} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			continue // a vendored dir may legitimately be absent in some checkouts
+			continue
 		}
 		for _, e := range entries {
 			if e.IsDir() {
