@@ -105,10 +105,12 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 		t.Error("a relative path reached another node's clone; the node dir must be the default scope")
 	}
 
-	// The escape hatch stays: a leading "/" addresses the CHAT root, so a
-	// downstream node can still reach an upstream node's clone deliberately.
-	if _, err := fb.withCwd(gooseCtx).readFile(readFileArgs{Path: "/openhands_research/openhands/README.md"}); err != nil {
-		t.Errorf("chat-root escape hatch must still reach another node's clone: %v", err)
+	// "/" is the node's OWN root, not the chat root: it is NOT a way out into a
+	// sibling's tree. (It used to be. Nothing used it, and it was the last path by
+	// which one node could read another's clone — see the sandbox's OS boundary,
+	// which stops a run_command child doing the same thing.)
+	if _, err := fb.withCwd(gooseCtx).readFile(readFileArgs{Path: "/openhands_research/openhands/README.md"}); err == nil {
+		t.Error("a \"/\"-prefixed path reached a SIBLING node's clone; \"/\" must mean the node's own root")
 	}
 
 	// Nothing escapes the jail, node dir or not.
@@ -141,16 +143,27 @@ func TestCdComposesWithTheNodeDir(t *testing.T) {
 	if _, err := b.withCwd(ctx).writeFile(writeFileArgs{Path: "notes.md", Content: "hi"}); err != nil {
 		t.Fatalf("write_file: %v", err)
 	}
-	if got, err := b.withCwd(ctx).readFile(readFileArgs{Path: "/node-1/notes.md"}); err != nil || got.Content != "hi" {
+	// "/" is the node's own root: the absolute form of the very same file.
+	if got, err := b.withCwd(ctx).readFile(readFileArgs{Path: "/notes.md"}); err != nil || got.Content != "hi" {
 		t.Fatalf("write_file did not land under the node dir: %v", err)
 	}
 
-	// cd to the chat root, then a relative read must resolve THERE (not silently
-	// back under the node dir).
-	if _, err := b.withCwd(ctx).cd(ctx, cdArgs{Dir: "/"}); err != nil {
+	// `cd` into a subdir, then `cd /` returns to the node root — and a relative read
+	// resolves THERE, not back inside the subdir.
+	if _, err := b.withCwd(ctx).writeFile(writeFileArgs{Path: "repo/inner.md", Content: "in"}); err != nil {
+		t.Fatalf("write_file repo/inner.md: %v", err)
+	}
+	if _, err := b.withCwd(ctx).cd(ctx, cdArgs{Dir: "repo"}); err != nil {
+		t.Fatalf("cd repo: %v", err)
+	}
+	res, err := b.withCwd(ctx).cd(ctx, cdArgs{Dir: "/"})
+	if err != nil {
 		t.Fatalf("cd /: %v", err)
 	}
-	if _, err := b.withCwd(ctx).readFile(readFileArgs{Path: "node-1/notes.md"}); err != nil {
-		t.Errorf("after `cd /` a relative path must resolve against the chat root: %v", err)
+	if res.Cwd != "/" {
+		t.Errorf("cd / reported cwd %q, want \"/\" (the node's root)", res.Cwd)
+	}
+	if _, err := b.withCwd(ctx).readFile(readFileArgs{Path: "notes.md"}); err != nil {
+		t.Errorf("after `cd /` a relative path must resolve at the node root: %v", err)
 	}
 }

@@ -132,3 +132,51 @@ func TestCloneListAndCdAgreeOnOneNamespace(t *testing.T) {
 		t.Fatalf("cd reported %q but git_clone reported %q for the same dir — two namespaces", cd.Dir, cloned.Dir)
 	}
 }
+
+// `cd` must prove it moved: report where you now stand, and what is there.
+//
+// The live failure (code-mode dogfood, 2026-07-13): cd answered with the same string it
+// was handed — cd("goose") -> {"dir": "goose"} — which is indistinguishable from a no-op.
+// The model had no evidence it had moved, so it re-cd'd to the SAME directory, and
+// elsewhere ran list_dir on the directory it was already standing in. Repeatedly:
+// `cd goose` TWICE in one node, `list_dir "."` THREE times in another. Pure wasted turns.
+func TestCdProvesItMoved(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
+	ctx := newGatedCtx(t, "plan-1", "explorer-goose", "chat-1")
+
+	for _, p := range []string{"goose/Cargo.toml", "goose/README.md"} {
+		if _, err := b.withCwd(ctx).writeFile(writeFileArgs{Path: p, Content: "x"}); err != nil {
+			t.Fatalf("write_file %s: %v", p, err)
+		}
+	}
+
+	res, err := b.withCwd(ctx).cd(ctx, cdArgs{Dir: "goose"})
+	if err != nil {
+		t.Fatalf("cd: %v", err)
+	}
+	if res.Cwd != "/goose" {
+		t.Errorf("cd reported cwd %q, want \"/goose\" — with only `dir` echoing the argument back, the model cannot tell a real cd from a no-op, and cds again", res.Cwd)
+	}
+	if len(res.Entries) == 0 {
+		t.Fatal("cd returned no listing of where it landed — the model must spend a list_dir to confirm arrival, which is exactly what it did live")
+	}
+	var names []string
+	for _, e := range res.Entries {
+		names = append(names, e.Path)
+	}
+	for _, want := range []string{"Cargo.toml", "README.md"} {
+		found := false
+		for _, n := range names {
+			if n == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("cd's listing is missing %q; got %v — it must show what is HERE, in the cwd-relative namespace", want, names)
+		}
+	}
+}

@@ -35,6 +35,14 @@ type cdResult struct {
 	// Every later relative path/dir you pass to a workspace tool resolves against
 	// this until the next `cd` — and passing this path back verbatim works too.
 	Dir string `json:"dir"`
+	// Cwd is where you are now standing — the same value as Dir, named for what it
+	// IS rather than for what you asked for. Dir alone echoes the argument back, so a
+	// model cannot tell a successful `cd` from a no-op; it then re-`cd`s to prove it.
+	Cwd string `json:"cwd"`
+	// Entries is what's in the new working directory (one level), so arrival is
+	// self-evident and the model doesn't have to spend a `list_dir` to confirm it.
+	Entries          []dirEntry `json:"entries"`
+	EntriesTruncated bool       `json:"entries_truncated,omitempty"`
 	// InstructionsPath is the workspace-relative path of the AGENTS.md/CLAUDE.md
 	// whose content Instructions carries (empty when none was found).
 	InstructionsPath string `json:"instructions_path,omitempty"`
@@ -118,7 +126,20 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 		}
 	}
 
-	res := cdResult{Dir: newCwd, Skills: []cdSkill{}}
+	res := cdResult{Dir: newCwd, Cwd: displayCwd(newCwd), Skills: []cdSkill{}}
+
+	// Show what's HERE. `cd` used to answer with the same string it was handed
+	// ("goose" -> {"dir": "goose"}), which is indistinguishable from a no-op: the
+	// model has no evidence it moved. Live, explorers `cd`'d into a repo and then
+	// immediately either `cd`'d to the SAME directory again, or ran `list_dir` on the
+	// directory they were already standing in — both, repeatedly. A listing is proof
+	// of arrival, and it is the very call the model was about to make anyway.
+	nb := b
+	nb.cwd = newCwd
+	if here, lerr := nb.listDir(listDirArgs{Depth: 1}); lerr == nil {
+		res.Entries = here.Entries
+		res.EntriesTruncated = here.Truncated
+	}
 
 	// Nearest project instructions: walk UP from realDir to chatRoot (inclusive),
 	// AGENTS.md first (closest wins), then CLAUDE.md only if no AGENTS.md exists

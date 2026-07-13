@@ -341,15 +341,16 @@ func TestJoinCwd(t *testing.T) {
 }
 
 // jailPath is the ONE place the node dir (the invisible root) is applied. Every
-// path the model writes is node-relative; a leading "/" escapes to the CHAT root
-// (node dir AND cwd ignored) — the deliberate way to reach another node's clone.
+// path the model writes is node-relative; a leading "/" is absolute WITHIN the node's
+// own workspace (cwd ignored, node dir still applied) — so an absolute cwd a tool
+// REPORTS ("/goose") can be fed straight back in.
 func TestJailPath(t *testing.T) {
 	cases := []struct{ nodeDir, cwd, path, want string }{
 		{"n1", "", "a/b", "n1/a/b"},                           // node root is the default
 		{"n1", "repo", "src/x.go", "n1/repo/src/x.go"},        // cwd, then the node dir
 		{"n1", "repo", "repo/src/x.go", "n1/repo/src/x.go"},   // cd's own reported path, fed back
-		{"n1", "repo", "/other/repo/x.go", "other/repo/x.go"}, // "/" = chat root: node dir ignored
-		{"n1", "..", "x.go", "x.go"},                          // `cd /` then a relative path: chat root
+		{"n1", "repo", "/other/x.go", "n1/other/x.go"},        // "/" = the node's OWN root: cwd ignored, node dir applied
+		{"n1", ".", "x.go", "n1/x.go"},                        // `cd /` lands at the node root, stored "."
 		{"", "repo", "src/x.go", "repo/src/x.go"},             // un-gated: no node dir to apply
 		{"n1", "", "../../../etc/passwd", "../../etc/passwd"}, // climbs out — Jail.Resolve rejects it
 	}
