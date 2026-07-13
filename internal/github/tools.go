@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -34,6 +35,14 @@ func (a *App) GitCredential(ctx context.Context, rawURL string) (*tools.GitCrede
 	}
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
+		// The App is not installed on this repo. That is NOT an error: a PUBLIC repo
+		// clones fine with no credential at all. Attaching an installation token
+		// scoped to the operator's own account is precisely what turns a public
+		// clone into a 404 (live: OpenHands/goose/cloudflare all failed this way).
+		// Return no credential and let git proceed anonymously.
+		if errors.Is(err, ErrNoInstallation) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("github: mint git credential for %s/%s: %w", owner, repo, err)
 	}
 	return &tools.GitCredential{Host: gitHost, Username: gitUsername, Token: tok}, nil

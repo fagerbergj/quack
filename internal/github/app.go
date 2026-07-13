@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,9 +46,10 @@ type App struct {
 	apiBase string
 	http    *http.Client
 
-	mu       sync.Mutex
-	tokens   map[int64]cachedToken // installation id → token
-	installs map[string]int64      // "owner/repo" → installation id (stable; cached forever)
+	mu        sync.Mutex
+	tokens    map[int64]cachedToken // installation id → token
+	installs  map[string]int64      // "owner/repo" → installation id (stable; cached forever)
+	noInstall map[string]struct{}   // repos the App is NOT installed on (negative cache)
 
 	// Review-draft state. A PR review is built up comment-by-comment (each
 	// location-validated against the diff at add time) then submitted as one
@@ -99,14 +101,15 @@ func NewApp(issuer, pemKey string) (*App, error) {
 		return nil, fmt.Errorf("github: parse private key: %w", err)
 	}
 	return &App{
-		issuer:   issuer,
-		key:      key,
-		apiBase:  defaultAPIBase,
-		http:     &http.Client{Timeout: 20 * time.Second},
-		tokens:   map[int64]cachedToken{},
-		installs: map[string]int64{},
-		drafts:   map[string][]reviewComment{},
-		diffs:    map[string]cachedDiff{},
+		issuer:    issuer,
+		key:       key,
+		apiBase:   defaultAPIBase,
+		http:      &http.Client{Timeout: 20 * time.Second},
+		tokens:    map[int64]cachedToken{},
+		installs:  map[string]int64{},
+		noInstall: map[string]struct{}{},
+		drafts:    map[string][]reviewComment{},
+		diffs:     map[string]cachedDiff{},
 	}, nil
 }
 
@@ -175,12 +178,23 @@ func (a *App) InstallationToken(ctx context.Context, installationID int64) (stri
 // InstallationForRepo resolves (and caches) the installation id that owns
 // owner/repo, via the App JWT. The mapping is stable, so it is cached for the
 // process lifetime.
+// ErrNoInstallation means the App is not installed on the given repo. It is NOT
+// a failure: a PUBLIC repo the App cannot see still clones fine ANONYMOUSLY. Live
+// failure this guards against — a code-explorer asked to read OpenHands/goose/
+// cloudflare got 404 on every clone because we attached an installation token
+// scoped to the operator's own account, breaking repos that need no auth at all.
+var ErrNoInstallation = errors.New("github: app has no installation for this repo")
+
 func (a *App) InstallationForRepo(ctx context.Context, owner, repo string) (int64, error) {
 	key := owner + "/" + repo
 	a.mu.Lock()
 	if id, ok := a.installs[key]; ok {
 		a.mu.Unlock()
 		return id, nil
+	}
+	if _, miss := a.noInstall[key]; miss {
+		a.mu.Unlock()
+		return 0, fmt.Errorf("%w: %s", ErrNoInstallation, key)
 	}
 	a.mu.Unlock()
 
@@ -193,10 +207,22 @@ func (a *App) InstallationForRepo(ctx context.Context, owner, repo string) (int6
 	}
 	path := fmt.Sprintf("/repos/%s/%s/installation", owner, repo)
 	if err := a.doJSON(ctx, http.MethodGet, path, "Bearer "+jwtStr, nil, &out); err != nil {
+		// 404 = the App simply is not installed on this repo. Cache the miss so we
+		// don't re-ask GitHub on every clone, and report it as ErrNoInstallation so
+		// callers can fall back to an anonymous (public) clone.
+		if strings.Contains(err.Error(), "status 404") {
+			a.mu.Lock()
+			a.noInstall[key] = struct{}{}
+			a.mu.Unlock()
+			return 0, fmt.Errorf("%w: %s", ErrNoInstallation, key)
+		}
 		return 0, err
 	}
 	if out.ID == 0 {
-		return 0, fmt.Errorf("github: no installation found for %s", key)
+		a.mu.Lock()
+		a.noInstall[key] = struct{}{}
+		a.mu.Unlock()
+		return 0, fmt.Errorf("%w: %s", ErrNoInstallation, key)
 	}
 	a.mu.Lock()
 	a.installs[key] = out.ID
