@@ -289,11 +289,117 @@ func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}) {
 		t.Error("a non-empty answer that posted no review must be incomplete — the continuation loop has to re-invoke the reviewer with its tools")
 	}
-	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true}) {
+	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}) {
 		t.Error("a submitted review is complete work")
 	}
 	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}) {
 		t.Error("a prose task with a non-empty answer must not be held incomplete")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// behaviour_verified: a code review must EXECUTE the change, not just read it.
+//
+// Live e2e 2026-07-13: given run_command + write_file, the code-reviewer wrote a
+// throwaway trace harness, ran it, and printed "Start Y: 285.0, Final Y after 30
+// frames: 285.0 → BUG CONFIRMED — bird Y NEVER CHANGES" — a show-stopper in a PR
+// that passed typecheck, lint and all 19 of its own unit tests (the tests assert
+// the same absent behaviour). On the NEXT run, same PR, it wrote no probe, read
+// the diff, and called the game "fully functional". Prompt guidance alone is a
+// coin flip; execution is now a deterministic requirement.
+// ---------------------------------------------------------------------------
+
+func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
+	// Only reads: exactly the run that missed the bug.
+	act := activityFromSession(newTestSession(t,
+		fnCall("1", "git_checkout", map[string]any{"dir": "games", "ref": "add-flappy-bird-openhands"}),
+		fnResp("1", "git_checkout", map[string]any{"branch": "add-flappy-bird-openhands", "head": "abc1234"}),
+		fnCall("2", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
+		fnResp("2", "read_file", map[string]any{"content": "export function step() {}"}),
+	))
+	got, ok := behaviourCriterion(reviewTask, act)
+	if !ok {
+		t.Fatal("behaviour_verified must apply to a review of a real code change")
+	}
+	if got.Score != 0 {
+		t.Fatalf("Score = %v, want 0 — the reviewer executed nothing", got.Score)
+	}
+	if !strings.Contains(got.Reason, "run_command") {
+		t.Errorf("Reason = %q, want it to name run_command", got.Reason)
+	}
+	if !workIncomplete("The game is fully functional.", reviewTask, act) {
+		t.Error("a read-only review must be INCOMPLETE work — the continuation loop has to hand the reviewer its tools back")
+	}
+}
+
+func TestBehaviourCriterionPassesWhenTheReviewerRanTheCode(t *testing.T) {
+	act := activityFromSession(newTestSession(t,
+		fnCall("1", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
+		fnResp("1", "read_file", map[string]any{"content": "export function step() {}"}),
+		fnCall("2", "run_command", map[string]any{"dir": "games", "command": "npx tsx /tmp/probe.ts"}),
+		fnResp("2", "run_command", map[string]any{"exit_code": float64(0), "stdout": "Start Y: 285.0, Final Y: 285.0"}),
+	))
+	if !act.ranCommand {
+		t.Fatal("activityFromSession must record a successful run_command")
+	}
+	got, ok := behaviourCriterion(reviewTask, act)
+	if !ok || got.Score != 1 {
+		t.Fatalf("got %+v (applies=%v), want Score 1 — the reviewer executed the code", got, ok)
+	}
+}
+
+// A run_command that ERRORED never executed anything — same rule as
+// written/committed/pushed: successful calls only.
+func TestBehaviourCriterionFailsWhenTheCommandErrored(t *testing.T) {
+	act := activityFromSession(newTestSession(t,
+		fnCall("1", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
+		fnResp("1", "read_file", map[string]any{"content": "export function step() {}"}),
+		fnCall("2", "run_command", map[string]any{"dir": "games", "command": "npm test"}),
+		fnResp("2", "run_command", map[string]any{"error": "command not allowed"}),
+	))
+	if act.ranCommand {
+		t.Fatal("a FAILED run_command must not count as an execution")
+	}
+	got, ok := behaviourCriterion(reviewTask, act)
+	if !ok || got.Score != 0 {
+		t.Errorf("got %+v (applies=%v), want Score 0 — nothing ran", got, ok)
+	}
+}
+
+// A prose ask about a snippet has no code change to execute — a false positive
+// would deadlock the node in continuation rounds it can never satisfy.
+func TestBehaviourCriterionDoesNotFireOnProseTask(t *testing.T) {
+	tasks := []string{
+		"What do you think of this code? Explain the tradeoffs.",
+		"Summarise the diff on pull request #4 and report what changed.",
+		"Review the architecture of the repository and report your findings.",
+	}
+	for _, task := range tasks {
+		if _, ok := behaviourCriterion(task, workerActivity{}); ok {
+			t.Errorf("behaviour_verified fired on a task with no code change to execute: %q", task)
+		}
+		if workIncomplete("…", task, workerActivity{}) {
+			t.Errorf("prose task held incomplete: %q", task)
+		}
+	}
+}
+
+// A review of a change with no runnable surface (docs/config only) is exempt:
+// there is nothing to execute, so demanding an execution would deadlock it.
+func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
+	act := activityFromSession(newTestSession(t,
+		fnCall("1", "read_file", map[string]any{"path": "games/README.md"}),
+		fnResp("1", "read_file", map[string]any{"content": "# Games"}),
+		fnCall("2", "read_file", map[string]any{"path": "games/.github/workflows/ci.yaml"}),
+		fnResp("2", "read_file", map[string]any{"content": "on: push"}),
+	))
+	if _, ok := behaviourCriterion(reviewTask, act); ok {
+		t.Error("behaviour_verified must not fire on a review whose change has no runnable surface (.md/.yaml only)")
+	}
+	if workIncomplete("Docs look good.", reviewTask, workerActivity{
+		paths: act.paths, reviewSubmitted: true,
+	}) {
+		t.Error("a submitted docs-only review is complete work")
 	}
 }
 

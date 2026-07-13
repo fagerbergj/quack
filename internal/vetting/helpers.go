@@ -176,6 +176,12 @@ type workerActivity struct {
 	// deterministic review check (delivery.go).
 	reviewCommented bool
 	reviewSubmitted bool
+
+	// ranCommand marks at least one SUCCESSFUL run_command — the worker EXECUTED
+	// something (a test run, a build, a throwaway probe it wrote) rather than only
+	// reading. Read by the deterministic behaviour check (delivery.go): a code
+	// review produced purely by reading has verified nothing.
+	ranCommand bool
 }
 
 // wsOp is one workspace operation the worker actually performed — a completed

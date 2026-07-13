@@ -16,6 +16,7 @@ package vetting
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -171,7 +172,7 @@ var postedReviewRe = regexp.MustCompile(
 // a process-local DRAFT (see internal/github) — nothing is on the PR until
 // github_submit_review succeeds.
 func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
-	if !prRe.MatchString(task) || !postedReviewRe.MatchString(task) {
+	if !demandsPostedReview(task) {
 		return criterionScore{}, false
 	}
 	if act.reviewSubmitted {
@@ -202,6 +203,9 @@ func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
 //   - an UNPOSTED review task: the task demanded a review be posted on a PR and
 //     the ledger holds no submit, so the "review" exists only as prose in the
 //     answer — the reviewer's exact analogue of the undelivered commit.
+//   - an UNVERIFIED review task: the task was to review a code change and the
+//     ledger holds no successful run_command, so the reviewer never executed the
+//     thing it is passing judgment on (behaviourCriterion).
 //
 // Everything else (research, analysis, synthesis; a delivered coding task) is
 // complete as far as the gate is concerned — the judge takes it from here.
@@ -217,6 +221,66 @@ func workIncomplete(answer, task string, act workerActivity) bool {
 	return false
 }
 
+// demandsPostedReview reports whether a task asks for a review of a real code
+// change (a PR) to be POSTED — the ONE task-shape test shared by review_posted
+// and behaviour_verified, so the two can never disagree about what a review is.
+func demandsPostedReview(task string) bool {
+	return prRe.MatchString(task) && postedReviewRe.MatchString(task)
+}
+
+// proseExts are the file extensions with no runnable surface: a change confined
+// to these cannot be executed, so behaviour_verified exempts it.
+var proseExts = map[string]bool{".md": true, ".markdown": true, ".rst": true, ".txt": true, ".yaml": true, ".yml": true}
+
+// noRunnableSurface reports whether every file the reviewer actually touched is
+// prose/config — a docs-only change. Cheap and ledger-based (act.paths holds the
+// paths of successful fs ops). A reviewer that touched NO files is not exempt:
+// it has not even looked, let alone run anything.
+func noRunnableSurface(act workerActivity) bool {
+	if len(act.paths) == 0 {
+		return false
+	}
+	for p := range act.paths {
+		if !proseExts[strings.ToLower(filepath.Ext(p))] {
+			return false
+		}
+	}
+	return true
+}
+
+// behaviourCriterion scores `behaviour_verified` for a node: 0 when the task is
+// to review a real code change and the worker's ledger holds no SUCCESSFUL
+// run_command — no test run, no build, no probe — 1 when it does. ok=false ⇒ the
+// criterion does not apply (no code change to execute, or nothing runnable in
+// it), leaving every other node untouched.
+//
+// Live e2e 2026-07-13: given run_command + write_file, the code-reviewer wrote a
+// throwaway trace harness, ran it, and printed "Final Y after 30 frames: 285.0 →
+// BUG CONFIRMED — bird Y NEVER CHANGES" — a show-stopper in a PR that passed
+// typecheck, lint and all 19 of its own unit tests (the tests assert the same
+// absent behaviour). On the NEXT run, same PR, it wrote no probe, reviewed by
+// reading, and called the game "fully functional". Roughly half the time, then.
+// Prompt guidance is not reliability, so the execution is required mechanically:
+// a read-only review is INCOMPLETE work (workIncomplete), which hands the
+// reviewer its tools back in a continuation round instead of letting a review
+// that verified nothing reach the flaky judge.
+//
+// Deliberately weak on WHAT ran: any successful run_command counts (the test
+// suite, a build, a probe). Grading the command itself would be an LLM judgment,
+// which is the very thing this check exists to stop relying on.
+func behaviourCriterion(task string, act workerActivity) (criterionScore, bool) {
+	if !demandsPostedReview(task) || noRunnableSurface(act) {
+		return criterionScore{}, false
+	}
+	if act.ranCommand {
+		return criterionScore{Score: 1, Reason: "deterministic: the reviewer executed the code (successful `run_command`)"}, true
+	}
+	return criterionScore{Score: 0, Reason: "deterministic: your review has not EXECUTED the change — the ledger shows no successful `run_command`. " +
+		"Reading cannot detect bugs of absence (a `step()` that updates velocity but never assigns the new position reads exactly like working physics, " +
+		"and the tests pass because they assert the same absent behaviour). Install the dependencies, run the test suite, and write a throwaway harness " +
+		"that drives the core loop and prints the state over time; then post what you find."}, true
+}
+
 // incompleteCriteria returns the deterministic completion criteria that APPLY to
 // this task — the one definition of "the work is actually done", shared by
 // workIncomplete, foldDeterministic and the continuation prompt so they can
@@ -228,6 +292,9 @@ func incompleteCriteria(task string, act workerActivity) map[string]criterionSco
 	}
 	if c, ok := reviewCriterion(task, act); ok {
 		out["review_posted"] = c
+	}
+	if c, ok := behaviourCriterion(task, act); ok {
+		out["behaviour_verified"] = c
 	}
 	return out
 }

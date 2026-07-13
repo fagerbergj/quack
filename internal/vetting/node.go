@@ -877,6 +877,12 @@ func activityFromSession(sess session.Session) workerActivity {
 							act.reviewCommented = true
 						case "github_submit_review":
 							act.reviewSubmitted = true
+						// Execution (delivery.go): a node reviewing a code change cannot
+						// pass without having actually RUN something against it. Any
+						// successful run_command counts — the test suite, a build, or a
+						// throwaway probe. A non-zero exit_code still ran.
+						case "run_command":
+							act.ranCommand = true
 						case "git_clone":
 							// A successful clone IS retrieval: the whole repository is
 							// now local, strictly more consulted than a search-result

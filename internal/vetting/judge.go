@@ -748,6 +748,7 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string) s
 		"- Run the checks the task requires and fix whatever they surface.\n" +
 		"- When the task calls for it, commit your work, push the branch, and open the pull request.\n" +
 		"- When the task calls for a posted review, record your findings with github_add_review_comment and submit them with github_submit_review. Writing findings into your answer is NOT posting a review.\n" +
+		"- When the task calls for a review of a code change, EXECUTE the change with run_command before you judge it — run its tests, and write a throwaway harness that drives the code and prints what it does. Reading is not verification.\n" +
 		"- Only once the work is actually done, report what you DID — past tense, evidenced by the tool calls you made.\n\n")
 	if len(checks) > 0 {
 		sb.WriteString("Checks this node must pass: " + strings.Join(checks, ", ") + "\n\n")
