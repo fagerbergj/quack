@@ -371,6 +371,16 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			if _, selected := planCache.Selected(); selected {
 				produced = true
 			}
+			// A plan that was CREATED but never EXECUTED means the turn did NO WORK,
+			// no matter how much text the model emitted about it. Live failure: the
+			// orchestrator called `plan`, read the tool's "review before executing"
+			// summary, answered "The plan is solid — 4 parallel code-explorer nodes…"
+			// and finished — never calling `execute`. It described running the work
+			// instead of running it, the text made the turn look produced, and the run
+			// ended having done nothing. Force a continuation so it actually executes.
+			if _, pending := planCache.Pending(); pending {
+				produced = false
+			}
 			return produced, false
 		}
 
@@ -459,7 +469,7 @@ const continuationMarker = "CONTINUE — your last turn produced no plan and no 
 func continuationContent() *genai.Content {
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: continuationMarker + "\n\n" +
 		"Nothing ran and the user is still waiting. You have already loaded the skills you need — do not load " +
-		"more, and do not think silently. Do ONE of these now:\n" +
+		"more, and do not think silently. Do ONE of these now:\n If you have already called `plan` and it returned a plan_id, you have NOT done the work: call `execute` with that plan_id NOW. Describing the plan, or saying it looks good, is not executing it." +
 		"- Call the `plan` tool with the nodes, then call `execute` with the plan_id it returns.\n" +
 		"- Or, if no plan is needed, answer the user directly in text.\n\n" +
 		"Do not end this turn without a plan call or an answer."}}}
