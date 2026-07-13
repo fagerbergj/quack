@@ -275,7 +275,11 @@ func TestNonEmptyDraft_NoContinuation(t *testing.T) {
 // (live run v4: judge passed it at 0.7 with zero git_commit calls in the session).
 func TestUndeliveredDraft_ContinuesWorker(t *testing.T) {
 	stub := &nonEmptyStub{}
-	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10"}
+	// The demand lives on the NODE'S OWN task (cfg.Task), which is where the gate reads
+	// it. It is deliberately NOT read off the worker prompt: that prompt also carries the
+	// user's verbatim request as background, and keying on it held every read-only
+	// explorer in the plan to a commit it could never make (see explorer_completion_test).
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Task: implTask}
 	runContGate(t, stub, cfg, implTask)
 
 	if stub.workerCalls < 2 {

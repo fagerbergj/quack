@@ -352,11 +352,22 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// (runWorkerNode → RunNode input for a local llmagent, gate-authored session
 		// event for a remote A2A worker — see emitPrompt), which is what makes it land
 		// at all. Bounded by maxContinueRounds so a stuck worker can't spin forever.
-		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, prompt, activity()); attempt++ {
+		//
+		// The completion test reads the node's OWN task (cfg.Task) — NEVER `prompt`.
+		// `prompt` is the assembled worker input, and it carries the user's verbatim
+		// request as background (dag.buildTask). Judged against that, EVERY node in a
+		// plan whose request ends in "commit, push a branch, and open the PR" is
+		// forever incomplete — including the read-only explorers, which have no commit
+		// or push tools and whose job is explicitly not to deliver code. Live
+		// (2026-07-13): every code-explorer node ran the continuation loop to its bound
+		// on `committed=false pushed=false`, reading for HOURS, and not one ever
+		// finished or reached a judge round. The delivery check has always keyed on
+		// cfg.Task (see the deterministic fold below); only this loop didn't.
+		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, activity()); attempt++ {
 			act := activity()
 			log.Warn("work not finished; continuing the worker with its tools",
 				"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
-			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(prompt, act, cfg.Checks),
+			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks),
 				fmt.Sprintf("worker-cont%d%s", attempt, sfx), promptEmit)
 			if err != nil {
 				log.Error("worker continuation failed", "attempt", attempt, "err", err)
