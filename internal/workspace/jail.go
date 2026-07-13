@@ -108,6 +108,40 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 	return home, nil
 }
 
+// NodeDir returns the working directory a DAG node's tools default to — ONE
+// component under the per-chat scope (<root>/<user>/<chat>/<nodeID>/) — or ""
+// when nodeID can't safely name one (an un-gated call, or a planner-authored id
+// with a separator: fall back to the chat root, exactly the pre-node behaviour,
+// rather than fail every path the node touches).
+//
+// This is the fix for a live correctness bug: a plan's nodes run CONCURRENTLY in
+// one chat, so with only the per-chat scope every node cloned into the same
+// directory — and an explorer node told to study OpenHands sat there reading
+// goose's source, because goose's clone was simply THERE. It is a DEFAULT, not a
+// wall: the "/"-prefixed escape hatch still addresses the chat root, so a
+// downstream node can deliberately reach an upstream node's clone.
+func NodeDir(nodeID string) string {
+	if !isSafePathComponent(nodeID) {
+		return ""
+	}
+	return nodeID
+}
+
+// EnsureDir resolves rel under the (userID, chatID) scope and creates it,
+// returning the real path. Used to materialise a node's working directory at
+// node entry, so the worker's very first `list_dir .` sees an (empty) dir
+// instead of a "no such file" it then gropes around trying to recover from.
+func (j *Jail) EnsureDir(userID, chatID, rel string) (string, error) {
+	real, err := j.Resolve(userID, chatID, rel)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		return "", fmt.Errorf("workspace: create dir %q: %w", real, err)
+	}
+	return real, nil
+}
+
 // validateUserID is the jail-boundary guard shared by UserRoot and Resolve:
 // a userID must name exactly ONE directory component directly under the
 // workspace root, because Resolve joins it into the path RAW — an

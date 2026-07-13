@@ -43,26 +43,30 @@ type fsBinding struct {
 	jail   *workspace.Jail
 	caps   workspace.Caps
 	// cwd is the session working directory (chat-root-relative, "" = chat root) a
-	// per-call copy carries — set by withCwd from ctx state, so the shared
-	// startup-constructed binding stays immutable and its zero value ("") is
-	// exactly today's root-relative behaviour. Every path this binding resolves
-	// goes through resolve, which applies cwd (joinCwd) before Jail.Resolve.
+	// per-call copy carries — set by withCwd from ctx state (defaulting to the
+	// node's own dir), so the shared startup-constructed binding stays immutable.
+	// Every path this binding resolves goes through resolve, which applies cwd
+	// (joinCwd) before Jail.Resolve.
 	cwd string
 	// chatID is the per-chat scope (the workflow/chat session id) this call's
 	// paths resolve under (<root>/<user>/<chatID>/…) — set by withCwd from the
-	// advisor-thread marker in ctx (chatScopeFromContext). "" (a direct/un-gated
-	// call that can't recover the chat id) resolves the per-user root, exactly
-	// today's behaviour.
+	// advisor-thread marker in ctx (scopeFromContext). "" (a direct/un-gated
+	// call that can't recover the chat id) resolves the per-user root.
 	chatID string
+	// nodeDir is the calling DAG node's own directory within that chat scope
+	// (<chatID>/<nodeID>/) — the DEFAULT cwd, so concurrent nodes of one plan
+	// clone and read in separate trees instead of tripping over each other's
+	// repos. "" outside a gated node (see scopeFromContext).
+	nodeDir string
 }
 
-// withCwd returns a copy of b bound to this call's context: the session working
-// directory (cwd, from ctx state) AND the per-chat scope (chatID, from the
-// advisor-thread marker in ctx). A value receiver makes the copy; the shared
-// startup binding is never mutated.
+// withCwd returns a copy of b bound to this call's context: the per-chat scope
+// and the calling node's dir (both from the advisor-thread marker in ctx) plus
+// the session working directory (ctx state, defaulting to that node dir). A
+// value receiver makes the copy; the shared startup binding is never mutated.
 func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
-	b.cwd = cwdFromState(ctx)
-	b.chatID = chatScopeFromContext(ctx)
+	b.chatID, b.nodeDir = scopeFromContext(ctx)
+	b.cwd = cwdOrDefault(ctx, b.nodeDir)
 	return b
 }
 

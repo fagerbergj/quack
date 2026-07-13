@@ -97,12 +97,13 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 		return cdResult{}, fmt.Errorf("cd: %w", err)
 	}
 	newCwd = filepath.ToSlash(newCwd)
-	stored := newCwd
-	if stored == "." {
-		stored = "" // root: store "" so joinCwd short-circuits to today's behaviour
-	}
+	// Stored verbatim, including "." for the chat root: a stored cwd is always
+	// NON-empty, which is what distinguishes "the worker deliberately cd'd to the
+	// chat root" from "the worker has not cd'd at all" (whose default is the
+	// node's own dir — see cwdOrDefault). joinCwd(".", p) == p, so the root case
+	// still resolves exactly as before.
 	if st := ctx.State(); st != nil {
-		if err := st.Set(CwdKey, stored); err != nil {
+		if err := st.Set(CwdKey, newCwd); err != nil {
 			return cdResult{}, fmt.Errorf("cd: persist working directory: %w", err)
 		}
 	}
@@ -122,10 +123,10 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 		res.InstructionsTruncated = truncated
 	}
 
-	// Project skills: the containing repo is the first path component of the new
-	// cwd (immediate child of the workspace root, where git_clone lands a repo).
-	repoRel := firstComponent(newCwd)
-	for _, fm := range skillsource.ProjectSkills(b.jail, b.userID, b.chatID, repoRel) {
+	// Project skills: the containing repo is the first path component BELOW the
+	// node's own dir (where git_clone lands a repo) — or below the chat root when
+	// there is no node scope.
+	for _, fm := range skillsource.ProjectSkills(b.jail, b.userID, b.chatID, repoRel(newCwd, b.nodeDir)) {
 		res.Skills = append(res.Skills, cdSkill{Name: fm.Name, Description: fm.Description})
 	}
 
@@ -186,6 +187,24 @@ func (b fsBinding) readCappedFile(path string) (content string, truncated bool, 
 		return "", false, err
 	}
 	return string(data), capped, nil
+}
+
+// repoRel returns the chat-root-relative directory of the repo the cwd sits in:
+// the first path segment BELOW the node's own dir (git_clone lands a repo there),
+// or the first segment of cwd when there is no node scope. "" when the cwd is the
+// node dir / chat root itself (no containing repo).
+func repoRel(cwd, nodeDir string) string {
+	if nodeDir == "" {
+		return firstComponent(cwd)
+	}
+	if cwd != nodeDir && !strings.HasPrefix(cwd, nodeDir+"/") {
+		return firstComponent(cwd) // the worker cd'd out of its node dir
+	}
+	sub := firstComponent(strings.TrimPrefix(strings.TrimPrefix(cwd, nodeDir), "/"))
+	if sub == "" {
+		return ""
+	}
+	return nodeDir + "/" + sub
 }
 
 // firstComponent returns the first path segment of a slash path ("" for the

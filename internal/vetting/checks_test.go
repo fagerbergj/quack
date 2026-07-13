@@ -151,3 +151,33 @@ func TestComposeFeedbackNoFailuresReturnsJudgeFeedbackUnchanged(t *testing.T) {
 		t.Errorf("composeFeedback = %q, want unchanged judge feedback %q", got, "all good")
 	}
 }
+
+// TestChecksDirFindsTheNodesOwnRepo: two concurrent nodes each cloned a repo
+// into the same chat scope. Derived checks must find THIS node's repo — a
+// search from the chat root sees two repos, gives up ("no single repo"), and
+// nothing gets gated.
+func TestChecksDirFindsTheNodesOwnRepo(t *testing.T) {
+	cfg := testChecksConfig(t, nil, "")
+	cfg.ChatID = "chat-1"
+	cfg.NodeID = "impl_node"
+	cfg.DeriveChecks = true
+	for _, rel := range []string{"impl_node/mine/.git", "other_node/theirs/.git"} {
+		dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir, ok, err := checksDir(cfg)
+	if err != nil {
+		t.Fatalf("checksDir: %v", err)
+	}
+	if !ok {
+		t.Fatal("checksDir found no repo: a search from the chat root sees BOTH nodes' clones and gives up")
+	}
+	if !strings.HasSuffix(dir, "impl_node/mine") {
+		t.Errorf("checksDir = %q, want the node's own clone (…/impl_node/mine)", dir)
+	}
+}

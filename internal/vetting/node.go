@@ -18,6 +18,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // NewWorkerNode wraps a worker agent as an AgentNode for use as the worker inside
@@ -205,6 +206,23 @@ func replyString(reply any) string {
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
+	// Per-NODE workspace scope: a plan's nodes run concurrently in ONE chat, so
+	// each gets its own directory under the chat scope (<root>/<user>/<chat>/
+	// <node>/) — the default cwd its tools resolve relative paths against (they
+	// derive the SAME dir from the advisor-thread marker; see internal/tools
+	// scopeFromContext). Materialised here, at node entry, so the worker's first
+	// `list_dir .` sees an empty dir rather than a "no such file". Best-effort: a
+	// creation failure just means the tools create it on first write.
+	nodeDir := workspace.NodeDir(cfg.NodeID)
+	if cfg.Workspace != nil && nodeDir != "" {
+		if _, err := cfg.Workspace.EnsureDir(cfg.WorkspaceUserID, cfg.ChatID, nodeDir); err != nil {
+			log.Warn("could not create the node's working directory", "dir", nodeDir, "err", err)
+		}
+	}
+	// activity replays the worker's session from that node dir — the cwd its
+	// relative paths (and the judge's re-read of them) resolve against.
+	activity := func() workerActivity { return activityFromSessionAt(ctx.Session(), nodeDir) }
+
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	// The judge runs in its own isolated runner (off the workflow event stream), so
 	// its activity can't ride that stream. Forward it to the client as a stage:judge
@@ -334,8 +352,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// (runWorkerNode → RunNode input for a local llmagent, gate-authored session
 		// event for a remote A2A worker — see emitPrompt), which is what makes it land
 		// at all. Bounded by maxContinueRounds so a stuck worker can't spin forever.
-		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, prompt, activityFromSession(ctx.Session())); attempt++ {
-			act := activityFromSession(ctx.Session())
+		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, prompt, activity()); attempt++ {
+			act := activity()
 			log.Warn("work not finished; continuing the worker with its tools",
 				"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
 			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(prompt, act, cfg.Checks),
@@ -359,7 +377,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// continuation budget.
 		if strings.TrimSpace(answer) == "" {
 			log.Warn("worker still empty after continuation; falling back to the tool-less writer", "rounds", maxContinueRounds)
-			answer, err = runWriterFresh(ctx, workerModel, buildFinalizeContent(question, activityFromSession(ctx.Session())))
+			answer, err = runWriterFresh(ctx, workerModel, buildFinalizeContent(question, activity()))
 			if err != nil {
 				log.Error("writer recovery failed", "err", err)
 				return "", GateResult{}, err
@@ -393,7 +411,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if strings.TrimSpace(answer) == "" {
 				break // still nothing to judge after recovery
 			}
-			act := activityFromSession(ctx.Session())
+			act := activity()
 			runID := fmt.Sprintf("judge-r%d", round)
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
 			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, act, judgePartEmitter(sink, nodeID, runID))
@@ -444,7 +462,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			continue // re-run the whole gate with the guidance (fresh run IDs)
 		}
 		if res.Passed {
-			commitMemoryOnPass(ctx, cfg, nodeID, answer, activityFromSession(ctx.Session()).staged)
+			commitMemoryOnPass(ctx, cfg, nodeID, answer, activity().staged)
 		}
 		return answer, res, nil
 	}
@@ -809,7 +827,18 @@ func joinWritten(cwd, p string) string {
 	return filepath.Join(cwd, p)
 }
 
+// activityFromSession replays a session with the jail root as the starting cwd
+// (an un-gated/legacy worker, and every test that doesn't care about scoping).
 func activityFromSession(sess session.Session) workerActivity {
+	return activityFromSessionAt(sess, "")
+}
+
+// activityFromSessionAt replays the worker's session starting from initialCwd —
+// the node's OWN working dir (workspace.NodeDir), which is where a gated worker's
+// relative paths resolve until it cd's. Getting this wrong silently breaks the
+// judge's changed-file re-read: it would resolve the worker's writes against the
+// chat root, find nothing, and quietly degrade to scoring the answer's self-report.
+func activityFromSessionAt(sess session.Session, initialCwd string) workerActivity {
 	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
 	if sess == nil {
 		return act
@@ -818,7 +847,7 @@ func activityFromSession(sess session.Session) workerActivity {
 	pendingWs := map[string]map[string]any{} // workspace-tool call ID → args (see ledger.go)
 	pendingWsTool := map[string]string{}     // workspace-tool call ID → tool name
 	pendingCd := map[string]bool{}           // cd call ID → awaiting response (to track cwd)
-	curCwd := ""                             // jail-relative cwd in effect, updated on each successful cd
+	curCwd := initialCwd                     // jail-relative cwd in effect, updated on each successful cd
 	writtenSeen := map[string]bool{}         // dedup for act.written
 	for ev := range sess.Events().All() {
 		if ev == nil || ev.Content == nil {
