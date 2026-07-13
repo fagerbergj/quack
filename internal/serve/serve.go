@@ -593,7 +593,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if summarizer, err = inference.NewModel(cprov, compCfg.Model); err != nil {
 			return nil, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
-		slog.Info("context compaction enabled", "component", "startup", "summariser", compCfg.Model, "prune", compCfg.PruneEnabled())
+		slog.Info("context compaction enabled", "component", "startup", "summariser", compCfg.Model)
 	}
 	compactionFor := func(ac config.AgentConfig) agent.Compaction {
 		if !compCfg.Enabled {
@@ -606,7 +606,6 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		return agent.Compaction{
 			Summarizer:    summarizer,
 			ContextWindow: ac.ContextWindow,
-			Prune:         compCfg.PruneEnabled(),
 			Enabled:       true,
 		}
 	}
