@@ -47,8 +47,23 @@ func FindRepos(root string) []string {
 }
 
 // skipDir names the directories a repo search must never descend into.
-func skipDir(name string) bool {
-	return strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor"
+func skipDir(name string) bool { return SkipDir(name) }
+
+// SkipDir reports whether a directory is vendored or generated — a tree no search
+// should descend into. It covers dot-dirs (.git, .next, .venv), dependency trees
+// (node_modules, vendor) and the conventional build outputs.
+//
+// Searching these is never what anyone means, and the results are actively harmful:
+// a live `grep` that matched inside a Next.js build dir returned a 48 MB result (the
+// hits were minified .js.map lines), which blew the model's context window and 400'd
+// the node. Every other harness gets this for free by shelling out to ripgrep, which
+// honours .gitignore.
+func SkipDir(name string) bool {
+	switch name {
+	case "node_modules", "vendor", "target", "dist", "build", "__pycache__":
+		return true
+	}
+	return strings.HasPrefix(name, ".")
 }
 
 func isRepo(dir string) bool {
