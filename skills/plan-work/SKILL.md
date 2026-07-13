@@ -26,6 +26,19 @@ Match the request to a known shape first; fall back to the general rules below.
 | Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
 | Learn how ANOTHER project (a third-party OSS repo) implements something — "how does OpenHands do X?", "how does goose expose tools?" | ONE `code-explorer` node per project — it CLONES THEIR REPO and reads the real source. NOT `web-researcher`: articles and docs describe code, only the code is the code. Use `web-researcher` only for facts that exist nowhere but the web (a blog post's rationale, a spec, pricing) |
 | Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
+| Research several projects, THEN design, THEN implement and open a PR (a multi-phase request) | ONE DAG spanning ALL the phases: one `code-explorer` per project → (optionally ONE `synthesizer`) → ONE `code-implementer` (terminal). See Multi-phase requests |
+
+**Multi-phase requests.** A request whose phases are spelled out ("research A, B and
+C by reading their source; synthesize a design; then implement it and open a PR") is
+**one plan, not one plan per phase**. Plan the whole job in a single DAG: the research
+nodes are FEEDER steps and the terminal node is the one that produces the deliverable
+(the `code-implementer` that commits, pushes, and opens the PR).
+
+Do NOT plan only the first phase and stop. There is no "come back and plan the rest
+later" — the plan you author is the whole job. A plan of research nodes for a request
+that ends in "open a pull request" will be REJECTED (the terminal deliverable must be a
+`code-implementer` node), and re-authoring it with *more research nodes* wastes turns:
+the missing node is the implementer.
 
 Route by what the node must DO, not by topic: any node that must change code,
 commit, or push is `code-implementer` work — never `web-researcher`, which

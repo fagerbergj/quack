@@ -120,11 +120,18 @@ func (p *Planner) checkImplementationRouting(plan *Plan, message string) error {
 	}
 	slog.Warn("plan rejected: implement-and-deliver request has no code-implementer node",
 		"component", "planner", "message", message)
+	// Be explicit about the ONE edit that fixes this. The first version of this
+	// message said only "re-author the plan with a code-implementer node", and a live
+	// orchestrator answered it TWICE by adding another RESEARCH node — it read the
+	// rejection as "your plan is incomplete" rather than "one specific node is
+	// missing". Name the fix; forbid the wrong one.
 	return fmt.Errorf("this request asks to implement and deliver code (commit/push/open a PR) "+
 		"but the plan has no %s node. The terminal deliverable MUST be a %s node whose task is to "+
 		"clone the repo, study its conventions, implement the change with tests, run the repo's "+
 		"checks, commit, push a branch, and open the PR — a repo analysis is a feeder step, never "+
-		"the deliverable. Re-author the plan with a %s node and call again.",
+		"the deliverable.\n"+
+		"TO FIX: keep the nodes you already have and ADD ONE node with agent %q, depending on them, "+
+		"as the LAST node. Do NOT add more research/explorer nodes — research is not what is missing.",
 		implementerAgent, implementerAgent, implementerAgent)
 }
 
