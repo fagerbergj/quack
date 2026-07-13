@@ -145,21 +145,46 @@ func boundCheckOutput(out string) string {
 // <scope>/games, where git_clone had put it. Nothing gated the build, and code
 // that does not typecheck passed at 0.7. Resolving a workdir is not the same as
 // FINDING the repo, so now we find it.
+//
+// Workdir resolves against the node's OWN working dir first (<chat>/<node>/…,
+// where the node's git_clone landed its repo — exactly as the worker's own tools
+// resolve it), then against the chat scope root as a fallback (an un-gated node,
+// or a worker that used the "/" escape hatch to work at the root). Node-first is
+// what keeps a plan's CONCURRENT nodes from each seeing several repos — from the
+// chat root the search sees every node's clone, finds no single repo, and gates
+// nothing.
 func checksDir(cfg Config) (string, bool, error) {
-	start, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, cfg.Workdir)
+	nodeStart, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, joinWritten(workspace.NodeDir(cfg.NodeID), cfg.Workdir))
+	if err != nil {
+		return "", false, err
+	}
+	chatStart, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, cfg.Workdir)
 	if err != nil {
 		return "", false, err
 	}
 	if len(cfg.Checks) > 0 {
 		// Explicit planner-set checks keep their historical meaning: run exactly
-		// where the planner said (the scope root when it named no workdir).
-		return start, true, nil
+		// where the planner said. Fail closed — a workdir that exists nowhere is
+		// still returned, so the check errors rather than being silently skipped.
+		if nodeStart != chatStart && !isDir(nodeStart) && isDir(chatStart) {
+			return chatStart, true, nil
+		}
+		return nodeStart, true, nil
 	}
-	repos := workspace.FindRepos(start)
-	if len(repos) != 1 {
-		return "", false, nil
+	for _, start := range []string{nodeStart, chatStart} {
+		if repos := workspace.FindRepos(start); len(repos) == 1 {
+			return repos[0], true, nil
+		}
+		if nodeStart == chatStart {
+			break
+		}
 	}
-	return repos[0], true, nil
+	return "", false, nil
+}
+
+func isDir(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 func fileExists(dir, name string) bool {

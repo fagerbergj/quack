@@ -181,18 +181,39 @@ func (p *projectAware) sources() []skill.Source {
 		if err != nil {
 			continue
 		}
-		repos, err := os.ReadDir(scopeRoot)
-		if err != nil {
-			continue
-		}
-		for _, repo := range repos {
-			if !repo.IsDir() || repo.Name()[0] == '.' {
+		// A chat scope's children are the per-NODE working dirs (each node of a
+		// plan gets one — see workspace.NodeDir), and a repo is cloned INSIDE one
+		// of those. Older/un-gated clones sit directly in the chat scope, so both
+		// levels are offered.
+		for _, child := range readDirs(scopeRoot) {
+			sources = append(sources, sourcesUnder(p.jail, p.userID, chatID, child)...)
+			nodeRoot, err := p.jail.Resolve(p.userID, chatID, child)
+			if err != nil {
 				continue
 			}
-			sources = append(sources, sourcesUnder(p.jail, p.userID, chatID, repo.Name())...)
+			for _, repo := range readDirs(nodeRoot) {
+				sources = append(sources, sourcesUnder(p.jail, p.userID, chatID, child+"/"+repo)...)
+			}
 		}
 	}
 	return sources
+}
+
+// readDirs lists the sub-directory names of dir, skipping dot-dirs (e.g.
+// .quack-home) and files. An unreadable dir yields nothing.
+func readDirs(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || e.Name()[0] == '.' {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out
 }
 
 // projectAware is a skill.Source that serves built-in skills first and additive

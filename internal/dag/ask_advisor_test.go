@@ -136,6 +136,14 @@ func newAdvisorTool(t *testing.T, advisorModel model.LLM, sessions session.Servi
 // id — hence one named constant instead of a literal at each site.
 const runGraphChatID = "s"
 
+// runGraphNodeID is the id of the single node every runGraph test plan uses. Since
+// #198 a node's tools DEFAULT their cwd to the node's OWN dir (<chat>/<node>/), so a
+// fixture those tools must act on has to be seeded there — not at the chat root. A
+// fixture at the chat root leaves the tool resolving a path that does not exist, and
+// a guarded delete then never completes: that is exactly how TestGuardConfirm_OverA2A
+// hung for the full 10-minute CI timeout.
+const runGraphNodeID = "n1"
+
 // runGraph runs plan via the REAL dag.Executor (RunPlanAsGraph — the native
 // graph path production uses), collecting the SSE events and node outputs.
 // sessions is shared by BOTH the executor's own runner AND the ask_advisor

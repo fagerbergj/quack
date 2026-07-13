@@ -78,6 +78,11 @@ func ParseAdvisorThread(text string) (token string, ok bool) {
 type AdvisorTask struct {
 	Task   string
 	Rubric string
+	// NodeID is the plan node this thread belongs to — the SAME identity channel
+	// the chat scope travels on, reused (not duplicated) so the workspace tools
+	// can default a node's working directory to its own dir under the chat scope
+	// (internal/tools scopeFromContext → workspace.NodeDir).
+	NodeID string
 	// Workflow session coordinates + invocation, for guard-ladder scans.
 	AppName      string
 	UserID       string

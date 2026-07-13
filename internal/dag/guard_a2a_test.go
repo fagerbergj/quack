@@ -173,7 +173,7 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 // tests would assert against a file the worker never touched.
 func writeJailFile(t *testing.T, jail *workspace.Jail, userID, rel string) {
 	t.Helper()
-	real, err := jail.Resolve(userID, runGraphChatID, rel)
+	real, err := jail.Resolve(userID, runGraphChatID, filepath.Join(runGraphNodeID, rel))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func writeJailFile(t *testing.T, jail *workspace.Jail, userID, rel string) {
 // per-user root that nothing ever touched.
 func jailFileExists(t *testing.T, jail *workspace.Jail, userID, rel string) bool {
 	t.Helper()
-	real, err := jail.Resolve(userID, runGraphChatID, rel)
+	real, err := jail.Resolve(userID, runGraphChatID, filepath.Join(runGraphNodeID, rel))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -156,22 +156,26 @@ type gitBinding struct {
 	credentials []GitCredential
 	tokenSource GitTokenSource // optional dynamic credential source (extension seam)
 	allowPush   bool
-	// cwd is the session working directory (chat-root-relative, "" = chat root) a
-	// per-call copy carries — set by withCwd from ctx state, mirroring fsBinding.
-	// A relative `dir`/`path` a git tool takes resolves against it (resolve).
+	// cwd is the session working directory (chat-root-relative) a per-call copy
+	// carries — set by withCwd from ctx state, defaulting to the calling node's
+	// own dir, mirroring fsBinding. A relative `dir`/`path` a git tool takes
+	// resolves against it (resolve) — which is what lands git_clone's default
+	// target inside the NODE's dir instead of the shared chat root.
 	cwd string
 	// chatID is the per-chat scope (the workflow/chat session id) this call's
 	// paths resolve under — set by withCwd from the advisor-thread marker in ctx
-	// (chatScopeFromContext), mirroring fsBinding. "" resolves the per-user root.
+	// (scopeFromContext), mirroring fsBinding. "" resolves the per-user root.
 	chatID string
 }
 
-// withCwd returns a copy of b bound to this call's context: the session working
-// directory (cwd) AND the per-chat scope (chatID), both read from ctx (mirrors
-// fsBinding.withCwd). Value receiver ⇒ copy; the shared binding is never mutated.
+// withCwd returns a copy of b bound to this call's context: the per-chat scope
+// and the session working directory (defaulting to the calling node's own dir),
+// both derived from ctx (mirrors fsBinding.withCwd). Value receiver ⇒ copy; the
+// shared binding is never mutated.
 func (b gitBinding) withCwd(ctx agent.Context) gitBinding {
-	b.cwd = cwdFromState(ctx)
-	b.chatID = chatScopeFromContext(ctx)
+	var nodeDir string
+	b.chatID, nodeDir = scopeFromContext(ctx)
+	b.cwd = cwdOrDefault(ctx, nodeDir)
 	return b
 }
 

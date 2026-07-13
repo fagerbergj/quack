@@ -108,7 +108,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// the workflow session for confirm decisions even when they execute
 			// inside the A2A server's runner (whose own context session holds no
 			// gate events — see vetting.AdvisorTask).
-			task := vetting.AdvisorTask{Task: node.Task, Rubric: node.Rubric, InvocationID: ctx.InvocationID()}
+			task := vetting.AdvisorTask{Task: node.Task, Rubric: node.Rubric, NodeID: node.ID, InvocationID: ctx.InvocationID()}
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}

@@ -396,3 +396,54 @@ func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
 		t.Errorf("workspace ledger = %+v, want the FAILED git_clone recorded", act.workspace)
 	}
 }
+
+// TestJudgeRereadsFilesWrittenUnderTheNodeDir pins the judge's changed-file
+// re-read to the PER-NODE scope: a worker's relative write lands under
+// <chat>/<nodeID>/ (the node's default cwd), so the replay must start from the
+// node dir — otherwise the judge resolves against the chat root, reads nothing,
+// and its "read the real files" behaviour silently degrades to a no-op.
+func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chatID, nodeID = "chat-7", "impl_node"
+	dir, err := j.Resolve("u1", chatID, nodeID+"/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "logic.ts"), []byte("export const REAL = 1 // per-node content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The worker cd'd into its clone (relative to its own node dir) and wrote.
+	sess := newTestSession(t,
+		fnCall("c1", "cd", map[string]any{"dir": "repo"}),
+		fnResp("c1", "cd", map[string]any{"dir": nodeID + "/repo"}),
+		fnCall("w1", "write_file", map[string]any{"path": "logic.ts"}),
+		fnResp("w1", "write_file", map[string]any{"bytes": 42, "created": true}),
+	)
+	act := activityFromSessionAt(sess, nodeID)
+	if len(act.written) != 1 || act.written[0] != nodeID+"/repo/logic.ts" {
+		t.Fatalf("written = %v, want [%s/repo/logic.ts]", act.written, nodeID)
+	}
+	if got := buildChangedFilesSection(act, j, "u1", chatID); !strings.Contains(got, "per-node content") {
+		t.Errorf("judge must re-read the file the worker wrote under its node dir; got:\n%s", got)
+	}
+}
+
+// TestActivityWrittenDefaultsToTheNodeDir: a worker that never cd's writes into
+// its node dir (the default cwd), so the captured path must carry it.
+func TestActivityWrittenDefaultsToTheNodeDir(t *testing.T) {
+	sess := newTestSession(t,
+		fnCall("w1", "write_file", map[string]any{"path": "report.md"}),
+		fnResp("w1", "write_file", map[string]any{"bytes": 10, "created": true}),
+	)
+	act := activityFromSessionAt(sess, "node-1")
+	if len(act.written) != 1 || act.written[0] != "node-1/report.md" {
+		t.Fatalf("written = %v, want [node-1/report.md]", act.written)
+	}
+}
