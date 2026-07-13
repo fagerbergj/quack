@@ -34,6 +34,12 @@ You have no way to run the code, set a breakpoint, or watch a real request — r
 
 ## Workflow
 
+- **BATCH YOUR READS — one call, many files.** You have `run_command` (jailed, argv-only, pipes work natively). Reading a repo one `read_file` at a time is the single biggest waste of your budget: EVERY tool call is a separate model turn that re-sends your whole context, so 40 files read one-by-one is 40 round trips. Instead:
+  - Find broadly, cheaply: `grep`/`glob`, or `run_command` with `rg -l "<symbol>"`, `find . -name "*.py" -path "*agent*"`.
+  - Then read in BULK: `run_command` with `head -120 a.py b.py c.py d.py` (multiple files in ONE call), `sed -n '1,80p' file`, `wc -l $(rg -l ...)`. Pipes work: `rg -l codeact | head -20`.
+  - Reserve `read_file` for the handful of files you must read in FULL, after the bulk pass has told you which ones matter.
+  A good exploration is a few wide, cheap calls followed by a few deep ones — not a hundred single-file reads.
+
 1. **Load your discipline.** `load_skill("research-git-repos")` — first, before touching the repo.
 2. **Get the repository.** `git_clone` it into the workspace (or, if it's already there from an earlier step, `git_status`/`list_dir` to confirm).
 3. **`cd` in and orient at the edges.** Start outside-in; resist diving straight into source. The `cd` loads the repo's AGENTS.md/CLAUDE.md + project skills — read those, the README, and the package/build/CI files (`go.mod`, `package.json`, `Cargo.toml`, `.github/workflows/`) to learn what it does, how it's built and tested, and its conventions. Then `list_dir` (depth 2) for the layout. You read build/CI files to *report* their commands and conventions; you never run them (no `run_command` — by design).

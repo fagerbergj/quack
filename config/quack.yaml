@@ -99,7 +99,7 @@ agents:
     # load_skill/list_skills are auto-registered. load_memory/stage_memory + memory.md turn on task memory (M6):
     # recall/stage durable repo layout & conventions so repeat exploration of the same repo is faster.
     tools: [read_file, list_dir, glob, grep,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command]
   synthesizer:
     bundle: agents/synthesizer
     provider: default
