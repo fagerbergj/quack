@@ -102,5 +102,20 @@ func joinCwd(cwd, p string) string {
 	if cwd == "" {
 		return p
 	}
+	// Idempotent: a path that ALREADY starts with the cwd is taken as-is rather
+	// than joined onto it again.
+	//
+	// The model is handed workspace-relative paths constantly — `cd` reports its
+	// new dir that way, `git_clone` reports where it landed, `list_dir` echoes
+	// entry paths — and it very reasonably feeds them straight back. Without this,
+	// `cd openhands` (reporting dir "explorer-openhands/openhands") followed by
+	// read_file("explorer-openhands/openhands/README.md") resolved to
+	// <chat>/explorer-openhands/openhands/explorer-openhands/openhands/README.md
+	// and failed. The model then flails through variants: one live explorer node
+	// made 34 REPEATED calls out of 69 doing exactly this, and the whole node span
+	// looked like a spin. Doubling the cwd is never what anyone means.
+	if p == cwd || strings.HasPrefix(p, cwd+"/") {
+		return p
+	}
 	return filepath.Join(cwd, p)
 }
