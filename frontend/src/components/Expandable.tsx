@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 // Expandable height-locks long content: it renders its children inside a capped
@@ -7,11 +7,19 @@ import type { ReactNode } from 'react'
 // a long answer, a many-round node, or a big tool body stays scannable instead of
 // walling off the screen.
 //
-// The overflow decision is measured (scrollHeight vs the cap), re-checked after
-// every render (so streamed content that grows past the cap reveals the toggle)
-// and on container resize. The `fade` prop matches the underlying background so
-// the gradient reads as a fade-to-nothing rather than a grey bar; default is the
-// card background (white / gray-800).
+// The overflow decision is measured (scrollHeight vs the cap) on the CONTENT box —
+// never on the clamped box. Clamping changes that box's own layout (it becomes a
+// block formatting context and its full height leaves the scrolling ancestor), so
+// measuring the box we clamp feeds the decision back into its own input: measure
+// tall → clamp → measure short → unclamp → … Re-measured on every commit that
+// ping-pong is an unbounded chain of nested updates, and a streaming turn (hundreds
+// of token renders) hits React's guard — "Maximum update depth exceeded" (#185) —
+// which blanks the whole chat tree. The content box is never clamped, so its height
+// is independent of the decision, and one ResizeObserver on it covers both re-measure
+// triggers: streamed content growing, and width changes that rewrap long lines.
+//
+// The `fade` prop matches the underlying background so the gradient reads as a
+// fade-to-nothing rather than a grey bar; default is the card background.
 export function Expandable({
   children,
   maxHeight = 240,
@@ -29,19 +37,13 @@ export function Expandable({
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
 
-  // Measure after every render: streamed content grows token-by-token, and each
-  // growth re-renders, so this keeps `overflows` honest without an observer on the
-  // (height-clamped, so size-frozen) inner box.
   useLayoutEffect(() => {
     const el = ref.current
-    if (el) setOverflows(el.scrollHeight > maxHeight + 1)
-  })
-
-  // Re-measure on width changes (panel resize rewraps long lines).
-  useEffect(() => {
-    const el = ref.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(() => setOverflows(el.scrollHeight > maxHeight + 1))
+    if (!el) return
+    const measure = () => setOverflows(el.scrollHeight > maxHeight + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
   }, [maxHeight])
@@ -51,11 +53,10 @@ export function Expandable({
   return (
     <div className={className}>
       <div
-        ref={ref}
         style={collapsed ? { maxHeight } : undefined}
         className={collapsed ? 'relative overflow-hidden' : 'relative'}
       >
-        {children}
+        <div ref={ref}>{children}</div>
         {collapsed && (
           <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t to-transparent ${fade}`} />
         )}
