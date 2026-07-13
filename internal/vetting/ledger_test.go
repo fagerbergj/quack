@@ -3,16 +3,56 @@ package vetting
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // questionContent wraps text as a user content for prompt-builder tests.
 func questionContent(text string) *genai.Content {
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: text}}}
+}
+
+// evtPart pairs a genai part with the role its event carries.
+type evtPart struct {
+	role string
+	part *genai.Part
+}
+
+func fnCall(id, name string, args map[string]any) evtPart {
+	return evtPart{role: "model", part: &genai.Part{FunctionCall: &genai.FunctionCall{ID: id, Name: name, Args: args}}}
+}
+
+func fnResp(id, name string, resp map[string]any) evtPart {
+	return evtPart{role: "user", part: &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: id, Name: name, Response: resp}}}
+}
+
+// newTestSession builds an in-memory session carrying one event per part, in
+// order — enough to exercise activityFromSession's event walk.
+func newTestSession(t *testing.T, parts ...evtPart) session.Session {
+	t.Helper()
+	svc := session.InMemoryService()
+	ctx := context.Background()
+	resp, err := svc.Create(ctx, &session.CreateRequest{AppName: "t", UserID: "u", SessionID: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := resp.Session
+	for _, ep := range parts {
+		ev := session.NewEvent(ctx, "test")
+		ev.Author = "coder"
+		ev.Content = &genai.Content{Role: ep.role, Parts: []*genai.Part{ep.part}}
+		if err := svc.AppendEvent(ctx, sess, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return sess
 }
 
 func TestRecordWsOpSummaries(t *testing.T) {
@@ -147,7 +187,7 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 	act := workerActivity{workspace: []wsOp{
 		{tool: "read_file", detail: `read_file(path="README.md")`, sample: "# Real README"},
 	}}
-	got := buildJudgePrompt("", "rubric text", questionContent("do the task"), "the answer", act)
+	got := buildJudgePrompt("", "rubric text", questionContent("do the task"), "the answer", "", act)
 	if !strings.Contains(got, "Workspace activity") || !strings.Contains(got, `read_file(path="README.md")`) {
 		t.Errorf("judge prompt missing the workspace ledger:\n%s", got)
 	}
@@ -156,9 +196,71 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 	}
 	// A web-research node (no workspace ops) leaves the judge prompt exactly
 	// as before — no empty header.
-	got = buildJudgePrompt("", "rubric text", questionContent("q"), "a", workerActivity{})
+	got = buildJudgePrompt("", "rubric text", questionContent("q"), "a", "", workerActivity{})
 	if strings.Contains(got, "Workspace activity") {
 		t.Errorf("judge prompt should carry no workspace section without ops:\n%s", got)
+	}
+}
+
+func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := j.UserRoot("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "repo/app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The worker wrote logic but NO page — the exact incomplete-deliverable the
+	// judge must be able to see rather than trust the answer's "it's done".
+	if err := os.WriteFile(filepath.Join(root, "repo/app/logic.ts"), []byte("export const GRAVITY = 0.5 // real on-disk content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	act := workerActivity{written: []string{"repo/app/logic.ts"}}
+	got := buildChangedFilesSection(act, j, "u1")
+	if !strings.Contains(got, "repo/app/logic.ts") || !strings.Contains(got, "real on-disk content") {
+		t.Errorf("section missing the real file content:\n%s", got)
+	}
+	if !strings.Contains(got, "ACTUAL CURRENT CONTENT") {
+		t.Errorf("section missing the header:\n%s", got)
+	}
+	// No jail / no written files → no section (pure-research + unjailed paths).
+	if s := buildChangedFilesSection(act, nil, "u1"); s != "" {
+		t.Errorf("nil jail should yield no section, got:\n%s", s)
+	}
+	if s := buildChangedFilesSection(workerActivity{}, j, "u1"); s != "" {
+		t.Errorf("no written files should yield no section, got:\n%s", s)
+	}
+	// A path that no longer exists on disk is skipped, not an error.
+	if s := buildChangedFilesSection(workerActivity{written: []string{"repo/gone.ts"}}, j, "u1"); s != "" {
+		t.Errorf("unreadable path should be skipped, got:\n%s", s)
+	}
+}
+
+// TestActivityWrittenTracksCwd verifies write/edit paths are captured
+// jail-relative, resolved against the cwd a prior cd established.
+func TestActivityWrittenTracksCwd(t *testing.T) {
+	sess := newTestSession(t,
+		fnCall("c1", "cd", map[string]any{"dir": "repo"}),
+		fnResp("c1", "cd", map[string]any{"dir": "repo"}),
+		fnCall("w1", "write_file", map[string]any{"path": "app/logic.ts"}),
+		fnResp("w1", "write_file", map[string]any{"bytes": 42, "created": true}),
+		fnCall("w2", "write_file", map[string]any{"path": "/toplevel.ts"}),
+		fnResp("w2", "write_file", map[string]any{"bytes": 10, "created": true}),
+	)
+	act := activityFromSession(sess)
+	want := []string{"repo/app/logic.ts", "toplevel.ts"}
+	if len(act.written) != len(want) {
+		t.Fatalf("written = %v, want %v", act.written, want)
+	}
+	for i, w := range want {
+		if act.written[i] != w {
+			t.Errorf("written[%d] = %q, want %q", i, act.written[i], w)
+		}
 	}
 }
 

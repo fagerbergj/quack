@@ -90,6 +90,9 @@ func (p *Planner) Build(nodes []RawNode, history []HistoryTurn, message string, 
 	if err := p.checkImplementationRouting(plan, message); err != nil {
 		return nil, err
 	}
+	if err := p.checkCodeChecks(plan); err != nil {
+		return nil, err
+	}
 	plan.History = history
 	plan.UserMessage = message
 	plan.Attachments = attachments
@@ -136,6 +139,36 @@ func (p *Planner) checkImplementationRouting(plan *Plan, message string) error {
 		"checks, commit, push a branch, and open the PR — a repo analysis is a feeder step, never "+
 		"the deliverable. Re-author the plan with a %s node and call again.",
 		implementerAgent, implementerAgent, implementerAgent)
+}
+
+// checkCodeChecks is the deterministic backstop for the (observed, 2026-07-12)
+// failure where the planner leaves a code-implementer node's `checks` empty even
+// though the deployment configured check commands — so nothing deterministically
+// gates the build, and a blind judge passes an incomplete, non-compiling
+// deliverable. When check commands ARE configured, every code-implementer node
+// MUST carry checks (a code change with no build/typecheck/test gate is a
+// malformed plan); reject with a targeted, fixable error so the orchestrator
+// re-authors the DAG. A no-op when no check commands are configured (checks are
+// unavailable, so the plan-work skill tells the planner to omit them) — mirrors
+// checkImplementationRouting, and the plan-work skill's Code checks section
+// carries the rest.
+func (p *Planner) checkCodeChecks(plan *Plan) error {
+	if len(p.checkCommands) == 0 {
+		return nil
+	}
+	for _, n := range plan.Nodes {
+		if n.AgentName == implementerAgent && len(n.Checks) == 0 {
+			slog.Warn("plan rejected: code-implementer node has no checks though check commands are configured",
+				"component", "planner", "node", n.ID)
+			return fmt.Errorf("node %q is a %s node but sets no `checks`, yet this deployment configured "+
+				"check commands. Every %s node MUST carry `checks` covering build + typecheck + the tests "+
+				"nearest the change (each an allowed prefix from the plan tool's description) plus a `workdir` "+
+				"(the repo directory the node works in) — an incomplete or non-compiling deliverable must "+
+				"hard-fail deterministically, not ride on the judge alone. Add `checks` + `workdir` to every "+
+				"%s node and call again.", n.ID, implementerAgent, implementerAgent, implementerAgent)
+		}
+	}
+	return nil
 }
 
 // implementationIntent reports whether message asks for code to be implemented AND

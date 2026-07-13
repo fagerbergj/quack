@@ -21,7 +21,7 @@ Match the request to a known shape first; fall back to the general rules below.
 | Single information topic | ONE `web-researcher` node, no synthesizer |
 | Several distinct information topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
-| Write/fix/refactor code in a repo | ONE `code-implementer` node, with `checks` + `workdir` when checks are available (see Code checks) |
+| Write/fix/refactor code in a repo | ONE `code-implementer` node — `checks` + `workdir` are MANDATORY whenever checks are available (see Code checks) |
 | Review a PR / diff / branch / proposed change (read-only, no edits) | ONE `code-reviewer` node — it reads and critiques, never commits |
 | Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
 | Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
@@ -53,7 +53,8 @@ code and the opened PR — NOT an analysis of how one would do it. Two rules:
 - The **terminal** node MUST be a `code-implementer` node, and its `task` MUST cover
   the full end-to-end deliverable: clone the repo, study its conventions, implement
   the change with test coverage, make it pass the repo's checks, commit, push a
-  branch, and open the PR.
+  branch, and open the PR. Whenever checks are available, that node MUST also carry
+  `checks` + `workdir` (see Code checks) — non-negotiable for code that ships.
 - A "understand the repo / its conventions" step is at most an UPSTREAM feeder node —
   NEVER the terminal node and NEVER a substitute for the implementation. For a
   single-repo coding task, prefer folding "understand the repo" INTO the
@@ -67,13 +68,38 @@ logic."*
 - CORRECT — ONE `code-implementer` node: task = "Clone R, study its structure and
   conventions, implement a Flappy Bird game that fits them with tests for the game
   logic, run the repo's typecheck/lint/tests until green, commit, push a branch, and
-  open a pull request." (Add `checks` + `workdir` when the repo's check commands are
-  available.)
+  open a pull request." — plus `checks` (build + typecheck + the game-logic tests) and
+  `workdir` set, since the repo's check commands are available.
 - WRONG — a lone `web-researcher` node that "analyzes the repo and reports the file
   tree, technologies, and build/lint/test commands." It fails because the deliverable
   was the code and the PR, not a report; `web-researcher` cannot clone-edit-commit-push,
   and the run "completes" having done none of the actual work. (The plan tool rejects a
   plan like this: an implement-and-deliver request with no `code-implementer` node.)
+
+### Write the implement node's task as research → plan → implement
+
+A code-implementer task that jumps straight to writing code ships a fragment —
+isolated logic with no page, no wiring, that unit-tests green but isn't the
+feature. Write the node's `task` so it front-loads understanding before any code
+(this pairs with the implementer's own "complete vertical slice" standard — keep
+them consistent, don't re-teach its workflow):
+
+1. **Research first.** Study the repo's own conventions AND find a **sibling
+   feature of the same kind**, so the implementer knows the *complete structure*
+   a done deliverable has — entry point/route/page, sub-components, the
+   registration that makes it appear in the app, metadata, and tests.
+2. **Plan the full slice.** Enumerate every file and wiring point the sibling has
+   before writing, so nothing (the page, the registration, the metadata) is left
+   out.
+3. **Implement + test + verify** against the node's `checks` until green.
+
+Keep this as task *wording*, not extra nodes. The default is still ONE
+`code-implementer` node doing the research inline — it has the live repo in its
+own session (`git_clone` + `read_file` + `grep`), so a separate feeder node is
+redundant for a focused change in a conventional repo. Escalate to a standalone
+`code-explorer` feeder → implementer only when understanding the codebase is
+substantial work in its own right (see `references/breaking-down-large-work.md`,
+"When to split understanding from implementation").
 
 ## How to build the DAG
 
@@ -113,27 +139,33 @@ Work through these in order:
 
 ## Code checks (`checks` + `workdir` on a node)
 
-A `code-implementer` node can carry `checks`: commands the trust gate runs
-against the node's work after each draft — a failing check hard-fails vetting
-and its real compiler/test output feeds the revise prompt, so the implementer
-iterates against actual failures, not a reviewer's paraphrase.
+`checks` are commands the trust gate runs against a `code-implementer` node's
+work after each draft — a failing check hard-fails vetting and its real
+compiler/test output feeds the revise prompt, so the implementer iterates
+against actual failures, not a reviewer's paraphrase. Without them, nothing
+deterministically proves the deliverable even builds, and a judge alone can
+pass incomplete or non-compiling code.
 
 Rules:
 
-- The `plan` tool's description lists the **allowed command prefixes** for this
-  deployment. Each check must be exactly one of those prefixes, or extend one
-  with arguments after a space (`go test` → `go test ./...`). Pipes are fine
+- **Every `code-implementer` node MUST carry `checks` + `workdir` whenever the
+  deployment has check commands available** (the `plan` tool's description lists
+  the allowed prefixes). This is not optional — a code node with no checks while
+  checks are available is rejected at submission. OMIT `checks`/`workdir` ONLY
+  when the description says checks are **unavailable** (no prefixes configured).
+- The checks MUST cover **build + typecheck + the tests nearest the change**, so
+  an incomplete or non-compiling deliverable (logic with no wiring, a type error,
+  a missing file) hard-fails deterministically instead of riding on the judge.
+  Give the checks that actually verify the change, not every prefix available.
+- Each check must be exactly one of the allowed prefixes, or extend one with
+  arguments after a space (`go test` → `go test ./...`). Pipes are fine
   (`go vet ./... | head -50` — run natively, no shell). Anything else a shell
   would interpret (`& ; $ < > \` ( )`) rejects the whole plan at submission.
-- If the description says checks are **unavailable** (no prefixes configured),
-  OMIT `checks` and `workdir` entirely.
 - Set `workdir` to the workspace-relative directory the checks should run in —
   the repo the node clones or edits (e.g. `repo`, matching the `dir` its task
   tells it to clone into). Name that directory explicitly in the task text so
   the node and the checks agree on it.
-- Give a code node the checks that actually verify its change (typically a
-  build + the tests nearest the change), not every prefix available. Research
-  and synthesis nodes never carry checks.
+- Research and synthesis nodes never carry checks.
 
 ## Media routing
 

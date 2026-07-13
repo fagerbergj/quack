@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -729,6 +730,21 @@ func citationOnlyFailure(v verdict, threshold float64) bool {
 // paired to their responses by call ID, and web_search results feed the "seen"
 // set. Consumed by the deterministic citation check, the judge prompt's
 // workspace section (claims-vs-activity), and the revise/finalize prompts.
+// joinWritten resolves a worker's write/edit path argument to a jail-relative
+// path, applying the cwd in effect at the time of the call — the read-side
+// mirror of tools.joinCwd (kept here to avoid a vetting→tools dependency): a
+// leading "/" is jail-root-relative (cwd ignored), everything else is relative
+// to cwd. The result feeds Jail.Resolve, which re-verifies containment.
+func joinWritten(cwd, p string) string {
+	if strings.HasPrefix(p, "/") {
+		return strings.TrimPrefix(p, "/")
+	}
+	if cwd == "" {
+		return p
+	}
+	return filepath.Join(cwd, p)
+}
+
 func activityFromSession(sess session.Session) workerActivity {
 	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
 	if sess == nil {
@@ -737,6 +753,9 @@ func activityFromSession(sess session.Session) workerActivity {
 	pending := map[string]string{}           // web_fetch call ID → URL
 	pendingWs := map[string]map[string]any{} // workspace-tool call ID → args (see ledger.go)
 	pendingWsTool := map[string]string{}     // workspace-tool call ID → tool name
+	pendingCd := map[string]bool{}           // cd call ID → awaiting response (to track cwd)
+	curCwd := ""                             // jail-relative cwd in effect, updated on each successful cd
+	writtenSeen := map[string]bool{}         // dedup for act.written
 	for ev := range sess.Events().All() {
 		if ev == nil || ev.Content == nil {
 			continue
@@ -759,6 +778,8 @@ func activityFromSession(sess session.Session) workerActivity {
 					if cand, ok := stagedCandidate(p.FunctionCall); ok {
 						act.staged = append(act.staged, cand)
 					}
+				case "cd":
+					pendingCd[p.FunctionCall.ID] = true
 				default:
 					if isWorkspaceTool(p.FunctionCall.Name) {
 						pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
@@ -776,6 +797,22 @@ func activityFromSession(sess session.Session) workerActivity {
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_search" {
 				recordSearchResults(act.seen, p.FunctionResponse.Response)
+			}
+			if p.FunctionResponse != nil && p.FunctionResponse.Name == "cd" {
+				if pendingCd[p.FunctionResponse.ID] {
+					delete(pendingCd, p.FunctionResponse.ID)
+					if _, failed := p.FunctionResponse.Response["error"]; !failed {
+						// cd reports the new cwd as a jail-relative slash path
+						// ("." = root). Mirror the tool's own storage ("" at root)
+						// so joinWritten resolves later writes correctly.
+						if d, ok := p.FunctionResponse.Response["dir"].(string); ok {
+							if d == "." {
+								d = ""
+							}
+							curCwd = d
+						}
+					}
+				}
 			}
 			if p.FunctionResponse != nil && isWorkspaceTool(p.FunctionResponse.Name) {
 				// Only a completed call/response pair enters the ledger — an
@@ -819,6 +856,14 @@ func activityFromSession(sess session.Session) workerActivity {
 							if pth, ok := args["path"].(string); ok {
 								if np := normalizePath(pth); np != "" {
 									act.paths[np] = true
+								}
+								// write/edit only: record the jail-relative path so the
+								// judge can re-read the real post-edit source (buildChangedFilesSection).
+								if name := p.FunctionResponse.Name; name == "write_file" || name == "edit_file" {
+									if jr := joinWritten(curCwd, pth); jr != "" && !writtenSeen[jr] {
+										writtenSeen[jr] = true
+										act.written = append(act.written, jr)
+									}
 								}
 							}
 						}

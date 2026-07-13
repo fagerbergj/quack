@@ -112,6 +112,32 @@ component `depends_on`.
 
 ---
 
+## When to split understanding from implementation
+
+A `code-implementer` node already researches inline — it clones the repo into its
+own session and is told to study conventions and find a sibling feature before
+writing (see SKILL.md, "Write the implement node's task as research → plan →
+implement"). So the **default is ONE node**, understanding folded into its task —
+do NOT add a separate explorer node for a focused change in a conventional repo;
+that just makes the implementer re-learn context the feeder already paid for.
+
+Split a standalone `code-explorer` feeder node → `code-implementer` only when
+**understanding the codebase is substantial work in its own right**, i.e.:
+
+- the repo is large or unfamiliar enough that mapping how a feature is built is a
+  real task before any code can be written correctly;
+- **several** downstream implementer nodes share the same repo understanding (do
+  the exploration once, feed all of them);
+- the conventions are non-obvious and getting them wrong would mean rework across
+  the whole slice.
+
+When you do split, the explorer's report (structure, the sibling feature's full
+file set, conventions, wiring points) becomes the implementer node's brief — so
+the implementer still builds the complete vertical slice, just without re-deriving
+the map. One repo, one focused feature, conventional stack → keep it a single node.
+
+---
+
 ## Decision procedure
 
 1. **Parse** the request into distinct capabilities, domains, and user actions.

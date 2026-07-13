@@ -127,6 +127,14 @@ type workerActivity struct {
 	clonedRepos []string        // successful git_clone URLs
 	clonedDirs  []string        // the local dirs those clones landed in (normalizePath'd)
 	paths       map[string]bool // paths of successful fs ops (read/write/edit/delete), normalizePath'd
+
+	// written are the jail-relative paths the worker actually created/modified
+	// (successful write_file/edit_file only — not reads, not deletes), in
+	// first-touch order, resolved against the cwd in effect at the time of the
+	// call. buildChangedFilesSection re-reads these off disk so the judge scores
+	// the REAL post-edit source, not the worker's self-report (live 2026-07-12: a
+	// blind judge passed an incomplete, non-compiling deliverable it never read).
+	written []string
 }
 
 // wsOp is one workspace operation the worker actually performed — a completed
