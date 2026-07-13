@@ -80,6 +80,7 @@ func checksPassCriterion(cfg Config) (criterionScore, bool) {
 		}
 		slog.Info("derived checks from the repo", "component", "vetting", "node", cfg.NodeID, "dir", dir, "checks", checks)
 	}
+	var preexisting []string
 	for _, check := range checks {
 		stages, err := workspace.SplitPipeline(check)
 		if err != nil {
@@ -90,11 +91,31 @@ func checksPassCriterion(cfg Config) (criterionScore, bool) {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}
 		if res.ExitCode != 0 {
+			// The gate may only fail a node for what the node's own change BROKE.
+			// A check that already fails on the repo's base commit is repo debt the
+			// worker cannot fix and is not responsible for (baseline.go).
+			if failsAtBase(dir, check, cfg.WorkspaceCaps) {
+				slog.Warn("check already fails at base; not gating on it", "component", "vetting", "node", cfg.NodeID, "check", check)
+				preexisting = append(preexisting, check)
+				continue
+			}
 			return criterionScore{Score: 0, Reason: fmt.Sprintf(
-				"deterministic: check %q failed (exit %d):\n%s", check, res.ExitCode, boundCheckOutput(res.Output))}, true
+				"deterministic: check %q failed (exit %d):\n%s%s", check, res.ExitCode, boundCheckOutput(res.Output), preexistingNote(preexisting))}, true
 		}
 	}
-	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d check(s) passed", len(checks))}, true
+	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d check(s) passed%s", len(checks), preexistingNote(preexisting))}, true
+}
+
+// preexistingNote is the context line naming the checks that were IGNORED
+// because they already fail at the repo's base commit — so a worker reading the
+// revise feedback isn't confused by a check it saw fail that nothing asked it to
+// fix, and an operator reading the verdict sees the repo has debt.
+func preexistingNote(checks []string) string {
+	if len(checks) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n(ignored, not your fault: %s — already failing on the repo's base commit, before your change)",
+		strings.Join(checks, ", "))
 }
 
 // boundCheckOutput keeps a failing check's output within maxCheckOutputChars
