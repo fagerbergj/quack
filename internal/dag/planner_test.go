@@ -149,6 +149,44 @@ func TestBuildImplementationBackstopInertWithoutImplementerAgent(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Code-checks backstop: when the deployment configured check commands, a
+// code-implementer node with no `checks` is malformed (nothing deterministically
+// gates the build). Regression: live e2e 2026-07-12 — the planner set checks:None
+// and a blind judge passed an incomplete, non-compiling deliverable.
+// ---------------------------------------------------------------------------
+
+func TestBuildRejectsImplementerNodeWithoutChecks(t *testing.T) {
+	p := testPlanner("npx tsc", "npx vitest")
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR."},
+	}, nil, flappyPR, nil)
+	if err == nil {
+		t.Fatal("Build: expected rejection — code-implementer node with no checks while check commands are configured")
+	}
+}
+
+func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
+	p := testPlanner("npx tsc", "npx vitest")
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR.",
+			Checks: []string{"npx tsc", "npx vitest run"}, Workdir: "repo"},
+	}, nil, flappyPR, nil)
+	if err != nil {
+		t.Fatalf("Build: a code-implementer node WITH checks must pass: %v", err)
+	}
+}
+
+func TestBuildCodeChecksBackstopInertWhenUnconfigured(t *testing.T) {
+	p := testPlanner() // no check commands configured
+	_, err := p.Build([]RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR."},
+	}, nil, flappyPR, nil)
+	if err != nil {
+		t.Fatalf("Build: with no check commands configured, a checkless implementer node must pass: %v", err)
+	}
+}
+
 func TestImplementationIntent(t *testing.T) {
 	cases := map[string]bool{
 		"Add a Flappy Bird game to the repo and open it as a pull request.": true,

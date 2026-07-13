@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 const (
@@ -194,7 +196,7 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 // (reconstructed from session events, not from the worker's narration), so a
 // claims_match_activity rubric criterion can hard-fail an answer asserting an
 // operation the ledger doesn't contain (the live-e2e fabricated-commit hole).
-func buildJudgePrompt(constitution, rubric string, question *genai.Content, answer string, act workerActivity) string {
+func buildJudgePrompt(constitution, rubric string, question *genai.Content, answer, changedFiles string, act workerActivity) string {
 	var sb strings.Builder
 	if constitution != "" {
 		sb.WriteString("Principles:\n")
@@ -209,8 +211,67 @@ func buildJudgePrompt(constitution, rubric string, question *genai.Content, answ
 		sb.WriteString("\n\n")
 		sb.WriteString(ws)
 	}
+	if changedFiles != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(changedFiles)
+	}
 	sb.WriteString("\n\nAnswer to judge:\n")
 	sb.WriteString(answer)
+	return sb.String()
+}
+
+// changedFilesBudget caps the TOTAL bytes of changed-file content injected into
+// the judge prompt, and perFileBudget the slice of any single file — enough for
+// the judge to see the actual deliverable (a game's page + logic + tests) but
+// bounded so a large diff can't blow the judge's window. The judge still holds
+// read tools for anything it wants beyond this window.
+const (
+	changedFilesBudget = 24000
+	perFileBudget      = 8000
+	maxChangedFiles    = 12
+)
+
+// buildChangedFilesSection re-reads the files the worker actually wrote/edited
+// (act.written) off disk through the SAME jail its tools used and formats them
+// for the judge prompt, so a judge that (being a small model) won't tool-call
+// still scores the REAL post-edit source instead of the worker's self-report —
+// the fix for the 2026-07-12 run where a blind judge passed an incomplete,
+// non-compiling deliverable it never opened. Returns "" when there are no
+// written files or no jail is wired (pure-research nodes, unjailed deployments).
+// Best-effort: a path that fails to resolve/read is skipped, degrading to
+// today's no-injection behaviour rather than erroring.
+func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID string) string {
+	if len(act.written) == 0 || jail == nil {
+		return ""
+	}
+	var sb strings.Builder
+	total := 0
+	shown := 0
+	for _, rel := range act.written {
+		if shown >= maxChangedFiles || total >= changedFilesBudget {
+			break
+		}
+		abs, err := jail.Resolve(userID, rel)
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(abs)
+		if err != nil {
+			continue // deleted-after-write, moved, or unreadable — skip
+		}
+		body := boundExcerpt(string(raw), perFileBudget)
+		if rem := changedFilesBudget - total; len(body) > rem {
+			body = boundExcerpt(body, rem)
+		}
+		if shown == 0 {
+			sb.WriteString("ACTUAL CURRENT CONTENT OF THE FILES THE WORKER CREATED/CHANGED (read these; do not trust the answer's description of them — judge the code that is really on disk: does the deliverable actually build, is it complete, does it match the repo's conventions, are the tests real):\n")
+		}
+		fmt.Fprintf(&sb, "\n----- %s -----\n", rel)
+		sb.WriteString(body)
+		sb.WriteString("\n")
+		total += len(body)
+		shown++
+	}
 	return sb.String()
 }
 
@@ -247,7 +308,8 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer, act)}}
+	changedFiles := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID)
+	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer, changedFiles, act)}}
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {
 			parts = append(parts, p)

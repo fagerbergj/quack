@@ -35,10 +35,12 @@ type planResult struct {
 func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) — omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
-		checksDesc = fmt.Sprintf("Optionally set `checks` (commands the trust gate runs against a "+
-			"code-implementer node's output — a failing check hard-fails vetting and its output feeds the "+
-			"revise prompt) and `workdir` (the workspace-relative repo dir checks run in). Each check must be "+
-			"exactly, or extend with a space, one of these allowed prefixes: %s.", strings.Join(cc, ", "))
+		checksDesc = fmt.Sprintf("Every code-implementer node MUST set `checks` (commands the trust gate runs "+
+			"against the node's output — a failing check hard-fails vetting and its output feeds the revise "+
+			"prompt) and `workdir` (the workspace-relative repo dir checks run in); a code node without checks is "+
+			"rejected. Give it build + typecheck + the tests nearest the change so an incomplete or non-compiling "+
+			"deliverable hard-fails deterministically. Each check must be exactly, or extend with a space, one of "+
+			"these allowed prefixes: %s. (Research/synthesis nodes never carry checks.)", strings.Join(cc, ", "))
 	}
 	return functiontool.New[planArgs, planResult](
 		functiontool.Config{
