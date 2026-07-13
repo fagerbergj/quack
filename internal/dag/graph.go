@@ -57,6 +57,12 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// the plan node directly, so it stays plan/executor-agnostic.
 		cfg.Checks = node.Checks
 		cfg.Workdir = node.Workdir
+		cfg.NodeID = node.ID
+		// The planner has NOT seen the repo when it authors the plan, so `checks`
+		// are optional: for a code-implementer node the gate DERIVES them from the
+		// cloned repo itself (vetting.deriveChecks) when the planner set none. A
+		// planner-set list still wins.
+		cfg.DeriveChecks = node.AgentName == implementerAgent
 		// Per-chat workspace scope: the node's deterministic checks resolve their
 		// Workdir under <root>/<user>/<chatID>/ — the same tree the node's own
 		// git_clone/fs tools wrote to (they derive the SAME chatID from the

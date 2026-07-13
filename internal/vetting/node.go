@@ -668,11 +668,11 @@ func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config)
 	if det, details, hasCites := citationScore(answer, act); hasCites {
 		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), det)}
 	}
-	// §4: orchestrator-set deterministic gate checks (a code-implementer
-	// node's `go build`/`go test`/… commands) — untouched for a node with no
-	// Checks configured (research, synthesis).
-	if len(cfg.Checks) > 0 {
-		v.Criteria["checks_pass"] = checksPassCriterion(cfg)
+	// §4: deterministic gate checks — the planner's `checks` when it set them,
+	// else the ones derived from the repo on disk (checks.go). Untouched for a
+	// node that has neither (research, synthesis).
+	if c, ok := checksPassCriterion(cfg); ok {
+		v.Criteria["checks_pass"] = c
 	}
 	return aggregateVerdict(v)
 }

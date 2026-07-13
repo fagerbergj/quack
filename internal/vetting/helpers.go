@@ -64,8 +64,21 @@ type Config struct {
 	// every agent's BASE Config (see FromConfig) — this field only ever gets a
 	// value per-node, never per-agent.
 	Checks []string
+	// DeriveChecks marks a node whose checks the gate DERIVES from the repo on
+	// disk when Checks is empty (deriveChecks in checks.go) — set per-node by
+	// dag.buildGateNodes for code-implementer nodes. The planner authors the DAG
+	// before anything has looked at the repo, so it cannot know the repo's check
+	// commands; a set Checks list is an explicit override that still wins.
+	DeriveChecks bool
+	// CheckCommands is the configured workspace.check_commands allowlist — the
+	// security boundary every check must prefix-match, whether the planner wrote
+	// it (dag.validateChecks) or the gate derived it. Empty ⇒ checks disabled.
+	CheckCommands []string
+	// NodeID identifies the node in the gate's check logs.
+	NodeID string
 	// Workdir is the workspace-relative directory Checks run in (the node's
-	// repo, e.g. "repo" after a git_clone). Ignored when Checks is empty.
+	// repo, e.g. "repo" after a git_clone). When unset and checks are derived,
+	// the gate locates the single repo in the node's workspace scope.
 	Workdir string
 	// ChatID is the per-chat workspace scope (the chat/session id) Checks
 	// resolve their Workdir under, so a node's deterministic checks run in the

@@ -30,6 +30,20 @@ func ContainsShellMetachar(s string) bool {
 	return strings.ContainsAny(s, shellMetachars)
 }
 
+// MatchesCheckPrefix reports whether check IS one of prefixes, or extends one
+// with a space-separated continuation (e.g. "go test ./..." extends "go test";
+// "go testing" does not). The check_commands allowlist is the security boundary
+// for gate checks, whether they were written by the planner (dag.validateChecks)
+// or derived from the repo (vetting.deriveChecks) — both funnel through here.
+func MatchesCheckPrefix(check string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if check == p || strings.HasPrefix(check, p+" ") {
+			return true
+		}
+	}
+	return false
+}
+
 // SplitArgv splits s into an argv array WITHOUT invoking a shell: fields are
 // whitespace-separated; a single- or double-quoted span is kept as one field
 // (quotes stripped); a backslash escapes the next character outside single

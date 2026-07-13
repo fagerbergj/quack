@@ -499,6 +499,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gateCfg.Workspace = jail
 		gateCfg.WorkspaceUserID = localUserID
 		gateCfg.WorkspaceCaps = workspaceCaps
+		// The allowlist every check must prefix-match — the security boundary for
+		// BOTH planner-set checks (validated at plan time) and the checks the gate
+		// derives from the repo (vetting.deriveChecks). Empty ⇒ checks disabled.
+		gateCfg.CheckCommands = cfg.Workspace.CheckCommands
 		// The judge model is only built when the judge stage is active; the
 		// deterministic + self-critique stages run without it. Citation backing is
 		// checked deterministically in code, so the judge no longer carries web
