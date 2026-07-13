@@ -29,7 +29,10 @@ func testChecksConfig(t *testing.T, checks []string, workdir string) Config {
 
 func TestChecksPassCriterionAllPass(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"true", "true"}, "")
-	got := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply")
+	}
 	if got.Score != 1 {
 		t.Errorf("Score = %v, want 1 (all checks passed)", got.Score)
 	}
@@ -37,7 +40,10 @@ func TestChecksPassCriterionAllPass(t *testing.T) {
 
 func TestChecksPassCriterionOneFails(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"true", "false"}, "")
-	got := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply")
+	}
 	if got.Score != 0 {
 		t.Fatalf("Score = %v, want 0 (a check failed)", got.Score)
 	}
@@ -48,7 +54,10 @@ func TestChecksPassCriterionOneFails(t *testing.T) {
 
 func TestChecksPassCriterionNoWorkspaceFailsClosed(t *testing.T) {
 	cfg := Config{Checks: []string{"true"}} // Workspace deliberately nil
-	got := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply (explicit Checks, fail closed)")
+	}
 	if got.Score != 0 {
 		t.Errorf("Score = %v, want 0 (fail closed with no workspace wired up)", got.Score)
 	}
@@ -59,7 +68,10 @@ func TestChecksPassCriterionOutputInReason(t *testing.T) {
 	// that doesn't exist reliably prints a recognizable error and exits
 	// non-zero, without needing a shell (RunArgv never invokes one).
 	cfg := testChecksConfig(t, []string{"ls /quack-checks-test-does-not-exist-xyz"}, "")
-	got := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply")
+	}
 	if got.Score != 0 {
 		t.Fatalf("Score = %v, want 0", got.Score)
 	}

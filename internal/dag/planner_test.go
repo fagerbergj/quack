@@ -150,19 +150,22 @@ func TestBuildImplementationBackstopInertWithoutImplementerAgent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Code-checks backstop: when the deployment configured check commands, a
-// code-implementer node with no `checks` is malformed (nothing deterministically
-// gates the build). Regression: live e2e 2026-07-12 — the planner set checks:None
-// and a blind judge passed an incomplete, non-compiling deliverable.
+// Checks are OPTIONAL. Regression (live e2e 2026-07-12): PR #180's checkCodeChecks
+// backstop REJECTED any code-implementer node with empty `checks` whenever check
+// commands were configured — but the planner authors the DAG before anything has
+// looked at the repo, so it can only GUESS the commands (it guessed `go build` for
+// a JavaScript repo). The run thrashed through 7 rejected plans and executed ZERO
+// nodes. Checks are a property of the REPO: the trust gate now derives them from
+// the cloned repo (vetting.deriveChecks); a planner-set list still wins.
 // ---------------------------------------------------------------------------
 
-func TestBuildRejectsImplementerNodeWithoutChecks(t *testing.T) {
+func TestBuildAcceptsImplementerNodeWithoutChecks(t *testing.T) {
 	p := testPlanner("npx tsc", "npx vitest")
 	_, err := p.Build([]RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR."},
 	}, nil, flappyPR, nil)
-	if err == nil {
-		t.Fatal("Build: expected rejection — code-implementer node with no checks while check commands are configured")
+	if err != nil {
+		t.Fatalf("Build: a code-implementer node with NO checks must be accepted (the gate derives them): %v", err)
 	}
 }
 
@@ -174,16 +177,6 @@ func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
 	}, nil, flappyPR, nil)
 	if err != nil {
 		t.Fatalf("Build: a code-implementer node WITH checks must pass: %v", err)
-	}
-}
-
-func TestBuildCodeChecksBackstopInertWhenUnconfigured(t *testing.T) {
-	p := testPlanner() // no check commands configured
-	_, err := p.Build([]RawNode{
-		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR."},
-	}, nil, flappyPR, nil)
-	if err != nil {
-		t.Fatalf("Build: with no check commands configured, a checkless implementer node must pass: %v", err)
 	}
 }
 

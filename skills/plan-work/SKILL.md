@@ -21,7 +21,7 @@ Match the request to a known shape first; fall back to the general rules below.
 | Single information topic | ONE `web-researcher` node, no synthesizer |
 | Several distinct information topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
-| Write/fix/refactor code in a repo | ONE `code-implementer` node — `checks` + `workdir` are MANDATORY whenever checks are available (see Code checks) |
+| Write/fix/refactor code in a repo | ONE `code-implementer` node (the gate derives its checks from the repo — see Code checks) |
 | Review a PR / diff / branch / proposed change (read-only, no edits) | ONE `code-reviewer` node — it reads and critiques, never commits |
 | Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
 | Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
@@ -53,8 +53,8 @@ code and the opened PR — NOT an analysis of how one would do it. Two rules:
 - The **terminal** node MUST be a `code-implementer` node, and its `task` MUST cover
   the full end-to-end deliverable: clone the repo, study its conventions, implement
   the change with test coverage, make it pass the repo's checks, commit, push a
-  branch, and open the PR. Whenever checks are available, that node MUST also carry
-  `checks` + `workdir` (see Code checks) — non-negotiable for code that ships.
+  branch, and open the PR. Do NOT guess `checks` for it — the gate derives them
+  from the repo (see Code checks).
 - A "understand the repo / its conventions" step is at most an UPSTREAM feeder node —
   NEVER the terminal node and NEVER a substitute for the implementation. For a
   single-repo coding task, prefer folding "understand the repo" INTO the
@@ -68,8 +68,8 @@ logic."*
 - CORRECT — ONE `code-implementer` node: task = "Clone R, study its structure and
   conventions, implement a Flappy Bird game that fits them with tests for the game
   logic, run the repo's typecheck/lint/tests until green, commit, push a branch, and
-  open a pull request." — plus `checks` (build + typecheck + the game-logic tests) and
-  `workdir` set, since the repo's check commands are available.
+  open a pull request." — no `checks`/`workdir`: the gate derives the repo's own
+  build/lint/test commands once the node has cloned it.
 - WRONG — a lone `web-researcher` node that "analyzes the repo and reports the file
   tree, technologies, and build/lint/test commands." It fails because the deliverable
   was the code and the PR, not a report; `web-researcher` cannot clone-edit-commit-push,
@@ -142,34 +142,36 @@ Work through these in order:
 `checks` are commands the trust gate runs against a `code-implementer` node's
 work after each draft — a failing check hard-fails vetting and its real
 compiler/test output feeds the revise prompt, so the implementer iterates
-against actual failures, not a reviewer's paraphrase. Without them, nothing
-deterministically proves the deliverable even builds, and a judge alone can
-pass incomplete or non-compiling code.
+against actual failures, not a reviewer's paraphrase.
+
+**`checks` are OPTIONAL, and you should almost always omit them.** Check commands
+are a property of the REPO — and you have NOT seen the repo when you author the
+plan. Guessing them produces nonsense (`go build` for a JavaScript repo; `npx
+tsc` for a repo whose typecheck is `next build`). So don't guess: the trust gate
+**derives** a code node's checks from the repo itself once the node has cloned it
+— reading the repo's OWN `package.json` scripts (`npm run build`/`lint`/`test`),
+or its `go.mod` (`go build ./...`, `go vet ./...`, `go test ./...`), or its
+`Makefile` targets — and runs only the ones the deployment allows.
 
 Rules:
 
-- **Every `code-implementer` node MUST carry `checks` + `workdir` whenever the
-  deployment has check commands available** (the `plan` tool's description lists
-  the allowed prefixes). This is not optional — a code node with no checks while
-  checks are available is rejected at submission. OMIT `checks`/`workdir` ONLY
-  when the description says checks are **unavailable** (no prefixes configured).
-- The checks MUST cover **build + typecheck + the tests nearest the change**, so
-  an incomplete or non-compiling deliverable (logic with no wiring, a type error,
-  a missing file) hard-fails deterministically instead of riding on the judge.
-  Give the checks that actually verify the change, not every prefix available.
-- Each check must be exactly one of the allowed prefixes, or extend one with
-  arguments after a space (`go test` → `go test ./...`). Pipes are fine
-  (`go vet ./... | head -50` — run natively, no shell). Anything else a shell
-  would interpret (`& ; $ < > \` ( )`) rejects the whole plan at submission.
-- Set `workdir` to the workspace-relative directory the checks should run in —
-  the repo the node clones or edits (e.g. `repo`, matching the `dir` its task
-  tells it to clone into). Name that directory explicitly in the task text so
-  the node and the checks agree on it.
-- The checks run against a **fresh clone**, which has none of the project's
-  dependencies installed — so the node's TASK must tell the implementer to install
-  them first (`npm ci`, `go mod download`, …, whatever the repo uses) before its
-  build/test commands exist. Skip that and every check fails closed with "command
-  not found" (exit 127) and the node burns its whole revise budget on it.
+- **Omit `checks` (and `workdir`) by default.** Set them ONLY when the user
+  explicitly named the commands to run ("make sure `npm run e2e` passes"). A
+  planner-set list is an explicit override and wins over derivation.
+- When you do set them, each check must be exactly one of the allowed prefixes
+  listed in the `plan` tool's description, or extend one with arguments after a
+  space (`go test` → `go test ./...`). Pipes are fine (`go vet ./... | head -50` —
+  run natively, no shell). Anything else a shell would interpret
+  (`& ; $ < > \` ( )`) rejects the whole plan at submission.
+- When you set `checks`, also set `workdir` — the workspace-relative directory
+  they run in (e.g. `repo`, matching the `dir` the task tells the node to clone
+  into). Name that directory explicitly in the task text so the node and the
+  checks agree on it. (With no `workdir`, the gate finds the node's repo itself.)
+- Checks — yours or the gate's derived ones — run against a **fresh clone**, which
+  has none of the project's dependencies installed. The node's TASK must tell the
+  implementer to install them first (`npm ci`, `go mod download`, …, whatever the
+  repo uses); skip that and the checks fail closed with "command not found" and the
+  node burns its revise budget on it.
 - Research and synthesis nodes never carry checks.
 
 ## Media routing
