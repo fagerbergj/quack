@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strconv"
@@ -163,6 +164,9 @@ func (a *App) addReviewCommentTool() tool.Tool {
 		functiontool.Config{
 			Name: "github_add_review_comment",
 			Description: "Record ONE inline comment on a pull request, anchored to `path` and `line` in the diff. " +
+				"`path` is REPO-RELATIVE, exactly as the file appears in the PR diff (`app/game.ts`) — NOT the " +
+				"workspace/clone path you read it from (`games/app/game.ts`); a clone-dir prefix is stripped for you " +
+				"when it resolves to exactly one changed file. " +
 				"The line is validated against the PR diff immediately: if `path` isn't a changed file or `line` " +
 				"isn't a commentable line in its diff, the comment is REJECTED with the valid line range so you can " +
 				"fix it. Accepted comments accumulate in a draft (they are NOT posted yet) — call github_submit_review " +
@@ -195,15 +199,19 @@ func (a *App) addReviewComment(ctx context.Context, args addReviewCommentArgs) (
 	if err != nil {
 		return addReviewCommentResult{}, err
 	}
-	if err := validateLocation(positions, args.Path, args.Line, side); err != nil {
+	path, err := resolvePath(positions, args.Path)
+	if err != nil {
+		return addReviewCommentResult{}, err
+	}
+	if err := validateLocation(positions, path, args.Line, side); err != nil {
 		return addReviewCommentResult{}, err
 	}
 	if args.StartLine != 0 {
-		if err := validateLocation(positions, args.Path, args.StartLine, sideOr(args.StartSide, side)); err != nil {
+		if err := validateLocation(positions, path, args.StartLine, sideOr(args.StartSide, side)); err != nil {
 			return addReviewCommentResult{}, fmt.Errorf("start_line: %w", err)
 		}
 	}
-	c := reviewComment{Path: args.Path, Line: args.Line, Body: args.Body}
+	c := reviewComment{Path: path, Line: args.Line, Body: args.Body}
 	if side != "RIGHT" {
 		c.Side = side
 	}
@@ -223,8 +231,62 @@ func sideOr(s, fallback string) string {
 	return fallback
 }
 
-// validateLocation checks path is a changed file and line is commentable on the
-// given side, returning a clear error (with the valid line range) otherwise.
+// resolvePath maps the agent's `path` onto a file in the PR diff. A PR diff
+// addresses files REPO-relative ("app/game.ts"), but the agent works inside a
+// clone directory in its workspace and naturally says "games/app/game.ts" — so
+// on an inexact match we resolve by path-segment suffix (either direction).
+// Exactly one candidate → accept it. Zero or many → an actionable error: the
+// model cannot self-correct from "not a changed file" alone.
+func resolvePath(positions map[string]diffPositions, path string) (string, error) {
+	p := strings.Trim(strings.TrimPrefix(strings.TrimSpace(path), "./"), "/")
+	if _, ok := positions[p]; ok {
+		return p, nil
+	}
+	var candidates []string
+	for f := range positions {
+		if strings.HasSuffix(p, "/"+f) || strings.HasSuffix(f, "/"+p) {
+			candidates = append(candidates, f)
+		}
+	}
+	sort.Strings(candidates)
+	switch len(candidates) {
+	case 1:
+		slog.Debug("github: normalised review-comment path to its repo-relative form",
+			"component", "github", "given", path, "resolved", candidates[0])
+		return candidates[0], nil
+	case 0:
+		return "", fmt.Errorf("github_add_review_comment: %q is not a changed file in this PR. `path` must be REPO-RELATIVE, exactly as the file appears in the PR diff (e.g. \"app/game.ts\"), NOT the workspace/clone path (e.g. \"games/app/game.ts\"). Changed files in this PR: %s", path, joinCapped(changedFiles(positions)))
+	default:
+		return "", fmt.Errorf("github_add_review_comment: %q is ambiguous — it matches several changed files: %s. Re-send `path` as the full repo-relative path of the one you mean", path, joinCapped(candidates))
+	}
+}
+
+// changedFiles returns the PR's changed files, sorted.
+func changedFiles(positions map[string]diffPositions) []string {
+	files := make([]string, 0, len(positions))
+	for f := range positions {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	return files
+}
+
+// joinCapped renders paths as a comma-separated list, capped so a huge PR can't
+// blow the model's context.
+func joinCapped(paths []string) string {
+	if len(paths) == 0 {
+		return "(none — this PR has no changed files with a diff)"
+	}
+	const maxShown = 30
+	if len(paths) > maxShown {
+		return strings.Join(paths[:maxShown], ", ") + fmt.Sprintf(", … (%d more)", len(paths)-maxShown)
+	}
+	return strings.Join(paths, ", ")
+}
+
+// validateLocation checks line is commentable on the given side of path (already
+// resolved to a changed file by resolvePath), returning a clear error (with the
+// valid line range) otherwise.
 func validateLocation(positions map[string]diffPositions, path string, line int, side string) error {
 	dp, ok := positions[path]
 	if !ok {
