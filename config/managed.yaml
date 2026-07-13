@@ -59,7 +59,7 @@ agents:
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
     tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
-            cd, git_clone, git_status, git_diff, git_log, git_commit, git_branch,
+            cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
             run_command, ask_advisor]
   code-reviewer:
@@ -72,7 +72,7 @@ agents:
     # load_memory/stage_memory + memory.md turn on task memory (M6): recall/stage durable project conventions & decisions.
     # web_fetch (no web_search): verify a specific external claim; RequireRetrieval is already met by read_file.
     tools: [read_file, list_dir, glob, grep, web_fetch,
-            cd, git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   code-explorer:
     bundle: agents/code-explorer      # read-only explorer; rubric grades EXPLORATION quality (code-grounding/accuracy/usefulness), not web citations
     provider: default
@@ -83,7 +83,7 @@ agents:
     # (<repo>@<path>), so RequireRetrieval does NOT fire and it's judged by its bundle's exploration rubric.
     # load_memory/stage_memory + memory.md turn on task memory (M6): recall/stage durable repo layout & conventions.
     tools: [read_file, list_dir, glob, grep,
-            cd, git_clone, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

@@ -99,6 +99,7 @@ var registry = map[string]constructor{
 	// Git tools (internal/tools/git.go), all bound to (userID, jail,
 	// credentials, push-enabled) — see gitBinding / newGitBinding.
 	"git_clone":           newGitClone,
+	"git_checkout":        newGitCheckout,
 	"git_status":          newGitStatus,
 	"git_diff":            newGitDiff,
 	"git_log":             newGitLog,

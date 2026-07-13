@@ -356,7 +356,8 @@ type gitCloneArgs struct {
 	Dir string `json:"dir,omitempty"`
 	// Depth is a pointer so an EXPLICIT 0 ("full history") is distinguishable
 	// from absent ("default shallow depth 1") — the schema's contract.
-	Depth *int `json:"depth,omitempty"` // default 1 (shallow); 0 = full
+	Depth  *int   `json:"depth,omitempty"`  // default 1 (shallow); 0 = full
+	Branch string `json:"branch,omitempty"` // clone straight to this branch/tag (default: the repo's default branch)
 }
 
 type gitCloneResult struct {
@@ -376,7 +377,9 @@ func newGitClone(d Deps) (tool.Tool, error) {
 			Description: "Clone a git repository into your workspace. `url` must be a plain https:// URL with no " +
 				"embedded credentials — configure a deployment-level credential (workspace.git_credentials) for " +
 				"private repos instead. `dir` (workspace-relative) defaults to the repo name; `depth` defaults to " +
-				"1 (a shallow clone) — pass 0 for full history.",
+				"1 (a shallow clone) — pass 0 for full history. `branch` clones straight to that branch/tag instead " +
+				"of the repo's default branch (to review a pull request, clone then use git_checkout, which also " +
+				"fetches the history a diff against the base branch needs).",
 		},
 		func(ctx agent.Context, a gitCloneArgs) (gitCloneResult, error) { return b.withCwd(ctx).gitClone(a) },
 	)
@@ -420,6 +423,16 @@ func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
 	if dir == "" {
 		dir = defaultCloneDir(u)
 	}
+	return b.cloneRepo(a.URL, dir, a.Depth, a.Branch)
+}
+
+// cloneRepo is the clone itself, past git_clone's URL validation: resolve the
+// target through the jail, build the argv, run it. Split out so the clone path
+// is exercisable against a local (file://) remote in tests.
+func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) (gitCloneResult, error) {
+	if err := validateRef(branch, "git_clone"); branch != "" && err != nil {
+		return gitCloneResult{}, err
+	}
 	target, err := b.resolve(dir)
 	if err != nil {
 		return gitCloneResult{}, err
@@ -435,16 +448,19 @@ func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
 	}
 
 	depth := defaultCloneDepth // absent → shallow
-	if a.Depth != nil {
-		depth = *a.Depth // explicit 0 (or negative) → full history
+	if depthArg != nil {
+		depth = *depthArg // explicit 0 (or negative) → full history
 	}
 	argv := []string{"clone", "--quiet"}
 	if depth > 0 {
 		argv = append(argv, "--depth", strconv.Itoa(depth))
 	}
-	argv = append(argv, a.URL, target)
+	if branch != "" {
+		argv = append(argv, "--branch", branch)
+	}
+	argv = append(argv, rawURL, target)
 
-	auth, err := b.authFor(a.URL)
+	auth, err := b.authFor(rawURL)
 	if err != nil {
 		return gitCloneResult{}, err
 	}
@@ -476,6 +492,100 @@ func gitHeadInfo(dir string, caps workspace.Caps) (head, branch string, err erro
 	}
 	branch = strings.TrimSpace(out)
 	return head, branch, nil
+}
+
+// ---------------------------------------------------------------------------
+// git_checkout
+// ---------------------------------------------------------------------------
+
+type gitCheckoutArgs struct {
+	Dir string `json:"dir"`
+	Ref string `json:"ref"`
+}
+
+type gitCheckoutResult struct {
+	Ref    string `json:"ref"`
+	Head   string `json:"head"`
+	Branch string `json:"branch"` // "HEAD" when the ref was a SHA/tag (detached)
+}
+
+// validateRef rejects a ref that would be read by git as an OPTION rather than
+// a ref (anything leading with "-", e.g. "--upload-pack=…"). argv-only exec
+// means a ref can never become a shell command, but it could still smuggle a
+// git flag into the argv — this is the other half of that guard.
+func validateRef(ref, tool string) error {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return fmt.Errorf("%s: ref must not be empty", tool)
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("%s: ref %q looks like a command-line option, not a ref", tool, ref)
+	}
+	return nil
+}
+
+func newGitCheckout(d Deps) (tool.Tool, error) {
+	b, err := newGitBinding(d)
+	if err != nil {
+		return nil, err
+	}
+	return functiontool.New[gitCheckoutArgs, gitCheckoutResult](
+		functiontool.Config{
+			Name: "git_checkout",
+			Description: "Switch a cloned repository's working tree to an EXISTING branch, tag or commit. " +
+				"Use this to reach a pull request's branch: git_clone lands on the default branch only " +
+				"(and shallow, by default), so a PR's code is otherwise unreachable. The ref is fetched from " +
+				"origin first and the clone is deepened as needed, so afterwards `git_diff` against the base " +
+				"branch (e.g. ref `main...HEAD`) shows exactly what the PR changed. " +
+				"Do NOT use to create a new branch — that's git_branch.",
+		},
+		func(ctx agent.Context, a gitCheckoutArgs) (gitCheckoutResult, error) {
+			return b.withCwd(ctx).gitCheckout(a)
+		},
+	)
+}
+
+func (b gitBinding) gitCheckout(a gitCheckoutArgs) (gitCheckoutResult, error) {
+	if err := validateRef(a.Ref, "git_checkout"); err != nil {
+		return gitCheckoutResult{}, err
+	}
+	ref := strings.TrimSpace(a.Ref)
+	dir, err := b.resolve(a.Dir)
+	if err != nil {
+		return gitCheckoutResult{}, err
+	}
+	ctx := context.Background()
+
+	// Fetch first: after `clone --depth 1` (which implies --single-branch) the
+	// repo holds ONE branch at ONE commit, so neither the PR branch nor a
+	// merge-base with the base branch exists locally. Widen the refspec back to
+	// all branches, then fetch — deepening a shallow clone to full history,
+	// because a review's whole product is `git diff main...HEAD` and a shallow
+	// repo has no merge-base to compute it from. Best-effort: a repo with no
+	// origin (or an offline one) must still be able to check out a local ref.
+	if remoteURL, rerr := gitRemoteURL(dir, b.caps); rerr == nil {
+		auth, err := b.authFor(remoteURL)
+		if err != nil {
+			return gitCheckoutResult{}, err
+		}
+		_, _, _ = runGit(ctx, dir, []string{"remote", "set-branches", "origin", "*"}, b.caps, nil)
+		argv := []string{"fetch", "--quiet", "--tags"}
+		if shallow, _, _ := runGit(ctx, dir, []string{"rev-parse", "--is-shallow-repository"}, b.caps, nil); strings.TrimSpace(shallow) == "true" {
+			argv = append(argv, "--unshallow") // errors on a complete repo, hence the probe
+		}
+		_, _, _ = runGit(ctx, dir, append(argv, "origin"), b.caps, auth)
+	}
+
+	// A remote-only branch DWIMs into a local tracking branch here; a tag or SHA
+	// checks out detached. An unknown ref surfaces git's own error verbatim.
+	if _, _, err := runGit(ctx, dir, []string{"checkout", "--quiet", ref}, b.caps, nil); err != nil {
+		return gitCheckoutResult{}, err
+	}
+	head, branch, err := gitHeadInfo(dir, b.caps)
+	if err != nil {
+		return gitCheckoutResult{}, err
+	}
+	return gitCheckoutResult{Ref: ref, Head: head, Branch: branch}, nil
 }
 
 // ---------------------------------------------------------------------------
