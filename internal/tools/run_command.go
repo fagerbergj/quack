@@ -29,6 +29,8 @@ type runCommandResult struct {
 	ExitCode   int    `json:"exit_code"`
 	Output     string `json:"output"` // combined, tail-truncated
 	DurationMs int64  `json:"duration_ms"`
+	// Cwd is the directory the command ran in.
+	Cwd string `json:"cwd"`
 }
 
 // runCommandDescription tells the model exactly what holds and what doesn't.
@@ -174,5 +176,5 @@ func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 	}
 	slog.Info("workspace exec", "component", "tools", "tool", "run_command",
 		"user", b.userID, "dir", dirArg, "command", command, "stages", len(stages), "exit", res.ExitCode, "duration_ms", dur)
-	return runCommandResult{ExitCode: res.ExitCode, Output: res.Output, DurationMs: dur}, nil
+	return runCommandResult{ExitCode: res.ExitCode, Output: res.Output, DurationMs: dur, Cwd: displayCwd(b.cwd)}, nil
 }

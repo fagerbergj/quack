@@ -558,9 +558,21 @@ func toInt(v any) int {
 func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
 	var sb strings.Builder
 	if plan.UserMessage != "" {
-		sb.WriteString("User's request (verbatim):\n")
+		// The verbatim request is BACKGROUND, and must say so. Handed over bare, a node
+		// reads the whole brief as its own to-do list and starts doing its siblings'
+		// work: live (code-mode dogfood), the `goose` explorer finished goose, read
+		// "PHASE 2 — SYNTHESIZE A PLAN FOR QUACK" in the request it had been given for
+		// context, and went off to clone and read quack — which was a SIBLING node's job,
+		// running concurrently. The output is discarded and the run pays for it twice.
+		sb.WriteString("BACKGROUND — the user's full request, verbatim. This is CONTEXT ONLY, so you " +
+			"understand what the overall job is and how your piece fits. MOST OF IT IS NOT YOURS TO DO.\n\n")
 		sb.WriteString(plan.UserMessage)
 		sb.WriteString("\n\n---\n\n")
+		if others := siblingIDs(plan, node.ID); others != "" {
+			sb.WriteString("The other parts of that request are ALREADY ASSIGNED to these nodes, " +
+				"running in parallel with you right now: " + others + ".\n" +
+				"Do not do their work. Anything you produce outside your own task below is thrown away.\n\n---\n\n")
+		}
 	}
 	for _, dep := range node.DependsOn {
 		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
@@ -579,9 +591,21 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 	if sb.Len() == 0 {
 		return node.Task
 	}
-	sb.WriteString("Your task: ")
+	sb.WriteString("YOUR TASK — do this, and ONLY this:\n")
 	sb.WriteString(node.Task)
 	return sb.String()
+}
+
+// siblingIDs lists the plan's other node ids, for telling a node which parts of the
+// user's request are someone else's job. Empty when the node is alone in the plan.
+func siblingIDs(plan Plan, self string) string {
+	var ids []string
+	for _, n := range plan.Nodes {
+		if n.ID != self {
+			ids = append(ids, n.ID)
+		}
+	}
+	return strings.Join(ids, ", ")
 }
 
 // ensureTerminal seeds the plan's terminal node (no successors) from fallback

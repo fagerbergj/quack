@@ -106,6 +106,22 @@ func jailPath(nodeDir, cwd, p string) string {
 	return filepath.Join(nodeDir, joinCwd(cwd, p))
 }
 
+// displayCwd renders the session working directory for a tool RESULT: the path the
+// model should treat as "where I am", with the empty root spelled "." so it is never
+// mistaken for a missing field.
+//
+// Every workspace tool reports it, on every call. A model that is unsure where it
+// stands re-derives paths by guessing, and each guess is a wasted turn: live, a
+// code-explorer `cd`'d into a repo, did not trust that it had moved, and `cd`'d to
+// the SAME directory again — then globbed blind. Answering "where am I" costs ~20
+// bytes; making the model infer it costs turns.
+func displayCwd(cwd string) string {
+	if cwd == "" {
+		return "."
+	}
+	return cwd
+}
+
 // joinCwd applies the session working directory to a node-relative path, yielding
 // another node-relative path. Both sides speak the ONE namespace the model sees;
 // the node dir is added afterwards, by jailPath.
