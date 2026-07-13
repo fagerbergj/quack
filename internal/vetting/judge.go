@@ -197,7 +197,7 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 // (reconstructed from session events, not from the worker's narration), so a
 // claims_match_activity rubric criterion can hard-fail an answer asserting an
 // operation the ledger doesn't contain (the live-e2e fabricated-commit hole).
-func buildJudgePrompt(constitution, rubric string, question *genai.Content, answer, changedFiles string, act workerActivity) string {
+func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity) string {
 	var sb strings.Builder
 	if constitution != "" {
 		sb.WriteString("Principles:\n")
@@ -206,6 +206,19 @@ func buildJudgePrompt(constitution, rubric string, question *genai.Content, answ
 	}
 	sb.WriteString("Scoring rubric:\n")
 	sb.WriteString(rubric)
+	// Score the node against ITS OWN task. The question below is the worker's full
+	// prompt, which carries the user's whole request as background (dag.buildTask) —
+	// and in a plan that ends in "commit, push, open a PR", judging a READ-ONLY node
+	// against that fails it for work that was never its to do and is already assigned
+	// to a sibling. The continuation loop made exactly this mistake and left every
+	// explorer unfinishable (see node.go); the judge must not repeat it one stage later.
+	if strings.TrimSpace(nodeTask) != "" {
+		sb.WriteString("\n\nWHAT YOU ARE SCORING — this node's own task, and nothing else:\n")
+		sb.WriteString(nodeTask)
+		sb.WriteString("\n\nThe request below is BACKGROUND: it is the whole job, most of which belongs to " +
+			"OTHER nodes. Do NOT penalise this node for work the task above does not ask of it — a read-only " +
+			"research node that committed no code has not failed; that was never its job.")
+	}
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(questionText(question))
 	if ws := buildWorkspaceSection(act); ws != "" {
@@ -316,7 +329,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	defer cancel()
 
 	changedFiles := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
-	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer, changedFiles, act)}}
+	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)}}
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {
 			parts = append(parts, p)
