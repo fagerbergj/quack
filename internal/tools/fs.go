@@ -28,6 +28,30 @@ const defaultReadLimit = 500
 // decide whether it's binary (read_file, grep).
 const binarySniffBytes = 8 * 1024
 
+// grep's size bounds. caps.MaxResults bounds how MANY matches come back, which is
+// no bound at all on how BIG they are: one "line" of a minified bundle or a source
+// map is megabytes. Live (2026-07-13): a grep that matched inside a Next.js build
+// dir returned a 48 MB tool result, blew the 65k context window, and 400'd the node
+// dead. Bound the bytes, not just the count.
+const (
+	grepMatchMaxChars = 400             // per match, middle-elided (a minified line has no value anyway)
+	grepTotalMaxBytes = 256 * 1024      // per call, across all matches
+	grepFileMaxBytes  = 4 * 1024 * 1024 // files bigger than this are not source; never read them
+)
+
+// truncateMiddle keeps the head and tail of s around a loud elision marker when s
+// exceeds maxChars. Middle-out because a match's value is at its edges: the code
+// before and after the hit.
+func truncateMiddle(s string, maxChars int) string {
+	const marker = "…[elided]…"
+	if len(s) <= maxChars || maxChars <= len(marker) {
+		return s
+	}
+	keep := maxChars - len(marker)
+	head := keep / 2
+	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
+}
+
 // fsBinding is the (userID, jail, caps) triple every filesystem tool closes
 // over at construction — the isolation model's "workspace tools are built
 // bound to (userID, jail) per run — no identity parsing inside tool handlers"
@@ -513,6 +537,19 @@ func (b fsBinding) glob(a globArgs) (globResult, error) {
 	if err != nil {
 		return globResult{}, fmt.Errorf("glob: %w", err)
 	}
+	// Drop hits inside vendored/generated trees, unless the caller pointed `path`
+	// straight at one (which only ever means it). Without this, a glob for **/*.js
+	// in a repo with a node_modules returns thousands of paths the agent then wastes
+	// its turns reading.
+	if !pathHasGeneratedDir(a.Path) {
+		kept := matches[:0]
+		for _, m := range matches {
+			if !pathHasGeneratedDir(m) {
+				kept = append(kept, m)
+			}
+		}
+		matches = kept
+	}
 	sort.Strings(matches)
 	truncated := false
 	if len(matches) > b.caps.MaxResults {
@@ -526,6 +563,17 @@ func (b fsBinding) glob(a globArgs) (globResult, error) {
 		paths[i] = filepath.ToSlash(filepath.Join(a.Path, m))
 	}
 	return globResult{Paths: paths, Truncated: truncated}, nil
+}
+
+// pathHasGeneratedDir reports whether any component of p is a vendored/generated
+// directory (workspace.SkipDir).
+func pathHasGeneratedDir(p string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		if seg != "" && seg != "." && workspace.SkipDir(seg) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +638,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 
 	var matches []grepMatch
 	truncated := false
+	totalBytes := 0
 	walkErr := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -601,6 +650,11 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 			return nil
 		}
 		if d.IsDir() {
+			// Never descend into vendored/generated trees — but honour an explicit
+			// request for one (`path: "node_modules/foo"`), which only ever means it.
+			if p != base && workspace.SkipDir(d.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if a.Glob != "" {
@@ -610,18 +664,22 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 		}
 		fileMatches, ferr := grepFile(p, re, ctxLines)
 		if ferr != nil {
-			return nil // unreadable or binary file: skip silently
+			return nil // unreadable, binary, or too large: skip silently
 		}
 		relToRoot, rerr := filepath.Rel(relRoot, p)
 		if rerr != nil {
 			return rerr
 		}
 		for _, fm := range fileMatches {
-			if len(matches) >= b.caps.MaxResults {
+			if len(matches) >= b.caps.MaxResults || totalBytes >= grepTotalMaxBytes {
 				truncated = true
 				break
 			}
+			// A single "line" can be megabytes (a minified bundle is one line), so the
+			// match count alone is not a bound on size. Cap the text too.
+			fm.Text = truncateMiddle(fm.Text, grepMatchMaxChars)
 			fm.Path = filepath.ToSlash(relToRoot)
+			totalBytes += len(fm.Text)
 			matches = append(matches, fm)
 		}
 		return nil
@@ -634,8 +692,15 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 
 // grepFile scans one file for lines matching re, returning up to len(lines)
 // matches with ctxLines of surrounding context folded into Text. A binary file
-// (NUL in its first binarySniffBytes) returns an error so the caller skips it.
+// (NUL in its first binarySniffBytes), or one larger than grepFileMaxBytes,
+// returns an error so the caller skips it.
 func grepFile(path string, re *regexp.Regexp, ctxLines int) ([]grepMatch, error) {
+	// Check the size BEFORE reading: grep slurps the whole file, so an unbounded
+	// read here is an OOM waiting to happen (a source map or a vendored bundle is
+	// easily hundreds of MB). Nothing that big is source a human wrote.
+	if st, serr := os.Stat(path); serr == nil && st.Size() > grepFileMaxBytes {
+		return nil, fmt.Errorf("grep: %q is larger than the %d-byte scan limit", path, int64(grepFileMaxBytes))
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

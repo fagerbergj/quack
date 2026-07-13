@@ -198,6 +198,24 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 				"component", "agent", "budget", budget, "head_tokens", head, "ratio", ratio, "session", ctx.SessionID())
 		}
 	}
+	// The verbatim tail is the last thing standing between us and a 400. splitHead
+	// admits the MOST RECENT content unconditionally — whatever its size — so one
+	// colossal tool result there survives every rung above. Live (2026-07-13): a
+	// `grep` matched inside a Next.js build dir and returned a 48 MB result; the
+	// request reached the provider at 520,756 tokens against a 65,536 window, 400'd,
+	// and killed two explorer nodes that had been working for hours.
+	//
+	// A truncated tool result is RECOVERABLE — the model re-runs the tool with a
+	// narrower query. A 400 is not. So clamp tool results in the tail, hardest last.
+	for _, cap := range []int{8_000, toolOutputMaxChars, 500} {
+		if calibrated(estimateTokens(req.Contents), ratio, overhead) <= budget {
+			break
+		}
+		if n := clampToolResults(req.Contents[1:], cap); n > 0 {
+			slog.Warn("compaction clamped oversized tool results in the verbatim tail",
+				"component", "agent", "clamped", n, "cap_chars", cap, "session", ctx.SessionID())
+		}
+	}
 	// Compaction is out of moves; a calibrated size still over budget predicts a
 	// hard provider 400 next (which permanently strands the session), so this is
 	// worth a Warn even though the request is still sent.
@@ -205,6 +223,41 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 		slog.Warn("compaction could not bring request under budget; context overflow likely",
 			"component", "agent", "calibrated_tokens", got, "budget", budget, "ratio", ratio, "session", ctx.SessionID())
 	}
+}
+
+// clampToolResults middle-elides every tool result in contents whose serialised
+// response exceeds maxChars, and reports how many it clamped. The FunctionResponse
+// is REPLACED by a same-shaped one carrying the elided text plus a loud marker, so
+// the call/response pairing the chat template needs stays intact (a dropped response
+// with a live call 400s just as hard as an oversized one).
+func clampToolResults(contents []*genai.Content, maxChars int) int {
+	clamped := 0
+	for _, c := range contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p == nil || p.FunctionResponse == nil {
+				continue
+			}
+			if functionResponseBytes(p.FunctionResponse) <= maxChars {
+				continue
+			}
+			p.FunctionResponse = &genai.FunctionResponse{
+				ID:   p.FunctionResponse.ID,
+				Name: p.FunctionResponse.Name,
+				Response: map[string]any{
+					"truncated": true,
+					"result":    truncateMiddle(responseText(p.FunctionResponse), maxChars),
+					"note": "This result was too large for the context window and its middle was elided. " +
+						"Do NOT retry it verbatim — re-run the tool with a narrower query (a more specific path or pattern, " +
+						"or exclude build/vendor directories).",
+				},
+			}
+			clamped++
+		}
+	}
+	return clamped
 }
 
 // truncateHeadToFit truncates the middle of contents[0] when it alone exceeds
