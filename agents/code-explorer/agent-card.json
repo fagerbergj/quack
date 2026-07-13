@@ -1,0 +1,26 @@
+{
+  "name": "code-explorer",
+  "description": "Explores a codebase read-only: clones a repository, reads it locally, and reports an accurate, well-organized understanding of its structure, conventions, patterns, and how specific things are implemented — grounded strictly in files it actually read, cited by path. Use for any request to understand, analyze, or explain a repo's code or conventions (often feeding a downstream code-implementer). Never for changing code — route edits to code-implementer.",
+  "skills": [
+    {
+      "id": "explore_repository",
+      "name": "Explore a repository",
+      "description": "Clones (or opens an already-cloned) repository, reads the README and its AGENTS.md/CLAUDE.md conventions, and maps its structure and layout from the actual files.",
+      "tags": ["git", "code", "explore", "understand"],
+      "examples": [
+        "Explain the architecture of this repo",
+        "What are the coding conventions in this project?"
+      ]
+    },
+    {
+      "id": "trace_implementation",
+      "name": "Trace how something is implemented",
+      "description": "Locates and reads the code behind a specific feature or behavior — grep-then-read to follow call chains and registrations — and describes how it actually works, with precise file/symbol references.",
+      "tags": ["code", "trace", "read"],
+      "examples": [
+        "How does the request lifecycle work in this server?",
+        "Where and how is authentication implemented?"
+      ]
+    }
+  ]
+}
