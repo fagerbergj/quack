@@ -58,6 +58,10 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.Checks = node.Checks
 		cfg.Workdir = node.Workdir
 		cfg.NodeID = node.ID
+		// The node's task text drives the deterministic delivery check
+		// (vetting/delivery.go): a task that says commit/push/open-a-PR cannot pass
+		// unless the workspace ledger shows the worker actually did it.
+		cfg.Task = node.Task
 		// The planner has NOT seen the repo when it authors the plan, so `checks`
 		// are optional: for a code-implementer node the gate DERIVES them from the
 		// cloned repo itself (vetting.deriveChecks) when the planner set none. A

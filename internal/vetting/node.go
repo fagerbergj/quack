@@ -674,6 +674,12 @@ func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config)
 	if c, ok := checksPassCriterion(cfg); ok {
 		v.Criteria["checks_pass"] = c
 	}
+	// Delivery: a node whose task says commit/push/PR cannot pass unless the
+	// ledger shows it did (delivery.go). Untouched for a node whose task asks for
+	// no delivery.
+	if c, ok := deliveryCriterion(cfg.Task, act); ok {
+		v.Criteria["delivery_complete"] = c
+	}
 	return aggregateVerdict(v)
 }
 
@@ -828,6 +834,14 @@ func activityFromSession(sess session.Session) workerActivity {
 					// stays in the ledger above for claim-checking).
 					if _, failed := p.FunctionResponse.Response["error"]; !failed {
 						switch p.FunctionResponse.Name {
+						// Delivery actions (delivery.go): a task that demands the work
+						// be committed/pushed cannot pass without these.
+						case "git_commit":
+							act.committed = true
+						case "git_push":
+							act.pushed = true
+						case "github_pull_request":
+							act.prOpened = true
 						case "git_clone":
 							// A successful clone IS retrieval: the whole repository is
 							// now local, strictly more consulted than a search-result

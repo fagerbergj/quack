@@ -76,6 +76,11 @@ type Config struct {
 	CheckCommands []string
 	// NodeID identifies the node in the gate's check logs.
 	NodeID string
+	// Task is the node's task text, stamped per-node by dag.buildGateNodes. Read
+	// by the deterministic delivery check (delivery.go): a task that demands the
+	// work be committed/pushed/opened as a PR cannot pass without the ledger
+	// showing it happened. Empty ⇒ the check simply doesn't apply.
+	Task string
 	// Workdir is the workspace-relative directory Checks run in (the node's
 	// repo, e.g. "repo" after a git_clone). When unset and checks are derived,
 	// the gate locates the single repo in the node's workspace scope.
@@ -154,6 +159,13 @@ type workerActivity struct {
 	// the REAL post-edit source, not the worker's self-report (live 2026-07-12: a
 	// blind judge passed an incomplete, non-compiling deliverable it never read).
 	written []string
+
+	// Delivery actions the worker actually completed (SUCCESSFUL calls only —
+	// exactly like `written`): a git_commit, a git_push, and a github_pull_request.
+	// Read by the deterministic delivery check (delivery.go).
+	committed bool
+	pushed    bool
+	prOpened  bool
 }
 
 // wsOp is one workspace operation the worker actually performed — a completed

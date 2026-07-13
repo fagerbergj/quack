@@ -44,6 +44,12 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"git_rebase":          {args: []string{"dir", "onto"}, results: []string{"sha", "rebased"}},
 	"git_worktree_create": {args: []string{"dir", "branch"}, results: []string{"path"}},
 	"git_worktree_remove": {args: []string{"dir", "path"}, results: []string{"removed"}},
+
+	// The delivery step (GitHub App extension, internal/github): the PR URL is
+	// exactly the kind of outcome an answer claims, so it belongs in the ledger
+	// the judge checks claims against — and its success feeds the deterministic
+	// delivery check (delivery.go).
+	"github_pull_request": {args: []string{"owner", "repo", "head", "base", "title"}, results: []string{"url"}},
 }
 
 // isWorkspaceTool reports whether name belongs in the workspace ledger.
