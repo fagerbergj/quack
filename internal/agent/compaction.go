@@ -73,6 +73,7 @@ const (
 	measuredInputKey = "quack.compaction.measured_input" // last provider-reported prompt tokens
 	estimateKey      = "quack.compaction.last_estimate"  // raw estimate of the request as sent (paired with the measurement by recordUsage)
 	calibrationKey   = "quack.compaction.calibration"    // measured/estimated ratio from the last completed turn
+	overheadKey      = "quack.compaction.overhead"       // provider tokens NOT explained by req.Contents (system + tool schemas): ADDITIVE, not a multiplier
 
 	// Calibration ratio bounds. The floor is the DEFAULT (not 1.0) on purpose:
 	// undercounting is the fatal failure mode — a provider 400 strands the
@@ -149,7 +150,8 @@ func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 // overhead separately.
 func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LLMRequest) {
 	ratio := calibrationRatio(ctx)
-	if measuredInput(ctx) < budget && calibrated(estimateTokens(req.Contents), ratio) <= budget {
+	overhead := intState(ctx, overheadKey)
+	if measuredInput(ctx) < budget && calibrated(estimateTokens(req.Contents), ratio, overhead) <= budget {
 		return
 	}
 	// Reuse fast-path: session events are append-only, so the summary's
@@ -158,7 +160,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 	// re-summarise when that tail has itself grown past budget.
 	if prev, n := readSummary(ctx); prev != "" && n > 1 && n <= len(req.Contents) {
 		reused := append([]*genai.Content{mergeTaskSummary(req.Contents[0], prev)}, req.Contents[n:]...)
-		if calibrated(estimateTokens(reused), ratio) <= budget {
+		if calibrated(estimateTokens(reused), ratio, overhead) <= budget {
 			req.Contents = reused
 			slog.Debug("compaction reused anchored summary; no summariser call", "component", "agent", "covers_msgs", n, "session", ctx.SessionID())
 			return
@@ -182,16 +184,24 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 	// coding node) the repo on disk. Primary defence is not building a pathological
 	// contents[0] in the first place (see vetting.buildRevisionContent bounds);
 	// this only fires if some prompt still balloons past the window.
-	if got := calibrated(estimateTokens(req.Contents), ratio); got > budget {
+	//
+	// This must key on contents[0]'s OWN size, not the whole request's. It used to
+	// test the whole request, so anything that inflated the estimate — notably a
+	// calibration ratio pinned at its 8.0 ceiling, which happens whenever the
+	// provider's FIXED overhead (system instruction + ~20 tool schemas, easily 6k
+	// tokens) dwarfs a small contents[0] — made it shred a task that was never too
+	// big. Live: a 728-character code-explorer task was truncated to nothing, and the
+	// worker woke up asking "Which repository would you like me to explore?".
+	if head := calibrated(estimateTokens(req.Contents[:1]), ratio, overhead); head > budget {
 		if truncateHeadToFit(req.Contents, budget, ratio) {
 			slog.Warn("compaction truncated an oversized task/revise prompt (contents[0]) as a last resort",
-				"component", "agent", "budget", budget, "ratio", ratio, "session", ctx.SessionID())
+				"component", "agent", "budget", budget, "head_tokens", head, "ratio", ratio, "session", ctx.SessionID())
 		}
 	}
 	// Compaction is out of moves; a calibrated size still over budget predicts a
 	// hard provider 400 next (which permanently strands the session), so this is
 	// worth a Warn even though the request is still sent.
-	if got := calibrated(estimateTokens(req.Contents), ratio); got > budget {
+	if got := calibrated(estimateTokens(req.Contents), ratio, overhead); got > budget {
 		slog.Warn("compaction could not bring request under budget; context overflow likely",
 			"component", "agent", "calibrated_tokens", got, "budget", budget, "ratio", ratio, "session", ctx.SessionID())
 	}
@@ -425,10 +435,17 @@ func recordUsage() llmagent.AfterModelCallback {
 		// Calibrate the estimator: the BeforeModelCallback stashed the raw
 		// estimate for this same request, so measured/estimate is the true
 		// correction factor for this session's content mix + fixed overhead.
+		// Solve measured ≈ overhead + density×estimate for the OVERHEAD, holding the
+		// density at its conservative default. One equation, one unknown — and the
+		// overhead is the part that is actually fixed (system + tool schemas), so it
+		// generalises to the next turn instead of exploding on small content.
 		if est := intState(ctx, estimateKey); est > 0 {
-			ratio := clampRatio(float64(measured) / float64(est))
-			if e := ctx.State().Set(calibrationKey, ratio); e != nil {
-				slog.Warn("compaction: record calibration", "component", "agent", "err", e)
+			overhead := measured - int(float64(est)*defaultCalibrationRatio)
+			if overhead < 0 {
+				overhead = 0
+			}
+			if e := ctx.State().Set(overheadKey, overhead); e != nil {
+				slog.Warn("compaction: record overhead", "component", "agent", "err", e)
 			}
 		}
 		return nil, nil
@@ -461,8 +478,22 @@ func clampRatio(r float64) float64 {
 }
 
 // calibrated scales a raw bytes/4 estimate into approximate real prompt tokens.
-func calibrated(estimate int, ratio float64) int {
-	return int(float64(estimate) * ratio)
+// calibrated models the provider's prompt tokens as
+//
+//	measured ≈ overhead + density × estimate(req.Contents)
+//
+// The overhead (system instruction + ~20 tool schemas — easily 6k tokens) is FIXED
+// and cannot be seen by estimateTokens; the density corrects bytes/4 for code-dense
+// content. Modelling that overhead as a MULTIPLIER — the old `estimate * ratio` —
+// blows up precisely when the content is small: a node's first turn carries a
+// 728-char task (~200 tokens estimated) while the provider bills ~6000, so
+// measured/estimate ≈ 30, pinned to the 8.0 ceiling. Every later turn was then
+// multiplied by 8, and a genuinely ~7k-token request was declared to be 56344 —
+// a number ~49k of which never existed. Compaction then panicked, found nothing to
+// free on a fresh session, and shredded contents[0]: the worker lost its task and
+// woke up asking "Which repository would you like me to explore?".
+func calibrated(estimate int, density float64, overhead int) int {
+	return overhead + int(float64(estimate)*density)
 }
 
 // readSummary returns the anchored summary and how many leading messages it folds

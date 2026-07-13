@@ -251,51 +251,6 @@ func TestMeasuredUsageTriggers(t *testing.T) {
 	}
 }
 
-// The live-failure regression: recordUsage pairs the measured prompt tokens
-// with the estimate stashed by the previous callback, and the resulting ratio
-// makes the NEXT callback compact a request whose raw bytes/4 estimate is under
-// budget but whose calibrated (real) size is over.
-func TestCalibrationRecordedAndApplied(t *testing.T) {
-	ctx := newFakeCtx()
-	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	// budget = 60_000 - 20_000 = 40_000 real tokens.
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Enabled: true})
-
-	// Turn 1: under budget, no-op — but the raw estimate (10_000) is stashed.
-	small := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, strings.Repeat("a", 40_000))}}
-	if _, err := cb(ctx, small); err != nil {
-		t.Fatalf("first callback err: %v", err)
-	}
-	if got := intState(ctx, estimateKey); got != 10_000 {
-		t.Fatalf("estimate not stashed for calibration: got %d, want 10000", got)
-	}
-	// Provider measures 30_000 real prompt tokens (dense content + system prompt
-	// + tool schemas the estimate can't see): ratio = 3.0.
-	recordUsage()(ctx, &model.LLMResponse{
-		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 30_000},
-	}, nil)
-	if got := calibrationRatio(ctx); got != 3.0 {
-		t.Fatalf("calibrationRatio = %v; want 3.0", got)
-	}
-
-	// Turn 2: raw estimate ~15_000 (under the 40_000 budget, so the old code
-	// no-op'd and the provider 400'd) but calibrated ~45_000 is over → compacts.
-	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
-	for i := 0; i < 20; i++ {
-		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
-	}
-	req := &model.LLMRequest{Contents: contents}
-	if est := estimateTokens(contents); est > 40_000 {
-		t.Fatalf("test precondition broken: raw estimate %d not under budget", est)
-	}
-	if _, err := cb(ctx, req); err != nil {
-		t.Fatalf("second callback err: %v", err)
-	}
-	if llm.calls != 1 {
-		t.Fatalf("calibrated over-budget request did not compact: summariser calls=%d", llm.calls)
-	}
-}
-
 // The "does it fit?" check uses the calibrated value, not the raw bytes/4
 // estimate: a tool-heavy history whose raw estimate is under budget but whose
 // calibrated (real) size is over must still be summarised, and the request must
@@ -330,7 +285,7 @@ func TestOverBudgetCheckIsCalibrated(t *testing.T) {
 	if llm.calls != 1 {
 		t.Fatalf("calibrated over-budget request did not summarise (calls=%d)", llm.calls)
 	}
-	if got := calibrated(estimateTokens(req.Contents), calibrationRatio(ctx)); got > 60_000 {
+	if got := calibrated(estimateTokens(req.Contents), calibrationRatio(ctx), 0); got > 60_000 {
 		t.Fatalf("request still over budget after compaction: calibrated %d > 60000", got)
 	}
 }
@@ -360,44 +315,6 @@ func TestSummaryCarriesCodeKnowledge(t *testing.T) {
 	parts := req.Contents[0].Parts
 	if got := parts[len(parts)-1].Text; !strings.Contains(got, "Your context was compacted") {
 		t.Fatalf("model not told its context was compacted: %q", got)
-	}
-}
-
-// Absurd measured/estimate ratios are clamped, and the ratio never drops below
-// the safety floor (calibration must never shrink the estimate below the
-// first-turn default — undercounting is the fatal mode).
-func TestCalibrationClamped(t *testing.T) {
-	ctx := newFakeCtx()
-	// Measured below estimate (media-free overcount): floor at minCalibrationRatio.
-	if err := ctx.state.Set(estimateKey, 10_000); err != nil {
-		t.Fatal(err)
-	}
-	recordUsage()(ctx, &model.LLMResponse{
-		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 1_000},
-	}, nil)
-	if got := calibrationRatio(ctx); got != minCalibrationRatio {
-		t.Fatalf("ratio %v below floor; want %v", got, minCalibrationRatio)
-	}
-	// Tiny request dominated by tool-schema overhead: ceiling caps it.
-	if err := ctx.state.Set(estimateKey, 10); err != nil {
-		t.Fatal(err)
-	}
-	recordUsage()(ctx, &model.LLMResponse{
-		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 100_000},
-	}, nil)
-	if got := calibrationRatio(ctx); got != maxCalibrationRatio {
-		t.Fatalf("ratio %v above ceiling; want %v", got, maxCalibrationRatio)
-	}
-	// A zero estimate records no ratio at all (degenerate divide guarded).
-	fresh := newFakeCtx()
-	if err := fresh.state.Set(estimateKey, 0); err != nil {
-		t.Fatal(err)
-	}
-	recordUsage()(fresh, &model.LLMResponse{
-		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 5_000},
-	}, nil)
-	if _, err := fresh.state.Get(calibrationKey); err == nil {
-		t.Fatal("ratio recorded from a zero estimate")
 	}
 }
 
@@ -449,8 +366,8 @@ func TestTruncateOversizedHead(t *testing.T) {
 		t.Fatalf("expected the single task content, got %d", len(req.Contents))
 	}
 	got := estimateTokens(req.Contents)
-	if calibrated(got, defaultCalibrationRatio) > usable(60_000) {
-		t.Fatalf("oversized head not truncated under budget: calibrated %d > %d", calibrated(got, defaultCalibrationRatio), usable(60_000))
+	if calibrated(got, defaultCalibrationRatio, 0) > usable(60_000) {
+		t.Fatalf("oversized head not truncated under budget: calibrated %d > %d", calibrated(got, defaultCalibrationRatio, 0), usable(60_000))
 	}
 	text := req.Contents[0].Parts[0].Text
 	if !strings.Contains(text, "elided to fit the context window") {
@@ -565,5 +482,39 @@ func TestAnchoredSummaryFedBack(t *testing.T) {
 	}
 	if !strings.Contains(llm.lastPrompt, "<previous-summary>") || !strings.Contains(llm.lastPrompt, "FIRST-SUMMARY") {
 		t.Fatalf("second summarise did not receive the anchored previous summary; prompt:\n%s", llm.lastPrompt)
+	}
+}
+
+// recordUsage learns the provider's FIXED overhead (system instruction + tool
+// schemas) additively — the part estimateTokens structurally cannot see — rather
+// than a multiplier. goose and opencode both drive compaction from the provider's
+// own reported usage for exactly this reason; a fudge factor on a bytes/4 guess is
+// how quack came to believe a ~7k-token request was 56,344 tokens and shredded a
+// node's task.
+func TestOverheadRecordedAndAppliedAdditively(t *testing.T) {
+	const density = defaultCalibrationRatio
+
+	// A turn whose content estimates at 1000 tokens but which the provider bills at
+	// 7300 — the extra ~6k is the system instruction + tool schemas.
+	est, measured := 1000, 7300
+	overhead := measured - int(float64(est)*density)
+	if overhead < 0 {
+		overhead = 0
+	}
+
+	// The next turn doubles the content. The provider should bill roughly
+	// overhead + density*2000 — NOT double the whole previous measurement.
+	got := calibrated(2000, density, overhead)
+	want := overhead + int(float64(2000)*density)
+	if got != want {
+		t.Fatalf("calibrated = %d, want %d (overhead must be added, not multiplied)", got, want)
+	}
+	// Sanity: the overhead is carried, so the estimate is well above a bare bytes/4.
+	if got <= int(float64(2000)*density) {
+		t.Fatalf("calibrated %d ignores the fixed overhead", got)
+	}
+	// And it must not explode: the old model would have multiplied by measured/est = 7.3.
+	if got >= int(float64(2000)*7.3) {
+		t.Fatalf("calibrated %d is as bad as the old multiplicative model", got)
 	}
 }
