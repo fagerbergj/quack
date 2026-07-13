@@ -115,8 +115,10 @@ func PromptEventNeeded(ag adkagent.Agent) bool {
 	return !ok
 }
 
-// maxEmptyRetries bounds the empty-answer recovery re-invocations in RunGatedRefine.
-const maxEmptyRetries = 4
+// maxContinueRounds bounds the tool-bearing continuation turns RunGatedRefine
+// gives a worker whose WORK isn't finished (empty draft, or a demanded commit/push
+// the ledger doesn't show) before falling back to the tool-less writer.
+const maxContinueRounds = 4
 
 // fetchSampleBytes is how many bytes of fetched content we keep per URL — enough
 // for the judge to spot-check a claim, small enough not to flood its context.

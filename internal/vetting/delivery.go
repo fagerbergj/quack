@@ -104,6 +104,28 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 		deliveryWording(d), strings.Join(missing, " and "), want)}, true
 }
 
+// workIncomplete reports whether the worker's turn left the WORK unfinished — the
+// gate's continuation condition (RunGatedRefine). Two mechanical signals, no LLM
+// judgment:
+//
+//   - an EMPTY answer: a reasoning model that spends its whole output budget on
+//     thinking returns no content. ADK ends the run there, and "the model emitted
+//     no text" is indistinguishable from "the model is done" — except that it
+//     almost always means the opposite (mid-task, out of road).
+//   - an UNDELIVERED implement-and-deliver task: the task demanded a commit/push
+//     and the ledger holds none, so whatever the worker wrote is a description of
+//     work it never shipped.
+//
+// Everything else (research, analysis, synthesis; a delivered coding task) is
+// complete as far as the gate is concerned — the judge takes it from here.
+func workIncomplete(answer, task string, act workerActivity) bool {
+	if strings.TrimSpace(answer) == "" {
+		return true
+	}
+	c, applies := deliveryCriterion(task, act)
+	return applies && c.Score < 1
+}
+
 // deliveryWording names, in the task's own terms, what delivery it asked for.
 func deliveryWording(d deliveryDemand) string {
 	switch {

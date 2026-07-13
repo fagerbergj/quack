@@ -726,6 +726,42 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
+// continuationMarker opens every continuation prompt. It is the worker's signal
+// that this turn CONTINUES an unfinished task (do the work) rather than starting
+// or revising one — and the tests' handle on "the continuation actually landed".
+const continuationMarker = "CONTINUE THE TASK — it is not finished."
+
+// buildContinuationPrompt is the tool-bearing continuation directive for a worker
+// whose work isn't done (workIncomplete): an empty turn, or a demanded commit/push
+// the ledger doesn't show. It is deliberately NOT buildFinalizeContent — that one
+// asks for a WRITE-UP, which is exactly how half-finished work got frozen in place
+// and passed off to the judge. This one says: do the remaining work, with your
+// tools, and name the known gap.
+func buildContinuationPrompt(task string, act workerActivity, checks []string) string {
+	var sb strings.Builder
+	sb.WriteString(continuationMarker + "\n\n" +
+		"Your last turn produced no answer, or produced an answer for work you have not actually delivered. " +
+		"You are MID-TASK, not done. This is not a request for a summary.\n\n" +
+		"Continue now, using your tools:\n" +
+		"- DO the remaining work rather than describing it. Writing a file's contents into your answer is NOT writing the file — call write_file/edit_file.\n" +
+		"- Run the checks the task requires and fix whatever they surface.\n" +
+		"- When the task calls for it, commit your work, push the branch, and open the pull request.\n" +
+		"- Only once the work is actually done, report what you DID — past tense, evidenced by the tool calls you made.\n\n")
+	if len(checks) > 0 {
+		sb.WriteString("Checks this node must pass: " + strings.Join(checks, ", ") + "\n\n")
+	}
+	if c, applies := deliveryCriterion(task, act); applies && c.Score < 1 {
+		sb.WriteString("Known gap: " + c.Reason + "\n\n")
+	}
+	if section := buildActivitySection(act); section != "" {
+		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Original task:\n")
+	sb.WriteString(boundExcerpt(task, maxOriginalQuestionChars))
+	return sb.String()
+}
+
 // normalizeScale converts a verdict's scores from the rubric's 0–10 integer
 // scale to the internal 0.0–1.0 axis the gate, deterministic criteria, and
 // threshold all use. The rubric asks the judge for whole numbers 0–10 (an LLM

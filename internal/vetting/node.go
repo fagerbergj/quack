@@ -315,31 +315,57 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			return "", GateResult{}, ierr // ErrNodeInterrupted → park
 		}
 
-		// Empty-answer recovery: the worker sometimes ends a turn with no answer text
-		// (it called tools but never wrote up, or thought into the void). Re-invoke it
-		// with a finalize prompt asking it to write up what it found, up to the retry
-		// budget. ponytail: the legacy gate used a tool-LESS writer clone here (a
-		// tool-having re-invoke can keep researching); re-invoking the worker with a
-		// finalize prompt is the graph-native port — swap in a tool-less writer node if
-		// empty answers prove sticky.
+		// Continuation loop: keep giving the worker TOOL-BEARING turns until the WORK
+		// is done — not until the model happens to emit text. An agentic harness
+		// (goose, OpenHands) calls the model, runs its tools, feeds the results back
+		// and calls it AGAIN, until the model says it is finished; quack instead
+		// treated ONE llmagent invocation as "the draft" and its text as the
+		// deliverable, so a turn that spent its whole output budget on reasoning (empty
+		// content) read as "done" — and the gate replaced the worker's continuation
+		// with a TOOL-LESS writer that summarised half-finished work. Live TC2 evidence
+		// (2026-07-13): four runs, ZERO git_commit calls ever; run v4's answer contained
+		// a markdown code block of a file the worker was supposed to WRITE, and the
+		// judge passed it at 0.7. Same model, in goose, drove the same task to a pushed
+		// branch — an architecture gap, not a model limit.
+		//
+		// So the loop condition is the WORK, not the text (workIncomplete): an empty
+		// draft, or a task that demanded a commit/push the ledger doesn't show. The
+		// continuation prompt rides the same delivery path as a revise round
+		// (runWorkerNode → RunNode input for a local llmagent, gate-authored session
+		// event for a remote A2A worker — see emitPrompt), which is what makes it land
+		// at all. Bounded by maxContinueRounds so a stuck worker can't spin forever.
+		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, prompt, activityFromSession(ctx.Session())); attempt++ {
+			act := activityFromSession(ctx.Session())
+			log.Warn("work not finished; continuing the worker with its tools",
+				"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
+			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(prompt, act, cfg.Checks),
+				fmt.Sprintf("worker-cont%d%s", attempt, sfx), promptEmit)
+			if err != nil {
+				log.Error("worker continuation failed", "attempt", attempt, "err", err)
+				return "", GateResult{}, err
+			}
+			// A continuation is where the worker finally proposes its guarded delivery
+			// step (git_commit/git_push) — park the node for the human exactly as the
+			// draft and revise paths do.
+			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
+				return "", GateResult{}, ierr // ErrNodeInterrupted → park
+			}
+		}
+
+		// Last resort for a genuinely stuck worker (nothing, on every turn): a
+		// TOOL-LESS writer in a FRESH runner writes up whatever the session shows it
+		// found. Better than an empty node — never a substitute for the work itself,
+		// which is why it now runs only AFTER the worker has been given its
+		// continuation budget.
 		if strings.TrimSpace(answer) == "" {
-			// Empty (no error) is the OTHER silent failure mode besides a 400 — a
-			// reasoning model can spend its whole output budget on thinking (or trap its
-			// tool calls in reasoning) and return empty content. Recover via a TOOL-LESS
-			// writer run in a FRESH runner with the findings: re-invoking the worker in
-			// its own session drops the finalize prompt (llmagent rebuilds from session
-			// events, which end in the empty reply), so that write-up never happened.
-			log.Warn("worker draft empty; recovering via tool-less writer", "retries", maxEmptyRetries)
-			fin := buildFinalizeContent(question, activityFromSession(ctx.Session()))
-			for attempt := 1; attempt <= maxEmptyRetries && strings.TrimSpace(answer) == ""; attempt++ {
-				answer, err = runWriterFresh(ctx, workerModel, fin)
-				if err != nil {
-					log.Error("writer recovery failed", "attempt", attempt, "err", err)
-					return "", GateResult{}, err
-				}
+			log.Warn("worker still empty after continuation; falling back to the tool-less writer", "rounds", maxContinueRounds)
+			answer, err = runWriterFresh(ctx, workerModel, buildFinalizeContent(question, activityFromSession(ctx.Session())))
+			if err != nil {
+				log.Error("writer recovery failed", "err", err)
+				return "", GateResult{}, err
 			}
 			if strings.TrimSpace(answer) == "" {
-				log.Error("worker produced NO answer; writer recovery also empty", "retries", maxEmptyRetries)
+				log.Error("worker produced NO answer; writer recovery also empty", "rounds", maxContinueRounds)
 				return "", GateResult{}, ErrNodeEmpty
 			}
 		}
