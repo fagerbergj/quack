@@ -40,7 +40,26 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 			seenAgent[n.AgentName] = true
 			subAgents = append(subAgents, ag) // dedup: author resolution only
 		}
-		workerNode, err := vetting.NewWorkerNode(ag)
+		// Per-node CLIENT identity for an A2A agent (agent.nodeClient.ForNode):
+		// concurrent nodes running the SAME agent share ONE workflow session, and
+		// remoteagent picks the remote A2A session to continue by scanning that
+		// session backward for an event authored by its own Name — so with the
+		// plain agent name a node adopts a SIBLING's remote session, task and all
+		// (live: the OpenHands explorer cloned goose). Keyed by plan+node so it is
+		// unique across nodes yet stable across a node's judge/revise rounds and a
+		// HITL resume (the same remote session must be resumed there). Local
+		// (non-A2A) agents don't implement ForNode and are used as-is.
+		worker := ag
+		if scoped, ok := ag.(interface {
+			ForNode(string) (adkagent.Agent, error)
+		}); ok {
+			w, err := scoped.ForNode(plan.ID + ":" + n.ID)
+			if err != nil {
+				return nil, nil, fmt.Errorf("dag: node %q: per-node a2a client: %w", n.ID, err)
+			}
+			worker = w
+		}
+		workerNode, err := vetting.NewWorkerNode(worker)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -50,7 +69,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg := cfgFor(n.AgentName)
 		// Remote (A2A) workers never see RunNode input — the gate must deliver
 		// each prompt as a session event instead (see vetting.PromptEventNeeded).
-		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(ag)
+		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
 		node := n // capture per iteration
 		// Orchestrator-set deterministic gate checks (§4): the deterministic
 		// stage (vetting.checksPassCriterion) reads these off Config, not off

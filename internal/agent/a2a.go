@@ -14,6 +14,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"iter"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -137,17 +139,170 @@ func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 // per-session lock while running), producing a spurious WARN on every client
 // disconnect.
 func (s *A2AServer) Client() (adkagent.Agent, error) {
+	base, err := s.clientNamed(s.Card.Name)
+	if err != nil {
+		return nil, err
+	}
+	return nodeClient{Agent: base, srv: s}, nil
+}
+
+// nodeClient is the A2A client agent for one server, with the ability to mint a
+// per-node CLIENT identity (ForNode). It behaves exactly like the plain client
+// otherwise (Name/Description are the served agent's), so the planner roster,
+// routing by agent name and the config.agents keys are untouched.
+type nodeClient struct {
+	adkagent.Agent
+	srv *A2AServer
+}
+
+// ForNode returns a client agent for the SAME A2A server whose LOCAL identity —
+// the Name ADK stamps as the Author of every event this client writes into the
+// shared plan session — is unique to nodeKey.
+//
+// Why: remoteagent decides which remote A2A session to CONTINUE by scanning the
+// local session backward for the first event whose Author == ctx.Agent().Name()
+// and reusing that event's A2A contextID (ADK v2.0.0
+// agent/remoteagent/v2/utils.go, toMissingRemoteSessionParts). Every plan node
+// shares ONE workflow session, so when several concurrent nodes run the SAME
+// agent, that author-keyed scan matches a SIBLING node's event and the node
+// adopts the sibling's remote session — inheriting its task and history (live:
+// five concurrent code-explorer nodes, and the OpenHands node cloned goose's
+// repo). It also truncates the node's own prompt out of the outbound message,
+// which is how two nodes lost their task entirely and asked the user which repo
+// to explore. This is an upstream ADK bug: the lookup keys on a name that is not
+// unique per invocation. A per-node client name is the client-side workaround —
+// the server (and its published AgentCard) stays ONE per agent.
+//
+// nodeKey must be STABLE for a node across its judge/revise rounds and across a
+// HITL pause/resume — that stability is what lets the node resume its own remote
+// session (multi-turn dispatch).
+func (c nodeClient) ForNode(nodeKey string) (adkagent.Agent, error) {
+	return c.srv.clientNamed(c.srv.Card.Name + "#" + nodeKey)
+}
+
+// clientNamed builds a remote agent for this server under the given local name.
+func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
 	factory := a2aclient.NewFactory(
 		a2aclient.WithJSONRPCTransport(&http.Client{}),
 	)
+	base := remoteagent.NewA2AClientProvider(factory)
 	return remoteagent.NewA2A(remoteagent.A2AConfig{
-		Name:                      s.Card.Name,
-		Description:               s.Card.Description,
-		AgentCard:                 s.Card,
-		ClientProvider:            remoteagent.NewA2AClientProvider(factory),
+		Name:        name,
+		Description: s.Card.Description,
+		AgentCard:   s.Card,
+		ClientProvider: func(ctx context.Context, card *a2a.AgentCard) (remoteagent.A2AClient, error) {
+			c, err := base(ctx, card)
+			if err != nil {
+				return nil, err
+			}
+			return scopedClient{A2AClient: c}, nil
+		},
 		GenAIPartConverter:        sanitizeWorkflowPlumbingPart,
 		RemoteTaskCleanupCallback: func(context.Context, *a2a.AgentCard, remoteagent.A2AClient, a2a.TaskInfo, error) {},
 	})
+}
+
+// scopedClient is the A2A client with ONE addition: it rebuilds the outbound
+// message's parts from the session events that belong to THIS invocation and
+// THIS branch, dropping a concurrently-running sibling node's events.
+//
+// Why here and not in the part converter (where the branch filter used to live):
+// remoteagent's history sweep (toMissingRemoteSessionParts) hands FOREIGN-authored
+// events to the converter only AFTER re-wrapping them via presentAsUserMessage — a
+// synthetic event built with session.NewEvent, which carries NO Branch. By the time
+// the converter sees a sibling node's event its branch is gone, so a branch check
+// there cannot fire. Nor can a BeforeRequestCallback help: ADK's callback context
+// refuses Session() and Agent(). The client is the one seam that still sees BOTH
+// the assembled message AND the live InvocationContext (remoteagent passes its
+// InvocationContext straight into SendMessage/SendStreamingMessage).
+//
+// Live consequence of the gap: every plan node shares ONE workflow session, so a
+// concurrent sibling's gate prompt (the event that carries its TASK) and its
+// relayed tool activity were textified into this node's outbound message — "For
+// context: [quack-gate] said: Your task: <the sibling's task>" — and the OpenHands
+// explorer cloned goose's repo.
+type scopedClient struct{ remoteagent.A2AClient }
+
+func (c scopedClient) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	scopeMessage(ctx, req)
+	return c.A2AClient.SendMessage(ctx, req)
+}
+
+func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	scopeMessage(ctx, req)
+	return c.A2AClient.SendStreamingMessage(ctx, req)
+}
+
+// scopeMessage rewrites req's parts in place. It never touches TaskID/ContextID —
+// WHICH remote session to continue stays ADK's call (and, with the per-node client
+// identity from ForNode, a correct one).
+func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest) {
+	ic, ok := ctx.(adkagent.InvocationContext)
+	if !ok || req == nil || req.Message == nil || ic.Session() == nil {
+		return
+	}
+	events := ic.Session().Events()
+	// The same pivot ADK's sweep uses: everything after this agent's own last
+	// response is what the remote session has not seen yet. The per-node client
+	// name makes "its own" exact (see nodeClient.ForNode).
+	start := 0
+	for i := events.Len() - 1; i >= 0; i-- {
+		if ev := events.At(i); ev != nil && ev.Author == ic.Agent().Name() {
+			start = i + 1
+			break
+		}
+	}
+	parts := make([]*a2a.Part, 0, len(req.Message.Parts))
+	for i := start; i < events.Len(); i++ {
+		ev := events.At(i)
+		// Scoping to the current invocation on top of the branch keeps a previous
+		// chat turn's events out of a node's first dispatch (node IDs — hence branch
+		// names — repeat across plans). The branch check is THE sibling filter, and
+		// it works here because ev is the REAL event.
+		if ev == nil || ev.Content == nil || ev.InvocationID != ic.InvocationID() || !eventBelongsToBranch(ic.Branch(), ev) {
+			continue
+		}
+		// Foreign-authored (neither the human nor this agent): describe it, exactly
+		// as remoteagent's presentAsUserMessage would — the worker's own prompt
+		// arrives this way ("[quack-gate] said: Your task: …"), and no unpaired
+		// FunctionCall/Response ever crosses the wire.
+		if ev.Author != "user" && ev.Author != ic.Agent().Name() {
+			parts = append(parts, describeEvent(ev)...)
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			cp, err := sanitizeWorkflowPlumbingPart(ic, ev, p)
+			if err != nil {
+				slog.Warn("a2a: part conversion failed; dropping", "component", "agent", "err", err)
+				continue
+			}
+			if cp != nil {
+				parts = append(parts, cp)
+			}
+		}
+	}
+	req.Message.Parts = parts
+}
+
+// describeEvent renders a foreign-authored event as descriptive user-facing text,
+// mirroring remoteagent's presentAsUserMessage (ADK v2.0.0 utils.go).
+func describeEvent(ev *session.Event) []*a2a.Part {
+	parts := make([]*a2a.Part, 0, len(ev.Content.Parts)+1)
+	for _, p := range ev.Content.Parts {
+		switch {
+		case p == nil || p.Thought:
+		case p.Text != "":
+			parts = append(parts, a2a.NewTextPart(fmt.Sprintf("[%s] said: %s", ev.Author, p.Text)))
+		case p.FunctionCall != nil:
+			parts = append(parts, a2a.NewTextPart(fmt.Sprintf("[%s] called tool %s with parameters: %v", ev.Author, p.FunctionCall.Name, p.FunctionCall.Args)))
+		case p.FunctionResponse != nil:
+			parts = append(parts, a2a.NewTextPart(fmt.Sprintf("[%s] %s tool returned result: %v", ev.Author, p.FunctionResponse.Name, p.FunctionResponse.Response)))
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return append([]*a2a.Part{a2a.NewTextPart("For context:")}, parts...)
 }
 
 // sanitizeWorkflowPlumbingPart is a remoteagent.A2AConfig.GenAIPartConverter
@@ -212,10 +367,20 @@ func sanitizeWorkflowPlumbingPart(ctx context.Context, adkEvent *session.Event, 
 	}
 }
 
-// eventBelongsToBranch mirrors ADK's branch-visibility rule (adk/v2
-// internal/llminternal/contents_processor.go): an event is visible to the
-// current branch when either side is branchless, the branches match exactly,
-// or the event's branch is a dot-delimited ancestor of the current one.
+// eventBelongsToBranch REPRODUCES ADK's own branch-visibility rule, rule for
+// rule (adk/v2 internal/llminternal/contents_processor.go:205,
+// eventBelongsToBranch): an event is visible to the current branch when either
+// side is branchless, the branches match exactly, or the event's branch is a
+// dot-DELIMITED ancestor of the current one (the explicit "." is what stops
+// agent_0 from matching agent_00).
+//
+// This is ADK's intended design for parallel work — workflow/scheduler.go:288:
+// "Branch scopes LLM history visibility (via the flow processor's branch-prefix
+// filter) and gets stamped onto every emitted event when the node leaves
+// Event.Branch empty." ADK's LOCAL LLM flow implements it. ADK's A2A flow
+// (agent/remoteagent/v2/utils.go, toMissingRemoteSessionParts) does NOT — it
+// sweeps every event since the agent's own last response with no branch filter.
+// We deliberately apply ADK's semantics on the path where ADK forgot them.
 func eventBelongsToBranch(invocationBranch string, ev *session.Event) bool {
 	if invocationBranch == "" || ev.Branch == "" || ev.Branch == invocationBranch {
 		return true
