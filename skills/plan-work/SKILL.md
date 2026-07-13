@@ -165,6 +165,11 @@ Rules:
   the repo the node clones or edits (e.g. `repo`, matching the `dir` its task
   tells it to clone into). Name that directory explicitly in the task text so
   the node and the checks agree on it.
+- The checks run against a **fresh clone**, which has none of the project's
+  dependencies installed — so the node's TASK must tell the implementer to install
+  them first (`npm ci`, `go mod download`, …, whatever the repo uses) before its
+  build/test commands exist. Skip that and every check fails closed with "command
+  not found" (exit 127) and the node burns its whole revise budget on it.
 - Research and synthesis nodes never carry checks.
 
 ## Media routing
