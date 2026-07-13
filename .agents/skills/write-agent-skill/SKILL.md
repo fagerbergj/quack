@@ -7,7 +7,7 @@ description: |
   Use whenever the user asks to create a new agent skill, extract expertise into a skill package, build a reusable workflow,
   audit an existing skill for compliance, or convert rough notes into a structured SKILL.md.
 license: MIT
-allowed-tools: Bash Read Write Edit Glob
+allowed-tools: [Bash, Read, Write, Edit, Glob]
 ---
 
 # Agent Skill Engineer — Create Reusable, Modular AI Agent Skills
@@ -82,7 +82,7 @@ compatibility: <if required>         # Optional; ≤500 chars; omit if no real r
 metadata:
   author: <handle>
   version: "1.0"
-allowed-tools: Bash Read Write       # Optional/experimental
+allowed-tools: [Bash, Read, Write]   # Optional/experimental; a YAML list, not a string
 ---
 ```
 

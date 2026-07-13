@@ -36,6 +36,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
@@ -96,9 +97,53 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 		if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
 			continue // no such skills dir in this repo
 		}
-		out = append(out, skill.NewFileSystemSource(os.DirFS(real)))
+		out = append(out, &tolerant{Source: skill.NewFileSystemSource(os.DirFS(real)), dir: real})
 	}
 	return out
+}
+
+// tolerant is a skill.Source whose listing survives a malformed skill. ADK's
+// FileSystemSource.ListFrontmatters aborts the WHOLE directory on the first
+// SKILL.md that fails frontmatter validation — so in a world of cloned
+// third-party repos, one bad file silently costs the agent every project skill
+// (and re-fails on every skill call). This lists per-directory instead: a skill
+// that parses is returned, one that doesn't is skipped and reported ONCE per
+// path. Everything else (Load*) delegates unchanged: naming a broken skill
+// explicitly still surfaces its real error.
+type tolerant struct {
+	skill.Source
+	dir string // real (jail-resolved) path of the skills dir, for the warning
+}
+
+// warnedBadSkills dedupes the malformed-skill warning to one line per path, for
+// the process lifetime — the listing is rebuilt on every skill call, so without
+// this the same bad file warns hundreds of times in a single run.
+var warnedBadSkills sync.Map // skill dir path → struct{}
+
+func (t *tolerant) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
+	entries, err := os.ReadDir(t.dir)
+	if err != nil {
+		return nil, nil // unreadable skills dir: no skills, not an error
+	}
+	var out []*skill.Frontmatter
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue // skills are directories (dir/SKILL.md)
+		}
+		fm, err := t.Source.LoadFrontmatter(ctx, e.Name())
+		if err != nil {
+			if !errors.Is(err, skill.ErrSkillNotFound) { // a dir without SKILL.md simply isn't a skill
+				path := filepath.Join(t.dir, e.Name(), "SKILL.md")
+				if _, dup := warnedBadSkills.LoadOrStore(path, struct{}{}); !dup {
+					slog.Warn("skipping malformed skill; other skills still load",
+						"component", "skillsource", "path", path, "err", err)
+				}
+			}
+			continue
+		}
+		out = append(out, fm)
+	}
+	return out, nil
 }
 
 // project builds a fresh source over ALL project skills currently in the jail.
@@ -113,14 +158,18 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 // (ProjectSkills, threaded with the real chat id) is the per-chat-accurate
 // surface. Rebuilt per query so a repo cloned mid-run is picked up without
 // restart. Never errors: an unreadable root yields an empty source.
-func (p *projectAware) project() skill.Source {
+func (p *projectAware) project() skill.Source { return skill.NewMergedSource(p.sources()...) }
+
+// sources returns one tolerant source per project skills dir currently in the
+// jail (see project()).
+func (p *projectAware) sources() []skill.Source {
 	root, err := p.jail.Resolve(p.userID, "", "")
 	if err != nil {
-		return skill.NewMergedSource()
+		return nil
 	}
 	scopes, err := os.ReadDir(root)
 	if err != nil {
-		return skill.NewMergedSource() // user root not created yet (no clones): no project skills
+		return nil // user root not created yet (no clones): no project skills
 	}
 	var sources []skill.Source
 	for _, scope := range scopes {
@@ -143,7 +192,7 @@ func (p *projectAware) project() skill.Source {
 			sources = append(sources, sourcesUnder(p.jail, p.userID, chatID, repo.Name())...)
 		}
 	}
-	return skill.NewMergedSource(sources...)
+	return sources
 }
 
 // projectAware is a skill.Source that serves built-in skills first and additive
@@ -156,10 +205,12 @@ type projectAware struct {
 }
 
 // ListFrontmatters returns the built-in skills plus every project skill whose
-// name does NOT collide with a built-in one (built-in wins; the project
-// duplicate is hidden). A failure to list project skills (a malformed skill in
-// a cloned repo) is logged and treated as "no project skills" — it must not
-// break listing the built-in library.
+// name does NOT collide with an already-listed one (built-in wins; a project
+// duplicate — including the same skill name in two clones — is hidden, never an
+// error). Listing is per source and per file: a malformed SKILL.md anywhere in
+// the jail is skipped (warned once, by tolerant), and every skill that parsed is
+// still returned. One bad file in one cloned repo must never cost the agent its
+// skills.
 func (p *projectAware) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
 	builtin, err := p.builtin.ListFrontmatters(ctx)
 	if err != nil {
@@ -169,19 +220,21 @@ func (p *projectAware) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatt
 	for _, fm := range builtin {
 		seen[fm.Name] = true
 	}
-	proj, perr := p.project().ListFrontmatters(ctx)
-	if perr != nil {
-		slog.Warn("project skills unavailable; listing built-in skills only",
-			"component", "skillsource", "err", perr)
-		return builtin, nil
-	}
 	out := builtin
-	for _, fm := range proj {
-		if seen[fm.Name] {
-			continue // built-in wins the collision; hide the project duplicate
+	for _, src := range p.sources() {
+		proj, perr := src.ListFrontmatters(ctx)
+		if perr != nil {
+			slog.Warn("project skills dir unavailable; skipping it",
+				"component", "skillsource", "err", perr)
+			continue
 		}
-		seen[fm.Name] = true
-		out = append(out, fm)
+		for _, fm := range proj {
+			if seen[fm.Name] {
+				continue // first listing wins the collision; hide the duplicate
+			}
+			seen[fm.Name] = true
+			out = append(out, fm)
+		}
 	}
 	return out, nil
 }

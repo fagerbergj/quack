@@ -30,7 +30,12 @@ const userID = "local"
 
 const titleInstruction = "Generate a concise chat title (3–6 words, no punctuation, no quotes). Return only the title."
 
-const runTimeout = 2 * time.Hour
+// runTimeout is the backstop that stops a wedged run leaking a goroutine
+// forever — not a policy on how long work may take. It has to outlast the
+// longest legitimate run (an overnight multi-node research/implement DAG), or it
+// becomes the thing that kills long runs: the ceiling fires, every in-flight node
+// dies with "emitUp: context canceled", and the chat goes idle with no answer.
+const runTimeout = 24 * time.Hour
 
 // activeRun is the live handle to a chat's in-flight run: its response id (the
 // turn id, surfaced in the stream's opening response_created event) and the
@@ -207,9 +212,11 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SendChatMessage runs the orchestrator and streams the response as SSE.
-// Accepts either application/json ({"content":"..."}) or multipart/form-data
-// with a "content" text field and optional "files" file parts (image/audio).
+// SendChatMessage STARTS a run and streams it to this client as SSE. The run is
+// server-side work with its own lifetime (see startRun); this request is just the
+// first viewer of it. Accepts either application/json ({"content":"..."}) or
+// multipart/form-data with a "content" text field and optional "files" file parts
+// (image/audio).
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	var body schema.SendMessageBody
 	var attachments []*genai.Part
@@ -259,24 +266,59 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	// Generate a stable turn ID before the run so the DAG plan can reference it,
 	// and so it can be surfaced as this run's response_id (the very first event
-	// below) — the id a client names in PUT .../responses/{response_id}/status
+	// of the stream) — the id a client names in PUT .../responses/{response_id}/status
 	// to cancel this run.
 	turnID := uuid.NewString()
 	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
 
-	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), runTimeout)
-	h.activeCancels.Store(chatID, &activeRun{responseID: turnID, cancel: cancelRun})
-	defer func() {
-		cancelRun()
-		h.activeCancels.Delete(chatID)
-	}()
-	// Mark the run finished for hub subscribers once this returns (after the final
-	// Done is published below). The run uses a detached context, so it — and the
-	// hub fan-out — continue even if this initiating client disconnects.
-	defer h.hub.Close(chatID)
+	// Attach THIS client to the run's topic BEFORE the run starts publishing, so
+	// it misses nothing (Reset drops the previous run's buffer first, exactly as
+	// the run's first Publish would).
+	h.hub.Reset(chatID)
+	replay, live, unsubscribe, _ := h.hub.Subscribe(chatID)
+	defer unsubscribe()
 
+	h.startRun(chatID, turnID, body.Content, attachments)
+
+	// From here this handler is only a VIEWER of the run: it forwards hub events
+	// to this client and returns when the run ends or the client goes away. It
+	// does not drive the run, so a slow, sleeping or vanished client can neither
+	// stall it (SSE writes are off the run's critical path) nor kill it.
+	streamHub(r.Context(), sse, replay, live, 0)
+}
+
+// startRun launches a chat's turn as server-side work: its own goroutine on a
+// context tied to the SERVER's lifetime (bounded by runTimeout) plus the
+// explicit-cancel path — NOT to the HTTP request that kicked it off. A run
+// outlives its initiating client: a dropped curl, a closed tab or a laptop going
+// to sleep stops the client READING the stream; the DAG keeps executing, keeps
+// publishing to the hub + durable event log, and any client (this one on
+// reconnect, or another device via GET .../stream) can attach and watch it live.
+// Only PUT .../responses/{id}/status {"status":"cancelled"} may kill it.
+func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.Part) {
+	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	// Registered synchronously (before the goroutine gets to run) so the cancel
+	// endpoint can never miss the run it was just told about.
+	h.activeCancels.Store(chatID, &activeRun{responseID: turnID, cancel: cancelRun})
+	go func() {
+		// Mark the run finished for hub subscribers once it returns (after its final
+		// Done is published) — LAST, so that by the time a viewer sees the stream
+		// close, the run is already off activeCancels (cancelling it now 404s).
+		defer h.hub.Close(chatID)
+		defer func() {
+			cancelRun()
+			h.activeCancels.Delete(chatID)
+		}()
+		h.runChat(runCtx, chatID, turnID, content, attachments)
+	}()
+}
+
+// runChat is the run itself: it drives the orchestrator and publishes the whole
+// SSE stream to the hub (live subscribers) and the durable event log. It writes
+// to no HTTP client — a run has no client, only viewers.
+func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string, attachments []*genai.Part) {
 	// Fresh run: clear the previous run's durable events so this run's seq starts
-	// at 1 (mirrors the hub discarding the old buffer on its first publish).
+	// at 1 (mirrors the hub topic reset on the way in).
 	h.eventLog.reset(runCtx, chatID)
 
 	// publish assigns the next per-chat seq, fans the event to live hub subscribers,
@@ -289,14 +331,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		h.eventLog.append(chatID, seq, ev)
 	}
 
-	// response_created is always the very first event of the stream. clientGone
-	// tracks whether the direct write to THIS client still succeeds — publish
-	// (hub + durable log) always continues regardless, for other subscribers.
-	clientGone := false
+	// response_created is always the very first event of the stream.
 	publish(stream.ResponseCreated(turnID))
-	if sendErr := sse.send(stream.ResponseCreated(turnID)); sendErr != nil {
-		clientGone = true
-	}
 
 	titleCh := make(chan string, 1)
 	go func() {
@@ -305,7 +341,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		if c == nil || c.Title != "" {
 			return
 		}
-		title := h.generateTitle(runCtx, body.Content)
+		title := h.generateTitle(runCtx, message)
 		if title == "" {
 			return
 		}
@@ -318,9 +354,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		case title, ok := <-titleCh:
 			if ok {
 				publish(stream.ChatTitle(title))
-				if !clientGone {
-					_ = sse.send(stream.ChatTitle(title))
-				}
 			}
 		default:
 		}
@@ -332,15 +365,11 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	// ADK's event storage drops ModelVersion, so history can't recover it later.
 	var orchModel string
 
-	for ev, err := range h.orch.Run(runCtx, userID, chatID, body.Content, attachments) {
+	for ev, err := range h.orch.Run(runCtx, userID, chatID, message, attachments) {
 		trySendTitle()
 		if err != nil {
 			publish(stream.Errorf(err.Error()))
 			publish(stream.Done())
-			if !clientGone {
-				_ = sse.send(stream.Errorf(err.Error()))
-				_ = sse.send(stream.Done())
-			}
 			return
 		}
 		if ev.Name == stream.EventAgentComplete {
@@ -359,25 +388,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		} else if activePlanID != "" {
 			h.persistNodeEvent(activePlanID, ev)
 		}
-		// Fan out to any other subscribers regardless of whether THIS client is
-		// still connected; only the direct write is gated on clientGone.
 		publish(ev)
-		if !clientGone {
-			if sendErr := sse.send(ev); sendErr != nil {
-				clientGone = true
-			}
-		}
 	}
 	for title := range titleCh {
 		publish(stream.ChatTitle(title))
-		if !clientGone {
-			_ = sse.send(stream.ChatTitle(title))
-		}
 	}
 	publish(stream.Done())
-	if !clientGone {
-		_ = sse.send(stream.Done())
-	}
 	// Stamp the orchestrator's model on the turn row so history attribution
 	// matches the live stream. Plain replies only — a DAG turn's models live
 	// per-node on DagNodeState, and its answer is credited to the terminal node.
@@ -619,16 +635,36 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 
 	// Warm path: the hub holds the run (live, or completed-but-still-buffered).
 	// Replay its buffer (skipping anything the client already saw), then tail live.
-	for _, it := range replay {
-		if it.Seq <= lastSeq {
-			continue
+	if done { // run already finished; replay holds the whole stream (live is nil)
+		for _, it := range replay {
+			if it.Seq > lastSeq {
+				if sse.sendID(it.Seq, it.SSE) != nil {
+					return
+				}
+			}
 		}
-		if sse.sendID(it.Seq, it.SSE) != nil {
+		return
+	}
+	streamHub(r.Context(), sse, replay, live, lastSeq)
+}
+
+// streamHub forwards one run's events to one client: the replay buffer, then the
+// live tail, until the run ends (the hub closes the channel) or the client goes
+// away (its request context is done, or a write fails). It is the ONLY place a
+// run's events touch an HTTP connection — the run itself publishes to the hub and
+// never blocks on a client, so a viewer that is slow, asleep or gone cannot stall
+// or kill it. lastSeq skips whatever the client already saw.
+func streamHub(ctx context.Context, sse *sseWriter, replay []stream.Event, live <-chan stream.Event, lastSeq int64) {
+	send := func(it stream.Event) bool {
+		if it.Seq <= lastSeq {
+			return true
+		}
+		return sse.sendID(it.Seq, it.SSE) == nil
+	}
+	for _, it := range replay {
+		if !send(it) {
 			return
 		}
-	}
-	if done {
-		return // run already finished; replay included its terminal Done event
 	}
 	for {
 		select {
@@ -636,14 +672,11 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 			if !ok {
 				return // run ended (its Done was delivered via the live channel)
 			}
-			if it.Seq <= lastSeq {
-				continue
-			}
-			if sse.sendID(it.Seq, it.SSE) != nil {
+			if !send(it) {
 				return
 			}
-		case <-r.Context().Done():
-			return
+		case <-ctx.Done():
+			return // this client is gone; the run carries on without it
 		}
 	}
 }
