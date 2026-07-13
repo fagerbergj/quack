@@ -127,8 +127,15 @@ server:
 # empty ⇒ public repos only (keyless path); git_push off; guards use the
 # shipped defaults (delete_path/git_rebase: judge, git_push/run_command:
 # judge+confirm).
+#
+# sandbox: bwrap is the DEFAULT and it matters most in exactly this preset —
+# `quack server` here runs on the operator's own machine, as their own user, so
+# an unsandboxed child process would have their ~/.ssh, ~/.aws and .env. Install
+# bubblewrap (Debian/Ubuntu: apt-get install bubblewrap) or the server refuses to
+# start; `sandbox: none` opts out, loudly.
 workspace:
   root: ${QUACK_WORKSPACE_ROOT}
+  sandbox: bwrap
   git_push: false
   guards:
     delete_path: judge

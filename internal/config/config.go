@@ -65,6 +65,17 @@ const (
 	defaultWorkspaceMaxResults     = 200
 	defaultWorkspaceMaxListEntries = 500
 	defaultWorkspaceTimeoutSeconds = 60
+	// defaultWorkspaceSandbox: children get a real OS boundary unless the
+	// operator explicitly opts out. A host without bubblewrap therefore fails to
+	// START (with an install-it-or-say-none error) rather than quietly running
+	// agent child processes with the server user's full filesystem authority.
+	defaultWorkspaceSandbox = "bwrap"
+	// Per-child resource limits (see workspace.Limits). RLIMIT_AS is generous on
+	// purpose: it is per PROCESS and Node's V8 reserves a huge virtual region at
+	// startup, so a tight limit doesn't shrink a build, it stops `node` running.
+	defaultWorkspaceAddressSpaceMB = 8192
+	defaultWorkspaceMaxProcs       = 512
+	defaultWorkspaceMaxFileSizeMB  = 1024
 )
 
 // WorkspaceConfig is the agents' working disk: one configured root, with a
@@ -103,6 +114,26 @@ type WorkspaceConfig struct {
 	// Guards maps a tool name to its guard-ladder tier: none (default,
 	// unlisted) | judge | confirm | judge+confirm. See §4b of the design doc.
 	Guards map[string]string `yaml:"guards"`
+	// Sandbox is the OS boundary run_command/gate-check CHILD PROCESSES run
+	// inside: "bwrap" (default — a bubblewrap mount/pid/user namespace: nothing
+	// outside the child's cwd and its isolated $HOME exists in its filesystem)
+	// or "none" (the child runs with the server user's full filesystem
+	// authority). "bwrap" on a host without a working bwrap is a startup ERROR,
+	// never a silent fallback; "none" logs a loud WARN. See
+	// internal/workspace.ResolveSandbox.
+	Sandbox string `yaml:"sandbox"`
+	// Limits are the per-child-process resource limits (setrlimit) — a runaway
+	// build must not be able to take the host down with it.
+	Limits WorkspaceLimits `yaml:"limits"`
+}
+
+// WorkspaceLimits are the per-child rlimits (see internal/workspace.Limits for
+// what each one means and why RLIMIT_NPROC only applies inside the sandbox).
+// Each is optional; 0 means "inherit the server's limit" (no limit).
+type WorkspaceLimits struct {
+	AddressSpaceMB int `yaml:"address_space_mb"` // RLIMIT_AS, default 8192 (per process)
+	MaxProcs       int `yaml:"max_procs"`        // RLIMIT_NPROC, default 512 (sandboxed children only)
+	MaxFileSizeMB  int `yaml:"max_file_size_mb"` // RLIMIT_FSIZE, default 1024
 }
 
 // GitCredentialConfig is one deployment-level per-host HTTPS git credential.
@@ -726,6 +757,24 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	}
 	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 {
 		return fmt.Errorf("config: workspace caps must be >= 0")
+	}
+	if w.Sandbox == "" {
+		w.Sandbox = defaultWorkspaceSandbox
+	}
+	if w.Sandbox != "bwrap" && w.Sandbox != "none" {
+		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap or none)", w.Sandbox)
+	}
+	if w.Limits.AddressSpaceMB == 0 {
+		w.Limits.AddressSpaceMB = defaultWorkspaceAddressSpaceMB
+	}
+	if w.Limits.MaxProcs == 0 {
+		w.Limits.MaxProcs = defaultWorkspaceMaxProcs
+	}
+	if w.Limits.MaxFileSizeMB == 0 {
+		w.Limits.MaxFileSizeMB = defaultWorkspaceMaxFileSizeMB
+	}
+	if w.Limits.AddressSpaceMB < 0 || w.Limits.MaxProcs < 0 || w.Limits.MaxFileSizeMB < 0 {
+		return fmt.Errorf("config: workspace.limits must be >= 0")
 	}
 	for i, gc := range w.GitCredentials {
 		if strings.TrimSpace(gc.Host) == "" {

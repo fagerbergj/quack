@@ -69,33 +69,56 @@ func TestSafetyJudgeNoVerdictIsError(t *testing.T) {
 	}
 }
 
-// TestSafetyJudgeInstructionCalibration pins the recalibrated system prompt's
-// load-bearing content (live usage 2026-07-10: the judge re-litigated the
-// sandbox, denying anything destructive-LOOKING): the you-are-not-the-sandbox
-// walls paragraph, the deny-only-for list, and both allow and deny calibration
-// examples. If someone rewrites the prompt and drops one of these anchors, the
-// judge drifts back to pattern-matching on syntax.
+// TestSafetyJudgeInstructionCalibration pins the system prompt's load-bearing
+// content in BOTH directions.
+//
+// The prompt used to tell the judge that "every path is confined to the agent's
+// workspace jail" and that "commands run argv-only with no shell", then told it
+// not to re-litigate the sandbox. Neither claim was ever true of a run_command
+// CHILD process (its arguments are path-checked by nothing; `sh -c "…"` trips no
+// metachar), so the one automated gate we have was calibrated to stand down on
+// exactly the class of operation it exists to catch. Those claims must never
+// come back — hence the must-NOT-contain half.
+//
+// The anti-over-denial calibration (live usage 2026-07-10: the judge denied
+// anything destructive-LOOKING) is kept, but only for what IS genuinely
+// confined: the task's own artifacts inside its own repo.
 func TestSafetyJudgeInstructionCalibration(t *testing.T) {
 	for _, want := range []string{
-		// The walls paragraph: the judge is not the sandbox.
-		"You are NOT the sandbox",
-		"workspace jail",
-		"argv-only with no shell",
-		// No syntax-pattern denials.
-		"Do NOT deny",
-		"could be dangerous in general",
-		// The exhaustive deny grounds.
-		"Deny ONLY for",
-		"outside or contradicting the user's task",
-		"not the task's own artifact",
+		// What actually holds — stated as narrowly as it is true.
+		"resolve every path inside the agent's workspace jail",
+		"run_command is DIFFERENT",
+		"real operating-system process",
+		`"No shell" is a habit guard, not a wall`,
+		// The deny grounds that the (false) wall claims used to suppress.
+		"DENY:",
+		"INLINE code",
+		"python -c",
+		"credentials or dotfile config",
+		".ssh",
+		"outside the task's own repository",
+		"piping remote content into an interpreter",
 		"external destination",
 		"scope escalation",
-		// Calibration examples — at least one anchor per direction.
-		"ALLOW: rm -rf node_modules",
-		"DENY: git_push when the task is read-only research",
+		// Anti-over-denial calibration, scoped to what IS confined.
+		"ALLOW",
+		"rm -rf node_modules",
+		"DENY examples: git_push when the task is read-only research",
 	} {
 		if !strings.Contains(safetyJudgeInstruction, want) {
 			t.Errorf("safetyJudgeInstruction missing calibration anchor %q", want)
+		}
+	}
+	// Claims that are FALSE for a run_command child. Telling the judge these
+	// walls hold is how it gets talked out of denying `sh -c cat ~/.ssh/id_rsa`.
+	for _, forbidden := range []string{
+		"You are NOT the sandbox",
+		"argv-only with no shell",
+		"Deterministic walls already hold",
+		"could be dangerous in general",
+	} {
+		if strings.Contains(safetyJudgeInstruction, forbidden) {
+			t.Errorf("safetyJudgeInstruction claims a wall that does not exist for a run_command child: %q", forbidden)
 		}
 	}
 }

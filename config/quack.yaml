@@ -206,9 +206,47 @@ workspace:
   max_results: 200                # grep/glob hits per call
   max_list_entries: 500           # list_dir entries per call
   timeout_seconds: 60
-  # exec_path: ["/home/user/.nvm/versions/node/v22.22.3/bin"]  # extra PATH dirs for
-  #                               # run_command/checks/git children — for toolchains
-  #                               # outside the fixed system dirs (nvm, asdf).             # per git/check/run_command invocation
+
+  # sandbox: the OS boundary every run_command / gate-check CHILD PROCESS runs
+  # inside. The jail above is a PATH CHECK on the tools — it never constrained a
+  # child process, only its cwd, so before this a child (any child: `sh -c` slips
+  # through the metachar filter untouched) could read ~/.ssh, ~/.aws, .env, and
+  # anything else the server's OS user can read.
+  #   bwrap (default) — bubblewrap namespace: the child's filesystem is a
+  #     read-only system view plus exactly two writable paths (its own working
+  #     directory and its isolated $HOME). Nothing else EXISTS in there. Needs
+  #     no root and no daemon; install it (Debian/Ubuntu: `apt-get install
+  #     bubblewrap`). If it isn't installed/usable, the server REFUSES TO START.
+  #   none — children run with the server user's full filesystem authority.
+  #     Logs a loud WARN at startup. Only sane when the whole server is already
+  #     confined (a throwaway container/VM) or you trust the agents with that
+  #     account.
+  sandbox: bwrap
+
+  # Per-child resource limits (rlimits). A runaway build (`npm ci` on a hostile
+  # repo, a test that allocates without bound) must not be able to take the host
+  # down with it. 0 = inherit the server's limit.
+  limits:
+    address_space_mb: 8192   # RLIMIT_AS, PER PROCESS. Do not tighten much: node's V8
+                             # reserves a huge VIRTUAL region at startup, so a small
+                             # limit doesn't slim a build, it stops node running at all.
+    max_procs: 512           # RLIMIT_NPROC — only applied inside the bwrap user namespace
+                             # (it is counted per-UID system-wide, so outside one it would
+                             # break every fork). --unshare-pid contains fork bombs anyway.
+    max_file_size_mb: 1024   # RLIMIT_FSIZE: one command cannot fill the disk.
+
+  # exec_path: extra PATH dirs for run_command/checks/git children — for toolchains
+  # outside the fixed system dirs (nvm, asdf, a $HOME-installed Go SDK). Under
+  # sandbox: bwrap each entry is ALSO bind-mounted READ-ONLY into the child (a
+  # `.../bin` entry brings its sibling lib/, libexec/ and share/ with it — nvm's
+  # `npm` is a symlink into ../lib), so the toolchain exists in there and nothing
+  # else on the host does. Entries are bound VERBATIM: a toolchain that keeps
+  # runtime files elsewhere in its prefix (a Go SDK's GOROOT — src/, pkg/) needs
+  # that directory listed too, or the child fails with "cannot find GOROOT" /
+  # exit 127 "No such file or directory". Anything under /usr is already covered.
+  # exec_path:
+  #   - /home/user/.nvm/versions/node/v22.22.3/bin
+  #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
   # check_commands: allowed command PREFIXES the planner may complete into a
   # code-implementer node's `checks` (§4) — the trust gate runs these against
   # the node's own workdir after each draft. Empty = checks unavailable (the
@@ -233,14 +271,16 @@ workspace:
   git_push: false
 
   # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
-  # confirm | judge+confirm. Tier-0 walls (the jail, argv-only exec, no shell,
-  # no force-push/push-to-main) always apply regardless of guard tier.
+  # confirm | judge+confirm. Tier-0 always applies regardless of guard tier: the
+  # path jail for the fs/git TOOLS, the sandbox + rlimits for their CHILD
+  # PROCESSES, no force-push/push-to-main. (The rejected shell metacharacters are
+  # NOT a wall — `sh -c` contains none of them; they are an LLM-habit guard. The
+  # judge tier is what denies an inline interpreter.)
   guards:
     delete_path: judge
     git_rebase: judge
     git_push: judge+confirm
-    run_command: judge+confirm   # honest limit: the jail confines cwd, not what the program does
-    # run_command: judge+confirm   # reserved for the code-implementer PR
+    run_command: judge+confirm   # the sandbox contains WHERE it can reach; the judge contains WHAT it does
 
 # Bundled integrations (inbound + outbound). Optional; each is off unless its
 # sub-section is present. Commented out here because dev/local runs typically

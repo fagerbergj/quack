@@ -482,7 +482,23 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		MaxListEntries: cfg.Workspace.MaxListEntries,
 		Timeout:        time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
 		ExtraPath:      cfg.Workspace.ExecPath,
+		Limits: workspace.Limits{
+			AddressSpaceMB: cfg.Workspace.Limits.AddressSpaceMB,
+			Procs:          cfg.Workspace.Limits.MaxProcs,
+			FileSizeMB:     cfg.Workspace.Limits.MaxFileSizeMB,
+		},
 	}
+	// The OS boundary every run_command / gate-check child process runs inside.
+	// Resolved HERE, once, at startup — and it either holds or the server does
+	// not start: a configured-but-unusable sandbox is a hard error (the jail is
+	// a path check on the TOOLS; without this, a child — including any `sh -c` —
+	// had the server user's whole filesystem). `none` returns cleanly, with a
+	// WARN that says exactly what the deployment is accepting.
+	sandbox, err := workspace.ResolveSandbox(workspace.SandboxMode(cfg.Workspace.Sandbox))
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	workspaceCaps.Sandbox = sandbox
 	// A dedicated $HOME for run_command/checks/git children, OUTSIDE the
 	// user's cloned repos (a sibling under their jail root — see Jail.
 	// HomeDir) — never the task's own cwd. Fixes a live bug: HOME pinned to a

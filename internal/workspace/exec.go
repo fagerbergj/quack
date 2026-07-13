@@ -272,36 +272,57 @@ func childHome(dir string, caps Caps) string {
 	return dir
 }
 
+// newChildCmd is the ONE place a child process is constructed — RunArgv and
+// every stage of RunPipeline go through it, so the OS sandbox and the resource
+// limits cannot be forgotten on one path and applied on the other.
+//
+// argv[0] is resolved via the server process's own (ambient) PATH — exactly
+// like gitBinaryPath does for `git` — BEFORE the child's argv is constructed;
+// exec.Command would otherwise resolve a bare name using the CALLING process's
+// PATH regardless of what cmd.Env sets, silently ignoring our scrub. Passing
+// the already-resolved absolute path means no further lookup happens, so
+// cmd.Env's PATH only governs the child's OWN nested lookups (see execEnvPath).
+// Under SandboxBwrap the resolved path is valid INSIDE the sandbox too: the
+// system dirs and the configured exec_path toolchains are bound at their own
+// paths (see sandbox.go).
+func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*exec.Cmd, error) {
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("workspace: empty command")
+	}
+	bin, err := exec.LookPath(argv[0])
+	if err != nil {
+		return nil, fmt.Errorf("workspace: %q not found: %w", argv[0], err)
+	}
+	real := childArgv(dir, bin, argv, caps)
+	cmd := exec.CommandContext(ctx, real[0], real[1:]...)
+	cmd.Dir = dir
+	// bwrap passes its own environment straight through to the sandboxed child,
+	// so the scrub (no inherited secrets, a fixed PATH, the isolated HOME) holds
+	// identically in both modes.
+	cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
+	return cmd, nil
+}
+
 // RunArgv executes argv[0] with argv[1:] as a subprocess: exec.Command argv
-// arrays ONLY, never a shell. The caller has already rejected shell
-// metacharacters and split the command itself (ContainsShellMetachar /
-// SplitArgv) — this is the LAST wall: even a validated argv never touches
-// /bin/sh. cwd is pinned to dir (callers resolve it through a Jail first), the
-// child's environment is scrubbed (execEnvPath + HOME=childHome(dir,caps)), a per-call
-// timeout comes from caps (DefaultCaps when unset), and output is
-// tail-capped. Shared by run_command (internal/tools) and the trust gate's
-// per-node deterministic `checks` (internal/vetting/checks.go) — ONE runner,
-// two consumers.
+// arrays ONLY, never a shell. cwd is pinned to dir (callers resolve it through
+// a Jail first), the child's environment is scrubbed (execEnvPath +
+// HOME=childHome(dir,caps)), a per-call timeout comes from caps (DefaultCaps
+// when unset), and output is tail-capped. Shared by run_command
+// (internal/tools) and the trust gate's per-node deterministic `checks`
+// (internal/vetting/checks.go) — ONE runner, two consumers.
+//
+// The REAL containment is caps.Sandbox (SandboxBwrap: an OS mount/pid/user
+// namespace — see sandbox.go), because the argv-only rule never was one: a
+// child's ARGUMENTS are not path-checked, and `sh -c "…"` contains no rejected
+// metacharacter. Not opening a shell here still matters (it keeps the model
+// from expressing shell semantics quack never validated), but it is a habit
+// guard; the namespace is the wall.
 //
 // err is reserved for a launch failure (binary not found, bad cwd) or a
 // timeout; a non-zero exit from the command itself is reported via
 // ExecResult.ExitCode with a nil error, so callers can surface "the test
 // failed" to the model without it looking like a tool malfunction.
 func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecResult, error) {
-	if len(argv) == 0 {
-		return ExecResult{}, fmt.Errorf("workspace: empty command")
-	}
-	// Resolve the binary via the server process's own (ambient) PATH — exactly
-	// like gitBinaryPath does for `git` — BEFORE constructing the child's argv;
-	// exec.Command would otherwise resolve a bare name using the CALLING
-	// process's PATH regardless of what cmd.Env sets, silently ignoring our
-	// scrub. Passing the already-resolved absolute path means no further
-	// lookup happens, so cmd.Env's PATH only governs the child's OWN nested
-	// lookups (see execEnvPath).
-	bin, err := exec.LookPath(argv[0])
-	if err != nil {
-		return ExecResult{}, fmt.Errorf("workspace: %q not found: %w", argv[0], err)
-	}
 	timeout := caps.Timeout
 	if timeout <= 0 {
 		timeout = DefaultCaps().Timeout
@@ -309,9 +330,10 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, bin, argv[1:]...)
-	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
+	cmd, err := newChildCmd(cctx, dir, argv, caps)
+	if err != nil {
+		return ExecResult{}, err
+	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -375,21 +397,18 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Resolve every binary up front (see RunArgv's LookPath rationale) so a
-	// missing program is one clean error before anything starts.
+	// Build every stage up front (newChildCmd resolves the binary and applies
+	// the sandbox + limits — see its doc) so a missing program is one clean
+	// error before anything starts. Each stage is its OWN sandbox; the pipes
+	// between them are inherited file descriptors, which cross the namespace
+	// boundary exactly as they cross a process boundary.
 	cmds := make([]*exec.Cmd, len(stages))
 	stderrs := make([]*bytes.Buffer, len(stages)) // one buffer per stage: exec copies stderr on its own goroutine, so a shared buffer would race
 	for i, argv := range stages {
-		if len(argv) == 0 {
-			return ExecResult{}, fmt.Errorf("workspace: empty pipeline stage")
-		}
-		bin, err := exec.LookPath(argv[0])
+		cmd, err := newChildCmd(cctx, dir, argv, caps)
 		if err != nil {
-			return ExecResult{}, fmt.Errorf("workspace: %q not found: %w", argv[0], err)
+			return ExecResult{}, err
 		}
-		cmd := exec.CommandContext(cctx, bin, argv[1:]...)
-		cmd.Dir = dir
-		cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
 		stderrs[i] = &bytes.Buffer{}
 		cmd.Stderr = stderrs[i]
 		cmds[i] = cmd

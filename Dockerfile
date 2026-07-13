@@ -32,9 +32,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # convention) — a deliberate size/attack-surface tradeoff for a real userland,
 # not a downgrade in the properties that actually matter here (non-root,
 # unprivileged port, no runtime writes outside the workspace volume).
+#
+# bubblewrap is the OS boundary agent child processes (run_command, the trust
+# gate's derived checks) run inside — workspace.sandbox: bwrap, the default, and
+# the server REFUSES TO START without it. It needs no root and no daemon, but it
+# does need the container runtime to permit unprivileged user namespaces (Docker's
+# default seccomp profile does; a hardened runtime may not — see
+# docs/configuration.md). util-linux carries prlimit(1), which applies the
+# per-child rlimits (workspace.limits).
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates \
+      git ca-certificates bubblewrap util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 WORKDIR /

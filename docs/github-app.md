@@ -190,9 +190,11 @@ stdlib `net/http` for the REST, stdlib `crypto/hmac` for the webhook signature.
 
 Quack's guard ladder has a `confirm` tier that pauses a node for a human
 approve/deny (`workspace.guards`). A webhook-driven run has **no human at a
-terminal**. By default nothing is on the `confirm` tier, so a webhook run
-executes autonomously, with the `judge` tier (an independent model allow/deny)
-providing automated safety for risky ops.
+terminal**. The shipped config puts two tools on the `confirm` tier —
+`git_push: judge+confirm` and `run_command: judge+confirm` (see
+`config/quack.yaml`) — so a webhook-driven deployment that wants autonomous runs
+must **explicitly** drop those to `judge` (or `none`), accepting that the
+independent-model allow/deny is then the only safety check on them.
 
 **If** a tool is on the `confirm` tier, a webhook run that reaches it pauses
 (`node_needs_input`) and the run ends **without performing that operation** —
