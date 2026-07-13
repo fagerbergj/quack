@@ -155,58 +155,12 @@ func checksDir(cfg Config) (string, bool, error) {
 		// where the planner said (the scope root when it named no workdir).
 		return start, true, nil
 	}
-	repos := findRepos(start)
+	repos := workspace.FindRepos(start)
 	if len(repos) != 1 {
 		return "", false, nil
 	}
 	return repos[0], true, nil
 }
-
-// repoSearchDepth bounds the walk below the starting directory. git_clone puts a
-// repo at <scope>/<dir> (depth 1); one extra level covers a worker that nested it.
-const repoSearchDepth = 2
-
-// findRepos returns the git repositories at root or beneath it, to
-// repoSearchDepth. Vendored/ignored trees (node_modules, vendor, and dot-dirs —
-// notably .git itself) are skipped: a dependency carrying its own .git must not
-// masquerade as the node's repo, nor make the real one look ambiguous. Once a
-// directory IS a repo, the walk stops there (a submodule is not a second repo).
-func findRepos(root string) []string {
-	if isRepo(root) {
-		return []string{root}
-	}
-	var out []string
-	var walk func(dir string, depth int)
-	walk = func(dir string, depth int) {
-		if depth > repoSearchDepth {
-			return
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return
-		}
-		for _, e := range entries {
-			if !e.IsDir() || skipDir(e.Name()) {
-				continue
-			}
-			sub := filepath.Join(dir, e.Name())
-			if isRepo(sub) {
-				out = append(out, sub)
-				continue // don't descend into a repo — submodules aren't candidates
-			}
-			walk(sub, depth+1)
-		}
-	}
-	walk(root, 1)
-	return out
-}
-
-// skipDir names the directories a repo search must never descend into.
-func skipDir(name string) bool {
-	return strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor"
-}
-
-func isRepo(dir string) bool { return fileExists(dir, ".git") }
 
 func fileExists(dir, name string) bool {
 	_, err := os.Stat(filepath.Join(dir, name))

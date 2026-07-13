@@ -234,7 +234,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 				return
 			}
 			toolList = append(toolList, memory.NewPreload(), commitTool)
-			memSvc = o.userMem
+			// The orchestrator reads exactly one bucket: this user's. (Legacy = the raw
+			// user id, the pre-bucket key user memories were written under.)
+			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{

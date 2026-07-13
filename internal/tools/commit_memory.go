@@ -47,7 +47,11 @@ func NewCommitMemoryTool(store *memory.Store, userID string) (tool.Tool, error) 
 			// orchestrator's turn (this write is synchronous — the model awaits it).
 			cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 			defer cancel()
-			if _, err := store.Commit(cctx, userID, "orchestrator", []memory.Candidate{cand}, ""); err != nil {
+			// The user bucket, always: this tool records facts ABOUT THE USER. Legacy is
+			// the raw user id — the pre-bucket key these memories used to be written
+			// under — so the ones already stored keep loading.
+			sc := memory.Scope{User: userID, Legacy: userID}
+			if _, err := store.Commit(cctx, sc, "orchestrator", []memory.Candidate{cand}, ""); err != nil {
 				return "", fmt.Errorf("commit_memory: %w", err)
 			}
 			return "Remembered.", nil

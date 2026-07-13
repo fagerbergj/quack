@@ -33,6 +33,14 @@ func TestStagedCandidate(t *testing.T) {
 	if c, ok := stagedCandidate(&genai.FunctionCall{Args: map[string]any{"content": "x"}}); !ok || c.Metadata != nil {
 		t.Fatalf("no-kind case: got %+v ok=%v", c, ok)
 	}
+	// bucket (what the memory is ABOUT) is carried through: it routes the write to the
+	// shared repo/role/user bucket (memory.Scope.writeBucket).
+	c, ok = stagedCandidate(&genai.FunctionCall{Args: map[string]any{
+		"content": "load-games.ts registers every game", "kind": "layout", "bucket": "repo",
+	}})
+	if !ok || c.Metadata["bucket"] != "repo" || c.Metadata["kind"] != "layout" {
+		t.Fatalf("bucket case: got %+v ok=%v", c, ok)
+	}
 	// blank / missing content is not staged (guards the arg-key contract)
 	for _, args := range []map[string]any{{"content": "   "}, {}, {"content": 42}} {
 		if _, ok := stagedCandidate(&genai.FunctionCall{Args: args}); ok {

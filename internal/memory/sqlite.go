@@ -68,10 +68,10 @@ func (x *sqliteIndex) ensure(ctx context.Context, _ func() (int, error)) error {
 	return x.db.WithContext(ctx).AutoMigrate(&memoryRow{})
 }
 
-func (x *sqliteIndex) query(ctx context.Context, scope string, vec []float32, k int) ([]scored, error) {
+func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error) {
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
-	if scope != "" {
-		q = q.Where("scope = ?", scope)
+	if len(buckets) > 0 {
+		q = q.Where("scope IN ?", buckets) // OR across the caller's buckets
 	}
 	var rows []memoryRow
 	if err := q.Find(&rows).Error; err != nil {

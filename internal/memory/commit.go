@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,7 +16,8 @@ import (
 
 // Candidate is a memory the agent staged (or that the orchestrator wants written
 // directly). Metadata is free-form (e.g. {"kind": "source"}); the schema carries
-// no use-case vocabulary.
+// no use-case vocabulary. Metadata["bucket"] (repo|role|user — stage_memory's
+// `bucket` argument) routes the write; anything else takes Scope's default.
 type Candidate struct {
 	Content  string
 	Metadata map[string]string
@@ -23,34 +26,72 @@ type Candidate struct {
 // nowRFC3339 lets tests stamp deterministically; defaults to time.Now.
 var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// Commit vets, extracts, and consolidates memories into this collection for
-// userID, returning the number of points written or updated. It is the single
-// gated writer: the gate calls it on a judge pass (staged tradecraft + the
-// accepted answer); the orchestrator calls it directly for user facts.
+// Commit vets, extracts, and consolidates memories into this collection, routing
+// each one to the BUCKET it is about (see scope.go), and returns the number of
+// points written or updated. It is the single gated writer: the gate calls it on a
+// judge pass (staged tradecraft + the accepted answer); the orchestrator calls it
+// directly for user facts.
 //
-// One consolidation pass (the consolidator LLM, e.g. gemma) does it all: given
-// the staged candidates, the source text, and the user's most similar existing
-// memories, it returns ADD / UPDATE / DELETE / NOOP operations — dropping junk
-// or non-durable items (the vetting step) and reconciling against neighbours
-// (mem0-style consolidation) so a superseding fact updates rather than duplicates.
+// Routing is explicit and cheap, never an LLM judgment: a staged candidate names its
+// bucket (stage_memory's `bucket` argument, in Metadata["bucket"]) and sc.writeBucket
+// resolves it to a key, degrading repo → role → user when the caller has no repo
+// context. The source answer's extraction goes to the caller's default bucket.
 //
-// ponytail: per-(user, collection) commits can race — two parallel commits of
+// Each bucket is consolidated separately (its own neighbours, its own reconcile
+// pass), because a memory only ever competes with others about the SAME subject.
+//
+// ponytail: per-(bucket, collection) commits can race — two parallel commits of
 // the same fact both ADD. Best-effort: the next commit's consolidation reconciles
 // the dup. Add a per-key lock only if duplicate churn proves real.
-func (s *Store) Commit(ctx context.Context, userID, author string, staged []Candidate, sourceText string) (int, error) {
+func (s *Store) Commit(ctx context.Context, sc Scope, author string, staged []Candidate, sourceText string) (int, error) {
 	if s.consolidator == nil {
 		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
 	}
-	// Partition key: task tradecraft is keyed by the agent (author), user memory by
-	// the real userID — see Store.scope. Keeps writes and recall on the same key.
-	userID = s.scope(author, userID)
 	staged = dedupCandidates(staged) // collapse the same sentence staged across passes
 	if len(staged) == 0 && strings.TrimSpace(sourceText) == "" {
 		return 0, nil
 	}
 
-	// Fetch existing memories near the work (answer-relevant) to reconcile against.
-	neighbours, err := s.neighbours(ctx, userID, sourceText, staged)
+	// Group the staged candidates by the bucket they belong in; the answer's own
+	// extraction rides the default bucket.
+	byBucket := map[string][]Candidate{}
+	for _, c := range staged {
+		if b := sc.writeBucket(c.Metadata["bucket"]); b != "" {
+			byBucket[b] = append(byBucket[b], c)
+		}
+	}
+	def := sc.writeBucket("")
+	if def == "" {
+		// Nothing to key a write on (no repo, no role, no user): drop it rather than
+		// invent a bucket. A memory nobody can address is worse than no memory.
+		s.log.Debug("commit skipped: caller has no writable bucket", "author", author)
+		return 0, nil
+	}
+	if strings.TrimSpace(sourceText) != "" {
+		if _, ok := byBucket[def]; !ok {
+			byBucket[def] = nil
+		}
+	}
+
+	total := 0
+	for _, bucket := range slices.Sorted(maps.Keys(byBucket)) { // deterministic order
+		src := ""
+		if bucket == def {
+			src = sourceText
+		}
+		n, err := s.commitTo(ctx, bucket, author, byBucket[bucket], src)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+// commitTo runs the vet + reconcile pass for ONE bucket and applies its operations.
+func (s *Store) commitTo(ctx context.Context, bucket, author string, staged []Candidate, sourceText string) (int, error) {
+	// Fetch existing memories in this bucket near the work to reconcile against.
+	neighbours, err := s.neighbours(ctx, bucket, sourceText, staged)
 	if err != nil {
 		return 0, err
 	}
@@ -69,7 +110,7 @@ func (s *Store) Commit(ctx context.Context, userID, author string, staged []Cand
 	for _, n := range neighbours {
 		valid[n.ID] = true
 	}
-	return s.apply(ctx, userID, author, ops, valid)
+	return s.apply(ctx, bucket, author, ops, valid)
 }
 
 // dedupCandidates drops candidates with duplicate trimmed content (cheap; saves
@@ -125,7 +166,7 @@ func neighbourProbe(sourceText string, staged []Candidate) string {
 	return probe
 }
 
-func (s *Store) neighbours(ctx context.Context, userID, sourceText string, staged []Candidate) ([]neighbour, error) {
+func (s *Store) neighbours(ctx context.Context, bucket, sourceText string, staged []Candidate) ([]neighbour, error) {
 	probe := neighbourProbe(sourceText, staged)
 	if probe == "" {
 		return nil, nil
@@ -137,7 +178,7 @@ func (s *Store) neighbours(ctx context.Context, userID, sourceText string, stage
 	if len(vecs) == 0 {
 		return nil, nil
 	}
-	pts, err := s.idx.query(ctx, userID, vecs[0], s.topK)
+	pts, err := s.idx.query(ctx, []string{bucket}, vecs[0], s.topK)
 	if err != nil {
 		return nil, fmt.Errorf("memory: neighbour query: %w", err)
 	}
@@ -209,11 +250,11 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 	return parsed.Ops, nil
 }
 
-// apply writes the operations to Qdrant: ADD/UPDATE upsert a point (UPDATE keeps
-// the existing id), DELETE removes one, NOOP is skipped. valid is the set of ids
-// the consolidator was shown; an UPDATE/DELETE naming any other id is treated as
+// apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE
+// keeps the existing id), DELETE removes one, NOOP is skipped. valid is the set of
+// ids the consolidator was shown; an UPDATE/DELETE naming any other id is treated as
 // a hallucination (UPDATE → fresh ADD, DELETE → dropped). Returns writes applied.
-func (s *Store) apply(ctx context.Context, userID, author string, ops []op, valid map[string]bool) (int, error) {
+func (s *Store) apply(ctx context.Context, bucket, author string, ops []op, valid map[string]bool) (int, error) {
 	var dels []string
 	var writes []op
 	for _, o := range ops {
@@ -253,7 +294,7 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 				ID:        id,
 				Vector:    vecs[i],
 				Content:   o.Content,
-				Scope:     userID,
+				Scope:     bucket,
 				Author:    author,
 				Timestamp: ts,
 				Kind:      o.Kind,
@@ -272,7 +313,7 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 		count += len(dels)
 	}
 
-	s.log.Debug("commit", "user", userID, "author", author, "ops", len(ops), "writes", count)
+	s.log.Debug("commit", "bucket", bucket, "author", author, "ops", len(ops), "writes", count)
 	return count, nil
 }
 
@@ -280,14 +321,15 @@ func (s *Store) apply(ctx context.Context, userID, author string, ops []op, vali
 // reconcile mechanics (ADD/UPDATE/DELETE/NOOP + JSON shape) are identical; only
 // the "what's worth keeping" framing differs by scope.
 var consolidatePrompts = map[string]string{
-	"task": "You maintain an agent's long-term memory of durable, reusable research " +
-		"tradecraft — which sources proved authoritative (and for what), which were junk, search/fetch " +
-		"tactics that worked, and availability dead-ends. You are given STAGED candidates, the agent's " +
-		"FINAL ANSWER, and the most similar EXISTING MEMORIES.\n\n" +
-		"Produce a set of operations. First VET: keep only durable, generally-useful tradecraft worth " +
-		"recalling in future unrelated tasks; drop anything volatile (prices, hours), request-specific, " +
-		"speculative, or not clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
-		"- ADD: genuinely new — provide content (one atomic sentence) and a kind (source|search|fetch|deadend).\n" +
+	"task": "You maintain a team of agents' SHARED long-term memory about one subject — either a " +
+		"repository (its conventions, build/test/lint commands, layout, where things are registered, " +
+		"pre-existing failures) or a role's durable tradecraft (which sources proved authoritative and " +
+		"for what, which were junk, tactics that worked, dead-ends). You are given STAGED candidates, the " +
+		"agent's FINAL ANSWER, and the most similar EXISTING MEMORIES about this same subject.\n\n" +
+		"Produce a set of operations. First VET: keep only durable knowledge worth recalling in future " +
+		"unrelated tasks on this subject; drop anything volatile, request-specific, speculative, or not " +
+		"clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
+		"- ADD: genuinely new — provide content (one atomic sentence) and a kind (e.g. convention|command|layout|source|search|fetch|deadend).\n" +
 		"- UPDATE: refines/supersedes an existing memory — provide its id plus the new content and kind.\n" +
 		"- DELETE: an existing memory is now contradicted or obsolete — provide its id.\n" +
 		"- NOOP: already covered — skip it.\n\n" +

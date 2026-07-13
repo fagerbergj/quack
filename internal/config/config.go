@@ -217,6 +217,7 @@ type AgentConfig struct {
 	Inputs        []string `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
 	Gated         *bool    `yaml:"gated"`          // wrap in the trust gate? default true; set false for side-effecting/action agents
 	JudgeRounds   int      `yaml:"judge_rounds"`   // per-agent judge/revise round budget; 0 ⇒ inherit gates.judge.max_rounds
+	MemoryRole    string   `yaml:"memory_role"`    // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no role bucket)
 }
 
 // IsGated reports whether the agent runs under the trust gate (default true).
@@ -519,6 +520,18 @@ func (c *Config) validate() error {
 	}
 	if c.Orchestrator.Model == "" {
 		return fmt.Errorf("config: orchestrator.model is empty")
+	}
+	// Agents: memory_role names a SHARED role bucket, so a typo would silently hand
+	// an agent a private silo of its own — exactly what the bucket model replaced.
+	// Fail loudly instead.
+	// (The role names are memory.RoleCoding / memory.RoleResearch; spelled out here
+	// because internal/memory depends on this package, not the other way round.)
+	for name, a := range c.Agents {
+		switch a.MemoryRole {
+		case "", "coding", "research":
+		default:
+			return fmt.Errorf("config: agent %q has unknown memory_role %q (known: coding, research)", name, a.MemoryRole)
+		}
 	}
 	// Stores registry: every entry must resolve (extends acyclic) and use a
 	// supported kind.

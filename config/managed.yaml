@@ -47,6 +47,7 @@ agents:
   web-researcher:
     bundle: agents/web-researcher
     provider: default
+    memory_role: research   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
@@ -54,16 +55,20 @@ agents:
   code-implementer:
     bundle: agents/code-implementer
     provider: default
+    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
     tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
-            run_command, ask_advisor]
+            run_command, ask_advisor, load_memory, stage_memory]
+    # load_memory/stage_memory + memory.md turn on shared memory: the implementer recalls what the
+    # explorer/reviewer learned about THIS repo (buckets are by subject, not agent — internal/memory/scope.go).
   code-reviewer:
     bundle: agents/code-reviewer      # reviewer identity + review-code skill; rubric scores whether the REVIEW is good
     provider: default
+    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
@@ -75,6 +80,7 @@ agents:
   code-explorer:
     bundle: agents/code-explorer      # read-only explorer; rubric grades EXPLORATION quality (code-grounding/accuracy/usefulness), not web citations
     provider: default
+    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds is plenty

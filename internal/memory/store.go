@@ -1,12 +1,14 @@
-// Package memory is Quack's semantic-memory layer (M6): an implementation of
-// ADK's memory.Service over a swappable vector index (Qdrant for a server, or an
-// embedded SQLite file for the no-docker path). All the embed / scope / recall /
-// mem0-style consolidation logic lives on Store; the backend is just storage,
-// behind the index interface. Recall (SearchMemory) is live here; ADK's native
-// preload_memory / load_memory tools route through it via the runner's
-// MemoryService. Whole-session auto-write (AddSessionToMemory) is a deliberate
-// no-op — writes go through the explicit, gated commit path, never ADK's
-// automatic ingestion.
+// Package memory is Quack's semantic-memory layer (M6) over a swappable vector
+// index (Qdrant for a server, or an embedded SQLite file for the no-docker path).
+// All the embed / bucket / recall / mem0-style consolidation logic lives on Store;
+// the backend is just storage, behind the index interface.
+//
+// Memory is SHARED and bucketed by SUBJECT (repo / role / user — see scope.go), not
+// siloed per agent. A caller reads and writes through a View: a Store bound to its
+// Scope, implementing ADK's memory.Service so the native preload_memory /
+// load_memory tools route through it via the runner's MemoryService. Whole-session
+// auto-write (AddSessionToMemory) is a deliberate no-op — writes go through the
+// explicit, gated commit path, never ADK's automatic ingestion.
 package memory
 
 import (
@@ -27,16 +29,16 @@ import (
 
 // index is the vector-storage backend behind a Store. Qdrant and SQLite implement
 // it; Store holds the shared embed/scope/consolidation logic, so a backend is just
-// storage. Points are partitioned by a scope key (agent name or user id), set on
-// upsert and filtered on query.
+// storage. Points are partitioned by a BUCKET key (repo / role / user — see
+// scope.go), set on upsert and filtered on query.
 type index interface {
 	// ensure makes the backing collection/table ready. probeDim returns the
 	// embedding dimension, called only by a backend that needs a fixed vector size
 	// (Qdrant); SQLite stores variable-length blobs and ignores it.
 	ensure(ctx context.Context, probeDim func() (int, error)) error
-	// query returns up to k points whose scope matches, nearest to vec by cosine,
-	// best score first. An empty scope means no partition filter.
-	query(ctx context.Context, scope string, vec []float32, k int) ([]scored, error)
+	// query returns up to k points in ANY of the given buckets (an OR), nearest to
+	// vec by cosine, best score first. No buckets means no partition filter.
+	query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error)
 	upsert(ctx context.Context, pts []point) error
 	remove(ctx context.Context, ids []string) error
 }
@@ -50,7 +52,7 @@ type scored struct {
 	Score     float32
 }
 
-// point is one memory to upsert. Scope is the partition key (stored so query can
+// point is one memory to upsert. Scope is the bucket key (stored so query can
 // filter by it).
 type point struct {
 	ID        string
@@ -71,10 +73,11 @@ const (
 	recallEmbedTimeout = 30 * time.Second
 )
 
-// Store serves one memory scope (e.g. "task_memory") over a vector index. It
-// implements adkmemory.Service. The consolidator (a gemma-class LLM) drives the
-// gated commit path's extract/vet/consolidate step; it may be nil for a read-only
-// store (Commit then errors).
+// Store serves one memory collection (e.g. "task_memory") over a vector index. It
+// is SHARED by every agent: callers read and write through a View bound to their
+// Scope (the buckets they are entitled to — see scope.go). The consolidator (a
+// gemma-class LLM) drives the gated commit path's extract/vet/consolidate step; it
+// may be nil for a read-only store (Commit then errors).
 type Store struct {
 	idx          index
 	embedder     inference.Embedder
@@ -86,8 +89,6 @@ type Store struct {
 	log          *slog.Logger
 	embCache     *embedCache // memoizes text→vector (deterministic for a fixed model)
 }
-
-var _ adkmemory.Service = (*Store)(nil)
 
 // newStore wraps a backend index with the shared memory logic and ensures the
 // backing store is ready (probing the embedder for the vector dimension on first
@@ -119,21 +120,21 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 	return s, nil
 }
 
-// AddSessionToMemory is a deliberate no-op (implements adkmemory.Service): Quack
-// never auto-ingests whole sessions; writes go through the explicit gated commit.
+// AddSessionToMemory is a deliberate no-op: Quack never auto-ingests whole
+// sessions; writes go through the explicit gated commit.
 func (s *Store) AddSessionToMemory(ctx context.Context, _ session.Session) error { return nil }
 
-// SearchMemory embeds the query and returns the top-K nearest memories in this
-// scope, filtered to the requesting user. Implements adkmemory.Service.
-func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) (*adkmemory.SearchResponse, error) {
-	if req == nil || strings.TrimSpace(req.Query) == "" {
+// recall embeds the query and returns the top-K nearest memories across buckets
+// (the union of what the caller is entitled to — see Scope). Callers reach it
+// through a View, which is what binds a caller to its buckets.
+func (s *Store) recall(ctx context.Context, buckets []string, query string) (*adkmemory.SearchResponse, error) {
+	if len(buckets) == 0 || strings.TrimSpace(query) == "" {
 		return &adkmemory.SearchResponse{}, nil
 	}
 	// Cap the query before embedding: a recall query is a topic, not a document.
 	// Without this an agent whose input is huge (e.g. a combiner fed all upstream
 	// findings) would embed tens of KB on the CPU embedder — a 10-min job that
 	// head-of-line-blocks llama.cpp and stalls the DAG.
-	query := req.Query
 	if r := []rune(query); len(r) > maxRecallRunes {
 		query = string(r[:maxRecallRunes])
 	}
@@ -149,12 +150,11 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 	if len(vecs) == 0 {
 		return &adkmemory.SearchResponse{}, nil
 	}
-	scopeID := s.scope(req.AppName, req.UserID)
-	// Fetch top-K by similarity within the scope, then apply minScore in Go so the
-	// threshold decision is observable (raw match count + top score in the debug log).
-	// Dropping weak matches keeps low-relevance hits out of the prompt as the
-	// collection grows (context rot).
-	pts, err := s.idx.query(ctx, scopeID, vecs[0], s.topK)
+	// Fetch top-K by similarity across the caller's buckets, then apply minScore in
+	// Go so the threshold decision is observable (raw match count + top score in the
+	// debug log). Dropping weak matches keeps low-relevance hits out of the prompt as
+	// the collection grows (context rot).
+	pts, err := s.idx.query(ctx, buckets, vecs[0], s.topK)
 	if err != nil {
 		return nil, fmt.Errorf("memory: query %q: %w", s.coll, err)
 	}
@@ -187,12 +187,12 @@ func (s *Store) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) 
 		entries = append(entries, e)
 	}
 	// Logs what preload_memory / load_memory pulled in (both route here). Enable with
-	// QUACK_LOG_LEVEL=debug. scope = the partition key actually queried (agent name for task,
-	// userID for user); raw = matches in scope before minScore; top_score = best cosine;
-	// dropped = filtered by minScore. This pinpoints hits=0: scope mismatch (raw=0) vs
-	// threshold too high (raw>0, dropped=raw).
-	s.log.Debug("recall", "user", req.UserID, "scope", scopeID, "app", req.AppName,
-		"query", preview(req.Query), "raw", len(pts), "top_score", topScore,
+	// QUACK_LOG_LEVEL=debug. buckets = the partition keys actually queried (repo/role/
+	// user + the caller's legacy key); raw = matches before minScore; top_score = best
+	// cosine; dropped = filtered by minScore. This pinpoints hits=0: bucket mismatch
+	// (raw=0) vs threshold too high (raw>0, dropped=raw).
+	s.log.Debug("recall", "buckets", buckets,
+		"query", preview(query), "raw", len(pts), "top_score", topScore,
 		"min_score", s.minScore, "dropped", dropped, "hits", len(entries), "memories", previews)
 	return &adkmemory.SearchResponse{Memories: entries}, nil
 }
@@ -264,16 +264,4 @@ func preview(s string) string {
 		return s
 	}
 	return string(r[:max]) + "…"
-}
-
-// scope returns the partition key for this store's domain. Task memory is
-// per-agent *tradecraft*, so it is keyed by the agent name (recall: req.AppName;
-// commit: the author) — stable across requests, unlike the per-invocation
-// "A2A_USER_<ctxid>" the A2A server mints. User memory is personal, so it stays
-// keyed by the real userID.
-func (s *Store) scope(agentName, userID string) string {
-	if s.domain == "task" {
-		return agentName
-	}
-	return userID
 }

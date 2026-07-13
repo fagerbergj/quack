@@ -42,6 +42,12 @@ type Config struct {
 	Memory *memory.Store
 	// CommitMemory marks this agent as a task-memory participant.
 	CommitMemory bool
+	// MemoryRole is the agent's role family (memory.RoleCoding | memory.RoleResearch)
+	// — the key of the role bucket it reads and writes. Memory is SHARED and bucketed
+	// by subject, not siloed per agent: what the explorer learns about a repo, the
+	// implementer and the reviewer recall (see internal/memory/scope.go). Empty = the
+	// agent has no role bucket (its writes fall back to repo, then user).
+	MemoryRole string
 
 	// DeliverPromptEvent makes the gate write each worker prompt into the
 	// session as a gate-authored event right before the worker run (see
