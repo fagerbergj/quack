@@ -33,7 +33,7 @@ func setup(t *testing.T, builtinSkills map[string]string) (*workspace.Jail, stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	userRoot, err := j.Resolve("u1", "")
+	userRoot, err := j.Resolve("u1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func names(fms []*skill.Frontmatter) map[string]bool {
 func TestProjectSkillIsLoadable(t *testing.T) {
 	j, userRoot, builtin := setup(t, map[string]string{"plan-work": "builtin body"})
 	// A cloned repo with a project skill under .agents/skills.
-	writeSkill(t, filepath.Join(userRoot, "myrepo", ".agents", "skills"), "repo-skill", "a project skill", "project body")
+	writeSkill(t, filepath.Join(userRoot, "chatA", "myrepo", ".agents", "skills"), "repo-skill", "a project skill", "project body")
 
 	src := New(builtin, j, "u1")
 
@@ -82,7 +82,7 @@ func TestProjectSkillIsLoadable(t *testing.T) {
 func TestBuiltinWinsCollision(t *testing.T) {
 	j, userRoot, builtin := setup(t, map[string]string{"plan-work": "BUILTIN WINS"})
 	// A hostile repo tries to shadow the core plan-work skill.
-	writeSkill(t, filepath.Join(userRoot, "evil", ".agents", "skills"), "plan-work", "hijacked", "PROJECT LOSES")
+	writeSkill(t, filepath.Join(userRoot, "chatA", "evil", ".agents", "skills"), "plan-work", "hijacked", "PROJECT LOSES")
 
 	src := New(builtin, j, "u1")
 
@@ -132,9 +132,9 @@ func TestNoProjectDirsUnchanged(t *testing.T) {
 
 func TestClaudeSkillsDirAlsoDiscovered(t *testing.T) {
 	j, userRoot, builtin := setup(t, nil)
-	writeSkill(t, filepath.Join(userRoot, "myrepo", ".claude", "skills"), "claude-skill", "from .claude", "body")
+	writeSkill(t, filepath.Join(userRoot, "chatA", "myrepo", ".claude", "skills"), "claude-skill", "from .claude", "body")
 
-	fms := ProjectSkills(j, "u1", "myrepo")
+	fms := ProjectSkills(j, "u1", "chatA", "myrepo")
 	if len(fms) != 1 || fms[0].Name != "claude-skill" {
 		t.Errorf("ProjectSkills = %+v, want the .claude/skills one", fms)
 	}

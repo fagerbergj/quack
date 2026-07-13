@@ -23,6 +23,7 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 const userID = "local"
@@ -44,14 +45,16 @@ type Handler struct {
 	store         *store.Store
 	orch          *orchestrator.Orchestrator
 	titler        model.LLM
-	hub           *stream.Hub // fans a chat's run to extra subscribers (other devices)
-	eventLog      *eventLog   // durably persists the run stream, backing replay across restarts
-	activeCancels sync.Map    // chatID → *activeRun
+	jail          *workspace.Jail // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
+	hub           *stream.Hub     // fans a chat's run to extra subscribers (other devices)
+	eventLog      *eventLog       // durably persists the run stream, backing replay across restarts
+	activeCancels sync.Map        // chatID → *activeRun
 }
 
-// NewHandler builds a REST handler.
-func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM) *Handler {
-	return &Handler{store: s, orch: o, titler: titler, hub: stream.NewHub(), eventLog: newEventLog(s)}
+// NewHandler builds a REST handler. jail may be nil (no workspace configured):
+// DeleteChat then skips per-chat workspace cleanup.
+func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail) *Handler {
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: stream.NewHub(), eventLog: newEventLog(s)}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
@@ -188,6 +191,18 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 	if err := h.store.DeleteChat(r.Context(), chatID); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
+	}
+	// Lifecycle cleanup: remove the chat's per-chat workspace tree
+	// (<root>/<user>/<chatID>/) so a deleted chat doesn't leak its clones
+	// forever. Best-effort — the chat row is already gone, and RemoveChatScope
+	// sanitizes chatID (single path component) so the RemoveAll can't escape the
+	// user root. A missing dir is a clean no-op; any error is logged and the
+	// delete still succeeds. Skipped when no workspace is configured (jail nil).
+	if h.jail != nil {
+		if err := h.jail.RemoveChatScope(userID, chatID); err != nil {
+			slog.Warn("per-chat workspace cleanup failed; chat deleted anyway",
+				"component", "rest", "chat", chatID, "err", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

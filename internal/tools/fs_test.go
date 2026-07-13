@@ -24,7 +24,7 @@ func newTestBinding(t *testing.T, userID string) fsBinding {
 
 func writeUserFile(t *testing.T, b fsBinding, relPath, content string) {
 	t.Helper()
-	real, err := b.jail.Resolve(b.userID, relPath)
+	real, err := b.jail.Resolve(b.userID, "", relPath)
 	if err != nil {
 		t.Fatalf("resolve %q: %v", relPath, err)
 	}
@@ -94,7 +94,7 @@ func TestReadFileOversizedTruncatesNotErrors(t *testing.T) {
 
 func TestReadFileBinaryRejected(t *testing.T) {
 	b := newTestBinding(t, "u1")
-	real, err := b.jail.Resolve(b.userID, "bin.dat")
+	real, err := b.jail.Resolve(b.userID, "", "bin.dat")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestEditFileExactWhitespaceSingleReplacement(t *testing.T) {
 	if res.Replacements != 1 {
 		t.Errorf("Replacements = %d, want 1", res.Replacements)
 	}
-	real, _ := b.jail.Resolve(b.userID, "f.go")
+	real, _ := b.jail.Resolve(b.userID, "", "f.go")
 	got, err := os.ReadFile(real)
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +359,7 @@ func TestGrepResultCap(t *testing.T) {
 
 func TestGrepSkipsBinary(t *testing.T) {
 	b := newTestBinding(t, "u1")
-	real, err := b.jail.Resolve(b.userID, "bin.dat")
+	real, err := b.jail.Resolve(b.userID, "", "bin.dat")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestDeletePathFile(t *testing.T) {
 	if res.Deleted != 1 {
 		t.Errorf("Deleted = %d, want 1", res.Deleted)
 	}
-	real, _ := b.jail.Resolve(b.userID, "f.txt")
+	real, _ := b.jail.Resolve(b.userID, "", "f.txt")
 	if _, statErr := os.Stat(real); !os.IsNotExist(statErr) {
 		t.Error("file still exists after delete")
 	}
@@ -411,7 +411,7 @@ func TestDeletePathNonEmptyDirRequiresRecursive(t *testing.T) {
 	if res.Deleted < 2 { // dir + f.txt
 		t.Errorf("Deleted = %d, want >= 2", res.Deleted)
 	}
-	real, _ := b.jail.Resolve(b.userID, "dir")
+	real, _ := b.jail.Resolve(b.userID, "", "dir")
 	if _, err := os.Stat(real); !os.IsNotExist(err) {
 		t.Error("dir still exists after recursive delete")
 	}
@@ -419,7 +419,7 @@ func TestDeletePathNonEmptyDirRequiresRecursive(t *testing.T) {
 
 func TestDeletePathEmptyDirNoRecursiveNeeded(t *testing.T) {
 	b := newTestBinding(t, "u1")
-	real, err := b.jail.Resolve(b.userID, "emptydir")
+	real, err := b.jail.Resolve(b.userID, "", "emptydir")
 	if err != nil {
 		t.Fatal(err)
 	}

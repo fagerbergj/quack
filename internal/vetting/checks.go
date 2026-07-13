@@ -27,7 +27,7 @@ func checksPassCriterion(cfg Config) criterionScore {
 		// running unjailed.
 		return criterionScore{Score: 0, Reason: "deterministic: this node has checks configured but no workspace is wired up (internal error — contact the operator)"}
 	}
-	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.Workdir)
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, cfg.Workdir)
 	if err != nil {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: checks workdir %q: %v", cfg.Workdir, err)}
 	}

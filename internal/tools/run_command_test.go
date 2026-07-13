@@ -15,7 +15,7 @@ import (
 // exercising a real cwd need the jail's user directory to already exist.
 func ensureUserRoot(t *testing.T, b fsBinding) string {
 	t.Helper()
-	root, err := b.jail.Resolve(b.userID, "")
+	root, err := b.jail.Resolve(b.userID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

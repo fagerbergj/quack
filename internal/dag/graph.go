@@ -57,6 +57,12 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// the plan node directly, so it stays plan/executor-agnostic.
 		cfg.Checks = node.Checks
 		cfg.Workdir = node.Workdir
+		// Per-chat workspace scope: the node's deterministic checks resolve their
+		// Workdir under <root>/<user>/<chatID>/ — the same tree the node's own
+		// git_clone/fs tools wrote to (they derive the SAME chatID from the
+		// advisor-thread marker; see internal/tools chatScopeFromContext). chatID
+		// here is the run's chat/session id (== the workflow session id).
+		cfg.ChatID = chatID
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID)
 	}
 	return nodesByID, subAgents, nil

@@ -19,7 +19,7 @@ func newTestJail(t *testing.T) *Jail {
 
 func TestResolveWithinJailWorks(t *testing.T) {
 	j := newTestJail(t)
-	got, err := j.Resolve("alice", "sub/file.txt")
+	got, err := j.Resolve("alice", "", "sub/file.txt")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestResolveRejectsDotDotEscape(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(j.Root(), "bob"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := j.Resolve("alice", "../bob/secret.txt")
+	_, err := j.Resolve("alice", "", "../bob/secret.txt")
 	if !errors.Is(err, ErrEscape) {
 		t.Fatalf("Resolve(..escape) err = %v, want ErrEscape", err)
 	}
@@ -44,7 +44,7 @@ func TestResolveRejectsDotDotEscape(t *testing.T) {
 
 func TestResolveRejectsAbsolutePath(t *testing.T) {
 	j := newTestJail(t)
-	_, err := j.Resolve("alice", "/etc/passwd")
+	_, err := j.Resolve("alice", "", "/etc/passwd")
 	if !errors.Is(err, ErrEscape) {
 		t.Fatalf("Resolve(absolute) err = %v, want ErrEscape", err)
 	}
@@ -64,7 +64,7 @@ func TestResolveRejectsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
-	_, err := j.Resolve("alice", "escape/secret.txt")
+	_, err := j.Resolve("alice", "", "escape/secret.txt")
 	if !errors.Is(err, ErrEscape) {
 		t.Fatalf("Resolve(symlink escape) err = %v, want ErrEscape", err)
 	}
@@ -84,7 +84,7 @@ func TestResolveSymlinkInsideJailWorks(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	got, err := j.Resolve("alice", "link/f.txt")
+	got, err := j.Resolve("alice", "", "link/f.txt")
 	if err != nil {
 		t.Fatalf("Resolve(symlink inside jail): %v", err)
 	}
@@ -96,11 +96,11 @@ func TestResolveSymlinkInsideJailWorks(t *testing.T) {
 
 func TestResolveTwoUsersAreIndependent(t *testing.T) {
 	j := newTestJail(t)
-	aPath, err := j.Resolve("alice", "notes.txt")
+	aPath, err := j.Resolve("alice", "", "notes.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bPath, err := j.Resolve("bob", "notes.txt")
+	bPath, err := j.Resolve("bob", "", "notes.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestUserIDValidation(t *testing.T) {
 		{"S-1-5-21-1004", true},
 	} {
 		_, uerr := j.UserRoot(tc.userID)
-		_, rerr := j.Resolve(tc.userID, "f.txt")
+		_, rerr := j.Resolve(tc.userID, "", "f.txt")
 		if tc.valid {
 			if uerr != nil {
 				t.Errorf("UserRoot(%q) = %v, want accepted", tc.userID, uerr)
@@ -171,7 +171,7 @@ func TestUserIDValidation(t *testing.T) {
 // "path escapes your workspace"; an invalid identity is the operator's bug).
 func TestBadUserIDIsNotErrEscape(t *testing.T) {
 	j := newTestJail(t)
-	_, err := j.Resolve("../bob", "f.txt")
+	_, err := j.Resolve("../bob", "", "f.txt")
 	if errors.Is(err, ErrEscape) {
 		t.Fatalf("Resolve with a bad userID returned ErrEscape; want the distinct ErrInvalidUserID")
 	}
@@ -182,7 +182,7 @@ func TestBadUserIDIsNotErrEscape(t *testing.T) {
 
 func TestResolveRootItselfWorks(t *testing.T) {
 	j := newTestJail(t)
-	got, err := j.Resolve("alice", "")
+	got, err := j.Resolve("alice", "", "")
 	if err != nil {
 		t.Fatalf("Resolve(\"\"): %v", err)
 	}
@@ -190,7 +190,7 @@ func TestResolveRootItselfWorks(t *testing.T) {
 	if got != want {
 		t.Errorf("Resolve(\"\") = %q, want %q", got, want)
 	}
-	got2, err := j.Resolve("alice", ".")
+	got2, err := j.Resolve("alice", "", ".")
 	if err != nil {
 		t.Fatalf("Resolve(\".\"): %v", err)
 	}
@@ -199,11 +199,147 @@ func TestResolveRootItselfWorks(t *testing.T) {
 	}
 }
 
+// TestResolvePerChatScope pins the per-chat segment: a non-empty chatID scopes
+// paths under <root>/<user>/<chat>/, two different chat ids get isolated trees,
+// and an empty chatID falls back to the per-user root (backward compatible).
+func TestResolvePerChatScope(t *testing.T) {
+	j := newTestJail(t)
+	got, err := j.Resolve("alice", "chat1", "sub/file.txt")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := filepath.Join(j.Root(), "alice", "chat1", "sub", "file.txt")
+	if got != want {
+		t.Errorf("Resolve = %q, want %q", got, want)
+	}
+
+	// Two chats of the same user resolve to isolated trees.
+	c1, _ := j.Resolve("alice", "chat1", "notes.txt")
+	c2, _ := j.Resolve("alice", "chat2", "notes.txt")
+	if c1 == c2 {
+		t.Fatalf("chat1 and chat2 resolved to the same path: %q", c1)
+	}
+	if err := os.MkdirAll(filepath.Dir(c1), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(c1, []byte("chat1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(c2); !os.IsNotExist(err) {
+		t.Fatalf("chat2's notes.txt should not exist after chat1 wrote hers; stat err = %v", err)
+	}
+
+	// Empty chatID falls back to the per-user root (today's behaviour).
+	fallback, err := j.Resolve("alice", "", "notes.txt")
+	if err != nil {
+		t.Fatalf("Resolve(empty chat): %v", err)
+	}
+	if wantFallback := filepath.Join(j.Root(), "alice", "notes.txt"); fallback != wantFallback {
+		t.Errorf("Resolve(empty chat) = %q, want per-user root %q", fallback, wantFallback)
+	}
+}
+
+// TestChatIDValidation guards the per-chat segment: a chat id is a
+// system-generated UUID but treated as untrusted here — a separator or
+// dot-traversal must never relocate the scope root and let a path escape the
+// user jail. A malicious id is rejected with ErrInvalidChatID (distinct from
+// ErrInvalidUserID and ErrEscape); an empty id is NOT an error (it is the
+// per-user fallback).
+func TestChatIDValidation(t *testing.T) {
+	j := newTestJail(t)
+	// Make a sibling under alice to prove `../` can't reach it.
+	if err := os.MkdirAll(filepath.Join(j.Root(), "alice", "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		chatID string
+		valid  bool
+	}{
+		{"", true}, // empty = per-user fallback, not an error
+		{"chat-123", true},
+		{"550e8400-e29b-41d4-a716-446655440000", true},
+		{".", false},
+		{"..", false},
+		{"../other", false},
+		{"a/b", false},
+		{"/etc", false},
+	} {
+		_, err := j.Resolve("alice", tc.chatID, "f.txt")
+		if tc.valid {
+			if err != nil {
+				t.Errorf("Resolve(alice, %q, f.txt) = %v, want accepted", tc.chatID, err)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrInvalidChatID) {
+			t.Errorf("Resolve(alice, %q, f.txt) err = %v, want ErrInvalidChatID", tc.chatID, err)
+		}
+		if errors.Is(err, ErrEscape) {
+			t.Errorf("bad chatID %q read as ErrEscape; want the distinct ErrInvalidChatID", tc.chatID)
+		}
+	}
+}
+
+// TestRemoveChatScope covers the deletion-cleanup contract: it removes exactly
+// the chat's subtree, a non-existent dir is a clean no-op, an empty chatID is
+// rejected (never removes the whole user root), and a crafted id can't escape.
+func TestRemoveChatScope(t *testing.T) {
+	j := newTestJail(t)
+	// Populate two chats plus a per-user sibling that must survive.
+	c1, _ := j.Resolve("alice", "chat1", "repo/f.txt")
+	c2, _ := j.Resolve("alice", "chat2", "repo/f.txt")
+	userSibling, _ := j.Resolve("alice", "", ".quack-home")
+	for _, p := range []string{c1, c2} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(userSibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := j.RemoveChatScope("alice", "chat1"); err != nil {
+		t.Fatalf("RemoveChatScope(chat1): %v", err)
+	}
+	chat1Root := filepath.Join(j.Root(), "alice", "chat1")
+	if _, err := os.Stat(chat1Root); !os.IsNotExist(err) {
+		t.Fatalf("chat1 tree still exists after RemoveChatScope: %v", err)
+	}
+	// chat2 and the per-user sibling are untouched.
+	if _, err := os.Stat(c2); err != nil {
+		t.Errorf("chat2 tree should survive: %v", err)
+	}
+	if _, err := os.Stat(userSibling); err != nil {
+		t.Errorf("per-user sibling (.quack-home) should survive: %v", err)
+	}
+
+	// Removing a non-existent chat scope is a clean no-op.
+	if err := j.RemoveChatScope("alice", "chat1"); err != nil {
+		t.Errorf("RemoveChatScope on missing dir = %v, want nil (no-op)", err)
+	}
+
+	// An empty chatID is rejected — must never remove the whole user root.
+	if err := j.RemoveChatScope("alice", ""); !errors.Is(err, ErrInvalidChatID) {
+		t.Errorf("RemoveChatScope(empty) = %v, want ErrInvalidChatID", err)
+	}
+	if _, err := os.Stat(filepath.Join(j.Root(), "alice")); err != nil {
+		t.Errorf("user root must survive an empty-chatID removal: %v", err)
+	}
+
+	// A crafted chatID can't escape the user root.
+	if err := j.RemoveChatScope("alice", "../bob"); !errors.Is(err, ErrInvalidChatID) {
+		t.Errorf("RemoveChatScope(../bob) = %v, want ErrInvalidChatID", err)
+	}
+}
+
 func TestJailHomeDirIsSiblingNotNestedInARepo(t *testing.T) {
 	j := newTestJail(t)
 	// Simulate a cloned repo living directly under the user's jail root, the
 	// way git_clone's default `dir` (the repo name) does.
-	repoDir, err := j.Resolve("alice", "myrepo")
+	repoDir, err := j.Resolve("alice", "", "myrepo")
 	if err != nil {
 		t.Fatalf("Resolve(myrepo): %v", err)
 	}

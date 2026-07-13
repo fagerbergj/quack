@@ -59,11 +59,14 @@ func New(builtin skill.Source, jail *workspace.Jail, userID string) skill.Source
 }
 
 // ProjectSkills lists the project skills discovered for ONE repo root (a
-// jail-relative path, e.g. "myrepo"), for the `cd` tool's on-entry report.
-// Best-effort: a missing dir, a malformed skill, or a jail-escape is skipped,
-// never surfaced as an error (a bad skill in a cloned repo must not break `cd`).
-func ProjectSkills(jail *workspace.Jail, userID, repoRel string) []*skill.Frontmatter {
-	src := skill.NewMergedSource(sourcesUnder(jail, userID, repoRel)...)
+// chat-root-relative path, e.g. "myrepo") within a given per-chat scope, for the
+// `cd` tool's on-entry report. chatID scopes discovery to the calling chat's
+// workspace (<root>/<user>/<chatID>/<repoRel>/…) so `cd`'s report matches where
+// the worker actually cloned. Best-effort: a missing dir, a malformed skill, or
+// a jail-escape is skipped, never surfaced as an error (a bad skill in a cloned
+// repo must not break `cd`).
+func ProjectSkills(jail *workspace.Jail, userID, chatID, repoRel string) []*skill.Frontmatter {
+	src := skill.NewMergedSource(sourcesUnder(jail, userID, chatID, repoRel)...)
 	fms, err := src.ListFrontmatters(context.Background())
 	if err != nil {
 		return nil
@@ -72,11 +75,11 @@ func ProjectSkills(jail *workspace.Jail, userID, repoRel string) []*skill.Frontm
 }
 
 // sourcesUnder returns a FileSystemSource for whichever of repoRel's
-// .agents/skills / .claude/skills directories exist, each resolved THROUGH the
-// jail so the dir is symlink-contained. A dir that is absent or escapes the
-// jail is skipped. repoRel "" or "." (the jail root itself) has no containing
-// repo, so it yields nothing.
-func sourcesUnder(jail *workspace.Jail, userID, repoRel string) []skill.Source {
+// .agents/skills / .claude/skills directories exist under the (userID, chatID)
+// scope, each resolved THROUGH the jail so the dir is symlink-contained. A dir
+// that is absent or escapes the jail is skipped. repoRel "" or "." (the scope
+// root itself) has no containing repo, so it yields nothing.
+func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.Source {
 	if jail == nil {
 		return nil
 	}
@@ -86,9 +89,9 @@ func sourcesUnder(jail *workspace.Jail, userID, repoRel string) []skill.Source {
 	}
 	var out []skill.Source
 	for _, sub := range projectSkillDirs {
-		real, err := jail.Resolve(userID, filepath.Join(clean, sub))
+		real, err := jail.Resolve(userID, chatID, filepath.Join(clean, sub))
 		if err != nil {
-			continue // escapes the jail, or bad user id — skip
+			continue // escapes the jail, or bad user/chat id — skip
 		}
 		if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
 			continue // no such skills dir in this repo
@@ -98,25 +101,47 @@ func sourcesUnder(jail *workspace.Jail, userID, repoRel string) []skill.Source {
 	return out
 }
 
-// project builds a fresh source over ALL project skills currently in the jail:
-// one per immediate child repo of the jail root. Rebuilt per query so a repo
-// cloned mid-run is picked up without restart. Never errors: an unreadable jail
-// root yields an empty (skill-less) source.
+// project builds a fresh source over ALL project skills currently in the jail.
+// Repos now live one level deeper — under each per-chat scope
+// (<root>/<user>/<chat>/<repo>) — but this source is the shared startup
+// skilltoolset singleton (list_skills/load_skill), built once and driven by a
+// plain context.Context, so it CANNOT recover the calling chat id the way the
+// workspace tools do (there is no advisor-thread marker on a context.Context).
+// It therefore walks BOTH levels: each per-chat scope dir, then each repo dir
+// within it. Skill names thus become visible across a single user's chats in
+// list_skills — read-only, single-user, acceptable; the `cd` tool's report
+// (ProjectSkills, threaded with the real chat id) is the per-chat-accurate
+// surface. Rebuilt per query so a repo cloned mid-run is picked up without
+// restart. Never errors: an unreadable root yields an empty source.
 func (p *projectAware) project() skill.Source {
-	root, err := p.jail.Resolve(p.userID, "")
+	root, err := p.jail.Resolve(p.userID, "", "")
 	if err != nil {
 		return skill.NewMergedSource()
 	}
-	entries, err := os.ReadDir(root)
+	scopes, err := os.ReadDir(root)
 	if err != nil {
-		return skill.NewMergedSource() // jail root not created yet (no clones): no project skills
+		return skill.NewMergedSource() // user root not created yet (no clones): no project skills
 	}
 	var sources []skill.Source
-	for _, e := range entries {
-		if !e.IsDir() || e.Name()[0] == '.' {
+	for _, scope := range scopes {
+		if !scope.IsDir() || scope.Name()[0] == '.' {
 			continue // skip files and dot-dirs (e.g. .quack-home)
 		}
-		sources = append(sources, sourcesUnder(p.jail, p.userID, e.Name())...)
+		chatID := scope.Name()
+		scopeRoot, err := p.jail.Resolve(p.userID, chatID, "")
+		if err != nil {
+			continue
+		}
+		repos, err := os.ReadDir(scopeRoot)
+		if err != nil {
+			continue
+		}
+		for _, repo := range repos {
+			if !repo.IsDir() || repo.Name()[0] == '.' {
+				continue
+			}
+			sources = append(sources, sourcesUnder(p.jail, p.userID, chatID, repo.Name())...)
+		}
 	}
 	return skill.NewMergedSource(sources...)
 }

@@ -42,28 +42,37 @@ type fsBinding struct {
 	userID string
 	jail   *workspace.Jail
 	caps   workspace.Caps
-	// cwd is the session working directory (jail-relative, "" = jail root) a
+	// cwd is the session working directory (chat-root-relative, "" = chat root) a
 	// per-call copy carries — set by withCwd from ctx state, so the shared
 	// startup-constructed binding stays immutable and its zero value ("") is
 	// exactly today's root-relative behaviour. Every path this binding resolves
 	// goes through resolve, which applies cwd (joinCwd) before Jail.Resolve.
 	cwd string
+	// chatID is the per-chat scope (the workflow/chat session id) this call's
+	// paths resolve under (<root>/<user>/<chatID>/…) — set by withCwd from the
+	// advisor-thread marker in ctx (chatScopeFromContext). "" (a direct/un-gated
+	// call that can't recover the chat id) resolves the per-user root, exactly
+	// today's behaviour.
+	chatID string
 }
 
-// withCwd returns a copy of b whose cwd is the session working directory read
-// from ctx state — the one place the durable cwd enters a tool call. A value
-// receiver makes the copy; the original binding is never mutated.
+// withCwd returns a copy of b bound to this call's context: the session working
+// directory (cwd, from ctx state) AND the per-chat scope (chatID, from the
+// advisor-thread marker in ctx). A value receiver makes the copy; the shared
+// startup binding is never mutated.
 func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
 	b.cwd = cwdFromState(ctx)
+	b.chatID = chatScopeFromContext(ctx)
 	return b
 }
 
-// resolve is the cwd-aware Jail.Resolve every fs tool uses in place of a raw
-// b.jail.Resolve(b.userID, p): a relative p resolves against b.cwd, a "/"-
-// prefixed p against the jail root (see joinCwd), and containment is still
-// enforced by Jail.Resolve — a cwd + path can never escape the jail.
+// resolve is the cwd- and chat-aware Jail.Resolve every fs tool uses in place of
+// a raw b.jail.Resolve: a relative p resolves against b.cwd, a "/"-prefixed p
+// against the chat root (see joinCwd), everything scoped under b.chatID, and
+// containment is still enforced by Jail.Resolve — a cwd + path can never escape
+// the chat's (nor the user's) jail.
 func (b fsBinding) resolve(p string) (string, error) {
-	return b.jail.Resolve(b.userID, joinCwd(b.cwd, p))
+	return b.jail.Resolve(b.userID, b.chatID, joinCwd(b.cwd, p))
 }
 
 // newFSBinding resolves Deps into an fsBinding, defaulting caps when unset.

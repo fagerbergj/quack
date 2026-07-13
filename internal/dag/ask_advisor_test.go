@@ -129,6 +129,13 @@ func newAdvisorTool(t *testing.T, advisorModel model.LLM, sessions session.Servi
 	return tl
 }
 
+// runGraphChatID is the chat/session id runGraph runs every plan under. It is
+// ALSO the per-chat WORKSPACE scope the run's tools resolve paths through
+// (<root>/<user>/<runGraphChatID>/…, derived by tools.chatScopeFromContext), so
+// a test seeding a jail fixture for those tools must write it under this SAME
+// id — hence one named constant instead of a literal at each site.
+const runGraphChatID = "s"
+
 // runGraph runs plan via the REAL dag.Executor (RunPlanAsGraph — the native
 // graph path production uses), collecting the SSE events and node outputs.
 // sessions is shared by BOTH the executor's own runner AND the ask_advisor
@@ -141,7 +148,7 @@ func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, session
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs = map[string]string{}
 	yield := func(ev stream.SSEEvent, _ error) bool { events = append(events, ev); return true }
-	p, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", "s", content, yield, outputs, resumeNodes)
+	p, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", runGraphChatID, content, yield, outputs, resumeNodes)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
