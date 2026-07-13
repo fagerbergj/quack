@@ -1,0 +1,298 @@
+package workspace
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// SandboxMode selects the OS boundary every RunArgv/RunPipeline child process
+// runs inside.
+//
+// Why this exists: the workspace Jail is a PATH check — it confines the paths
+// the filesystem/git TOOLS resolve. It never constrained a child process, only
+// its cwd: RunArgv set cmd.Dir and scrubbed the env, but a child's ARGUMENTS
+// were never path-checked, argv[0] resolved against the server's ambient PATH,
+// and there is no binary allowlist. `run_command: cat ~/.ssh/id_ed25519` — or
+// any `sh -c "…"`, which contains none of the rejected shell metacharacters —
+// therefore ran as the server's own OS user with that user's full filesystem
+// authority. The metachar wall (shellMetachars) is an LLM-habit guard, not a
+// security boundary; this is the security boundary.
+type SandboxMode string
+
+const (
+	// SandboxBwrap wraps each child in a bubblewrap (bwrap) mount/pid/ipc/user
+	// namespace: the host filesystem is replaced by a read-only view of the
+	// system directories the toolchains need, plus exactly two writable paths —
+	// the child's own working directory and its isolated $HOME. Everything else
+	// (~/.ssh, ~/.aws, ~/.config/gh, /etc/shadow, other users' workspaces, the
+	// server's own .env) is not merely un-suggested: it does not exist inside
+	// the child's mount namespace. Needs no daemon and no root.
+	SandboxBwrap SandboxMode = "bwrap"
+	// SandboxNone runs children directly, exactly as quack did before: with the
+	// server user's full filesystem authority. Loudly warned about at startup.
+	SandboxNone SandboxMode = "none"
+)
+
+// bwrapBinary / prlimitBinary are looked up on the SERVER's ambient PATH (like
+// every other binary RunArgv resolves — see RunArgv's LookPath rationale).
+const (
+	bwrapBinary   = "bwrap"
+	prlimitBinary = "prlimit"
+)
+
+// Limits are the per-child-PROCESS resource limits (setrlimit), applied via
+// prlimit(1) as the INNERMOST wrapper — Go's os/exec has no setrlimit hook, and
+// setting them in the server process would limit the server itself. Zero means
+// "leave the inherited limit alone". Motivation: a runaway build (`npm ci` on a
+// hostile repo, a `go test` that allocates without bound) can OOM the machine
+// the server runs on; nothing stopped it.
+type Limits struct {
+	// AddressSpaceMB is RLIMIT_AS — per process, not per build. Keep it
+	// generous: Node's V8 reserves a very large VIRTUAL region at startup, so a
+	// too-tight limit does not slim a build down, it makes `node` refuse to
+	// start at all.
+	AddressSpaceMB int
+	// Procs is RLIMIT_NPROC. Applied ONLY under SandboxBwrap: RLIMIT_NPROC is
+	// counted per-UID across the whole system, so outside the sandbox's user
+	// namespace a limit below the server user's existing process count fails
+	// every fork — including bwrap's own (observed: "Creating new namespace
+	// failed: Resource temporarily unavailable"). Inside the namespace the
+	// count starts at ~0 and the limit means what it says. --unshare-pid
+	// already contains a fork bomb's blast radius; this bounds it.
+	Procs int
+	// FileSizeMB is RLIMIT_FSIZE: a child that writes past it is killed
+	// (SIGXFSZ), so no agent can fill the server's disk with one command.
+	FileSizeMB int
+}
+
+// ResolveSandbox validates the configured mode and PROVES it works on this host
+// before the server starts serving. It never falls back: a deployment that asks
+// for a boundary and doesn't get one is exactly the failure this whole change
+// exists to remove, so a missing/broken bwrap is a startup error, and running
+// without a boundary is a WARN that says plainly what it costs.
+func ResolveSandbox(mode SandboxMode) (SandboxMode, error) {
+	switch mode {
+	case SandboxNone:
+		slog.Warn("workspace sandbox is OFF (workspace.sandbox: none): every run_command and gate-check child process "+
+			"runs as the server's OS user with that user's FULL filesystem authority — it can read ~/.ssh, ~/.aws, "+
+			"~/.config/gh, .env and anything else that account can read, whatever the path jail says. The jail confines "+
+			"the TOOLS' paths, not a child process. Only run agents you would trust with that account.",
+			"component", "workspace")
+		return SandboxNone, nil
+	case SandboxBwrap:
+		if err := probeBwrap(); err != nil {
+			return "", fmt.Errorf("workspace.sandbox: %q: %w\n"+
+				"Install bubblewrap (Debian/Ubuntu: apt-get install bubblewrap; Fedora: dnf install bubblewrap; "+
+				"Alpine: apk add bubblewrap), or set `workspace.sandbox: none` to accept that child processes run with "+
+				"the server user's full filesystem authority", SandboxBwrap, err)
+		}
+		return SandboxBwrap, nil
+	default:
+		return "", fmt.Errorf("workspace.sandbox: unknown mode %q (want %q or %q)", mode, SandboxBwrap, SandboxNone)
+	}
+}
+
+// probeBwrap checks that bwrap is installed AND that it can actually create a
+// namespace here — presence is not proof: a container runtime whose seccomp
+// profile blocks unshare(CLONE_NEWUSER) has bwrap on disk and cannot use it,
+// and that must fail at startup, not on the first agent command. The program it
+// runs inside the probe sandbox is bwrap itself (`bwrap --version`): /usr is
+// bound read-only, so it is always present in there, with no dependency on
+// coreutils existing in the image.
+func probeBwrap() error {
+	bin, err := exec.LookPath(bwrapBinary)
+	if err != nil {
+		return fmt.Errorf("the bwrap binary is not installed or not on PATH: %w", err)
+	}
+	args := append(bwrapSystemArgs(), "--tmpfs", "/tmp", "--", bin, "--version")
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("bwrap is installed but cannot create a sandbox on this host (%v): %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// bwrapSystemArgs is the host-independent half of the sandbox: the namespaces
+// and the read-only system view. Every bind is here because something a coding
+// agent routinely runs needs it — discovered by running `go build`, `go test`,
+// `npm install`, `npm test`, `npx`, and `git` inside the sandbox until they all
+// passed:
+//
+//   - --unshare-user: the whole reason this needs no root or daemon.
+//   - --unshare-pid: the child can neither see nor signal the server's own
+//     processes, and a fork bomb dies with its namespace.
+//   - --unshare-ipc / --unshare-uts: no shared SysV IPC, no hostname games.
+//   - --die-with-parent: a killed/timed-out run leaves nothing behind.
+//   - --new-session: no controlling terminal to inject keystrokes into (TIOCSTI).
+//   - /usr, /bin, /lib, /lib64, /sbin (ro): the toolchains and their shared
+//     libraries. git links against libcurl/libssl/libpcre2/zlib; node and go
+//     live here too. Read-only: a child cannot patch the system it runs on.
+//   - /etc/ssl + /etc/ca-certificates (ro): TLS trust — `npm install` and
+//     `git clone` over HTTPS fail without it.
+//   - /etc/resolv.conf, /etc/hosts, /etc/nsswitch.conf (ro): DNS. The network
+//     namespace is deliberately NOT unshared — agents legitimately fetch
+//     dependencies (npm ci, go mod download) — so name resolution must work.
+//   - /etc/passwd, /etc/group (ro): getpwuid()/getgrgid() — npm and git both
+//     look the running user up and misbehave when it doesn't exist.
+//   - /etc/alternatives (ro): on Debian, /usr/bin/<tool> is often a symlink
+//     into here (java, editor, …).
+//   - /etc/localtime (ro): sane timestamps in build/test output.
+//   - --proc /proc: required with --unshare-pid; every language runtime reads it.
+//   - --dev /dev: a minimal device set (/dev/null, /dev/urandom, /dev/tty) —
+//     NOT the host's /dev.
+//
+// Everything NOT listed is absent from the child's filesystem — including all
+// of $HOME, /root, /etc/shadow, and the rest of /etc.
+func bwrapSystemArgs() []string {
+	return []string{
+		"--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+		"--die-with-parent", "--new-session",
+		"--ro-bind", "/usr", "/usr",
+		"--ro-bind-try", "/bin", "/bin",
+		"--ro-bind-try", "/lib", "/lib",
+		"--ro-bind-try", "/lib64", "/lib64",
+		"--ro-bind-try", "/sbin", "/sbin",
+		"--ro-bind-try", "/etc/ssl", "/etc/ssl",
+		"--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+		"--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
+		"--ro-bind-try", "/etc/hosts", "/etc/hosts",
+		"--ro-bind-try", "/etc/nsswitch.conf", "/etc/nsswitch.conf",
+		"--ro-bind-try", "/etc/passwd", "/etc/passwd",
+		"--ro-bind-try", "/etc/group", "/etc/group",
+		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives",
+		"--ro-bind-try", "/etc/localtime", "/etc/localtime",
+		"--proc", "/proc",
+		"--dev", "/dev",
+	}
+}
+
+// childArgv is the ONE place a child's real argv is assembled: rlimits wrap the
+// program, and the sandbox wraps that. bin is the already-resolved absolute
+// path of argv[0] (see RunArgv), dir the jail-resolved working directory.
+//
+//	bwrap <system view> <toolchains ro> <cwd + HOME rw> --chdir dir -- prlimit … -- <bin> <args>
+//
+// prlimit goes INSIDE bwrap on purpose: RLIMIT_NPROC is counted per-UID
+// system-wide, so it is only meaningful (and only safe) inside the sandbox's
+// own user namespace.
+func childArgv(dir, bin string, argv []string, caps Caps) []string {
+	inner := append([]string{bin}, argv[1:]...)
+	if caps.Sandbox != SandboxBwrap {
+		// No OS boundary: still bound the damage a runaway build can do, but
+		// leave RLIMIT_NPROC alone (see Limits.Procs).
+		return withLimits(inner, caps.Limits, false)
+	}
+	args := bwrapSystemArgs()
+	args = append(args, tmpArgs(caps)...)
+	args = append(args, toolchainArgs(caps)...)
+	// The only writable paths: the child's own working directory and its
+	// isolated $HOME (npm's _cacache, GOCACHE, ~/.gitconfig — see Jail.HomeDir).
+	// NOT the whole workspace root: a node's child cannot reach another node's
+	// clone, another chat's tree, or another user's jail.
+	args = append(args, "--bind", dir, dir)
+	if caps.HomeDir != "" && caps.HomeDir != dir {
+		args = append(args, "--bind", caps.HomeDir, caps.HomeDir)
+	}
+	args = append(args, "--chdir", dir, "--")
+	args = append(args, withLimits(inner, caps.Limits, true)...)
+	return append([]string{bwrapPath()}, args...)
+}
+
+// tmpArgs gives the child a private /tmp. It is backed by a real directory
+// under the isolated $HOME rather than a tmpfs when one is available: a tmpfs
+// lives in RAM, and a `go build`'s temporary objects are exactly the kind of
+// multi-gigabyte write that would then become memory pressure on the server.
+func tmpArgs(caps Caps) []string {
+	if caps.HomeDir == "" {
+		return []string{"--tmpfs", "/tmp"}
+	}
+	tmp := filepath.Join(caps.HomeDir, "tmp")
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		slog.Warn("could not create the sandbox tmp dir; falling back to an in-memory /tmp",
+			"component", "workspace", "dir", tmp, "err", err)
+		return []string{"--tmpfs", "/tmp"}
+	}
+	return []string{"--bind", tmp, "/tmp"}
+}
+
+// toolchainArgs read-only-binds the operator's configured exec_path entries
+// (workspace.exec_path — the real toolchain dirs, e.g. nvm's node bin), which
+// live outside the system directories bwrapSystemArgs covers.
+//
+// A bin/ entry gets its FHS siblings (lib, libexec, share) bound too: a prefix
+// toolchain keeps its libraries next to its binaries and its bin entries are
+// symlinks into them (nvm's `npm` is a symlink to ../lib/node_modules/npm/…),
+// so binding bin/ alone yields a working `node` and a broken `npm`. Only those
+// three siblings — never the parent directory itself, which for a `~/bin` entry
+// would be the operator's whole home directory.
+func toolchainArgs(caps Caps) []string {
+	var args []string
+	for _, p := range caps.ExtraPath {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		args = append(args, "--ro-bind-try", p, p)
+		if filepath.Base(p) != "bin" {
+			continue
+		}
+		prefix := filepath.Dir(p)
+		for _, sib := range []string{"lib", "libexec", "share"} {
+			sibling := filepath.Join(prefix, sib)
+			args = append(args, "--ro-bind-try", sibling, sibling)
+		}
+	}
+	return args
+}
+
+// withLimits prefixes argv with prlimit(1) when any limit is set. prlimit is
+// util-linux — present on any Linux userland, including the debian-slim runtime
+// image — but limits are DoS hygiene, not the security boundary, so a host
+// without it gets a one-time WARN and unlimited children rather than a refusal
+// to run (unlike the sandbox itself, which fails closed at startup).
+func withLimits(argv []string, lim Limits, inUserNS bool) []string {
+	var flags []string
+	if lim.AddressSpaceMB > 0 {
+		flags = append(flags, "--as="+strconv.Itoa(lim.AddressSpaceMB*1024*1024))
+	}
+	if lim.FileSizeMB > 0 {
+		flags = append(flags, "--fsize="+strconv.Itoa(lim.FileSizeMB*1024*1024))
+	}
+	if lim.Procs > 0 && inUserNS {
+		flags = append(flags, "--nproc="+strconv.Itoa(lim.Procs))
+	}
+	if len(flags) == 0 {
+		return argv
+	}
+	bin, err := exec.LookPath(prlimitBinary)
+	if err != nil {
+		warnNoPrlimit.Do(func() {
+			slog.Warn("prlimit(1) is not installed; child processes run with NO resource limits "+
+				"(a runaway build can exhaust the host's memory or disk). Install util-linux, or ignore this if the "+
+				"deployment limits the whole container instead.", "component", "workspace", "err", err)
+		})
+		return argv
+	}
+	out := append([]string{bin}, flags...)
+	out = append(out, "--")
+	return append(out, argv...)
+}
+
+var warnNoPrlimit sync.Once
+
+// bwrapPath resolves bwrap once. ResolveSandbox already proved it is there and
+// works before any child runs, so a lookup failure here is unreachable in a
+// running server; returning the bare name keeps the failure a clear "bwrap not
+// found" from exec rather than a panic.
+func bwrapPath() string {
+	if p, err := exec.LookPath(bwrapBinary); err == nil {
+		return p
+	}
+	return bwrapBinary
+}

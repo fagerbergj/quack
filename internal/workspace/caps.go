@@ -40,6 +40,17 @@ type Caps struct {
 	// other half of this fix). Wired once from internal/serve's buildAgents;
 	// nothing here computes it — Caps only carries the resolved value.
 	HomeDir string
+	// Sandbox is the OS boundary every RunArgv/RunPipeline child runs inside
+	// (SandboxBwrap | SandboxNone — see sandbox.go). The ZERO value is NO
+	// boundary, which is why exactly one place in the server resolves it
+	// (internal/serve, via workspace.ResolveSandbox — which refuses to start when
+	// the configured sandbox isn't usable, and WARNs loudly when it is off).
+	// Configured via workspace.sandbox. The jail is a path check on the TOOLS;
+	// this is the wall around their children.
+	Sandbox SandboxMode
+	// Limits are the per-child resource limits (RLIMIT_AS/NPROC/FSIZE — see
+	// Limits). Configured via workspace.limits. Zero = inherit the server's.
+	Limits Limits
 }
 
 // DefaultCaps returns the isolation model's documented defaults.
@@ -59,5 +70,5 @@ func DefaultCaps() Caps {
 func (c Caps) IsZero() bool {
 	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
 		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 &&
-		len(c.ExtraPath) == 0 && c.HomeDir == ""
+		len(c.ExtraPath) == 0 && c.HomeDir == "" && c.Sandbox == "" && c.Limits == Limits{}
 }

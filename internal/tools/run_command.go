@@ -31,20 +31,30 @@ type runCommandResult struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-// runCommandDescription documents the Tier-0 walls (see internal/workspace/
-// exec.go's RunArgv/RunPipeline) and the honest limit the design doc calls
-// out: the jail confines the cwd, not what an arbitrary binary DOES. That's
-// exactly why run_command ships judge+confirm-guarded by default
-// (workspace.guards) — the operator, who knows what's on their host, owns the
-// dial.
-const runCommandDescription = "Run a command in your workspace. `command` is argv-split — NEVER a shell. Pipes ARE " +
-	"supported natively (`grep -r pattern . | head -50` chains real processes; exit code is pipefail-style — " +
-	"non-zero if ANY stage fails, with the failing stage named in the output). Everything else a shell would " +
-	"interpret — redirects, backgrounding, subshells, command/variable substitution (& ; $ < > ` ( )) — is " +
-	"rejected outright and unavailable. `dir` is the workspace-relative directory to run in. Honest limit: the " +
-	"jail confines the working directory, not what the program itself does — this tool typically requires " +
-	"independent review and human approval before it runs (see workspace.guards), so expect to wait for that " +
-	"before you see a result."
+// runCommandDescription tells the model exactly what holds and what doesn't.
+// Two of the three things this text used to assert as walls were not walls:
+//
+//   - The jail IS now real for a child process, but only because the child runs
+//     in an OS sandbox (workspace.sandbox: bwrap — internal/workspace/sandbox.go
+//     puts it in a namespace whose filesystem is its cwd + an isolated $HOME).
+//     A deployment may set sandbox: none, and then it isn't.
+//   - "No shell" is NOT a security wall: the rejected metacharacter set is a
+//     handful of punctuation, and `sh -c "…"` contains none of it. It is an
+//     LLM-habit guard that keeps commands in a shape quack can actually reason
+//     about, and the safety judge (guard.go) is what denies inline interpreters.
+//
+// Saying so plainly is the point: an agent that believes a wall exists proposes
+// operations it would otherwise not propose.
+const runCommandDescription = "Run a command in your workspace. `command` is argv-split and executed directly — no " +
+	"shell is involved, so redirects, backgrounding, subshells, and command/variable substitution (& ; $ < > ` ( )) " +
+	"are rejected and unavailable. Pipes ARE supported natively (`grep -r pattern . | head -50` chains real " +
+	"processes; exit code is pipefail-style — non-zero if ANY stage fails, with the failing stage named in the " +
+	"output). `dir` is the workspace-relative directory to run in. What actually contains this: the deployment " +
+	"normally runs your command in an OS sandbox where nothing outside its working directory and your isolated " +
+	"$HOME exists at all — so reading host paths (~/.ssh, /etc, another task's files) fails, and there is no way " +
+	"to smuggle it past by invoking an interpreter. Do not try: this tool typically also requires independent " +
+	"review and human approval before it runs (see workspace.guards), an off-task command is denied there, and " +
+	"you will wait for that review before you see any result."
 
 func newRunCommand(d Deps) (tool.Tool, error) {
 	b, err := newFSBinding(d)

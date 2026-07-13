@@ -437,6 +437,44 @@ func TestWorkspaceDefaults(t *testing.T) {
 	if len(w.CheckCommands) != 0 {
 		t.Errorf("CheckCommands = %v, want empty (checks unavailable by default)", w.CheckCommands)
 	}
+	// The child-process sandbox is ON by default: a deployment that says nothing
+	// must get the OS boundary, not the pre-sandbox behaviour where a child (any
+	// `sh -c`, whose text trips no metachar wall) had the server user's whole
+	// filesystem. An unusable bwrap then refuses to START (workspace.ResolveSandbox);
+	// opting out is explicit.
+	if w.Sandbox != "bwrap" {
+		t.Errorf("Sandbox = %q, want bwrap (a config that says nothing must still confine child processes)", w.Sandbox)
+	}
+	if w.Limits.AddressSpaceMB != 8192 || w.Limits.MaxProcs != 512 || w.Limits.MaxFileSizeMB != 1024 {
+		t.Errorf("Limits = %+v, want {8192 512 1024}", w.Limits)
+	}
+}
+
+// TestWorkspaceSandboxOverrides: `none` is the explicit opt-out, the limits
+// round-trip, and any other value is a startup error rather than a typo that
+// silently degrades to "no sandbox".
+func TestWorkspaceSandboxOverrides(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  sandbox: none
+  limits:
+    address_space_mb: 2048
+    max_procs: 64
+    max_file_size_mb: 256
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Workspace.Sandbox != "none" {
+		t.Errorf("Sandbox = %q, want none", c.Workspace.Sandbox)
+	}
+	if c.Workspace.Limits != (WorkspaceLimits{AddressSpaceMB: 2048, MaxProcs: 64, MaxFileSizeMB: 256}) {
+		t.Errorf("Limits = %+v, want the configured values", c.Workspace.Limits)
+	}
+
+	if _, err := Load(writeTemp(t, baseConfig+"\nworkspace:\n  sandbox: docker\n")); err == nil {
+		t.Fatal("an unknown workspace.sandbox value must be a startup error")
+	}
 }
 
 // TestWorkspaceParsesOverrides proves every workspace: field round-trips
