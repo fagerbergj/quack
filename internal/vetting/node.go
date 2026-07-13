@@ -503,45 +503,76 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*ses
 	return false, nil
 }
 
-// stagedCandidate parses a stage_memory tool call's args (content + optional
-// kind) into a memory candidate; ok=false if there's no usable content.
+// stagedCandidate parses a stage_memory tool call's args (content + optional kind
+// and bucket) into a memory candidate; ok=false if there's no usable content. The
+// bucket (repo|role|user) is the agent's own declaration of WHAT the memory is
+// about, and routes the write (memory.Scope.writeBucket); an absent/unknown one
+// takes the caller's default bucket.
 func stagedCandidate(fc *genai.FunctionCall) (memory.Candidate, bool) {
 	c, ok := fc.Args["content"].(string)
 	if !ok || strings.TrimSpace(c) == "" {
 		return memory.Candidate{}, false
 	}
 	cand := memory.Candidate{Content: strings.TrimSpace(c)}
-	if k, ok := fc.Args["kind"].(string); ok && k != "" {
-		cand.Metadata = map[string]string{"kind": k}
+	set := func(key, val string) {
+		if val == "" {
+			return
+		}
+		if cand.Metadata == nil {
+			cand.Metadata = map[string]string{}
+		}
+		cand.Metadata[key] = val
 	}
+	k, _ := fc.Args["kind"].(string)
+	set("kind", k)
+	b, _ := fc.Args["bucket"].(string)
+	set("bucket", b)
 	return cand, true
 }
 
-// commitMemoryOnPass fires the agent's staged tradecraft (plus consolidation from
-// the accepted answer) into task memory — only on a gate pass, so nothing is
+// commitMemoryOnPass fires the agent's staged knowledge (plus consolidation from
+// the accepted answer) into shared memory — only on a gate pass, so nothing is
 // remembered from a failed answer. Fire-and-forget: memory is best-effort and
 // never blocks or fails the node. Commit also runs with empty staged (its
 // answer-extraction still mines the accepted answer), matching the M6 design.
+//
+// The write is bucketed by SUBJECT (memory.Scope): the repo the node is working in,
+// the agent's role family, or the user — never the agent's own name. The gate is the
+// right place to resolve that scope: it runs workflow-side, so it holds the real user
+// id and the jail coordinates the node's repo was cloned into.
 func commitMemoryOnPass(ctx adkagent.Context, cfg Config, author, answer string, staged []memory.Candidate) {
 	if cfg.Memory == nil || !cfg.CommitMemory || strings.TrimSpace(answer) == "" {
 		return
 	}
-	userID := ""
-	if s := ctx.Session(); s != nil {
-		userID = s.UserID()
-	}
+	sc := memoryScope(ctx, cfg, author)
 	go func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		n, err := cfg.Memory.Commit(cctx, userID, author, staged, answer)
+		n, err := cfg.Memory.Commit(cctx, sc, author, staged, answer)
 		if err != nil {
 			slog.Warn("memory commit failed", "component", "vetting", "node", author, "err", err, "staged", len(staged))
 			return
 		}
 		if n > 0 {
-			slog.Info("memory committed", "component", "vetting", "node", author, "count", n, "user", userID)
+			slog.Info("memory committed", "component", "vetting", "node", author,
+				"count", n, "repo", sc.Repo, "role", sc.Role, "user", sc.User)
 		}
 	}()
+}
+
+// memoryScope is the node's memory entitlement: the repo it is working in (derived
+// from the chat's jail — "" when there is no repo or more than one, in which case the
+// write falls back to the role bucket rather than guessing), its agent's role family,
+// the real user, and its agent name as the legacy read key.
+func memoryScope(ctx adkagent.Context, cfg Config, author string) memory.Scope {
+	sc := memory.Scope{Role: cfg.MemoryRole, Legacy: author}
+	if s := ctx.Session(); s != nil {
+		sc.User = s.UserID()
+	}
+	if cfg.Workspace != nil {
+		sc.Repo = cfg.Workspace.RepoKey(cfg.WorkspaceUserID, cfg.ChatID)
+	}
+	return sc
 }
 
 // runWorkerNode runs the worker as a sub-branched child with a stable per-run

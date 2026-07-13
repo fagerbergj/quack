@@ -49,6 +49,7 @@ agents:
   web-researcher:
     bundle: agents/web-researcher
     provider: default
+    memory_role: research   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
@@ -57,16 +58,22 @@ agents:
   code-implementer:
     bundle: agents/code-implementer   # prompt.md (ponytail ladder) + rubric.md (code-quality research + ponytail criteria)
     provider: default
+    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
     tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
-            run_command, ask_advisor, ask_user]
+            run_command, ask_advisor, ask_user, load_memory, stage_memory]
+    # load_memory/stage_memory + the bundle's memory.md turn on shared memory: the implementer
+    # RECALLS what the explorer/reviewer already learned about this repo (build/test/lint commands,
+    # where things are registered, the reference feature, pre-existing failures) instead of
+    # rediscovering it every run — memory is bucketed by SUBJECT, not by agent (internal/memory/scope.go).
   code-reviewer:
     bundle: agents/code-reviewer      # prompt.md (reviewer identity/values) + rubric.md (is the REVIEW good) + review-code skill
     provider: default
+    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty to close a gate gap
@@ -82,6 +89,7 @@ agents:
   code-explorer:
     bundle: agents/code-explorer      # prompt.md (read-only explorer, research-git-repos) + rubric.md (grades EXPLORATION: code-grounding/accuracy/usefulness, NOT web citations) + memory.md (repo layout/conventions)
     provider: default
+    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap

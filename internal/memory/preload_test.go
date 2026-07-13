@@ -36,14 +36,3 @@ func TestFirstStep(t *testing.T) {
 		}
 	}
 }
-
-func TestScope(t *testing.T) {
-	const agent, user = "web-researcher", "local"
-	// Task memory keys by agent name (stable); user memory by the real userID.
-	if got := (&Store{domain: "task"}).scope(agent, user); got != agent {
-		t.Errorf("task scope = %q, want %q", got, agent)
-	}
-	if got := (&Store{domain: "user"}).scope(agent, user); got != user {
-		t.Errorf("user scope = %q, want %q", got, user)
-	}
-}

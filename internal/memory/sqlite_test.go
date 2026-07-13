@@ -22,8 +22,8 @@ func TestSQLiteIndex(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	// Query near {1,0,0} in scope x → a, b, c by descending cosine; scope y excluded.
-	got, err := s.idx.query(ctx, "x", []float32{1, 0, 0}, 5)
+	// Query near {1,0,0} in bucket x → a, b, c by descending cosine; bucket y excluded.
+	got, err := s.idx.query(ctx, []string{"x"}, []float32{1, 0, 0}, 5)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestSQLiteIndex(t *testing.T) {
 	}
 
 	// k caps the result count.
-	if top, _ := s.idx.query(ctx, "x", []float32{1, 0, 0}, 1); len(top) != 1 || top[0].ID != "a" {
+	if top, _ := s.idx.query(ctx, []string{"x"}, []float32{1, 0, 0}, 1); len(top) != 1 || top[0].ID != "a" {
 		t.Fatalf("k=1 → %+v, want just a", top)
 	}
 
@@ -46,7 +46,7 @@ func TestSQLiteIndex(t *testing.T) {
 	if err := s.idx.upsert(ctx, []point{{ID: "a", Vector: []float32{1, 0, 0}, Content: "updated", Scope: "x"}}); err != nil {
 		t.Fatalf("update upsert: %v", err)
 	}
-	got, _ = s.idx.query(ctx, "x", []float32{1, 0, 0}, 5)
+	got, _ = s.idx.query(ctx, []string{"x"}, []float32{1, 0, 0}, 5)
 	if len(got) != 3 || got[0].ID != "a" || got[0].Content != "updated" {
 		t.Fatalf("after UPDATE: %d rows, top=%+v, want 3 rows with a.Content=updated", len(got), got[0])
 	}
@@ -55,8 +55,17 @@ func TestSQLiteIndex(t *testing.T) {
 	if err := s.idx.remove(ctx, []string{"a"}); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if got, _ = s.idx.query(ctx, "x", []float32{1, 0, 0}, 5); len(got) != 2 {
+	if got, _ = s.idx.query(ctx, []string{"x"}, []float32{1, 0, 0}, 5); len(got) != 2 {
 		t.Fatalf("after DELETE: %d rows, want 2", len(got))
+	}
+
+	// A multi-bucket query (how every recall runs: repo ∪ role ∪ user ∪ legacy) ORs them.
+	both, err := s.idx.query(ctx, []string{"x", "y"}, []float32{1, 0, 0}, 5)
+	if err != nil {
+		t.Fatalf("multi-bucket query: %v", err)
+	}
+	if len(both) != 3 {
+		t.Fatalf("buckets x∪y → %d rows, want 3 (2 in x + 1 in y)", len(both))
 	}
 }
 

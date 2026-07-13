@@ -27,7 +27,8 @@ func TestCommit_AddThenRecall(t *testing.T) {
 	consolidator := fakeModel{reply: "```json\n{\"ops\":[{\"action\":\"ADD\",\"content\":\"transportforireland.ie is authoritative for Irish transit\",\"kind\":\"source\"}]}\n```"}
 	s := newSQLiteStore(t, "task", consolidator)
 
-	n, err := s.Commit(ctx, "u1", "web-researcher",
+	sc := Scope{Role: RoleResearch, User: "u1", Legacy: "web-researcher"}
+	n, err := s.Commit(ctx, sc, "web-researcher",
 		[]Candidate{{Content: "use the official transit site", Metadata: map[string]string{"kind": "source"}}},
 		"Dublin buses run by transportforireland.ie ...")
 	if err != nil {
@@ -37,8 +38,8 @@ func TestCommit_AddThenRecall(t *testing.T) {
 		t.Fatalf("Commit wrote %d, want 1", n)
 	}
 
-	// Task memory is scoped to the agent (author), so recall passes AppName.
-	resp, err := s.SearchMemory(ctx, &adkmemory.SearchRequest{Query: "irish transit", AppName: "web-researcher", UserID: "u1"})
+	// Recall goes through the writer's own view (its role + user buckets).
+	resp, err := s.View(sc, nil).SearchMemory(ctx, &adkmemory.SearchRequest{Query: "irish transit"})
 	if err != nil {
 		t.Fatalf("SearchMemory: %v", err)
 	}
@@ -53,7 +54,7 @@ func TestCommit_Noop(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", fakeModel{reply: `{"ops":[]}`})
 
-	n, err := s.Commit(ctx, "u1", "web-researcher", []Candidate{{Content: "today's bus fare is 2 euro"}}, "")
+	n, err := s.Commit(ctx, Scope{Role: RoleResearch, User: "u1"}, "web-researcher", []Candidate{{Content: "today's bus fare is 2 euro"}}, "")
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestCommit_Noop(t *testing.T) {
 // TestCommit_NoConsolidator guards the read-only-store error path (no LLM call).
 func TestCommit_NoConsolidator(t *testing.T) {
 	s := &Store{} // no consolidator
-	if _, err := s.Commit(context.Background(), "u1", "a", []Candidate{{Content: "x"}}, ""); err == nil {
+	if _, err := s.Commit(context.Background(), Scope{User: "u1"}, "a", []Candidate{{Content: "x"}}, ""); err == nil {
 		t.Fatal("Commit with nil consolidator should error")
 	}
 }

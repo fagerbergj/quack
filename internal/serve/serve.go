@@ -26,6 +26,7 @@ import (
 	"google.golang.org/adk/v2/tool/loadmemorytool"
 	"google.golang.org/adk/v2/tool/skilltoolset"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/bundledir"
@@ -437,12 +438,32 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
 func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
-	// Derive the recall service, leaving it nil (not a non-nil interface wrapping
-	// a nil pointer) when memory is off. The gate takes the concrete *memory.Store
-	// directly (taskStore), so it has no such typed-nil hazard.
-	var taskMem adkmemory.Service
-	if taskStore != nil {
-		taskMem = taskStore
+	// nodeScope resolves the part of an agent's memory entitlement that is only
+	// knowable per invocation: the repo the node is working in, and the real user.
+	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
+	// per-invocation "A2A_USER_<ctxid>"), so we reuse the ONE channel that does —
+	// the advisor-thread marker the gate stamps into the worker's prompt (the same
+	// channel guard.go and the workspace tools' chat scope use) — and derive the repo
+	// from the chat's jail (the single clone in it; "" when there is none or several,
+	// so memory falls back to the role bucket rather than guessing).
+	nodeScope := func(ctx context.Context) memory.Scope {
+		uc, ok := ctx.(interface{ UserContent() *genai.Content })
+		if !ok {
+			return memory.Scope{}
+		}
+		token, ok := vetting.ParseAdvisorThread(contentText(uc.UserContent()))
+		if !ok {
+			return memory.Scope{}
+		}
+		at, ok := vetting.LookupAdvisorThread(token)
+		if !ok {
+			return memory.Scope{}
+		}
+		sc := memory.Scope{User: at.UserID}
+		if jail != nil {
+			sc.Repo = jail.RepoKey(localUserID, at.SessionID)
+		}
+		return sc
 	}
 	names := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
@@ -612,7 +633,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// (added to every agent when memory is on); load_memory is deliberate recall
 		// (opt-in via the agent's tools list). Strip load_memory from the builtin
 		// names regardless, so tools.Build never sees an unknown tool.
-		toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskMem != nil, advisorAgent != nil)
+		toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
@@ -656,7 +677,14 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, servers, nil, nil, fmtErr(name, "memory.md: %v", err)
 			}
 		}
-		if taskMem != nil && memGuidance != "" {
+		// The agent's recall service: a VIEW of the shared store bound to this agent's
+		// buckets — its role family + the per-node repo/user (nodeScope) — plus its own
+		// agent name as the legacy read key, so memories written under the old
+		// per-agent-silo scheme still load. nil (not a typed-nil interface) when this
+		// agent is not a memory participant.
+		var memSvc adkmemory.Service
+		if taskStore != nil && memGuidance != "" {
+			memSvc = taskStore.View(memory.Scope{Role: ac.MemoryRole, Legacy: name}, nodeScope)
 			builtins = append(builtins, memory.NewPreload())
 			if wantLoadMemory {
 				builtins = append(builtins, loadmemorytool.New())
@@ -681,6 +709,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// memGuidance above). Such agents commit on a judge pass even when they
 			// staged nothing, so Commit's answer-extraction still runs.
 			agentGateCfg.CommitMemory = taskStore != nil && memGuidance != ""
+			// The role bucket this agent reads and writes (memory is shared, bucketed by
+			// subject — see internal/memory/scope.go).
+			agentGateCfg.MemoryRole = ac.MemoryRole
 			// A retrieval agent (web tools in its list) must actually retrieve —
 			// a zero-activity answer hard-fails the deterministic fold instead of
 			// sailing to the judge ungraded (see vetting.Config.RequireRetrieval).
@@ -707,7 +738,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			gateCfgs[name] = agentGateCfg
 		}
 
-		srv, err := agent.Serve(ag, sessions, taskMem)
+		srv, err := agent.Serve(ag, sessions, memSvc)
 		if err != nil {
 			return nil, nil, servers, nil, nil, fmtErr(name, "a2a serve: %v", err)
 		}
@@ -724,6 +755,21 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL, "tools", ac.Tools)
 	}
 	return clientMap, modelMap, servers, judgeFactory, gateCfgs, nil
+}
+
+// contentText flattens a content's text parts (the worker's prompt, where the gate
+// stamps the advisor-thread marker nodeScope reads).
+func contentText(c *genai.Content) string {
+	if c == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range c.Parts {
+		if p != nil && p.Text != "" {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
 }
 
 func fmtErr(agentName, format string, args ...any) error {

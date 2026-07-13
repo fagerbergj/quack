@@ -14,10 +14,14 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// Payload keys stored on each Qdrant point.
+// Payload keys stored on each Qdrant point. payloadScope holds the BUCKET key
+// (repo:… / role:… / user:… — see scope.go). Its wire name stays "user_id": that is
+// what points written before the bucket model carry (their value being an agent name
+// or a raw user id), and reading them back is exactly what makes the legacy
+// entitlement in Scope.Legacy work without a migration.
 const (
 	payloadContent   = "content"
-	payloadUserID    = "user_id"
+	payloadScope     = "user_id"
 	payloadAuthor    = "author"
 	payloadTimestamp = "timestamp"
 )
@@ -67,10 +71,16 @@ func (x *qdrantIndex) ensure(ctx context.Context, probeDim func() (int, error)) 
 	return nil
 }
 
-func (x *qdrantIndex) query(ctx context.Context, scope string, vec []float32, k int) ([]scored, error) {
+func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error) {
 	var flt *qdrant.Filter
-	if scope != "" {
-		flt = &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadUserID, scope)}}
+	if len(buckets) > 0 {
+		// OR across the caller's buckets (`should` = at least one must match): a
+		// coding agent reads repo:<repo> ∪ role:coding ∪ user:<id> ∪ its legacy key.
+		should := make([]*qdrant.Condition, len(buckets))
+		for i, b := range buckets {
+			should[i] = qdrant.NewMatchKeyword(payloadScope, b)
+		}
+		flt = &qdrant.Filter{Should: should}
 	}
 	limit := uint64(k)
 	pts, err := x.client.Query(ctx, &qdrant.QueryPoints{
@@ -101,7 +111,7 @@ func (x *qdrantIndex) upsert(ctx context.Context, pts []point) error {
 	for _, p := range pts {
 		payload := map[string]any{
 			payloadContent:   p.Content,
-			payloadUserID:    p.Scope,
+			payloadScope:     p.Scope,
 			payloadAuthor:    p.Author,
 			payloadTimestamp: p.Timestamp,
 		}
