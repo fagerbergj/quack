@@ -42,11 +42,11 @@ type fsBinding struct {
 	userID string
 	jail   *workspace.Jail
 	caps   workspace.Caps
-	// cwd is the session working directory (chat-root-relative, "" = chat root) a
-	// per-call copy carries — set by withCwd from ctx state (defaulting to the
-	// node's own dir), so the shared startup-constructed binding stays immutable.
-	// Every path this binding resolves goes through resolve, which applies cwd
-	// (joinCwd) before Jail.Resolve.
+	// cwd is the session working directory (NODE-relative, "" = the node's own
+	// root) a per-call copy carries — set by withCwd from ctx state, so the shared
+	// startup-constructed binding stays immutable. Every path this binding resolves
+	// goes through resolve, which applies cwd and the node dir (jailPath) before
+	// Jail.Resolve.
 	cwd string
 	// chatID is the per-chat scope (the workflow/chat session id) this call's
 	// paths resolve under (<root>/<user>/<chatID>/…) — set by withCwd from the
@@ -54,29 +54,32 @@ type fsBinding struct {
 	// call that can't recover the chat id) resolves the per-user root.
 	chatID string
 	// nodeDir is the calling DAG node's own directory within that chat scope
-	// (<chatID>/<nodeID>/) — the DEFAULT cwd, so concurrent nodes of one plan
-	// clone and read in separate trees instead of tripping over each other's
-	// repos. "" outside a gated node (see scopeFromContext).
+	// (<chatID>/<nodeID>/) — the node's INVISIBLE ROOT: every model-supplied path
+	// is relative to it, and it is applied only here, at resolve time (jailPath),
+	// so concurrent nodes of one plan clone and read in separate trees instead of
+	// tripping over each other's repos, without the model ever seeing the dir.
+	// "" outside a gated node (see scopeFromContext).
 	nodeDir string
 }
 
 // withCwd returns a copy of b bound to this call's context: the per-chat scope
 // and the calling node's dir (both from the advisor-thread marker in ctx) plus
-// the session working directory (ctx state, defaulting to that node dir). A
-// value receiver makes the copy; the shared startup binding is never mutated.
+// the session working directory (ctx state; "" — the node's own root — until the
+// worker cd's). A value receiver makes the copy; the shared startup binding is
+// never mutated.
 func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
 	b.chatID, b.nodeDir = scopeFromContext(ctx)
-	b.cwd = cwdOrDefault(ctx, b.nodeDir)
+	b.cwd = cwdFromState(ctx)
 	return b
 }
 
-// resolve is the cwd- and chat-aware Jail.Resolve every fs tool uses in place of
-// a raw b.jail.Resolve: a relative p resolves against b.cwd, a "/"-prefixed p
-// against the chat root (see joinCwd), everything scoped under b.chatID, and
-// containment is still enforced by Jail.Resolve — a cwd + path can never escape
-// the chat's (nor the user's) jail.
+// resolve is the cwd-, node- and chat-aware Jail.Resolve every fs tool uses in
+// place of a raw b.jail.Resolve: a relative p resolves against b.cwd under the
+// node's own root, a "/"-prefixed p against the chat root (see jailPath),
+// everything scoped under b.chatID, and containment is still enforced by
+// Jail.Resolve — no cwd + path can escape the chat's (nor the user's) jail.
 func (b fsBinding) resolve(p string) (string, error) {
-	return b.jail.Resolve(b.userID, b.chatID, joinCwd(b.cwd, p))
+	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
 
 // newFSBinding resolves Deps into an fsBinding, defaulting caps when unset.

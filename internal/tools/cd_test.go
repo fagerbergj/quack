@@ -329,13 +329,33 @@ func TestCwdFromStateFallsBackToRoot(t *testing.T) {
 func TestJoinCwd(t *testing.T) {
 	cases := []struct{ cwd, path, want string }{
 		{"", "a/b", "a/b"},                    // no cwd: unchanged
+		{".", "a/b", "a/b"},                   // the node root: unchanged
 		{"repo", "src/x.go", "repo/src/x.go"}, // relative joins onto cwd
-		{"repo", "/top", "top"},               // leading slash: root-relative, cwd ignored
 		{"repo", "..", "."},                   // climbing composes (jail re-checks later)
 	}
 	for _, c := range cases {
 		if got := joinCwd(c.cwd, c.path); got != c.want {
 			t.Errorf("joinCwd(%q,%q) = %q, want %q", c.cwd, c.path, got, c.want)
+		}
+	}
+}
+
+// jailPath is the ONE place the node dir (the invisible root) is applied. Every
+// path the model writes is node-relative; a leading "/" escapes to the CHAT root
+// (node dir AND cwd ignored) — the deliberate way to reach another node's clone.
+func TestJailPath(t *testing.T) {
+	cases := []struct{ nodeDir, cwd, path, want string }{
+		{"n1", "", "a/b", "n1/a/b"},                           // node root is the default
+		{"n1", "repo", "src/x.go", "n1/repo/src/x.go"},        // cwd, then the node dir
+		{"n1", "repo", "repo/src/x.go", "n1/repo/src/x.go"},   // cd's own reported path, fed back
+		{"n1", "repo", "/other/repo/x.go", "other/repo/x.go"}, // "/" = chat root: node dir ignored
+		{"n1", "..", "x.go", "x.go"},                          // `cd /` then a relative path: chat root
+		{"", "repo", "src/x.go", "repo/src/x.go"},             // un-gated: no node dir to apply
+		{"n1", "", "../../../etc/passwd", "../../etc/passwd"}, // climbs out — Jail.Resolve rejects it
+	}
+	for _, c := range cases {
+		if got := jailPath(c.nodeDir, c.cwd, c.path); got != c.want {
+			t.Errorf("jailPath(%q,%q,%q) = %q, want %q", c.nodeDir, c.cwd, c.path, got, c.want)
 		}
 	}
 }

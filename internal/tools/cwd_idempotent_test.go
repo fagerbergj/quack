@@ -4,21 +4,15 @@ import "testing"
 
 // A path that ALREADY carries the cwd must not be joined onto the cwd again.
 //
-// The live failure: with the node-scoped cwd, `cd openhands` reports its new dir
-// workspace-relative — "explorer-openhands/openhands". The model then does the
-// natural thing and feeds that path straight back:
-//
-//	read_file("explorer-openhands/openhands/README.md")
-//
-// which used to resolve to
-//
-//	<chat>/explorer-openhands/openhands/explorer-openhands/openhands/README.md
-//
-// and fail. The model then flails through variants. One live explorer node made
-// 34 REPEATED calls out of 69 doing exactly this; the node looked like it was
-// spinning. Doubling the cwd is never what anyone means.
+// The model is handed paths constantly and feeds them straight back: `cd` reports
+// its new dir ("openhands"), git_clone reports where it landed, list_dir echoes
+// entry paths. All of them now speak ONE namespace — node-relative — so
+// read_file("openhands/README.md") after `cd openhands` is unambiguous and must
+// WORK. Doubling the cwd into openhands/openhands/README.md is never what anyone
+// means: a live explorer node made 34 REPEATED calls out of 69 flailing through
+// variants of exactly that.
 func TestJoinCwd_DoesNotDoubleTheCwd(t *testing.T) {
-	const cwd = "explorer-openhands/openhands"
+	const cwd = "openhands"
 
 	tests := []struct {
 		name string
@@ -28,27 +22,22 @@ func TestJoinCwd_DoesNotDoubleTheCwd(t *testing.T) {
 		{
 			name: "cwd-relative path is joined (the normal case)",
 			path: "README.md",
-			want: "explorer-openhands/openhands/README.md",
+			want: "openhands/README.md",
 		},
 		{
 			name: "a path that already carries the cwd is taken as-is",
-			path: "explorer-openhands/openhands/README.md",
-			want: "explorer-openhands/openhands/README.md",
+			path: "openhands/README.md",
+			want: "openhands/README.md",
 		},
 		{
 			name: "the cwd itself is taken as-is",
-			path: "explorer-openhands/openhands",
-			want: "explorer-openhands/openhands",
-		},
-		{
-			name: "a leading slash still escapes to the scope root",
-			path: "/other-node/repo/x.go",
-			want: "other-node/repo/x.go",
+			path: "openhands",
+			want: "openhands",
 		},
 		{
 			name: "a sibling that merely shares a prefix is still joined",
-			path: "explorer-openhands-v2/x.go",
-			want: "explorer-openhands/openhands/explorer-openhands-v2/x.go",
+			path: "openhands-v2/x.go",
+			want: "openhands/openhands-v2/x.go",
 		},
 	}
 

@@ -812,33 +812,54 @@ func citationOnlyFailure(v verdict, threshold float64) bool {
 // paired to their responses by call ID, and web_search results feed the "seen"
 // set. Consumed by the deterministic citation check, the judge prompt's
 // workspace section (claims-vs-activity), and the revise/finalize prompts.
-// joinWritten resolves a worker's write/edit path argument to a jail-relative
-// path, applying the cwd in effect at the time of the call — the read-side
-// mirror of tools.joinCwd (kept here to avoid a vetting→tools dependency): a
-// leading "/" is jail-root-relative (cwd ignored), everything else is relative
-// to cwd. The result feeds Jail.Resolve, which re-verifies containment.
+// joinWritten resolves a path argument against the cwd in effect at the time of
+// the call — the read-side mirror of tools.joinCwd (kept here to avoid a
+// vetting→tools dependency): a leading "/" ignores the cwd, everything else is
+// relative to it.
 func joinWritten(cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")
 	}
-	if cwd == "" {
+	if cwd == "" || cwd == "." {
 		return p
 	}
 	return filepath.Join(cwd, p)
 }
 
-// activityFromSession replays a session with the jail root as the starting cwd
-// (an un-gated/legacy worker, and every test that doesn't care about scoping).
+// writtenRel resolves a worker's write/edit path argument to a CHAT-relative path
+// for Jail.Resolve — the read-side mirror of tools.jailPath. The worker's own paths
+// (and the cwd its `cd` reports) are NODE-relative, because the node dir is an
+// invisible root the model never sees; the node dir is re-applied here, at the one
+// resolution boundary, exactly as the tools do it. A leading "/" is the chat-root
+// escape hatch: cwd AND node dir ignored. The result feeds Jail.Resolve, which
+// re-verifies containment.
+//
+// The two namespaces must match. If the worker records paths in one and the judge
+// resolves them in another, buildChangedFilesSection silently reads NOTHING and the
+// judge degrades to trusting the answer's self-report — this exact regression has
+// bitten twice.
+func writtenRel(nodeDir, cwd, p string) string {
+	if strings.HasPrefix(p, "/") {
+		return strings.TrimPrefix(p, "/")
+	}
+	return joinWritten(nodeDir, joinWritten(cwd, p))
+}
+
+// activityFromSession replays a session with no node scope (an un-gated/legacy
+// worker, and every test that doesn't care about scoping).
 func activityFromSession(sess session.Session) workerActivity {
 	return activityFromSessionAt(sess, "")
 }
 
-// activityFromSessionAt replays the worker's session starting from initialCwd —
-// the node's OWN working dir (workspace.NodeDir), which is where a gated worker's
-// relative paths resolve until it cd's. Getting this wrong silently breaks the
-// judge's changed-file re-read: it would resolve the worker's writes against the
-// chat root, find nothing, and quietly degrade to scoring the answer's self-report.
-func activityFromSessionAt(sess session.Session, initialCwd string) workerActivity {
+// activityFromSessionAt replays the worker's session inside nodeDir — the node's
+// OWN working dir (workspace.NodeDir) and its invisible root, which every path the
+// worker passed and every cwd its `cd` reported is relative to. The recorded
+// act.written paths come back CHAT-relative (writtenRel), which is what
+// buildChangedFilesSection hands to Jail.Resolve. Getting this wrong silently
+// breaks the judge's changed-file re-read: it would resolve the worker's writes
+// against the wrong root, find nothing, and quietly degrade to scoring the answer's
+// self-report.
+func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity {
 	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
 	if sess == nil {
 		return act
@@ -847,7 +868,7 @@ func activityFromSessionAt(sess session.Session, initialCwd string) workerActivi
 	pendingWs := map[string]map[string]any{} // workspace-tool call ID → args (see ledger.go)
 	pendingWsTool := map[string]string{}     // workspace-tool call ID → tool name
 	pendingCd := map[string]bool{}           // cd call ID → awaiting response (to track cwd)
-	curCwd := initialCwd                     // jail-relative cwd in effect, updated on each successful cd
+	curCwd := ""                             // NODE-relative cwd in effect ("" = the node's own root), updated on each successful cd
 	writtenSeen := map[string]bool{}         // dedup for act.written
 	for ev := range sess.Events().All() {
 		if ev == nil || ev.Content == nil {
@@ -895,9 +916,9 @@ func activityFromSessionAt(sess session.Session, initialCwd string) workerActivi
 				if pendingCd[p.FunctionResponse.ID] {
 					delete(pendingCd, p.FunctionResponse.ID)
 					if _, failed := p.FunctionResponse.Response["error"]; !failed {
-						// cd reports the new cwd as a jail-relative slash path
-						// ("." = root). Mirror the tool's own storage ("" at root)
-						// so joinWritten resolves later writes correctly.
+						// cd reports the new cwd as a NODE-relative slash path
+						// ("." = the node's own root). Mirror the tool's own storage
+						// so writtenRel resolves later writes correctly.
 						if d, ok := p.FunctionResponse.Response["dir"].(string); ok {
 							if d == "." {
 								d = ""
@@ -975,7 +996,7 @@ func activityFromSessionAt(sess session.Session, initialCwd string) workerActivi
 								// write/edit only: record the jail-relative path so the
 								// judge can re-read the real post-edit source (buildChangedFilesSection).
 								if name := p.FunctionResponse.Name; name == "write_file" || name == "edit_file" {
-									if jr := joinWritten(curCwd, pth); jr != "" && !writtenSeen[jr] {
+									if jr := writtenRel(nodeDir, curCwd, pth); jr != "" && !writtenSeen[jr] {
 										writtenSeen[jr] = true
 										act.written = append(act.written, jr)
 									}

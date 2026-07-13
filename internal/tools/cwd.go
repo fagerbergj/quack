@@ -11,19 +11,31 @@ import (
 )
 
 // CwdKey is the session-state key the `cd` tool stores the agent's working
-// directory under: a jail-relative, slash-separated path ("" = jail root).
-// Every workspace tool that takes a path/dir reads it (cwdFromState) and
-// resolves a RELATIVE argument against it — the durable equivalent of a shell's
-// cwd. It lives in ctx.State() (the same persisted, resume-surviving store
-// compaction uses), NOT in a mutable in-process field, so it survives
-// compaction and reconnect and never leaks across sessions: the `cd` and every
-// later tool call in a worker's own tool loop share that one session's state.
+// directory under: a NODE-relative, slash-separated path ("" or "." = the node's
+// own root, which is where every worker starts).
+//
+// NODE-relative, not chat-relative, is the whole point: the node's directory is
+// an INVISIBLE ROOT (a chroot, conceptually). The model never sees it, in any
+// tool's arguments or results — it is applied exactly once, at the final jail
+// join (jailPath), and nowhere else. There is therefore exactly ONE namespace the
+// model ever speaks: paths relative to its own root (and, within it, to its cwd).
+//
+// The bug this design replaces: `cd` stored and reported a CHAT-relative cwd, so
+// it alone handed back paths carrying the node dir ("explorer-openhands/openhands")
+// while git_clone and list_dir reported the same location cwd-relative
+// ("openhands"). Two incompatible namespaces; the model faithfully reused `cd`'s
+// path and flailed.
+//
+// It lives in ctx.State() (the same persisted, resume-surviving store compaction
+// uses), NOT in a mutable in-process field, so it survives compaction and
+// reconnect and never leaks across sessions: the `cd` and every later tool call in
+// a worker's own tool loop share that one session's state.
 const CwdKey = "workspace.cwd"
 
 // cwdFromState reads the session working directory (CwdKey) from ctx's state.
 // It NEVER errors: an absent key, a nil context/state, or a non-string value
-// all fall back to "" (the jail root — exactly today's behaviour), so any tool
-// call made WITHOUT a prior `cd` behaves as it always did.
+// all fall back to "" — the node's own root, which is exactly where a worker
+// that has not cd'd anywhere should be.
 func cwdFromState(ctx agent.Context) string {
 	if ctx == nil {
 		return ""
@@ -71,49 +83,48 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 	return at.SessionID, workspace.NodeDir(at.NodeID)
 }
 
-// cwdOrDefault is the working directory one tool call resolves relative paths
-// against: the durable session cwd a prior `cd` stored, or — until the worker
-// cd's anywhere — the node's OWN directory. `cd` always stores a non-empty path
-// ("." at the chat root), so a deliberate `cd /` is never silently undone by
-// this default.
-func cwdOrDefault(ctx agent.Context, nodeDir string) string {
-	if cwd := cwdFromState(ctx); cwd != "" {
-		return cwd
-	}
-	return nodeDir
-}
-
-// joinCwd applies the session working directory to a workspace path, yielding
-// a jail-relative path for Jail.Resolve. Precedence (predictable and jail-safe):
+// jailPath turns a path the MODEL wrote (node-relative, or "/"-prefixed) into the
+// chat-relative path Jail.Resolve takes. It is the ONE place the node dir — the
+// invisible root — is applied, which is what keeps it out of every tool argument
+// and every tool result. Precedence (predictable and jail-safe):
 //
-//   - a path beginning with "/" is JAIL-ROOT-relative — the explicit escape
-//     hatch back to the workspace root, with cwd IGNORED (Jail.Resolve rejected
-//     a leading "/" as an absolute path before, so no previously-valid input
-//     regresses; the leading "/" is stripped, never passed to Resolve).
-//   - every other path is relative to cwd ("" cwd = jail root = today).
+//   - a path beginning with "/" is CHAT-ROOT-relative — the explicit escape hatch
+//     OUT of the node's own root, with both the cwd and the node dir IGNORED, so a
+//     downstream node can deliberately reach an upstream node's clone
+//     ("/other-node/repo/x.go"). The leading "/" is stripped, never passed to
+//     Resolve (which rejects an absolute path as an escape).
+//   - every other path is node-relative: applied to the cwd (joinCwd), then rooted
+//     at the node dir.
 //
-// The result still flows through Jail.Resolve, which re-verifies containment
-// (and resolves symlinks), so NO cwd + path combination can escape the jail —
-// a `..` that climbs above cwd is caught there, exactly as a bare `..` is today.
-func joinCwd(cwd, p string) string {
+// The result still flows through Jail.Resolve, which re-verifies containment (and
+// resolves symlinks), so NO nodeDir + cwd + path combination can escape the jail —
+// a `..` that climbs above the chat scope is caught there, escape hatch or not.
+func jailPath(nodeDir, cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")
 	}
-	if cwd == "" {
+	return filepath.Join(nodeDir, joinCwd(cwd, p))
+}
+
+// joinCwd applies the session working directory to a node-relative path, yielding
+// another node-relative path. Both sides speak the ONE namespace the model sees;
+// the node dir is added afterwards, by jailPath.
+func joinCwd(cwd, p string) string {
+	if cwd == "" || cwd == "." {
 		return p
 	}
 	// Idempotent: a path that ALREADY starts with the cwd is taken as-is rather
 	// than joined onto it again.
 	//
-	// The model is handed workspace-relative paths constantly — `cd` reports its
-	// new dir that way, `git_clone` reports where it landed, `list_dir` echoes
-	// entry paths — and it very reasonably feeds them straight back. Without this,
-	// `cd openhands` (reporting dir "explorer-openhands/openhands") followed by
-	// read_file("explorer-openhands/openhands/README.md") resolved to
-	// <chat>/explorer-openhands/openhands/explorer-openhands/openhands/README.md
-	// and failed. The model then flails through variants: one live explorer node
-	// made 34 REPEATED calls out of 69 doing exactly this, and the whole node span
-	// looked like a spin. Doubling the cwd is never what anyone means.
+	// The model is handed paths constantly — `cd` reports its new dir, `git_clone`
+	// reports where it landed, `list_dir` echoes entry paths — and it very
+	// reasonably feeds them straight back. Now that all of those speak ONE
+	// namespace, feeding one back is unambiguous and must WORK: after `cd openhands`
+	// (reporting dir "openhands"), read_file("openhands/README.md") means the same
+	// file as read_file("README.md"). Doubling the cwd into
+	// openhands/openhands/README.md is never what anyone means — a live explorer
+	// node made 34 REPEATED calls out of 69 flailing through variants of exactly
+	// that.
 	if p == cwd || strings.HasPrefix(p, cwd+"/") {
 		return p
 	}

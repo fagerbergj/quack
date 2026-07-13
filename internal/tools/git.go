@@ -156,34 +156,37 @@ type gitBinding struct {
 	credentials []GitCredential
 	tokenSource GitTokenSource // optional dynamic credential source (extension seam)
 	allowPush   bool
-	// cwd is the session working directory (chat-root-relative) a per-call copy
-	// carries — set by withCwd from ctx state, defaulting to the calling node's
-	// own dir, mirroring fsBinding. A relative `dir`/`path` a git tool takes
-	// resolves against it (resolve) — which is what lands git_clone's default
-	// target inside the NODE's dir instead of the shared chat root.
+	// cwd is the session working directory (NODE-relative) a per-call copy carries —
+	// set by withCwd from ctx state, mirroring fsBinding. A relative `dir`/`path` a
+	// git tool takes resolves against it (resolve).
 	cwd string
 	// chatID is the per-chat scope (the workflow/chat session id) this call's
 	// paths resolve under — set by withCwd from the advisor-thread marker in ctx
 	// (scopeFromContext), mirroring fsBinding. "" resolves the per-user root.
 	chatID string
+	// nodeDir is the calling node's invisible root within that chat scope, applied
+	// only at resolve time (jailPath) — which is what lands git_clone's default
+	// target inside the NODE's dir instead of the shared chat root, without the dir
+	// ever appearing in the reported path. Mirrors fsBinding.
+	nodeDir string
 }
 
-// withCwd returns a copy of b bound to this call's context: the per-chat scope
-// and the session working directory (defaulting to the calling node's own dir),
-// both derived from ctx (mirrors fsBinding.withCwd). Value receiver ⇒ copy; the
-// shared binding is never mutated.
+// withCwd returns a copy of b bound to this call's context: the per-chat scope,
+// the calling node's dir, and the session working directory — all derived from ctx
+// (mirrors fsBinding.withCwd). Value receiver ⇒ copy; the shared binding is never
+// mutated.
 func (b gitBinding) withCwd(ctx agent.Context) gitBinding {
-	var nodeDir string
-	b.chatID, nodeDir = scopeFromContext(ctx)
-	b.cwd = cwdOrDefault(ctx, nodeDir)
+	b.chatID, b.nodeDir = scopeFromContext(ctx)
+	b.cwd = cwdFromState(ctx)
 	return b
 }
 
-// resolve is the cwd- and chat-aware Jail.Resolve every git tool uses for its
-// `dir`/`path` argument: relative to b.cwd, "/"-prefixed to the chat root
-// (joinCwd), scoped under b.chatID, always containment-checked by Jail.Resolve.
+// resolve is the cwd-, node- and chat-aware Jail.Resolve every git tool uses for
+// its `dir`/`path` argument: relative to b.cwd under the node's own root,
+// "/"-prefixed to the chat root (jailPath), scoped under b.chatID, always
+// containment-checked by Jail.Resolve.
 func (b gitBinding) resolve(p string) (string, error) {
-	return b.jail.Resolve(b.userID, b.chatID, joinCwd(b.cwd, p))
+	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
 
 // newGitBinding resolves Deps into a gitBinding, defaulting caps when unset.
