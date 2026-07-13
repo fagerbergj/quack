@@ -195,24 +195,38 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string) (*Pla
 		})
 	}
 
-	// Harden: every synthesizer node depends on ALL non-synthesizer nodes. The
-	// orchestrator frequently omits some predecessors, which would let the
-	// synthesizer run before research finishes; replace its depends_on with the
-	// complete set (redundant serial edges are harmless — TopoSort dedups).
+	// Harden: a synthesizer depends on every non-synthesizer node that is NOT
+	// DOWNSTREAM OF IT. The orchestrator frequently omits some predecessors, which
+	// would let the synthesizer run before research finishes; fill the set in.
+	//
+	// The "not downstream of it" part is load-bearing. A synthesizer is not always
+	// the terminal fan-in: research → synthesize → implement is a perfectly good
+	// plan, and there the implementer depends ON the synthesizer. Blindly giving the
+	// synthesizer an edge to EVERY other node then points it at its own descendant
+	// and manufactures a cycle — which quack rejected as "dag plan contains a cycle",
+	// blaming the orchestrator for a correct plan we had just corrupted (live:
+	// 5 explorers → synthesize-design → implement-code-mode, rejected repeatedly).
 	if len(plan.Nodes) > 1 {
-		var nonSynth []string
 		hasSynth := false
 		for _, n := range plan.Nodes {
-			if n.AgentName != "synthesizer" {
-				nonSynth = append(nonSynth, n.ID)
-			} else {
+			if n.AgentName == "synthesizer" {
 				hasSynth = true
+				break
 			}
 		}
 		for i, n := range plan.Nodes {
-			if n.AgentName == "synthesizer" {
-				plan.Nodes[i].DependsOn = nonSynth
+			if n.AgentName != "synthesizer" {
+				continue
 			}
+			down := descendants(plan.Nodes, n.ID)
+			var deps []string
+			for _, m := range plan.Nodes {
+				if m.ID == n.ID || m.AgentName == "synthesizer" || down[m.ID] {
+					continue
+				}
+				deps = append(deps, m.ID)
+			}
+			plan.Nodes[i].DependsOn = deps
 		}
 		// Harden: a multi-node plan with NO synthesizer and ≥2 terminal nodes
 		// can't run as a native graph (single-terminal rule — nativegraph.go).
@@ -220,11 +234,17 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string) (*Pla
 		// rather than failing the whole run. Skipped when the roster has no
 		// synthesizer (the graph build will then reject multi-terminal plans).
 		if !hasSynth && known["synthesizer"] && len(terminalIDs(plan.Nodes)) > 1 {
+			// Safe to depend on every existing node: this fan-in is APPENDED, so
+			// nothing depends on it and it can have no descendants to cycle into.
+			var all []string
+			for _, n := range plan.Nodes {
+				all = append(all, n.ID)
+			}
 			plan.Nodes = append(plan.Nodes, Node{
 				ID:        "synthesize",
 				AgentName: "synthesizer",
 				Task:      "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
-				DependsOn: nonSynth,
+				DependsOn: all,
 			})
 		}
 	}
@@ -262,4 +282,29 @@ func validateChecks(checks, checkCommands []string) error {
 		}
 	}
 	return nil
+}
+
+// descendants returns every node that transitively DEPENDS ON id — the nodes
+// downstream of it. A hardening pass must never add an edge from a node to one of
+// its own descendants: that is a cycle by construction.
+func descendants(nodes []Node, id string) map[string]bool {
+	dependents := map[string][]string{} // dep -> nodes that depend on it
+	for _, n := range nodes {
+		for _, d := range n.DependsOn {
+			dependents[d] = append(dependents[d], n.ID)
+		}
+	}
+	out := map[string]bool{}
+	stack := []string{id}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, next := range dependents[cur] {
+			if !out[next] {
+				out[next] = true
+				stack = append(stack, next)
+			}
+		}
+	}
+	return out
 }
