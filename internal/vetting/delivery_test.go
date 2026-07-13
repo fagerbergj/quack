@@ -117,6 +117,52 @@ func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 	}
 }
 
+// Regression (live, 2026-07-13): a code REVIEW of PR #4 on branch
+// `add-flappy-bird-openhands` was classified as implement-and-deliver — the impl
+// verb matched only INSIDE the branch name (\b sits on the hyphen) — so the
+// planner's routing backstop demanded a code-implementer node for a read-only
+// review and rejected the plan 8 times in a row, burning the whole re-plan budget.
+const reviewPrompt = "Review pull request #4 on the GitHub repository https://github.com/fagerbergj/games " +
+	"(branch add-flappy-bird-openhands). Clone the repo, check out the PR branch, and review the change " +
+	"thoroughly. Post your findings as inline review comments, then submit the review with an overall verdict."
+
+func TestImplementationIntent(t *testing.T) {
+	cases := map[string]bool{
+		// The live false positive: a review whose only impl verb is a branch name.
+		reviewPrompt: false,
+		// An impl verb inside a URL or an identifier is a NAME, not an instruction.
+		"Summarise https://github.com/fagerbergj/games/pull/4 and the branch add-flappy-bird": false,
+		"Check out feature/add-x and describe what the PR does":                               false,
+		// A review/audit ask is never implement-and-deliver, however well-formed.
+		"Review the PR that will add a game":                    false,
+		"Audit the commits on the branch that implement search": false,
+		// …unless it ALSO directs a change: review-then-change still counts.
+		"Review PR #4 and fix the bugs you find, then push": true,
+		"Review the branch and implement the changes":       true,
+		// The case the backstop exists for (must not regress).
+		"Add a Flappy Bird game to https://github.com/fagerbergj/games and open it as a pull request": true,
+		"Fix the login bug and push a branch": true,
+		// Both halves are still required.
+		"Implement the parser":                     false, // impl verb, no delivery term
+		"Explain what a pull request is":           false, // delivery term, no impl verb
+		"What are the top 3 game engines in 2026?": false, // pure research
+	}
+	for text, want := range cases {
+		if got := ImplementationIntent(text); got != want {
+			t.Errorf("ImplementationIntent(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
+// The node-level delivery check keys off the NODE's task text, and a task that
+// directs a commit/push demands delivery on its own terms — the intent heuristic
+// must not be the only way in.
+func TestDeliveryCriterionAppliesToADirectedDeliveryTask(t *testing.T) {
+	if _, ok := deliveryCriterion("Commit on branch add-foo and open a PR.", workerActivity{}); !ok {
+		t.Error("delivery_complete must apply to a task that directs a commit and a PR")
+	}
+}
+
 // The criterion is folded into the verdict deterministically, so a judge that
 // (wrongly) loves the answer cannot pass the node anyway (weakest-link).
 func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {

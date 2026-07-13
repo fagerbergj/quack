@@ -28,8 +28,26 @@ import (
 // from ever tripping either consumer: dag's planner routing backstop
 // (checkImplementationRouting) and this check.
 var (
-	implVerbRe = regexp.MustCompile(`(?i)\b(add|implement|create|write|fix|refactor|build|port|migrate|scaffold|generate)\b`)
+	implVerbs  = `add|implement|create|write|fix|refactor|build|port|migrate|scaffold|generate`
+	implVerbRe = regexp.MustCompile(`(?i)\b(` + implVerbs + `)\b`)
 	deliveryRe = regexp.MustCompile(`(?i)(pull[ -]?request|\bpr\b|\bcommit\b|\bpush\b|\bbranch\b|\bmerge\b)`)
+
+	// identRe matches a URL, a path, or a hyphen/underscore-joined identifier. A
+	// verb inside one of those is part of a NAME, not an instruction — reviewing
+	// branch `add-flappy-bird-openhands` is not asking anyone to add anything. \b
+	// is no help here: it sits on the hyphen, so `\badd\b` matches inside the
+	// branch name. Identifiers are dropped before any verb is looked for.
+	identRe = regexp.MustCompile(`\S*[-_/]\S*`)
+
+	// A verb is DIRECTED at the worker when it opens a sentence/clause or follows
+	// and/then/also/please: "review the PR and fix the bugs" directs a change;
+	// "review the PR that will add a game" merely describes one.
+	clauseStart       = `(?i)(?:^|[.;:!?\n]\s*|\b(?:and|then|also|please)\s+)`
+	implDirectedRe    = regexp.MustCompile(clauseStart + `(?:` + implVerbs + `)\b`)
+	deliverDirectedRe = regexp.MustCompile(clauseStart + `(?:commit|push)\b`)
+
+	// A review/audit ask is read-only by default (see ImplementationIntent).
+	reviewRe = regexp.MustCompile(`(?i)\b(review|audit|critique|assess)(s|ed|ing)?\b`)
 
 	// The per-action terms, narrower than deliveryRe: a task that merely names a
 	// "branch" is not asking for a push (a report on a repo's branching
@@ -42,10 +60,27 @@ var (
 
 // ImplementationIntent reports whether text asks for code to be implemented AND
 // delivered — an imperative code verb plus a version-control term. Conservative
-// by construction (both must match). Shared with internal/dag's planner backstop
-// so there is ONE delivery vocabulary, not two that drift.
+// by construction (both must match, and the two guards below only ever say NO).
+// Shared with internal/dag's planner backstop so there is ONE delivery
+// vocabulary, not two that drift.
+//
+// Live 2026-07-13: "Review pull request #4 … (branch add-flappy-bird-openhands)"
+// was classified as implement-and-deliver — the verb matched only inside the
+// BRANCH NAME — so the planner's backstop demanded a code-implementer node for a
+// read-only review and rejected the plan 8 times, exhausting the re-plan budget.
+// Hence: verbs are looked for in prose only (identifiers and URLs are dropped),
+// and a request whose instruction is to REVIEW is not a request to change.
 func ImplementationIntent(text string) bool {
-	return implVerbRe.MatchString(text) && deliveryRe.MatchString(text)
+	if !deliveryRe.MatchString(text) {
+		return false
+	}
+	prose := identRe.ReplaceAllString(text, " ")
+	if !implVerbRe.MatchString(prose) {
+		return false
+	}
+	// A review/audit ask is read-only — unless it ALSO directs a change ("review
+	// PR #4 and fix the bugs", "review the branch and implement the changes").
+	return !reviewRe.MatchString(prose) || implDirectedRe.MatchString(prose)
 }
 
 // deliveryDemand is what a node's task requires be delivered. The implications
@@ -53,8 +88,12 @@ func ImplementationIntent(text string) bool {
 // commit — so a task that says only "open a PR" still demands all three.
 type deliveryDemand struct{ commit, push, pr bool }
 
+// A node's task demands delivery when it reads as implement-and-deliver, or when
+// it simply DIRECTS a commit/push ("Commit on branch add-foo and open a PR") —
+// the latter is an instruction to ship in its own right, while a research task
+// that merely mentions "the commits on main" directs nothing and is left alone.
 func demandedDelivery(task string) deliveryDemand {
-	if !ImplementationIntent(task) {
+	if !ImplementationIntent(task) && !deliverDirectedRe.MatchString(task) {
 		return deliveryDemand{}
 	}
 	d := deliveryDemand{pr: prRe.MatchString(task)}
