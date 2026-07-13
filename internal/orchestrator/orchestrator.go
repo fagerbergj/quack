@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -342,19 +343,57 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// yields through one mutex.
 		var mu sync.Mutex
 		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
-		for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
-			if err != nil {
-				safeYield(stream.Errorf(err.Error()), nil)
-				return
-			}
-			if ev == nil {
-				continue
-			}
-			for _, se := range translator.Event(ev) {
-				if !safeYield(stream.ScopeToRun(se, orchRunID), nil) {
-					return
+
+		// invoke runs the orchestrator llmagent once and streams its events.
+		// produced reports whether the turn left the run something to stand on:
+		// answer text, a clarifying question, or a committed plan. stop means the
+		// stream is over (an error, or the client hung up) — Run must return.
+		invoke := func(content *genai.Content) (produced, stop bool) {
+			for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
+				if err != nil {
+					safeYield(stream.Errorf(err.Error()), nil)
+					return false, true
+				}
+				if ev == nil {
+					continue
+				}
+				if turnProduced(ev) {
+					produced = true
+				}
+				for _, se := range translator.Event(ev) {
+					if !safeYield(stream.ScopeToRun(se, orchRunID), nil) {
+						return produced, true
+					}
 				}
 			}
+			if _, selected := planCache.Selected(); selected {
+				produced = true
+			}
+			return produced, false
+		}
+
+		// The orchestrator's own empty-turn recovery — the WORKER's (vetting's
+		// continuation loop, PR #186) one level up, and the same root cause: a
+		// reasoning model can spend its whole output budget thinking and end the
+		// invocation with EMPTY content — no plan call, no execute call, no text.
+		// ADK reports a clean finish, so quack took that for "the orchestrator is
+		// done" and the run simply stopped: no DAG, no answer, no log line, chat
+		// back to idle. "The model emitted text" is not a completion signal.
+		//
+		// So: re-invoke it with a firm continuation directive, bounded by
+		// maxOrchestratorContinues. Each r.Run appends the directive to the chat
+		// session as a user event before the agent runs (Runner.appendMessageToSession),
+		// which is the ONLY delivery an llmagent reads — it rebuilds its request
+		// from Session().Events() and drops fresh UserContent handed to a node
+		// (see vetting.emitPrompt / [[adk-ignores-usercontent]]).
+		produced, stop := invoke(content)
+		for attempt := 1; !produced && !stop && attempt <= maxOrchestratorContinues; attempt++ {
+			slog.Warn("orchestrator turn produced no plan and no answer; continuing it",
+				"component", "orchestrator", "chat", sessionID, "attempt", attempt)
+			produced, stop = invoke(continuationContent())
+		}
+		if stop {
+			return
 		}
 		model, promptTokens, completionTokens, reasoningTokens, totalTokens, finishReason := translator.Usage()
 		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
@@ -362,6 +401,17 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			Model: model, PromptTokens: promptTokens, CompletionTokens: completionTokens,
 			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, FinishReason: finishReason,
 		}}, nil)
+
+		// Still nothing after the whole continuation budget: FAIL LOUDLY. A run
+		// that ends with no answer, no error and no log line is the worst outcome
+		// there is — the user cannot even tell that something broke.
+		if !produced {
+			slog.Error("orchestrator produced no plan and no answer; giving up",
+				"component", "orchestrator", "chat", sessionID, "attempts", maxOrchestratorContinues+1)
+			safeYield(stream.Errorf("The orchestrator ended its turn without a plan or an answer, "+
+				"even after being asked to continue. Nothing was run. Please try again."), nil)
+			return
+		}
 
 		// Phase 2: the llmagent committed a plan (execute tool) — run it as a
 		// native graph. Node events stream through the DagStream inside
@@ -388,6 +438,53 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		o.persistAnswer(ctx, userID, sessionID, planCache.Delivered())
 		yield(stream.Done(), nil)
 	}
+}
+
+// maxOrchestratorContinues bounds the continuation re-invocations an
+// orchestrator gets after an empty turn (no plan, no answer) before the run
+// fails loudly.
+const maxOrchestratorContinues = 3
+
+// continuationMarker opens the continuation directive — the model's signal that
+// its last turn produced nothing, and the tests' handle on "the directive
+// actually landed".
+const continuationMarker = "CONTINUE — your last turn produced no plan and no answer."
+
+// continuationContent is the directive delivered to an orchestrator that ended
+// an invocation with nothing. Short and firm on purpose: it has already loaded
+// its skills (that is where the output budget went), so the only useful
+// instruction left is ACT — call plan, or answer.
+func continuationContent() *genai.Content {
+	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: continuationMarker + "\n\n" +
+		"Nothing ran and the user is still waiting. You have already loaded the skills you need — do not load " +
+		"more, and do not think silently. Do ONE of these now:\n" +
+		"- Call the `plan` tool with the nodes, then call `execute` with the plan_id it returns.\n" +
+		"- Or, if no plan is needed, answer the user directly in text.\n\n" +
+		"Do not end this turn without a plan call or an answer."}}}
+}
+
+// turnProduced reports whether an orchestrator event carries something that
+// legitimately ENDS the turn: answer text for the user, or a get_user_choice
+// clarification awaiting their reply. Thinking, tool calls and tool results are
+// not answers — a turn made of nothing but those is the silent death this
+// guards against. (A committed plan is the third way, checked on the plan cache
+// once the invocation drains: the execute tool ends the turn structurally.)
+func turnProduced(ev *session.Event) bool {
+	if ev == nil || ev.Content == nil || ev.Author == "user" {
+		return false
+	}
+	for _, p := range ev.Content.Parts {
+		if p == nil {
+			continue
+		}
+		if p.FunctionCall != nil && p.FunctionCall.Name == tools.ChoiceToolName {
+			return true
+		}
+		if !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil && strings.TrimSpace(p.Text) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // stashedPlan loads the dag.Plan the execute tool stashed in session state
