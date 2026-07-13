@@ -419,10 +419,14 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The worker cd'd into its clone (relative to its own node dir) and wrote.
+	// The worker cd'd into its clone and wrote. `cd` reports its new dir
+	// NODE-relative ("repo", not "<nodeID>/repo"): the node dir is an invisible
+	// root the model never sees, so the replay must re-apply it — otherwise the
+	// judge resolves the write against the chat root, reads NOTHING, and silently
+	// degrades to trusting the answer's self-report.
 	sess := newTestSession(t,
 		fnCall("c1", "cd", map[string]any{"dir": "repo"}),
-		fnResp("c1", "cd", map[string]any{"dir": nodeID + "/repo"}),
+		fnResp("c1", "cd", map[string]any{"dir": "repo"}),
 		fnCall("w1", "write_file", map[string]any{"path": "logic.ts"}),
 		fnResp("w1", "write_file", map[string]any{"bytes": 42, "created": true}),
 	)

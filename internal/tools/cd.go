@@ -29,9 +29,11 @@ type cdSkill struct {
 }
 
 type cdResult struct {
-	// Dir is the new working directory (workspace-relative, "." = jail root).
-	// Every later relative path/dir you pass to a workspace tool resolves
-	// against this until the next `cd`.
+	// Dir is the new working directory, in the SAME workspace-relative namespace
+	// every other tool speaks ("." = the workspace root; `cd openhands` after a
+	// clone reports exactly "openhands", matching git_clone's own reported dir).
+	// Every later relative path/dir you pass to a workspace tool resolves against
+	// this until the next `cd` — and passing this path back verbatim works too.
 	Dir string `json:"dir"`
 	// InstructionsPath is the workspace-relative path of the AGENTS.md/CLAUDE.md
 	// whose content Instructions carries (empty when none was found).
@@ -51,8 +53,10 @@ type cdResult struct {
 const cdDescription = "Change your working directory to `dir` (workspace-relative) AND load that location's project " +
 	"context. After `cd`, every relative path or `dir` you pass to a workspace tool (read_file, write_file, " +
 	"list_dir, grep, git_*, run_command, …) resolves against this directory — so you can pass `README.md` " +
-	"instead of `myrepo/README.md`. Prefix a path with `/` to address the workspace root explicitly (ignoring " +
-	"the working directory). `cd` returns: the nearest project agent-instructions (the closest AGENTS.md walking " +
+	"instead of `myrepo/README.md`. The `dir` this returns is in the SAME namespace every other tool speaks, so " +
+	"you can pass it straight back to them. Prefix a path with `/` ONLY to reach the shared root ABOVE your own " +
+	"workspace, where PARALLEL tasks' directories live (rarely needed — your own files are never under `/`). " +
+	"`cd` returns: the nearest project agent-instructions (the closest AGENTS.md walking " +
 	"up to the repo/workspace root — falling back to CLAUDE.md if there is none — which you MUST then follow for " +
 	"build/test/style/PR conventions), and the project-level skills that repo defines (loadable with load_skill). " +
 	"Run `cd <repo>` right after git_clone."
@@ -72,8 +76,13 @@ func newCd(d Deps) (tool.Tool, error) {
 // resolved against the CURRENT cwd, so `cd a` then `cd b` lands in a/b, exactly
 // like a shell — then reports that location's project context (nearest
 // AGENTS.md/CLAUDE.md + discovered project skills). The receiver's b.cwd is the
-// CURRENT working directory (set by withCwd); the resolution and the stored new
-// cwd are both jail-relative to the workspace root.
+// CURRENT working directory (set by withCwd).
+//
+// The stored (and reported) new cwd is NODE-relative — the node's dir is an
+// invisible root, so `cd openhands` reports "openhands", exactly as git_clone and
+// list_dir report that same location. That single namespace is what lets the model
+// feed cd's own reported dir straight back into read_file/list_dir/grep, which it
+// does constantly (see jailPath/joinCwd).
 func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 	realDir, err := b.resolve(a.Dir) // resolves a.Dir against the current cwd, jail-checked
 	if err != nil {
@@ -90,18 +99,19 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 	if err != nil {
 		return cdResult{}, err
 	}
-	// New cwd, stored as a chat-root-relative slash path ("" = root, persisted
-	// as ".") — cwd composes WITHIN the per-chat dir.
-	newCwd, err := filepath.Rel(chatRoot, realDir)
+	nodeRoot, err := b.jail.Resolve(b.userID, b.chatID, b.nodeDir)
+	if err != nil {
+		return cdResult{}, err
+	}
+	// New cwd, stored NODE-relative ("." = the node's own root). A deliberate
+	// `cd /` (the chat-root escape hatch) is the one case that yields a ".."
+	// path — honest and self-consistent: jailPath re-applies the node dir, so
+	// ".." + "x" lands at <chat>/x, and the escape survives the round trip.
+	newCwd, err := filepath.Rel(nodeRoot, realDir)
 	if err != nil {
 		return cdResult{}, fmt.Errorf("cd: %w", err)
 	}
 	newCwd = filepath.ToSlash(newCwd)
-	// Stored verbatim, including "." for the chat root: a stored cwd is always
-	// NON-empty, which is what distinguishes "the worker deliberately cd'd to the
-	// chat root" from "the worker has not cd'd at all" (whose default is the
-	// node's own dir — see cwdOrDefault). joinCwd(".", p) == p, so the root case
-	// still resolves exactly as before.
 	if st := ctx.State(); st != nil {
 		if err := st.Set(CwdKey, newCwd); err != nil {
 			return cdResult{}, fmt.Errorf("cd: persist working directory: %w", err)
@@ -112,8 +122,10 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 
 	// Nearest project instructions: walk UP from realDir to chatRoot (inclusive),
 	// AGENTS.md first (closest wins), then CLAUDE.md only if no AGENTS.md exists
-	// anywhere in the chain — the agents.md precedence, no merge.
-	if path, rel, found := b.nearestInstructions(realDir, chatRoot); found {
+	// anywhere in the chain — the agents.md precedence, no merge. The reported path
+	// is NODE-relative like every other path the model is handed, so it can read it
+	// back with read_file.
+	if path, rel, found := b.nearestInstructions(realDir, chatRoot, nodeRoot); found {
 		content, truncated, rerr := b.readCappedFile(path)
 		if rerr != nil {
 			return cdResult{}, fmt.Errorf("cd: read %s: %w", rel, rerr)
@@ -125,8 +137,9 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 
 	// Project skills: the containing repo is the first path component BELOW the
 	// node's own dir (where git_clone lands a repo) — or below the chat root when
-	// there is no node scope.
-	for _, fm := range skillsource.ProjectSkills(b.jail, b.userID, b.chatID, repoRel(newCwd, b.nodeDir)) {
+	// there is no node scope. skillsource resolves CHAT-relative paths, so the
+	// node dir is re-applied here, at the boundary, exactly as jailPath does.
+	for _, fm := range skillsource.ProjectSkills(b.jail, b.userID, b.chatID, repoRel(jailPath(b.nodeDir, newCwd, "."), b.nodeDir)) {
 		res.Skills = append(res.Skills, cdSkill{Name: fm.Name, Description: fm.Description})
 	}
 
@@ -134,16 +147,16 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 	return res, nil
 }
 
-// nearestInstructions walks from startDir up to stopDir (inclusive), returning
-// the closest AGENTS.md; if none exists anywhere in the chain, the closest
-// CLAUDE.md. rel is the returned file's path relative to the jail root (for the
-// result + as a citable source). Both paths are already jail-contained (Resolve
+// nearestInstructions walks from startDir up to stopDir (inclusive, the chat
+// root), returning the closest AGENTS.md; if none exists anywhere in the chain,
+// the closest CLAUDE.md. rel is the returned file's path relative to relRoot (the
+// NODE's root — the namespace every path the model sees is expressed in, so it can
+// feed the path back to read_file). Both paths are already jail-contained (Resolve
 // produced startDir/stopDir), so the walk never reads outside the jail.
-func (b fsBinding) nearestInstructions(startDir, stopDir string) (path, rel string, found bool) {
-	root, _ := b.jail.Resolve(b.userID, b.chatID, "")
+func (b fsBinding) nearestInstructions(startDir, stopDir, relRoot string) (path, rel string, found bool) {
 	for _, name := range projectInstructionFiles {
 		if p, ok := nearestUp(startDir, stopDir, name); ok {
-			r, err := filepath.Rel(root, p)
+			r, err := filepath.Rel(relRoot, p)
 			if err != nil {
 				r = name
 			}
