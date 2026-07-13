@@ -88,11 +88,13 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 // invisible root — is applied, which is what keeps it out of every tool argument
 // and every tool result. Precedence (predictable and jail-safe):
 //
-//   - a path beginning with "/" is CHAT-ROOT-relative — the explicit escape hatch
-//     OUT of the node's own root, with both the cwd and the node dir IGNORED, so a
-//     downstream node can deliberately reach an upstream node's clone
-//     ("/other-node/repo/x.go"). The leading "/" is stripped, never passed to
-//     Resolve (which rejects an absolute path as an escape).
+//   - a path beginning with "/" is absolute WITHIN THE NODE'S OWN WORKSPACE: the cwd
+//     is ignored, the node dir is still applied. "/" is the root of everything the
+//     model can see, and there is nothing of the model's above it. (It used to mean
+//     the CHAT root — an escape hatch into a sibling node's tree. Nothing used it,
+//     it was the last way one node could reach another's clone, and it made an
+//     absolute cwd un-echoable: a reported "/goose" would have resolved somewhere
+//     else if fed back. One root, one namespace.)
 //   - every other path is node-relative: applied to the cwd (joinCwd), then rooted
 //     at the node dir.
 //
@@ -101,25 +103,33 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 // a `..` that climbs above the chat scope is caught there, escape hatch or not.
 func jailPath(nodeDir, cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
-		return strings.TrimPrefix(p, "/")
+		// "/" is the ROOT OF YOUR WORKSPACE — the node's own dir. It is not an escape
+		// above it: there is nothing above it that is yours. This is what lets a tool
+		// REPORT an absolute cwd ("/goose") that the model can feed straight back in;
+		// when "/" meant the chat root, an absolute path was un-echoable and every
+		// result had to speak in relatives ("." — which says nothing about where you
+		// are). One namespace, one root, absolute or relative both legal.
+		return filepath.Join(nodeDir, strings.TrimPrefix(p, "/"))
 	}
 	return filepath.Join(nodeDir, joinCwd(cwd, p))
 }
 
-// displayCwd renders the session working directory for a tool RESULT: the path the
-// model should treat as "where I am", with the empty root spelled "." so it is never
-// mistaken for a missing field.
+// displayCwd renders the session working directory for a tool RESULT: the ABSOLUTE
+// path of where you are standing, within the node's workspace ("/" at the root,
+// "/goose" inside a clone).
 //
-// Every workspace tool reports it, on every call. A model that is unsure where it
-// stands re-derives paths by guessing, and each guess is a wasted turn: live, a
-// code-explorer `cd`'d into a repo, did not trust that it had moved, and `cd`'d to
-// the SAME directory again — then globbed blind. Answering "where am I" costs ~20
-// bytes; making the model infer it costs turns.
+// Every workspace tool reports it, on every call. It is absolute on purpose: a
+// relative cwd of "." is technically true and operationally useless — it tells the
+// model nothing about WHERE it is, so an unsure model re-derives its position by
+// guessing, and each guess is a wasted turn. Live, a code-explorer `cd`'d into a
+// repo, could not tell it had moved, and `cd`'d to the same place again — then
+// globbed blind. Answering "where am I" costs ~20 bytes; making the model infer it
+// costs turns.
 func displayCwd(cwd string) string {
-	if cwd == "" {
-		return "."
+	if cwd == "" || cwd == "." {
+		return "/"
 	}
-	return cwd
+	return "/" + cwd
 }
 
 // joinCwd applies the session working directory to a node-relative path, yielding
