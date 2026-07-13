@@ -34,6 +34,7 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"run_command": {args: []string{"dir", "command"}, results: []string{"exit_code"}},
 
 	"git_clone":           {args: []string{"url", "dir"}, results: []string{"dir", "head", "default_branch"}},
+	"git_checkout":        {args: []string{"dir", "ref"}, results: []string{"branch", "head"}},
 	"git_status":          {args: []string{"dir"}, results: []string{"branch", "clean"}},
 	"git_diff":            {args: []string{"dir", "ref", "path"}},
 	"git_log":             {args: []string{"dir"}},
@@ -44,6 +45,19 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"git_rebase":          {args: []string{"dir", "onto"}, results: []string{"sha", "rebased"}},
 	"git_worktree_create": {args: []string{"dir", "branch"}, results: []string{"path"}},
 	"git_worktree_remove": {args: []string{"dir", "path"}, results: []string{"removed"}},
+
+	// The delivery step (GitHub App extension, internal/github): the PR URL is
+	// exactly the kind of outcome an answer claims, so it belongs in the ledger
+	// the judge checks claims against — and its success feeds the deterministic
+	// delivery check (delivery.go).
+	"github_pull_request": {args: []string{"owner", "repo", "head", "base", "title"}, results: []string{"url"}},
+
+	// The reviewer's delivery (same extension): drafting an inline comment and
+	// SUBMITTING the review. "I reviewed the PR" is a claim like any other — the
+	// ledger is what contradicts it — and the submit feeds the deterministic
+	// review check (delivery.go).
+	"github_add_review_comment": {args: []string{"owner", "repo", "pull_number", "path", "line"}, results: []string{"draft_count"}},
+	"github_submit_review":      {args: []string{"owner", "repo", "pull_number", "event"}, results: []string{"url", "comments"}},
 }
 
 // isWorkspaceTool reports whether name belongs in the workspace ledger.

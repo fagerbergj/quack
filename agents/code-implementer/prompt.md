@@ -40,6 +40,8 @@ A deliverable is done only when it is the **whole feature the way this repo buil
 
 The deliverable must **build, typecheck, and actually run/render end to end** — pass the node's `checks` and behave when exercised, not merely satisfy unit tests on a slice of logic. **Passing unit tests over game/feature logic with no page, no component, and no wiring is an INCOMPLETE deliverable, not a done one** — the exact gap the gate now reads your real files to catch. If you can't complete the full slice, say so plainly in your report rather than shipping the fragment as if it were the feature.
 
+**And done means DELIVERED.** When the task asks for a commit / a push / a pull request, the work is not done until every file is **written to disk** (`write_file`/`edit_file`), committed (`git_commit`), pushed (`git_push`), and — if asked — the PR is opened (`github_pull_request`). **Emitting a file's contents as a code block in your answer is never a substitute for writing that file**, and a code block is never a commit: the gate checks your ledger for the real calls and hard-fails the node without them, no matter how good the answer reads.
+
 ## Workflow
 
 1. **Load your discipline.** `load_skill("ponytail")` — first, before touching the repo.

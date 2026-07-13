@@ -142,6 +142,114 @@ func TestChecksPassCriterionNoRepoSkipsRatherThanFails(t *testing.T) {
 	}
 }
 
+// mkRepo makes dir a git repo (a .git dir) carrying the given files.
+func mkRepo(t *testing.T, dir string, files map[string]string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// scopeCfg is a derive-checks Config over a fresh jail, with the node's workdir.
+func scopeCfg(t *testing.T, workdir string, allow ...string) (Config, string) {
+	t.Helper()
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := j.Resolve("u1", "c1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return Config{
+		DeriveChecks: true, CheckCommands: allow, Workdir: workdir,
+		Workspace: j, WorkspaceUserID: "u1", ChatID: "c1", WorkspaceCaps: workspace.DefaultCaps(),
+		NodeID: "impl",
+	}, root
+}
+
+// Regression (live e2e 2026-07-13): the planner set no usable workdir, so the
+// checks dir resolved to the workspace SCOPE ROOT — which holds no package.json.
+// "no checks derived from the repo; skipping checks" ⇒ checks never ran ⇒ code
+// that does not typecheck passed the gate at 0.7. The repo was one level down
+// (<scope>/games), where git_clone put it: SEARCH for it.
+func TestChecksDirFindsRepoBelowTheScopeRoot(t *testing.T) {
+	for _, workdir := range []string{"", ".", "games"} {
+		t.Run("workdir="+workdir, func(t *testing.T) {
+			cfg, root := scopeCfg(t, workdir, "npm run")
+			repo := mkRepo(t, filepath.Join(root, "games"), map[string]string{
+				"package.json": `{"scripts": {"build": "next build", "test": "vitest run"}}`,
+			})
+			dir, ok, err := checksDir(cfg)
+			if err != nil || !ok {
+				t.Fatalf("checksDir = (%q, %v, %v), want the repo dir", dir, ok, err)
+			}
+			if dir != repo {
+				t.Fatalf("checksDir = %q, want %q (the repo, not the scope root)", dir, repo)
+			}
+			want := []string{"npm run build", "npm run test"}
+			if got := deriveChecks(dir, cfg.CheckCommands); !reflect.DeepEqual(got, want) {
+				t.Errorf("deriveChecks = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// The scope root ITSELF being the repo keeps working.
+func TestChecksDirScopeRootIsTheRepo(t *testing.T) {
+	cfg, root := scopeCfg(t, "", "go build")
+	mkRepo(t, root, map[string]string{"go.mod": "module example.com/x\n"})
+	dir, ok, err := checksDir(cfg)
+	if err != nil || !ok || dir != root {
+		t.Fatalf("checksDir = (%q, %v, %v), want the scope root %q", dir, ok, err, root)
+	}
+}
+
+// Two repos ⇒ ambiguous ⇒ no checks (never guess which tree is "the" repo).
+func TestChecksDirAmbiguousReposSkips(t *testing.T) {
+	cfg, root := scopeCfg(t, "", "npm run")
+	mkRepo(t, filepath.Join(root, "games"), map[string]string{"package.json": `{"scripts":{"build":"x"}}`})
+	mkRepo(t, filepath.Join(root, "other"), map[string]string{"package.json": `{"scripts":{"build":"x"}}`})
+	if _, ok, err := checksDir(cfg); ok || err != nil {
+		t.Errorf("checksDir applied (%v, %v) with two repos in scope; want skip", ok, err)
+	}
+	if _, ok := checksPassCriterion(cfg); ok {
+		t.Error("checks_pass must not apply when the repo is ambiguous")
+	}
+}
+
+// No repo at all ⇒ skip, no error (a research node's workspace).
+func TestChecksDirNoRepoSkips(t *testing.T) {
+	cfg, root := scopeCfg(t, "", "npm run")
+	if err := os.WriteFile(filepath.Join(root, "notes.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := checksDir(cfg); ok || err != nil {
+		t.Errorf("checksDir = (%v, %v), want skip with no error", ok, err)
+	}
+}
+
+// A vendored .git under node_modules must not be mistaken for the repo (and must
+// not make the real repo look "ambiguous").
+func TestChecksDirIgnoresNodeModules(t *testing.T) {
+	cfg, root := scopeCfg(t, "", "npm run")
+	repo := mkRepo(t, filepath.Join(root, "games"), map[string]string{"package.json": `{"scripts":{"build":"x"}}`})
+	mkRepo(t, filepath.Join(repo, "node_modules", "dep"), map[string]string{"package.json": `{"scripts":{"build":"y"}}`})
+	dir, ok, err := checksDir(cfg)
+	if err != nil || !ok || dir != repo {
+		t.Fatalf("checksDir = (%q, %v, %v), want %q", dir, ok, err, repo)
+	}
+}
+
 // Bug 2 (same live run): a failing check's FULL output was folded into the
 // revise prompt, which grew past the context window until compaction truncated
 // the worker's own task prompt and the revision worker failed outright. Bound it.

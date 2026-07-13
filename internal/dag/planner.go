@@ -3,12 +3,12 @@ package dag
 import (
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -17,16 +17,6 @@ import (
 // the same way assemble() hardcodes "synthesizer" — the roster is name-keyed and both
 // roles carry a fixed contract the plan validation depends on.
 const implementerAgent = "code-implementer"
-
-// implVerbRe matches an imperative code verb ("add a game", "implement X", "fix the
-// bug"). deliveryRe matches a version-control / delivery term that means the ask is
-// to SHIP the code, not merely describe it. The implementation-intent backstop
-// (checkImplementationRouting) fires only when BOTH match, keeping pure-research
-// requests ("how does X work", "what are the top 3 Y") from ever tripping it.
-var (
-	implVerbRe = regexp.MustCompile(`(?i)\b(add|implement|create|write|fix|refactor|build|port|migrate|scaffold|generate)\b`)
-	deliveryRe = regexp.MustCompile(`(?i)(pull[ -]?request|\bpr\b|\bcommit\b|\bpush\b|\bbranch\b|\bmerge\b)`)
-)
 
 // AgentInfo describes one available agent (name + description) — the roster the
 // orchestrator authors a DAG from.
@@ -140,11 +130,11 @@ func (p *Planner) checkImplementationRouting(plan *Plan, message string) error {
 
 // implementationIntent reports whether message asks for code to be implemented AND
 // shipped (committed / pushed / PR'd) — the shape that MUST route to a
-// code-implementer node. It requires BOTH an imperative code verb AND a
-// version-control/delivery term, so a pure-research request never trips it. See the
-// implVerbRe/deliveryRe comment for the known ceiling.
+// code-implementer node. The vocabulary lives in vetting (delivery.go), shared
+// with the deterministic delivery check that holds such a node to its word, so
+// routing and gating can never drift apart.
 func implementationIntent(message string) bool {
-	return implVerbRe.MatchString(message) && deliveryRe.MatchString(message)
+	return vetting.ImplementationIntent(message)
 }
 
 // AttachmentDesc returns a human-readable description of the attachment list

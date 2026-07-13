@@ -76,6 +76,11 @@ type Config struct {
 	CheckCommands []string
 	// NodeID identifies the node in the gate's check logs.
 	NodeID string
+	// Task is the node's task text, stamped per-node by dag.buildGateNodes. Read
+	// by the deterministic delivery check (delivery.go): a task that demands the
+	// work be committed/pushed/opened as a PR cannot pass without the ledger
+	// showing it happened. Empty ⇒ the check simply doesn't apply.
+	Task string
 	// Workdir is the workspace-relative directory Checks run in (the node's
 	// repo, e.g. "repo" after a git_clone). When unset and checks are derived,
 	// the gate locates the single repo in the node's workspace scope.
@@ -110,8 +115,10 @@ func PromptEventNeeded(ag adkagent.Agent) bool {
 	return !ok
 }
 
-// maxEmptyRetries bounds the empty-answer recovery re-invocations in RunGatedRefine.
-const maxEmptyRetries = 4
+// maxContinueRounds bounds the tool-bearing continuation turns RunGatedRefine
+// gives a worker whose WORK isn't finished (empty draft, or a demanded commit/push
+// the ledger doesn't show) before falling back to the tool-less writer.
+const maxContinueRounds = 4
 
 // fetchSampleBytes is how many bytes of fetched content we keep per URL — enough
 // for the judge to spot-check a claim, small enough not to flood its context.
@@ -154,6 +161,27 @@ type workerActivity struct {
 	// the REAL post-edit source, not the worker's self-report (live 2026-07-12: a
 	// blind judge passed an incomplete, non-compiling deliverable it never read).
 	written []string
+
+	// Delivery actions the worker actually completed (SUCCESSFUL calls only —
+	// exactly like `written`): a git_commit, a git_push, and a github_pull_request.
+	// Read by the deterministic delivery check (delivery.go).
+	committed bool
+	pushed    bool
+	prOpened  bool
+
+	// The reviewer's equivalent: a drafted inline comment
+	// (github_add_review_comment) and a SUBMITTED review (github_submit_review).
+	// Only the submit actually posts anything — the comments accumulate in a
+	// process-local draft until then (see internal/github). Read by the
+	// deterministic review check (delivery.go).
+	reviewCommented bool
+	reviewSubmitted bool
+
+	// ranCommand marks at least one SUCCESSFUL run_command — the worker EXECUTED
+	// something (a test run, a build, a throwaway probe it wrote) rather than only
+	// reading. Read by the deterministic behaviour check (delivery.go): a code
+	// review produced purely by reading has verified nothing.
+	ranCommand bool
 }
 
 // wsOp is one workspace operation the worker actually performed — a completed

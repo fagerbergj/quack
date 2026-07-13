@@ -757,3 +757,148 @@ func TestCredentialForMatchesExactHostOnly(t *testing.T) {
 		t.Error("expected no match for a subdomain (exact host match only)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// git_checkout — the reviewer's path to a PR branch. A shallow clone
+// (--depth 1, which git implies --single-branch for) lands on the default
+// branch ONLY: no other branch is reachable, so a code review of a PR was
+// impossible before this tool existed.
+// ---------------------------------------------------------------------------
+
+// addFeatureBranch pushes a `feature` branch (one new file, one commit off
+// main) to the bare fixture repo and returns its full SHA.
+func addFeatureBranch(t *testing.T, bare, branch, file string) string {
+	t.Helper()
+	work := t.TempDir()
+	runGitT(t, filepath.Dir(work), "clone", "--quiet", bare, work)
+	runGitT(t, work, "checkout", "--quiet", "-b", branch)
+	if err := os.WriteFile(filepath.Join(work, file), []byte("feature work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, work, "add", "-A")
+	runGitT(t, work, "-c", "user.name=seed", "-c", "user.email=seed@x.local", "commit", "--quiet", "-m", "add "+file)
+	runGitT(t, work, "push", "--quiet", "origin", branch)
+	return strings.TrimSpace(runGitT(t, work, "rev-parse", "HEAD"))
+}
+
+// shallowCloneIntoJail clones bare into the jail at relDir with --depth 1 (the
+// git_clone tool's default), exactly as a reviewer's first step does. A file://
+// URL is required — git ignores --depth for a plain local path.
+func shallowCloneIntoJail(t *testing.T, b gitBinding, bare, relDir string) string {
+	t.Helper()
+	target, err := b.jail.Resolve(b.userID, "", relDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userRoot, err := b.jail.Resolve(b.userID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(userRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, userRoot, "clone", "--quiet", "--depth", "1", "file://"+bare, target)
+	return target
+}
+
+func TestGitCheckoutReachesAPRBranchFromAShallowClone(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	addFeatureBranch(t, bare, "feature", "feature.txt")
+
+	b := newTestGitBinding(t)
+	target := shallowCloneIntoJail(t, b, bare, "repo")
+
+	// The bug, reproduced: a shallow clone has ONLY the default branch, so the
+	// PR branch cannot be checked out with the pre-existing tool set.
+	if _, _, err := runGit(context.Background(), target, []string{"checkout", "--quiet", "feature"}, b.caps, nil); err == nil {
+		t.Fatal("expected the feature branch to be unreachable in a shallow clone before git_checkout")
+	}
+
+	res, err := b.gitCheckout(gitCheckoutArgs{Dir: "repo", Ref: "feature"})
+	if err != nil {
+		t.Fatalf("gitCheckout: %v", err)
+	}
+	if res.Branch != "feature" {
+		t.Errorf("branch = %q, want feature", res.Branch)
+	}
+	// (a) the working tree now holds the branch's files.
+	if _, err := os.Stat(filepath.Join(target, "feature.txt")); err != nil {
+		t.Errorf("feature.txt not in the working tree after checkout: %v", err)
+	}
+	// (b) the whole point: a diff against the base branch shows what the PR changed.
+	diff, err := b.gitDiff(gitDiffArgs{Dir: "repo", Ref: "main...HEAD"})
+	if err != nil {
+		t.Fatalf("gitDiff main...HEAD: %v", err)
+	}
+	if !strings.Contains(diff.Diff, "feature.txt") || !strings.Contains(diff.Diff, "feature work") {
+		t.Errorf("diff against main does not show the branch's changes:\n%s", diff.Diff)
+	}
+}
+
+func TestGitCheckoutSHA(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	sha := addFeatureBranch(t, bare, "feature", "feature.txt")
+
+	b := newTestGitBinding(t)
+	target := shallowCloneIntoJail(t, b, bare, "repo")
+
+	res, err := b.gitCheckout(gitCheckoutArgs{Dir: "repo", Ref: sha})
+	if err != nil {
+		t.Fatalf("gitCheckout(sha): %v", err)
+	}
+	if !strings.HasPrefix(sha, res.Head) {
+		t.Errorf("head = %q, want a prefix of %q", res.Head, sha)
+	}
+	if _, err := os.Stat(filepath.Join(target, "feature.txt")); err != nil {
+		t.Errorf("feature.txt not in the working tree after SHA checkout: %v", err)
+	}
+}
+
+func TestGitCheckoutUnknownRefIsACleanError(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	shallowCloneIntoJail(t, b, bare, "repo")
+
+	_, err := b.gitCheckout(gitCheckoutArgs{Dir: "repo", Ref: "no-such-branch"})
+	if err == nil {
+		t.Fatal("expected an error for a ref that does not exist")
+	}
+	if !strings.Contains(err.Error(), "no-such-branch") {
+		t.Errorf("error = %v, want it to name the missing ref", err)
+	}
+}
+
+func TestGitCheckoutRespectsTheJail(t *testing.T) {
+	requireGit(t)
+	b := newTestGitBinding(t)
+	if _, err := b.gitCheckout(gitCheckoutArgs{Dir: "../../etc", Ref: "main"}); err == nil {
+		t.Error("expected a jail-containment error for a dir outside the workspace")
+	}
+	// A ref is never allowed to become a git flag (e.g. --upload-pack=…).
+	if _, err := b.gitCheckout(gitCheckoutArgs{Dir: "repo", Ref: "--upload-pack=touch /tmp/pwned"}); err == nil {
+		t.Error("expected an option-like ref to be rejected")
+	}
+	if _, err := b.gitCheckout(gitCheckoutArgs{Dir: "repo", Ref: ""}); err == nil {
+		t.Error("expected an empty ref to be rejected")
+	}
+}
+
+func TestGitCloneBranchLandsOnThatBranch(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	addFeatureBranch(t, bare, "feature", "feature.txt")
+
+	b := newTestGitBinding(t)
+	// git_clone's https-only rule is enforced before this point (tested above),
+	// so drive the clone itself — where `branch` lands — with a file:// remote.
+	res, err := b.cloneRepo("file://"+bare, "repo", nil, "feature")
+	if err != nil {
+		t.Fatalf("cloneRepo: %v", err)
+	}
+	if res.DefaultBranch != "feature" {
+		t.Errorf("branch after clone = %q, want feature", res.DefaultBranch)
+	}
+}

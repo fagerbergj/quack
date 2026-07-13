@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -724,6 +725,49 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 	sb.WriteString("Question:\n")
 	sb.WriteString(boundExcerpt(questionText(question), maxOriginalQuestionChars))
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
+}
+
+// continuationMarker opens every continuation prompt. It is the worker's signal
+// that this turn CONTINUES an unfinished task (do the work) rather than starting
+// or revising one — and the tests' handle on "the continuation actually landed".
+const continuationMarker = "CONTINUE THE TASK — it is not finished."
+
+// buildContinuationPrompt is the tool-bearing continuation directive for a worker
+// whose work isn't done (workIncomplete): an empty turn, or a demanded commit/push
+// the ledger doesn't show. It is deliberately NOT buildFinalizeContent — that one
+// asks for a WRITE-UP, which is exactly how half-finished work got frozen in place
+// and passed off to the judge. This one says: do the remaining work, with your
+// tools, and name the known gap.
+func buildContinuationPrompt(task string, act workerActivity, checks []string) string {
+	var sb strings.Builder
+	sb.WriteString(continuationMarker + "\n\n" +
+		"Your last turn produced no answer, or produced an answer for work you have not actually delivered. " +
+		"You are MID-TASK, not done. This is not a request for a summary.\n\n" +
+		"Continue now, using your tools:\n" +
+		"- DO the remaining work rather than describing it. Writing a file's contents into your answer is NOT writing the file — call write_file/edit_file.\n" +
+		"- Run the checks the task requires and fix whatever they surface.\n" +
+		"- When the task calls for it, commit your work, push the branch, and open the pull request.\n" +
+		"- When the task calls for a posted review, record your findings with github_add_review_comment and submit them with github_submit_review. Writing findings into your answer is NOT posting a review.\n" +
+		"- When the task calls for a review of a code change, EXECUTE the change with run_command before you judge it — run its tests, and write a throwaway harness that drives the code and prints what it does. Reading is not verification.\n" +
+		"- Only once the work is actually done, report what you DID — past tense, evidenced by the tool calls you made.\n\n")
+	if len(checks) > 0 {
+		sb.WriteString("Checks this node must pass: " + strings.Join(checks, ", ") + "\n\n")
+	}
+	var gaps []string
+	for _, c := range incompleteCriteria(task, act) {
+		if c.Score < 1 {
+			gaps = append(gaps, "Known gap: "+c.Reason+"\n\n")
+		}
+	}
+	sort.Strings(gaps) // stable order across runs (map iteration is random)
+	sb.WriteString(strings.Join(gaps, ""))
+	if section := buildActivitySection(act); section != "" {
+		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Original task:\n")
+	sb.WriteString(boundExcerpt(task, maxOriginalQuestionChars))
+	return sb.String()
 }
 
 // normalizeScale converts a verdict's scores from the rubric's 0–10 integer

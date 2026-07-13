@@ -80,6 +80,7 @@ func checksPassCriterion(cfg Config) (criterionScore, bool) {
 		}
 		slog.Info("derived checks from the repo", "component", "vetting", "node", cfg.NodeID, "dir", dir, "checks", checks)
 	}
+	var preexisting []string
 	for _, check := range checks {
 		stages, err := workspace.SplitPipeline(check)
 		if err != nil {
@@ -90,11 +91,31 @@ func checksPassCriterion(cfg Config) (criterionScore, bool) {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}
 		if res.ExitCode != 0 {
+			// The gate may only fail a node for what the node's own change BROKE.
+			// A check that already fails on the repo's base commit is repo debt the
+			// worker cannot fix and is not responsible for (baseline.go).
+			if failsAtBase(dir, check, cfg.WorkspaceCaps) {
+				slog.Warn("check already fails at base; not gating on it", "component", "vetting", "node", cfg.NodeID, "check", check)
+				preexisting = append(preexisting, check)
+				continue
+			}
 			return criterionScore{Score: 0, Reason: fmt.Sprintf(
-				"deterministic: check %q failed (exit %d):\n%s", check, res.ExitCode, boundCheckOutput(res.Output))}, true
+				"deterministic: check %q failed (exit %d):\n%s%s", check, res.ExitCode, boundCheckOutput(res.Output), preexistingNote(preexisting))}, true
 		}
 	}
-	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d check(s) passed", len(checks))}, true
+	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d check(s) passed%s", len(checks), preexistingNote(preexisting))}, true
+}
+
+// preexistingNote is the context line naming the checks that were IGNORED
+// because they already fail at the repo's base commit — so a worker reading the
+// revise feedback isn't confused by a check it saw fail that nothing asked it to
+// fix, and an operator reading the verdict sees the repo has debt.
+func preexistingNote(checks []string) string {
+	if len(checks) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n(ignored, not your fault: %s — already failing on the repo's base commit, before your change)",
+		strings.Join(checks, ", "))
 }
 
 // boundCheckOutput keeps a failing check's output within maxCheckOutputChars
@@ -111,45 +132,78 @@ func boundCheckOutput(out string) string {
 }
 
 // checksDir returns the absolute directory a node's checks run in: the node's
-// Workdir when the planner set one (Jail.Resolve, per-chat scope), else — when
-// checks are being derived — the ONE repo (a directory holding a .git) in the
-// node's workspace scope. ok=false when no single repo can be located: skip the
-// checks rather than guess which of several trees is "the" repo.
+// Workdir when the planner set explicit Checks to run there, else — when checks
+// are being DERIVED — the ONE repo (a directory holding a .git) at or beneath the
+// node's Workdir (the workspace scope root when it set none). ok=false when no
+// single repo can be located: skip the checks rather than guess which of several
+// trees is "the" repo.
+//
+// The search is the fix for a live e2e (2026-07-13): the planner set no usable
+// workdir (legitimate — checks/workdir became optional), so the checks dir
+// resolved to the SCOPE ROOT, which holds no package.json — "no checks derived
+// from the repo; skipping checks" — while the repo sat one level down at
+// <scope>/games, where git_clone had put it. Nothing gated the build, and code
+// that does not typecheck passed at 0.7. Resolving a workdir is not the same as
+// FINDING the repo, so now we find it.
 func checksDir(cfg Config) (string, bool, error) {
-	if cfg.Workdir != "" || len(cfg.Checks) > 0 {
-		// Explicit Checks with no Workdir keep their historical meaning: run in
-		// the scope root itself.
-		dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, cfg.Workdir)
-		return dir, err == nil, err
-	}
-	root, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "")
+	start, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, cfg.Workdir)
 	if err != nil {
 		return "", false, err
 	}
-	repos := findRepos(root)
+	if len(cfg.Checks) > 0 {
+		// Explicit planner-set checks keep their historical meaning: run exactly
+		// where the planner said (the scope root when it named no workdir).
+		return start, true, nil
+	}
+	repos := findRepos(start)
 	if len(repos) != 1 {
 		return "", false, nil
 	}
 	return repos[0], true, nil
 }
 
-// findRepos returns the git repositories directly under root (or root itself) —
-// where git_clone puts them (<scope>/<dir>).
+// repoSearchDepth bounds the walk below the starting directory. git_clone puts a
+// repo at <scope>/<dir> (depth 1); one extra level covers a worker that nested it.
+const repoSearchDepth = 2
+
+// findRepos returns the git repositories at root or beneath it, to
+// repoSearchDepth. Vendored/ignored trees (node_modules, vendor, and dot-dirs —
+// notably .git itself) are skipped: a dependency carrying its own .git must not
+// masquerade as the node's repo, nor make the real one look ambiguous. Once a
+// directory IS a repo, the walk stops there (a submodule is not a second repo).
 func findRepos(root string) []string {
 	if isRepo(root) {
 		return []string{root}
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
 	var out []string
-	for _, e := range entries {
-		if e.IsDir() && isRepo(filepath.Join(root, e.Name())) {
-			out = append(out, filepath.Join(root, e.Name()))
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		if depth > repoSearchDepth {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() || skipDir(e.Name()) {
+				continue
+			}
+			sub := filepath.Join(dir, e.Name())
+			if isRepo(sub) {
+				out = append(out, sub)
+				continue // don't descend into a repo — submodules aren't candidates
+			}
+			walk(sub, depth+1)
 		}
 	}
+	walk(root, 1)
 	return out
+}
+
+// skipDir names the directories a repo search must never descend into.
+func skipDir(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor"
 }
 
 func isRepo(dir string) bool { return fileExists(dir, ".git") }

@@ -298,6 +298,95 @@ func TestReactToComment(t *testing.T) {
 	}
 }
 
+// newFilesApp is newReviewApp with an arbitrary set of changed files (each
+// carrying samplePatch), for the path-normalisation cases.
+func newFilesApp(t *testing.T, filenames ...string) *App {
+	t.Helper()
+	files := make([]map[string]string, len(filenames))
+	for i, f := range filenames {
+		files[i] = map[string]string{"filename": f, "patch": samplePatch}
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/pulls/7/files", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(files)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+	app.installs["acme/widgets"] = 1
+	app.tokens[1] = cachedToken{token: "ghs_x", expires: time.Now().Add(time.Hour)}
+	return app
+}
+
+// TestAddReviewCommentNormalisesWorkspacePath: the agent works inside a clone
+// directory in its workspace, so it names files by their WORKSPACE path
+// ("games/app/.../game.ts"); the PR diff addresses them repo-relative
+// ("app/.../game.ts"). A unique suffix match must be accepted and normalised.
+func TestAddReviewCommentNormalisesWorkspacePath(t *testing.T) {
+	const repoPath = "app/games/flappy-bird/lib/game.ts"
+	app := newFilesApp(t, repoPath)
+	ctx := context.Background()
+
+	for _, given := range []string{
+		"games/" + repoPath, // clone-dir prefix
+		"./" + repoPath,     // ./ prefix
+		"lib/game.ts",       // a trailing fragment of the repo path
+	} {
+		app.draftTake("acme", "widgets", 7) // clear
+		res, err := app.addReviewComment(ctx, addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: given, Line: 42, Body: "bird never falls"})
+		if err != nil {
+			t.Fatalf("path %q: %v", given, err)
+		}
+		if res.DraftCount != 1 {
+			t.Fatalf("path %q: draft_count = %d; want 1", given, res.DraftCount)
+		}
+		if got := app.draftList("acme", "widgets", 7); got[0].Path != repoPath {
+			t.Errorf("path %q: drafted path = %q; want normalised %q", given, got[0].Path, repoPath)
+		}
+	}
+}
+
+// TestAddReviewCommentAmbiguousPath: two changed files match the suffix → don't
+// guess; reject naming both candidates.
+func TestAddReviewCommentAmbiguousPath(t *testing.T) {
+	app := newFilesApp(t, "a/lib/game.ts", "b/lib/game.ts")
+	_, err := app.addReviewComment(context.Background(), addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "lib/game.ts", Line: 42, Body: "x"})
+	if err == nil {
+		t.Fatal("expected an ambiguity rejection")
+	}
+	for _, want := range []string{"a/lib/game.ts", "b/lib/game.ts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v does not name candidate %q", err, want)
+		}
+	}
+}
+
+// TestAddReviewCommentUnknownPathListsChangedFiles: an unresolvable path must
+// produce an error the model can ACT on — say the path is repo-relative and list
+// the PR's changed files.
+func TestAddReviewCommentUnknownPathListsChangedFiles(t *testing.T) {
+	app := newFilesApp(t, "app/one.ts", "app/two.ts")
+	_, err := app.addReviewComment(context.Background(), addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "src/other.ts", Line: 42, Body: "x"})
+	if err == nil {
+		t.Fatal("expected a rejection for an unknown path")
+	}
+	msg := err.Error()
+	if !strings.Contains(strings.ToLower(msg), "repo-relative") {
+		t.Errorf("error must tell the model paths are repo-relative; got %v", err)
+	}
+	for _, want := range []string{"app/one.ts", "app/two.ts"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %v does not list changed file %q", err, want)
+		}
+	}
+}
+
 // TestReviewToolsRegistered guards that all four review tools plus the existing
 // two are wired into Tools().
 func TestReviewToolsRegistered(t *testing.T) {
