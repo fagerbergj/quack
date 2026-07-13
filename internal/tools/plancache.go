@@ -75,3 +75,22 @@ func (c *PlanCache) Get(id string) (dag.Plan, bool) {
 	p, ok := c.plans[id]
 	return p, ok
 }
+
+// Pending reports whether a plan was CREATED but never EXECUTED (selected). That
+// state means the turn did no work: the orchestrator authored a DAG and then
+// stopped. Observed live — the model called `plan`, read the tool's "review before
+// executing" summary, replied "The plan is solid — 4 parallel code-explorer nodes…"
+// and finished the turn WITHOUT calling `execute`. It described running the work
+// instead of running it, and because it emitted text the turn looked complete, so
+// the run ended having done nothing.
+func (c *PlanCache) Pending() (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.selected != "" {
+		return "", false
+	}
+	for id := range c.plans {
+		return id, true
+	}
+	return "", false
+}
