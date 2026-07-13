@@ -14,7 +14,7 @@ import (
 // Build turns a loaded bundle into a runnable ADK llmagent, given its model,
 // its selected built-in tools, optional ADK toolsets (e.g. SkillToolset), and
 // optional context-compaction settings. When compaction is enabled and the
-// model's context window is known, a BeforeModelCallback prunes/summarises the
+// model’s context window is known, a BeforeModelCallback summarises + drops the
 // session before each model call so long runs can't overflow the window.
 // memoryGuidance, when non-empty, is the bundle's memory.md appended to the
 // behaviour layer (M6) — passed only for memory-participating agents when the

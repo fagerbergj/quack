@@ -99,7 +99,7 @@ func toolResult(name, id string, n int) *genai.Content {
 // Under budget: callback is a pure no-op and the summariser is never called.
 func TestCompactionNoOpUnderBudget(t *testing.T) {
 	llm := &fakeLLM{text: "S"}
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 1_000_000, Prune: true, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 1_000_000, Enabled: true})
 	req := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, "task"), textContent(genai.RoleModel, "small answer")}}
 	before := len(req.Contents)
 	if _, err := cb(newFakeCtx(), req); err != nil {
@@ -113,65 +113,52 @@ func TestCompactionNoOpUnderBudget(t *testing.T) {
 	}
 }
 
-// prune blanks old tool outputs, preserves the recent ones + call/response
-// pairing (Name/ID), and is skipped when it wouldn't free enough.
-func TestPrune(t *testing.T) {
-	// 12 fetches of 40k chars (=10k tokens) each: 120k tokens total tool output.
-	// Recent 40k tokens + last 2 messages protected; the rest (well over the 20k
-	// minimum) gets blanked.
-	const each = 40_000
+// THE invariant: after compaction the model must never see a tool call whose
+// result has been replaced by a placeholder. Either the turn is gone (its
+// knowledge folded into the summary) or it is intact. A blanked-in-place result
+// ("[earlier tool output elided…]") is amnesia: the model can see it read the
+// file and that the content is gone, so it reads it again (live churn: the same
+// file read 8x, list_dir 9x in one node).
+func TestNoBlankedToolResultsSurviveCompaction(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	// budget = 80_000 - 20_000 = 60_000 real tokens.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 80_000, Enabled: true})
+
+	// 12 old tool fetches of 40k chars (10k est tokens) each ⇒ way over budget.
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
 	for i := 0; i < 12; i++ {
-		contents = append(contents, toolCall("web_fetch", "c"))
-		contents = append(contents, toolResult("web_fetch", "c", each))
+		contents = append(contents, toolCall("read_file", "c"))
+		contents = append(contents, toolResult("read_file", "c", 40_000))
 	}
-	freed := prune(contents)
-	if freed <= 0 {
-		t.Fatalf("prune freed %d tokens; expected it to engage", freed)
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
 	}
 
-	var blanked, intact int
-	for _, c := range contents {
+	intact := strings.Repeat("x", 40_000) // what toolResult puts in Response["result"]
+	for _, c := range req.Contents {
 		for _, p := range c.Parts {
 			fr := p.FunctionResponse
 			if fr == nil {
 				continue
 			}
-			if fr.Name == "" || fr.ID == "" {
-				t.Fatalf("prune dropped Name/ID, breaking call/response pairing: %+v", fr)
-			}
-			if r, _ := fr.Response["result"].(string); r == prunedStub {
-				blanked++
-			} else {
-				intact++
+			if got, _ := fr.Response["result"].(string); got != intact {
+				t.Fatalf("a surviving tool result was replaced by a placeholder (%q); the turn must be dropped and summarised, not hollowed out", truncate(got, 120))
 			}
 		}
 	}
-	if blanked == 0 {
-		t.Fatal("prune blanked nothing")
-	}
-	if intact == 0 {
-		t.Fatal("prune blanked everything; recent output must be protected")
-	}
-
-	// Below the minimum: a single small old fetch shouldn't trigger a prune.
-	small := []*genai.Content{
-		textContent(genai.RoleUser, "task"),
-		toolResult("web_fetch", "c", 1_000),
-		textContent(genai.RoleModel, "a"),
-		textContent(genai.RoleUser, "b"),
-	}
-	if freed := prune(small); freed != 0 {
-		t.Fatalf("prune engaged on a sub-minimum gain: freed %d", freed)
+	// And the knowledge it carried must have been summarised, not just discarded.
+	if llm.calls != 1 {
+		t.Fatalf("older tool outputs were discarded without summarising them: summariser calls=%d; want 1", llm.calls)
 	}
 }
 
-// Over budget after prune (all-text history): the head is summarised and the
+// Over budget (all-text history): the head is summarised and the
 // request is rebuilt as [task, summary, ...tail] within budget.
 func TestCompactSummarises(t *testing.T) {
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 	// context_window 10k tokens, reserve 8k ⇒ usable 2k tokens (8k chars).
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Prune: true, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Enabled: true})
 
 	task := textContent(genai.RoleUser, "the self-contained task")
 	contents := []*genai.Content{task}
@@ -247,7 +234,7 @@ func TestMeasuredUsageTriggers(t *testing.T) {
 
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 	// budget = 200000 - 8192 = 191808. Estimate stays far under; measured (195000) is over.
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Prune: false, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Enabled: true})
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
 	for i := 0; i < 20; i++ {
 		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
@@ -272,7 +259,7 @@ func TestCalibrationRecordedAndApplied(t *testing.T) {
 	ctx := newFakeCtx()
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 	// budget = 60_000 - 20_000 = 40_000 real tokens.
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Prune: false, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Enabled: true})
 
 	// Turn 1: under budget, no-op — but the raw estimate (10_000) is stashed.
 	small := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, strings.Repeat("a", 40_000))}}
@@ -309,10 +296,11 @@ func TestCalibrationRecordedAndApplied(t *testing.T) {
 	}
 }
 
-// The post-prune "did we free enough?" check uses the calibrated value: a prune
-// that brings the RAW estimate under budget but leaves the calibrated size over
-// must fall through to summarisation instead of declaring victory.
-func TestPostPruneCheckIsCalibrated(t *testing.T) {
+// The "does it fit?" check uses the calibrated value, not the raw bytes/4
+// estimate: a tool-heavy history whose raw estimate is under budget but whose
+// calibrated (real) size is over must still be summarised, and the request must
+// come back under budget.
+func TestOverBudgetCheckIsCalibrated(t *testing.T) {
 	ctx := newFakeCtx()
 	// Ratio 2.0: measured 20_000 vs stashed estimate 10_000.
 	if err := ctx.state.Set(estimateKey, 10_000); err != nil {
@@ -324,11 +312,9 @@ func TestPostPruneCheckIsCalibrated(t *testing.T) {
 
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 	// budget = 80_000 - 20_000 = 60_000 real tokens.
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 80_000, Prune: true, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 80_000, Enabled: true})
 
 	// 12 old tool fetches of 40k chars (10k est tokens) each ⇒ raw est ~120k.
-	// prune protects the most recent ~40k est tokens and blanks the rest, landing
-	// the raw estimate around 40k (< 60k budget) — but calibrated ~80k is over.
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
 	for i := 0; i < 12; i++ {
 		contents = append(contents, toolCall("web_fetch", "c"))
@@ -341,9 +327,39 @@ func TestPostPruneCheckIsCalibrated(t *testing.T) {
 	if _, err := cb(ctx, req); err != nil {
 		t.Fatalf("callback err: %v", err)
 	}
-	est := estimateTokens(req.Contents)
 	if llm.calls != 1 {
-		t.Fatalf("post-prune raw estimate %d passed the gate; calibrated check must summarise (calls=%d)", est, llm.calls)
+		t.Fatalf("calibrated over-budget request did not summarise (calls=%d)", llm.calls)
+	}
+	if got := calibrated(estimateTokens(req.Contents), calibrationRatio(ctx)); got > 60_000 {
+		t.Fatalf("request still over budget after compaction: calibrated %d > 60000", got)
+	}
+}
+
+// The summary is the only thing the agent keeps of the compacted turns, so the
+// summariser must be asked for the knowledge that stops it redoing work (goose's
+// Files+Code / commands / errors sections), and the model must be TOLD its
+// context was compacted rather than left to think it is starting fresh.
+func TestSummaryCarriesCodeKnowledge(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Enabled: true})
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 8; i++ {
+		contents = append(contents, toolCall("read_file", "c"))
+		contents = append(contents, toolResult("read_file", "c", 4_000))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	for _, want := range []string{"Files & Code State", "Commands & Tools Run", "Errors & Fixes", "Repository State"} {
+		if !strings.Contains(llm.lastPrompt, want) {
+			t.Fatalf("summariser prompt does not ask for %q — the knowledge whose absence makes the agent re-read a file", want)
+		}
+	}
+	parts := req.Contents[0].Parts
+	if got := parts[len(parts)-1].Text; !strings.Contains(got, "Your context was compacted") {
+		t.Fatalf("model not told its context was compacted: %q", got)
 	}
 }
 
@@ -410,13 +426,13 @@ func TestCalibrationNeverBelowDefault(t *testing.T) {
 }
 
 // The contents[0] backstop: an oversized self-contained task/revise prompt —
-// which prune and summarise both leave verbatim — is middle-truncated to fit,
+// which summarisation leaves verbatim — is middle-truncated to fit,
 // so contents[0] alone can never strand the session on a 400 (the revise-round
 // spiral). Non-text parts are preserved; the head keeps a usable core.
 func TestTruncateOversizedHead(t *testing.T) {
 	llm := &fakeLLM{text: "S"}
 	// budget = 60_000 - 20_000 = 40_000 real tokens; default ratio 1.3.
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Prune: true, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Enabled: true})
 
 	// A single huge task content (~50k tokens estimate ⇒ ~65k calibrated) with no
 	// tail to summarise: only the head backstop can save it.
@@ -463,7 +479,7 @@ func TestCalibrationDefaultBeforeMeasurement(t *testing.T) {
 		t.Fatalf("calibrationRatio before measurement = %v; want default %v", got, defaultCalibrationRatio)
 	}
 	llm := &fakeLLM{text: "S"}
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 1_000_000, Prune: true, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 1_000_000, Enabled: true})
 	req := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, "task")}}
 	if _, err := cb(ctx, req); err != nil {
 		t.Fatalf("callback err: %v", err)
@@ -484,7 +500,7 @@ func TestReuseSkipsSummariser(t *testing.T) {
 	}, nil)
 
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Prune: false, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Enabled: true})
 
 	build := func() *model.LLMRequest {
 		c := []*genai.Content{textContent(genai.RoleUser, "task")}
@@ -525,7 +541,7 @@ func TestAnchoredSummaryFedBack(t *testing.T) {
 	llm := &fakeLLM{text: "FIRST-SUMMARY"}
 	// usable = ctx - min(MaxOutputTokens, compactionBuffer=20000) = 1808: a small
 	// budget so the second oversized turn re-summarises (not the reuse fast-path).
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 21_808, Prune: false, Enabled: true})
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 21_808, Enabled: true})
 	ctx := newFakeCtx()
 
 	oversized := func() *model.LLMRequest {

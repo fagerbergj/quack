@@ -631,7 +631,7 @@ func buildActivitySection(act workerActivity) string {
 
 // Caps on the individually-unbounded sections of the revise / finalize prompt.
 // That prompt becomes contents[0] of the worker's next request, which context
-// compaction structurally CANNOT touch (prune/summarise leave contents[0]
+// compaction structurally CANNOT touch (summarisation leaves contents[0]
 // verbatim) — so an unbounded revise prompt is the one input that can push a
 // request past the model window with no recovery, spiral into an empty draft →
 // tool-less recovery → judge 0 → a bigger revise prompt, and strand the node

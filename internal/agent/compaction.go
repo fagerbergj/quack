@@ -12,17 +12,42 @@ import (
 	"google.golang.org/genai"
 )
 
-// Context compaction ports sst/opencode's two-stage strategy into an ADK
-// BeforeModelCallback, the only v1.4.0 hook that sees the assembled request
-// before it hits the model. The ADK runner rebuilds every request from the full
-// session history with no trimming, so a node's worker session (worker tool loop
-// + the trust gate's self-critique / revision rounds, all in one session) grows
-// past the model's window on large research runs. The callback fires before each
-// model call and, when the request would overflow:
+// Context compaction runs as an ADK BeforeModelCallback, the only v1.4.0 hook
+// that sees the assembled request before it hits the model. The ADK runner
+// rebuilds every request from the full session history with no trimming, so a
+// node's worker session (worker tool loop + the trust gate's self-critique /
+// revision rounds, all in one session) grows past the model's window on large
+// research runs. The callback fires before each model call and, when the request
+// would overflow, summarises the older turns via a separate summariser model
+// into an anchored summary kept in session state, then DROPS those turns
+// (reusing the stored summary when the live tail still fits, so most turns cost
+// no summariser call).
 //
-//  1. prune  — blank old tool-output payloads (cheap, no model call).
-//  2. compact — if still over budget, summarise the older turns via a separate
-//     summariser model into an anchored summary kept in session state.
+// Compaction folds old turns into KNOWLEDGE; it never hollows them out in place.
+// The original port of opencode's cheap "prune" pass blanked old tool-output
+// payloads while keeping the call (opencode does the same:
+// packages/opencode/src/session/message-v2.ts:293 substitutes "[Old tool result
+// content cleared]" for a compacted part), leaving the model looking at
+//
+//	FunctionCall:     read_file("crates/goose/src/agents/mod.rs")
+//	FunctionResponse: "[earlier tool output elided to fit the context window]"
+//
+// — evidence that the work happened with the learning deleted, whose only
+// rational response is to redo the call (live code run: the same file read 8x,
+// list_dir "." 9x per node). opencode survives it because it is driven by
+// huge-context frontier models where prune rarely fires; quack runs a 65k window
+// on a local model, so it fired constantly. Worse, prune ran FIRST and could
+// satisfy the budget on its own, short-circuiting the summariser, so the
+// knowledge was destroyed before anything could preserve it.
+//
+// The invariant now (goose's and OpenHands' design): after compaction the model
+// never sees a tool call whose result was replaced by a placeholder — either the
+// turn is gone, its content folded into the anchored summary, or it is intact.
+// goose summarises and then hides the old messages
+// (crates/goose/src/context_mgmt/mod.rs compact_messages), telling the model its
+// context was compacted; OpenHands' LLMSummarizingCondenser
+// (sdk/context/condenser/llm_summarizing_condenser.py) drops the forgotten events
+// and replaces them with a single summary event.
 //
 // Token counts are estimated as bytes/charsPerToken, then CALIBRATED by the
 // measured/estimated ratio of the previous turn (see calibrationRatio): the raw
@@ -36,9 +61,6 @@ const (
 	charsPerToken = 4
 
 	compactionBuffer    = 20_000 // opencode COMPACTION_BUFFER: max output reserve
-	pruneProtectTokens  = 40_000 // opencode PRUNE_PROTECT: recent tool output kept verbatim
-	pruneMinimumTokens  = 20_000 // opencode PRUNE_MINIMUM: don't prune unless it frees this much
-	tailTurns           = 2      // opencode DEFAULT_TAIL_TURNS: trailing messages kept verbatim
 	toolOutputMaxChars  = 2_000  // opencode TOOL_OUTPUT_MAX_CHARS: per-tool-output cap when summarising
 	minPreserveTokens   = 2_000  // opencode MIN_PRESERVE_RECENT_TOKENS
 	maxPreserveTokens   = 8_000  // opencode MAX_PRESERVE_RECENT_TOKENS
@@ -51,7 +73,6 @@ const (
 	measuredInputKey = "quack.compaction.measured_input" // last provider-reported prompt tokens
 	estimateKey      = "quack.compaction.last_estimate"  // raw estimate of the request as sent (paired with the measurement by recordUsage)
 	calibrationKey   = "quack.compaction.calibration"    // measured/estimated ratio from the last completed turn
-	prunedStub       = "[earlier tool output elided to fit the context window]"
 
 	// Calibration ratio bounds. The floor is the DEFAULT (not 1.0) on purpose:
 	// undercounting is the fatal failure mode — a provider 400 strands the
@@ -86,7 +107,6 @@ const (
 type Compaction struct {
 	Summarizer    model.LLM // summariser model (its own model, opencode runs a hidden agent)
 	ContextWindow int       // the agent model's total context window in tokens (0 ⇒ disabled)
-	Prune         bool      // run the cheap tool-output prune pass before summarising
 	Enabled       bool
 }
 
@@ -121,24 +141,16 @@ func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 	}
 }
 
-// enforceBudget runs the prune → reuse-summary → summarise ladder, mutating
-// req.Contents in place. Every "did we free enough?" comparison uses the
-// CALIBRATED estimate, not raw bytes/4: the ratio folds in both the true
-// tokenizer density of the session's content and the fixed request overhead
-// (system instruction + tool declarations) that estimateTokens can't see —
-// there's no need to model the overhead separately.
+// enforceBudget runs the reuse-summary → summarise ladder, mutating req.Contents
+// in place. Every "did we free enough?" comparison uses the CALIBRATED estimate,
+// not raw bytes/4: the ratio folds in both the true tokenizer density of the
+// session's content and the fixed request overhead (system instruction + tool
+// declarations) that estimateTokens can't see — there's no need to model the
+// overhead separately.
 func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LLMRequest) {
 	ratio := calibrationRatio(ctx)
 	if measuredInput(ctx) < budget && calibrated(estimateTokens(req.Contents), ratio) <= budget {
 		return
-	}
-	if c.Prune {
-		if freed := prune(req.Contents); freed > 0 {
-			slog.Debug("compaction pruned tokens", "component", "agent", "freed", freed, "session", ctx.SessionID())
-		}
-		if calibrated(estimateTokens(req.Contents), ratio) <= budget {
-			return
-		}
 	}
 	// Reuse fast-path: session events are append-only, so the summary's
 	// coverage boundary is a stable index. If the anchored summary plus the
@@ -160,7 +172,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 		req.Contents = out
 		slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
 	}
-	// Last-resort backstop: prune and summarise both leave contents[0] verbatim
+	// Last-resort backstop: summarisation leaves contents[0] verbatim
 	// (it's the self-contained task / revise prompt), so if contents[0] ALONE
 	// overflows the budget nothing above could have helped and the request is
 	// unsendable — the provider 400s and the session is stranded for good (the
@@ -187,7 +199,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 
 // truncateHeadToFit truncates the middle of contents[0] when it alone exceeds
 // the budget, leaving room for the verbatim tail. contents[0] is never touched
-// by prune/summarise, so an oversized one is otherwise unrecoverable. Returns
+// by summarisation, so an oversized one is otherwise unrecoverable. Returns
 // true if it truncated. Non-text parts (media attachments) are preserved.
 func truncateHeadToFit(contents []*genai.Content, budget int, ratio float64) bool {
 	if len(contents) == 0 || contents[0] == nil {
@@ -243,45 +255,6 @@ func truncateMiddle(s string, maxChars int) string {
 	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
-// prune blanks the payloads of old FunctionResponse parts (tool outputs the
-// model has already consumed), protecting the most recent pruneProtectTokens of
-// tool output plus the last tailTurns messages. Call↔response pairing is kept
-// intact: only the response body is replaced, ID/Name preserved. Returns the
-// estimated tokens freed, and applies nothing unless that exceeds
-// pruneMinimumTokens (so a tiny win isn't worth the lost context).
-func prune(contents []*genai.Content) int {
-	var targets []*genai.FunctionResponse
-	kept, freed := 0, 0
-	for ci := len(contents) - 1; ci >= 0; ci-- {
-		c := contents[ci]
-		if c == nil {
-			continue
-		}
-		protected := ci >= len(contents)-tailTurns
-		for _, p := range c.Parts {
-			fr := p.FunctionResponse
-			if fr == nil {
-				continue
-			}
-			sz := functionResponseBytes(fr) / charsPerToken
-			if protected || kept < pruneProtectTokens {
-				kept += sz
-				continue
-			}
-			targets = append(targets, fr)
-			freed += sz - len(prunedStub)/charsPerToken
-		}
-	}
-	if freed <= pruneMinimumTokens {
-		return 0
-	}
-	for _, fr := range targets {
-		fr.Response = map[string]any{"result": prunedStub}
-		fr.Parts = nil
-	}
-	return freed
-}
-
 // compact summarises the head (older turns) into an anchored summary and rebuilds
 // contents as [task, summary, ...tail]. contents[0] (the self-contained task) and
 // the recent tail are kept verbatim. Returns ok=false (contents unchanged) when
@@ -312,10 +285,13 @@ func compact(ctx adkagent.Context, summarizer model.LLM, contents []*genai.Conte
 // mergeTaskSummary appends the anchored summary to the task content rather than
 // inserting a separate turn: a standalone summary message could sit adjacent to
 // another same-role turn and trip strict chat templates. The task stays Parts[0].
+// The summary carries compactionNotice so the model knows the turns it can no
+// longer see are folded into it (goose tells the model the same thing) and does
+// not treat the missing history as work still to do.
 func mergeTaskSummary(task *genai.Content, summary string) *genai.Content {
 	return &genai.Content{
 		Role:  task.Role,
-		Parts: append(append([]*genai.Part{}, task.Parts...), &genai.Part{Text: "\n\nSummary of earlier work (older turns were compacted):\n" + summary}),
+		Parts: append(append([]*genai.Part{}, task.Parts...), &genai.Part{Text: compactionNotice + summary}),
 	}
 }
 

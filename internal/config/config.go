@@ -136,18 +136,14 @@ type ProviderModel struct {
 }
 
 // CompactionConfig configures automatic context compaction. When enabled, every
-// gated agent gets a BeforeModelCallback that prunes old tool outputs and, if a
-// request is still over budget, summarises the older conversation via the named
-// summariser model (ports sst/opencode's prune + compaction).
+// gated agent gets a BeforeModelCallback that, once a request would overflow the
+// model's context window, summarises the older conversation via the named
+// summariser model into an anchored summary and drops those turns.
 type CompactionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Provider string `yaml:"provider"` // inference provider for the summariser model
 	Model    string `yaml:"model"`    // summariser model
-	Prune    *bool  `yaml:"prune"`    // blank old tool outputs before summarising (default true)
 }
-
-// PruneEnabled reports whether the cheap tool-output prune pass runs (default true).
-func (c CompactionConfig) PruneEnabled() bool { return c.Prune == nil || *c.Prune }
 
 // DagConfig tunes how the orchestrator's DAG is executed.
 type DagConfig struct {

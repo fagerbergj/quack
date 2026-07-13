@@ -35,7 +35,6 @@ session:
     enabled: ${QUACK_COMPACTION_ENABLED}  # unset ⇒ false
     provider: default
     model: ${QUACK_COMPACTION_MODEL}      # required when enabled; pick a worker-co-resident model (gemma)
-    prune: true                     # blank old tool outputs before summarising (cheap, no model call)
 
 orchestrator:
   provider: default
