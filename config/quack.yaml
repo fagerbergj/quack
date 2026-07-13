@@ -53,7 +53,7 @@ agents:
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor,
-            git_clone, cd, read_file, list_dir, glob, grep]  # read-only fs + clone, so research can pull a repo apart
+            ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
   code-implementer:
     bundle: agents/code-implementer   # prompt.md (ponytail ladder) + rubric.md (code-quality research + ponytail criteria)
     provider: default

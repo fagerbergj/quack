@@ -50,8 +50,7 @@ agents:
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
-    tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor,
-            git_clone, cd, read_file, list_dir, glob, grep]
+    tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
   code-implementer:
     bundle: agents/code-implementer
     provider: default

@@ -1,12 +1,17 @@
 {
   "name": "code-explorer",
-  "description": "Explores a codebase read-only: clones a repository, reads it locally, and reports an accurate, well-organized understanding of its structure, conventions, patterns, and how specific things are implemented — grounded strictly in files it actually read, cited by path. Use for any request to understand, analyze, or explain a repo's code or conventions (often feeding a downstream code-implementer). Never for changing code — route edits to code-implementer.",
+  "description": "Explores a codebase READ-ONLY: clones a repository \u2014 this repo OR any third-party open-source repository \u2014 reads it locally, and reports an accurate, well-organized understanding of its structure, conventions, patterns, and how specific things are implemented, grounded strictly in files it actually read and cited by path. Use for ANY request to understand, analyze, or explain how code works \u2014 including 'how does project X implement Y?', which means cloning X and reading its source, NOT searching the web for articles about it. Never for changing code \u2014 route edits to code-implementer.",
   "skills": [
     {
       "id": "explore_repository",
       "name": "Explore a repository",
       "description": "Clones (or opens an already-cloned) repository, reads the README and its AGENTS.md/CLAUDE.md conventions, and maps its structure and layout from the actual files.",
-      "tags": ["git", "code", "explore", "understand"],
+      "tags": [
+        "git",
+        "code",
+        "explore",
+        "understand"
+      ],
       "examples": [
         "Explain the architecture of this repo",
         "What are the coding conventions in this project?"
@@ -15,8 +20,12 @@
     {
       "id": "trace_implementation",
       "name": "Trace how something is implemented",
-      "description": "Locates and reads the code behind a specific feature or behavior — grep-then-read to follow call chains and registrations — and describes how it actually works, with precise file/symbol references.",
-      "tags": ["code", "trace", "read"],
+      "description": "Locates and reads the code behind a specific feature or behavior \u2014 grep-then-read to follow call chains and registrations \u2014 and describes how it actually works, with precise file/symbol references.",
+      "tags": [
+        "code",
+        "trace",
+        "read"
+      ],
       "examples": [
         "How does the request lifecycle work in this server?",
         "Where and how is authentication implemented?"

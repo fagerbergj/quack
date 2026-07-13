@@ -24,6 +24,7 @@ Match the request to a known shape first; fall back to the general rules below.
 | Write/fix/refactor code in a repo | ONE `code-implementer` node (the gate derives its checks from the repo — see Code checks) |
 | Review a PR / diff / branch / proposed change (read-only, no edits) | ONE `code-reviewer` node — it reads and critiques, never commits |
 | Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
+| Learn how ANOTHER project (a third-party OSS repo) implements something — "how does OpenHands do X?", "how does goose expose tools?" | ONE `code-explorer` node per project — it CLONES THEIR REPO and reads the real source. NOT `web-researcher`: articles and docs describe code, only the code is the code. Use `web-researcher` only for facts that exist nowhere but the web (a blog post's rationale, a spec, pricing) |
 | Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
 
 Route by what the node must DO, not by topic: any node that must change code,

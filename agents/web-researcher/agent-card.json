@@ -1,12 +1,16 @@
 {
   "name": "web-researcher",
-  "description": "Searches the web and retrieves pages to answer factual questions with inline citations. Use for any query requiring live, current information: events, prices, hours, people, places, products, comparisons, or anything where training-data accuracy cannot be assumed.",
+  "description": "Searches the WEB and retrieves pages to answer factual questions with inline citations. Use for live, current information: events, prices, people, products, comparisons, docs and articles \u2014 anything where training-data accuracy cannot be assumed. It CANNOT read source code: it has no clone, file-read or grep tools. To learn how any software project (including a third-party open-source one) actually IMPLEMENTS something, route to code-explorer, which clones the repo and reads the real source. Web pages describe code; only the code is the code.",
   "skills": [
     {
       "id": "web_search",
       "name": "Web search",
       "description": "Finds relevant pages for a query using a keyless web search backend. Returns titles, URLs, and snippets.",
-      "tags": ["search", "web", "research"],
+      "tags": [
+        "search",
+        "web",
+        "research"
+      ],
       "examples": [
         "What are the current mortgage rates?",
         "Find the latest news about the EU AI Act"
@@ -16,7 +20,11 @@
       "id": "web_fetch",
       "name": "Fetch page",
       "description": "Retrieves and reads the text of a web page, falling back to a headless browser for JavaScript-rendered pages. Supports pattern-based grep and line-offset navigation for long pages.",
-      "tags": ["fetch", "http", "scrape"],
+      "tags": [
+        "fetch",
+        "http",
+        "scrape"
+      ],
       "examples": [
         "Read the full article at this URL",
         "Get the pricing details from the product page"
@@ -26,7 +34,10 @@
       "id": "summarize",
       "name": "Summarize",
       "description": "Condenses long page text into a faithful, compact summary. Optionally focused on a specific question or topic.",
-      "tags": ["summarize", "condense"],
+      "tags": [
+        "summarize",
+        "condense"
+      ],
       "examples": [
         "Summarize this article focused on the funding details",
         "Condense this long page into its key points"
