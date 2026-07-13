@@ -1,7 +1,9 @@
 package skillsource
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,5 +149,64 @@ func TestNilJailReturnsBuiltin(t *testing.T) {
 	builtin := skill.NewFileSystemSource(os.DirFS(builtinDir))
 	if New(builtin, nil, "u1") != builtin {
 		t.Error("New with a nil jail should return the built-in source unchanged")
+	}
+}
+
+// writeBadSkill writes a SKILL.md whose frontmatter fails validation (a
+// description over the skilltoolset's 1024-char ceiling) — the shape that took
+// every project skill down in production.
+func writeBadSkill(t *testing.T, dir, name string) {
+	t.Helper()
+	writeSkill(t, dir, name, strings.Repeat("x", 1100), "body")
+}
+
+// TestMalformedSkillDoesNotKillListing: one bad SKILL.md in a cloned repo must
+// not disable the WHOLE project-skill listing (nor the built-in library). The
+// bad skill is skipped; every skill that parsed is returned.
+func TestMalformedSkillDoesNotKillListing(t *testing.T) {
+	j, userRoot, builtin := setup(t, map[string]string{"plan-work": "builtin body"})
+	skillsDir := filepath.Join(userRoot, "chatA", "myrepo", ".agents", "skills")
+	writeSkill(t, skillsDir, "good-skill", "a valid project skill", "body")
+	writeBadSkill(t, skillsDir, "bad-skill")
+
+	src := New(builtin, j, "u1")
+
+	fms, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+	got := names(fms)
+	if !got["plan-work"] {
+		t.Errorf("names = %v, want the built-in plan-work", got)
+	}
+	if !got["good-skill"] {
+		t.Errorf("names = %v, want the valid project skill (a malformed sibling must not hide it)", got)
+	}
+	if got["bad-skill"] {
+		t.Errorf("names = %v, want the malformed skill skipped", got)
+	}
+}
+
+// TestMalformedSkillWarnsOnce: the same bad file must not re-warn on every skill
+// call (the live run logged this hundreds of times in one run).
+func TestMalformedSkillWarnsOnce(t *testing.T) {
+	j, userRoot, builtin := setup(t, nil)
+	skillsDir := filepath.Join(userRoot, "chatA", "myrepo", ".agents", "skills")
+	writeBadSkill(t, skillsDir, "bad-skill")
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	src := New(builtin, j, "u1")
+	for range 3 {
+		if _, err := src.ListFrontmatters(context.Background()); err != nil {
+			t.Fatalf("ListFrontmatters: %v", err)
+		}
+	}
+
+	if n := strings.Count(buf.String(), "bad-skill"); n != 1 {
+		t.Errorf("bad skill warned %d times across 3 listings, want exactly 1:\n%s", n, buf.String())
 	}
 }

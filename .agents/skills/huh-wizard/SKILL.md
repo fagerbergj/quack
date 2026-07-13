@@ -1,17 +1,15 @@
 ---
 name: huh-wizard
 description: |
-  How to build polished multi-stage interactive wizards with Charm `huh` (v1) — the form library quack's
-  `quack init` / `quack server init` use. Covers the idioms that separate a generic form from a
-  deliberate, navigable wizard: multi-group forms for built-in back-navigation, WithHideFunc for
-  answer-dependent sections (split a second form only across an I/O boundary like a /models fetch), group
-  titles/descriptions as section headers, placeholders + EchoModePassword + Filtering/Height + .Key() on
-  fields, a final review/confirm group with a live DescriptionFunc summary, and a custom theme. Includes
-  the gotchas that bite (Form has no .Title() in v1 — use the first group; separate forms per question
-  kill back-nav; a Confirm value is never checked unless you check it; embed paths can't climb out of a
-  package). Use when adding
-  or restyling any `huh.NewForm` wizard, debugging a form that can't go back, or theming a quack CLI
-  surface. Do NOT use for Bubble Tea screens (that's quack-cli) or non-interactive CLI paths.
+  How to build polished multi-stage interactive wizards with Charm `huh` (v1) — the form library behind
+  `quack init` / `quack server init`. Covers the idioms that separate a generic form from a deliberate,
+  navigable wizard: multi-group forms for built-in back-navigation, WithHideFunc for answer-dependent
+  sections, group titles/descriptions as section headers, placeholders + EchoModePassword +
+  Filtering/Height + .Key() on fields, a final review/confirm group with a live DescriptionFunc summary,
+  and a custom theme. Includes the v1 gotchas that bite (Form has no .Title() — use the first group;
+  separate forms per question kill back-nav; a Confirm value is never checked unless you check it).
+  Use when adding or restyling any `huh.NewForm` wizard, debugging a form that can't go back, or theming
+  a quack CLI surface. Do NOT use for Bubble Tea screens (that's quack-cli) or non-interactive CLI paths.
 ---
 
 # Skill: huh-wizard

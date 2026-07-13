@@ -100,6 +100,17 @@ func (h *Hub) Close(key string) {
 	}
 }
 
+// Reset drops the chat's topic so a starting run can register its viewers on a
+// fresh, empty one — Subscribe would otherwise hand a client the PREVIOUS run's
+// buffer (and, if that run was Closed, no live channel at all). Publish does the
+// same reset lazily on its first event; a run that wants subscribers attached
+// BEFORE it publishes calls this first.
+func (h *Hub) Reset(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.topics, key)
+}
+
 // Subscribe returns the events so far (replay) plus, when the run is still
 // active, a live channel for subsequent events and a cancel func to unsubscribe.
 // When done is true the run has finished: replay holds the whole stream and live

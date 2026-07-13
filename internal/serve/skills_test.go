@@ -9,21 +9,26 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
-// TestSkillsLoad guards against a shipped skill whose SKILL.md frontmatter fails
-// the skilltoolset's validation (e.g. an invalid name) — which crashes startup.
+// TestSkillsLoad guards against a skill in THIS repo whose SKILL.md frontmatter
+// fails the skilltoolset's validation (bad name, description over the 1024-char
+// ceiling, …). Both libraries are checked: the shipped skills/ (a bad one crashes
+// startup) and .claude/skills/ (quack's own project skills — a bad one poisons
+// every agent that clones quack, exactly as `huh-wizard`/`go-testing` did at 1045
+// and 1039 description chars).
 func TestSkillsLoad(t *testing.T) {
-	const dir = "../../skills"
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read skills dir: %v", err)
-	}
-	src := skill.NewFileSystemSource(os.DirFS(dir))
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	for _, dir := range []string{"../../skills", "../../.claude/skills"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("read skills dir %s: %v", dir, err)
 		}
-		if _, err := src.LoadFrontmatter(context.Background(), e.Name()); err != nil {
-			t.Errorf("skill %q frontmatter failed to load: %v", e.Name(), err)
+		src := skill.NewFileSystemSource(os.DirFS(dir))
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if _, err := src.LoadFrontmatter(context.Background(), e.Name()); err != nil {
+				t.Errorf("skill %s/%s frontmatter failed to load: %v", dir, e.Name(), err)
+			}
 		}
 	}
 }

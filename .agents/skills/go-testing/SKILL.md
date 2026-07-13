@@ -1,18 +1,16 @@
 ---
 name: go-testing
 description: |
-  Best practices for unit and integration testing Go servers and TUIs — stdlib-first. Covers
-  table-driven tests with t.Run subtests + t.Parallel, httptest (NewRequest/NewRecorder for handlers,
-  NewServer for full-chain integration + third-party API stubs), testing middleware in isolation then
-  composed, interface-based dependency injection with function-field mocks (and when gomock/mockery/testify
-  earn their keep), real-database testing via Testcontainers over sqlmock, benchmarking with the Go 1.24+
-  testing.B.Loop pattern, and testing Charm Bubble Tea TUIs (WithInput/WithOutput/WithoutRenderer, teatest
-  golden files). Includes a CI matrix (go test -race -coverprofile -covermode=atomic, unit-vs-integration
-  gating).
+  Best practices for unit and integration testing Go servers and TUIs — stdlib-first. Covers table-driven
+  tests with t.Run subtests + t.Parallel, httptest (NewRequest/NewRecorder for handlers, NewServer for
+  full-chain integration + third-party API stubs), testing middleware in isolation then composed,
+  interface-based dependency injection with function-field mocks (and when gomock/mockery/testify earn
+  their keep), real-database testing via Testcontainers over sqlmock, benchmarking with the Go 1.24+
+  testing.B.Loop pattern, testing Charm Bubble Tea TUIs (WithInput/WithOutput/WithoutRenderer, teatest
+  golden files), and a CI matrix (go test -race -coverprofile, unit-vs-integration gating).
   Use when writing or reviewing any *_test.go in the quack Go backend (internal/, cmd/) or the Bubble Tea
   TUI (internal/tui/) — picking a test shape, mocking a dependency, testing an HTTP handler/middleware,
-  or wiring CI.
-  Do NOT use for frontend (vitest/MSW — see frontend-design) or non-Go code.
+  or wiring CI. Do NOT use for frontend (vitest/MSW — see frontend-design) or non-Go code.
 license: MIT
 metadata:
   author: jason
