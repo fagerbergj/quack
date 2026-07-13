@@ -143,8 +143,53 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 		deliveryWording(d), strings.Join(missing, " and "), want)}, true
 }
 
+// postedReviewRe matches a task that asks for a review to be POSTED on the pull
+// request — a posting verb next to the thing posted ("post your findings as
+// inline review comments", "submit the review", "leave a review"), or the
+// passive equivalent ("the review must be submitted"). Deliberately narrow: a
+// prose ask ("what do you think of this code?", "summarise the diff on PR #4",
+// "review the architecture and report your findings") is answered IN the answer,
+// and a false positive there would deadlock the node in continuation rounds it
+// could never satisfy — the same discipline as the delivery check above.
+var postedReviewRe = regexp.MustCompile(
+	`(?i)(\b(post|submit|leave|publish)\b[^.\n]{0,80}\b(reviews?|inline comments?|review comments?)\b` +
+		`|\b(reviews?|comments?)\b[^.\n]{0,40}\b(posted|submitted|published)\b)`)
+
+// reviewCriterion scores `review_posted` for a node: 0 when the task demands a
+// review be posted on a pull request and the worker's ledger shows no SUCCESSFUL
+// github_submit_review, 1 when it does. ok=false ⇒ the criterion does not apply
+// (the task asks for no posted review), leaving every other node untouched.
+//
+// Live e2e 2026-07-13: a code-reviewer told to review a PR and post its findings
+// produced a non-empty answer — a status update about shallow-clone trouble —
+// and posted NOTHING (0 inline comments, 0 reviews on the PR). Non-empty answer,
+// no commit/push demanded ⇒ workIncomplete said "done" and the half-finished work
+// went to the flaky judge. Posting a review is mechanically checkable, so it is
+// checked mechanically, exactly like a commit/push.
+//
+// The submit is the whole requirement: github_add_review_comment only accumulates
+// a process-local DRAFT (see internal/github) — nothing is on the PR until
+// github_submit_review succeeds.
+func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
+	if !prRe.MatchString(task) || !postedReviewRe.MatchString(task) {
+		return criterionScore{}, false
+	}
+	if act.reviewSubmitted {
+		return criterionScore{Score: 1, Reason: "deterministic: the review was submitted on the pull request"}, true
+	}
+	drafted := "the ledger shows no successful `github_add_review_comment` either"
+	if act.reviewCommented {
+		drafted = "your inline comments are still only a draft — `github_add_review_comment` posts nothing on its own"
+	}
+	return criterionScore{Score: 0, Reason: fmt.Sprintf(
+		"deterministic: your task requires posting a review on the pull request, but the workspace ledger contains "+
+			"no successful `github_submit_review` (%s). Describing your findings in your answer is NOT posting them: "+
+			"record each finding with `github_add_review_comment`, then call `github_submit_review` with your summary "+
+			"and verdict, then report what you actually posted.", drafted)}, true
+}
+
 // workIncomplete reports whether the worker's turn left the WORK unfinished — the
-// gate's continuation condition (RunGatedRefine). Two mechanical signals, no LLM
+// gate's continuation condition (RunGatedRefine). Three mechanical signals, no LLM
 // judgment:
 //
 //   - an EMPTY answer: a reasoning model that spends its whole output budget on
@@ -154,6 +199,9 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 //   - an UNDELIVERED implement-and-deliver task: the task demanded a commit/push
 //     and the ledger holds none, so whatever the worker wrote is a description of
 //     work it never shipped.
+//   - an UNPOSTED review task: the task demanded a review be posted on a PR and
+//     the ledger holds no submit, so the "review" exists only as prose in the
+//     answer — the reviewer's exact analogue of the undelivered commit.
 //
 // Everything else (research, analysis, synthesis; a delivered coding task) is
 // complete as far as the gate is concerned — the judge takes it from here.
@@ -161,8 +209,27 @@ func workIncomplete(answer, task string, act workerActivity) bool {
 	if strings.TrimSpace(answer) == "" {
 		return true
 	}
-	c, applies := deliveryCriterion(task, act)
-	return applies && c.Score < 1
+	for _, c := range incompleteCriteria(task, act) {
+		if c.Score < 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// incompleteCriteria returns the deterministic completion criteria that APPLY to
+// this task — the one definition of "the work is actually done", shared by
+// workIncomplete, foldDeterministic and the continuation prompt so they can
+// never drift apart.
+func incompleteCriteria(task string, act workerActivity) map[string]criterionScore {
+	out := map[string]criterionScore{}
+	if c, ok := deliveryCriterion(task, act); ok {
+		out["delivery_complete"] = c
+	}
+	if c, ok := reviewCriterion(task, act); ok {
+		out["review_posted"] = c
+	}
+	return out
 }
 
 // deliveryWording names, in the task's own terms, what delivery it asked for.

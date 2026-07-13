@@ -701,10 +701,11 @@ func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config)
 		v.Criteria["checks_pass"] = c
 	}
 	// Delivery: a node whose task says commit/push/PR cannot pass unless the
-	// ledger shows it did (delivery.go). Untouched for a node whose task asks for
-	// no delivery.
-	if c, ok := deliveryCriterion(cfg.Task, act); ok {
-		v.Criteria["delivery_complete"] = c
+	// ledger shows it did, and one told to POST a review on a PR cannot pass
+	// unless it submitted one (delivery.go). Untouched for a node whose task
+	// demands neither.
+	for name, c := range incompleteCriteria(cfg.Task, act) {
+		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)
 }
@@ -868,6 +869,14 @@ func activityFromSession(sess session.Session) workerActivity {
 							act.pushed = true
 						case "github_pull_request":
 							act.prOpened = true
+						// The reviewer's delivery (delivery.go): a task that demands a
+						// POSTED review cannot pass without a submit. A drafted comment
+						// posts nothing on its own — the draft only becomes a review on
+						// the PR when github_submit_review succeeds (internal/github).
+						case "github_add_review_comment":
+							act.reviewCommented = true
+						case "github_submit_review":
+							act.reviewSubmitted = true
 						case "git_clone":
 							// A successful clone IS retrieval: the whole repository is
 							// now local, strictly more consulted than a search-result

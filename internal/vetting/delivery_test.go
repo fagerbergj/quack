@@ -175,3 +175,137 @@ func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 		t.Errorf("verdict score = %v, want a weakest-link fail below any threshold", got.Score)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The review half of the same mechanism.
+//
+// Live e2e 2026-07-13: a code-reviewer node told to review a pull request and
+// post its findings produced a NON-EMPTY answer — a status update ("I hit
+// shallow-clone difficulties…") — and posted NOTHING: zero inline comments,
+// zero reviews on the PR. Because the answer wasn't empty and the task demanded
+// no commit/push, workIncomplete said "done", no continuation fired, and the
+// half-finished work went to the judge. Posting a review is mechanically
+// checkable, so it is checked mechanically.
+// ---------------------------------------------------------------------------
+
+// reviewTask is the shape of the live task text.
+const reviewTask = "Review pull request #4 on https://github.com/fagerbergj/games (branch add-flappy-bird-openhands). " +
+	"Post your findings as inline review comments and submit the review."
+
+func TestReviewCriterionFailsWhenNothingWasPosted(t *testing.T) {
+	act := workerActivity{paths: map[string]bool{"games/README.md": true}}
+	got, ok := reviewCriterion(reviewTask, act)
+	if !ok {
+		t.Fatal("review_posted must apply to a task that demands a posted review")
+	}
+	if got.Score != 0 {
+		t.Fatalf("Score = %v, want 0 (no review was posted)", got.Score)
+	}
+	if !strings.Contains(got.Reason, "github_submit_review") {
+		t.Errorf("Reason = %q, want it to name github_submit_review", got.Reason)
+	}
+}
+
+func TestReviewCriterionPassesWhenReviewSubmitted(t *testing.T) {
+	act := workerActivity{reviewCommented: true, reviewSubmitted: true}
+	got, ok := reviewCriterion(reviewTask, act)
+	if !ok {
+		t.Fatal("review_posted must apply to a task that demands a posted review")
+	}
+	if got.Score != 1 {
+		t.Errorf("got %+v, want Score 1 — the review WAS submitted", got)
+	}
+}
+
+// Drafted comments are not a posted review: github_add_review_comment only
+// accumulates a draft (see internal/github) — the review exists on the PR only
+// after github_submit_review.
+func TestReviewCriterionFailsOnDraftedButUnsubmittedComments(t *testing.T) {
+	got, ok := reviewCriterion(reviewTask, workerActivity{reviewCommented: true})
+	if !ok || got.Score != 0 {
+		t.Fatalf("got %+v (applies=%v), want Score 0 — drafted comments were never submitted", got, ok)
+	}
+	if !strings.Contains(got.Reason, "draft") {
+		t.Errorf("Reason = %q, want it to explain the draft was never submitted", got.Reason)
+	}
+}
+
+// A prose ask ("what do you think of this code?", "summarise this diff") is
+// answered IN the answer — a false positive here would deadlock it in
+// continuation rounds it can never satisfy.
+func TestReviewCriterionDoesNotFireOnProseTask(t *testing.T) {
+	tasks := []string{
+		"What do you think of this code? Explain the tradeoffs.",
+		"Summarise the diff on pull request #4 and report what changed.",
+		"Review the architecture of the repository and report your findings.",
+		"Research how other projects post code reviews and cite your sources.",
+	}
+	for _, task := range tasks {
+		if _, ok := reviewCriterion(task, workerActivity{}); ok {
+			t.Errorf("review_posted fired on a task that asks for no posted review: %q", task)
+		}
+	}
+}
+
+// Only SUCCESSFUL calls count: a github_submit_review that errored posted nothing.
+func TestReviewCriterionFailsWhenSubmitErrored(t *testing.T) {
+	act := activityFromSession(newTestSession(t,
+		fnCall("1", "github_add_review_comment", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "path": "app/games.ts", "line": float64(12)}),
+		fnResp("1", "github_add_review_comment", map[string]any{"index": float64(0), "draft_count": float64(1)}),
+		fnCall("2", "github_submit_review", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "event": "REQUEST_CHANGES"}),
+		fnResp("2", "github_submit_review", map[string]any{"error": "422 Unprocessable Entity"}),
+	))
+	if act.reviewSubmitted {
+		t.Fatal("activityFromSession recorded a FAILED github_submit_review as submitted")
+	}
+	if !act.reviewCommented {
+		t.Error("the successful github_add_review_comment should be recorded")
+	}
+	got, ok := reviewCriterion(reviewTask, act)
+	if !ok || got.Score != 0 {
+		t.Errorf("got %+v (applies=%v), want Score 0 — the submit failed, so nothing was posted", got, ok)
+	}
+}
+
+func TestActivityFromSessionRecordsReview(t *testing.T) {
+	act := activityFromSession(newTestSession(t,
+		fnCall("1", "github_add_review_comment", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "path": "app/games.ts", "line": float64(12)}),
+		fnResp("1", "github_add_review_comment", map[string]any{"index": float64(0), "draft_count": float64(1)}),
+		fnCall("2", "github_submit_review", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "event": "REQUEST_CHANGES"}),
+		fnResp("2", "github_submit_review", map[string]any{"url": "https://github.com/fagerbergj/games/pull/4#pullrequestreview-1", "comments": float64(1)}),
+	))
+	if !act.reviewCommented || !act.reviewSubmitted {
+		t.Errorf("reviewCommented=%v reviewSubmitted=%v, want both true", act.reviewCommented, act.reviewSubmitted)
+	}
+	if ws := buildWorkspaceSection(act); !strings.Contains(ws, "github_submit_review") || !strings.Contains(ws, "pullrequestreview-1") {
+		t.Errorf("workspace ledger = %q, want the github_submit_review call and its URL", ws)
+	}
+}
+
+// The continuation condition: a non-empty answer that posted no review is NOT
+// done — this is the exact live regression (a status update passed as an answer).
+func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
+	statusUpdate := "I encountered technical difficulties with the shallow clone and could not complete the review."
+	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}) {
+		t.Error("a non-empty answer that posted no review must be incomplete — the continuation loop has to re-invoke the reviewer with its tools")
+	}
+	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true}) {
+		t.Error("a submitted review is complete work")
+	}
+	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}) {
+		t.Error("a prose task with a non-empty answer must not be held incomplete")
+	}
+}
+
+// The criterion sinks the round on its own (weakest-link), no matter what the
+// judge thought of the prose.
+func TestFoldDeterministicHardFailsUnpostedReview(t *testing.T) {
+	v := verdict{Score: 0.9, Criteria: map[string]criterionScore{"review_quality": {Score: 0.9}}}
+	got := foldDeterministic(v, "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask})
+	if c := got.Criteria["review_posted"]; c.Score != 0 {
+		t.Fatalf("review_posted = %+v, want Score 0", c)
+	}
+	if got.Score >= 0.6 {
+		t.Errorf("overall = %v, want the unposted review to sink the round", got.Score)
+	}
+}

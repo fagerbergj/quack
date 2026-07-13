@@ -168,6 +168,14 @@ type workerActivity struct {
 	committed bool
 	pushed    bool
 	prOpened  bool
+
+	// The reviewer's equivalent: a drafted inline comment
+	// (github_add_review_comment) and a SUBMITTED review (github_submit_review).
+	// Only the submit actually posts anything — the comments accumulate in a
+	// process-local draft until then (see internal/github). Read by the
+	// deterministic review check (delivery.go).
+	reviewCommented bool
+	reviewSubmitted bool
 }
 
 // wsOp is one workspace operation the worker actually performed — a completed

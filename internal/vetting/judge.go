@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -746,13 +747,19 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string) s
 		"- DO the remaining work rather than describing it. Writing a file's contents into your answer is NOT writing the file — call write_file/edit_file.\n" +
 		"- Run the checks the task requires and fix whatever they surface.\n" +
 		"- When the task calls for it, commit your work, push the branch, and open the pull request.\n" +
+		"- When the task calls for a posted review, record your findings with github_add_review_comment and submit them with github_submit_review. Writing findings into your answer is NOT posting a review.\n" +
 		"- Only once the work is actually done, report what you DID — past tense, evidenced by the tool calls you made.\n\n")
 	if len(checks) > 0 {
 		sb.WriteString("Checks this node must pass: " + strings.Join(checks, ", ") + "\n\n")
 	}
-	if c, applies := deliveryCriterion(task, act); applies && c.Score < 1 {
-		sb.WriteString("Known gap: " + c.Reason + "\n\n")
+	var gaps []string
+	for _, c := range incompleteCriteria(task, act) {
+		if c.Score < 1 {
+			gaps = append(gaps, "Known gap: "+c.Reason+"\n\n")
+		}
 	}
+	sort.Strings(gaps) // stable order across runs (map iteration is random)
+	sb.WriteString(strings.Join(gaps, ""))
 	if section := buildActivitySection(act); section != "" {
 		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n")
