@@ -240,7 +240,13 @@ const (
 // written files or no jail is wired (pure-research nodes, unjailed deployments).
 // Best-effort: a path that fails to resolve/read is skipped, degrading to
 // today's no-injection behaviour rather than erroring.
-func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID string) string {
+//
+// chatID is the per-chat workspace scope (the run's chat/session id) the worker
+// actually wrote under (<root>/<userID>/<chatID>/<rel>) — WITHOUT it the judge
+// would re-read from the per-user root where nothing was written, silently
+// no-op'ing this whole "judge reads the real files" fix. "" falls back to the
+// per-user root (unjailed/legacy — see Jail.Resolve).
+func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, chatID string) string {
 	if len(act.written) == 0 || jail == nil {
 		return ""
 	}
@@ -251,7 +257,7 @@ func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID s
 		if shown >= maxChangedFiles || total >= changedFilesBudget {
 			break
 		}
-		abs, err := jail.Resolve(userID, rel)
+		abs, err := jail.Resolve(userID, chatID, rel)
 		if err != nil {
 			continue
 		}
@@ -308,7 +314,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	changedFiles := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID)
+	changedFiles := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
 	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, question, answer, changedFiles, act)}}
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {

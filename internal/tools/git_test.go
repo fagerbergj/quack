@@ -64,11 +64,11 @@ func newBareRepoFixture(t *testing.T) string {
 // separately; this is fixture setup for a local, no-network round trip).
 func cloneIntoJail(t *testing.T, b gitBinding, bare, relDir string) string {
 	t.Helper()
-	target, err := b.jail.Resolve(b.userID, relDir)
+	target, err := b.jail.Resolve(b.userID, "", relDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	userRoot, err := b.jail.Resolve(b.userID, "")
+	userRoot, err := b.jail.Resolve(b.userID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +543,7 @@ func TestGitWorktreeCreateDefaultPath(t *testing.T) {
 	if res.Branch != "feature-x" {
 		t.Errorf("Branch = %q, want feature-x", res.Branch)
 	}
-	wtReal, err := b.jail.Resolve(b.userID, res.Path)
+	wtReal, err := b.jail.Resolve(b.userID, "", res.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestGitWorktreeRemove(t *testing.T) {
 	if !rres.Removed {
 		t.Error("Removed = false, want true")
 	}
-	wtReal, _ := b.jail.Resolve(b.userID, res.Path)
+	wtReal, _ := b.jail.Resolve(b.userID, "", res.Path)
 	if _, err := os.Stat(wtReal); !os.IsNotExist(err) {
 		t.Errorf("worktree dir still exists after remove: err=%v", err)
 	}
@@ -583,7 +583,7 @@ func TestGitWorktreeRemoveRefusesDirty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wtReal, err := b.jail.Resolve(b.userID, res.Path)
+	wtReal, err := b.jail.Resolve(b.userID, "", res.Path)
 	if err != nil {
 		t.Fatal(err)
 	}

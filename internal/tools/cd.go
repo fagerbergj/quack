@@ -86,12 +86,13 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 	if !info.IsDir() {
 		return cdResult{}, fmt.Errorf("cd: %q is not a directory", a.Dir)
 	}
-	userRoot, err := b.jail.Resolve(b.userID, "")
+	chatRoot, err := b.jail.Resolve(b.userID, b.chatID, "")
 	if err != nil {
 		return cdResult{}, err
 	}
-	// New cwd, stored as a jail-relative slash path ("" = root, persisted as ".").
-	newCwd, err := filepath.Rel(userRoot, realDir)
+	// New cwd, stored as a chat-root-relative slash path ("" = root, persisted
+	// as ".") — cwd composes WITHIN the per-chat dir.
+	newCwd, err := filepath.Rel(chatRoot, realDir)
 	if err != nil {
 		return cdResult{}, fmt.Errorf("cd: %w", err)
 	}
@@ -108,10 +109,10 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 
 	res := cdResult{Dir: newCwd, Skills: []cdSkill{}}
 
-	// Nearest project instructions: walk UP from realDir to userRoot (inclusive),
+	// Nearest project instructions: walk UP from realDir to chatRoot (inclusive),
 	// AGENTS.md first (closest wins), then CLAUDE.md only if no AGENTS.md exists
 	// anywhere in the chain — the agents.md precedence, no merge.
-	if path, rel, found := b.nearestInstructions(realDir, userRoot); found {
+	if path, rel, found := b.nearestInstructions(realDir, chatRoot); found {
 		content, truncated, rerr := b.readCappedFile(path)
 		if rerr != nil {
 			return cdResult{}, fmt.Errorf("cd: read %s: %w", rel, rerr)
@@ -124,7 +125,7 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 	// Project skills: the containing repo is the first path component of the new
 	// cwd (immediate child of the workspace root, where git_clone lands a repo).
 	repoRel := firstComponent(newCwd)
-	for _, fm := range skillsource.ProjectSkills(b.jail, b.userID, repoRel) {
+	for _, fm := range skillsource.ProjectSkills(b.jail, b.userID, b.chatID, repoRel) {
 		res.Skills = append(res.Skills, cdSkill{Name: fm.Name, Description: fm.Description})
 	}
 
@@ -138,7 +139,7 @@ func (b fsBinding) cd(ctx agent.Context, a cdArgs) (cdResult, error) {
 // result + as a citable source). Both paths are already jail-contained (Resolve
 // produced startDir/stopDir), so the walk never reads outside the jail.
 func (b fsBinding) nearestInstructions(startDir, stopDir string) (path, rel string, found bool) {
-	root, _ := b.jail.Resolve(b.userID, "")
+	root, _ := b.jail.Resolve(b.userID, b.chatID, "")
 	for _, name := range projectInstructionFiles {
 		if p, ok := nearestUp(startDir, stopDir, name); ok {
 			r, err := filepath.Rel(root, p)

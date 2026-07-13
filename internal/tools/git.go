@@ -156,25 +156,30 @@ type gitBinding struct {
 	credentials []GitCredential
 	tokenSource GitTokenSource // optional dynamic credential source (extension seam)
 	allowPush   bool
-	// cwd is the session working directory (jail-relative, "" = jail root) a
+	// cwd is the session working directory (chat-root-relative, "" = chat root) a
 	// per-call copy carries — set by withCwd from ctx state, mirroring fsBinding.
 	// A relative `dir`/`path` a git tool takes resolves against it (resolve).
 	cwd string
+	// chatID is the per-chat scope (the workflow/chat session id) this call's
+	// paths resolve under — set by withCwd from the advisor-thread marker in ctx
+	// (chatScopeFromContext), mirroring fsBinding. "" resolves the per-user root.
+	chatID string
 }
 
-// withCwd returns a copy of b whose cwd is the session working directory read
-// from ctx state (mirrors fsBinding.withCwd). Value receiver ⇒ copy; the shared
-// binding is never mutated.
+// withCwd returns a copy of b bound to this call's context: the session working
+// directory (cwd) AND the per-chat scope (chatID), both read from ctx (mirrors
+// fsBinding.withCwd). Value receiver ⇒ copy; the shared binding is never mutated.
 func (b gitBinding) withCwd(ctx agent.Context) gitBinding {
 	b.cwd = cwdFromState(ctx)
+	b.chatID = chatScopeFromContext(ctx)
 	return b
 }
 
-// resolve is the cwd-aware Jail.Resolve every git tool uses for its `dir`/`path`
-// argument: relative to b.cwd, "/"-prefixed to the jail root (joinCwd), always
-// containment-checked by Jail.Resolve.
+// resolve is the cwd- and chat-aware Jail.Resolve every git tool uses for its
+// `dir`/`path` argument: relative to b.cwd, "/"-prefixed to the chat root
+// (joinCwd), scoped under b.chatID, always containment-checked by Jail.Resolve.
 func (b gitBinding) resolve(p string) (string, error) {
-	return b.jail.Resolve(b.userID, joinCwd(b.cwd, p))
+	return b.jail.Resolve(b.userID, b.chatID, joinCwd(b.cwd, p))
 }
 
 // newGitBinding resolves Deps into a gitBinding, defaulting caps when unset.

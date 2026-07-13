@@ -67,6 +67,12 @@ type Config struct {
 	// Workdir is the workspace-relative directory Checks run in (the node's
 	// repo, e.g. "repo" after a git_clone). Ignored when Checks is empty.
 	Workdir string
+	// ChatID is the per-chat workspace scope (the chat/session id) Checks
+	// resolve their Workdir under, so a node's deterministic checks run in the
+	// SAME <root>/<user>/<chatID>/<workdir> dir the node's own git_clone/fs tools
+	// wrote to (see checksPassCriterion). Stamped per-node by dag.buildGateNodes
+	// from the run's chat id; "" falls back to the per-user root (Jail.Resolve).
+	ChatID string
 	// Workspace/WorkspaceUserID/WorkspaceCaps are the SAME jail, identity, and
 	// caps the fs/git/run_command tools use (internal/workspace) — wired once
 	// onto the base Config in internal/serve's buildAgents, so a node's Checks

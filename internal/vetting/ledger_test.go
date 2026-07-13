@@ -221,7 +221,7 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 	}
 
 	act := workerActivity{written: []string{"repo/app/logic.ts"}}
-	got := buildChangedFilesSection(act, j, "u1")
+	got := buildChangedFilesSection(act, j, "u1", "")
 	if !strings.Contains(got, "repo/app/logic.ts") || !strings.Contains(got, "real on-disk content") {
 		t.Errorf("section missing the real file content:\n%s", got)
 	}
@@ -229,15 +229,48 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 		t.Errorf("section missing the header:\n%s", got)
 	}
 	// No jail / no written files → no section (pure-research + unjailed paths).
-	if s := buildChangedFilesSection(act, nil, "u1"); s != "" {
+	if s := buildChangedFilesSection(act, nil, "u1", ""); s != "" {
 		t.Errorf("nil jail should yield no section, got:\n%s", s)
 	}
-	if s := buildChangedFilesSection(workerActivity{}, j, "u1"); s != "" {
+	if s := buildChangedFilesSection(workerActivity{}, j, "u1", ""); s != "" {
 		t.Errorf("no written files should yield no section, got:\n%s", s)
 	}
 	// A path that no longer exists on disk is skipped, not an error.
-	if s := buildChangedFilesSection(workerActivity{written: []string{"repo/gone.ts"}}, j, "u1"); s != "" {
+	if s := buildChangedFilesSection(workerActivity{written: []string{"repo/gone.ts"}}, j, "u1", ""); s != "" {
 		t.Errorf("unreadable path should be skipped, got:\n%s", s)
+	}
+}
+
+// TestBuildChangedFilesSectionUsesPerChatScope pins the coupling with per-chat
+// isolation: the worker writes into <root>/<user>/<chatID>/, so the judge must
+// re-read from the SAME per-chat dir. Reading from the per-user root (chatID
+// "") finds nothing — the exact silent no-op the chatID param prevents.
+func TestBuildChangedFilesSectionUsesPerChatScope(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chatID = "chat-42"
+	// The worker's file lands under the per-chat scope, where its tools wrote it.
+	chatRepo, err := j.Resolve("u1", chatID, "repo/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(chatRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chatRepo, "logic.ts"), []byte("export const REAL = 1 // per-chat content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	act := workerActivity{written: []string{"repo/app/logic.ts"}}
+
+	// With the chat scope, the judge sees the real per-chat file.
+	if got := buildChangedFilesSection(act, j, "u1", chatID); !strings.Contains(got, "per-chat content") {
+		t.Errorf("per-chat section missing the real file content:\n%s", got)
+	}
+	// WITHOUT it (per-user root), the file isn't there — the fix would no-op.
+	if got := buildChangedFilesSection(act, j, "u1", ""); got != "" {
+		t.Errorf("per-user root must NOT find the per-chat file, got:\n%s", got)
 	}
 }
 

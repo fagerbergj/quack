@@ -63,7 +63,7 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil)
 	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil)
-	return NewHandler(st, orch, nil)
+	return NewHandler(st, orch, nil, nil)
 }
 
 // --- UpdateNodeStatus -------------------------------------------------------

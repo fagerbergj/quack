@@ -17,6 +17,12 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
+// checksChatID is the chat id this test runs its plan under — and therefore the
+// per-chat workspace scope the nodes' deterministic checks resolve their workdir
+// through (<root>/<user>/<checksChatID>/…). One constant keeps the fixture dir
+// and the RunPlanAsGraph argument from drifting apart.
+const checksChatID = "chat"
+
 // checksJudgeStub always votes the judge's OWN criteria a clean pass
 // (score 0.9) — any fail this test observes must come from the
 // deterministic checks_pass fold (§4), not from the judge itself.
@@ -51,7 +57,12 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
 	}
-	root, err := jail.UserRoot("u")
+	// The checks run in the node's PER-CHAT scope (<root>/u/<checksChatID>/,
+	// stamped onto vetting.Config.ChatID by buildGateNodes) — the same tree the
+	// node's own fs/git tools write to. Create THAT dir, not the per-user root:
+	// a check whose cwd does not exist cannot run at all, so even `true` would
+	// fail and passcheck would look like a broken fold.
+	root, err := jail.Resolve("u", checksChatID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +112,7 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	ctx := stream.WithYield(context.Background(), func(ev stream.SSEEvent) { record(ev, nil) })
 	outputs := map[string]string{}
 	start := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}
-	if _, err := ex.RunPlanAsGraph(ctx, plan, "quack", "u", "chat", start, record, outputs, nil); err != nil {
+	if _, err := ex.RunPlanAsGraph(ctx, plan, "quack", "u", checksChatID, start, record, outputs, nil); err != nil {
 		t.Fatalf("RunPlanAsGraph: %v", err)
 	}
 

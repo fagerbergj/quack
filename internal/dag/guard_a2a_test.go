@@ -166,9 +166,14 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 	}
 }
 
+// writeJailFile seeds a fixture the RUN's guarded tools will act on, so it must
+// land in the per-chat scope those tools resolve under (<root>/<userID>/
+// <runGraphChatID>/<rel>) — NOT the per-user root. Seeding the per-user root
+// would leave delete_path pointing at a path that does not exist, and the guard
+// tests would assert against a file the worker never touched.
 func writeJailFile(t *testing.T, jail *workspace.Jail, userID, rel string) {
 	t.Helper()
-	real, err := jail.Resolve(userID, rel)
+	real, err := jail.Resolve(userID, runGraphChatID, rel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,9 +185,13 @@ func writeJailFile(t *testing.T, jail *workspace.Jail, userID, rel string) {
 	}
 }
 
+// jailFileExists checks the SAME per-chat scope writeJailFile seeded and the
+// run's tools act on — so "the approved delete really happened" is asserted
+// against the file the worker actually resolved, not a same-named path at the
+// per-user root that nothing ever touched.
 func jailFileExists(t *testing.T, jail *workspace.Jail, userID, rel string) bool {
 	t.Helper()
-	real, err := jail.Resolve(userID, rel)
+	real, err := jail.Resolve(userID, runGraphChatID, rel)
 	if err != nil {
 		t.Fatal(err)
 	}
