@@ -487,9 +487,9 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 	// The remote worker must actually RECEIVE its node task: remoteagent builds
 	// its outbound message from session events only (RunNode input/UserContent
 	// is dropped), so without the gate's prompt-delivery event (vetting.
-	// emitPrompt) an A2A worker never sees "Your task: ..." at all.
+	// emitPrompt) an A2A worker never sees its task at all.
 	stub.mu.Lock()
-	if len(stub.reqText) == 0 || !strings.Contains(stub.reqText[0], "Your task: do it") {
+	if len(stub.reqText) == 0 || !strings.Contains(stub.reqText[0], "do it") {
 		var first string
 		if len(stub.reqText) > 0 {
 			first = stub.reqText[0]

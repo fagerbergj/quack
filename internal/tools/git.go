@@ -371,6 +371,9 @@ type gitCloneResult struct {
 	Dir           string `json:"dir"`
 	Head          string `json:"head"`
 	DefaultBranch string `json:"default_branch"`
+	// Cwd is where you are standing. NOTE: `dir` is relative to it — the clone
+	// landed at <cwd>/<dir>, and `cd` into it with exactly that `dir`.
+	Cwd string `json:"cwd"`
 }
 
 func newGitClone(d Deps) (tool.Tool, error) {
@@ -483,7 +486,7 @@ func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) 
 	if err != nil {
 		relDir = dir
 	}
-	return gitCloneResult{Dir: filepath.ToSlash(relDir), Head: head, DefaultBranch: branch}, nil
+	return gitCloneResult{Dir: filepath.ToSlash(relDir), Head: head, DefaultBranch: branch, Cwd: displayCwd(b.cwd)}, nil
 }
 
 // gitHeadInfo reads a repo's current short HEAD sha and branch name.

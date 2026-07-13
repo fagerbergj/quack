@@ -397,6 +397,8 @@ type dirEntry struct {
 type listDirResult struct {
 	Entries   []dirEntry `json:"entries"`
 	Truncated bool       `json:"truncated"`
+	// Cwd is where you are standing: every path above is relative to it.
+	Cwd string `json:"cwd"`
 }
 
 func newListDir(d Deps) (tool.Tool, error) {
@@ -486,7 +488,7 @@ func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
 		return listDirResult{}, fmt.Errorf("list_dir: %w", walkErr)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return listDirResult{Entries: entries, Truncated: truncated}, nil
+	return listDirResult{Entries: entries, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +503,8 @@ type globArgs struct {
 type globResult struct {
 	Paths     []string `json:"paths"`
 	Truncated bool     `json:"truncated"`
+	// Cwd is where you are standing: every path above is relative to it.
+	Cwd string `json:"cwd"`
 }
 
 func newGlob(d Deps) (tool.Tool, error) {
@@ -562,7 +566,7 @@ func (b fsBinding) glob(a globArgs) (globResult, error) {
 	for i, m := range matches {
 		paths[i] = filepath.ToSlash(filepath.Join(a.Path, m))
 	}
-	return globResult{Paths: paths, Truncated: truncated}, nil
+	return globResult{Paths: paths, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
 }
 
 // pathHasGeneratedDir reports whether any component of p is a vendored/generated
@@ -596,6 +600,8 @@ type grepMatch struct {
 type grepResult struct {
 	Matches   []grepMatch `json:"matches"`
 	Truncated bool        `json:"truncated"`
+	// Cwd is where you are standing: every path above is relative to it.
+	Cwd string `json:"cwd"`
 }
 
 func newGrep(d Deps) (tool.Tool, error) {
@@ -687,7 +693,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 	if walkErr != nil {
 		return grepResult{}, fmt.Errorf("grep: %w", walkErr)
 	}
-	return grepResult{Matches: matches, Truncated: truncated}, nil
+	return grepResult{Matches: matches, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
 }
 
 // grepFile scans one file for lines matching re, returning up to len(lines)
