@@ -146,6 +146,34 @@ guarded as a command:
     run_code: judge+confirm
 ```
 
+## What comes back is enforced, not requested
+
+A script may read whatever it likes. What it RETURNS is bounded: any large string in the
+return value that is verbatim payload a tool in that script already handed it is **elided**,
+with a marker saying so, and the model is told what was dropped and how much.
+
+This is enforcement rather than instruction because instruction demonstrably failed. The
+tool description already said, in capitals, *"RETURN ONLY WHAT YOU NEED — NEVER THE FILE
+CONTENTS"*, with a worked example — and code mode's very first live script returned 52.2 KB
+of file contents anyway. Asking does not work.
+
+No other harness enforces this. Cloudflare's Code Mode "relies entirely on the language
+model's own judgment" (their own documentation); goose returns whatever its runtime printed.
+They can afford to: on a 200k-context frontier model a dump is waste. On a 65k window it is
+the failure the feature exists to prevent.
+
+What is NOT elided, and must never be:
+
+- a **computed** answer — a patch, a diff, a generated file. None is a verbatim substring of
+  what a tool returned (its own markers and interleaving break containment), so the detector
+  cannot mistake one for an echo. There is a test whose only job is to prove this; if it ever
+  fails, eliding has started destroying real work and must be reverted.
+- a **short quote** — a signature, a failing assertion, the three lines around a bug. That is
+  an answer, not a dump.
+
+If a script genuinely needs a file's full text in the model's context, `read_file` it
+directly. Code mode is for the case where it does not.
+
 ## The honest limits
 
 - **The human now approves a PROGRAM, not each command.** That is more power per approval —

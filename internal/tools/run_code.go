@@ -109,6 +109,22 @@ const (
 	// being a quote and starts being a dump. A few snippets never reach it; a file's
 	// contents pass it immediately.
 	runCodeEchoWarnBytes = 4 << 10
+	// runCodeEchoElideChunk is the size at which ONE verbatim returned string stops
+	// being a quote and becomes a dump we refuse to deliver. Below it a verbatim
+	// string is a legitimate answer — a signature, a failing assertion, the three
+	// lines around a bug — and is passed through untouched. At or above it, a string
+	// that is verbatim tool payload is a file coming back, and it is ELIDED.
+	//
+	// Warning the model was not enough. run_code's description already says, in
+	// capitals, "RETURN ONLY WHAT YOU NEED — NEVER THE FILE CONTENTS", with a worked
+	// example — and the first live script returned 52.2 KB of file contents anyway.
+	// No other harness enforces this (Cloudflare's Code Mode "relies entirely on the
+	// language model's own judgment"; goose returns whatever the runtime printed):
+	// they run 200k-context frontier models, where a dump is waste, not failure. On a
+	// 65k window it IS the failure — it is the entire cost the feature exists to
+	// avoid. So we do not ask. The bytes are only spent when we hand them BACK: the
+	// script may read whatever it likes, but what returns is bounded here.
+	runCodeEchoElideChunk = 1 << 10
 	// runCodeEchoScanBytes bounds what the detector RETAINS to compare against — a
 	// script that reads 200 files must not make the tool hold all of them. Past it,
 	// bytes are still counted, they are just no longer matchable.
@@ -431,7 +447,10 @@ func (r *scriptRun) encodeReturn(v goja.Value) (result, warning string) {
 		return "", ""
 	}
 	exported := v.Export()
-	warning = r.echoWarning(exported)
+	// Elide BEFORE encoding: the bytes only cost the model anything when they are
+	// handed back, so this is the boundary where the feature is actually enforced.
+	exported, cut := r.elideEchoes(exported)
+	warning = r.echoWarning(cut)
 	b, err := json.Marshal(exported)
 	if err != nil {
 		return truncate(fmt.Sprint(exported), runCodeMaxResult), warning
@@ -469,18 +488,48 @@ func (r *scriptRun) encodeReturn(v goja.Value) (result, warning string) {
 // one legitimate large-and-verbatim return there is (a patch assembled out of the
 // lines it read) would be the thing destroyed. The model gets the loud version and
 // the size, and can fix its next script itself.
-func (r *scriptRun) echoWarning(returned any) string {
-	echoed := r.echoedBytes(returned)
-	if echoed < runCodeEchoWarnBytes {
+func (r *scriptRun) echoWarning(elided int) string {
+	if elided == 0 {
 		return ""
 	}
-	return fmt.Sprintf("YOU RETURNED THE FILE CONTENTS. %s of your return value is text the tools in this "+
-		"script already handed you verbatim (they returned %s of such payload in total). It is now in your "+
-		"context — which is the entire cost code mode exists to avoid: the SCRIPT is what reads the bulk, "+
-		"YOU are not. Next time return only the structure you need from it — paths, line numbers, counts, "+
-		"symbol names, a short quoted snippet — never a whole `content`/`output`/`matches` field. "+
-		"{path, total_lines, exports: [...]} is right; {path, content} is the mistake you just made.",
-		humanBytes(echoed), humanBytes(r.payloadBytes))
+	return fmt.Sprintf("YOU TRIED TO RETURN THE FILE CONTENTS, AND I DROPPED THEM. %s of your return value "+
+		"was text the tools in this script had already handed you verbatim (they returned %s of such payload "+
+		"in total), so it was ELIDED rather than delivered — it is not in your context. That is the entire "+
+		"cost code mode exists to avoid: the SCRIPT reads the bulk, YOU do not. Return only the structure you "+
+		"need — paths, line numbers, counts, symbol names, a short quoted snippet — never a whole "+
+		"`content`/`output`/`matches` field. {path, total_lines, exports: [...]} is right; {path, content} is "+
+		"the mistake you just made. If you genuinely need a file's text, read_file it directly.",
+		humanBytes(elided), humanBytes(r.payloadBytes))
+}
+
+// elideEchoes rebuilds the return value with every LARGE verbatim-payload string
+// replaced by a marker naming what was dropped, and reports how many bytes it cut.
+// A computed answer is never touched: a patch, a diff, a generated file is not a
+// verbatim substring of anything a tool returned — its own markers and interleaving
+// break containment — so only an actual echo matches. A short quote is not touched
+// either (runCodeEchoElideChunk).
+func (r *scriptRun) elideEchoes(returned any) (any, int) {
+	cut := 0
+	out := mapStrings(returned, 0, func(s string) (string, bool) {
+		if len(s) < runCodeEchoElideChunk || !r.isEcho(s) {
+			return s, false
+		}
+		cut += len(s)
+		return fmt.Sprintf("[elided by code mode: %s of content your script already read. "+
+			"It is NOT re-sent to you — that is the whole point. Return structure instead: "+
+			"paths, line numbers, counts, symbol names, a short quote.]", humanBytes(len(s))), true
+	})
+	return out, cut
+}
+
+// isEcho reports whether s is verbatim payload some tool in this script returned.
+func (r *scriptRun) isEcho(s string) bool {
+	for _, p := range r.payloads {
+		if strings.Contains(p, s) || strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // echoedBytes is how many bytes of the return value are verbatim tool payload.
@@ -901,4 +950,51 @@ func summarize1(desc string) string {
 		desc = truncate(desc, runCodeMaxDescChars) + "…"
 	}
 	return desc
+}
+
+// mapStrings rebuilds v with every string passed through fn — the transforming twin
+// of walkStrings. fn returns the replacement and whether it replaced anything; a
+// container is only rebuilt if something inside it actually changed, so the common
+// case (nothing elided) returns the original value untouched.
+//
+// goja exports a script's return value as map[string]any / []any / string / float64,
+// so those are the shapes that matter; anything else is returned as-is.
+func mapStrings(v any, depth int, fn func(string) (string, bool)) any {
+	if v == nil || depth > maxWalkDepth {
+		return v
+	}
+	switch t := v.(type) {
+	case string:
+		if s, changed := fn(t); changed {
+			return s
+		}
+		return t
+	case []any:
+		out := make([]any, len(t))
+		changed := false
+		for i, e := range t {
+			out[i] = mapStrings(e, depth+1, fn)
+			if !reflect.DeepEqual(out[i], e) {
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		changed := false
+		for k, e := range t {
+			out[k] = mapStrings(e, depth+1, fn)
+			if !reflect.DeepEqual(out[k], e) {
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return out
+	}
+	return v
 }
