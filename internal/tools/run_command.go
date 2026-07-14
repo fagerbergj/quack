@@ -209,12 +209,19 @@ func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 		return runCommandResult{}, fmt.Errorf("run_command: %q is not a directory", dirArg)
 	}
 
+	// The sandbox's writable subtree is the NODE's own dir, not just this command's
+	// cwd — see workspace.Caps.WorkRoot. Binding the cwd alone silently ate every
+	// file a child wrote elsewhere in its own workspace (a `git clone` one level up
+	// vanished), because a private /tmp hides a workspace root that lives under /tmp.
+	caps := b.caps
+	caps.WorkRoot = b.workRoot()
+
 	t0 := time.Now()
 	var res workspace.ExecResult
 	if shell {
-		res, err = workspace.RunShell(context.Background(), dir, command, b.caps)
+		res, err = workspace.RunShell(context.Background(), dir, command, caps)
 	} else {
-		res, err = workspace.RunPipeline(context.Background(), dir, stages, b.caps)
+		res, err = workspace.RunPipeline(context.Background(), dir, stages, caps)
 	}
 	dur := time.Since(t0).Milliseconds()
 	if err != nil {

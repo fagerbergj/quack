@@ -196,11 +196,36 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	args := bwrapSystemArgs()
 	args = append(args, tmpArgs(caps)...)
 	args = append(args, toolchainArgs(caps)...)
-	// The only writable paths: the child's own working directory and its
-	// isolated $HOME (npm's _cacache, GOCACHE, ~/.gitconfig — see Jail.HomeDir).
-	// NOT the whole workspace root: a node's child cannot reach another node's
-	// clone, another chat's tree, or another user's jail.
-	args = append(args, "--bind", dir, dir)
+	// The only writable paths: the child's own WORKSPACE — the calling node's own
+	// directory (Caps.WorkRoot), which contains its cwd — and its isolated $HOME
+	// (npm's _cacache, GOCACHE, ~/.gitconfig — see Jail.HomeDir). NOT the whole
+	// workspace root: a node's child still cannot reach another node's clone,
+	// another chat's tree, or another user's jail.
+	//
+	// Binding only the CWD was silent data loss. tmpArgs replaces /tmp wholesale,
+	// and a workspace root that lives under /tmp (ours does) is therefore GONE
+	// inside the sandbox except for the one path bound back on top of it. Anything
+	// the child wrote elsewhere in its own workspace — a `git clone` into the node
+	// dir, a file one directory up — landed in the throwaway mount and evaporated
+	// when the command exited. The Go fs tools are not sandboxed and saw the real
+	// tree, so the model was handed two contradictory views of its own workspace.
+	// Live (2026-07-13), a code-explorer, after cloning a repo with the shell:
+	//
+	//	"The software-agent-sdk clone is missing from this workspace… I see the
+	//	 workspace has changed between turns… The cd tool seems to have lost its
+	//	 state or the path resolution is broken."
+	//
+	// It hadn't. We ate its files. The node's own dir is what the fs tools already
+	// treat as writable (it is the invisible root every model path resolves under),
+	// so binding it here removes an inconsistency rather than widening anything.
+	work := caps.WorkRoot
+	if work == "" {
+		work = dir // no node scope (a direct/un-gated call): the cwd is all there is
+	}
+	args = append(args, "--bind", work, work)
+	if dir != work {
+		args = append(args, "--bind", dir, dir) // cwd outside the node dir: bind it too
+	}
 	if caps.HomeDir != "" && caps.HomeDir != dir {
 		args = append(args, "--bind", caps.HomeDir, caps.HomeDir)
 	}
