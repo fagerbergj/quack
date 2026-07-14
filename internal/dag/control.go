@@ -9,9 +9,10 @@ import (
 // vetting.NodeControl: cancel and steer are cooperative, taking effect at the
 // gate's stage boundaries (not mid-model-call — see docs Phase 3c).
 type nodeControl struct {
-	mu        sync.Mutex
-	cancelled bool
-	steer     string
+	mu             sync.Mutex
+	cancelled      bool
+	steer          string
+	steerDelivered bool // guidance already handed to a tool call this steer generation
 }
 
 func (c *nodeControl) Cancelled() bool {
@@ -37,7 +38,23 @@ func (c *nodeControl) markCancelled() {
 func (c *nodeControl) setSteer(g string) {
 	c.mu.Lock()
 	c.steer = g
+	c.steerDelivered = false
 	c.mu.Unlock()
+}
+
+// takeSteerForTool returns pending steer guidance NOT YET handed to a tool call
+// this generation, and marks it delivered — the tool-layer half of steer (see
+// steerguard.go), mirroring cancel's NodeCancelled path. It does NOT clear
+// c.steer: TakeSteer (the gate-stage boundary) still consumes it afterwards to
+// drive the existing full re-run, which stays the backstop.
+func (c *nodeControl) takeSteerForTool() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.steer == "" || c.steerDelivered {
+		return ""
+	}
+	c.steerDelivered = true
+	return c.steer
 }
 
 // runControls tracks per-chat, per-node controls for active runs so the
@@ -173,4 +190,24 @@ func (e *Executor) SteerNode(chatID, nodeID, guidance string) bool {
 	c.setSteer(guidance)
 	e.controls.recordSteer(chatID, nodeID, guidance)
 	return true
+}
+
+// NodeSteerGuidance returns pending steer guidance for a node that has not yet
+// been delivered to the tool layer, and marks it delivered. It is the query
+// side of SteerNode, wired into the TOOL layer (tools.Deps.NodeSteerGuidance,
+// via internal/serve) the same way NodeCancelled is: a steered worker's very
+// next tool call gets the guidance as that call's RESULT instead of the real
+// tool running, so a worker deep in a tool loop hears the redirect within one
+// call rather than only after its whole draft finishes at the gate's next
+// stage boundary. The gate-stage TakeSteer check remains the backstop that
+// triggers a full clean re-run with the guidance folded into the prompt.
+//
+// "" when no node is running under that ID, or the node's pending guidance was
+// already delivered to a tool call this steer generation.
+func (e *Executor) NodeSteerGuidance(chatID, nodeID string) string {
+	c := e.controls.get(chatID, nodeID)
+	if c == nil {
+		return ""
+	}
+	return c.takeSteerForTool()
 }
