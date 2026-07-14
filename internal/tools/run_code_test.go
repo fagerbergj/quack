@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,6 +56,13 @@ func (scriptCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return 
 
 func newScriptCtx() scriptCtx { return scriptCtx{newFakeCtx()} }
 
+// scriptGatedCtx is the same, for a call that runs under a real gated NODE (the
+// advisor-thread marker in the prompt) — which is what the cancel guard and the
+// per-node jail scope read.
+type scriptGatedCtx struct{ *gatedCtx }
+
+func (scriptGatedCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
+
 // runScriptTool invokes run_code the way the model does — through the tool's own
 // Run — and decodes the single result that comes back.
 func runScriptTool(t *testing.T, tools map[string]tool.Tool, code string) runCodeResult {
@@ -63,6 +71,11 @@ func runScriptTool(t *testing.T, tools map[string]tool.Tool, code string) runCod
 	if err != nil {
 		t.Fatalf("run_code returned a Go error (%v); every failure must come back INSIDE the result, or the calls the script already made are lost to the ledger", err)
 	}
+	return decodeScriptResult(t, raw)
+}
+
+func decodeScriptResult(t *testing.T, raw map[string]any) runCodeResult {
+	t.Helper()
 	b, err := json.Marshal(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -470,21 +483,28 @@ func TestLogsComeBack(t *testing.T) {
 // 7. Which tools code mode may bind
 // ---------------------------------------------------------------------------
 
-// TestConfirmTierToolIsNotInTheScriptAPI: a script has nowhere to suspend to, so
-// a tool that pauses the node for a human (confirm tier — guard.go) must not
-// become a function inside one. Mid-script, that pause has no turn boundary to
-// land on, and resuming would re-run the script from the top, re-doing every side
-// effect it had already performed. It stays available as an ordinary
-// one-call-per-turn tool: code mode adds a path, it removes none.
-func TestConfirmTierToolIsNotInTheScriptAPI(t *testing.T) {
+// TestConfirmTierToolsAreInTheScriptAPI: the confirmation is on the SCRIPT.
+// run_code is itself one tool call, so it pauses for a human like any other tool —
+// and the human approves ONE readable program before a line of it runs. There is
+// therefore no mid-script suspension to arrange, and the tools that would each have
+// asked on their own ARE callable inside a script. This is not a nicety: with
+// run_command and git_push excluded (the shipped behaviour of #219), a script could
+// not run the tests or push a branch — which is most of what code mode is for.
+func TestConfirmTierToolsAreInTheScriptAPI(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	built, err := Build([]string{"read_file", "delete_path", vetting.RunCodeToolName}, Deps{
+	built, err := Build([]string{"read_file", "delete_path", "run_command", "git_push", vetting.RunCodeToolName}, Deps{
 		Workspace:       j,
 		WorkspaceUserID: "u1",
-		Guards:          map[string]string{"delete_path": "confirm"},
+		GitPush:         true,
+		Guards: map[string]string{
+			"delete_path":           "confirm",
+			"run_command":           "judge+confirm",
+			"git_push":              "judge+confirm",
+			vetting.RunCodeToolName: "judge+confirm",
+		},
 		SafetyJudge: func(context.Context, string, string, string, map[string]any, string) (bool, string, error) {
 			return true, "", nil
 		},
@@ -500,20 +520,217 @@ func TestConfirmTierToolIsNotInTheScriptAPI(t *testing.T) {
 			desc = b.Description()
 		}
 	}
-	if !names["delete_path"] {
-		t.Error("delete_path was removed from the agent's tools; code mode must not remove anything")
+	for _, want := range []string{"read_file(", "delete_path(", "run_command(", "git_push("} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("%s is missing from the script API — the whole script is confirmed as one operation, so a "+
+				"confirm-tier tool has no reason to be excluded from it", want)
+		}
 	}
-	if strings.Contains(desc, "delete_path(") {
-		t.Error("a confirm-tier tool is in the script API: a mid-script human pause has nowhere to land, and resuming would re-run the script's side effects")
+	if !names["delete_path"] || !names["run_command"] {
+		t.Error("a tool was removed from the agent's direct tools; code mode must not remove anything")
 	}
-	if !strings.Contains(desc, "read_file(") {
-		t.Fatal("the unguarded tool should still be in the API")
+}
+
+// TestScriptIsGuardedAsAWhole: run_code itself carries the guard ladder, and the
+// tools bound INSIDE a script do not carry their own — the program was judged and
+// approved once, as a program, so re-judging each of its calls would be redundant
+// (and, at the judge tier, a model call per loop iteration). The safety judge must
+// therefore be consulted exactly ONCE per script: about the script.
+func TestScriptIsGuardedAsAWhole(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var judged []string
+	built, err := Build([]string{"read_file", "write_file", "delete_path", vetting.RunCodeToolName}, Deps{
+		Workspace:       j,
+		WorkspaceUserID: "u1",
+		Guards:          map[string]string{"delete_path": "judge"},
+		SafetyJudge: func(_ context.Context, _, _, toolName string, _ map[string]any, _ string) (bool, string, error) {
+			judged = append(judged, toolName)
+			return true, "on task", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]tool.Tool{}
+	for _, b := range built {
+		byName[b.Name()] = b
+	}
+	b := fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeUserFile(t, b, f, "x")
+	}
+
+	out := runScriptTool(t, byName, `
+		for (const f of ["a.txt", "b.txt", "c.txt"]) { delete_path({ path: f }); }
+		return "ok";
+	`)
+	if out.Error != "" {
+		t.Fatalf("script failed: %s", out.Error)
+	}
+	if len(out.Calls) != 3 {
+		t.Fatalf("calls = %d, want 3 — the deletes must still be on the ledger's record", len(out.Calls))
+	}
+	// ONE judge call, and it was about the SCRIPT — not one per in-script delete.
+	if len(judged) != 1 || judged[0] != vetting.RunCodeToolName {
+		t.Errorf("safety judge saw %v, want exactly one verdict on %q: the program is judged once, "+
+			"as a whole, and its calls are not re-judged", judged, vetting.RunCodeToolName)
+	}
+	// And the deletes really happened — the script's tools are bound to the real,
+	// jailed implementations.
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		if p, err := b.jail.Resolve("u1", "", f); err == nil {
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				t.Errorf("%s still exists — the in-script delete did not run", f)
+			}
+		}
+	}
+}
+
+// TestScriptTierIsAtLeastTheUnionOfItsTools is the structural rule that keeps this
+// safe as tools are added: run_code's tier is its OWN configured tier RAISED to the
+// union of every tier it binds. A script can do anything its tools can do, so it
+// must be at least as guarded as the most-guarded tool in it — and a tool added to
+// an agent tomorrow cannot become reachable through a script under a weaker guard
+// than its own, even if someone forgets to touch the config.
+func TestScriptTierIsAtLeastTheUnionOfItsTools(t *testing.T) {
+	cases := map[string]struct {
+		names  []string
+		guards map[string]string
+		want   guardTier
+		none   bool
+	}{
+		"a judge-tier tool raises the script to judge": {
+			names:  []string{"read_file", "delete_path"},
+			guards: map[string]string{"delete_path": "judge"},
+			want:   guardTier{Judge: true},
+		},
+		"a judge+confirm tool raises the script to judge+confirm": {
+			names:  []string{"read_file", "run_command"},
+			guards: map[string]string{"run_command": "judge+confirm"},
+			want:   guardTier{Judge: true, Confirm: true},
+		},
+		"the union of two tiers, not just the last one": {
+			names:  []string{"delete_path", "run_command"},
+			guards: map[string]string{"delete_path": "judge", "run_command": "confirm"},
+			want:   guardTier{Judge: true, Confirm: true},
+		},
+		"run_code's own configured tier still applies with no guarded tools": {
+			names:  []string{"read_file"},
+			guards: map[string]string{vetting.RunCodeToolName: "confirm"},
+			want:   guardTier{Confirm: true},
+		},
+		// A tool EXCLUDED from the script API (long-running: it ends the turn) is not
+		// reachable from a script, so its tier must not raise the script's.
+		"an excluded tool's tier does not raise the script": {
+			names:  []string{"read_file", "ask_user"},
+			guards: map[string]string{"ask_user": "judge+confirm"},
+			none:   true,
+		},
+		"nothing guarded, nothing configured: run_code is unguarded": {
+			names: []string{"read_file"},
+			none:  true,
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			j, err := workspace.NewJail(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			built, err := Build(append(c.names, vetting.RunCodeToolName), Deps{
+				Workspace:       j,
+				WorkspaceUserID: "u1",
+				Guards:          c.guards,
+				SafetyJudge: func(context.Context, string, string, string, map[string]any, string) (bool, string, error) {
+					return true, "", nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rc tool.Tool
+			for _, b := range built {
+				if b.Name() == vetting.RunCodeToolName {
+					rc = b
+				}
+			}
+			g, guarded := rc.(*guardedTool)
+			if c.none {
+				if guarded {
+					t.Fatalf("run_code was guarded (%+v) with nothing to raise it", g.tier)
+				}
+				return
+			}
+			if !guarded {
+				t.Fatalf("run_code is UNGUARDED (%T) while it binds a guarded tool — a script would be a "+
+					"way around that tool's guard", rc)
+			}
+			if g.tier != c.want {
+				t.Errorf("run_code tier = %+v, want %+v", g.tier, c.want)
+			}
+		})
+	}
+}
+
+// TestCancelGuardStopsAScriptMidExecution: the ONE per-call guard a script keeps.
+// A confirmed script still has to stop when the user cancels the node — an approval
+// is not a licence to keep running after the user pulled the plug.
+func TestCancelGuardStopsAScriptMidExecution(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The user cancels the node while the script is running: the predicate says
+	// "not cancelled" for run_code's own entry and the first in-script read, then
+	// "cancelled" from the next call on.
+	asked := 0
+	built, err := Build([]string{"read_file", vetting.RunCodeToolName}, Deps{
+		Workspace:       j,
+		WorkspaceUserID: "u1",
+		NodeCancelled:   func(string, string) bool { asked++; return asked > 2 },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]tool.Tool{}
+	for _, b := range built {
+		byName[b.Name()] = b
+	}
+	writeUserFile(t, fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}, "a.txt", "x")
+
+	// The script CATCHES its own errors and keeps looping — a cancel that merely
+	// threw would be swallowed, exactly as the call cap would be.
+	raw, err := byName[vetting.RunCodeToolName].(runnableTool).Run(
+		scriptGatedCtx{newGatedCtx(t, "plan-1", "n1", "chat-1")},
+		map[string]any{"code": `
+			let done = 0;
+			for (let i = 0; i < 20; i++) {
+				try { read_file({ path: "a.txt" }); done++; } catch (e) { /* swallow */ }
+			}
+			return done;
+		`})
+	if err != nil {
+		t.Fatalf("run_code returned a Go error: %v", err)
+	}
+	out := decodeScriptResult(t, raw)
+	if out.Error == "" {
+		t.Fatalf("the script ran to completion on a CANCELLED node (result %q)", out.Result)
+	}
+	if !strings.Contains(out.Error, "CANCELLED") {
+		t.Errorf("error = %q, want it to name the cancellation", out.Error)
+	}
+	if len(out.Calls) > 2 {
+		t.Errorf("the script made %d calls after the node was cancelled; the cancel guard must stop it "+
+			"within one call, even though the script swallows the error", len(out.Calls))
 	}
 }
 
 // longRunningTool ends the model's turn by design and is answered on the next one
-// (ask_user, get_user_choice) — so, like a confirm-tier tool, it cannot live
-// inside a script.
+// (ask_user, get_user_choice). It is the one thing a script still cannot hold: it
+// has no turn boundary to be answered on.
 func TestLongRunningToolIsNotInTheScriptAPI(t *testing.T) {
 	slow, err := functiontool.New[fakeToolArgs, fakeToolResult](
 		functiontool.Config{Name: "await_the_oracle", Description: "Waits.", IsLongRunning: true},
@@ -529,7 +746,7 @@ func TestLongRunningToolIsNotInTheScriptAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, err := newRunCode([]tool.Tool{slow, quick}, func(tl tool.Tool) bool { return noCodeMode(tl, Deps{}) })
+	rc, err := newRunCode([]tool.Tool{slow, quick}, noCodeMode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,6 +754,37 @@ func TestLongRunningToolIsNotInTheScriptAPI(t *testing.T) {
 		t.Error("a long-running tool is in the script API: it ends the model's turn by design")
 	}
 	if !strings.Contains(rc.Description(), "divine_the_corpus(") {
+		t.Fatal("the ordinary tool should still be in the API")
+	}
+	// And the model is TOLD why, so it does not write a script that calls one and
+	// then has to be told by an exception.
+	if !strings.Contains(rc.Description(), "ask the user") {
+		t.Errorf("the generated API does not say why a turn-ending tool is absent:\n%s", rc.Description())
+	}
+}
+
+// TestAskUserIsNotInTheScriptAPI: ask_user is the OTHER turn-ending tool, and it is
+// not flagged IsLongRunning — it is a plain function tool that ends the turn with
+// SkipSummarization, and the trust gate parks the node on seeing the call in the
+// session. An in-script call emits no session event, so the gate would never see the
+// question: the script would sail on with "forwarded to the user" and nobody would
+// ever be asked. It must be excluded BY NAME, not by IsLongRunning.
+func TestAskUserIsNotInTheScriptAPI(t *testing.T) {
+	built, err := Build([]string{"current_date", vetting.AskToolName, vetting.RunCodeToolName}, Deps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var desc string
+	for _, b := range built {
+		if b.Name() == vetting.RunCodeToolName {
+			desc = b.Description()
+		}
+	}
+	if strings.Contains(desc, vetting.AskToolName+"(") {
+		t.Error("ask_user is in the script API: a script has no turn boundary for the answer to arrive on, " +
+			"and the gate never sees an in-script call, so the user would never actually be asked")
+	}
+	if !strings.Contains(desc, "current_date(") {
 		t.Fatal("the ordinary tool should still be in the API")
 	}
 }

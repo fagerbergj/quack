@@ -139,7 +139,21 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	if d.Guarded == nil {
 		d.Guarded = GuardedClient()
 	}
+	// Every tool is built ONCE and then viewed two ways:
+	//
+	//   out       — the MODEL's direct, one-call-per-turn tools: the full guard
+	//               ladder (guard.go), then the cancel guard (cancelguard.go).
+	//   scriptAPI — the SAME tool objects as a SCRIPT sees them (run_code.go):
+	//               cancel-guarded, but NOT ladder-guarded. The ladder sits on
+	//               run_code instead, so the human and the safety judge approve the
+	//               whole PROGRAM once, before a line of it runs — see scriptTier.
+	//
+	// Neither view is unguarded, and neither is reachable without going through one
+	// of these two constructions: a new tool added to the registry gets both, or it
+	// gets neither.
 	out := make([]tool.Tool, 0, len(names))
+	var scriptAPI []tool.Tool
+	var floor guardTier // the strongest tier any tool the script can call carries
 	wantCodeMode := false
 	for _, name := range names {
 		if name == vetting.RunCodeToolName {
@@ -155,25 +169,45 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tools: build %q: %w", name, err)
 		}
-		t, err = wrap(t, name, d)
+		tier, guarded := parseGuardTier(d.Guards[name])
+
+		direct := t
+		if guarded {
+			if direct, err = newGuardedTool(direct, tier, d.SafetyJudge, d.Sessions); err != nil {
+				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
+			}
+		}
+		if direct, err = cancelWrap(direct, name, d); err != nil {
+			return nil, err
+		}
+		out = append(out, direct)
+
+		script, err := cancelWrap(t, name, d)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, t)
+		scriptAPI = append(scriptAPI, script)
+		if guarded && !noCodeMode(t) {
+			floor.Judge = floor.Judge || tier.Judge
+			floor.Confirm = floor.Confirm || tier.Confirm
+		}
 	}
 	if wantCodeMode {
-		// Code mode (run_code.go) is assembled LAST, over the tools already built
-		// AND ALREADY WRAPPED above. That ordering is the whole safety argument: a
-		// script's call invokes the same guarded, cancellable tool object a direct
-		// call does, so the guard ladder, the cancel guard, the path jail and the
-		// workspace caps all apply to it for free. Its API is generated from those
-		// same tools' declarations, so it cannot drift from them.
-		t, err := newRunCode(out, func(t tool.Tool) bool { return noCodeMode(t, d) })
+		// Code mode (run_code.go) is assembled LAST, over the tools built above —
+		// bound to the SCRIPT view of them (jail, caps, sandbox and cancel guard
+		// intact; individual guard ladder off), and itself wrapped in the guard
+		// ladder at scriptTier. Its API is generated from those same tools'
+		// declarations, so it cannot drift from them.
+		t, err := newRunCode(scriptAPI, noCodeMode)
 		if err != nil {
 			return nil, fmt.Errorf("tools: build %q: %w", vetting.RunCodeToolName, err)
 		}
-		t, err = wrap(t, vetting.RunCodeToolName, d)
-		if err != nil {
+		if tier, guarded := scriptTier(floor, d); guarded {
+			if t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions); err != nil {
+				return nil, fmt.Errorf("tools: guard %q: %w", vetting.RunCodeToolName, err)
+			}
+		}
+		if t, err = cancelWrap(t, vetting.RunCodeToolName, d); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -181,44 +215,58 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	return out, nil
 }
 
-// wrap applies the guard ladder (guard.go) and then the per-node cancel guard
-// (cancelguard.go) to one built tool. The cancel guard is OUTERMOST, so a
-// cancelled node's call is refused before it can reach the guard ladder (no
-// point safety-judging or human-confirming an operation for a node the user
-// just stopped).
-func wrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
-	var err error
-	if tier, guarded := parseGuardTier(d.Guards[name]); guarded {
-		t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions)
-		if err != nil {
-			return nil, fmt.Errorf("tools: guard %q: %w", name, err)
-		}
+// scriptTier is the guard tier run_code runs under: its OWN configured tier
+// (config/quack.yaml's workspace.guards — judge+confirm by default, matching
+// run_command), RAISED to `floor`, the union of the tiers of every tool the script
+// can call.
+//
+// The floor is the invariant that makes this design safe as tools are added: a
+// script can do anything its tools can do, so it must be at least as guarded as the
+// most-guarded tool in it. Config can only make run_code MORE guarded, never less,
+// and a tool given a guard tier tomorrow cannot become reachable through a script
+// under a weaker guard than its own — even if nobody remembers to touch run_code's
+// entry.
+func scriptTier(floor guardTier, d Deps) (guardTier, bool) {
+	tier, _ := parseGuardTier(d.Guards[vetting.RunCodeToolName])
+	tier.Judge = tier.Judge || floor.Judge
+	tier.Confirm = tier.Confirm || floor.Confirm
+	return tier, tier.Judge || tier.Confirm
+}
+
+// cancelWrap applies the per-node cancel guard (cancelguard.go). It is the
+// OUTERMOST wrapper on both views of a tool: a cancelled node's call is refused
+// before it can reach the guard ladder (no point safety-judging or human-confirming
+// an operation for a node the user just stopped), and before it can reach a script's
+// next statement (a cancelled node must stop mid-script).
+func cancelWrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
+	if d.NodeCancelled == nil {
+		return t, nil
 	}
-	if d.NodeCancelled != nil {
-		t, err = newCancelGuard(t, d.NodeCancelled)
-		if err != nil {
-			return nil, fmt.Errorf("tools: cancel guard %q: %w", name, err)
-		}
+	wrapped, err := newCancelGuard(t, d.NodeCancelled)
+	if err != nil {
+		return nil, fmt.Errorf("tools: cancel guard %q: %w", name, err)
 	}
-	return t, nil
+	return wrapped, nil
 }
 
 // noCodeMode reports whether a tool must stay direct-call only, i.e. must NOT
-// become a function inside a script. Two kinds qualify, both for the same
-// reason — a script has nowhere to suspend to:
+// become a function inside a script. Exactly one kind qualifies now: a tool that
+// ENDS THE MODEL'S TURN and is answered on the NEXT one. A script has no turn
+// boundary inside it to be answered on — the question would go nowhere and the
+// script would sail on with a meaningless result. Two shapes of it:
 //
-//   - A CONFIRM-tier tool pauses the node for a human (guard.go). Mid-script,
-//     that pause has no turn boundary to land on, and resuming would re-run the
-//     script from the top — re-doing every side effect it had already performed.
-//   - A LONG-RUNNING tool (ask_user, get_user_choice) ends the model's turn by
-//     design and is answered on the next one.
+//   - ADK's long-running tools (get_user_choice), flagged IsLongRunning.
+//   - ask_user, which is an ordinary function tool that ends the turn by setting
+//     SkipSummarization; the trust GATE detects the call in the session and parks
+//     the node (vetting.AskToolName). An in-script call emits no session event, so
+//     the gate would never see the question at all.
 //
-// Both remain fully available as ordinary one-call-per-turn tools; code mode
-// adds a path, it never removes one.
-func noCodeMode(t tool.Tool, d Deps) bool {
-	if t.IsLongRunning() {
-		return true
-	}
-	tier, guarded := parseGuardTier(d.Guards[t.Name()])
-	return guarded && tier.Confirm
+// A CONFIRM-tier tool used to be excluded too, for a suspension problem of its own:
+// a mid-script human pause would have had to resume by re-running the script from
+// the top, re-doing every side effect it had already performed. That exclusion is
+// gone, because the confirmation moved to where it belongs — run_code is ONE tool
+// call, so the human approves the whole program before any of it runs, and there is
+// nothing mid-script left to suspend for.
+func noCodeMode(t tool.Tool) bool {
+	return t.IsLongRunning() || t.Name() == vetting.AskToolName
 }

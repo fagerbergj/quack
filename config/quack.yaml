@@ -294,6 +294,13 @@ workspace:
     git_rebase: judge
     git_push: judge+confirm
     run_command: judge+confirm   # the sandbox contains WHERE it can reach; the judge contains WHAT it does
+    # Code mode: the guard is on the SCRIPT. run_code is one tool call, so the judge
+    # and the human see the whole PROGRAM and approve it ONCE, before a line of it
+    # runs — and its calls are then not re-gated individually. A script that can run
+    # commands must be at least as guarded as a command, hence the same tier.
+    # (Lowering this entry cannot open a hole: run_code's tier is RAISED to the union
+    # of the tiers of every tool it binds — see tools.scriptTier.)
+    run_code: judge+confirm
 
 # Bundled integrations (inbound + outbound). Optional; each is off unless its
 # sub-section is present. Commented out here because dev/local runs typically
