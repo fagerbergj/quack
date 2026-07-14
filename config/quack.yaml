@@ -135,7 +135,9 @@ agents:
 # internal/tools/backends.go.
 tools:
   web_search:
-    kind: searxng                 # searxng (needs url) | exa. empty ⇒ searxng. exa's keyless MCP rate-limits (429) → searxng.
+    kind: exa                     # searxng (needs url) | exa. exa is keyless hosted MCP; used here because
+                                   # searxng is being bot-walled. exa's keyless MCP does rate-limit (429) —
+                                   # acceptable trade for now (see AGENTS.md/memory for context).
     url: ${QUACK_SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080; unused by kind: exa
     # exa is keyless via Exa's hosted MCP by default (the no-docker path). Add an
     # api_key to use Exa's REST API instead (structured JSON, more robust):
@@ -234,7 +236,8 @@ workspace:
   #     confined (a throwaway container/VM) or you trust the agents with that
   #     account. With no OS boundary the habit guard is all there is, so THERE
   #     run_command stays argv-only and still rejects & ; $ < > ` ( ).
-  sandbox: bwrap
+  sandbox: none   # bwrap cannot nest inside this Docker container (nested-namespace mount denied);
+                  # the container itself is the isolation boundary for this deploy.
 
   # Per-child resource limits (rlimits). A runaway build (`npm ci` on a hostile
   # repo, a test that allocates without bound) must not be able to take the host
