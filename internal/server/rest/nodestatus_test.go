@@ -95,7 +95,14 @@ func putNodeStatus(t *testing.T, h *Handler, chatID, nodeID string, body schema.
 	return rec
 }
 
-func TestUpdateNodeStatus_CancelRunningNode(t *testing.T) {
+// TestUpdateNodeStatus_CancelUndeliverable409: cancel, like steer, is NOT
+// optimistic. The node's persisted row says "running", but with no live control
+// registered the cancel lands nowhere — and the old handler discarded
+// CancelNode's bool and answered 200 + "cancelled" anyway. Live (2026-07-13) the
+// user hit Cancel six times in one second, got six 200s, and the node ran on:
+// "cancel and steer is seemingly doing nothing". Delivery success is exercised at
+// the dag layer (control tests) and live e2e.
+func TestUpdateNodeStatus_CancelUndeliverable409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
@@ -104,18 +111,18 @@ func TestUpdateNodeStatus_CancelRunningNode(t *testing.T) {
 	}
 
 	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (nothing live to cancel); body=%s", rec.Code, rec.Body.String())
 	}
-	var got schema.DagNodeState
+	var got schema.TransitionError
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// The response optimistically reports the accepted target status; the
-	// actual cancellation is cooperative and durably lands later via the
-	// node_cancelled SSE event (persistNodeEvent).
-	if got.Status != schema.NodeStatusCancelled {
-		t.Errorf("Status = %q, want %q", got.Status, schema.NodeStatusCancelled)
+	if !strings.Contains(got.Error, "not cancellable") {
+		t.Errorf("409 body should explain nothing was cancelled; got %q", got.Error)
+	}
+	if got.Current != schema.NodeStatusRunning {
+		t.Errorf("Current = %q, want %q (the node is still running — nothing changed)", got.Current, schema.NodeStatusRunning)
 	}
 }
 

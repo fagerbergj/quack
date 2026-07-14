@@ -493,14 +493,26 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 
 	switch target {
 	case dag.StatusCancelled:
-		// Cooperative: actually takes effect at the node's next gate-stage
-		// boundary and is durably reflected via the node_cancelled SSE event
-		// (persistNodeEvent then writes the store row) — but the transition was
-		// accepted, so the response optimistically reports the target status,
-		// same as retry below. No-op server-side if the node isn't currently
-		// live (e.g. still queued, not yet dispatched) — same as the old DELETE
-		// endpoint's documented no-op.
-		h.orch.CancelNode(chatID, nodeID)
+		// Delivery is NOT optimistic (same as steer below): CancelNode returns
+		// false when no live control is registered for the node — the signal
+		// landed nowhere. Discarding that bool and answering 200 + "cancelled"
+		// is how the API came to LIE: live (2026-07-13) a user hit Cancel six
+		// times in one second, got six 200s, and the node kept running —
+		// "cancel and steer is seemingly doing nothing".
+		//
+		// A delivered cancel is still COOPERATIVE: the node's next tool call
+		// fails fast (tools.Deps.NodeCancelled) and the gate stops it at its
+		// next stage boundary, keeping its partial answer (continue-but-warn).
+		// So 200 means "the running node has been told", not "it has stopped";
+		// the stop is durably reflected by the node_cancelled SSE event.
+		if !h.orch.CancelNode(chatID, nodeID) {
+			writeJSON(w, http.StatusConflict, schema.TransitionError{
+				Error:   "node is not cancellable right now (no live run — it may be queued but not yet dispatched, or already finished); nothing was cancelled",
+				Current: schema.NodeStatus(current),
+				Allowed: allowedStatuses(current),
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusRunning:
 		// Steer delivery is NOT optimistic: unlike cancel (whose no-op case is

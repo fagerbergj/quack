@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -318,9 +319,20 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		}
 	}
 
+	// The DAG executor is built below (it needs the agents this call produces),
+	// but the workers' TOOLS need to ask it "was my node cancelled?" on every
+	// call — so hand buildAgents a predicate that reads the executor through a
+	// holder, published once startup has built it. Nothing calls a tool before
+	// the server is listening, and the atomic keeps the publish race-free.
+	var executorRef atomic.Pointer[dag.Executor]
+	nodeCancelled := func(chatID, nodeID string) bool {
+		ex := executorRef.Load()
+		return ex != nil && ex.NodeCancelled(chatID, nodeID)
+	}
+
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools)
+	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, nodeCancelled)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -392,6 +404,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
+	executorRef.Store(executor) // arms the tools' cancel guard (see nodeCancelled above)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS, userStore)
 
 	spa, err := fs.Sub(webDist, "web/dist")
@@ -437,7 +450,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, nodeCancelled func(chatID, nodeID string) bool) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
@@ -666,6 +679,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				GitPush:         cfg.Workspace.GitPush,
 				Guards:          cfg.Workspace.Guards,
 				SafetyJudge:     safetyJudge,
+				NodeCancelled:   nodeCancelled,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, fmtErr(name, "tools: %v", err)

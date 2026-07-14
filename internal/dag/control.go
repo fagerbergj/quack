@@ -146,6 +146,20 @@ func (e *Executor) CancelNode(chatID, nodeID string) bool {
 	return true
 }
 
+// NodeCancelled reports whether a node of a chat's active run was cancelled by
+// the user. It is the query side of CancelNode, wired into the TOOL layer
+// (tools.Deps.NodeCancelled, via internal/serve): a cancelled worker's very next
+// tool call fails fast instead of grinding on until the gate's next stage
+// boundary — a worker deep in a tool loop can be many minutes from one, which is
+// what made cancel look like a no-op.
+//
+// It reads the same wasCancelled flag the gate reads, and outlives the node's
+// control registration on purpose: an in-flight tool call that lands just after
+// the node unregisters must still be told to stop.
+func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
+	return e.controls.wasCancelled(chatID, nodeID)
+}
+
 // SteerNode re-runs one running node with new guidance at its next gate-stage
 // boundary. Returns false if no such node is running.
 func (e *Executor) SteerNode(chatID, nodeID, guidance string) bool {
