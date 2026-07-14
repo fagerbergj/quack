@@ -27,7 +27,7 @@ const (
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
 // runDAG ignores them).
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -92,7 +92,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// advisor-thread marker; see internal/tools chatScopeFromContext). chatID
 		// here is the run's chat/session id (== the workflow session id).
 		cfg.ChatID = chatID
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID, recordGate)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -102,7 +102,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 // FAILS (marks the node) on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
 // directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			upstream := upstreamFromInput(in, node.DependsOn)
@@ -160,10 +160,16 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				return "", nil
 			}
 			if err == nil {
-				// Persist the gate outcome to session state: gate_failed drives
-				// continue-but-warn on dependents; score/passed/rounds let Execute
-				// surface the judge result on node_done (the judge runs in its own
-				// isolated runner, so its result can't ride the workflow stream).
+				// Record the gate outcome IN PROCESS first: node_done is assembled
+				// before this node's state delta is appended, so a fresh sessions.Get
+				// cannot see the Set()s below. Live (2026-07-13): a node whose judge
+				// passed at 1.0 persisted judge_final_score=0 and judge_rounds=0 —
+				// every finished node claimed its trust gate had never run.
+				if recordGate != nil {
+					recordGate(node.ID, res.Score, res.Passed, res.Rounds)
+				}
+				// Session state too: gate_failed drives continue-but-warn on dependents
+				// (read in-process, where the delta IS visible) and it survives a resume.
 				st := ctx.State()
 				_ = st.Set(gateFailedKey+node.ID, !res.Passed)
 				_ = st.Set(gateScoreKey+node.ID, res.Score)

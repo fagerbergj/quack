@@ -184,7 +184,10 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 // to the paused nodes + their downstream (skipped siblings emit nothing this run
 // and must not be swept as failed).
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
+		func(nodeID string, score float64, passed bool, rounds int) {
+			e.recordGateResult(chatID, nodeID, score, passed, rounds)
+		})
 	if err != nil {
 		return false, err
 	}
