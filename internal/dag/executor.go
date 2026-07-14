@@ -4,6 +4,8 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
@@ -28,6 +30,17 @@ type Executor struct {
 	mediaAgents map[string]bool                       // agents accepting image/audio parts
 	controls    *runControls                          // live per-node cancel/steer handles (M5b)
 	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
+
+	// gateResults holds each node's trust-gate outcome, in memory, keyed
+	// "<chatID>\x00<nodeID>". The gated node ALSO writes it to session state, but
+	// that write is not visible to the fresh sessions.Get below: it is a state delta
+	// that only lands when an event carrying it is appended, and node_done is built
+	// before that happens. Live (2026-07-13): a node whose judge passed at 1.0
+	// persisted judge_final_score=0, judge_rounds=0 — every completed node reported
+	// its trust gate as never having run, so a node's score was invisible in the UI
+	// and in the DB. The value is known in-process at the moment the gate returns;
+	// there is no reason to make a round trip for it.
+	gateResults sync.Map
 }
 
 // SetMaxActive sets the concurrent-node cap for plan execution (config
@@ -160,7 +173,10 @@ func (s *DagStream) Finish() {
 // freshly re-run). Per-node guidance should already be folded into the plan's node
 // Task by the caller.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID)
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
+		func(nodeID string, score float64, passed bool, rounds int) {
+			e.recordGateResult(chatID, nodeID, score, passed, rounds)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -174,17 +190,37 @@ func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, mod
 	return &Executor{sessions: sessions, agents: agents, models: models, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 
-// gateScore is a node's trust-gate result read back from workflow session state.
+// gateScore is a node's trust-gate result.
 type gateScore struct {
 	score  float64
 	passed bool
 	rounds int
 }
 
+// gateResultKey keys Executor.gateResults. The chat id scopes it so two chats
+// running the same plan's node ids never collide.
+func gateResultKey(chatID, nodeID string) string { return chatID + "\x00" + nodeID }
+
+// recordGateResult stores a node's gate outcome in process, where node_done can
+// actually see it.
+func (e *Executor) recordGateResult(chatID, nodeID string, score float64, passed bool, rounds int) {
+	e.gateResults.Store(gateResultKey(chatID, nodeID), gateScore{score: score, passed: passed, rounds: rounds})
+}
+
 // gateScore reads a node's persisted judge result (written by the gated node via
 // dag.gateScoreKey…). Returns the zero value if the session/state/keys are absent.
 func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, nodeID string) gateScore {
 	var g gateScore
+	// In-process first: the state write below is a delta that has not been appended
+	// yet when node_done is assembled (see Executor.gateResults).
+	if v, ok := e.gateResults.Load(gateResultKey(sessionID, nodeID)); ok {
+		if got, ok := v.(gateScore); ok {
+			return got
+		}
+	}
+	if e.sessions == nil {
+		return g
+	}
 	resp, err := e.sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: sessionID})
 	if err != nil || resp == nil {
 		return g
@@ -215,7 +251,8 @@ type dagStream struct {
 	agentByID map[string]string
 	yield     func(stream.SSEEvent, error) bool
 	outputs   map[string]string        // nodeID → captured output (== caller's nodeOutputs)
-	scoreOf   func(string) gateScore   // reads a node's persisted judge result
+	scoreOf   func(string) gateScore   // reads a node's judge result
+	startedAt map[string]time.Time     // node → when node_start was emitted (for node_done's duration)
 	cancelled func(string) bool        // nodeID → user-cancelled this run (→ "stopped", not "failed")
 	steerOf   func(string, int) string // nodeID + steer generation (the -sN run suffix) → delivered guidance
 
@@ -237,7 +274,7 @@ type runUsage struct {
 func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
 		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, steerOf: steerOf,
-		started: map[string]bool{}, doneEmitted: map[string]bool{}, paused: map[string]bool{},
+		started: map[string]bool{}, doneEmitted: map[string]bool{}, paused: map[string]bool{}, startedAt: map[string]time.Time{},
 		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{},
 	}
 }
@@ -267,6 +304,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	}
 	if !s.started[node] {
 		s.started[node] = true
+		s.startedAt[node] = time.Now()
 		if !s.emit(stream.NodeStart(node, s.agentByID[node])) {
 			return false
 		}
@@ -448,6 +486,12 @@ func (s *dagStream) flush() bool {
 func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 	out := s.outputs[node]
 	d := stream.NodeDoneData{Output: out, OutputPreview: preview(out)}
+	// Wall-clock. This was never assigned, so every completed node persisted
+	// duration_ms=0 and a node's cost was invisible — the one number you need to see
+	// whether a node is working or spinning.
+	if t, ok := s.startedAt[node]; ok {
+		d.DurationMs = time.Since(t).Milliseconds()
+	}
 	if s.scoreOf != nil {
 		g := s.scoreOf(node)
 		d.JudgeFinalScore = g.score

@@ -429,7 +429,16 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 
 // UpsertDagNode creates or updates a DAG node's execution state.
 func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
-	return s.db.WithContext(ctx).Save(&node).Error
+	db := s.db.WithContext(ctx)
+	// Save() writes EVERY column, so a later event that doesn't carry StartedAt —
+	// node_done, node_failed — would overwrite the start time recorded at node_start
+	// with NULL. Live (2026-07-13): a node that completed had started_at = NULL, so
+	// its duration was unknowable and the DAG could not report how long anything took.
+	// Never let a nil StartedAt erase a real one.
+	if node.StartedAt == nil {
+		db = db.Omit("started_at")
+	}
+	return db.Save(&node).Error
 }
 
 // InsertChatEvent persists one run event. The caller assigns Seq (per-chat
