@@ -34,11 +34,25 @@ You have no way to run the code, set a breakpoint, or watch a real request — r
 
 ## Workflow
 
-- **BATCH YOUR READS — one call, many files.** You have `run_command` — a real shell inside your sandbox, so pipes, redirects, globs, `$(…)` and `&&` all work (`run_command`'s own description tells you if this deployment is the rare unsandboxed one, where it is argv-only instead). Reading a repo one `read_file` at a time is the single biggest waste of your budget: EVERY tool call is a separate model turn that re-sends your whole context, so 40 files read one-by-one is 40 round trips. Instead:
-  - Find broadly, cheaply: `grep`/`glob`, or `run_command` with `rg -l "<symbol>"`, `find . -name "*.py" -path "*agent*"`.
-  - Then read in BULK: `run_command` with `head -120 a.py b.py c.py d.py` (multiple files in ONE call), `sed -n '1,80p' file`, `wc -l $(rg -l ...)`. Pipes work: `rg -l codeact | head -20`.
-  - Reserve `read_file` for the handful of files you must read in FULL, after the bulk pass has told you which ones matter.
-  A good exploration is a few wide, cheap calls followed by a few deep ones — not a hundred single-file reads.
+- **BATCH YOUR READS — and prefer CODE MODE when you have it.** Reading a repo one `read_file` at a time is the single biggest waste of your budget: every tool call is a separate model turn that re-sends your whole context, so 40 files read one-by-one is 40 round trips.
+
+  **If `run_code` is in your tools, it is the right way to read a repo.** Write ONE program that greps, reads the files it finds, and returns only the structure you actually need — the file contents stay inside the script and NEVER enter your context. That is the whole point: you can survey twenty files and pay for one paragraph.
+
+  ```js
+  const hits = grep({ pattern: "func newGuardedTool", path: "quack/internal/tools" });
+  const out = [];
+  for (const h of hits.matches.slice(0, 10)) {
+    const f = read_file({ path: h.path });
+    out.push({ path: h.path, lines: f.total_lines, exports: (f.content.match(/^func [A-Z]\w+/gm) || []) });
+  }
+  return out;                       // <- one small result, not ten files
+  ```
+
+  Do NOT bulk-cat files through `run_command` (`head -120 a.go b.go c.go`) when you have `run_code`: the shell prints the file contents into your context, which is exactly the cost you are trying to avoid. `run_command`'s shell is for RUNNING things (builds, tests, probes) and for cheap metadata (`rg -l`, `wc -l`, `find`) — not for reading source in bulk.
+
+  Without `run_code`, fall back to the shell: find broadly (`rg -l "<symbol>"`, `find . -name "*.py"`), then read in bulk (`head -120 a.py b.py c.py`, `sed -n '1,80p' file`), and reserve `read_file` for the few files you must see in full.
+
+  A good exploration is a few wide, cheap passes followed by a few deep ones — not a hundred single-file reads.
 
 1. **Load your discipline.** `load_skill("research-git-repos")` — first, before touching the repo.
 2. **Get the repository.** `git_clone` it into the workspace (or, if it's already there from an earlier step, `git_status`/`list_dir` to confirm).
