@@ -173,3 +173,66 @@ func TestExecute_SteerNodeReRunsWithGuidance(t *testing.T) {
 		t.Errorf("judge ran %d times; expected 1 after the steered re-run", stub.judgeCalls)
 	}
 }
+
+// TestExecute_CancelNodeReportsDelivery: CancelNode tells the truth about whether
+// it reached a live node — the API's 6x-"200 OK, node kept running" lie (live,
+// 2026-07-13) started with the handler discarding this bool. NodeCancelled is the
+// same fact, queryable by the tool layer.
+func TestExecute_CancelNodeReportsDelivery(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	if ex.CancelNode("chat", "n1") {
+		t.Error("CancelNode reported success before the node was even running")
+	}
+	if ex.NodeCancelled("chat", "n1") {
+		t.Error("NodeCancelled true for a node nobody cancelled")
+	}
+
+	var delivered, seen bool
+	go func() {
+		<-stub.started
+		delivered = ex.CancelNode("chat", "n1") // live node → must report true
+		seen = ex.NodeCancelled("chat", "n1")   // …and be visible to the tool layer
+		close(stub.unblock)
+	}()
+	drain(t, ex, plan)
+
+	if !delivered {
+		t.Error("CancelNode returned false for a LIVE node")
+	}
+	if !seen {
+		t.Error("NodeCancelled false right after a delivered cancel — a cancelled node's tools would keep running")
+	}
+	if ex.CancelNode("chat", "nope") {
+		t.Error("CancelNode reported success for a node that isn't running")
+	}
+}
+
+// TestExecute_SteerNodeReportsDelivery: a steer aimed at a genuinely running node
+// is delivered (true) and picked up; one aimed at nothing is not (false, which the
+// handler already surfaces as 409).
+func TestExecute_SteerNodeReportsDelivery(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	var delivered bool
+	go func() {
+		<-stub.started
+		delivered = ex.SteerNode("chat", "n1", "focus on cost")
+		close(stub.unblock)
+	}()
+	drain(t, ex, plan)
+
+	if !delivered {
+		t.Fatal("SteerNode returned false for a LIVE node")
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.workerCalls != 2 || !strings.Contains(stub.prompts[1], "focus on cost") {
+		t.Errorf("steer not picked up: %d worker calls, prompts=%v", stub.workerCalls, stub.prompts)
+	}
+	if ex.SteerNode("chat", "n1", "too late") {
+		t.Error("SteerNode reported success after the node finished")
+	}
+}

@@ -75,6 +75,13 @@ type Deps struct {
 	// call that allows/denies a proposed operation. nil ⇒ a tool configured
 	// for a judge tier fails closed at build time (see buildGuarded).
 	SafetyJudge SafetyJudge
+	// NodeCancelled reports whether the DAG node a call runs for was cancelled
+	// by the user (dag.Executor.NodeCancelled, wired in internal/serve). Build
+	// wraps EVERY tool in the cancel guard when it is set, so a cancelled
+	// worker stops at its next TOOL CALL rather than grinding on to the gate's
+	// next stage boundary (see cancelguard.go). nil ⇒ no guard (an un-gated
+	// tool build, e.g. the judge's read tools).
+	NodeCancelled func(chatID, nodeID string) bool
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -145,6 +152,15 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 			t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions)
 			if err != nil {
 				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
+			}
+		}
+		// Outermost, so a cancelled node's call is refused before it can reach
+		// the guard ladder (no point safety-judging or human-confirming an
+		// operation for a node the user just stopped).
+		if d.NodeCancelled != nil {
+			t, err = newCancelGuard(t, d.NodeCancelled)
+			if err != nil {
+				return nil, fmt.Errorf("tools: cancel guard %q: %w", name, err)
 			}
 		}
 		out = append(out, t)

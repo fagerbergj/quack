@@ -60,7 +60,16 @@ var ErrNodeEmpty = errors.New("vetting: node produced no answer")
 // NodeControl lets a caller cancel or steer a running gate between its stages.
 // nil = no control. Cooperative: checked at gate-stage boundaries (before each
 // judge round), not mid-model-call: mid-call per-node cancel isn't possible on
-// ADK v2 without breaking event streaming.
+// ADK v2 without breaking event streaming (the nodes of one plan share a runner
+// and its event stream; cancelling that context would take out the siblings).
+//
+// That makes this check the BACKSTOP, not the whole story: it is what actually
+// ends the node and keeps its partial answer (continue-but-warn), but a worker
+// deep in a tool loop can be minutes from the next stage boundary. The TOOL layer
+// closes that window — a cancelled node's next tool call is refused outright
+// (tools.Deps.NodeCancelled / cancelguard.go), so the worker gives up its turn
+// and arrives here promptly. Steer has no such shortcut: it still lands only at
+// the next stage boundary.
 type NodeControl interface {
 	// Cancelled reports whether this node should stop (keep its current answer).
 	Cancelled() bool
