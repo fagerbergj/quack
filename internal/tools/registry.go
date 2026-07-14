@@ -151,6 +151,13 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	// Neither view is unguarded, and neither is reachable without going through one
 	// of these two constructions: a new tool added to the registry gets both, or it
 	// gets neither.
+	//
+	// BOTH views are also host-path scrubbed (hostpath.go), applied here — at the one
+	// wrap point — rather than in each tool: an error carrying the resolved path comes
+	// from os/git, not from the tool, so every tool that wraps one with %w leaks it,
+	// and a new tool would leak it too. Wrapping innermost means the script view gets
+	// it as well: an in-script call's recorded error is scrubbed by the same object.
+	scrub := workspaceScrub(d)
 	out := make([]tool.Tool, 0, len(names))
 	var scriptAPI []tool.Tool
 	var floor guardTier // the strongest tier any tool the script can call carries
@@ -169,6 +176,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tools: build %q: %w", name, err)
 		}
+		t = scrub(t)
 		tier, guarded := parseGuardTier(d.Guards[name])
 
 		direct := t
@@ -202,6 +210,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tools: build %q: %w", vetting.RunCodeToolName, err)
 		}
+		t = scrub(t)
 		if tier, guarded := scriptTier(floor, d); guarded {
 			if t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions); err != nil {
 				return nil, fmt.Errorf("tools: guard %q: %w", vetting.RunCodeToolName, err)
@@ -231,6 +240,21 @@ func scriptTier(floor guardTier, d Deps) (guardTier, bool) {
 	tier.Judge = tier.Judge || floor.Judge
 	tier.Confirm = tier.Confirm || floor.Confirm
 	return tier, tier.Judge || tier.Confirm
+}
+
+// workspaceScrub returns the INNERMOST wrapper both views of a tool are built
+// through: the host-path scrub (hostpath.go), which respells any workspace path in
+// a returned ERROR in the model's own namespace. Innermost, so a script's recorded
+// call error is scrubbed too, and so nothing a tool reports can slip past it.
+//
+// Identity, not a no-op, when there is no workspace configured (a web-only agent
+// has no jail, so there is no host path of ours to leak).
+func workspaceScrub(d Deps) func(tool.Tool) tool.Tool {
+	b, err := newFSBinding(d)
+	if err != nil {
+		return func(t tool.Tool) tool.Tool { return t }
+	}
+	return func(t tool.Tool) tool.Tool { return newPathScrub(t, b) }
 }
 
 // cancelWrap applies the per-node cancel guard (cancelguard.go). It is the
