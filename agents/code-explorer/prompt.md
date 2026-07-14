@@ -34,7 +34,7 @@ You have no way to run the code, set a breakpoint, or watch a real request — r
 
 ## Workflow
 
-- **BATCH YOUR READS — one call, many files.** You have `run_command` (jailed, argv-only, pipes work natively). Reading a repo one `read_file` at a time is the single biggest waste of your budget: EVERY tool call is a separate model turn that re-sends your whole context, so 40 files read one-by-one is 40 round trips. Instead:
+- **BATCH YOUR READS — one call, many files.** You have `run_command` — a real shell inside your sandbox, so pipes, redirects, globs, `$(…)` and `&&` all work (`run_command`'s own description tells you if this deployment is the rare unsandboxed one, where it is argv-only instead). Reading a repo one `read_file` at a time is the single biggest waste of your budget: EVERY tool call is a separate model turn that re-sends your whole context, so 40 files read one-by-one is 40 round trips. Instead:
   - Find broadly, cheaply: `grep`/`glob`, or `run_command` with `rg -l "<symbol>"`, `find . -name "*.py" -path "*agent*"`.
   - Then read in BULK: `run_command` with `head -120 a.py b.py c.py d.py` (multiple files in ONE call), `sed -n '1,80p' file`, `wc -l $(rg -l ...)`. Pipes work: `rg -l codeact | head -20`.
   - Reserve `read_file` for the handful of files you must read in FULL, after the bulk pass has told you which ones matter.

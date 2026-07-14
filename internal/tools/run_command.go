@@ -22,7 +22,7 @@ import (
 
 type runCommandArgs struct {
 	Dir     string `json:"dir"`
-	Command string `json:"command"` // argv-split, no shell interpretation
+	Command string `json:"command"` // a real shell command line when sandboxed; argv-split otherwise
 }
 
 type runCommandResult struct {
@@ -33,45 +33,67 @@ type runCommandResult struct {
 	Cwd string `json:"cwd"`
 }
 
-// runCommandDescription tells the model exactly what holds and what doesn't.
-// Two of the three things this text used to assert as walls were not walls:
-//
-//   - The jail IS now real for a child process, but only because the child runs
-//     in an OS sandbox (workspace.sandbox: bwrap — internal/workspace/sandbox.go
-//     puts it in a namespace whose filesystem is its cwd + an isolated $HOME).
-//     A deployment may set sandbox: none, and then it isn't.
-//   - "No shell" is NOT a security wall: the rejected metacharacter set is a
-//     handful of punctuation, and `sh -c "…"` contains none of it. It is an
-//     LLM-habit guard that keeps commands in a shape quack can actually reason
-//     about, and the safety judge (guard.go) is what denies inline interpreters.
-//
-// Saying so plainly is the point: an agent that believes a wall exists proposes
-// operations it would otherwise not propose.
-const runCommandDescription = "Run a command in your workspace. `command` is argv-split and executed directly — no " +
-	"shell is involved, so redirects, backgrounding, subshells, and command/variable substitution (& ; $ < > ` ( )) " +
-	"are rejected and unavailable. Pipes ARE supported natively (`grep -r pattern . | head -50` chains real " +
-	"processes; exit code is pipefail-style — non-zero if ANY stage fails, with the failing stage named in the " +
-	"output). `dir` is the workspace-relative directory to run in. What actually contains this: the deployment " +
-	"normally runs your command in an OS sandbox where nothing outside its working directory and your isolated " +
-	"$HOME exists at all — so reading host paths (~/.ssh, /etc, another task's files) fails, and there is no way " +
-	"to smuggle it past by invoking an interpreter. Do not try: this tool typically also requires independent " +
-	"review and human approval before it runs (see workspace.guards), an off-task command is denied there, and " +
-	"you will wait for that review before you see any result."
+// The tool description states what actually holds, and it differs by
+// deployment, so the model is told which of the two it is living in (the
+// binding knows: caps.Sandbox). An agent that believes a wall exists proposes
+// operations it would otherwise not propose — and, worse, an agent that
+// believes a wall exists where there is none WORKS AROUND IT: the metachar
+// guard's real cost was a code-explorer writing script files to disk because it
+// could not type `python3 -c "…"`.
+const (
+	// runCommandShellDescription — workspace.sandbox: bwrap (the default). The
+	// command line goes to a real /bin/sh inside the namespace.
+	runCommandShellDescription = "Run a shell command line in your workspace. `command` is executed by a real shell " +
+		"(/bin/sh -c) — pipes, redirects, globs, quoting, `&&`/`;` chaining, subshells and command substitution " +
+		"`$(…)` all work exactly as they do in a terminal. `dir` is the workspace-relative directory to run in " +
+		"(you can also just `cd` inside the command). stdout and stderr come back merged, tail-truncated; the exit " +
+		"code is the shell's. What contains this: your command runs in an OS sandbox whose entire filesystem is a " +
+		"READ-ONLY system view plus exactly two writable paths — this working directory and your isolated $HOME. " +
+		"Nothing else exists in there: not ~/.ssh, not /etc/shadow, not another task's files. So there is no point " +
+		"reaching outside your workspace; it will simply fail. Note this tool typically also requires independent " +
+		"review and human approval before it runs (see workspace.guards) — an off-task command is denied there, and " +
+		"you will wait for that review before you see any result."
+	// runCommandArgvDescription — workspace.sandbox: none. With no OS boundary
+	// around the child, the argv-only habit guard is all there is, so it stays.
+	runCommandArgvDescription = "Run a command in your workspace. This deployment runs commands WITHOUT an OS " +
+		"sandbox, so `command` is argv-split and executed directly — no shell is involved, and redirects, " +
+		"backgrounding, subshells, and command/variable substitution (& ; $ < > ` ( )) are rejected. Pipes ARE " +
+		"supported natively (`grep -r pattern . | head -50` chains real processes; the exit code is pipefail-style " +
+		"— non-zero if ANY stage fails, with the failing stage named in the output). `dir` is the workspace-relative " +
+		"directory to run in; use it instead of a `cd X &&` prefix, and write files with the write_file tool instead " +
+		"of `>`. This tool typically also requires independent review and human approval before it runs (see " +
+		"workspace.guards), and you will wait for that review before you see any result."
+)
 
 func newRunCommand(d Deps) (tool.Tool, error) {
 	b, err := newFSBinding(d)
 	if err != nil {
 		return nil, err
 	}
+	desc := runCommandArgvDescription
+	if b.shellAvailable() {
+		desc = runCommandShellDescription
+	}
 	return functiontool.New[runCommandArgs, runCommandResult](
-		functiontool.Config{Name: "run_command", Description: runCommandDescription},
+		functiontool.Config{Name: "run_command", Description: desc},
 		func(ctx agent.Context, a runCommandArgs) (runCommandResult, error) {
 			return b.withCwd(ctx).runCommand(a)
 		},
 	)
 }
 
-// stripCDPrefix recognizes the worker-LLM habit of opening a command with
+// shellAvailable reports whether run_command may hand its command line to a
+// real shell: exactly when an OS sandbox contains the child. The shell is safe
+// BECAUSE the namespace is real (internal/workspace/sandbox.go), so it is
+// offered only when the namespace is real — with `sandbox: none` there is no
+// boundary but the habit guard, and the habit guard stays.
+func (b fsBinding) shellAvailable() bool {
+	return b.caps.Sandbox == workspace.SandboxBwrap
+}
+
+// stripCDPrefix is UNSANDBOXED-PATH ONLY (with a shell, `cd X && …` simply
+// works, and a shell cd cannot leave the sandbox's writable bind anyway).
+// It recognizes the worker-LLM habit of opening a command with
 // `cd <path> && <rest>` — a shell re-statement of the `dir` argument that
 // would otherwise trip the metachar wall on `&&` and burn a revise round
 // (observed live: `cd repo && npx vitest run …` with dir already "repo").
@@ -108,58 +130,77 @@ func stripCDPrefix(command string) (target, rest string, ok bool) {
 	return target, rest, true
 }
 
-// runCommand is run_command's logic: normalize two rejected-but-harmless
-// shell idioms the worker LLM habitually emits (a leading `cd X &&` folds
-// into the dir resolution; a standalone `2>&1` is dropped — output is already
-// combined), then validate (no shell metacharacters; pipeline-split on
-// unquoted `|`), resolve `dir` through the jail, and execute via the SAME
-// runner the trust gate's deterministic checks use (workspace.RunPipeline) —
-// one internal runner, two consumers (see .quack/plan-pr5-tool-schemas.md
-// §4/§4b). The normalization is run_command-only: the gate's checks come from
-// operator config, not an LLM, and keep their exact semantics.
+// runCommand is run_command's logic, and it has two shapes because the
+// deployment has two:
+//
+//   - SANDBOXED (workspace.sandbox: bwrap, the default): the command string is
+//     handed to a real shell INSIDE the namespace (workspace.RunShell). No
+//     metachar rejection, no argv splitting, no idiom normalization — sh does
+//     all of it, correctly, and the OS namespace is the boundary (the guard
+//     never was one: `sh -c "…"` contains none of the rejected characters). The
+//     jail still decides the child's CWD, and the sandbox still binds only that
+//     cwd + the isolated $HOME writable; a shell cannot widen that.
+//   - UNSANDBOXED (workspace.sandbox: none): exactly as before — normalize the
+//     two rejected-but-harmless idioms the worker LLM habitually emits (a
+//     leading `cd X &&` folds into the dir resolution; a standalone `2>&1` is
+//     dropped, output is already combined), reject shell metacharacters, split
+//     on unquoted `|`, and run argv-only through workspace.RunPipeline. With no
+//     OS boundary the habit guard is all there is, so it stays.
+//
+// Either way `dir` resolves through the jail exactly as it always did, and the
+// runner is workspace's — one internal runner, two consumers (run_command and
+// the trust gate's deterministic checks; see .quack/plan-pr5-tool-schemas.md
+// §4/§4b). The gate's `checks` never take this shell path at all: they are
+// prefix-matched against operator config, and a prefix allowlist means nothing
+// if the suffix can open a shell.
 func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 	if strings.TrimSpace(a.Command) == "" {
 		return runCommandResult{}, fmt.Errorf("run_command: command must not be empty")
 	}
 	command, dirArg := a.Command, a.Dir
-	if target, rest, ok := stripCDPrefix(command); ok {
-		command = rest
-		switch {
-		case strings.TrimSpace(dirArg) == "":
-			dirArg = target // `cd` supplies the missing dir argument
-		case filepath.IsAbs(target):
-			dirArg = target // let jail.Resolve reject it exactly as a dir argument would be
-		case filepath.Clean(dirArg) == filepath.Clean(target):
-			// dir already names the cd target (the habit re-states it) —
-			// don't double repo to repo/repo.
-		default:
-			// Shell semantics: the cd runs from dir, so a relative target
-			// composes under it. `..` components survive the Join and are
-			// judged by the jail like any other dir argument.
-			dirArg = filepath.Join(dirArg, target)
+	var stages [][]string
+	shell := b.shellAvailable()
+	if !shell {
+		if target, rest, ok := stripCDPrefix(command); ok {
+			command = rest
+			switch {
+			case strings.TrimSpace(dirArg) == "":
+				dirArg = target // `cd` supplies the missing dir argument
+			case filepath.IsAbs(target):
+				dirArg = target // let jail.Resolve reject it exactly as a dir argument would be
+			case filepath.Clean(dirArg) == filepath.Clean(target):
+				// dir already names the cd target (the habit re-states it) —
+				// don't double repo to repo/repo.
+			default:
+				// Shell semantics: the cd runs from dir, so a relative target
+				// composes under it. `..` components survive the Join and are
+				// judged by the jail like any other dir argument.
+				dirArg = filepath.Join(dirArg, target)
+			}
 		}
-	}
-	command = workspace.StripStderrMerge(command)
-	if strings.TrimSpace(command) == "" {
-		return runCommandResult{}, fmt.Errorf("run_command: command must not be empty")
-	}
-	if workspace.ContainsShellMetachar(command) {
-		return runCommandResult{}, fmt.Errorf(
-			"run_command: command contains a shell metacharacter (& ; $ < > ` ( )) — run_command never invokes a " +
-				"shell; pipes are supported natively, but redirects, backgrounding, subshells, and substitution are " +
-				"unavailable. Use the `dir` argument instead of a 'cd X &&' prefix; stderr is already merged into " +
-				"the output (drop '2>&1'); write output to a file with the write_file tool instead of '>'")
-	}
-	stages, err := workspace.SplitPipeline(command)
-	if err != nil {
-		return runCommandResult{}, fmt.Errorf("run_command: %w", err)
+		command = workspace.StripStderrMerge(command)
+		if strings.TrimSpace(command) == "" {
+			return runCommandResult{}, fmt.Errorf("run_command: command must not be empty")
+		}
+		if workspace.ContainsShellMetachar(command) {
+			return runCommandResult{}, fmt.Errorf(
+				"run_command: command contains a shell metacharacter (& ; $ < > ` ( )) — this deployment runs " +
+					"commands without an OS sandbox, so no shell is involved; pipes are supported natively, but " +
+					"redirects, backgrounding, subshells, and substitution are unavailable. Use the `dir` argument " +
+					"instead of a 'cd X &&' prefix; stderr is already merged into the output (drop '2>&1'); write " +
+					"output to a file with the write_file tool instead of '>'")
+		}
+		var err error
+		if stages, err = workspace.SplitPipeline(command); err != nil {
+			return runCommandResult{}, fmt.Errorf("run_command: %w", err)
+		}
 	}
 	// Apply the session cwd ONCE to the final dir argument (after the #154
 	// `cd X &&` fold above already produced dirArg). The in-command `cd` and
 	// the session cwd never double-apply the SAME cwd: the fold shapes dirArg,
-	// then b.resolve joins the session cwd onto it a single time. A redundant
-	// in-command `cd` composes on top exactly as a shell would (dir="" is the
-	// common case — it resolves straight to the session cwd).
+	// then b.resolve joins the session cwd onto it a single time. (On the shell
+	// path there is no fold: a `cd` inside the command is the shell's own, and
+	// it can only move the child WITHIN the sandbox's writable bind.)
 	dir, err := b.resolve(dirArg)
 	if err != nil {
 		return runCommandResult{}, err
@@ -169,12 +210,17 @@ func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 	}
 
 	t0 := time.Now()
-	res, err := workspace.RunPipeline(context.Background(), dir, stages, b.caps)
+	var res workspace.ExecResult
+	if shell {
+		res, err = workspace.RunShell(context.Background(), dir, command, b.caps)
+	} else {
+		res, err = workspace.RunPipeline(context.Background(), dir, stages, b.caps)
+	}
 	dur := time.Since(t0).Milliseconds()
 	if err != nil {
 		return runCommandResult{}, fmt.Errorf("run_command: %w", err)
 	}
 	slog.Info("workspace exec", "component", "tools", "tool", "run_command",
-		"user", b.userID, "dir", dirArg, "command", command, "stages", len(stages), "exit", res.ExitCode, "duration_ms", dur)
+		"user", b.userID, "dir", dirArg, "command", command, "shell", shell, "exit", res.ExitCode, "duration_ms", dur)
 	return runCommandResult{ExitCode: res.ExitCode, Output: res.Output, DurationMs: dur, Cwd: displayCwd(b.cwd)}, nil
 }

@@ -11,17 +11,26 @@ import (
 
 // shellMetachars are the characters whose presence in a raw command string
 // signals shell-interpretation intent (backgrounding, command chaining,
-// redirects, command/variable substitution, subshells). Rejected wherever a
-// command string is accepted for jailed argv-only execution — run_command's
-// `command` arg (internal/tools) and a plan node's `checks` (internal/dag's
-// planner) — so a shell escape is unexpressible, not merely filtered by
-// heuristic: RunArgv/RunPipeline never open a shell to interpret them either
-// way, but rejecting them at parse time gives the model (or the planner) a
-// clear, early error instead of a confusing "argument" to some other program.
+// redirects, command/variable substitution, subshells).
+//
+// Where this still applies, and where it deliberately does not:
+//
+//   - run_command with NO OS sandbox (workspace.sandbox: none): rejected. With
+//     no namespace around the child, this habit guard is all there is, so it
+//     stays exactly as it was.
+//   - run_command INSIDE the sandbox (the default): not applied at all — the
+//     command line goes to a real /bin/sh (RunShell). The wall is the OS
+//     namespace, not a punctuation blacklist: `sh -c "…"` always contained none
+//     of these characters, so the guard blocked no attack — it only blocked the
+//     model, which then wrote script files to disk to route around us.
+//   - a plan node's `checks` (internal/dag's planner): rejected, unchanged.
+//     Checks are matched against the operator's `workspace.check_commands`
+//     PREFIX allowlist, and a prefix allowlist means nothing if the suffix can
+//     open a shell.
 //
 // `|` is deliberately NOT in this set: pipes don't need a shell — SplitPipeline
 // splits a pipeline on unquoted `|` and RunPipeline chains the stages as plain
-// argv processes connected by real pipes. The rest stay unexpressible.
+// argv processes connected by real pipes.
 const shellMetachars = "&;$<>`()"
 
 // ContainsShellMetachar reports whether s contains a shell metacharacter. See
@@ -361,6 +370,27 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 		}
 	}
 	return ExecResult{ExitCode: exitCode, Output: out}, nil
+}
+
+// RunShell runs command as a REAL shell command line — `/bin/sh -c "<command>"`
+// — inside whatever boundary caps.Sandbox names. Pipes, redirects, globs,
+// `$(…)`, `&&`, quoting: all of it just works, because sh is doing it.
+//
+// Callers MUST only reach here with caps.Sandbox == SandboxBwrap (run_command
+// checks; see internal/tools/run_command.go): the shell is safe *because* the
+// namespace is real. sh is the child, so the sandbox's binds are its binds — a
+// shell cannot widen them: outside its own cwd and its isolated $HOME nothing
+// is writable, and outside the read-only system view nothing EXISTS. `> /etc/passwd`
+// from in there fails like any other write to a read-only mount.
+//
+// sh is just another argv here, so RunArgv supplies everything else unchanged:
+// the resolved binary, the scrubbed env, cwd=dir, the timeout, the output cap,
+// and the "a non-zero exit is a result, not an error" contract.
+func RunShell(ctx context.Context, dir, command string, caps Caps) (ExecResult, error) {
+	if strings.TrimSpace(command) == "" {
+		return ExecResult{}, fmt.Errorf("workspace: empty command")
+	}
+	return RunArgv(ctx, dir, []string{"sh", "-c", command}, caps)
 }
 
 // RunPipeline executes stages as a native pipeline: each stage is a plain

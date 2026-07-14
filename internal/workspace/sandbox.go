@@ -22,7 +22,11 @@ import (
 // any `sh -c "…"`, which contains none of the rejected shell metacharacters —
 // therefore ran as the server's own OS user with that user's full filesystem
 // authority. The metachar wall (shellMetachars) is an LLM-habit guard, not a
-// security boundary; this is the security boundary.
+// security boundary; this is the security boundary. That is also why, once this
+// exists, run_command hands its command line to a REAL SHELL inside the
+// namespace (RunShell): the guard blocked no attack, it only blocked the model.
+// With SandboxNone there is no boundary but the habit guard, so there the
+// argv-only rule — and the metachar rejection — stays exactly as it was.
 type SandboxMode string
 
 const (

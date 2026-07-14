@@ -1,8 +1,11 @@
 // Package tools' guard ladder (see .quack/plan-pr5-tool-schemas.md §4b): a
 // wrapper applied at tool-registration time (registry.go's Build) around any
 // tool named in workspace.guards, escalating a risky call through up to two
-// tiers above the deterministic Tier-0 walls (the jail, argv-only exec, no
-// shell — unconditional, never bypassed by a guard result):
+// tiers above the deterministic Tier-0 walls (the fs/git tools' path jail, and
+// the OS sandbox + rlimits around their child processes — unconditional, never
+// bypassed by a guard result). "No shell" is NOT one of those walls: a
+// sandboxed run_command takes a real shell command line (workspace.RunShell),
+// and the judge tier is what decides what that command may do:
 //
 //   - judge   — an independent safety-judge model call decides allow/deny.
 //     Deny returns the refusal AS THE TOOL'S RESULT; the tool never executes.

@@ -217,10 +217,16 @@ workspace:
   #     directory and its isolated $HOME). Nothing else EXISTS in there. Needs
   #     no root and no daemon; install it (Debian/Ubuntu: `apt-get install
   #     bubblewrap`). If it isn't installed/usable, the server REFUSES TO START.
+  #     Because the namespace IS the wall, run_command runs its command line in a
+  #     REAL SHELL (/bin/sh -c) in here: pipes, redirects, globs, $(…) and &&
+  #     all work. The metachar filter is not applied on this path — it blocked no
+  #     attack (`sh -c` never contained one of those characters), it only made
+  #     agents write throwaway script files to route around it.
   #   none — children run with the server user's full filesystem authority.
   #     Logs a loud WARN at startup. Only sane when the whole server is already
   #     confined (a throwaway container/VM) or you trust the agents with that
-  #     account.
+  #     account. With no OS boundary the habit guard is all there is, so THERE
+  #     run_command stays argv-only and still rejects & ; $ < > ` ( ).
   sandbox: bwrap
 
   # Per-child resource limits (rlimits). A runaway build (`npm ci` on a hostile
@@ -273,9 +279,9 @@ workspace:
   # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
   # confirm | judge+confirm. Tier-0 always applies regardless of guard tier: the
   # path jail for the fs/git TOOLS, the sandbox + rlimits for their CHILD
-  # PROCESSES, no force-push/push-to-main. (The rejected shell metacharacters are
-  # NOT a wall — `sh -c` contains none of them; they are an LLM-habit guard. The
-  # judge tier is what denies an inline interpreter.)
+  # PROCESSES, no force-push/push-to-main. ("No shell" is NOT a wall and is not
+  # Tier 0: a sandboxed run_command takes a real shell command line. The judge
+  # tier is what decides what a command may DO.)
   guards:
     delete_path: judge
     git_rebase: judge
