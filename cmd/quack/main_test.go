@@ -33,9 +33,12 @@ func TestCommandTree(t *testing.T) {
 		}
 	}
 
-	// `chat node stop` is the deepest leaf — prove 3-level nesting resolves.
-	if c, _, err := root.Find([]string{"chat", "node", "stop"}); err != nil || c.Name() != "stop" {
-		t.Errorf("chat node stop not registered: %v", err)
+	// `chat node stop|steer|retry` are the deepest leaves — prove 3-level
+	// nesting resolves and the full updateNodeStatus surface is wired.
+	for _, sub := range []string{"stop", "steer", "retry"} {
+		if c, _, err := root.Find([]string{"chat", "node", sub}); err != nil || c.Name() != sub {
+			t.Errorf("chat node %s not registered: %v", sub, err)
+		}
 	}
 
 	// `chat resume` was removed with the TUI (superseded by `chat show` + `chat send`).

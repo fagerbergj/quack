@@ -88,6 +88,17 @@ func (c *Client) SteerNode(ctx context.Context, chatID, nodeID, guidance string)
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning, Guidance: &guidance})
 }
 
+// RetryNode re-queues a finished node (done, failed, or cancelled) — it and
+// every node downstream re-run, reusing the stored outputs of all other nodes.
+// guidance is optional and folded into the node's task.
+func (c *Client) RetryNode(ctx context.Context, chatID, nodeID, guidance string) error {
+	body := schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued}
+	if guidance != "" {
+		body.Guidance = &guidance
+	}
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status", body)
+}
+
 // putStatus PUTs body (a *StatusUpdateBody schema type) to path — the shared
 // shape of the node/response status-transition endpoints.
 func (c *Client) putStatus(ctx context.Context, path string, body any) error {
@@ -106,9 +117,35 @@ func (c *Client) putStatus(ctx context.Context, path string, body any) error {
 		return ErrNotFound
 	}
 	if resp.StatusCode >= 400 {
+		// Surface the server's reason (e.g. a 409 TransitionError names the
+		// allowed target statuses) instead of a bare status line.
+		if msg := errBody(resp.Body); msg != "" {
+			return fmt.Errorf("PUT %s: %s: %s", path, resp.Status, msg)
+		}
 		return fmt.Errorf("PUT %s: server returned %s", path, resp.Status)
 	}
 	return nil
+}
+
+// errBody extracts a human-readable reason from an error response body: the
+// JSON "error" field (plus "allowed" statuses when present, the TransitionError
+// shape), else the raw body text. "" when the body is empty/unreadable.
+func errBody(r io.Reader) string {
+	raw, err := io.ReadAll(io.LimitReader(r, 4096))
+	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	var te struct {
+		Error   string   `json:"error"`
+		Allowed []string `json:"allowed"`
+	}
+	if json.Unmarshal(raw, &te) == nil && te.Error != "" {
+		if len(te.Allowed) > 0 {
+			return fmt.Sprintf("%s (allowed: %s)", te.Error, strings.Join(te.Allowed, ", "))
+		}
+		return te.Error
+	}
+	return string(bytes.TrimSpace(raw))
 }
 
 // getJSON GETs path and decodes a JSON response into out; 404 → ErrNotFound.

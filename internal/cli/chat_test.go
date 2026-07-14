@@ -257,3 +257,85 @@ func TestRunChatStop(t *testing.T) {
 		t.Error("stop should PUT the response status to cancelled")
 	}
 }
+
+// TestRunNodeSteer PUTs {"status":"running","guidance":...} to the node status
+// endpoint (updateNodeStatus's steer transition) and confirms on stdout.
+func TestRunNodeSteer(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var gotBody schema.NodeStatusUpdateBody
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/nodes/n2/status" {
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusRunning})
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunNodeSteer(context.Background(), &out, srv.URL, "c1", "n2", "focus on cost"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.Status != schema.NodeStatusRunning {
+		t.Errorf("steer sent status %q, want %q", gotBody.Status, schema.NodeStatusRunning)
+	}
+	if gotBody.Guidance == nil || *gotBody.Guidance != "focus on cost" {
+		t.Errorf("steer sent guidance %v, want focus on cost", gotBody.Guidance)
+	}
+	if !strings.Contains(out.String(), "Steered node n2") {
+		t.Errorf("steer output %q lacks confirmation", out.String())
+	}
+}
+
+// TestRunNodeRetry PUTs {"status":"queued"} (guidance omitted when blank, set
+// when given) — updateNodeStatus's retry transition.
+func TestRunNodeRetry(t *testing.T) {
+	for _, guidance := range []string{"", "use the newer source"} {
+		t.Setenv("QUACK_HOME", t.TempDir())
+		var gotBody schema.NodeStatusUpdateBody
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/nodes/n2/status" {
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusQueued})
+				return
+			}
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}))
+		var out bytes.Buffer
+		if err := RunNodeRetry(context.Background(), &out, srv.URL, "c1", "n2", guidance); err != nil {
+			t.Fatal(err)
+		}
+		srv.Close()
+		if gotBody.Status != schema.NodeStatusQueued {
+			t.Errorf("retry sent status %q, want %q", gotBody.Status, schema.NodeStatusQueued)
+		}
+		if guidance == "" && gotBody.Guidance != nil {
+			t.Errorf("blank guidance should be omitted, got %v", *gotBody.Guidance)
+		}
+		if guidance != "" && (gotBody.Guidance == nil || *gotBody.Guidance != guidance) {
+			t.Errorf("retry sent guidance %v, want %q", gotBody.Guidance, guidance)
+		}
+	}
+}
+
+// TestPutStatusSurfaces409Reason: an illegal transition's TransitionError body
+// (error + allowed statuses) reaches the user, not a bare "409 Conflict".
+func TestPutStatusSurfaces409Reason(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": "node is done", "current": "done", "allowed": []string{"queued"},
+		})
+	}))
+	defer srv.Close()
+	err := RunNodeSteer(context.Background(), io.Discard, srv.URL, "c1", "n2", "g")
+	if err == nil {
+		t.Fatal("expected an error on 409")
+	}
+	for _, want := range []string{"node is done", "allowed: queued"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("409 error %q should contain %q", err.Error(), want)
+		}
+	}
+}

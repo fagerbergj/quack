@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -70,6 +71,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	var ok bool
 	groups := modelGroups(&a, models, manual)
 	groups = append(groups, featuresGroup(&feats))
+	groups = append(groups, codingGroups(&a, &feats, models)...)
 	groups = append(groups, storeGroups(&a, &feats)...)
 	groups = append(groups, reviewGroup(&a, &feats, outPath, &ok))
 	if err := runForm(huh.NewForm(groups...)); err != nil {
@@ -77,6 +79,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	}
 	a.WebSearch = slices.Contains(feats, "search")
 	a.WebFetch = slices.Contains(feats, "fetch")
+	a.Coding = slices.Contains(feats, "coding")
 	if !ok {
 		fmt.Println("Aborted — nothing written.")
 		return nil
@@ -174,10 +177,18 @@ func summarize(a *cli.InitAnswers, feats *[]string) string {
 	if len(*feats) > 0 {
 		feat = strings.Join(*feats, ", ")
 	}
-	return fmt.Sprintf(
+	s := fmt.Sprintf(
 		"endpoint   %s\nmain       %s\njudge      %s\nembed      %s\nsession    %s\nfeatures   %s",
 		a.Endpoint, a.MainModel, noneLabel(a.JudgeModel), noneLabel(a.EmbedModel), a.SessionKind, feat,
 	)
+	if slices.Contains(*feats, "coding") {
+		coder := a.CoderModel
+		if coder == "" {
+			coder = a.MainModel + " (main)"
+		}
+		s += fmt.Sprintf("\ncoder      %s\nsandbox    %s", coder, a.Sandbox)
+	}
+	return s
 }
 
 func noneLabel(s string) string {
@@ -351,9 +362,40 @@ func featuresGroup(feats *[]string) *huh.Group {
 			Options(
 				huh.NewOption("Web search", "search"),
 				huh.NewOption("Web fetch", "fetch"),
+				huh.NewOption("Coding agents (workspace + sandbox)", "coding"),
 			).
 			Value(feats),
 	).Title("Features").Description("Toggle the tool backends to configure")
+}
+
+// codingGroups: the coder model (defaults to the main model) and the workspace
+// sandbox mode, shown only when the coding feature is selected. The sandbox
+// default is detected: bwrap when bubblewrap is installed, else none (with the
+// caveat in the description).
+func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.Group {
+	if a.CoderModel == "" {
+		a.CoderModel = suggestModel(models, "coder", "code")
+	}
+	if a.Sandbox == "" {
+		a.Sandbox = "none"
+		if _, err := exec.LookPath("bwrap"); err == nil {
+			a.Sandbox = "bwrap"
+		}
+	}
+	hide := func() bool { return !slices.Contains(*feats, "coding") }
+	model := huh.NewGroup(specialistSelect(models, &a.CoderModel, huh.NewOption("Same as main model", ""))).
+		Title("Coder model").Description("Powers code-implementer/explorer/reviewer").
+		WithHideFunc(hide)
+	sandbox := huh.NewGroup(
+		huh.NewSelect[string]().
+			Options(
+				huh.NewOption("bwrap — OS sandbox for run_command/run_code children (needs bubblewrap)", "bwrap"),
+				huh.NewOption("none  — no OS boundary (guards still apply)", "none"),
+			).
+			Value(&a.Sandbox),
+	).Title("Workspace sandbox").Description("The OS boundary agent-run commands execute inside").
+		WithHideFunc(hide)
+	return []*huh.Group{model, sandbox}
 }
 
 // storeGroups: session (always), memory (when an embedder is set), search/fetch

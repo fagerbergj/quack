@@ -32,6 +32,12 @@ type InitAnswers struct {
 
 	WebSearch bool // optional-feature toggles (drive which stores are emitted)
 	WebFetch  bool
+
+	// Coding — emit the coding agents (code-implementer/explorer/reviewer) plus
+	// the workspace section they need (sandbox + run_command/run_code guards).
+	Coding     bool
+	CoderModel string // blank ⇒ reuse MainModel
+	Sandbox    string // workspace.sandbox: bwrap | none (blank ⇒ bwrap, the server default)
 }
 
 // EmitServerConfig renders a complete quack.yaml from the answers. Secrets
@@ -81,6 +87,9 @@ func EmitServerConfig(a InitAnswers) string {
 		emitAgent(&b, "image-reader", a.VisionModel, 32768, "[]", a)
 		b.WriteString("    inputs: [text, image]\n")
 	}
+	if a.Coding {
+		emitCodingAgents(&b, a)
+	}
 	b.WriteString("\n")
 
 	b.WriteString("tools:\n")
@@ -101,8 +110,62 @@ func EmitServerConfig(a InitAnswers) string {
 	}
 
 	b.WriteString("dag:\n  max_active_nodes: 2\n\n")
+	if a.Coding {
+		emitWorkspace(&b, a)
+	}
 	b.WriteString("server:\n  addr: \":8080\"\n")
 	return b.String()
+}
+
+// emitCodingAgents renders the three coding agents, mirroring the reference
+// config/quack.yaml roster: the implementer gets the full read/write/git/run
+// toolset and a deep judge budget (iterate-until-tests-pass); explorer and
+// reviewer are READ-ONLY. run_code (code mode, goja — no external runtime) is
+// on for implementer and explorer. Memory tools are included only when an
+// embedding model was selected.
+func emitCodingAgents(b *strings.Builder, a InitAnswers) {
+	model := a.CoderModel
+	if model == "" {
+		model = a.MainModel
+	}
+	mem := ""
+	if a.EmbedModel != "" {
+		mem = ", load_memory, stage_memory"
+	}
+	implementer := "[read_file, write_file, edit_file, list_dir, glob, grep, delete_path,\n" +
+		"            cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,\n" +
+		"            run_command, ask_user" + mem + ", run_code]"
+	readOnly := "read_file, list_dir, glob, grep,\n" +
+		"            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user" + mem
+	explorer := "[" + readOnly + ", run_command, run_code]"
+	reviewer := "[" + readOnly
+	if a.WebFetch {
+		reviewer += ", web_fetch"
+	}
+	reviewer += "]"
+
+	emitAgent(b, "code-implementer", model, 65536, implementer, a)
+	b.WriteString("    judge_rounds: 8   # coding converges via the judge+revise grind\n")
+	emitAgent(b, "code-explorer", model, 65536, explorer, a)
+	b.WriteString("    judge_rounds: 2\n")
+	emitAgent(b, "code-reviewer", model, 65536, reviewer, a)
+	b.WriteString("    judge_rounds: 2\n")
+}
+
+// emitWorkspace renders the workspace section the coding agents need: the
+// sandbox mode (bwrap needs bubblewrap installed; none = no OS boundary) and
+// guard tiers for the two arbitrary-execution tools. The judge tier only
+// exists with a judge model, so guards degrade to confirm-only without one.
+func emitWorkspace(b *strings.Builder, a InitAnswers) {
+	sandbox := a.Sandbox
+	if sandbox == "" {
+		sandbox = "bwrap"
+	}
+	tier := "confirm"
+	if a.JudgeModel != "" {
+		tier = "judge+confirm"
+	}
+	fmt.Fprintf(b, "workspace:\n  sandbox: %s\n  guards:\n    run_command: %s\n    run_code: %s\n\n", sandbox, tier, tier)
 }
 
 // EnvExports is the set of `export` lines the wizard prints so the emitted
