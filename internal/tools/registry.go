@@ -14,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -139,7 +140,13 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		d.Guarded = GuardedClient()
 	}
 	out := make([]tool.Tool, 0, len(names))
+	wantCodeMode := false
 	for _, name := range names {
+		if name == vetting.RunCodeToolName {
+			// Assembled AFTER this loop, over the tools it will bind — see below.
+			wantCodeMode = true
+			continue
+		}
 		ctor, ok := registry[name]
 		if !ok {
 			return nil, fmt.Errorf("tools: unknown builtin tool %q", name)
@@ -148,22 +155,70 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tools: build %q: %w", name, err)
 		}
-		if tier, guarded := parseGuardTier(d.Guards[name]); guarded {
-			t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions)
-			if err != nil {
-				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
-			}
+		t, err = wrap(t, name, d)
+		if err != nil {
+			return nil, err
 		}
-		// Outermost, so a cancelled node's call is refused before it can reach
-		// the guard ladder (no point safety-judging or human-confirming an
-		// operation for a node the user just stopped).
-		if d.NodeCancelled != nil {
-			t, err = newCancelGuard(t, d.NodeCancelled)
-			if err != nil {
-				return nil, fmt.Errorf("tools: cancel guard %q: %w", name, err)
-			}
+		out = append(out, t)
+	}
+	if wantCodeMode {
+		// Code mode (run_code.go) is assembled LAST, over the tools already built
+		// AND ALREADY WRAPPED above. That ordering is the whole safety argument: a
+		// script's call invokes the same guarded, cancellable tool object a direct
+		// call does, so the guard ladder, the cancel guard, the path jail and the
+		// workspace caps all apply to it for free. Its API is generated from those
+		// same tools' declarations, so it cannot drift from them.
+		t, err := newRunCode(out, func(t tool.Tool) bool { return noCodeMode(t, d) })
+		if err != nil {
+			return nil, fmt.Errorf("tools: build %q: %w", vetting.RunCodeToolName, err)
+		}
+		t, err = wrap(t, vetting.RunCodeToolName, d)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+// wrap applies the guard ladder (guard.go) and then the per-node cancel guard
+// (cancelguard.go) to one built tool. The cancel guard is OUTERMOST, so a
+// cancelled node's call is refused before it can reach the guard ladder (no
+// point safety-judging or human-confirming an operation for a node the user
+// just stopped).
+func wrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
+	var err error
+	if tier, guarded := parseGuardTier(d.Guards[name]); guarded {
+		t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions)
+		if err != nil {
+			return nil, fmt.Errorf("tools: guard %q: %w", name, err)
+		}
+	}
+	if d.NodeCancelled != nil {
+		t, err = newCancelGuard(t, d.NodeCancelled)
+		if err != nil {
+			return nil, fmt.Errorf("tools: cancel guard %q: %w", name, err)
+		}
+	}
+	return t, nil
+}
+
+// noCodeMode reports whether a tool must stay direct-call only, i.e. must NOT
+// become a function inside a script. Two kinds qualify, both for the same
+// reason — a script has nowhere to suspend to:
+//
+//   - A CONFIRM-tier tool pauses the node for a human (guard.go). Mid-script,
+//     that pause has no turn boundary to land on, and resuming would re-run the
+//     script from the top — re-doing every side effect it had already performed.
+//   - A LONG-RUNNING tool (ask_user, get_user_choice) ends the model's turn by
+//     design and is answered on the next one.
+//
+// Both remain fully available as ordinary one-call-per-turn tools; code mode
+// adds a path, it never removes one.
+func noCodeMode(t tool.Tool, d Deps) bool {
+	if t.IsLongRunning() {
+		return true
+	}
+	tier, guarded := parseGuardTier(d.Guards[t.Name()])
+	return guarded && tier.Confirm
 }

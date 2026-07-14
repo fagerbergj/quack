@@ -61,10 +61,15 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
+    # run_code = CODE MODE (internal/tools/run_code.go): the model writes a JS program and the
+    # tools above are its API, so one turn can read five files, grep and write a patch without any
+    # of that bulk entering a 65k context. Per-agent opt-in; every tool above stays callable the
+    # normal way. In-script calls go through the SAME guarded tool objects, and the trust gate's
+    # ledger expands them, so nothing is unwatched. See docs/code-mode.md.
     tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
-            run_command, ask_advisor, ask_user, load_memory, stage_memory]
+            run_command, ask_advisor, ask_user, load_memory, stage_memory, run_code]
     # load_memory/stage_memory + the bundle's memory.md turn on shared memory: the implementer
     # RECALLS what the explorer/reviewer already learned about this repo (build/test/lint commands,
     # where things are registered, the reference feature, pre-existing failures) instead of
@@ -98,8 +103,10 @@ agents:
     # its bundle rubric (exploration quality), not the web-researcher's harsh web-citation bar.
     # load_skill/list_skills are auto-registered. load_memory/stage_memory + memory.md turn on task memory (M6):
     # recall/stage durable repo layout & conventions so repeat exploration of the same repo is faster.
+    # run_code = CODE MODE: exploration is exactly the read-many-files-and-summarize shape code mode
+    # is for — the files it reads never enter its context. See docs/code-mode.md.
     tools: [read_file, list_dir, glob, grep,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command]
+            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command, run_code]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

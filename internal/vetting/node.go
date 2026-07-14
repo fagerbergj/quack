@@ -880,16 +880,18 @@ func activityFromSession(sess session.Session) workerActivity {
 // against the wrong root, find nothing, and quietly degrade to scoring the answer's
 // self-report.
 func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity {
-	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
+	s := &activityScanner{
+		act:         workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}},
+		nodeDir:     nodeDir,
+		writtenSeen: map[string]bool{},
+	}
 	if sess == nil {
-		return act
+		return s.act
 	}
 	pending := map[string]string{}           // web_fetch call ID → URL
 	pendingWs := map[string]map[string]any{} // workspace-tool call ID → args (see ledger.go)
 	pendingWsTool := map[string]string{}     // workspace-tool call ID → tool name
 	pendingCd := map[string]bool{}           // cd call ID → awaiting response (to track cwd)
-	curCwd := ""                             // NODE-relative cwd in effect ("" = the node's own root), updated on each successful cd
-	writtenSeen := map[string]bool{}         // dedup for act.written
 	for ev := range sess.Events().All() {
 		if ev == nil || ev.Content == nil {
 			continue
@@ -901,16 +903,14 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 			if p.FunctionCall != nil {
 				switch p.FunctionCall.Name {
 				case "web_search":
-					if q, ok := p.FunctionCall.Args["query"].(string); ok && strings.TrimSpace(q) != "" {
-						act.searches = append(act.searches, strings.TrimSpace(q))
-					}
+					s.recordSearch(p.FunctionCall.Args)
 				case "web_fetch":
 					if u, ok := p.FunctionCall.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
 						pending[p.FunctionCall.ID] = strings.TrimSpace(u)
 					}
 				case "stage_memory":
 					if cand, ok := stagedCandidate(p.FunctionCall); ok {
-						act.staged = append(act.staged, cand)
+						s.act.staged = append(s.act.staged, cand)
 					}
 				case "cd":
 					pendingCd[p.FunctionCall.ID] = true
@@ -924,109 +924,185 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_fetch" {
 				if url, known := pending[p.FunctionResponse.ID]; known {
 					delete(pending, p.FunctionResponse.ID)
-					if result, ok := p.FunctionResponse.Response["result"].(string); ok && strings.TrimSpace(result) != "" {
-						act.fetched[url] = fetchRecord{sample: strings.TrimSpace(trimToSample(result))}
-					}
+					s.recordFetch(url, p.FunctionResponse.Response)
 				}
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_search" {
-				recordSearchResults(act.seen, p.FunctionResponse.Response)
+				recordSearchResults(s.act.seen, p.FunctionResponse.Response)
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "cd" {
 				if pendingCd[p.FunctionResponse.ID] {
 					delete(pendingCd, p.FunctionResponse.ID)
-					if _, failed := p.FunctionResponse.Response["error"]; !failed {
-						// cd reports the new cwd as a NODE-relative slash path
-						// ("." = the node's own root). Mirror the tool's own storage
-						// so writtenRel resolves later writes correctly.
-						if d, ok := p.FunctionResponse.Response["dir"].(string); ok {
-							if d == "." {
-								d = ""
-							}
-							curCwd = d
-						}
-					}
+					s.recordCd(p.FunctionResponse.Response)
 				}
 			}
 			if p.FunctionResponse != nil && isWorkspaceTool(p.FunctionResponse.Name) {
 				// Only a completed call/response pair enters the ledger — an
 				// operation with no response never happened as far as claims go.
-				// Failures ARE recorded (recordWsOp marks them FAILED): "the tests
-				// passed" claimed over a failed run must be contradictable.
 				if args, known := pendingWs[p.FunctionResponse.ID]; known && pendingWsTool[p.FunctionResponse.ID] == p.FunctionResponse.Name {
 					delete(pendingWs, p.FunctionResponse.ID)
 					delete(pendingWsTool, p.FunctionResponse.ID)
-					act.workspace = append(act.workspace, recordWsOp(p.FunctionResponse.Name, args, p.FunctionResponse.Response))
-					// Structured grounding capture (successful ops only — a FAILED
-					// clone/read retrieved nothing and backs no citation, though it
-					// stays in the ledger above for claim-checking).
-					if _, failed := p.FunctionResponse.Response["error"]; !failed {
-						switch p.FunctionResponse.Name {
-						// Delivery actions (delivery.go): a task that demands the work
-						// be committed/pushed cannot pass without these.
-						case "git_commit":
-							act.committed = true
-						case "git_push":
-							act.pushed = true
-						case "github_pull_request":
-							act.prOpened = true
-						// The reviewer's delivery (delivery.go): a task that demands a
-						// POSTED review cannot pass without a submit. A drafted comment
-						// posts nothing on its own — the draft only becomes a review on
-						// the PR when github_submit_review succeeds (internal/github).
-						case "github_add_review_comment":
-							act.reviewCommented = true
-						case "github_submit_review":
-							act.reviewSubmitted = true
-						// Execution (delivery.go): a node reviewing a code change cannot
-						// pass without having actually RUN something against it. Any
-						// successful run_command counts — the test suite, a build, or a
-						// throwaway probe. A non-zero exit_code still ran.
-						case "run_command":
-							act.ranCommand = true
-						case "git_clone":
-							// A successful clone IS retrieval: the whole repository is
-							// now local, strictly more consulted than a search-result
-							// snippet. citationScore gives full backing to the repo URL,
-							// to URLs under it (blob/tree links), and to local paths
-							// inside the clone dir — without this, a node following the
-							// research-git-repos flow (clone + read instead of
-							// web_fetch) scored 0.25 backing on files of the very repo
-							// it had cloned (live failures 2026-07-10, 2026-07-12).
-							if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
-								act.clonedRepos = append(act.clonedRepos, strings.TrimSpace(u))
-							}
-							dir, _ := p.FunctionResponse.Response["dir"].(string)
-							if strings.TrimSpace(dir) == "" {
-								dir, _ = args["dir"].(string)
-							}
-							if d := normalizePath(dir); d != "" {
-								act.clonedDirs = append(act.clonedDirs, d)
-							}
-						case "read_file", "write_file", "edit_file", "delete_path":
-							// Repo-exploration/coding answers cite the files they worked
-							// on ([games-repo/app/games.ts](games-repo/app/games.ts)),
-							// not web pages — that's correct behavior, and citationScore
-							// backs such a path only if it appears here or under a
-							// cloned dir.
-							if pth, ok := args["path"].(string); ok {
-								if np := normalizePath(pth); np != "" {
-									act.paths[np] = true
-								}
-								// write/edit only: record the jail-relative path so the
-								// judge can re-read the real post-edit source (buildChangedFilesSection).
-								if name := p.FunctionResponse.Name; name == "write_file" || name == "edit_file" {
-									if jr := writtenRel(nodeDir, curCwd, pth); jr != "" && !writtenSeen[jr] {
-										writtenSeen[jr] = true
-										act.written = append(act.written, jr)
-									}
-								}
-							}
-						}
-					}
+					s.recordWorkspace(p.FunctionResponse.Name, args, p.FunctionResponse.Response)
+				}
+			}
+			// CODE MODE. A tool called from inside a script (internal/tools/run_code.go)
+			// emits no session event of its own, so without this the gate would be blind
+			// to it — a node that really did write and commit code would be failed for
+			// claiming work with no ledger evidence, and, far worse, real work would go
+			// unverified. run_code's response carries a compact record of every call the
+			// script made; each one is replayed HERE, through the very same recorders a
+			// direct call goes through, in the order the script made them. The result is
+			// that a write from inside a script is indistinguishable, to the trust gate,
+			// from a direct write_file.
+			if p.FunctionResponse != nil && p.FunctionResponse.Name == RunCodeToolName {
+				for _, c := range expandRunCode(p.FunctionResponse.Response) {
+					s.replay(c)
 				}
 			}
 		}
 	}
-	return act
+	return s.act
+}
+
+// activityScanner accumulates one worker's activity. Every recorder below is
+// reached from BOTH paths — a direct tool call's session events, and a call
+// replayed out of a run_code record — which is what makes the two
+// indistinguishable to the trust gate. There is one implementation of each rule,
+// so the two paths cannot diverge.
+type activityScanner struct {
+	act     workerActivity
+	nodeDir string
+	// curCwd is the NODE-relative cwd in effect ("" = the node's own root),
+	// updated on each successful cd — including a cd made from inside a script,
+	// since the tool writes the same session state either way.
+	curCwd      string
+	writtenSeen map[string]bool // dedup for act.written
+}
+
+// replay folds one call a script made into the activity, exactly as if the model
+// had made it directly. It covers the call-side capture too (a search query, a
+// staged memory), which for a direct call is read from the FunctionCall part.
+func (s *activityScanner) replay(c innerCall) {
+	switch c.name {
+	case "web_search":
+		s.recordSearch(c.args)
+		recordSearchResults(s.act.seen, c.result)
+	case "web_fetch":
+		if u, ok := c.args["url"].(string); ok && strings.TrimSpace(u) != "" {
+			s.recordFetch(strings.TrimSpace(u), c.result)
+		}
+	case "stage_memory":
+		if cand, ok := stagedCandidate(&genai.FunctionCall{Name: c.name, Args: c.args}); ok {
+			s.act.staged = append(s.act.staged, cand)
+		}
+	case "cd":
+		s.recordCd(c.result)
+	default:
+		if isWorkspaceTool(c.name) {
+			s.recordWorkspace(c.name, c.args, c.result)
+		}
+	}
+}
+
+func (s *activityScanner) recordSearch(args map[string]any) {
+	if q, ok := args["query"].(string); ok && strings.TrimSpace(q) != "" {
+		s.act.searches = append(s.act.searches, strings.TrimSpace(q))
+	}
+}
+
+func (s *activityScanner) recordFetch(url string, resp map[string]any) {
+	if result, ok := resp["result"].(string); ok && strings.TrimSpace(result) != "" {
+		s.act.fetched[url] = fetchRecord{sample: strings.TrimSpace(trimToSample(result))}
+	}
+}
+
+// recordCd tracks the working directory a later write resolves against. cd
+// reports the new cwd as a NODE-relative slash path ("." = the node's own root);
+// mirror the tool's own storage so writtenRel resolves later writes correctly.
+func (s *activityScanner) recordCd(resp map[string]any) {
+	if _, failed := resp["error"]; failed {
+		return
+	}
+	if d, ok := resp["dir"].(string); ok {
+		if d == "." {
+			d = ""
+		}
+		s.curCwd = d
+	}
+}
+
+// recordWorkspace is the ledger entry plus the structured grounding/delivery
+// capture for one completed workspace operation. Failures ARE recorded
+// (recordWsOp marks them FAILED): "the tests passed" claimed over a failed run
+// must be contradictable.
+func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any) {
+	s.act.workspace = append(s.act.workspace, recordWsOp(name, args, resp))
+	// Structured grounding capture (successful ops only — a FAILED clone/read
+	// retrieved nothing and backs no citation, though it stays in the ledger
+	// above for claim-checking).
+	if _, failed := resp["error"]; failed {
+		return
+	}
+	switch name {
+	// Delivery actions (delivery.go): a task that demands the work be
+	// committed/pushed cannot pass without these.
+	case "git_commit":
+		s.act.committed = true
+	case "git_push":
+		s.act.pushed = true
+	case "github_pull_request":
+		s.act.prOpened = true
+	// The reviewer's delivery (delivery.go): a task that demands a POSTED review
+	// cannot pass without a submit. A drafted comment posts nothing on its own —
+	// the draft only becomes a review on the PR when github_submit_review
+	// succeeds (internal/github).
+	case "github_add_review_comment":
+		s.act.reviewCommented = true
+	case "github_submit_review":
+		s.act.reviewSubmitted = true
+	// Execution (delivery.go): a node reviewing a code change cannot pass without
+	// having actually RUN something against it. Any successful run_command counts
+	// — the test suite, a build, or a throwaway probe. A non-zero exit_code still
+	// ran.
+	case "run_command":
+		s.act.ranCommand = true
+	case "git_clone":
+		// A successful clone IS retrieval: the whole repository is now local,
+		// strictly more consulted than a search-result snippet. citationScore gives
+		// full backing to the repo URL, to URLs under it (blob/tree links), and to
+		// local paths inside the clone dir — without this, a node following the
+		// research-git-repos flow (clone + read instead of web_fetch) scored 0.25
+		// backing on files of the very repo it had cloned (live failures
+		// 2026-07-10, 2026-07-12).
+		if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
+			s.act.clonedRepos = append(s.act.clonedRepos, strings.TrimSpace(u))
+		}
+		dir, _ := resp["dir"].(string)
+		if strings.TrimSpace(dir) == "" {
+			dir, _ = args["dir"].(string)
+		}
+		if d := normalizePath(dir); d != "" {
+			s.act.clonedDirs = append(s.act.clonedDirs, d)
+		}
+	case "read_file", "write_file", "edit_file", "delete_path":
+		// Repo-exploration/coding answers cite the files they worked on
+		// ([games-repo/app/games.ts](games-repo/app/games.ts)), not web pages —
+		// that's correct behavior, and citationScore backs such a path only if it
+		// appears here or under a cloned dir.
+		pth, ok := args["path"].(string)
+		if !ok {
+			return
+		}
+		if np := normalizePath(pth); np != "" {
+			s.act.paths[np] = true
+		}
+		// write/edit only: record the jail-relative path so the judge can re-read
+		// the real post-edit source (buildChangedFilesSection).
+		if name == "write_file" || name == "edit_file" {
+			if jr := writtenRel(s.nodeDir, s.curCwd, pth); jr != "" && !s.writtenSeen[jr] {
+				s.writtenSeen[jr] = true
+				s.act.written = append(s.act.written, jr)
+			}
+		}
+	}
 }
