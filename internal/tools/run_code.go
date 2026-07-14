@@ -97,6 +97,24 @@ const (
 	runCodeMaxDescChars = 240
 )
 
+// The echo detector's three numbers (see echoWarning). A script may quote what it
+// found — that is often the answer — so the question is never "is the return value
+// big" but "how much of it is verbatim payload the tools already handed you".
+const (
+	// runCodeEchoMinChunk is the shortest returned string worth testing against the
+	// payloads. Below it, a match means nothing (every source file contains "func"),
+	// and a genuinely useful quote — a signature, a failing assertion — lives here.
+	runCodeEchoMinChunk = 64
+	// runCodeEchoWarnBytes is how much verbatim payload in one return value stops
+	// being a quote and starts being a dump. A few snippets never reach it; a file's
+	// contents pass it immediately.
+	runCodeEchoWarnBytes = 4 << 10
+	// runCodeEchoScanBytes bounds what the detector RETAINS to compare against — a
+	// script that reads 200 files must not make the tool hold all of them. Past it,
+	// bytes are still counted, they are just no longer matchable.
+	runCodeEchoScanBytes = 4 << 20
+)
+
 var (
 	errScriptTimeout   = errors.New("script exceeded its time limit")
 	errNoBoundTools    = errors.New("tools: code mode needs at least one other tool to expose as its API")
@@ -137,6 +155,10 @@ type runCodeResult struct {
 	// error so that Calls survives: a script that wrote a file and then threw did
 	// really write that file, and the ledger must still see it.
 	Error string `json:"error,omitempty"`
+	// Warning is set when the script RETURNED the bulk it was supposed to keep out
+	// of the context — see echoWarning. It is addressed to the model, in the result,
+	// because that is the only place the model will read it in time to do better.
+	Warning string `json:"warning,omitempty"`
 }
 
 // newRunCode builds the code-mode tool over `bound` — the SCRIPT view of the tools
@@ -185,6 +207,13 @@ type scriptRun struct {
 	calls    []runCodeCall
 	logs     []string
 	logBytes int
+	// payloadBytes is how many bytes of BULK (file contents, command output, grep
+	// matches — the fields compactResult elides) the tools handed this script, and
+	// payloads is as much of that text as the echo detector may retain to compare
+	// the return value against. See echoWarning.
+	payloadBytes    int
+	payloads        []string
+	payloadRetained int
 }
 
 // runScript compiles and runs one script in a fresh goja VM. It NEVER returns a
@@ -231,7 +260,7 @@ func runScript(ctx agent.Context, api map[string]runnableTool, code string) (out
 		out.Error = scriptError(err)
 		return out
 	}
-	out.Result = encodeReturn(v)
+	out.Result, out.Warning = r.encodeReturn(v)
 	return out
 }
 
@@ -293,6 +322,7 @@ func (r *scriptRun) jsFunc(ctx agent.Context, vm *goja.Runtime, name string, t r
 			panic(vm.NewGoError(err))
 		}
 		r.calls = append(r.calls, runCodeCall{Name: name, Args: args, Result: compactResult(res)})
+		r.recordPayload(res)
 		return vm.ToValue(res)
 	}
 }
@@ -347,26 +377,196 @@ func scriptError(err error) string {
 	}
 	var ex *goja.Exception
 	if errors.As(err, &ex) {
-		return strings.TrimSpace(ex.String())
+		return exceptionMessage(ex)
 	}
 	return err.Error()
 }
 
-// encodeReturn JSON-encodes the script's return value, capped. undefined/null —
+// exceptionMessage renders a thrown exception as the model needs it: the message,
+// plainly, and the line in ITS OWN script that threw.
+//
+// goja's String() buries that under a Go stack trace — the live one led with
+//
+//	GoError: read_file: … no such file or directory
+//	    at …tools.(*scriptRun).bind.(*scriptRun).jsFunc.func2 (native)
+//	    at <eval>:1:29(5)
+//
+// The `native` frame is our implementation detail: it names nothing in the model's
+// script, it cannot be acted on, and it was the largest part of the message. The
+// "GoError:" prefix goes with it — it is goja's word for "a Go function threw",
+// i.e. "a tool call failed", which the message below it already says better.
+func exceptionMessage(ex *goja.Exception) string {
+	lines := strings.Split(strings.TrimSpace(ex.String()), "\n")
+	msg := strings.TrimPrefix(strings.TrimSpace(lines[0]), "GoError: ")
+	if n := scriptLine(lines[1:]); n != "" {
+		return msg + " (at line " + n + " of your script)"
+	}
+	return msg
+}
+
+// scriptLine finds the first stack frame that is in the SCRIPT (goja calls it
+// "<eval>") and returns its line number — the only part of the trace the model can
+// use. "" when the throw has no script frame at all.
+func scriptLine(stack []string) string {
+	const marker = "<eval>:"
+	for _, f := range stack {
+		i := strings.Index(f, marker)
+		if i < 0 {
+			continue
+		}
+		rest := f[i+len(marker):]
+		if j := strings.IndexAny(rest, ":( "); j > 0 {
+			return rest[:j]
+		}
+	}
+	return ""
+}
+
+// encodeReturn JSON-encodes the script's return value, capped, and checks it for
+// the one mistake that makes code mode pointless (echoWarning). undefined/null —
 // a script that only logged, or only wrote files — encodes to nothing rather
 // than to the string "null".
-func encodeReturn(v goja.Value) string {
+func (r *scriptRun) encodeReturn(v goja.Value) (result, warning string) {
 	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
-		return ""
+		return "", ""
 	}
-	b, err := json.Marshal(v.Export())
+	exported := v.Export()
+	warning = r.echoWarning(exported)
+	b, err := json.Marshal(exported)
 	if err != nil {
-		return truncate(fmt.Sprint(v.Export()), runCodeMaxResult)
+		return truncate(fmt.Sprint(exported), runCodeMaxResult), warning
 	}
 	if len(b) > runCodeMaxResult {
-		return truncate(string(b), runCodeMaxResult) + " …(result truncated; return less)"
+		return truncate(string(b), runCodeMaxResult) + " …(result truncated; return less)", warning
 	}
-	return string(b)
+	return string(b), warning
+}
+
+// ---------------------------------------------------------------------------
+// The echo detector — the model handing the payload back to itself
+// ---------------------------------------------------------------------------
+
+// echoWarning is the answer to code mode's first live failure. The `calls` ledger
+// elided the file contents correctly — and the model then returned them anyway,
+// through its own return value:
+//
+//	out[f] = { total_lines: c.total_lines, content: c.content };   // ~50 KB of source
+//
+// The bulk went straight back into the context the feature exists to protect, and
+// nothing told the model it had done anything wrong, so it would have done it again
+// on the next turn. A cap alone does not teach; it just truncates, silently, and the
+// model concludes its tool is flaky.
+//
+// So: PROVE it and SAY it. Proof, not a ratio — a returned string is an echo when
+// it is verbatim (a substring of, or a superstring of) a payload some tool in this
+// very script actually handed back. That distinction is what keeps the legitimate
+// case alive: a script that COMPUTES a large answer (a generated file, a rendered
+// report, a summary) matches nothing it was given and is never warned at, however
+// big it is.
+//
+// Warn, do not truncate. The bytes are already spent by the time we can see them —
+// truncating buys nothing back, it only hides the evidence from the model, and the
+// one legitimate large-and-verbatim return there is (a patch assembled out of the
+// lines it read) would be the thing destroyed. The model gets the loud version and
+// the size, and can fix its next script itself.
+func (r *scriptRun) echoWarning(returned any) string {
+	echoed := r.echoedBytes(returned)
+	if echoed < runCodeEchoWarnBytes {
+		return ""
+	}
+	return fmt.Sprintf("YOU RETURNED THE FILE CONTENTS. %s of your return value is text the tools in this "+
+		"script already handed you verbatim (they returned %s of such payload in total). It is now in your "+
+		"context — which is the entire cost code mode exists to avoid: the SCRIPT is what reads the bulk, "+
+		"YOU are not. Next time return only the structure you need from it — paths, line numbers, counts, "+
+		"symbol names, a short quoted snippet — never a whole `content`/`output`/`matches` field. "+
+		"{path, total_lines, exports: [...]} is right; {path, content} is the mistake you just made.",
+		humanBytes(echoed), humanBytes(r.payloadBytes))
+}
+
+// echoedBytes is how many bytes of the return value are verbatim tool payload.
+// Strings shorter than runCodeEchoMinChunk are not tested: a short quote is a
+// legitimate answer, and a short string matches by coincidence.
+func (r *scriptRun) echoedBytes(returned any) int {
+	total := 0
+	walkStrings(returned, 0, func(s string) {
+		if len(s) < runCodeEchoMinChunk {
+			return
+		}
+		for _, p := range r.payloads {
+			// Either direction is an echo: the return may quote a slice of a file, or
+			// wrap a whole file inside a bigger string.
+			if strings.Contains(p, s) || strings.Contains(s, p) {
+				total += len(s)
+				return
+			}
+		}
+	})
+	return total
+}
+
+// recordPayload accounts for the bulk ONE tool call handed the script — the same
+// fields compactResult elides from the model's view, which is exactly the set the
+// model must not get back by another route.
+func (r *scriptRun) recordPayload(res map[string]any) {
+	for k, v := range res {
+		switch {
+		case payloadKeys[k], isBulkString(v):
+			walkStrings(v, 0, func(s string) {
+				r.payloadBytes += len(s)
+				if len(s) < runCodeEchoMinChunk || r.payloadRetained >= runCodeEchoScanBytes {
+					return
+				}
+				r.payloads = append(r.payloads, s)
+				r.payloadRetained += len(s)
+			})
+		default:
+			if nested, ok := v.(map[string]any); ok {
+				r.recordPayload(nested)
+			}
+		}
+	}
+}
+
+// maxWalkDepth bounds walkStrings. A goja object can be cyclic, and a tool result
+// is arbitrarily nested JSON; neither may hang a node.
+const maxWalkDepth = 16
+
+// walkStrings visits every string inside an arbitrary decoded JSON/JS value.
+func walkStrings(v any, depth int, fn func(string)) {
+	if v == nil || depth > maxWalkDepth {
+		return
+	}
+	if s, ok := v.(string); ok {
+		fn(s)
+		return
+	}
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return
+	}
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < rv.Len(); i++ {
+			walkStrings(rv.Index(i).Interface(), depth+1, fn)
+		}
+	case reflect.Map:
+		for _, k := range rv.MapKeys() {
+			walkStrings(rv.MapIndex(k).Interface(), depth+1, fn)
+		}
+	case reflect.Ptr, reflect.Interface:
+		if !rv.IsNil() {
+			walkStrings(rv.Elem().Interface(), depth+1, fn)
+		}
+	}
+}
+
+// humanBytes renders a size the way the warning needs to land: "12.4 KB", not
+// "12683".
+func humanBytes(n int) string {
+	if n < 1<<10 {
+		return fmt.Sprintf("%d bytes", n)
+	}
+	return fmt.Sprintf("%.1f KB", float64(n)/1024)
 }
 
 // displayValue renders one console.log argument: objects as JSON (a model that
@@ -521,16 +721,29 @@ func runCodePreamble() string {
 
 Use this INSTEAD of a long chain of one-tool-per-turn calls. A single script can read five files, grep, and write a patch — with real loops and conditionals — and the bulk (file contents, grep matches, command output) is processed INSIDE the script and never enters your context. That is the whole point: reach for it whenever you would otherwise make several related calls in a row, or when what you need to look at is bigger than what you can hold.
 
+RETURN ONLY WHAT YOU NEED — NEVER THE FILE CONTENTS
+  The SCRIPT reads the bulk. YOU do not. Your return value is the ONE thing that comes back into your context, so it must carry the structure you extracted, never the payload you extracted it from. This is not a style note: returning the contents defeats the entire tool, and costs you exactly the context you called it to save.
+
+    WRONG — you have now read the file into your context, the long way round:
+      const c = read_file({ path: f });
+      return { path: f, content: c.content };          // ← the mistake. NEVER do this.
+
+    RIGHT — the script looked, and hands you back only the answer:
+      const c = read_file({ path: f });
+      return { path: f, total_lines: c.total_lines, exports: c.content.match(/^func \w+/gm) };
+
+  Quote a few lines when the lines ARE the answer (a signature, the failing assertion, the line to patch). Never hand back a whole `+"`content`"+`, `+"`output`"+` or `+"`matches`"+` field. If the model of what you need is "everything in the file", you do not need a script — you need to think about what question you are actually asking. Returned bulk is DETECTED and reported back to you as a warning.
+
 THE CONTRACT
   - Your code is the BODY of a function. Use `+"`return`"+` to return a value.
   - Every tool below is a plain SYNCHRONOUS function in scope. Each takes ONE object argument and returns its result object directly. No await, no promises, no callbacks.
   - `+"`console.log(...)`"+` is captured and returned to you.
   - A failing tool call THROWS. Wrap a call in try/catch to handle partial failure and still return something useful; an uncaught throw ends the script (you still get its logs, its calls so far, and the error with its line number).
   - The script has NO other capability: no filesystem, no network, no require/import, no process. It can call the functions below and nothing else.
-  - Limits: %s wall clock, %d tool calls, and the returned value is capped — return a SUMMARY, not a dump.
+  - Limits: %s wall clock, %d tool calls, and the returned value is capped.
 
 WHAT YOU GET BACK
-  result — your return value (JSON). logs — what you printed. calls — a compact record of each tool call you made (bulky payloads elided; this is also what the trust gate audits your work by). error — set if the script threw.
+  result — your return value (JSON). logs — what you printed. calls — a compact record of each tool call you made (bulky payloads elided; this is also what the trust gate audits your work by). error — set if the script threw. warning — set if you returned the bulk you were supposed to leave behind.
 
 EXAMPLE
   const hits = grep({ pattern: "func Build", path: "internal" });
@@ -538,7 +751,7 @@ EXAMPLE
   const sizes = {};
   for (const f of files) {
     try {
-      sizes[f] = read_file({ path: f }).content.split("\n").length;
+      sizes[f] = read_file({ path: f }).content.split("\n").length;   // the COUNT, not the content
     } catch (e) {
       sizes[f] = "unreadable: " + e.message;
     }
