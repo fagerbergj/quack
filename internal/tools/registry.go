@@ -68,7 +68,8 @@ type Deps struct {
 	GitTokenSource GitTokenSource
 	// Guards maps a tool name to its guard tier (workspace.guards: none |
 	// judge | confirm | judge+confirm). A tool with no entry is unguarded
-	// (Tier 0 walls — the jail, argv-only exec, etc. — still always apply).
+	// (Tier 0 walls — the fs/git path jail, the OS sandbox around child
+	// processes — still always apply).
 	Guards map[string]string
 	// SafetyJudge backs the guard ladder's judge tier: an independent model
 	// call that allows/denies a proposed operation. nil ⇒ a tool configured
