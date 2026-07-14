@@ -84,6 +84,10 @@ type fsBinding struct {
 	// tripping over each other's repos, without the model ever seeing the dir.
 	// "" outside a gated node (see scopeFromContext).
 	nodeDir string
+	// reads counts identical reads per (chat, node, path) so read_file can break a
+	// context-thrash loop (rereadguard.go). A POINTER: withCwd copies the binding by
+	// value on every call, and the count must be shared across those copies.
+	reads *readTracker
 }
 
 // withCwd returns a copy of b bound to this call's context: the per-chat scope
@@ -121,7 +125,7 @@ func newFSBinding(d Deps) (fsBinding, error) {
 	if caps.IsZero() {
 		caps = workspace.DefaultCaps()
 	}
-	return fsBinding{userID: userID, jail: d.Workspace, caps: caps}, nil
+	return fsBinding{userID: userID, jail: d.Workspace, caps: caps, reads: newReadTracker()}, nil
 }
 
 // isBinary reports whether b (a file's head) looks like binary content: a NUL
@@ -216,6 +220,17 @@ func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 	if err != nil {
 		return readFileResult{}, fmt.Errorf("read_file: %w", err)
 	}
+
+	// Break the re-read thrash loop: a node whose context is full loses each read to
+	// compaction and reads the same file again, forever (see rereadguard.go — a live
+	// implementer read one file TEN times and wrote nothing in 25 minutes). Keyed on
+	// CONTENT, so re-reading a file you just edited always works.
+	if n := b.reads.observe(b.chatID, b.nodeDir, a.Path, data); n > maxSameReads {
+		slog.Warn("node is re-reading an unchanged file; refusing and redirecting it to act",
+			"component", "tools", "node", b.nodeDir, "path", a.Path, "reads", n)
+		return readFileResult{}, rereadDirective(a.Path, n)
+	}
+
 	lines := strings.Split(string(data), "\n")
 	total := len(lines)
 
