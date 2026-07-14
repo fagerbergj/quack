@@ -267,15 +267,15 @@ The shape, illustratively:
 # illustrative; the actual values + justifications live in docs/configuration.md
 
 providers:                       # pluggable; `kind` selects the adapter
-  local:
+  default:
     kind: openai                 # API protocol; e.g. openai | gemini | anthropic
-    endpoint: ${LLM_BASE_URL}
+    endpoint: ${QUACK_LLM_ENDPOINT}
     api_key: ${QUACK_LLM_API_KEY}
 
 orchestrator:
   planner:
     inference:
-      provider: local
+      provider: default
       model: gpt-oss-120b
 
 gates:                             # trust gate: cheapest-first stages, each with its own budget
@@ -285,10 +285,10 @@ gates:                             # trust gate: cheapest-first stages, each wit
   self_critique:
     max_rounds: 1                  # worker improves its own draft
   judge:
-    provider: local
+    provider: default
     model: gemma4-26b-a4b          # independent judge (empty ⇒ judge disabled)
     max_rounds: 1
-    threshold: 0.6                 # per-criterion pass bar (verdict = lowest criterion)
+    threshold: 0.7                 # per-criterion pass bar (verdict = lowest criterion)
 
 tools:                           # registry: catalog of available tools (agents select by name)
   web_search:
@@ -301,7 +301,7 @@ tools:                           # registry: catalog of available tools (agents 
 agents:
   - card: ./cards/web-researcher.json   # external A2A AgentCard
     inference:
-      provider: local
+      provider: default
       model: qwen3.6-35b
     tools:                              # explicit; independent of the card's skills
       - web_search
@@ -309,7 +309,7 @@ agents:
       - summarize
   - card: ./cards/translator.json       # skill is pure model + prompt
     inference:
-      provider: local
+      provider: default
       model: qwen3.6-35b
     # no tools
 
