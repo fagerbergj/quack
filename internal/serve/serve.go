@@ -329,10 +329,19 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		ex := executorRef.Load()
 		return ex != nil && ex.NodeCancelled(chatID, nodeID)
 	}
+	// Same holder, for steer's tool-layer half (steerguard.go): a worker's next
+	// tool call gets pending guidance as that call's result instead of running.
+	nodeSteerGuidance := func(chatID, nodeID string) string {
+		ex := executorRef.Load()
+		if ex == nil {
+			return ""
+		}
+		return ex.NodeSteerGuidance(chatID, nodeID)
+	}
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, nodeCancelled)
+	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, nodeCancelled, nodeSteerGuidance)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -450,7 +459,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, nodeCancelled func(chatID, nodeID string) bool) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
@@ -665,21 +674,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
-				WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-				Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-				Summarizer:      m,
-				Cache:           urlCache,
-				Advisor:         advisorAgent,
-				Sessions:        sessions,
-				Workspace:       jail,
-				WorkspaceUserID: localUserID,
-				WorkspaceCaps:   workspaceCaps,
-				GitCredentials:  gitCredentials,
-				GitTokenSource:  gitTokenSource,
-				GitPush:         cfg.Workspace.GitPush,
-				Guards:          cfg.Workspace.Guards,
-				SafetyJudge:     safetyJudge,
-				NodeCancelled:   nodeCancelled,
+				WebSearch:         tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
+				Fetch:             tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+				Summarizer:        m,
+				Cache:             urlCache,
+				Advisor:           advisorAgent,
+				Sessions:          sessions,
+				Workspace:         jail,
+				WorkspaceUserID:   localUserID,
+				WorkspaceCaps:     workspaceCaps,
+				GitCredentials:    gitCredentials,
+				GitTokenSource:    gitTokenSource,
+				GitPush:           cfg.Workspace.GitPush,
+				Guards:            cfg.Workspace.Guards,
+				SafetyJudge:       safetyJudge,
+				NodeCancelled:     nodeCancelled,
+				NodeSteerGuidance: nodeSteerGuidance,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, fmtErr(name, "tools: %v", err)

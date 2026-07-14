@@ -236,3 +236,46 @@ func TestExecute_SteerNodeReportsDelivery(t *testing.T) {
 		t.Error("SteerNode reported success after the node finished")
 	}
 }
+
+// TestExecute_NodeSteerGuidanceDeliversOnceThenGateStillReRuns: NodeSteerGuidance
+// is the tool layer's query side of SteerNode (mirrors NodeCancelled) — it must
+// hand back the guidance to the FIRST caller (a worker's next tool call) and ""
+// to any caller after that, since the point is a one-shot immediate nudge, not a
+// sticky prompt. The gate-stage TakeSteer (exercised by
+// TestExecute_SteerNodeReportsDelivery above) must still fire afterwards and
+// drive its own re-run — the tool-layer delivery must not swallow the guidance
+// that the gate boundary needs for the backstop re-run.
+func TestExecute_NodeSteerGuidanceDeliversOnceThenGateStillReRuns(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	if g := ex.NodeSteerGuidance("chat", "n1"); g != "" {
+		t.Errorf("NodeSteerGuidance returned %q before the node was even running", g)
+	}
+
+	var first, second string
+	go func() {
+		<-stub.started
+		if !ex.SteerNode("chat", "n1", "focus on cost") {
+			t.Error("SteerNode returned false for a LIVE node")
+		}
+		first = ex.NodeSteerGuidance("chat", "n1")
+		second = ex.NodeSteerGuidance("chat", "n1")
+		close(stub.unblock)
+	}()
+	drain(t, ex, plan)
+
+	if first != "focus on cost" {
+		t.Errorf("NodeSteerGuidance first call = %q, want the pending guidance", first)
+	}
+	if second != "" {
+		t.Errorf("NodeSteerGuidance second call = %q, want \"\" (already delivered to a tool call)", second)
+	}
+	// The gate-stage boundary must STILL see the guidance and re-run — tool-layer
+	// delivery is additive, not a substitute for it.
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.workerCalls != 2 || !strings.Contains(stub.prompts[1], "focus on cost") {
+		t.Errorf("gate-stage re-run did not happen after tool-layer delivery: %d worker calls, prompts=%v", stub.workerCalls, stub.prompts)
+	}
+}

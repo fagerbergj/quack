@@ -83,6 +83,13 @@ type Deps struct {
 	// next stage boundary (see cancelguard.go). nil ⇒ no guard (an un-gated
 	// tool build, e.g. the judge's read tools).
 	NodeCancelled func(chatID, nodeID string) bool
+	// NodeSteerGuidance returns pending steer guidance for the DAG node a call
+	// runs for, if any hasn't yet been delivered to a tool call (dag.Executor.
+	// NodeSteerGuidance, wired in internal/serve). Build wraps EVERY tool in the
+	// steer guard when it is set, so a steered worker's next tool call gets the
+	// guidance as that call's result instead of running the real tool (see
+	// steerguard.go). nil ⇒ no guard.
+	NodeSteerGuidance func(chatID, nodeID string) string
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -185,12 +192,19 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
 			}
 		}
+		if direct, err = steerWrap(direct, name, d); err != nil {
+			return nil, err
+		}
 		if direct, err = cancelWrap(direct, name, d); err != nil {
 			return nil, err
 		}
 		out = append(out, direct)
 
-		script, err := cancelWrap(t, name, d)
+		script, err := steerWrap(t, name, d)
+		if err != nil {
+			return nil, err
+		}
+		script, err = cancelWrap(script, name, d)
 		if err != nil {
 			return nil, err
 		}
@@ -215,6 +229,9 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 			if t, err = newGuardedTool(t, tier, d.SafetyJudge, d.Sessions); err != nil {
 				return nil, fmt.Errorf("tools: guard %q: %w", vetting.RunCodeToolName, err)
 			}
+		}
+		if t, err = steerWrap(t, vetting.RunCodeToolName, d); err != nil {
+			return nil, err
 		}
 		if t, err = cancelWrap(t, vetting.RunCodeToolName, d); err != nil {
 			return nil, err
@@ -269,6 +286,20 @@ func cancelWrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
 	wrapped, err := newCancelGuard(t, d.NodeCancelled)
 	if err != nil {
 		return nil, fmt.Errorf("tools: cancel guard %q: %w", name, err)
+	}
+	return wrapped, nil
+}
+
+// steerWrap applies the per-node steer guard (steerguard.go), sibling to
+// cancelWrap and applied on TOP of it (so a cancelled node's call is refused
+// by cancelGuard before steerGuard is ever consulted — cancel wins).
+func steerWrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
+	if d.NodeSteerGuidance == nil {
+		return t, nil
+	}
+	wrapped, err := newSteerGuard(t, d.NodeSteerGuidance)
+	if err != nil {
+		return nil, fmt.Errorf("tools: steer guard %q: %w", name, err)
 	}
 	return wrapped, nil
 }
