@@ -182,6 +182,11 @@ type DagConfig struct {
 	// dependencies are met still queue behind this cap, so a wide layer doesn't
 	// fire many heavy model requests at the single worker at once.
 	MaxActiveNodes int `yaml:"max_active_nodes"`
+	// MaxActiveRuns caps how many orchestrator RUNS execute concurrently server-wide
+	// (default 3). max_active_nodes bounds nodes within ONE plan; this bounds the
+	// number of plans, so a burst of webhook/REST requests queues instead of all
+	// piling onto one model. 0 ⇒ default; extras block until a slot frees.
+	MaxActiveRuns int `yaml:"max_active_runs"`
 }
 
 // GatesConfig configures the trust gate that wraps every agent, each stage with
@@ -672,6 +677,12 @@ func (c *Config) validate() error {
 	}
 	if c.Dag.MaxActiveNodes == 0 {
 		c.Dag.MaxActiveNodes = 2
+	}
+	if c.Dag.MaxActiveRuns == 0 {
+		c.Dag.MaxActiveRuns = 3
+	}
+	if c.Dag.MaxActiveRuns < 1 {
+		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
 	}
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
