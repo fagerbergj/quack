@@ -133,6 +133,33 @@ redundant for a focused change in a conventional repo. Escalate to a standalone
 substantial work in its own right (see `references/breaking-down-large-work.md`,
 "When to split understanding from implementation").
 
+## Carry the user's CONSTRAINTS into the node's task — a constraint you drop is a constraint that is never honoured
+
+A node acts on **its own task**, which you write. The user's verbatim request is given to it
+only as BACKGROUND, explicitly marked as mostly other nodes' work (that framing is what stops
+a node wandering off and doing a sibling's job). So the node will follow *your paraphrase*,
+not the user's words.
+
+Which means: **every explicit instruction the user gave about HOW the work must be done has to
+survive into the task you write, or it will not happen.** These are not decoration — the user
+said them for a reason, and they are the first thing a paraphrase loses:
+
+- **method** — "use code mode / `run_code`", "write ONE script, don't read one file at a time",
+  "clone and read the SOURCE, not blog posts", "batch your reads"
+- **prohibitions** — "don't touch the generated files", "no new dependencies", "don't refactor
+  while you're in there"
+- **sources** — "read their actual implementation", "use the repo's own docs", a specific URL,
+  a specific branch or commit
+- **shape of the answer** — "cite every file", "keep the summary short", "one PR, not three"
+
+Live failure (2026-07-14): the user's request said, in capitals, *"You have run_code (code
+mode). USE IT: write ONE script that reads the four files"*. The orchestrator wrote the node's
+task as *"CLONE the repo, then READ these four files"* — dropping the instruction entirely. The
+node read them one at a time with `read_file`, exactly as its task said, and the feature the
+user had asked for went unused. The node did nothing wrong. The plan did.
+
+When in doubt, quote the user's constraint into the task verbatim. It costs you one line.
+
 ## How to build the DAG
 
 For a LARGE or multi-phase coding request where the decomposition isn't obvious — a
