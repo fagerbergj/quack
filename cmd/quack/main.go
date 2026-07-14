@@ -130,7 +130,7 @@ func newChatCmd() *cobra.Command {
 	c := &cobra.Command{Use: "chat", Short: "Create and drive chat sessions"}
 
 	node := &cobra.Command{Use: "node", Short: "Control nodes within a chat's active run"}
-	node.AddCommand(newNodeStopCmd())
+	node.AddCommand(newNodeStopCmd(), newNodeSteerCmd(), newNodeRetryCmd())
 
 	c.AddCommand(
 		newChatNewCmd(),
@@ -295,6 +295,39 @@ func newNodeStopCmd() *cobra.Command {
 			})
 		},
 	}
+}
+
+// newNodeSteerCmd: `chat node steer` — interrupt a RUNNING node and re-run it
+// with guidance against its same session (updateNodeStatus status=running).
+func newNodeSteerCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "steer <chat-id> <node-id> <guidance>",
+		Short: "Interrupt a running node and re-run it with new guidance (same session)",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodeSteer(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2])
+			})
+		},
+	}
+}
+
+// newNodeRetryCmd: `chat node retry` — re-queue a finished node (and its
+// downstream) with optional guidance (updateNodeStatus status=queued).
+func newNodeRetryCmd() *cobra.Command {
+	var guidance string
+	c := &cobra.Command{
+		Use:   "retry <chat-id> <node-id>",
+		Short: "Re-run a finished node (done/failed/cancelled) and everything downstream of it",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodeRetry(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], guidance)
+			})
+		},
+	}
+	c.Flags().StringVar(&guidance, "guidance", "", "extra guidance folded into the node's task for the re-run")
+	return c
 }
 
 // newServerCmd: run and manage the server. `serve` folds in cmd/server in the

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/config"
@@ -263,4 +264,75 @@ func TestEmitFillsBlankBackendURL(t *testing.T) {
 	if got := cfg.Stores["default_postgres"].URL; got == "" {
 		t.Error("postgres blank URL should be filled with the default DSN")
 	}
+}
+
+// TestEmitServerConfigCoding: the coding feature emits the three coding agents,
+// the workspace section (sandbox + run_command/run_code guards), and loads
+// through the real config loader. The guard tier tracks the judge: judge+confirm
+// with a judge model, confirm without.
+func TestEmitServerConfigCoding(t *testing.T) {
+	t.Setenv("QUACK_LLM_API_KEY", "k")
+	base := InitAnswers{
+		Endpoint: "http://x/v1", MainModel: "m", SessionKind: "sqlite",
+		Coding: true, Sandbox: "none",
+	}
+
+	t.Run("with judge", func(t *testing.T) {
+		a := base
+		a.JudgeModel = "j"
+		a.CoderModel = "coder-x"
+		path := filepath.Join(t.TempDir(), "quack.yaml")
+		if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := loadConfigForTest(path)
+		if err != nil {
+			t.Fatalf("emitted coding config failed to load: %v\n---\n%s", err, EmitServerConfig(a))
+		}
+		for _, want := range []string{"code-implementer", "code-explorer", "code-reviewer"} {
+			ag, ok := cfg.Agents[want]
+			if !ok {
+				t.Fatalf("emitted config missing agent %q", want)
+			}
+			if ag.Model != "coder-x" {
+				t.Errorf("%s model = %q, want coder-x", want, ag.Model)
+			}
+		}
+		if cfg.Agents["code-implementer"].JudgeRounds != 8 {
+			t.Errorf("implementer judge_rounds = %d, want 8", cfg.Agents["code-implementer"].JudgeRounds)
+		}
+		if cfg.Workspace.Sandbox != "none" {
+			t.Errorf("workspace.sandbox = %q, want none", cfg.Workspace.Sandbox)
+		}
+		if got := cfg.Workspace.Guards["run_code"]; got != "judge+confirm" {
+			t.Errorf("guards[run_code] = %q, want judge+confirm", got)
+		}
+	})
+
+	t.Run("no judge downgrades guards, blank coder model reuses main", func(t *testing.T) {
+		a := base
+		path := filepath.Join(t.TempDir(), "quack.yaml")
+		if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := loadConfigForTest(path)
+		if err != nil {
+			t.Fatalf("emitted coding config failed to load: %v\n---\n%s", err, EmitServerConfig(a))
+		}
+		if got := cfg.Workspace.Guards["run_command"]; got != "confirm" {
+			t.Errorf("guards[run_command] = %q, want confirm without a judge", got)
+		}
+		if got := cfg.Agents["code-implementer"].Model; got != "m" {
+			t.Errorf("blank coder model should reuse main, got %q", got)
+		}
+	})
+
+	t.Run("off by default", func(t *testing.T) {
+		a := base
+		a.Coding = false
+		out := EmitServerConfig(a)
+		if strings.Contains(out, "code-implementer") || strings.Contains(out, "workspace:") {
+			t.Error("coding off should emit no coding agents or workspace section")
+		}
+	})
 }

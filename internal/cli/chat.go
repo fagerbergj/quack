@@ -125,6 +125,37 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 	return nil
 }
 
+// RunNodeSteer is `quack chat node steer <chat-id> <node-id> <guidance>`:
+// interrupt one RUNNING node and re-run it against its same session with the
+// guidance folded in. The re-run streams over the chat's existing SSE
+// connection — watch it with `chat show -f`.
+func RunNodeSteer(ctx context.Context, out io.Writer, server, chatID, nodeID, guidance string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.SteerNode(ctx, chatID, nodeID, guidance); err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Steered node %s (chat %s) — watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
+	return nil
+}
+
+// RunNodeRetry is `quack chat node retry <chat-id> <node-id> [--guidance]`:
+// re-queue a finished node (done/failed/cancelled); it and everything
+// downstream re-run, reusing the stored outputs of all other nodes.
+func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, guidance string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.RetryNode(ctx, chatID, nodeID, guidance); err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Retrying node %s (chat %s) — watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
+	return nil
+}
+
 // RunChatDelete is `quack chat delete <id>`. Deletion is irreversible, so it
 // confirms first unless yes is set (the --yes flag, or a non-interactive stdin).
 func RunChatDelete(ctx context.Context, out io.Writer, in io.Reader, server, id string, yes bool) error {
