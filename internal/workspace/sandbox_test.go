@@ -114,6 +114,100 @@ func TestSandboxAllowsWorkInsideTheJail(t *testing.T) {
 	}
 }
 
+// TestSandboxMountsTheWorkRootAtOneFixedPath: the child's view of its own
+// workspace must be the MODEL's view of it. Caps.WorkRoot (the node's own
+// directory — the invisible root every fs tool resolves against) appears inside
+// the namespace at SandboxWorkRoot and nowhere else, so `pwd` in a subdirectory
+// prints the same trailing path the tools use, with no host prefix at all.
+//
+// Before this, the child was chdir'd to the HOST path, so `pwd` printed the
+// server's workspace root, the chat id and the node id — and the model, handed a
+// second name for the one place it already knew as "/quack", went looking for
+// its workspace on the host filesystem (see internal/tools/sandbox_namespace_test.go).
+func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
+	requireBwrap(t)
+
+	work := t.TempDir() // stands in for <root>/<user>/<chat>/<node>/
+	repo := filepath.Join(work, "quack")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	caps := sandboxCaps(t, SandboxBwrap)
+	caps.WorkRoot = work
+
+	res, err := RunArgv(context.Background(), repo, []string{"pwd"}, caps)
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("pwd: err=%v exit=%d output=%q", err, res.ExitCode, res.Output)
+	}
+	got := strings.TrimSpace(res.Output)
+	if want := SandboxWorkRoot + "/quack"; got != want {
+		t.Errorf("pwd = %q, want %q — the child must see the workspace at the fixed mount, not on the host", got, want)
+	}
+	if strings.Contains(got, work) {
+		t.Errorf("pwd = %q leaks the host path %q into the model's context", got, work)
+	}
+
+	// The write still lands on the real host tree (the fixed path is a MOUNT, not
+	// a copy) — the guarantee #214 exists for.
+	if res, err := RunArgv(context.Background(), repo, []string{"sh", "-c", "echo built > ../built.txt"}, caps); err != nil || res.ExitCode != 0 {
+		t.Fatalf("write into the node's own workspace: err=%v exit=%d output=%q", err, res.ExitCode, res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(work, "built.txt")); err != nil {
+		t.Fatalf("the sandboxed write did not survive on the host: %v", err)
+	}
+
+	// A stray write to the sandbox's own root can no longer EVAPORATE silently:
+	// the throwaway root is read-only, so it fails loudly instead of landing in a
+	// mount that disappears when the command exits.
+	res, err = RunArgv(context.Background(), repo, []string{"sh", "-c", "echo x > /stray.txt"}, caps)
+	if err != nil {
+		t.Fatalf("stray write errored (want a clean non-zero exit): %v", err)
+	}
+	if res.ExitCode == 0 {
+		t.Errorf("a write to the sandbox root succeeded (%q) — it would vanish with the mount", res.Output)
+	}
+}
+
+// TestSandboxToolchainAndHomeSurviveTheFixedMount: remapping the WORKSPACE must not
+// disturb the other two things a real build needs — a toolchain from exec_path
+// (bound read-only at its OWN host path, because RunArgv resolves argv[0] on the
+// host and hands the child that absolute path) and the isolated $HOME the caches
+// land in (npm's _cacache, GOCACHE, ~/.gitconfig).
+//
+// The "toolchain" here is a script in a temp dir on PATH, which is exactly what
+// workspace.exec_path binds (nvm's node bin, an asdf shim dir) minus any dependence
+// on what happens to be installed on the test host. It answers both questions at
+// once: it only runs at all if exec_path reached inside the namespace, and what it
+// prints is the $HOME the child actually got.
+func TestSandboxToolchainAndHomeSurviveTheFixedMount(t *testing.T) {
+	requireBwrap(t)
+
+	toolBin := t.TempDir()
+	script := "#!/bin/sh\necho \"$HOME\"\nmkdir -p \"$HOME/.cache\" && echo cached > \"$HOME/.cache/probe\"\n"
+	if err := os.WriteFile(filepath.Join(toolBin, "faketool"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", toolBin+string(os.PathListSeparator)+os.Getenv("PATH")) // RunArgv resolves argv[0] on the ambient PATH
+
+	work := t.TempDir()
+	caps := sandboxCaps(t, SandboxBwrap)
+	caps.WorkRoot = work
+	caps.ExtraPath = []string{toolBin} // as workspace.exec_path would
+
+	res, err := RunArgv(context.Background(), work, []string{"faketool"}, caps)
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("an exec_path toolchain could not run inside the sandbox: err=%v exit=%d output=%q",
+			err, res.ExitCode, res.Output)
+	}
+	if got := strings.TrimSpace(res.Output); got != caps.HomeDir {
+		t.Errorf("child HOME = %q, want the isolated home %q — a toolchain's cache must not land in the workspace",
+			got, caps.HomeDir)
+	}
+	if _, err := os.Stat(filepath.Join(caps.HomeDir, ".cache", "probe")); err != nil {
+		t.Fatalf("the toolchain's cache write did not survive in the isolated HOME: %v", err)
+	}
+}
+
 // TestSandboxBlocksWritesOutsideTheJail: read containment is half of it — a
 // child must not be able to WRITE outside its working dir either.
 func TestSandboxBlocksWritesOutsideTheJail(t *testing.T) {

@@ -102,6 +102,7 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 // resolves symlinks), so NO nodeDir + cwd + path combination can escape the jail —
 // a `..` that climbs above the chat scope is caught there, escape hatch or not.
 func jailPath(nodeDir, cwd, p string) string {
+	p = stripSandboxRoot(p)
 	if strings.HasPrefix(p, "/") {
 		// "/" is the ROOT OF YOUR WORKSPACE — the node's own dir. It is not an escape
 		// above it: there is nothing above it that is yours. This is what lets a tool
@@ -112,6 +113,31 @@ func jailPath(nodeDir, cwd, p string) string {
 		return filepath.Join(nodeDir, strings.TrimPrefix(p, "/"))
 	}
 	return filepath.Join(nodeDir, joinCwd(cwd, p))
+}
+
+// stripSandboxRoot turns the SHELL's spelling of the workspace root into the model's
+// own: "/workspace/quack/main.go" → "/quack/main.go" (workspace.SandboxWorkRoot is
+// where a sandboxed child sees the node's directory mounted — see sandbox.go).
+//
+// This is the tools' half of "one namespace, including inside the shell". The shell
+// is a tool like any other, and the rule is that a path out of ANY tool result feeds
+// back into ANY tool: a `pwd` the model just read says "/workspace/quack", and
+// read_file must open the file it names, not go hunting for a directory called
+// "workspace" inside the node dir. (The sandbox closes the other direction: the
+// model's "/quack" resolves in the shell too — see rootAliasArgs.)
+//
+// Only the ABSOLUTE alias is rewritten, so a relative "workspace/x" still means an
+// entry actually named workspace. A top-level entry named "workspace" is therefore
+// shadowed in the absolute spelling; that is the price of the alias, and it is
+// addressable relatively.
+func stripSandboxRoot(p string) string {
+	if p == workspace.SandboxWorkRoot {
+		return "/"
+	}
+	if rest, ok := strings.CutPrefix(p, workspace.SandboxWorkRoot+"/"); ok {
+		return "/" + rest
+	}
+	return p
 }
 
 // displayCwd renders the session working directory for a tool RESULT: the ABSOLUTE

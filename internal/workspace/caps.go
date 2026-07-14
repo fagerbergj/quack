@@ -41,10 +41,19 @@ type Caps struct {
 	// nothing here computes it — Caps only carries the resolved value.
 	HomeDir string
 	// WorkRoot is the calling node's OWN directory (<root>/<user>/<chat>/<node>/) —
-	// the writable subtree a sandboxed child gets. It CONTAINS the child's cwd; the
-	// cwd alone is not enough, because a private /tmp (see sandbox.go tmpArgs) hides
-	// a workspace that lives under /tmp, so anything the child wrote outside the one
-	// bound path silently evaporated. Empty ⇒ no node scope: the cwd is bound alone.
+	// the writable subtree a sandboxed child gets, mounted inside the namespace at
+	// the fixed SandboxWorkRoot. It CONTAINS the child's cwd; the cwd alone is not
+	// enough, because a private /tmp (see sandbox.go tmpArgs) hides a workspace that
+	// lives under /tmp, so anything the child wrote outside the one bound path
+	// silently evaporated.
+	//
+	// It is also the child's NAMESPACE root: the node dir is what the fs tools call
+	// "/" (the invisible root — internal/tools/cwd.go), so mounting it at one fixed
+	// path is what makes a shell's `pwd` and a tool's `cwd` name one place. Every
+	// caller whose child's output the MODEL will read must set it: run_command
+	// (internal/tools) and the gate's deterministic checks (internal/vetting), whose
+	// compiler output lands in the revise prompt. Empty ⇒ no node scope: the cwd is
+	// mounted as the root instead.
 	WorkRoot string
 	// Sandbox is the OS boundary every RunArgv/RunPipeline child runs inside
 	// (SandboxBwrap | SandboxNone — see sandbox.go). The ZERO value is NO

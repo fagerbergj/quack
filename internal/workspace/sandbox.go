@@ -50,6 +50,35 @@ const (
 	prlimitBinary = "prlimit"
 )
 
+// SandboxWorkRoot is the ONE path a sandboxed child's workspace appears at,
+// whatever the host calls it: Caps.WorkRoot (the calling node's own directory —
+// the INVISIBLE ROOT every model-supplied path already resolves under, see
+// internal/tools/cwd.go) is bind-mounted here, and the child is chdir'd relative
+// to it. It never varies — not by host, not by chat, not by node.
+//
+// This is the shell half of the one-namespace invariant (#204, #209): the fs
+// tools call the node's directory "/", so a path the model reads out of any tool
+// result must be usable in any tool, INCLUDING the shell. Give the shell's child
+// the host path instead and the model is handed two names for one place — which
+// is exactly what happened when the shell landed (#213). Live, a code-implementer
+// ran `pwd`, got
+//
+//	/tmp/claude-1000/-home-jason-…/workspace/local/<chatID>/<nodeID>/quack
+//
+// for the directory every other tool called `/quack`, and spent its next three
+// turns running `find /tmp -name quack` over the host filesystem before giving up
+// and cloning the repo a SECOND time. `pwd` now prints /workspace/quack.
+//
+// Why not "/" itself: the child still needs /usr, /bin, /proc and /dev to exist,
+// and making the node dir the root would have bwrap create those mountpoints
+// INSIDE the node's own directory, where the fs tools would show them to the
+// model. A named mountpoint under a read-only root is the closest honest thing.
+// "/workspace" is the name because it is what it is; the cost is that a top-level
+// entry literally named "workspace" cannot be addressed through the ABSOLUTE
+// alias (jailPath maps "/workspace/…" back onto the node root) — it is still
+// addressable relatively, and no clone has ever been called that.
+const SandboxWorkRoot = "/workspace"
+
 // Limits are the per-child-PROCESS resource limits (setrlimit), applied via
 // prlimit(1) as the INNERMOST wrapper — Go's os/exec has no setrlimit hook, and
 // setting them in the server process would limit the server itself. Zero means
@@ -181,7 +210,8 @@ func bwrapSystemArgs() []string {
 // program, and the sandbox wraps that. bin is the already-resolved absolute
 // path of argv[0] (see RunArgv), dir the jail-resolved working directory.
 //
-//	bwrap <system view> <toolchains ro> <cwd + HOME rw> --chdir dir -- prlimit … -- <bin> <args>
+//	bwrap <system view> <toolchains ro> <workspace + HOME rw> <root aliases>
+//	      --remount-ro / --chdir <workspace path of dir> -- prlimit … -- <bin> <args>
 //
 // prlimit goes INSIDE bwrap on purpose: RLIMIT_NPROC is counted per-UID
 // system-wide, so it is only meaningful (and only safe) inside the sandbox's
@@ -218,20 +248,133 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	// It hadn't. We ate its files. The node's own dir is what the fs tools already
 	// treat as writable (it is the invisible root every model path resolves under),
 	// so binding it here removes an inconsistency rather than widening anything.
+	//
+	// And it is mounted at SandboxWorkRoot — a FIXED path — so the child sees the
+	// workspace by the same name the model does (see SandboxWorkRoot): the host
+	// path, the chat id and the node id never enter the child's view at all.
 	work := caps.WorkRoot
-	if work == "" {
+	if work == "" || !isDir(work) {
 		work = dir // no node scope (a direct/un-gated call): the cwd is all there is
 	}
-	args = append(args, "--bind", work, work)
-	if dir != work {
-		args = append(args, "--bind", dir, dir) // cwd outside the node dir: bind it too
+	args = append(args, "--bind", work, SandboxWorkRoot)
+	chdir := SandboxWorkRoot
+	if rel, ok := relUnder(work, dir); ok {
+		chdir = filepath.Join(SandboxWorkRoot, rel)
+	} else {
+		// A cwd outside the node's own workspace — the gate's baseline worktree
+		// (internal/vetting/baseline.go) is the only one, and no model ever sees
+		// its path. Bind it where it is and run there, exactly as before.
+		args = append(args, "--bind", dir, dir)
+		chdir = dir
 	}
 	if caps.HomeDir != "" && caps.HomeDir != dir {
 		args = append(args, "--bind", caps.HomeDir, caps.HomeDir)
 	}
-	args = append(args, "--chdir", dir, "--")
+	args = append(args, rootAliasArgs(work, dir, caps)...)
+	// The sandbox's own root is a throwaway tmpfs: anything written there is gone
+	// when the command exits. That is how we ate the agent's files once already
+	// (#214), and the root aliases below make a stray `cd /repo && cd ..` land
+	// there. Read-only, so a write to the fake root FAILS instead of vanishing;
+	// every real mount (/workspace, $HOME, /tmp, /dev, /proc) keeps its own flags.
+	args = append(args, "--remount-ro", "/")
+	args = append(args, "--chdir", chdir, "--")
 	args = append(args, withLimits(inner, caps.Limits, true)...)
 	return append([]string{bwrapPath()}, args...)
+}
+
+// rootAliasArgs symlinks each top-level entry of the node's workspace to the same
+// name at the sandbox root: /quack → /workspace/quack.
+//
+// This is the last inch of the one namespace. The model's tools call the node's
+// directory "/", so the paths they hand back are "/quack", "/quack/main.go" — and
+// the model feeds those straight into the next tool, which is now sometimes a
+// shell. Without the aliases, `cat /quack/README.md` in a shell is a "No such
+// file or directory" the model has to translate its way out of; with them, the
+// path it just read WORKS, which is the whole invariant (#204, #209).
+//
+// A symlink holds no data: the file is only ever at /workspace/…, so a write
+// through the alias lands in the real bind and survives (and the read-only root
+// above means a write to the alias's *parent* cannot silently vanish). Entries
+// whose names collide with a real mount are skipped — bwrap would refuse to
+// create the symlink, and the mount is what must win.
+func rootAliasArgs(work, dir string, caps Caps) []string {
+	entries, err := os.ReadDir(work)
+	if err != nil {
+		return nil // unreadable node dir: the fixed mount alone is still correct
+	}
+	taken := reservedRoots(dir, caps)
+	var args []string
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || taken[name] || len(args) >= 2*maxRootAliases {
+			continue
+		}
+		args = append(args, "--symlink", SandboxWorkRoot+"/"+name, "/"+name)
+	}
+	return args
+}
+
+// maxRootAliases bounds the symlink farm: the node dir holds clones and a handful
+// of files, so this is never reached in practice — it just keeps a pathological
+// directory (an agent that wrote 5,000 files at its root) from building an absurd
+// argv. Beyond it the entries are still reachable at /workspace/<name>.
+const maxRootAliases = 100
+
+// reservedRoots are the top-level names inside the sandbox that a workspace entry
+// may NOT shadow: the system view's mountpoints, the workspace mount itself, and
+// the first component of every host path we bind (the isolated $HOME, an outside
+// cwd, the exec_path toolchains — bwrap creates those parent dirs at the root).
+func reservedRoots(dir string, caps Caps) map[string]bool {
+	m := map[string]bool{
+		"usr": true, "bin": true, "lib": true, "lib64": true, "sbin": true,
+		"etc": true, "proc": true, "dev": true, "tmp": true,
+		strings.TrimPrefix(SandboxWorkRoot, "/"): true,
+	}
+	add := func(p string) {
+		if c := firstComponent(p); c != "" {
+			m[c] = true
+		}
+	}
+	add(caps.HomeDir)
+	add(dir)
+	for _, p := range caps.ExtraPath {
+		add(p)
+	}
+	return m
+}
+
+// firstComponent is the first path element of an absolute path ("/home/j/x" →
+// "home"); "" for a relative or empty path.
+func firstComponent(p string) string {
+	if !filepath.IsAbs(p) {
+		return ""
+	}
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(p), "/"), "/")
+	return parts[0]
+}
+
+// relUnder reports dir's path RELATIVE to base when dir is base or lies inside it
+// — the mapping from a host path to its place under SandboxWorkRoot. Both paths
+// come from Jail.Resolve (already cleaned and symlink-resolved), so a lexical
+// answer is the true one.
+func relUnder(base, dir string) (string, bool) {
+	rel, err := filepath.Rel(base, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	if rel == "." {
+		return "", true
+	}
+	return rel, true
+}
+
+// isDir guards the WorkRoot bind: bwrap fails outright on a bind source that does
+// not exist, and a caller can hand us a node dir that was never created (a gate
+// check on a node whose worker never wrote anything). Falling back to the cwd —
+// which by then has been stat'd by the caller — keeps that a normal run.
+func isDir(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 // tmpArgs gives the child a private /tmp. It is backed by a real directory
