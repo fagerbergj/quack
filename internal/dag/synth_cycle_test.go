@@ -51,14 +51,14 @@ func TestSynthesizerHardeningDoesNotCreateACycle(t *testing.T) {
 		}
 	}
 
-	layers, err := TopoSort(*plan)
+	layers, err := topoLayers(*plan)
 	if err != nil {
-		t.Fatalf("TopoSort: %v", err)
+		t.Fatalf("topoLayers: %v", err)
 	}
 	if len(layers) != 3 {
 		t.Fatalf("got %d layers, want 3 (explorers → synthesizer → implementer)", len(layers))
 	}
-	if len(layers[0]) != 3 || layers[1][0].ID != "synthesize-design" || layers[2][0].ID != "implement-code-mode" {
+	if len(layers[0]) != 3 || layers[1][0] != "synthesize-design" || layers[2][0] != "implement-code-mode" {
 		t.Fatalf("unexpected layering: %v", layers)
 	}
 }

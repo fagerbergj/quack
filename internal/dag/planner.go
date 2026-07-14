@@ -256,7 +256,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string) (*Pla
 		}
 	}
 
-	if _, err := TopoSort(*plan); err != nil {
+	if _, err := topoLayers(*plan); err != nil {
 		return nil, err
 	}
 	return plan, nil
