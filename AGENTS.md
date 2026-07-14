@@ -96,7 +96,7 @@ Every node's output passes three cheapest-first stages before the DAG propagates
 
 1. **Deterministic checks** (`gate.go`) — citation backing score + length check; targeted revise cycles up to `DeterministicRounds`.
 2. **Self-refine** (`gate.go`) — the worker agent continues its own session to address its draft's gaps.
-3. **Independent judge** (`judge.go`) — a separate agent with a different model calls `submit_verdict` (G-Eval style, 0–10 per criterion). Overall score = lowest criterion (weakest-link; no averaging). Score is normalised 0–1; threshold default `0.6`.
+3. **Independent judge** (`judge.go`) — a separate agent with a different model calls `submit_verdict` (G-Eval style, 0–10 per criterion). Overall score = lowest criterion (weakest-link; no averaging). Score is normalised 0–1; threshold default `0.7`.
 
 ### Agent bundles (`internal/agent/`, `agents/`)
 
@@ -162,11 +162,15 @@ Components under `src/components/` have co-located Storybook stories (`.stories.
 
 | Var | Purpose |
 |-----|---------|
-| `LLM_BASE_URL` | OpenAI-compatible LLM endpoint (e.g. `http://jason-server:11436/v1`) |
+| `QUACK_LLM_ENDPOINT` | OpenAI-compatible LLM endpoint (e.g. `http://jason-server:11436/v1`); interpolated into `providers.default.endpoint` |
 | `QUACK_LLM_API_KEY` | API key |
+| `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (coder/media/image fall back to `QUACK_RESEARCHER_MODEL` if unset) |
+| `QUACK_EMBED_MODEL` | Embedding model for the vector store |
+| `QUACK_COMPACTION_ENABLED` / `QUACK_COMPACTION_MODEL` | Toggle + model for history compaction |
 | `QUACK_DATABASE_URL` | Postgres DSN |
-| `QUACK_QDRANT_URL` | qdrant endpoint |
-| `OIDC_ISSUER` / `OIDC_AUDIENCE` / `OIDC_JWKS_URL` | Inbound OIDC auth |
+| `QUACK_QDRANT_URL` | qdrant endpoint (unset ⇒ memory self-disables) |
+| `QUACK_SEARXNG_URL` | SearXNG JSON API endpoint for web search |
+| `QUACK_WORKSPACE_ROOT` | Filesystem sandbox root (default `./workspace`) |
 | `QUACK_LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error`. `debug` surfaces per-round hot-path trace (vetting/compaction). |
 | `QUACK_LOG_FORMAT` | slog output: `text` (default, human-readable) or `json` (one object per line, for log aggregators). |
 

@@ -5,20 +5,20 @@ out of `PLAN.md` so they can change without touching the architecture. Secrets c
 
 | Config key | Value | Justification |
 | --- | --- | --- |
-| `providers.local.kind` | `openai` | API protocol the provider speaks (the `endpoint` picks the actual server). Other kinds (`gemini`, `anthropic`, …) possible in theory; only this one is implemented. |
-| `providers.local.endpoint` (env `LLM_BASE_URL`) | `http://jason-server:11436/v1` | Local llama-swap endpoint; every agent shares it. |
-| `providers.local.api_key` (env `QUACK_LLM_API_KEY`) | `unused` | llama-swap needs no auth. |
-| `orchestrator.planner.inference` | provider `local`, model `gpt-oss-120b` | Strongest reasoner; plans the DAG once per request, so quality beats speed. |
+| `providers.default.kind` | `openai` | API protocol the provider speaks (the `endpoint` picks the actual server). Other kinds (`gemini`, `anthropic`, …) possible in theory; only this one is implemented. |
+| `providers.default.endpoint` (env `QUACK_LLM_ENDPOINT`) | `http://jason-server:11436/v1` | Local llama-swap endpoint; every agent shares it. |
+| `providers.default.api_key` (env `QUACK_LLM_API_KEY`) | `unused` | llama-swap needs no auth. |
+| `orchestrator.planner.inference` | provider `default`, model `gpt-oss-120b` | Strongest reasoner; plans the DAG once per request, so quality beats speed. |
 | `gates.deterministic_checks.max_rounds` | `4` | Free citation/length checks + cheap targeted revise cycles, run first. |
 | `gates.judge.model` | `gemma4-26b-a4b` | Independent rubric scorer (empty ⇒ judge disabled, and the ask_advisor tool with it); cheaper stages still run. |
-| `gates.judge.threshold` | `0.6` | Per-criterion pass bar — every rubric criterion must clear it (verdict score = the lowest criterion; no averaging or hard caps). |
+| `gates.judge.threshold` | `0.7` | Per-criterion pass bar — every rubric criterion must clear it (verdict score = the lowest criterion; no averaging or hard caps). |
 | `gates.judge.max_rounds` | `1` | Judge/revise rounds; bounds cost and keeps the node loop acyclic. |
-| `agents[web-researcher].inference` | provider `local`, model `qwen3.6-35b` | Fast, capable general worker for web research. |
+| `agents[web-researcher].inference` | provider `default`, model `qwen3.6-35b` | Fast, capable general worker for web research. |
 | `agents[web-researcher].tools` | `web_search, web_fetch, summarize, current_date, …, git_clone, read_file, list_dir, glob, grep` | Tool bindings (explicit; independent of the card's skills). The read-only fs + clone tools let a research task pull a repository apart; no write/edit/commit for the researcher — that's the code-implementer's job. |
-| `agents[code-implementer].inference` | provider `local`, model `${QUACK_CODER_MODEL}` (falls back to `${QUACK_RESEARCHER_MODEL}` if unset — `internal/config`'s `expandEnv`) | Clones/edits/commits real code. Bundle `agents/code-implementer` (`prompt.md` = the ponytail ladder; `rubric.md` = the code-quality research criteria + a first-class ponytail section). |
+| `agents[code-implementer].inference` | provider `default`, model `${QUACK_CODER_MODEL}` (falls back to `${QUACK_RESEARCHER_MODEL}` if unset — `internal/config`'s `expandEnv`) | Clones/edits/commits real code. Bundle `agents/code-implementer` (`prompt.md` = the ponytail ladder; `rubric.md` = the code-quality research criteria + a first-class ponytail section). |
 | `agents[code-implementer].tools` | `read_file, write_file, edit_file, list_dir, glob, grep, delete_path, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch, git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase, run_command, ask_advisor, ask_user, load_memory, stage_memory` | The full fs + git surface, plus `run_command` for its own build/test iteration loop (guarded — see `workspace.guards`), and shared memory (`load_memory`/`stage_memory` + the bundle's `memory.md`) so it recalls what the explorer/reviewer already learned about this repo. |
 | `agents[<name>].memory_role` | `coding` / `research` (empty ⇒ none) | The agent's role bucket in **shared memory**. Memory is bucketed by SUBJECT — the repo, the role family, the user — not by agent (`internal/memory/scope.go`), so the explorer's repo knowledge reaches the implementer and the reviewer. |
-| `agents[rag-researcher].inference` | provider `local`, model `qwen3.5-9b` | Smaller/faster worker; RAG lookup is lighter work. |
+| `agents[rag-researcher].inference` | provider `default`, model `qwen3.5-9b` | Smaller/faster worker; RAG lookup is lighter work. |
 | `agents[rag-researcher].tools` | `rag_search` | Tool binding for the RAG researcher. |
 | `tools.web_search.kind` | `searxng` (default) / `exa` | Search backend. `searxng` needs an instance URL. `exa` works **keyless** by default — it speaks Exa's hosted MCP under the hood, so no URL and no container (the no-docker path); add `auth` to use Exa's REST API instead (structured JSON, more robust). Either way the agent just calls `web_search`; swapping the backend is a config change, not a tool rewrite (`internal/tools/backends.go`). |
 | `tools.web_search.url` (env `QUACK_SEARXNG_URL`) | _internal URL_ | SearXNG endpoint (e.g. `http://searxng:8080`); **required** for `kind: searxng`, unused by `kind: exa`. |

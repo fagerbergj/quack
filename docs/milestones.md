@@ -464,7 +464,8 @@ validated by Turnstone (files + ripgrep + bash, no document DB).
 
 - **File tools** (`read_file` / `write_file` / `edit_file` / `list_dir` / `grep`) confined to a
   configured **workspace root** (`workspace.root`), paths guarded against `..` traversal. `grep` is a
-  typed wrapper over **ripgrep**. Writes are bounded by the sandbox, so they need no gate.
+  pure-Go regexp scanner (skips vendored/generated dirs, byte-bounded), not a `ripgrep` wrapper.
+  Writes are bounded by the sandbox, so they need no gate.
 - **`bash` + 3-tier safety gate** (auto-allow polarity, Turnstone-shaped): (1) a deterministic
   **allowlist** of read-only commands → auto-run + a **denylist** of foot-guns → force-ask; (2) a
   cheap **safety judge** (reusing the warm gemma judge) for the gray zone → `allow | ask | deny`; (3)

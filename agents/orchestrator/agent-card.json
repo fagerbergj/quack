@@ -1,16 +1,18 @@
 {
   "name": "orchestrator",
-  "description": "Routes research requests to specialist agents and handles simple conversational questions directly. Use for any user-facing request: factual questions, comparisons, recommendations, and multi-part research tasks.",
+  "description": "Routes user requests to specialist agents and handles simple conversational questions directly. Use for any user-facing request: factual questions, comparisons, recommendations, multi-part research, code changes, code review, and codebase understanding.",
   "skills": [
     {
       "id": "route_request",
       "name": "Request routing",
-      "description": "Decomposes a user request and routes sub-tasks to the appropriate specialist agents (web researcher, synthesizer). Handles simple conversational queries directly without delegation.",
+      "description": "Decomposes a user request into a DAG and routes each sub-task to the appropriate specialist agent (web-researcher, code-implementer, code-reviewer, code-explorer, synthesizer). Handles simple conversational queries directly without delegation.",
       "tags": ["routing", "orchestration", "planning"],
       "examples": [
         "What are the best hiking trails near Seattle?",
         "Compare the latest MacBook Pro and Dell XPS 15",
-        "What is Quack?",
+        "Add a --verbose flag to this repo's CLI and commit it",
+        "Review this PR for correctness",
+        "Explain this repo's architecture",
         "Summarize the key findings from the research above"
       ]
     },
