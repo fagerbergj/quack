@@ -12,21 +12,11 @@ import (
 )
 
 // SandboxMode selects the OS boundary every RunArgv/RunPipeline child process
-// runs inside.
-//
-// Why this exists: the workspace Jail is a PATH check — it confines the paths
-// the filesystem/git TOOLS resolve. It never constrained a child process, only
-// its cwd: RunArgv set cmd.Dir and scrubbed the env, but a child's ARGUMENTS
-// were never path-checked, argv[0] resolved against the server's ambient PATH,
-// and there is no binary allowlist. `run_command: cat ~/.ssh/id_ed25519` — or
-// any `sh -c "…"`, which contains none of the rejected shell metacharacters —
-// therefore ran as the server's own OS user with that user's full filesystem
-// authority. The metachar wall (shellMetachars) is an LLM-habit guard, not a
-// security boundary; this is the security boundary. That is also why, once this
-// exists, run_command hands its command line to a REAL SHELL inside the
-// namespace (RunShell): the guard blocked no attack, it only blocked the model.
-// With SandboxNone there is no boundary but the habit guard, so there the
-// argv-only rule — and the metachar rejection — stays exactly as it was.
+// runs inside. The workspace Jail is a PATH check on the TOOLS; it never
+// constrained a child process — this is the security boundary (the metachar wall
+// is an LLM-habit guard, not one). With a sandbox, run_command may hand its line
+// to a real shell (RunShell); under SandboxNone the argv-only rule and metachar
+// rejection stay exactly as they were.
 type SandboxMode string
 
 const (
@@ -51,32 +41,15 @@ const (
 )
 
 // SandboxWorkRoot is the ONE path a sandboxed child's workspace appears at,
-// whatever the host calls it: Caps.WorkRoot (the calling node's own directory —
-// the INVISIBLE ROOT every model-supplied path already resolves under, see
-// internal/tools/cwd.go) is bind-mounted here, and the child is chdir'd relative
-// to it. It never varies — not by host, not by chat, not by node.
+// whatever the host calls it: Caps.WorkRoot is bind-mounted here and the child
+// chdir'd relative to it. Never varies by host, chat, or node — the shell half
+// of the one-namespace invariant (a `pwd` that prints the host path hands the
+// model two names for one place).
 //
-// This is the shell half of the one-namespace invariant (#204, #209): the fs
-// tools call the node's directory "/", so a path the model reads out of any tool
-// result must be usable in any tool, INCLUDING the shell. Give the shell's child
-// the host path instead and the model is handed two names for one place — which
-// is exactly what happened when the shell landed (#213). Live, a code-implementer
-// ran `pwd`, got
-//
-//	/tmp/claude-1000/-home-jason-…/workspace/local/<chatID>/<nodeID>/quack
-//
-// for the directory every other tool called `/quack`, and spent its next three
-// turns running `find /tmp -name quack` over the host filesystem before giving up
-// and cloning the repo a SECOND time. `pwd` now prints /workspace/quack.
-//
-// Why not "/" itself: the child still needs /usr, /bin, /proc and /dev to exist,
-// and making the node dir the root would have bwrap create those mountpoints
-// INSIDE the node's own directory, where the fs tools would show them to the
-// model. A named mountpoint under a read-only root is the closest honest thing.
-// "/workspace" is the name because it is what it is; the cost is that a top-level
-// entry literally named "workspace" cannot be addressed through the ABSOLUTE
-// alias (jailPath maps "/workspace/…" back onto the node root) — it is still
-// addressable relatively, and no clone has ever been called that.
+// Not "/" itself because the child still needs /usr, /proc, /dev to exist, and
+// making the node dir the root would create those mountpoints inside it where
+// the fs tools would show them. Cost: a top-level entry literally named
+// "workspace" is shadowed in the ABSOLUTE spelling only.
 const SandboxWorkRoot = "/workspace"
 
 // Limits are the per-child-PROCESS resource limits (setrlimit), applied via
@@ -226,32 +199,14 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	args := bwrapSystemArgs()
 	args = append(args, tmpArgs(caps)...)
 	args = append(args, toolchainArgs(caps)...)
-	// The only writable paths: the child's own WORKSPACE — the calling node's own
-	// directory (Caps.WorkRoot), which contains its cwd — and its isolated $HOME
-	// (npm's _cacache, GOCACHE, ~/.gitconfig — see Jail.HomeDir). NOT the whole
-	// workspace root: a node's child still cannot reach another node's clone,
-	// another chat's tree, or another user's jail.
-	//
-	// Binding only the CWD was silent data loss. tmpArgs replaces /tmp wholesale,
-	// and a workspace root that lives under /tmp (ours does) is therefore GONE
-	// inside the sandbox except for the one path bound back on top of it. Anything
-	// the child wrote elsewhere in its own workspace — a `git clone` into the node
-	// dir, a file one directory up — landed in the throwaway mount and evaporated
-	// when the command exited. The Go fs tools are not sandboxed and saw the real
-	// tree, so the model was handed two contradictory views of its own workspace.
-	// Live (2026-07-13), a code-explorer, after cloning a repo with the shell:
-	//
-	//	"The software-agent-sdk clone is missing from this workspace… I see the
-	//	 workspace has changed between turns… The cd tool seems to have lost its
-	//	 state or the path resolution is broken."
-	//
-	// It hadn't. We ate its files. The node's own dir is what the fs tools already
-	// treat as writable (it is the invisible root every model path resolves under),
-	// so binding it here removes an inconsistency rather than widening anything.
-	//
-	// And it is mounted at SandboxWorkRoot — a FIXED path — so the child sees the
-	// workspace by the same name the model does (see SandboxWorkRoot): the host
-	// path, the chat id and the node id never enter the child's view at all.
+	// The only writable paths: the node's own directory (Caps.WorkRoot) and its
+	// isolated $HOME. NOT the whole workspace root — a node's child still cannot
+	// reach another node's clone, another chat's tree, or another user's jail.
+	// Bind the WHOLE node dir, not just the cwd: tmpArgs replaces /tmp wholesale,
+	// so anything the child wrote in its workspace outside the bind would land in
+	// the throwaway mount and evaporate (a live clone vanished exactly that way).
+	// Mounted at SandboxWorkRoot, a FIXED path, so the host path / chat id /
+	// node id never enter the child's view.
 	work := caps.WorkRoot
 	if work == "" || !isDir(work) {
 		work = dir // no node scope (a direct/un-gated call): the cwd is all there is
@@ -282,21 +237,12 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	return append([]string{bwrapPath()}, args...)
 }
 
-// rootAliasArgs symlinks each top-level entry of the node's workspace to the same
-// name at the sandbox root: /quack → /workspace/quack.
-//
-// This is the last inch of the one namespace. The model's tools call the node's
-// directory "/", so the paths they hand back are "/quack", "/quack/main.go" — and
-// the model feeds those straight into the next tool, which is now sometimes a
-// shell. Without the aliases, `cat /quack/README.md` in a shell is a "No such
-// file or directory" the model has to translate its way out of; with them, the
-// path it just read WORKS, which is the whole invariant (#204, #209).
-//
-// A symlink holds no data: the file is only ever at /workspace/…, so a write
-// through the alias lands in the real bind and survives (and the read-only root
-// above means a write to the alias's *parent* cannot silently vanish). Entries
-// whose names collide with a real mount are skipped — bwrap would refuse to
-// create the symlink, and the mount is what must win.
+// rootAliasArgs symlinks each top-level entry of the node's workspace to the
+// same name at the sandbox root (/quack → /workspace/quack), so the "/quack"
+// paths the fs tools hand back also work in the shell — the last inch of the one
+// namespace. A symlink holds no data, so a write through the alias lands in the
+// real bind and survives. Entries colliding with a real mount are skipped: the
+// mount must win.
 func rootAliasArgs(work, dir string, caps Caps) []string {
 	entries, err := os.ReadDir(work)
 	if err != nil {

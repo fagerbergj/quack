@@ -16,7 +16,7 @@ import (
 // events, plan-wrapper structural events, A2A-relayed activity) is invisible
 // to the orchestrator's request builder.
 //
-// Why this exists (live failure 2026-07-11): the orchestrator is pinned
+// Why this exists: the orchestrator is pinned
 // Mode: ModeChat (the amnesia fix), so ADK builds its request from session
 // history — and the plan graph runs in the SAME session (sessionID ==
 // chatID). ADK's contents builder cannot exclude the run internals for us:

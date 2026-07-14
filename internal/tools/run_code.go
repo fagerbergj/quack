@@ -1,51 +1,19 @@
-// Code mode (internal/tools/run_code.go): instead of emitting ONE tool call per
-// turn and waiting — every intermediate result landing in its context — the
-// model writes a PROGRAM that calls the tools as ordinary functions. The program
-// runs; ONE result comes back. A single turn can read five files, grep, and write
-// a patch, with real control flow, and the five file contents never enter the
-// model's context at all.
+// Code mode: the model writes a PROGRAM that calls its tools as ordinary
+// functions; the program runs; ONE result comes back. The bulk (file contents,
+// grep matches, command output) is consumed inside the script and never enters
+// the model's context.
 //
-// The motivating failure was live: a code-implementer spent 25 minutes and 98
-// tool calls re-reading the same files and wrote nothing, because a 65k context
-// window cannot hold what it needed to hold.
-//
-// THE API IS GENERATED, NEVER HAND-WRITTEN. The callable surface comes from each
-// bound tool's real Declaration() — name, description, parameter schema — and each
-// JS function is bound straight to that same tool object's Run. There is exactly
-// one source of truth, so a tool whose schema changes changes here too, in the
-// same commit, with no parallel list to drift. run_code_test.go's
-// TestNoHandMaintainedToolList enforces that: this file may not name a single
-// tool in a string literal.
-//
-// THE GUARD IS ON THE SCRIPT. run_code is itself ONE tool call, so it can pause
-// and confirm like any other tool — and that is where the guard ladder goes
-// (registry.go: run_code is judge+confirm, and its tier is RAISED to the union of
-// the tiers of every tool it binds, so a script can never be a way around a tool's
-// own guard). The safety judge and the human see the PROGRAM — readable,
-// deterministic text — and approve it ONCE, before a single line of it runs. There
-// is no mid-script suspension, so the re-execution problem that would come with one
-// does not exist.
-//
-// Inside an approved script the tools therefore run WITHOUT their individual
-// confirm/judge guards (the program was already judged and approved as a whole;
-// re-judging each call would be redundant and, at the judge tier, a model call per
-// loop iteration). What still applies to EVERY in-script call: the path jail and the
-// workspace caps (these live in the tool implementations — newFSBinding et al — not
-// in the guard wrapper), the OS sandbox around run_command's children, the per-node
-// CANCEL guard (a cancelled node stops mid-script), and the activity ledger below.
-//
-// The script itself has NO ambient capability whatsoever — no filesystem, no
-// network, no exec, no require/import. It can only call the functions bound here.
-//
-// THE LEDGER STILL SEES IT. A tool called inside a script produces no session
-// event, so the trust gate's activity ledger — which scans session events for
-// FunctionCall/FunctionResponse pairs — would be blind to it, and a node that
-// really did commit code would be failed for claiming work with no evidence. So
-// the result carries `calls`: a compact record of every in-script call, which
-// vetting's scanner EXPANDS through the exact same recording path a direct call
-// takes (see internal/vetting/node.go's activityScanner). A file written from
-// inside a script is indistinguishable, to the gate, from one written by a direct
-// call.
+// Invariants:
+//   - The API is GENERATED from each bound tool's real Declaration(); this file
+//     may not name a tool in a string literal (TestNoHandMaintainedToolList).
+//   - The guard is on the SCRIPT: run_code's guard tier is raised to the union of
+//     its bound tools' tiers (registry.go), the whole program is judged/approved
+//     once before it runs, and in-script calls skip their individual guards. The
+//     path jail, workspace caps, OS sandbox, and cancel guard still apply per call.
+//   - The script has no ambient capability — only the bound functions.
+//   - The ledger still sees it: in-script calls produce no session events, so the
+//     result carries `calls`, which vetting's activityScanner expands through the
+//     same recording path a direct call takes.
 package tools
 
 import (
@@ -67,67 +35,41 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// The two bounds a runaway script is stopped by. Vars, not consts, only so the
-// tests can shrink them; nothing in production writes to them.
+// Bounds on a runaway script. Vars, not consts, only so tests can shrink them.
 var (
-	// runCodeTimeout bounds a script's wall clock. A script must never hang a
-	// node: goja's Interrupt stops it wherever it is, including inside a
-	// `while(true){}` that touches nothing.
-	runCodeTimeout = 60 * time.Second
-	// runCodeMaxCalls bounds how many tools ONE script may invoke. Generous —
-	// the point of the feature is a turn that does a lot — but finite, so a
-	// looping script cannot grind forever under the timeout.
-	runCodeMaxCalls = 200
+	// goja's Interrupt is what stops a `while(true){}` that touches nothing.
+	runCodeTimeout  = 60 * time.Second
+	runCodeMaxCalls = 200 // tool calls per script
 )
 
 const (
-	// runCodeMaxResult / runCodeMaxLogs cap what comes back into the model's
-	// context. Code mode exists to keep bulk OUT of the context; an uncapped
-	// return value would put it straight back.
+	// Caps on what comes back into the model's context.
 	runCodeMaxResult = 16 << 10
 	runCodeMaxLogs   = 8 << 10
-	// runCodeSampleChars bounds the one string the compact call record keeps
-	// rather than elides: the error message (the ledger reads it to mark an
-	// operation FAILED, and the model reads it to fix its script).
+	// runCodeSampleChars bounds the error message — the one string the compact
+	// record keeps verbatim (the ledger reads it to mark an operation FAILED).
 	runCodeSampleChars = 300
-	// runCodeMaxDescChars bounds how much of each tool's own description is
-	// reproduced in the generated API listing. The model already has the tool's
-	// FULL description from its own declaration (code mode adds a tool, it never
-	// removes one), so the listing needs only enough to identify each function.
+	// Per-tool description budget in the generated API listing; the model already
+	// has each tool's full description from its own declaration.
 	runCodeMaxDescChars = 240
 )
 
-// The echo detector's three numbers (see echoWarning). A script may quote what it
-// found — that is often the answer — so the question is never "is the return value
-// big" but "how much of it is verbatim payload the tools already handed you".
+// Echo-detector thresholds (see echoWarning). The question is never "is the
+// return value big" but "how much of it is verbatim payload the tools already
+// handed the script".
 const (
-	// runCodeEchoMinChunk is the shortest returned string worth testing against the
-	// payloads. Below it, a match means nothing (every source file contains "func"),
-	// and a genuinely useful quote — a signature, a failing assertion — lives here.
+	// Shortest returned string worth testing — below this a match means nothing
+	// (every source file contains "func") and a useful quote lives here.
 	runCodeEchoMinChunk = 64
-	// runCodeEchoWarnBytes is how much verbatim payload in one return value stops
-	// being a quote and starts being a dump. A few snippets never reach it; a file's
-	// contents pass it immediately.
+	// Verbatim payload in one return value past which a quote is a dump.
 	runCodeEchoWarnBytes = 4 << 10
-	// runCodeEchoElideChunk is the size at which ONE verbatim returned string stops
-	// being a quote and becomes a dump we refuse to deliver. Below it a verbatim
-	// string is a legitimate answer — a signature, a failing assertion, the three
-	// lines around a bug — and is passed through untouched. At or above it, a string
-	// that is verbatim tool payload is a file coming back, and it is ELIDED.
-	//
-	// Warning the model was not enough. run_code's description already says, in
-	// capitals, "RETURN ONLY WHAT YOU NEED — NEVER THE FILE CONTENTS", with a worked
-	// example — and the first live script returned 52.2 KB of file contents anyway.
-	// No other harness enforces this (Cloudflare's Code Mode "relies entirely on the
-	// language model's own judgment"; goose returns whatever the runtime printed):
-	// they run 200k-context frontier models, where a dump is waste, not failure. On a
-	// 65k window it IS the failure — it is the entire cost the feature exists to
-	// avoid. So we do not ask. The bytes are only spent when we hand them BACK: the
-	// script may read whatever it likes, but what returns is bounded here.
+	// Size at which ONE verbatim returned string is ELIDED rather than delivered.
+	// Enforced, not just warned about: the first live script returned 52 KB of
+	// file contents despite a capitalised prohibition with a worked example.
 	runCodeEchoElideChunk = 1 << 10
-	// runCodeEchoScanBytes bounds what the detector RETAINS to compare against — a
-	// script that reads 200 files must not make the tool hold all of them. Past it,
-	// bytes are still counted, they are just no longer matchable.
+	// Bound on what the detector RETAINS to compare against — a script reading
+	// 200 files must not make the tool hold all of them. Past it, bytes are
+	// still counted, just no longer matchable.
 	runCodeEchoScanBytes = 4 << 20
 )
 
@@ -399,18 +341,8 @@ func scriptError(err error) string {
 }
 
 // exceptionMessage renders a thrown exception as the model needs it: the message,
-// plainly, and the line in ITS OWN script that threw.
-//
-// goja's String() buries that under a Go stack trace — the live one led with
-//
-//	GoError: read_file: … no such file or directory
-//	    at …tools.(*scriptRun).bind.(*scriptRun).jsFunc.func2 (native)
-//	    at <eval>:1:29(5)
-//
-// The `native` frame is our implementation detail: it names nothing in the model's
-// script, it cannot be acted on, and it was the largest part of the message. The
-// "GoError:" prefix goes with it — it is goja's word for "a Go function threw",
-// i.e. "a tool call failed", which the message below it already says better.
+// plainly, and the line in ITS OWN script that threw. goja's String() buries that
+// under a Go stack trace of native frames the model cannot act on.
 func exceptionMessage(ex *goja.Exception) string {
 	lines := strings.Split(strings.TrimSpace(ex.String()), "\n")
 	msg := strings.TrimPrefix(strings.TrimSpace(lines[0]), "GoError: ")
@@ -465,29 +397,12 @@ func (r *scriptRun) encodeReturn(v goja.Value) (result, warning string) {
 // The echo detector — the model handing the payload back to itself
 // ---------------------------------------------------------------------------
 
-// echoWarning is the answer to code mode's first live failure. The `calls` ledger
-// elided the file contents correctly — and the model then returned them anyway,
-// through its own return value:
-//
-//	out[f] = { total_lines: c.total_lines, content: c.content };   // ~50 KB of source
-//
-// The bulk went straight back into the context the feature exists to protect, and
-// nothing told the model it had done anything wrong, so it would have done it again
-// on the next turn. A cap alone does not teach; it just truncates, silently, and the
-// model concludes its tool is flaky.
-//
-// So: PROVE it and SAY it. Proof, not a ratio — a returned string is an echo when
-// it is verbatim (a substring of, or a superstring of) a payload some tool in this
-// very script actually handed back. That distinction is what keeps the legitimate
-// case alive: a script that COMPUTES a large answer (a generated file, a rendered
-// report, a summary) matches nothing it was given and is never warned at, however
-// big it is.
-//
-// Warn, do not truncate. The bytes are already spent by the time we can see them —
-// truncating buys nothing back, it only hides the evidence from the model, and the
-// one legitimate large-and-verbatim return there is (a patch assembled out of the
-// lines it read) would be the thing destroyed. The model gets the loud version and
-// the size, and can fix its next script itself.
+// echoWarning tells the model its return value echoed tool payload. An echo is
+// PROVED, not guessed: a returned string is an echo only when it is verbatim (a
+// substring or superstring of) a payload some tool in this very script handed
+// back — so a script that COMPUTES a large answer is never warned at, however
+// big. The warning must be in the result, because that is the only place the
+// model will read it in time to do better.
 func (r *scriptRun) echoWarning(elided int) string {
 	if elided == 0 {
 		return ""
@@ -638,17 +553,10 @@ func displayValue(v goja.Value) string {
 // The compact call record
 // ---------------------------------------------------------------------------
 
-// payloadKeys are the fields a tool returns for a SCRIPT to consume: the file's
-// text, the command's output, the grep's matches, the directory's entries. They
-// are precisely what must NOT come back into the model's context — reproducing
-// them in the call record would put the whole point of code mode back where it
-// started. Each is replaced by its SIZE, so the model still knows what it did not
-// see.
-//
-// These are FIELD names, not tool names: nothing here needs to change when a tool
-// is added or renamed, and the size fallback in compactResult catches a bulky
-// field no one thought to name here, so a new tool cannot silently reintroduce
-// the leak.
+// payloadKeys are the bulk fields elided from the call record (replaced by their
+// SIZE, so the model knows what it did not see). FIELD names, not tool names —
+// nothing changes when a tool is added, and compactResult's size fallback catches
+// a bulky field no one named here, so a new tool cannot reintroduce the leak.
 var payloadKeys = map[string]bool{
 	"content": true, "output": true, "stdout": true, "stderr": true,
 	"matches": true, "entries": true, "paths": true, "results": true,

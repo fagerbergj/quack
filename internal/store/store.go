@@ -211,14 +211,11 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		if cur == nil {
 			continue
 		}
-		// Gate-internal activity (a worker draft, the formative advisor consult, a
-		// revision, the plan-graph wrapper's own structural events) is authored by
-		// something other than the orchestrator — it's the trust gate's own
-		// deliberation, never the user-facing message. Skip it entirely so it can't
-		// get glued into asstText (which used to concatenate EVERY assistant event's
-		// text in the turn, gate-internal or not) or listed as top-level activity.
-		// NodeInfo alone can't distinguish this: the orchestrator llmagent is ALSO
-		// wrapped in a workflow.AgentNode, so its own real replies carry NodeInfo too.
+		// Gate-internal activity (worker drafts, advisor consults, revisions) is
+		// authored by something other than the orchestrator and is never the
+		// user-facing message — skip it so it can't get glued into asstText or
+		// listed as top-level activity. NodeInfo alone can't distinguish this: the
+		// orchestrator's own replies carry NodeInfo too.
 		if ev.Author != orchestratorAuthor {
 			continue
 		}
@@ -430,10 +427,8 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 // UpsertDagNode creates or updates a DAG node's execution state.
 func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	db := s.db.WithContext(ctx)
-	// Save() writes EVERY column, so a later event that doesn't carry StartedAt —
-	// node_done, node_failed — would overwrite the start time recorded at node_start
-	// with NULL. Live (2026-07-13): a node that completed had started_at = NULL, so
-	// its duration was unknowable and the DAG could not report how long anything took.
+	// Save() writes EVERY column, so a later event that doesn't carry StartedAt
+	// (node_done, node_failed) would erase the start time recorded at node_start.
 	// Never let a nil StartedAt erase a real one.
 	if node.StartedAt == nil {
 		db = db.Omit("started_at")
