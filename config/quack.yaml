@@ -135,10 +135,14 @@ agents:
 # internal/tools/backends.go.
 tools:
   web_search:
-    kind: exa                     # searxng (needs url) | exa. exa is keyless hosted MCP; used here because
-                                   # searxng is being bot-walled. exa's keyless MCP does rate-limit (429) —
-                                   # acceptable trade for now (see AGENTS.md/memory for context).
+    kind: exa                     # searxng (needs url) | exa. exa used here because searxng is being bot-walled.
     url: ${QUACK_SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080; unused by kind: exa
+    # exa is keyless via Exa's hosted MCP by default (the no-docker path). With an
+    # api_key it uses Exa's REST API instead (structured JSON, more robust, no
+    # keyless-MCP rate-limiting):
+    auth:
+      kind: api_key
+      api_key: ${QUACK_EXA_API_KEY}
     # exa is keyless via Exa's hosted MCP by default (the no-docker path). Add an
     # api_key to use Exa's REST API instead (structured JSON, more robust):
     # auth:
