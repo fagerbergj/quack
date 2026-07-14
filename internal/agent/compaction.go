@@ -63,7 +63,6 @@ const (
 	compactionBuffer    = 20_000 // opencode COMPACTION_BUFFER: max output reserve
 	toolOutputMaxChars  = 2_000  // opencode TOOL_OUTPUT_MAX_CHARS: per-tool-output cap when summarising
 	minPreserveTokens   = 2_000  // opencode MIN_PRESERVE_RECENT_TOKENS
-	maxPreserveTokens   = 8_000  // opencode MAX_PRESERVE_RECENT_TOKENS
 	summaryOutputTokens = 4_096  // opencode SUMMARY_OUTPUT_TOKENS
 
 	maxHeadChars = 120_000 // cap on serialised head fed to the summariser (~30k tokens; safe for a ≥40k-context summariser)
@@ -169,7 +168,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 	// preserve is budgeted in real tokens (budget is real), but splitHead sums
 	// raw bytes/4 sizes — convert to estimate-space by dividing by the ratio so
 	// the preserved tail doesn't overflow the budget once calibrated back.
-	preserve := int(float64(min(max(budget/4, minPreserveTokens), maxPreserveTokens)) / ratio)
+	preserve := preserveFor(budget, req.Contents, ratio, overhead, measuredInput(ctx))
 	if out, ok := compact(ctx, c.Summarizer, req.Contents, preserve); ok {
 		req.Contents = out
 		slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
@@ -258,6 +257,55 @@ func clampToolResults(contents []*genai.Content, maxChars int) int {
 		}
 	}
 	return clamped
+}
+
+// preserveFor returns how much RECENT VERBATIM history to keep, in real tokens.
+//
+// It is a FRACTION OF THE BUDGET, not a constant — the point of compaction is to fit
+// the window, not to shrink to some fixed size and throw the rest of the window away.
+//
+// It used to be `min(max(budget/4, 2000), 8000)`, which on this deployment meant:
+//
+//	context window            65,536
+//	budget (minus output)     45,536
+//	preserved                  8,000   ← everything else summarised away
+//
+// 8_000 is opencode's MAX_PRESERVE_RECENT_TOKENS, ported here without its premise:
+// opencode runs 200k+ windows, where 8k of recent turns is a rounding error. On a 65k
+// window it is catastrophic. One source file is 6-7k tokens, so the tail could hold
+// exactly ONE FILE — every new read evicted the previous one, and we then blamed the
+// model for re-reading what we had deleted.
+//
+// Live (2026-07-13): a code-implementer ran 25 minutes, made 98 tool calls, and wrote
+// nothing. It read internal/tools/registry.go TEN TIMES. It was not confused; it simply
+// could never hold two files at once, so it could never write code that used both.
+//
+// What's left is the room the summary and the task actually need: contents[0] is kept
+// verbatim, and the anchored summary rides on it (mergeTaskSummary), so reserve those
+// plus the calibration overhead and preserve everything else.
+// It returns ESTIMATE-space tokens (what splitHead sums), not real ones.
+//
+// measured is the provider's own prompt-token count for the previous turn (0 if never
+// measured). When the provider says we are OVER budget while our estimate says we fit,
+// the estimate is simply wrong — that is what a measurement is for — and preserving
+// "budget minus reserved" would preserve us straight into a 400. In that case the tail
+// is bounded by the fraction of the CURRENT request that actually fits, which shrinks
+// in proportion to the real overshoot however wrong the ratio is.
+func preserveFor(budget int, contents []*genai.Content, ratio float64, overhead, measured int) int {
+	reserved := calibrated(estimateTokens(contents[:1]), ratio, overhead) + summaryOutputTokens
+	est := int(float64(budget-reserved) / ratio) // real tokens → estimate space
+
+	if measured > budget && measured > 0 {
+		// Keep three quarters of what genuinely fits, so the next turn has room to grow
+		// into rather than re-compacting immediately.
+		if fits := estimateTokens(contents) * budget / measured * 3 / 4; fits < est {
+			est = fits
+		}
+	}
+	if est < minPreserveTokens {
+		est = minPreserveTokens // an oversized task/head: truncateHeadToFit owns that case
+	}
+	return est
 }
 
 // truncateHeadToFit truncates the middle of contents[0] when it alone exceeds
