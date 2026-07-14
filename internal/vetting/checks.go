@@ -80,13 +80,14 @@ func checksPassCriterion(cfg Config) (criterionScore, bool) {
 		}
 		slog.Info("derived checks from the repo", "component", "vetting", "node", cfg.NodeID, "dir", dir, "checks", checks)
 	}
+	caps := checksCaps(cfg)
 	var preexisting []string
 	for _, check := range checks {
 		stages, err := workspace.SplitPipeline(check)
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}
-		res, err := workspace.RunPipeline(context.Background(), dir, stages, cfg.WorkspaceCaps)
+		res, err := workspace.RunPipeline(context.Background(), dir, stages, caps)
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}
@@ -94,7 +95,7 @@ func checksPassCriterion(cfg Config) (criterionScore, bool) {
 			// The gate may only fail a node for what the node's own change BROKE.
 			// A check that already fails on the repo's base commit is repo debt the
 			// worker cannot fix and is not responsible for (baseline.go).
-			if failsAtBase(dir, check, cfg.WorkspaceCaps) {
+			if failsAtBase(dir, check, caps) {
 				slog.Warn("check already fails at base; not gating on it", "component", "vetting", "node", cfg.NodeID, "check", check)
 				preexisting = append(preexisting, check)
 				continue
@@ -129,6 +130,26 @@ func boundCheckOutput(out string) string {
 	return boundExcerpt(out, maxCheckOutputChars) + fmt.Sprintf(
 		"\n[check output truncated: %d of %d bytes shown — fix the FIRST errors, the rest are usually cascades; re-run the check yourself to see them all]",
 		maxCheckOutputChars, len(out))
+}
+
+// checksCaps stamps the node's OWN directory onto the caps the checks run with,
+// so a sandboxed check child sees the workspace exactly where the worker's shell
+// and the fs tools see it: at workspace.SandboxWorkRoot, with the repo one level
+// under it. Without it the check's cwd would be mounted as the root, and a
+// compiler's absolute paths — which land verbatim in the revise feedback the
+// worker then reads — would name a THIRD spelling of the file it is being asked
+// to fix. One namespace means every child of a node speaks it.
+//
+// A node whose workspace dir does not exist (nothing was ever written) leaves
+// WorkRoot unset; childArgv falls back to the check's own cwd, exactly as before.
+func checksCaps(cfg Config) workspace.Caps {
+	caps := cfg.WorkspaceCaps
+	root, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
+	if err != nil {
+		return caps
+	}
+	caps.WorkRoot = root
+	return caps
 }
 
 // checksDir returns the absolute directory a node's checks run in: the node's

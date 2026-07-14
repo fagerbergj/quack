@@ -47,7 +47,11 @@ const (
 		"(/bin/sh -c) — pipes, redirects, globs, quoting, `&&`/`;` chaining, subshells and command substitution " +
 		"`$(…)` all work exactly as they do in a terminal. `dir` is the workspace-relative directory to run in " +
 		"(you can also just `cd` inside the command). stdout and stderr come back merged, tail-truncated; the exit " +
-		"code is the shell's. What contains this: your command runs in an OS sandbox whose entire filesystem is a " +
+		"code is the shell's. Paths: inside the shell your workspace root is " + workspace.SandboxWorkRoot + ", which " +
+		"is the same place the other tools call `/` — `" + workspace.SandboxWorkRoot + "/repo` in here IS `/repo` " +
+		"there, both spellings work everywhere, so a path from any tool result can be used verbatim in a command, " +
+		"and a path a command prints can be handed straight back to the other tools. There is nowhere else to look. " +
+		"What contains this: your command runs in an OS sandbox whose entire filesystem is a " +
 		"READ-ONLY system view plus exactly two writable paths — this working directory and your isolated $HOME. " +
 		"Nothing else exists in there: not ~/.ssh, not /etc/shadow, not another task's files. So there is no point " +
 		"reaching outside your workspace; it will simply fail. Note this tool typically also requires independent " +
