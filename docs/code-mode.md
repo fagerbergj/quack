@@ -54,13 +54,44 @@ in the same commit, because there is no second copy to forget. This is enforced
 structurally: `TestNoHandMaintainedToolList` parses `internal/tools/run_code.go` and fails if
 a single string literal in it is the name of a registered tool.
 
-## The guards still hold
+## One approval, for one program
 
-`registry.go` assembles `run_code` **last**, over the tools it has already built and already
-wrapped in the guard ladder (`guard.go`) and the per-node cancel guard (`cancelguard.go`). A
-script's call invokes that same wrapped tool object, so the path jail, the OS sandbox, the
-safety judge, the cancel guard and the workspace caps all apply to every in-script call for
-free. None of it is reimplemented, so none of it can be bypassed.
+`run_code` is itself **one tool call**. So it pauses and confirms exactly like any other
+tool — and that is where the guard goes. The safety judge and the human see the **script**:
+a readable, deterministic program, approved **once, before a single line of it runs**.
+
+```
+model writes a script
+  → run_code (judge+confirm)
+      → safety judge reads the PROGRAM        → deny ⇒ it never runs; the refusal is the result
+      → human approves the PROGRAM            → deny ⇒ it never runs
+  → the script executes, once, start to finish
+```
+
+Inside an approved script, the tools run **without their individual confirm/judge guards**.
+The program was already judged and approved as a whole; re-judging each call would be
+redundant, and at the judge tier it would be a model call per loop iteration. What still
+applies to **every** in-script call:
+
+- **the path jail and the workspace caps** — these live in the tool *implementations*
+  (`newFSBinding`, `newGitBinding`), below the guard wrapper, so removing the wrapper cannot
+  touch them. `read_file("/etc/passwd")` fails inside a script exactly as it does outside one.
+- **the OS sandbox** around `run_command`'s children (bubblewrap) — unchanged.
+- **the per-node cancel guard** (`cancelguard.go`) — a cancelled node stops mid-script, within
+  one call, even if the script swallows the error.
+- **the activity ledger** — see below. Non-negotiable, and unchanged.
+
+`registry.go` builds each tool **once** and hands out two views of it: the fully-wrapped tool
+for the model's direct, one-call-per-turn use, and a script-bound view that skips the guard
+ladder but keeps the cancel guard. Neither view is unguarded, and a tool cannot get one
+without the other.
+
+The invariant that keeps that honest as tools are added: **`run_code`'s tier is its own
+configured tier raised to the union of the tiers of every tool it binds** (`tools.scriptTier`).
+A script can do anything its tools can do, so it is always at least as guarded as the
+most-guarded tool in it. Config can make `run_code` *more* guarded, never less, and a tool
+given a guard tier tomorrow cannot become reachable through a script under a weaker guard than
+its own — even if nobody remembers to touch `run_code`'s config entry.
 
 The script itself gets **no ambient capability at all**: the runtime is
 [goja](https://github.com/dop251/goja), a pure-Go ES interpreter running in-process — no
@@ -105,16 +136,33 @@ It is on for `code-implementer` and `code-explorer`. Every other agent is unchan
 one-tool-per-turn path stays exactly as it is — code mode **adds** a path, it never removes
 one, and every tool remains callable the normal way.
 
+Its guard tier is an ordinary `workspace.guards` entry, and it ships at `judge+confirm` —
+the same tier `run_command` has, because a script that can run commands must be at least as
+guarded as a command:
+
+```yaml
+  guards:
+    run_command: judge+confirm
+    run_code: judge+confirm
+```
+
 ## The honest limits
 
-- **Confirm-tier and long-running tools are not in the script API.** A script has nowhere to
-  suspend to: a mid-script human pause has no turn boundary to land on, and resuming would
-  re-run the script from the top, re-doing every side effect it had already performed. Under
-  the default guard config that means **`run_command` and `git_push` are not callable from
-  inside a script** (both are `judge+confirm`), nor is `ask_user`. They stay fully available
-  as ordinary one-call-per-turn tools. A deployment that sets `run_command: judge` gets it in
-  code mode too. `judge`-tier tools (`delete_path`, `git_rebase`) *are* in the API — a denial
-  simply comes back as the call's result.
+- **The human now approves a PROGRAM, not each command.** That is more power per approval —
+  the real tradeoff of this design, and worth saying plainly. What makes it a *better* guard
+  rather than a weaker one: the thing being approved is readable, deterministic text, shown in
+  full before anything runs, and reviewed by the safety judge first. The alternative is N
+  approvals of opaque individual calls, each stripped of the context of the others — which is
+  how approval fatigue is manufactured, and how a human ends up rubber-stamping the tenth
+  `run_command` of a sequence they can no longer reconstruct. One program, once, read whole,
+  is the better bargain. (It is also the only one that works: with confirm-tier tools excluded,
+  a script could not run the tests or push a branch, which is most of what code mode is *for*.)
+- **A turn-ending tool is still not in the script API.** `ask_user` and `get_user_choice` end
+  the model's turn and are answered on the *next* one; a script has no turn boundary inside it
+  for the answer to arrive on, and an in-script `ask_user` emits no session event, so the gate
+  would never even see the question. They stay fully available as ordinary one-call-per-turn
+  tools, and the generated API says why they are absent. **Everything else is in the script
+  API**, `run_command` and `git_push` included.
 - **An in-script read carries no content sample.** The compact record elides bulky payloads
   (`content`, `output`, `matches`, `entries`, …) down to a size or a count — that is the
   whole point, and a size fallback catches any bulky field not named, so a new tool cannot

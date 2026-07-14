@@ -17,14 +17,25 @@
 // TestNoHandMaintainedToolList enforces that: this file may not name a single
 // tool in a string literal.
 //
-// THE GUARDS STILL HOLD. registry.go assembles this tool LAST, over the tools it
-// has ALREADY built and wrapped in the guard ladder (guard.go) and the per-node
-// cancel guard (cancelguard.go). A script's call invokes that same wrapped
-// runnableTool.Run, so the path jail, the OS sandbox, the safety judge, the
-// cancel guard and the workspace caps apply to every in-script call for free. The
-// script itself has NO ambient capability whatsoever — no filesystem, no network,
-// no exec, no require/import. It can only call the functions bound here. That is a
-// STRONGER sandbox than the shell it replaces, not a weaker one.
+// THE GUARD IS ON THE SCRIPT. run_code is itself ONE tool call, so it can pause
+// and confirm like any other tool — and that is where the guard ladder goes
+// (registry.go: run_code is judge+confirm, and its tier is RAISED to the union of
+// the tiers of every tool it binds, so a script can never be a way around a tool's
+// own guard). The safety judge and the human see the PROGRAM — readable,
+// deterministic text — and approve it ONCE, before a single line of it runs. There
+// is no mid-script suspension, so the re-execution problem that would come with one
+// does not exist.
+//
+// Inside an approved script the tools therefore run WITHOUT their individual
+// confirm/judge guards (the program was already judged and approved as a whole;
+// re-judging each call would be redundant and, at the judge tier, a model call per
+// loop iteration). What still applies to EVERY in-script call: the path jail and the
+// workspace caps (these live in the tool implementations — newFSBinding et al — not
+// in the guard wrapper), the OS sandbox around run_command's children, the per-node
+// CANCEL guard (a cancelled node stops mid-script), and the activity ledger below.
+//
+// The script itself has NO ambient capability whatsoever — no filesystem, no
+// network, no exec, no require/import. It can only call the functions bound here.
 //
 // THE LEDGER STILL SEES IT. A tool called inside a script produces no session
 // event, so the trust gate's activity ledger — which scans session events for
@@ -128,11 +139,11 @@ type runCodeResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// newRunCode builds the code-mode tool over `bound` — the tools registry.Build
-// has already constructed and wrapped. exclude drops a tool from the in-script
-// API without removing it from the agent (see registry.go: confirm-tier and
-// long-running tools stay direct-call only, because a mid-script human pause has
-// nowhere to suspend to).
+// newRunCode builds the code-mode tool over `bound` — the SCRIPT view of the tools
+// registry.Build has already constructed (cancel-guarded; the guard ladder sits on
+// run_code itself). exclude drops a tool from the in-script API without removing it
+// from the agent — only the turn-ending, long-running ones (registry.go's
+// noCodeMode), which have no turn boundary inside a script to be answered on.
 func newRunCode(bound []tool.Tool, exclude func(tool.Tool) bool) (tool.Tool, error) {
 	api := map[string]runnableTool{}
 	var decls []*genai.FunctionDeclaration
@@ -534,7 +545,9 @@ EXAMPLE
   }
   return { files, sizes };
 
-Tools that need a human's approval, and long-running tools, are NOT in the list below — a script has nowhere to pause. Call those directly, as you always have. Every tool you have remains callable the normal way; this is an addition, not a replacement.`, runCodeTimeout, runCodeMaxCalls)
+APPROVAL
+  This whole script is ONE operation. If your deployment guards it, the script itself is reviewed and approved BEFORE any of it runs — so write a program whose effects are plain to read, and expect an approval prompt on the program, not on its individual calls. Tools that would each ask for approval on their own (running commands, pushing) ARE available here: they are covered by the script's own approval.
+  The one thing missing from the list below is any tool that has to ask the user a question and wait for the answer — a script cannot pause for a human in the middle of itself. Call those directly, as you always have. Every tool you have remains callable the normal way; this is an addition, not a replacement.`, runCodeTimeout, runCodeMaxCalls)
 }
 
 // renderParams turns a tool's parameter schema into a JS-ish object signature —

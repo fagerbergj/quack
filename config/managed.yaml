@@ -147,6 +147,7 @@ workspace:
     git_rebase: judge
     git_push: judge+confirm
     run_command: judge+confirm
+    run_code: judge+confirm   # the whole SCRIPT is judged + approved once, before a line of it runs
 
 # GitHub App extension: webhook receiver + App-authed git creds + the App-mention
 # trigger. Uncomment and set the env vars to enable it on this deployment. Uses the
