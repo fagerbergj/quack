@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { navigate, useChatId } from '../router'
 import { api, type ChatSummary } from '../api'
 import { AssistantText, ActivityList, BubbleHeader, Dots } from '../components/AgentParts'
 import { QuestionBubble } from '../components/QuestionBubble'
@@ -21,8 +21,7 @@ function liveDagFinalText(dag: DagTurnState): string {
 }
 
 export default function Chat() {
-  const { chatId: urlChatId } = useParams<{ chatId?: string }>()
-  const navigate = useNavigate()
+  const urlChatId = useChatId()
 
   const store = useChatStore()
   const [chats, setChats] = useState<ChatSummary[]>([])
