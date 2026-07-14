@@ -156,3 +156,16 @@ func joinCwd(cwd, p string) string {
 	}
 	return filepath.Join(cwd, p)
 }
+
+// workRoot is the absolute path of the calling node's OWN directory — the writable
+// subtree a sandboxed child gets (workspace.Caps.WorkRoot). It is the invisible root
+// every model-supplied path already resolves under (jailPath), so a child that can
+// write anywhere the fs tools can write is not a widening: it is the SAME workspace.
+// "" when there is no node scope (an un-gated call), leaving the cwd bound alone.
+func (b fsBinding) workRoot() string {
+	root, err := b.jail.Resolve(b.userID, b.chatID, b.nodeDir)
+	if err != nil {
+		return ""
+	}
+	return root
+}

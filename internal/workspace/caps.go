@@ -40,6 +40,12 @@ type Caps struct {
 	// other half of this fix). Wired once from internal/serve's buildAgents;
 	// nothing here computes it — Caps only carries the resolved value.
 	HomeDir string
+	// WorkRoot is the calling node's OWN directory (<root>/<user>/<chat>/<node>/) —
+	// the writable subtree a sandboxed child gets. It CONTAINS the child's cwd; the
+	// cwd alone is not enough, because a private /tmp (see sandbox.go tmpArgs) hides
+	// a workspace that lives under /tmp, so anything the child wrote outside the one
+	// bound path silently evaporated. Empty ⇒ no node scope: the cwd is bound alone.
+	WorkRoot string
 	// Sandbox is the OS boundary every RunArgv/RunPipeline child runs inside
 	// (SandboxBwrap | SandboxNone — see sandbox.go). The ZERO value is NO
 	// boundary, which is why exactly one place in the server resolves it
