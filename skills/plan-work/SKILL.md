@@ -40,6 +40,24 @@ that ends in "open a pull request" will be REJECTED (the terminal deliverable mu
 `code-implementer` node), and re-authoring it with *more research nodes* wastes turns:
 the missing node is the implementer.
 
+**A `code-explorer` can only read source it can CLONE. It has no web tools.** So it
+can only be sent after something that actually lives in a public repository. If what
+the request asks about is a hosted service, a product feature, an unreleased or beta
+capability, or a design that exists only in a blog post or an announcement — there is
+no source to read, and a `code-explorer` pointed at it cannot succeed no matter how
+long it runs. It will clone speculative repositories and grep them blind until it is
+killed. That is a routing error, not an agent failure.
+
+Route those to `web-researcher`, which has the tools for it. Reach for `code-explorer`
+only when you can name the repository whose source holds the answer. When you're not
+sure whether a thing is in public source (a vendor's internal implementation, say),
+send BOTH: a `web-researcher` for what is written about it, and a `code-explorer` only
+for the repository that genuinely exists. Live failure: an explorer was sent to find
+Cloudflare's "code mode" implementation, which is server-side and not public. It cloned
+four repositories, found only an `AllowCodeMode` API flag, correctly concluded the
+implementation wasn't there — and kept searching anyway, because it had been given a
+task no amount of reading could complete.
+
 Route by what the node must DO, not by topic: any node that must change code,
 commit, or push is `code-implementer` work — never `web-researcher`, which
 cannot commit and whose vetting expects web citations. A coding request may

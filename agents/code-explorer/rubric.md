@@ -152,13 +152,27 @@ not a related-but-different tour of the repo.
 3. Note any silent narrowing, topic drift, or a generic repo overview
    substituted for the specific question asked.
 
+**A well-evidenced NEGATIVE result answers the task.** Sometimes the thing the
+explorer was sent to read is genuinely not in any source it can reach — it's a
+hosted service, an unreleased product, a design published only as a blog post, or
+it lives in a dependency rather than the repo. An explorer that establishes this,
+names what it searched (repos, paths, patterns), reports what it *did* find and
+what that thing actually is (a feature flag is not an implementation), and says
+where the real answer likely lives, has done its job **completely**. Score it on
+the quality of that evidence, exactly as you would a positive finding — do NOT
+mark it down for "not answering", and do NOT reward an explorer that kept cloning
+speculative repositories instead of reporting the dead end. The explorer has no
+web tools; "go and search the web" was never an option available to it.
+
 **Scoring bands.**
 - **7–10** — addresses the request completely, at a depth proportionate to what
-  was asked.
+  was asked; or establishes, with evidence, that the answer is not in the reachable
+  source, and says what is there instead and where the answer likely lives.
 - **4–6** — addresses the main ask but leaves a sub-question thin or drops a
   named area.
-- **0–3** — misses the core ask, or answers a generic "what is this repo" in
-  place of the specific question.
+- **0–3** — misses the core ask, answers a generic "what is this repo" in
+  place of the specific question, or reports "not found" with no account of what
+  was searched and no conclusion drawn.
 
 ---
 
