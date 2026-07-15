@@ -457,12 +457,40 @@ func (a *App) submitReview(ctx context.Context, args submitReviewArgs) (submitRe
 		return submitReviewResult{}, fmt.Errorf("github_submit_review: event must be one of COMMENT, REQUEST_CHANGES, APPROVE; got %q", args.Event)
 	}
 	comments := a.draftList(args.Owner, args.Repo, args.PullNumber)
-	url, id, err := a.createReview(ctx, args.Owner, args.Repo, args.PullNumber, event, args.Body, comments)
+	body := strings.TrimSpace(args.Body)
+	if body == "" {
+		// Both the mid-tier and the coder models sometimes submit an empty body.
+		// Never post a review with no summary — synthesise a minimal takeaway from
+		// the verdict and the inline count so the PR always shows one.
+		body = defaultReviewBody(event, len(comments))
+	}
+	url, id, err := a.createReview(ctx, args.Owner, args.Repo, args.PullNumber, event, body, comments)
 	if err != nil {
 		return submitReviewResult{}, err
 	}
 	a.draftTake(args.Owner, args.Repo, args.PullNumber) // clear only after a successful post
 	return submitReviewResult{URL: url, ReviewID: id, Comments: len(comments)}, nil
+}
+
+// defaultReviewBody synthesises a one-line summary for a review submitted with an
+// empty body — a verdict word plus the inline-comment count, so the PR never shows
+// a blank review summary.
+func defaultReviewBody(event string, n int) string {
+	verdict := "Reviewed"
+	switch event {
+	case "REQUEST_CHANGES":
+		verdict = "Requested changes"
+	case "APPROVE":
+		verdict = "Approved"
+	}
+	switch n {
+	case 0:
+		return verdict + "."
+	case 1:
+		return verdict + " — 1 inline comment, see it for detail."
+	default:
+		return fmt.Sprintf("%s — %d inline comments, see them for detail.", verdict, n)
+	}
 }
 
 // --- Reading & reacting to existing PR discussion ---
