@@ -113,12 +113,13 @@ func (a *App) commentTool() tool.Tool {
 }
 
 type prArgs struct {
-	Owner string `json:"owner"`
-	Repo  string `json:"repo"`
-	Title string `json:"title"`
-	Head  string `json:"head"`
-	Base  string `json:"base,omitempty"` // default "main"
-	Body  string `json:"body,omitempty"`
+	Owner  string   `json:"owner"`
+	Repo   string   `json:"repo"`
+	Title  string   `json:"title"`
+	Head   string   `json:"head"`
+	Base   string   `json:"base,omitempty"` // default "main"
+	Body   string   `json:"body,omitempty"`
+	Labels []string `json:"labels,omitempty"` // applied to the new PR (best effort)
 }
 
 type prResult struct {
@@ -614,7 +615,8 @@ func (a *App) pullRequestTool() tool.Tool {
 			Name: "github_pull_request",
 			Description: "Open a pull request. `head` is the branch you pushed (must already exist on the remote — " +
 				"push it with git_push first); `base` is the target branch (default `main`). `title`/`body` are the " +
-				"PR text. Returns the PR URL. Authenticated as the app installation.",
+				"PR text; `labels` (optional) are applied to the new PR. Returns the PR URL. Authenticated as the " +
+				"app installation.",
 		},
 		func(ctx adkagent.Context, args prArgs) (prResult, error) {
 			if args.Owner == "" || args.Repo == "" || strings.TrimSpace(args.Title) == "" || args.Head == "" {
@@ -624,9 +626,17 @@ func (a *App) pullRequestTool() tool.Tool {
 			if base == "" {
 				base = "main"
 			}
-			u, err := a.createPullRequest(ctx, args.Owner, args.Repo, args.Title, args.Head, base, args.Body)
+			u, number, err := a.createPullRequest(ctx, args.Owner, args.Repo, args.Title, args.Head, base, args.Body)
 			if err != nil {
 				return prResult{}, err
+			}
+			if len(args.Labels) > 0 {
+				// Best effort: the PR already exists, so a label failure must not fail
+				// the tool (a retry would open a duplicate PR).
+				if err := a.addLabels(ctx, args.Owner, args.Repo, number, args.Labels); err != nil {
+					slog.Warn("github_pull_request: labeling the new PR failed", "component", "github",
+						"repo", args.Owner+"/"+args.Repo, "pr", number, "err", err)
+				}
 			}
 			return prResult{URL: u}, nil
 		},

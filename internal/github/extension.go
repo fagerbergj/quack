@@ -43,12 +43,12 @@ type Runner interface {
 // webhook, all sharing the App's installation-token auth. Implements
 // extension.Extension.
 type Extension struct {
-	app             *App
-	secret          []byte
-	mention         string
-	triggers        map[string]bool // configured trigger set: mention, pr_opened, label
-	autoReviewLabel string
-	runner          Runner
+	app      *App
+	secret   []byte
+	mention  string
+	triggers map[string]bool // configured trigger set: mention, pr_opened, label, issue_plan
+	labels   config.GitHubLabels
+	runner   Runner
 	// runLocks serialises dispatches per PR session: a follow-up (or a rapid
 	// re-label) that arrives while a run on the same PR is in flight WAITS instead
 	// of running concurrently on the same session — concurrent runs on one session
@@ -75,17 +75,31 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner) *Ex
 	for _, t := range cfgTriggers {
 		triggers[t] = true
 	}
-	label := cfg.AutoReviewLabel
-	if label == "" {
-		label = "quack-auto-review"
+	labels := cfg.Labels
+	// config.applyDefaults normally fills these; re-default here so callers that
+	// build the struct directly (tests) still get the standard label names.
+	if labels.Review == "" {
+		labels.Review = cfg.AutoReviewLabel
+	}
+	if labels.Review == "" {
+		labels.Review = "quack-auto-review"
+	}
+	if labels.Plan == "" {
+		labels.Plan = "quack:plan"
+	}
+	if labels.Implement == "" {
+		labels.Implement = "quack:implement"
+	}
+	if labels.Merge == "" {
+		labels.Merge = "quack:merge"
 	}
 	return &Extension{
-		app:             app,
-		secret:          []byte(cfg.WebhookSecret),
-		mention:         cfg.Mention,
-		triggers:        triggers,
-		autoReviewLabel: label,
-		runner:          runner,
+		app:      app,
+		secret:   []byte(cfg.WebhookSecret),
+		mention:  cfg.Mention,
+		triggers: triggers,
+		labels:   labels,
+		runner:   runner,
 	}
 }
 

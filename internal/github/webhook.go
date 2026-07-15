@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -48,6 +49,41 @@ type issueCommentPayload struct {
 	Installation struct {
 		ID int64 `json:"id"`
 	} `json:"installation"`
+
+	// planOnly marks a synthetic payload for a label-driven planning run: the
+	// task produces a plan comment and must not touch code. Not part of the
+	// GitHub payload.
+	planOnly bool
+}
+
+// issuesPayload is the subset of GitHub's issues webhook we use ("labeled",
+// for the label-driven issue workflow).
+type issuesPayload struct {
+	Action string `json:"action"`
+	Issue  struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		// PullRequest is present when the "issue" is actually a PR.
+		PullRequest *struct{} `json:"pull_request"`
+	} `json:"issue"`
+	Label struct {
+		Name string `json:"name"`
+	} `json:"label"`
+	Repository struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		CloneURL      string `json:"clone_url"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"repository"`
+	Installation struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
 }
 
 // pullRequestPayload is the subset of GitHub's pull_request webhook we use
@@ -74,6 +110,9 @@ type pullRequestPayload struct {
 	Installation struct {
 		ID int64 `json:"id"`
 	} `json:"installation"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
 }
 
 // autoReviewTask is the synthesized request for a pr_opened/label-triggered
@@ -105,6 +144,8 @@ func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		e.handleIssueComment(w, body)
 	case "pull_request":
 		e.handlePullRequest(w, body)
+	case "issues":
+		e.handleIssues(w, body)
 	default:
 		w.WriteHeader(http.StatusOK) // unhandled event type: no-op ack
 	}
@@ -114,6 +155,13 @@ func (e *Extension) handleIssueComment(w http.ResponseWriter, body []byte) {
 	var p issueCommentPayload
 	if err := json.Unmarshal(body, &p); err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	// Never act on another bot's comments — quack's own posted plans/summaries
+	// and other integrations must not re-trigger runs.
+	// ponytail: rejects all bots, not just self — bots don't mention quack legitimately.
+	if strings.HasSuffix(p.Comment.User.Login, "[bot]") {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	task, ok := e.triggerTask(p)
@@ -139,8 +187,21 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
+	// The merge label is a human authorization, not an agent run: a deterministic
+	// handler checks quack's own review verdict and merges (or explains why not).
+	// A bot sender can never authorize a merge.
+	if p.Action == "labeled" && e.triggers["merge"] && p.Label.Name == e.labels.Merge &&
+		!strings.HasSuffix(p.Sender.Login, "[bot]") {
+		slog.Info("github webhook received", "component", "github",
+			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
+			"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
+		go e.mergeIfApproved(p)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
 	fires := (p.Action == "opened" && e.triggers["pr_opened"]) ||
-		(p.Action == "labeled" && e.triggers["label"] && p.Label.Name == e.autoReviewLabel)
+		(p.Action == "labeled" && e.triggers["label"] && p.Label.Name == e.labels.Review)
 	if !fires {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -164,6 +225,173 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 		"action", p.Action, "installation", p.Installation.ID)
 	go e.dispatch(synthetic, autoReviewTask)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleIssues drives the label-driven issue workflow: applying the configured
+// plan label to an issue dispatches a planning run whose answer (the plan) is
+// posted back as an issue comment. Labels double as the permission model —
+// only repo-write users can apply them.
+func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
+	var p issuesPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	// Only human-applied labels on REAL issues act (PRs surface labels via the
+	// pull_request event; a bot sender must never chain label workflows).
+	if p.Action != "labeled" || p.Issue.PullRequest != nil ||
+		strings.HasSuffix(p.Sender.Login, "[bot]") {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	synthetic := issueCommentPayload{Action: "created"}
+	synthetic.Issue.Number = p.Issue.Number
+	synthetic.Comment.User.Login = p.Sender.Login
+	synthetic.Repository.Name = p.Repository.Name
+	synthetic.Repository.Owner.Login = p.Repository.Owner.Login
+	synthetic.Repository.CloneURL = p.Repository.CloneURL
+	synthetic.Repository.DefaultBranch = p.Repository.DefaultBranch
+	synthetic.Installation.ID = p.Installation.ID
+
+	switch {
+	case e.triggers["issue_plan"] && p.Label.Name == e.labels.Plan:
+		synthetic.planOnly = true
+		go e.dispatch(synthetic, planTask(p))
+	case e.triggers["issue_implement"] && p.Label.Name == e.labels.Implement:
+		go e.runImplement(p, synthetic)
+	default:
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	slog.Info("github webhook received", "component", "github",
+		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
+		"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// runImplement acks the implement label with a comment, gathers the issue's
+// discussion (the posted plan lives there), and dispatches the implementation
+// run on the issue's session — the same session the planning run used, so the
+// plan is also in the model's own history.
+func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload) {
+	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
+	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
+	ack := fmt.Sprintf("On it — implementing per the plan above. I'll open a pull request that references this issue (`Closes #%d`).", number)
+	if err := e.app.postIssueComment(ctx, owner, repo, number, ack); err != nil {
+		slog.Warn("github: implement ack comment failed", "component", "github",
+			"repo", owner+"/"+repo, "issue", number, "err", err)
+	}
+	comments, err := e.app.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		slog.Warn("github: listIssueComments failed; implementing from the issue body and session history alone",
+			"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+	}
+	cancel()
+	e.dispatch(synthetic, implementTask(p, comments, e.labels.Review))
+}
+
+// implementTask synthesizes the implementation request for an implement-labeled
+// issue: the issue itself plus its discussion (which carries the approved plan),
+// and delivery instructions that chain the new PR into the review label flow.
+func implementTask(p issuesPayload, comments []commentView, reviewLabel string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Implement issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
+	if body := strings.TrimSpace(p.Issue.Body); body != "" {
+		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
+	}
+	if len(comments) > 0 {
+		const maxComments = 40
+		b.WriteString("\nIssue discussion (includes the approved plan — follow it):\n")
+		for i, c := range comments {
+			if i == maxComments {
+				fmt.Fprintf(&b, "  … and %d more\n", len(comments)-maxComments)
+				break
+			}
+			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
+		}
+	}
+	fmt.Fprintf(&b, "\nA maintainer approved this for implementation. Implement it per the plan and discussion, then open a pull request whose body includes `Closes #%d`", p.Issue.Number)
+	if reviewLabel != "" {
+		fmt.Fprintf(&b, " and pass labels=[%q] to github_pull_request so the PR is queued for review", reviewLabel)
+	}
+	b.WriteString(". Never merge anything — merging is a human decision.")
+	return b.String()
+}
+
+// planTask synthesizes the planning request for a plan-labeled issue — there is
+// no human comment to extract a task from, only the issue itself.
+func planTask(p issuesPayload) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Produce an implementation plan for issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
+	if body := strings.TrimSpace(p.Issue.Body); body != "" {
+		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
+	}
+	b.WriteString("\nInvestigate the repository first, then lay out a concrete plan: the approach, the files to change, and how to verify it. A maintainer will review the plan before any implementation happens.")
+	return b.String()
+}
+
+// mergeTimeout bounds the deterministic merge-label handler (a few API calls).
+const mergeTimeout = 2 * time.Minute
+
+// mergeIfApproved is the merge-label handler: merge ONLY at the intersection of
+// a human's label (repo write access) and quack's own APPROVED review. Anything
+// else gets an explanatory comment — re-applying the label after quack approves
+// is the retry, so no state is stored.
+func (e *Extension) mergeIfApproved(p pullRequestPayload) {
+	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Number
+	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
+	defer cancel()
+
+	comment := func(text string) {
+		if err := e.app.postIssueComment(ctx, owner, repo, number, text); err != nil {
+			slog.Error("github: merge-label comment failed", "component", "github",
+				"repo", owner+"/"+repo, "pr", number, "err", err)
+		}
+	}
+
+	state, err := e.latestOwnReviewState(ctx, owner, repo, number)
+	if err != nil {
+		slog.Error("github: merge-label review lookup failed", "component", "github",
+			"repo", owner+"/"+repo, "pr", number, "err", err)
+		comment(fmt.Sprintf("Not merging: I could not read this PR's reviews (%v). Re-apply the `%s` label to retry.", err, e.labels.Merge))
+		return
+	}
+	if state != "APPROVED" {
+		if state == "" {
+			state = "missing — I have not reviewed this PR"
+		}
+		comment(fmt.Sprintf("Not merging: my latest review is %s. Ask me to review (apply `%s` or mention me), then re-apply `%s` once I approve.",
+			state, e.labels.Review, e.labels.Merge))
+		return
+	}
+	if err := e.app.mergePR(ctx, owner, repo, number); err != nil {
+		slog.Error("github merge failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		comment(fmt.Sprintf("Merge failed: %v", err))
+		return
+	}
+	slog.Info("github pr merged", "component", "github", "repo", owner+"/"+repo, "pr", number, "user", p.Sender.Login)
+	comment(fmt.Sprintf("Merged — my review approved this PR and @%s authorized the merge via the `%s` label.", p.Sender.Login, e.labels.Merge))
+}
+
+// latestOwnReviewState returns the state of quack's most recent VERDICT review
+// (APPROVED / CHANGES_REQUESTED / DISMISSED) on the PR — COMMENTED reviews carry
+// no verdict and are skipped. "" means quack has no verdict on this PR.
+func (e *Extension) latestOwnReviewState(ctx context.Context, owner, repo string, number int) (string, error) {
+	reviews, err := e.app.listReviews(ctx, owner, repo, number)
+	if err != nil {
+		return "", err
+	}
+	bot, err := e.app.botLogin(ctx)
+	if err != nil {
+		return "", err
+	}
+	state := ""
+	for _, r := range reviews { // chronological: the last verdict wins
+		if r.User.Login == bot && r.State != "COMMENTED" {
+			state = r.State
+		}
+	}
+	return state, nil
 }
 
 // ackReaction posts a deterministic 👀 (eyes) reaction on the mentioning comment
@@ -255,7 +483,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly — never nudged.
 	planRan, delivered := e.drive(ctx, sessionID, message, owner, repo, number)
-	if !planRan && isWorkRequest(task) {
+	if !planRan && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		_, d2 := e.drive(ctx, sessionID, runNudge, owner, repo, number)
@@ -528,6 +756,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
 			owner, repo, p.Issue.Number)
 		b.WriteString("Answer concisely and reference the review you posted.")
+		return b.String()
+	}
+	if p.planOnly {
+		// Like reviewOnly: no commit/push/PR words, or the vetting completion gate
+		// reads a phantom delivery demand off the task and loops the worker.
+		b.WriteString("This is a PLANNING-ONLY task: read the repository as needed to ground the plan, but do NOT change code or deliver anything to GitHub beyond comments. ")
+		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer — the plan — is posted back to the issue automatically.",
+			owner, repo, p.Issue.Number)
 		return b.String()
 	}
 	b.WriteString("If the task needs code changes, create a branch, commit your work, push it with git_push, then open a pull request with github_pull_request ")

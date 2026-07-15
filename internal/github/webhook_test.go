@@ -811,3 +811,336 @@ func TestVerifySignature(t *testing.T) {
 		})
 	}
 }
+
+// issuesBody builds an "issues" event payload for the label-driven workflow.
+func issuesBody(action, labelName, sender string, isPR bool) []byte {
+	pr := ""
+	if isPR {
+		pr = `"pull_request":{},`
+	}
+	return []byte(fmt.Sprintf(`{
+		"action":%q,
+		"issue":{"number":7,"title":"Add widget cache","body":"Widgets are refetched on every request.",%s"labels":[]},
+		"label":{"name":%q},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5},
+		"sender":{"login":%q}
+	}`, action, pr, labelName, sender))
+}
+
+// TestHandleWebhookBotCommentIgnored pins the bot-sender guard: quack's own
+// posted comments (and any other bot's) must never trigger a run, or label
+// workflows would chain into comment storms.
+func TestHandleWebhookBotCommentIgnored(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "hi"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	body := []byte(`{
+		"action":"created",
+		"comment":{"id":999,"body":"@quack review this","user":{"login":"quack[bot]"}},
+		"issue":{"number":7},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5}
+	}`)
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 no-op ack", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if atomic.LoadInt32(&runner.calls) != 0 {
+		t.Error("a bot-authored mention must not dispatch a run")
+	}
+}
+
+func TestHandleWebhookIssuePlanLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		triggers []string
+		label    string
+		sender   string
+		isPR     bool
+		wantRun  bool
+	}{
+		{"plan label + issue_plan trigger fires", []string{"issue_plan"}, "quack:plan", "alice", false, true},
+		{"non-matching label is a no-op", []string{"issue_plan"}, "bug", "alice", false, false},
+		{"trigger not enabled is a no-op", []string{"mention"}, "quack:plan", "alice", false, false},
+		{"bot sender is a no-op", []string{"issue_plan"}, "quack:plan", "quack[bot]", false, false},
+		{"PR-shaped issue is a no-op", []string{"issue_plan"}, "quack:plan", "alice", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 1)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), gotSessionID: make(chan string, 1), answer: "the plan"}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", tt.label, tt.sender, tt.isPR)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+
+			if !tt.wantRun {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Error("issues event should not have dispatched a run")
+				}
+				return
+			}
+			select {
+			case msg := <-runner.gotMessage:
+				if !strings.Contains(msg, "Add widget cache") || !strings.Contains(msg, "implementation plan") {
+					t.Errorf("plan message missing issue context: %q", msg)
+				}
+				if !strings.Contains(msg, "PLANNING-ONLY") {
+					t.Errorf("plan message not framed planning-only: %q", msg)
+				}
+				// The vetting completion gate reads delivery demands off the task text:
+				// a planning run must carry no push/PR instructions.
+				for _, banned := range []string{"git_push", "github_pull_request", "create a branch"} {
+					if strings.Contains(msg, banned) {
+						t.Errorf("planning-only message contains delivery instruction %q: %q", banned, msg)
+					}
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("plan label did not dispatch a run")
+			}
+			select {
+			case sid := <-runner.gotSessionID:
+				if sid != "github-acme-widgets-7" {
+					t.Errorf("sessionID = %q, want issue-tied github-acme-widgets-7", sid)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no session id recorded")
+			}
+			// The plan is delivered as the fallback summary comment.
+			select {
+			case c := <-posted:
+				if !strings.Contains(c, "the plan") {
+					t.Errorf("posted comment = %q, want the run answer", c)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("plan was not posted back as an issue comment")
+			}
+		})
+	}
+}
+
+// TestHandleWebhookIssueOpenedNoOp pins that non-labeled issue actions are
+// ignored — the workflow is label-driven, not event-driven.
+func TestHandleWebhookIssueOpenedNoOp(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1)}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_plan"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("opened", "", "alice", false)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 no-op ack", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if atomic.LoadInt32(&runner.calls) != 0 {
+		t.Error("issues opened should not dispatch a run")
+	}
+}
+
+func TestHandleWebhookIssueImplementLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		triggers []string
+		label    string
+		wantRun  bool
+	}{
+		{"implement label + trigger fires", []string{"issue_implement"}, "quack:implement", true},
+		{"trigger not enabled is a no-op", []string{"issue_plan"}, "quack:implement", false},
+		{"plan label does not fire implement", []string{"issue_implement"}, "quack:plan", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 4)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), gotSessionID: make(chan string, 1), answer: "done"}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", tt.label, "alice", false)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			if !tt.wantRun {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Error("issues event should not have dispatched a run")
+				}
+				return
+			}
+			// The ack comment lands before the run.
+			select {
+			case c := <-posted:
+				if !strings.Contains(c, "Closes #7") {
+					t.Errorf("ack comment = %q, want the Closes #7 promise", c)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no ack comment posted")
+			}
+			select {
+			case msg := <-runner.gotMessage:
+				for _, want := range []string{"Implement issue #7", "Closes #7", `labels=["quack-auto-review"]`, "Never merge"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("implement message missing %q: %q", want, msg)
+					}
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("implement label did not dispatch a run")
+			}
+			select {
+			case sid := <-runner.gotSessionID:
+				if sid != "github-acme-widgets-7" {
+					t.Errorf("sessionID = %q, want the issue's session (plan continuity)", sid)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no session id recorded")
+			}
+		})
+	}
+}
+
+// TestImplementTaskIncludesDiscussion pins that the fetched issue comments (the
+// posted plan) are embedded in the implementation request.
+func TestImplementTaskIncludesDiscussion(t *testing.T) {
+	var p issuesPayload
+	p.Issue.Number = 7
+	p.Issue.Title = "Add widget cache"
+	p.Issue.Body = "Widgets are refetched on every request."
+	comments := []commentView{
+		{User: "quack[bot]", Body: "## Plan\n1. add lru cache to fetcher"},
+		{User: "alice", Body: "looks good, approved"},
+	}
+	msg := implementTask(p, comments, "quack:review")
+	for _, want := range []string{"add lru cache to fetcher", "looks good, approved", "@quack[bot]", "Closes #7", `labels=["quack:review"]`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("implementTask missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// mergeStub is stubGitHub plus a reviews list and a merge endpoint; merged
+// signals when the merge PUT lands.
+func mergeStub(t *testing.T, reviewsJSON string, posted chan<- string, merged chan<- struct{}) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, reviewsJSON)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge"):
+			merged <- struct{}{}
+			fmt.Fprint(w, `{"merged":true}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+}
+
+func mergeLabelBody(sender string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"action":"labeled",
+		"number":7,
+		"label":{"name":"quack:merge"},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5},
+		"sender":{"login":%q}
+	}`, sender))
+}
+
+func TestHandleWebhookMergeLabel(t *testing.T) {
+	approved := `[{"state":"CHANGES_REQUESTED","user":{"login":"quack[bot]"}},{"state":"APPROVED","user":{"login":"quack[bot]"}}]`
+	tests := []struct {
+		name        string
+		triggers    []string
+		reviews     string
+		sender      string
+		wantMerge   bool
+		wantComment string // substring of the posted comment; "" = no comment expected
+	}{
+		{"approved review merges", []string{"merge"}, approved, "alice", true, "Merged"},
+		{"changes-requested refuses", []string{"merge"},
+			`[{"state":"APPROVED","user":{"login":"quack[bot]"}},{"state":"CHANGES_REQUESTED","user":{"login":"quack[bot]"}}]`,
+			"alice", false, "Not merging: my latest review is CHANGES_REQUESTED"},
+		{"no quack review refuses", []string{"merge"},
+			`[{"state":"APPROVED","user":{"login":"alice"}}]`, "alice", false, "I have not reviewed this PR"},
+		{"COMMENTED carries no verdict", []string{"merge"},
+			`[{"state":"APPROVED","user":{"login":"quack[bot]"}},{"state":"COMMENTED","user":{"login":"quack[bot]"}}]`,
+			"alice", true, "Merged"},
+		{"trigger not enabled is a no-op", []string{"mention"}, approved, "alice", false, ""},
+		{"bot sender cannot authorize", []string{"merge"}, approved, "other[bot]", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 2)
+			merged := make(chan struct{}, 1)
+			gh := mergeStub(t, tt.reviews, posted, merged)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1)}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("pull_request", mergeLabelBody(tt.sender)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+
+			if tt.wantComment != "" {
+				select {
+				case c := <-posted:
+					if !strings.Contains(c, tt.wantComment) {
+						t.Errorf("comment = %q, want substring %q", c, tt.wantComment)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("expected an outcome comment")
+				}
+			}
+			if tt.wantMerge {
+				select {
+				case <-merged:
+				case <-time.After(2 * time.Second):
+					t.Fatal("expected a merge PUT")
+				}
+			} else {
+				time.Sleep(50 * time.Millisecond)
+				select {
+				case <-merged:
+					t.Error("merge must not have been called")
+				default:
+				}
+			}
+			// The merge label never dispatches an agent run.
+			if atomic.LoadInt32(&runner.calls) != 0 {
+				t.Error("merge label must not dispatch an orchestrator run")
+			}
+		})
+	}
+}
