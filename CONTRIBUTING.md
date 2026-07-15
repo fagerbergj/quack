@@ -4,6 +4,35 @@ Thanks for hacking on quack. This is the contribution **workflow**; for the deep
 architecture and the project's hard rules, read [AGENTS.md](AGENTS.md) (the agent /
 developer guide — `CLAUDE.md` is a symlinked copy).
 
+## The working model
+
+quack is built the way quack works — **issue-driven and agent-executed**. Every
+non-trivial change follows the same loop, whether a human or quack does the work.
+The `quack:plan` → `quack:implement` → `quack:review` → `quack:merge` label
+workflow is this loop automated (see [docs/extensions/github.md](docs/extensions/github.md)).
+
+1. **File an issue.** State a concrete failure (not a vague wish), what's **in and
+   out of scope**, **forbidden actions**, and **acceptance criteria**. Confirm it's
+   real and not already done. Label it: type (`bug` / `feature-request` /
+   `enhancement`), `area:*`, and `priority:*`.
+2. **Plan.** Post an implementation plan as a comment — **grounded in the code**
+   (real `file:line` anchors), **summary-first**, a `mermaid` diagram where structure
+   helps, deep detail in `<details>`. Or apply **`quack:plan`** to have quack plan it
+   on the issue's session.
+3. **Agree.** Refine the plan in the thread until it holds — **reuse or extend before
+   you add**, correct scoping, honest constraints. Do not implement before the plan is
+   settled.
+4. **Implement.** Apply **`quack:implement`** (quack implements on the same session and
+   opens a PR pre-labeled for review) or implement on a branch. Reuse before adding;
+   write the failing test first, implement to green.
+5. **Review.** The PR is reviewed (**`quack:review`** or a human). **Verify every
+   finding** — reject false positives *with a reason*, fix the real ones.
+6. **Merge.** **`quack:merge`** does a human-authorized, quack-approved squash merge;
+   or combine related PRs into one branch and merge with green CI.
+
+The per-step craft lives in loadable skills — `plan-work`, `develop-feature`,
+`fix-bug`, `review-code`, and `contribute` (which points back here).
+
 ## Development setup
 
 - **Go** — module `github.com/fagerbergj/quack`; server entrypoint `cmd/server/main.go`.
