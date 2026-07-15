@@ -53,9 +53,22 @@ type GitHubExtensionConfig struct {
 
 	// Triggers selects which webhook events fire a run: "mention" (default),
 	// "pr_opened" (auto-review on PR open), "label" (auto-review when
-	// AutoReviewLabel is applied).
+	// Labels.Review is applied), "issue_plan" (plan an issue when Labels.Plan is
+	// applied).
 	Triggers        []string `yaml:"triggers"`
-	AutoReviewLabel string   `yaml:"auto_review_label"` // label name for the "label" trigger, default "quack-auto-review"
+	AutoReviewLabel string   `yaml:"auto_review_label"` // deprecated alias for labels.review
+
+	// Labels names the labels that drive the label-based workflow. Each label
+	// only acts when its trigger is enabled (see Triggers).
+	Labels GitHubLabels `yaml:"labels"`
+}
+
+// GitHubLabels names the repo labels that drive quack's label-based workflow.
+// Applying a label requires repo write access, so labels double as the
+// permission model — no separate allowlist.
+type GitHubLabels struct {
+	Plan   string `yaml:"plan"`   // on an issue: post an implementation plan ("issue_plan" trigger)
+	Review string `yaml:"review"` // on a PR: review it once ("label" trigger; alias auto_review_label)
 }
 
 // defaultMention is the trigger phrase when github.mention is unset.
@@ -64,8 +77,11 @@ const defaultMention = "@quack"
 // defaultAutoReviewLabel is the label name when github.auto_review_label is unset.
 const defaultAutoReviewLabel = "quack-auto-review"
 
+// defaultPlanLabel is the label name when github.labels.plan is unset.
+const defaultPlanLabel = "quack:plan"
+
 // validGitHubTriggers is the whitelist for github.triggers entries.
-var validGitHubTriggers = map[string]bool{"mention": true, "pr_opened": true, "label": true}
+var validGitHubTriggers = map[string]bool{"mention": true, "pr_opened": true, "label": true, "issue_plan": true}
 
 // Workspace defaults (see WorkspaceConfig). Every field is optional; a
 // config with no workspace: section at all still gets a working (default)
@@ -749,11 +765,19 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	for _, t := range g.Triggers {
 		if !validGitHubTriggers[t] {
-			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, or label)", t)
+			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, or issue_plan)", t)
 		}
 	}
-	if g.AutoReviewLabel == "" {
-		g.AutoReviewLabel = defaultAutoReviewLabel
+	// labels.review supersedes auto_review_label; the old key wins only when the
+	// new one is unset, and both fall back to the historical default.
+	if g.Labels.Review == "" {
+		g.Labels.Review = g.AutoReviewLabel
+	}
+	if g.Labels.Review == "" {
+		g.Labels.Review = defaultAutoReviewLabel
+	}
+	if g.Labels.Plan == "" {
+		g.Labels.Plan = defaultPlanLabel
 	}
 	return nil
 }

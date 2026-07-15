@@ -811,3 +811,145 @@ func TestVerifySignature(t *testing.T) {
 		})
 	}
 }
+
+// issuesBody builds an "issues" event payload for the label-driven workflow.
+func issuesBody(action, labelName, sender string, isPR bool) []byte {
+	pr := ""
+	if isPR {
+		pr = `"pull_request":{},`
+	}
+	return []byte(fmt.Sprintf(`{
+		"action":%q,
+		"issue":{"number":7,"title":"Add widget cache","body":"Widgets are refetched on every request.",%s"labels":[]},
+		"label":{"name":%q},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5},
+		"sender":{"login":%q}
+	}`, action, pr, labelName, sender))
+}
+
+// TestHandleWebhookBotCommentIgnored pins the bot-sender guard: quack's own
+// posted comments (and any other bot's) must never trigger a run, or label
+// workflows would chain into comment storms.
+func TestHandleWebhookBotCommentIgnored(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "hi"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	body := []byte(`{
+		"action":"created",
+		"comment":{"id":999,"body":"@quack review this","user":{"login":"quack[bot]"}},
+		"issue":{"number":7},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5}
+	}`)
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 no-op ack", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if atomic.LoadInt32(&runner.calls) != 0 {
+		t.Error("a bot-authored mention must not dispatch a run")
+	}
+}
+
+func TestHandleWebhookIssuePlanLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		triggers []string
+		label    string
+		sender   string
+		isPR     bool
+		wantRun  bool
+	}{
+		{"plan label + issue_plan trigger fires", []string{"issue_plan"}, "quack:plan", "alice", false, true},
+		{"non-matching label is a no-op", []string{"issue_plan"}, "bug", "alice", false, false},
+		{"trigger not enabled is a no-op", []string{"mention"}, "quack:plan", "alice", false, false},
+		{"bot sender is a no-op", []string{"issue_plan"}, "quack:plan", "quack[bot]", false, false},
+		{"PR-shaped issue is a no-op", []string{"issue_plan"}, "quack:plan", "alice", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 1)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), gotSessionID: make(chan string, 1), answer: "the plan"}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", tt.label, tt.sender, tt.isPR)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+
+			if !tt.wantRun {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Error("issues event should not have dispatched a run")
+				}
+				return
+			}
+			select {
+			case msg := <-runner.gotMessage:
+				if !strings.Contains(msg, "Add widget cache") || !strings.Contains(msg, "implementation plan") {
+					t.Errorf("plan message missing issue context: %q", msg)
+				}
+				if !strings.Contains(msg, "PLANNING-ONLY") {
+					t.Errorf("plan message not framed planning-only: %q", msg)
+				}
+				// The vetting completion gate reads delivery demands off the task text:
+				// a planning run must carry no push/PR instructions.
+				for _, banned := range []string{"git_push", "github_pull_request", "create a branch"} {
+					if strings.Contains(msg, banned) {
+						t.Errorf("planning-only message contains delivery instruction %q: %q", banned, msg)
+					}
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("plan label did not dispatch a run")
+			}
+			select {
+			case sid := <-runner.gotSessionID:
+				if sid != "github-acme-widgets-7" {
+					t.Errorf("sessionID = %q, want issue-tied github-acme-widgets-7", sid)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no session id recorded")
+			}
+			// The plan is delivered as the fallback summary comment.
+			select {
+			case c := <-posted:
+				if !strings.Contains(c, "the plan") {
+					t.Errorf("posted comment = %q, want the run answer", c)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("plan was not posted back as an issue comment")
+			}
+		})
+	}
+}
+
+// TestHandleWebhookIssueOpenedNoOp pins that non-labeled issue actions are
+// ignored — the workflow is label-driven, not event-driven.
+func TestHandleWebhookIssueOpenedNoOp(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1)}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_plan"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("opened", "", "alice", false)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 no-op ack", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if atomic.LoadInt32(&runner.calls) != 0 {
+		t.Error("issues opened should not dispatch a run")
+	}
+}

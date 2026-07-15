@@ -650,6 +650,46 @@ extensions:
 	if got := c.Extensions.GitHub.Issuer(); got != "12345" {
 		t.Errorf("Issuer() = %q; want 12345", got)
 	}
+	if l := c.Extensions.GitHub.Labels; l.Plan != "quack:plan" || l.Review != "quack-auto-review" {
+		t.Errorf("labels defaults = %+v; want plan quack:plan, review quack-auto-review", l)
+	}
+}
+
+func TestGitHubExtensionAutoReviewLabelAliasesLabelsReview(t *testing.T) {
+	t.Setenv("QUACK_GH_KEY", "pem")
+	t.Setenv("QUACK_GH_SECRET", "s3cret")
+	// Deprecated auto_review_label still works when labels.review is unset…
+	c, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+    auto_review_label: legacy-label
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := c.Extensions.GitHub.Labels.Review; got != "legacy-label" {
+		t.Errorf("labels.review = %q; want legacy-label (alias)", got)
+	}
+	// …but labels.review wins when both are set.
+	c, err = Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+    auto_review_label: legacy-label
+    labels:
+      review: new-label
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := c.Extensions.GitHub.Labels.Review; got != "new-label" {
+		t.Errorf("labels.review = %q; want new-label", got)
+	}
 }
 
 func TestGitHubExtensionClientIDIssuer(t *testing.T) {
