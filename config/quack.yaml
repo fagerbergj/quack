@@ -190,9 +190,8 @@ gates:
 
 # DAG execution policy.
 dag:
-  max_active_runs: 3    # orchestrator RUNS concurrent server-wide; a burst of webhook/REST
-                        # requests queues instead of piling onto one model (1-GPU: lower it)
-  max_active_nodes: 2   # how many nodes run concurrently WITHIN one plan; extras queue. Matched to the
+  max_active_runs: 3    # orchestrator RUNS concurrent server-wide; a burst queues (1-GPU: lower it)
+  max_active_nodes: 2   # how many nodes run concurrently; extras queue. Matched to the
                         # worker server's --parallel 2 (2 KV slots @ 65536 tokens each);
                         # the GPU judge (gemma4-26b-a4b, co-resident with the worker)
                         # is also --parallel 2. Raising this past the worker's slot
@@ -325,9 +324,10 @@ workspace:
 # (private_key, webhook_secret) MUST be ${VAR} env references — a literal is a
 # startup error. A present-but-empty block fails to boot, so keep it commented
 # until the env vars are actually set.
-extensions:
-  github:
-    client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
-    private_key_path: /run/secrets/quack-app.pem  # mounted .pem (see docker-compose.override.yml)
-    webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
-    mention: "@quack"
+# extensions:
+#   github:
+#     client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
+#     private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY}    # PEM contents via env
+#     # private_key_path: /run/secrets/quack-app.pem  # alternative: a mounted .pem
+#     webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
+#     mention: "@quack"
