@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -243,12 +244,17 @@ func (e *Extension) dispatch(p issueCommentPayload, task, headSHA string) {
 	message := e.runMessage(p, task, prevSHA, headSHA)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
-	// Drain the stream to drive the run to completion; the answer is read from
-	// the persisted session afterwards.
-	for _, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
-		if err != nil {
-			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
-		}
+	// A webhook task always expects WORK (a review or a change), which runs as a
+	// plan. A mid-tier orchestrator model sometimes answers in prose without
+	// calling plan — "Let me start by cloning the repo…" — and that preamble would
+	// be posted as if it were the review. If no plan ran, nudge once to actually
+	// run it. (The orchestrator's own backstops cover empty/plan-not-executed
+	// turns; this covers the text-only-no-tool turn, which they accept as a valid
+	// direct answer — correct for chat, wrong for a webhook that dispatched work.)
+	if !e.drive(ctx, sessionID, message, owner, repo, number) {
+		slog.Warn("github: orchestrator produced no plan; nudging it to run the work once",
+			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		e.drive(ctx, sessionID, runNudge, owner, repo, number)
 	}
 	answer := strings.TrimSpace(e.runner.LatestAnswer(ctx, runUserID, sessionID))
 	if answer == "" {
@@ -259,6 +265,26 @@ func (e *Extension) dispatch(p issueCommentPayload, task, headSHA string) {
 		return
 	}
 	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number)
+}
+
+// runNudge is delivered when a webhook run answered without running a plan — a
+// firm instruction to actually do the work rather than narrate intent.
+const runNudge = "You answered without running anything. Do NOT reply in prose: use the plan and execute tools NOW to actually clone the repo, read the change, and carry out the review (or the requested change). Nothing has run yet and the user is waiting."
+
+// drive runs one orchestrator turn to completion and reports whether it EXECUTED
+// a plan (a dag_plan event). A webhook task always expects work, so a turn that
+// ran no plan produced only a direct-text answer — the work never happened.
+func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int) (planRan bool) {
+	for ev, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
+		if err != nil {
+			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+			continue
+		}
+		if ev.Name == stream.EventDagPlan {
+			planRan = true
+		}
+	}
+	return planRan
 }
 
 // runMessage frames the task for the orchestrator: the user's verbatim request

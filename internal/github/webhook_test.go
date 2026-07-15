@@ -34,6 +34,7 @@ type fakeRunner struct {
 	answer       string
 	block        chan struct{}
 	calls        int32
+	noPlan       bool // when true, emit no dag_plan event (simulates a narration-only turn)
 }
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
@@ -41,6 +42,9 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		atomic.AddInt32(&f.calls, 1)
 		if f.block != nil {
 			<-f.block
+		}
+		if !f.noPlan {
+			yield(stream.SSEEvent{Name: stream.EventDagPlan}, nil) // a real run executes a plan
 		}
 		select {
 		case f.gotMessage <- message:
@@ -329,6 +333,49 @@ func TestHandleWebhookMentionTriggersRun(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no comment posted back")
+	}
+}
+
+// A webhook run that answers WITHOUT executing a plan (a narration preamble like
+// "Let me start by cloning the repo…") is nudged exactly once to actually run the
+// work — the fix for reviews that posted the preamble as if it were the review.
+func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 4), answer: "reviewed", noPlan: true}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-posted: // wait for dispatch to finish
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back")
+	}
+	if got := atomic.LoadInt32(&runner.calls); got != 2 {
+		t.Errorf("runner invoked %d times, want 2 (initial run + one nudge when no plan ran)", got)
+	}
+
+	// Control: a run that DOES execute a plan is not nudged.
+	posted2 := make(chan string, 1)
+	gh2 := stubGitHub(t, posted2)
+	defer gh2.Close()
+	planned := &fakeRunner{gotMessage: make(chan string, 4), answer: "reviewed"} // noPlan=false ⇒ emits dag_plan
+	ext2 := newTestExtension(t, planned, gh2.URL)
+	rec2 := httptest.NewRecorder()
+	ext2.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	select {
+	case <-posted2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back (control)")
+	}
+	if got := atomic.LoadInt32(&planned.calls); got != 1 {
+		t.Errorf("runner invoked %d times, want 1 (a plan ran ⇒ no nudge)", got)
 	}
 }
 
