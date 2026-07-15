@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import Chat from './pages/Chat'
 import GitHubSessions from './pages/GitHubSessions'
 import { navigate, useView } from './router'
@@ -19,6 +20,16 @@ function NavButton({ label, active, onClick }: { label: string; active: boolean;
 
 export default function App() {
   const view = useView()
+
+  // Theme init must run here, not in Chat, so routes other than "/" (e.g. /github)
+  // also respect the stored/prefers-color-scheme theme on first load.
+  useEffect(() => {
+    const stored = localStorage.getItem('theme')
+    if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark')
+    }
+  }, [])
+
   return (
     <div className="h-screen flex flex-col">
       <div className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">

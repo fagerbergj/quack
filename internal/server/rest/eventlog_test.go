@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -16,11 +17,11 @@ import (
 // live stream sends (Data stays raw JSON), so a replayed event is indistinguishable.
 func TestEventCodecRoundTrip(t *testing.T) {
 	orig := stream.NodeStart("n1", "researcher")
-	js, err := marshalEvent(orig)
+	js, err := runlog.MarshalEvent(orig)
 	if err != nil {
 		t.Fatalf("marshalEvent: %v", err)
 	}
-	got, err := unmarshalEvent(js)
+	got, err := runlog.UnmarshalEvent(js)
 	if err != nil {
 		t.Fatalf("unmarshalEvent: %v", err)
 	}
@@ -42,14 +43,14 @@ func TestSubscribeColdReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New sqlite: %v", err)
 	}
-	h := &Handler{store: st, hub: stream.NewHub(), eventLog: newEventLog(st)}
+	h := &Handler{store: st, hub: stream.NewHub(), eventLog: runlog.NewEventLog(st)}
 	ctx := context.Background()
 	for i, ev := range []stream.SSEEvent{
 		stream.NodeStart("n1", "researcher"),
 		stream.NodeDone("n1", stream.NodeDoneData{}),
 		stream.Done(),
 	} {
-		js, _ := marshalEvent(ev)
+		js, _ := runlog.MarshalEvent(ev)
 		if err := st.InsertChatEvent(ctx, store.ChatEvent{ChatID: "c", Seq: int64(i + 1), Event: js}); err != nil {
 			t.Fatalf("seed event %d: %v", i, err)
 		}

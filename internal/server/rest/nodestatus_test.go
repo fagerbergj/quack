@@ -17,6 +17,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -63,7 +64,7 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil)
 	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil)
-	return NewHandler(st, orch, nil, nil)
+	return NewHandler(st, orch, nil, nil, nil)
 }
 
 // --- UpdateNodeStatus -------------------------------------------------------
@@ -398,10 +399,10 @@ func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	// A real HITL pause always follows node_start (running); persist that first
 	// and wait for it to land so the needs_input write below is a legal
 	// running → needs_input transition, not queued → needs_input.
-	h.persistNodeEvent(planID, stream.NodeStart(nodeID, "a"))
+	runlog.PersistNodeEvent(h.store, planID, stream.NodeStart(nodeID, "a"))
 	waitForDagNodeStatus(t, h, planID, nodeID, "running")
 
-	h.persistNodeEvent(planID, stream.NodeNeedsInput(nodeID, "int-1", "which region?"))
+	runlog.PersistNodeEvent(h.store, planID, stream.NodeNeedsInput(nodeID, "int-1", "which region?"))
 	waitForDagNodeStatus(t, h, planID, nodeID, "needs_input")
 
 	turns, err := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, userID, chatID)

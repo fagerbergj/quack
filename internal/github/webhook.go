@@ -14,8 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
+
+	"github.com/google/uuid"
 )
 
 // maxWebhookBody caps the raw webhook payload we read (GitHub payloads are well
@@ -477,18 +480,36 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	message := e.runMessage(p, task, rc)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
+
+	// Persist this dispatch as a turn on the session's chat, exactly like a
+	// UI-initiated run, so it shows up in getChat (DAG + progress) rather than
+	// leaving the chat row (already created by persistGithubLink) with no turns.
+	var pub *runlog.Publisher
+	turnID := uuid.NewString()
+	if e.store != nil {
+		_ = e.store.SaveTurn(ctx, sessionID, turnID)
+		e.eventLog.Reset(ctx, sessionID)
+		pub = runlog.NewPublisher(e.hub, e.eventLog, sessionID)
+		pub.Publish(stream.ResponseCreated(turnID))
+	}
+
 	// A WORK request (review/implement) always runs as a plan. A mid-tier
 	// orchestrator model sometimes answers in prose without calling plan — "Let me
 	// start by cloning the repo…" — and that preamble would be posted as if it were
 	// the review. So if a work request ran no plan, nudge once to actually run it.
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly — never nudged.
-	planRan, delivered := e.drive(ctx, sessionID, message, owner, repo, number)
+	planRan, delivered := e.drive(ctx, sessionID, message, owner, repo, number, turnID, pub)
 	if !planRan && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
-		_, d2 := e.drive(ctx, sessionID, runNudge, owner, repo, number)
+		_, d2 := e.drive(ctx, sessionID, runNudge, owner, repo, number, turnID, pub)
 		delivered = delivered || d2
+	}
+	if pub != nil {
+		pub.Publish(stream.Done())
+		e.hub.Close(sessionID)
+		_ = e.store.Touch(ctx, sessionID)
 	}
 	// The review (github_submit_review) or PR (github_pull_request) IS the
 	// deliverable and is already on the PR — posting the run's text summary too
@@ -538,7 +559,12 @@ const runNudge = "You answered without running anything. Do NOT reply in prose: 
 // review or opened a PR. A run with no plan produced only a direct-text answer
 // (the work never happened); a run that delivered has already posted its output,
 // so dispatch skips the redundant summary comment.
-func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int) (planRan, delivered bool) {
+//
+// pub is nil when the extension has no store (test harnesses that don't need
+// persistence) — every persistence step below is then a no-op, matching drive's
+// old behavior exactly.
+func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, delivered bool) {
+	var planID string
 	for ev, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
 		if err != nil {
 			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
@@ -547,10 +573,22 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 		switch ev.Name {
 		case stream.EventDagPlan:
 			planRan = true
+			if d, ok := ev.Data.(stream.DagPlanData); ok {
+				planID = d.PlanID
+				if pub != nil {
+					runlog.SaveDagPlan(e.store, sessionID, turnID, d)
+				}
+			}
 		case stream.EventAgentToolCall:
 			if d, ok := ev.Data.(stream.AgentToolCallData); ok && (d.Name == "github_submit_review" || d.Name == "github_pull_request") {
 				delivered = true
 			}
+		}
+		if pub != nil {
+			if planID != "" {
+				runlog.PersistNodeEvent(e.store, planID, ev)
+			}
+			pub.Publish(ev)
 		}
 	}
 	return planRan, delivered

@@ -44,6 +44,7 @@ import (
 	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/skillsource"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -422,15 +423,20 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
 	}
 
+	// Shared by every driver of a chat run — the REST handler and the GitHub
+	// webhook dispatcher — so a run started by either is visible to live
+	// subscribers of that chat, regardless of which one started it.
+	runHub := stream.NewHub()
+
 	// Now the orchestrator exists, bind it as the extension's webhook Runner and
 	// mount the extension's inbound routes.
 	var extensions []extension.Extension
 	if githubApp != nil {
-		extensions = append(extensions, github.NewExtension(githubApp, *cfg.Extensions.GitHub, orch, st))
+		extensions = append(extensions, github.NewExtension(githubApp, *cfg.Extensions.GitHub, orch, st, runHub))
 	}
 
 	handler = server.New(server.Options{
-		REST:       rest.NewHandler(st, orch, llm, jail),
+		REST:       rest.NewHandler(st, orch, llm, jail, runHub),
 		MCP:        mcpserver.Handler(orch),
 		SPA:        spa,
 		Extensions: extensions,
