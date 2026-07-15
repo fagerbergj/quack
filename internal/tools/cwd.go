@@ -12,24 +12,15 @@ import (
 
 // CwdKey is the session-state key the `cd` tool stores the agent's working
 // directory under: a NODE-relative, slash-separated path ("" or "." = the node's
-// own root, which is where every worker starts).
+// own root, where every worker starts).
 //
-// NODE-relative, not chat-relative, is the whole point: the node's directory is
-// an INVISIBLE ROOT (a chroot, conceptually). The model never sees it, in any
-// tool's arguments or results — it is applied exactly once, at the final jail
-// join (jailPath), and nowhere else. There is therefore exactly ONE namespace the
-// model ever speaks: paths relative to its own root (and, within it, to its cwd).
+// NODE-relative, not chat-relative: the node's directory is an INVISIBLE ROOT,
+// applied exactly once at the final jail join (jailPath), so the model speaks
+// exactly ONE namespace in every tool's arguments and results. (A chat-relative
+// cwd once leaked the node dir and split the namespace in two.)
 //
-// The bug this design replaces: `cd` stored and reported a CHAT-relative cwd, so
-// it alone handed back paths carrying the node dir ("explorer-openhands/openhands")
-// while git_clone and list_dir reported the same location cwd-relative
-// ("openhands"). Two incompatible namespaces; the model faithfully reused `cd`'s
-// path and flailed.
-//
-// It lives in ctx.State() (the same persisted, resume-surviving store compaction
-// uses), NOT in a mutable in-process field, so it survives compaction and
-// reconnect and never leaks across sessions: the `cd` and every later tool call in
-// a worker's own tool loop share that one session's state.
+// It lives in ctx.State(), not an in-process field, so it survives compaction and
+// reconnect and never leaks across sessions.
 const CwdKey = "workspace.cwd"
 
 // cwdFromState reads the session working directory (CwdKey) from ctx's state.
@@ -52,22 +43,15 @@ func cwdFromState(ctx agent.Context) string {
 	return s
 }
 
-// scopeFromContext derives BOTH workspace scopes a call runs under: the
-// per-chat scope (the workflow/chat session id — <root>/<user>/<chatID>/…, so
-// two chats never share a working tree) and the calling node's own working
-// directory within it (<chatID>/<nodeID>/ — so two CONCURRENT nodes of one plan
-// never share one, which is how an explorer node ended up reading another node's
-// clone; see workspace.NodeDir). Both ride the SAME identity channel guard.go's
-// guardSession uses — the advisor-thread marker stamped into the worker's prompt
-// (the ONE channel that survives the A2A hop: a tool's own ctx.SessionID() names
-// the A2A context session, not the chat) → LookupAdvisorThread → AdvisorTask
-// (SessionID IS the chat id, since the DAG runs in the chat session; NodeID is
-// the plan node — see internal/dag/graph.go + vetting.AdvisorTask).
+// scopeFromContext derives both workspace scopes a call runs under: the per-chat
+// scope (two chats never share a working tree) and the calling node's directory
+// within it (two CONCURRENT nodes of one plan never share one). Both ride the
+// advisor-thread marker stamped into the worker's prompt — the one identity
+// channel that survives the A2A hop (a tool's ctx.SessionID() names the A2A
+// context session, not the chat).
 //
-// Returns "", "" when this call runs outside any gated node — no marker (a
-// direct/un-gated invocation), or no live registration. The jail then resolves
-// against the per-user root (Jail.Resolve treats "" as unscoped), exactly the
-// pre-scoping behaviour: a safe fallback that never fails the call.
+// Returns "", "" outside any gated node; the jail then resolves against the
+// per-user root — a safe fallback that never fails the call.
 func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 	if ctx == nil {
 		return "", ""
@@ -89,12 +73,9 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 // and every tool result. Precedence (predictable and jail-safe):
 //
 //   - a path beginning with "/" is absolute WITHIN THE NODE'S OWN WORKSPACE: the cwd
-//     is ignored, the node dir is still applied. "/" is the root of everything the
-//     model can see, and there is nothing of the model's above it. (It used to mean
-//     the CHAT root — an escape hatch into a sibling node's tree. Nothing used it,
-//     it was the last way one node could reach another's clone, and it made an
-//     absolute cwd un-echoable: a reported "/goose" would have resolved somewhere
-//     else if fed back. One root, one namespace.)
+//     is ignored, the node dir is still applied. (It used to mean the CHAT root —
+//     the last way one node could reach a sibling's clone, and it made a reported
+//     absolute cwd un-echoable. One root, one namespace.)
 //   - every other path is node-relative: applied to the cwd (joinCwd), then rooted
 //     at the node dir.
 //
@@ -104,32 +85,19 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 func jailPath(nodeDir, cwd, p string) string {
 	p = stripSandboxRoot(p)
 	if strings.HasPrefix(p, "/") {
-		// "/" is the ROOT OF YOUR WORKSPACE — the node's own dir. It is not an escape
-		// above it: there is nothing above it that is yours. This is what lets a tool
-		// REPORT an absolute cwd ("/goose") that the model can feed straight back in;
-		// when "/" meant the chat root, an absolute path was un-echoable and every
-		// result had to speak in relatives ("." — which says nothing about where you
-		// are). One namespace, one root, absolute or relative both legal.
+		// "/" is the root of the node's own workspace, so a reported absolute cwd
+		// can be fed straight back in.
 		return filepath.Join(nodeDir, strings.TrimPrefix(p, "/"))
 	}
 	return filepath.Join(nodeDir, joinCwd(cwd, p))
 }
 
-// stripSandboxRoot turns the SHELL's spelling of the workspace root into the model's
-// own: "/workspace/quack/main.go" → "/quack/main.go" (workspace.SandboxWorkRoot is
-// where a sandboxed child sees the node's directory mounted — see sandbox.go).
-//
-// This is the tools' half of "one namespace, including inside the shell". The shell
-// is a tool like any other, and the rule is that a path out of ANY tool result feeds
-// back into ANY tool: a `pwd` the model just read says "/workspace/quack", and
-// read_file must open the file it names, not go hunting for a directory called
-// "workspace" inside the node dir. (The sandbox closes the other direction: the
-// model's "/quack" resolves in the shell too — see rootAliasArgs.)
-//
-// Only the ABSOLUTE alias is rewritten, so a relative "workspace/x" still means an
-// entry actually named workspace. A top-level entry named "workspace" is therefore
-// shadowed in the absolute spelling; that is the price of the alias, and it is
-// addressable relatively.
+// stripSandboxRoot turns the SHELL's spelling of the workspace root into the
+// model's own: "/workspace/quack/main.go" → "/quack/main.go", so a path out of a
+// shell result (`pwd`) feeds back into any fs tool. (The sandbox closes the other
+// direction — see rootAliasArgs.) Only the ABSOLUTE alias is rewritten, so a
+// relative "workspace/x" still means an entry actually named workspace; a
+// top-level entry named "workspace" is shadowed in the absolute spelling only.
 func stripSandboxRoot(p string) string {
 	if p == workspace.SandboxWorkRoot {
 		return "/"
@@ -140,17 +108,10 @@ func stripSandboxRoot(p string) string {
 	return p
 }
 
-// displayCwd renders the session working directory for a tool RESULT: the ABSOLUTE
-// path of where you are standing, within the node's workspace ("/" at the root,
-// "/goose" inside a clone).
-//
-// Every workspace tool reports it, on every call. It is absolute on purpose: a
-// relative cwd of "." is technically true and operationally useless — it tells the
-// model nothing about WHERE it is, so an unsure model re-derives its position by
-// guessing, and each guess is a wasted turn. Live, a code-explorer `cd`'d into a
-// repo, could not tell it had moved, and `cd`'d to the same place again — then
-// globbed blind. Answering "where am I" costs ~20 bytes; making the model infer it
-// costs turns.
+// displayCwd renders the session working directory for a tool RESULT: the
+// ABSOLUTE path of where you are standing ("/" at the root, "/goose" inside a
+// clone). Absolute on purpose — a relative "." tells the model nothing about
+// where it is, and it wastes turns re-deriving its position.
 func displayCwd(cwd string) string {
 	if cwd == "" || cwd == "." {
 		return "/"
@@ -165,18 +126,9 @@ func joinCwd(cwd, p string) string {
 	if cwd == "" || cwd == "." {
 		return p
 	}
-	// Idempotent: a path that ALREADY starts with the cwd is taken as-is rather
-	// than joined onto it again.
-	//
-	// The model is handed paths constantly — `cd` reports its new dir, `git_clone`
-	// reports where it landed, `list_dir` echoes entry paths — and it very
-	// reasonably feeds them straight back. Now that all of those speak ONE
-	// namespace, feeding one back is unambiguous and must WORK: after `cd openhands`
-	// (reporting dir "openhands"), read_file("openhands/README.md") means the same
-	// file as read_file("README.md"). Doubling the cwd into
-	// openhands/openhands/README.md is never what anyone means — a live explorer
-	// node made 34 REPEATED calls out of 69 flailing through variants of exactly
-	// that.
+	// Idempotent: a path that ALREADY starts with the cwd is taken as-is, never
+	// joined onto it again — tools echo paths and the model feeds them back, and
+	// doubling the cwd is never what anyone means.
 	if p == cwd || strings.HasPrefix(p, cwd+"/") {
 		return p
 	}

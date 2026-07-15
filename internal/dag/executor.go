@@ -31,15 +31,10 @@ type Executor struct {
 	controls    *runControls                          // live per-node cancel/steer handles (M5b)
 	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
 
-	// gateResults holds each node's trust-gate outcome, in memory, keyed
-	// "<chatID>\x00<nodeID>". The gated node ALSO writes it to session state, but
-	// that write is not visible to the fresh sessions.Get below: it is a state delta
-	// that only lands when an event carrying it is appended, and node_done is built
-	// before that happens. Live (2026-07-13): a node whose judge passed at 1.0
-	// persisted judge_final_score=0, judge_rounds=0 — every completed node reported
-	// its trust gate as never having run, so a node's score was invisible in the UI
-	// and in the DB. The value is known in-process at the moment the gate returns;
-	// there is no reason to make a round trip for it.
+	// gateResults holds each node's trust-gate outcome in memory, keyed
+	// "<chatID>\x00<nodeID>". The gated node also writes it to session state, but
+	// that delta only lands when an event carrying it is appended — after
+	// node_done is built — so the in-process copy is the one node_done can see.
 	gateResults sync.Map
 }
 
@@ -486,9 +481,6 @@ func (s *dagStream) flush() bool {
 func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 	out := s.outputs[node]
 	d := stream.NodeDoneData{Output: out, OutputPreview: preview(out)}
-	// Wall-clock. This was never assigned, so every completed node persisted
-	// duration_ms=0 and a node's cost was invisible — the one number you need to see
-	// whether a node is working or spinning.
 	if t, ok := s.startedAt[node]; ok {
 		d.DurationMs = time.Since(t).Milliseconds()
 	}
@@ -602,12 +594,9 @@ func toInt(v any) int {
 func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
 	var sb strings.Builder
 	if plan.UserMessage != "" {
-		// The verbatim request is BACKGROUND, and must say so. Handed over bare, a node
-		// reads the whole brief as its own to-do list and starts doing its siblings'
-		// work: live (code-mode dogfood), the `goose` explorer finished goose, read
-		// "PHASE 2 — SYNTHESIZE A PLAN FOR QUACK" in the request it had been given for
-		// context, and went off to clone and read quack — which was a SIBLING node's job,
-		// running concurrently. The output is discarded and the run pays for it twice.
+		// The verbatim request is BACKGROUND, and must say so — handed over bare, a
+		// node reads the whole brief as its own to-do list and does its siblings'
+		// work, which is discarded and paid for twice.
 		sb.WriteString("BACKGROUND — the user's full request, verbatim. This is CONTEXT ONLY, so you " +
 			"understand what the overall job is and how your piece fits. MOST OF IT IS NOT YOURS TO DO.\n\n")
 		sb.WriteString(plan.UserMessage)

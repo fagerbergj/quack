@@ -83,8 +83,7 @@ type askAdvisorResult struct {
 // inside the worker's A2A server runner (internal/agent.Serve), where the
 // calling runner's session, state, NodeInfo, and branch are all invisible —
 // but the prompt IS the inbound A2A message, and UserContent is fixed before
-// the model ever runs, so the read is deterministic and race-free (no
-// persisted-event scan — the live 2026-07-09 failure). The token keys a
+// the model ever runs, so the read is deterministic and race-free. The token keys a
 // persistent PER-NODE advisor session (`<plan>/<node>:advisor`), so the
 // mentor's memory survives gate rounds (draft → revision), steered re-runs,
 // and HITL pause/resume — the gate re-derives the same token from plan+node
@@ -158,7 +157,7 @@ func contentText(c *genai.Content) string {
 // ask_advisor calls at once — two runner lifecycles (Get/Create → append)
 // each holding its own localSession snapshot of the SAME advisor session row.
 // Under the database service's optimistic locking the loser's append dies
-// with "stale session error" (live 2026-07-09 22:29), the create race dies
+// with "stale session error", the create race dies
 // with a UNIQUE violation, and a double Get-miss double-seeds the thread.
 // Serializing per token removes all three at the source and is the right
 // conversation shape anyway (two simultaneous questions to one mentor are

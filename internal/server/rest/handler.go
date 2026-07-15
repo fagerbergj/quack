@@ -495,10 +495,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 	case dag.StatusCancelled:
 		// Delivery is NOT optimistic (same as steer below): CancelNode returns
 		// false when no live control is registered for the node — the signal
-		// landed nowhere. Discarding that bool and answering 200 + "cancelled"
-		// is how the API came to LIE: live (2026-07-13) a user hit Cancel six
-		// times in one second, got six 200s, and the node kept running —
-		// "cancel and steer is seemingly doing nothing".
+		// landed nowhere, and answering 200 + "cancelled" anyway makes the API lie.
 		//
 		// A delivered cancel is still COOPERATIVE: the node's next tool call
 		// fails fast (tools.Deps.NodeCancelled) and the gate stops it at its

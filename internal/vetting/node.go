@@ -329,49 +329,26 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// gate already paused for) and ended without a real answer. Park the NODE
 		// so ADK routes the human's answer/decision back here on the next turn.
 		//
-		// Runs REGARDLESS of whether the draft is empty. A chatty model asks (or
-		// proposes a guarded op) AND writes draft text in the SAME turn (observed
-		// live: code-implementer called ask_user with a real design question yet
-		// also emitted a draft). Any draft text from THIS turn is discarded on the
-		// pause: it was written WITHOUT the user's answer/decision, and the resume
-		// path re-runs the worker with the full Q&A / decision folded in — so
-		// nothing of value is lost. The SAME check runs after every revise round
-		// below (see the judge loop) — a worker often proposes its guarded delivery
-		// step only after the judge flags the draft incomplete.
+		// Runs REGARDLESS of whether the draft is empty — a chatty model asks and
+		// writes draft text in the same turn. Draft text from this turn is
+		// discarded on the pause (it was written without the user's answer; the
+		// resume path re-runs the worker with the Q&A folded in). The same check
+		// runs after every revise round below.
 		if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
 			return "", GateResult{}, ierr // ErrNodeInterrupted → park
 		}
 
-		// Continuation loop: keep giving the worker TOOL-BEARING turns until the WORK
-		// is done — not until the model happens to emit text. An agentic harness
-		// (goose, OpenHands) calls the model, runs its tools, feeds the results back
-		// and calls it AGAIN, until the model says it is finished; quack instead
-		// treated ONE llmagent invocation as "the draft" and its text as the
-		// deliverable, so a turn that spent its whole output budget on reasoning (empty
-		// content) read as "done" — and the gate replaced the worker's continuation
-		// with a TOOL-LESS writer that summarised half-finished work. Live TC2 evidence
-		// (2026-07-13): four runs, ZERO git_commit calls ever; run v4's answer contained
-		// a markdown code block of a file the worker was supposed to WRITE, and the
-		// judge passed it at 0.7. Same model, in goose, drove the same task to a pushed
-		// branch — an architecture gap, not a model limit.
+		// Continuation loop: keep giving the worker TOOL-BEARING turns until the
+		// WORK is done (workIncomplete) — not until the model happens to emit text:
+		// a turn that spends its whole output budget on reasoning is not "done",
+		// and a tool-less writer must never substitute for unfinished work. The
+		// continuation prompt rides the same delivery path as a revise round;
+		// bounded by maxContinueRounds.
 		//
-		// So the loop condition is the WORK, not the text (workIncomplete): an empty
-		// draft, or a task that demanded a commit/push the ledger doesn't show. The
-		// continuation prompt rides the same delivery path as a revise round
-		// (runWorkerNode → RunNode input for a local llmagent, gate-authored session
-		// event for a remote A2A worker — see emitPrompt), which is what makes it land
-		// at all. Bounded by maxContinueRounds so a stuck worker can't spin forever.
-		//
-		// The completion test reads the node's OWN task (cfg.Task) — NEVER `prompt`.
-		// `prompt` is the assembled worker input, and it carries the user's verbatim
-		// request as background (dag.buildTask). Judged against that, EVERY node in a
-		// plan whose request ends in "commit, push a branch, and open the PR" is
-		// forever incomplete — including the read-only explorers, which have no commit
-		// or push tools and whose job is explicitly not to deliver code. Live
-		// (2026-07-13): every code-explorer node ran the continuation loop to its bound
-		// on `committed=false pushed=false`, reading for HOURS, and not one ever
-		// finished or reached a judge round. The delivery check has always keyed on
-		// cfg.Task (see the deterministic fold below); only this loop didn't.
+		// The completion test reads the node's OWN task (cfg.Task) — NEVER `prompt`,
+		// which carries the user's verbatim request as background: judged against
+		// that, every node in a "commit and open a PR" plan is forever incomplete,
+		// including the read-only explorers.
 		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, activity()); attempt++ {
 			act := activity()
 			log.Warn("work not finished; continuing the worker with its tools",
@@ -457,17 +434,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				return answer, res, nil // revision failed; keep the prior answer
 			}
 			// A revision can ITSELF raise a fresh ask_user or guard-ladder
-			// confirmation — a worker commonly proposes the outward-facing,
-			// confirm-tiered delivery step (e.g. git_commit + git_push) only AFTER
-			// the judge flags the task incomplete, i.e. during a late revise round.
-			// The draft-time pause check above never sees that, so without this the
-			// unconfirmed operation is silently skipped and the incomplete answer
-			// sails to the next judge round (live safety bug 2026-07-12: a
-			// code-implementer proposed git_push in worker-r3, the confirm pause
-			// never fired, and the judge passed the unpushed answer at 0.7 — no
-			// human ever approved the push). Park the node exactly as the draft-time
-			// check does; the empty revise output is discarded, and on resume the
-			// worker re-runs with the decision folded in.
+			// confirmation — a worker commonly proposes its confirm-tiered delivery
+			// step (git_commit + git_push) only after the judge flags the task
+			// incomplete. Without this check here the unconfirmed operation is
+			// silently skipped and the incomplete answer sails to the next judge
+			// round with no human ever approving the push. Park exactly as the
+			// draft-time check does.
 			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
 				return "", GateResult{}, ierr // ErrNodeInterrupted → park
 			}
@@ -496,16 +468,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 // ErrNodeInterrupted sentinel to propagate) when it parked, false otherwise.
 //
 // It MUST run after EVERY worker run — the initial draft, each resume run, AND
-// each revise round — because a worker frequently proposes its outward-facing,
-// guard-confirmed delivery step (git_commit + git_push) only once the judge has
-// pushed back that the task is incomplete, i.e. during a LATE revision. A check
-// that ran solely after the initial draft never saw that confirmation, so the
-// unconfirmed (and incomplete) answer sailed straight to the judge and no human
-// ever approved the operation (live safety bug 2026-07-12).
+// each revise round: a worker frequently proposes its guard-confirmed delivery
+// step (git_commit + git_push) only during a late revision, and a draft-only
+// check lets that operation go unapproved.
 //
-// ask_user is checked before the guard confirmation: an interactive question is
-// the more specific signal, and a single turn raising both is not a shape any
-// worker prompt produces.
+// ask_user is checked before the guard confirmation: the more specific signal,
+// and no worker prompt raises both in one turn.
 func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*session.Event) error, log *slog.Logger) (bool, error) {
 	if emit == nil {
 		return false, nil
@@ -636,23 +604,12 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 const gatePromptAuthor = "quack-gate"
 
 // emitPrompt writes the worker's prompt into the session as a gate-authored
-// event, immediately before the RunNode that consumes it. A LOCAL llmagent
-// worker doesn't need it (node-mode llmagents take the RunNode input
-// directly), but production workers are A2A REMOTE agents, and those build
-// their outbound message from SESSION EVENTS ONLY — remoteagent's newMessage
-// reads ctx.Session().Events() and drops RunNode input/UserContent on the
-// floor (only llmagent implements the NodeRunner interface AgentNode would
-// deliver input through). Without this event a remote worker never sees its
-// node's task prompt at all, and a follow-up round whose session tail is
-// empty SKIPS the dispatch entirely (an empty outbound message short-circuits
-// in remoteagent). The emit → scheduler handshake → runner AppendEvent chain
-// completes before emit returns, so the event is durably in the session
-// before the dispatch that needs it — no ordering race.
-//
-// The event is filtered everywhere else by its author/branch: the chat store
-// skips non-orchestrator authors, the orchestrator's own history is branch-
-// filtered, and the dagStream translates it to (at most) the node's
-// node_start.
+// event, immediately before the RunNode that consumes it. A local llmagent takes
+// RunNode input directly, but production workers are A2A REMOTE agents, which
+// build their outbound message from SESSION EVENTS ONLY — without this event a
+// remote worker never sees its task, and an empty session tail skips the
+// dispatch entirely. emit completes durably before it returns, so there is no
+// ordering race. The event is filtered everywhere else by its author/branch.
 func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any) {
 	if emit == nil {
 		return
@@ -675,24 +632,14 @@ func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any
 func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string, emit func(*session.Event) error) (string, error) {
 	t0 := time.Now()
 	emitPrompt(ctx, emit, input)
-	// WithIsolationScopeFromNodePath: every plan node shares ONE workflow
-	// session, and a LOCAL single-turn llmagent worker picks its "current turn"
-	// pivot by scanning that session's tail for the latest user/foreign-authored
-	// event WITHOUT branch filtering (ADK v2.0.0
-	// llminternal.buildContentsCurrentTurnContextOnly — branch is only applied
-	// AFTER the pivot). A concurrently-running sibling node's event landing at
-	// the tail therefore steals the pivot, and everything before it — including
-	// THIS worker's own node-input prompt (seeded as a synthetic user event) —
-	// falls out of the request window; the branch filter then removes the
-	// sibling's events too, leaving the worker an EMPTY request (CI flake:
-	// TestRunPlanAsGraph_HITLPauseResume, n2 "asking n1's question"). The pivot
-	// scan DOES honour isolation scope, so scoping each worker run to its own
-	// node path makes sibling events invisible to it. Scope is inert for remote
-	// (A2A) workers — remoteagent ignores IsolationScope; their sibling leak is
-	// fixed read-side in internal/agent/a2a.go's part converter instead. Known
-	// ADK quirk of scope+single_turn: the node input is ALSO prepended from
-	// UserContent, so a local llmagent sees its prompt twice — harmless, and
-	// local llmagent workers exist only in tests (production workers are A2A).
+	// WithIsolationScopeFromNodePath: plan nodes share ONE workflow session, and
+	// a local llmagent's current-turn pivot scan is NOT branch-filtered (ADK
+	// v2.0.0), so a concurrent sibling's tail event steals the pivot and leaves
+	// this worker an empty request. The pivot scan does honour isolation scope,
+	// so scoping each run to its own node path hides sibling events. Inert for
+	// remote (A2A) workers — their sibling leak is fixed read-side in
+	// internal/agent/a2a.go. Known quirk: a local llmagent sees its prompt twice
+	// (harmless; local workers exist only in tests).
 	out, err := workflow.RunNode[string](ctx, workerNode, input,
 		workflow.WithUseSubBranch(), workflow.WithRunID(runID),
 		workflow.WithIsolationScopeFromNodePath())
@@ -945,15 +892,10 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					s.recordWorkspace(p.FunctionResponse.Name, args, p.FunctionResponse.Response)
 				}
 			}
-			// CODE MODE. A tool called from inside a script (internal/tools/run_code.go)
-			// emits no session event of its own, so without this the gate would be blind
-			// to it — a node that really did write and commit code would be failed for
-			// claiming work with no ledger evidence, and, far worse, real work would go
-			// unverified. run_code's response carries a compact record of every call the
-			// script made; each one is replayed HERE, through the very same recorders a
-			// direct call goes through, in the order the script made them. The result is
-			// that a write from inside a script is indistinguishable, to the trust gate,
-			// from a direct write_file.
+			// CODE MODE: a tool called from inside a script emits no session event, so
+			// its calls are replayed here from run_code's compact record, through the
+			// very same recorders a direct call goes through — a write from a script
+			// is indistinguishable, to the gate, from a direct write_file.
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == RunCodeToolName {
 				for _, c := range expandRunCode(p.FunctionResponse.Response) {
 					s.replay(c)
@@ -1067,13 +1009,9 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 	case "run_command":
 		s.act.ranCommand = true
 	case "git_clone":
-		// A successful clone IS retrieval: the whole repository is now local,
-		// strictly more consulted than a search-result snippet. citationScore gives
-		// full backing to the repo URL, to URLs under it (blob/tree links), and to
-		// local paths inside the clone dir — without this, a node following the
-		// research-git-repos flow (clone + read instead of web_fetch) scored 0.25
-		// backing on files of the very repo it had cloned (live failures
-		// 2026-07-10, 2026-07-12).
+		// A successful clone IS retrieval. citationScore backs the repo URL, URLs
+		// under it, and local paths inside the clone dir — without this, a
+		// clone-and-read node scores near zero on files of its own clone.
 		if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
 			s.act.clonedRepos = append(s.act.clonedRepos, strings.TrimSpace(u))
 		}

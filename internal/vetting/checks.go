@@ -14,15 +14,11 @@ import (
 )
 
 // maxCheckOutputChars bounds ONE failing check's output as folded into the
-// checks_pass Reason — which becomes the revise prompt's feedback section
-// (composeFeedback → buildRevisionContent). Regression (live e2e 2026-07-12):
-// a failing `npx tsc`/`npm run build` dumps a dozen multi-line errors and a
-// whole build trace; folded in whole and re-accumulated each round it pushed
-// the revise prompt past the model window, compaction truncated the worker's
-// OWN task prompt as a last resort, and the worker lost its state and failed
-// outright by round 5. A compiler's FIRST errors are the actionable ones; the
-// 40th cascade is noise — ~2KB is plenty. checksPassCriterion stops at the
-// first failing check, so this also caps the TOTAL check-output contribution.
+// checks_pass Reason, which becomes revise-prompt feedback — unbounded build
+// output re-accumulated each round once pushed the revise prompt past the model
+// window. A compiler's FIRST errors are the actionable ones; the 40th cascade
+// is noise. checksPassCriterion stops at the first failing check, so this also
+// caps the TOTAL check-output contribution.
 const maxCheckOutputChars = 2_000
 
 // checksPassCriterion is the GATE side of §4 (deterministic gates): it runs the
@@ -32,11 +28,10 @@ const maxCheckOutputChars = 2_000
 // (workspace.RunPipeline; pipes are native, everything else a shell would
 // interpret stays unexpressible), stopping at the first failure.
 //
-// Why derive: the planner authors the DAG BEFORE anything has looked at the repo,
-// so any checks it writes are guesses (live e2e 2026-07-12: `go build` for a
-// JavaScript repo, `npx tsc` for a repo whose typecheck is `next build`). Check
-// commands are a property of the REPO and are discovered from it here, at gate
-// time, once the worker has cloned it.
+// Why derive: the planner authors the DAG BEFORE anything has looked at the
+// repo, so any checks it writes are guesses (`go build` for a JavaScript repo).
+// Check commands are a property of the REPO and are discovered from it here, at
+// gate time, once the worker has cloned it.
 //
 // Called from foldDeterministic (node.go) exactly like grounded_in_retrieval: a
 // failing check folds in as criterion `checks_pass` with Score 0 (weakest-link —
@@ -159,13 +154,10 @@ func checksCaps(cfg Config) workspace.Caps {
 // single repo can be located: skip the checks rather than guess which of several
 // trees is "the" repo.
 //
-// The search is the fix for a live e2e (2026-07-13): the planner set no usable
-// workdir (legitimate — checks/workdir became optional), so the checks dir
-// resolved to the SCOPE ROOT, which holds no package.json — "no checks derived
-// from the repo; skipping checks" — while the repo sat one level down at
-// <scope>/games, where git_clone had put it. Nothing gated the build, and code
-// that does not typecheck passed at 0.7. Resolving a workdir is not the same as
-// FINDING the repo, so now we find it.
+// The search matters: the planner may legitimately set no workdir, and the repo
+// usually sits one level down where git_clone put it — resolving a workdir is
+// not the same as FINDING the repo, so we find it (a scope-root fallback once
+// derived no checks at all and let non-compiling code pass).
 //
 // Workdir resolves against the node's OWN working dir first (<chat>/<node>/…,
 // where the node's git_clone landed its repo — exactly as the worker's own tools

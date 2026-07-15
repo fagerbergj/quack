@@ -10,33 +10,14 @@ import (
 	"google.golang.org/genai"
 )
 
-// ONE NAMESPACE — IN ERRORS TOO.
-//
-// The rule #204/#209/#217 established for tool RESULTS is that a path out of any
-// tool goes back into any tool: the model speaks exactly one path namespace (its
-// node's invisible root, see cwd.go), and the host's — workspace root, chat id,
-// node id — is never shown to it. Errors were never held to that rule, and they
-// are where a path is most likely to appear. Live, code mode's first run:
-//
-//	read_file: stat /tmp/claude-1000/-home-jason-workspace-agent-researcher/…/
-//	workspace/local/2dfbfc35-…/explorer/internal/tools/registry.go:
-//	no such file or directory
-//
-// The model asked for `internal/tools/registry.go`. It was answered in a namespace
-// it has never seen, cannot type, and cannot correct — plus a free tour of the host
-// layout, spent from its context budget.
-//
-// The leak is not per-tool: it comes from os/git handing back the RESOLVED path
-// (*fs.PathError, git's stderr) that every tool dutifully wraps with %w. So the fix
-// is not per-`fmt.Errorf` either. pathScrub is applied ONCE, in registry.Build's
-// single wrap point, around EVERY tool it constructs — the same place cancelWrap
-// sits. A tool added tomorrow is scrubbed without its author knowing this file
-// exists, and hostpath_test.go's TestEveryBuiltToolIsPathScrubbed fails if the wrap
-// point is ever bypassed.
-//
-// It rewrites, rather than redacts: a host path becomes the SAME location spelled
-// in the model's namespace ("/internal/tools/registry.go"), so the error stays
-// actionable — the model can read what went wrong AND retry the path it names.
+// pathScrub keeps the one-namespace rule (see cwd.go) in ERRORS too: os/git hand
+// back RESOLVED host paths (*fs.PathError, git stderr) that every tool wraps with
+// %w, so the model would be answered in a namespace it cannot type or correct.
+// Applied ONCE, at registry.Build's single wrap point, around every tool — a tool
+// added tomorrow is scrubbed without its author knowing this file exists
+// (TestEveryBuiltToolIsPathScrubbed enforces it). It REWRITES rather than
+// redacts: the same location respelled in the model's namespace, so the error
+// stays actionable.
 type pathScrub struct {
 	inner runnableTool
 	// b carries (userID, jail): enough to compute, per call, where the MODEL's

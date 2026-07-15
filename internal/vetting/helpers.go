@@ -28,8 +28,8 @@ type Config struct {
 	// RequireRetrieval marks an agent whose job is retrieval (its tool list
 	// includes web_search/web_fetch). For such an agent an answer produced with
 	// ZERO retrieval activity is deterministically ungrounded — either pure model
-	// memory or (live e2e 2026-07-05) a question to the user written as answer
-	// text instead of an ask_user call. The deterministic fold hard-fails it with
+	// memory or a question to the user written as answer text instead of an
+	// ask_user call. The deterministic fold hard-fails it with
 	// feedback naming both ways out (research it, or ask_user). False for
 	// tool-less agents like the synthesizer, which legitimately re-cite upstream
 	// URLs without retrieving anything themselves.
@@ -139,10 +139,8 @@ type fetchRecord struct {
 // (reconstructed from session events by activityFromSession). Passed to the
 // judge + deterministic citation check so neither can falsely claim no
 // retrieval happened — and, via the workspace ledger, so the judge can check
-// the answer's CLAIMS against what the worker actually did (live e2e
-// 2026-07-10: a coder claimed "Committing…" + quoted README lines; ground
-// truth had zero commits and no such README content — both invisible to a
-// judge whose activity context recorded only web_search/web_fetch).
+// the answer's CLAIMS against what the worker actually did (a coder once
+// claimed commits that never happened).
 type workerActivity struct {
 	searches  []string               // every web_search query
 	fetched   map[string]fetchRecord // URL → sample for web_fetch calls that returned content
@@ -150,12 +148,10 @@ type workerActivity struct {
 	staged    []memory.Candidate     // memory candidates staged via stage_memory (M6)
 	workspace []wsOp                 // fs/git/run_command operations, in session order (see ledger.go)
 
-	// Cloned-repo grounding (live failure 2026-07-12: an explore-repo node
-	// cloned a repo, read ~10 files, cited them — and cites_sources scored
-	// 0.25, sinking a node the judge called excellent). A successful git_clone
-	// puts the ENTIRE repo on local disk: every file in it is retrieved
-	// material by construction, so citations of URLs under the repo and of
-	// local paths inside the clone dir are real grounding, not fabrication.
+	// Cloned-repo grounding: a successful git_clone puts the ENTIRE repo on
+	// local disk — every file in it is retrieved material by construction, so
+	// citations of URLs under the repo and of local paths inside the clone dir
+	// are real grounding, not fabrication.
 	clonedRepos []string        // successful git_clone URLs
 	clonedDirs  []string        // the local dirs those clones landed in (normalizePath'd)
 	paths       map[string]bool // paths of successful fs ops (read/write/edit/delete), normalizePath'd
@@ -164,8 +160,7 @@ type workerActivity struct {
 	// (successful write_file/edit_file only — not reads, not deletes), in
 	// first-touch order, resolved against the cwd in effect at the time of the
 	// call. buildChangedFilesSection re-reads these off disk so the judge scores
-	// the REAL post-edit source, not the worker's self-report (live 2026-07-12: a
-	// blind judge passed an incomplete, non-compiling deliverable it never read).
+	// the REAL post-edit source, not the worker's self-report.
 	written []string
 
 	// Delivery actions the worker actually completed (SUCCESSFUL calls only —

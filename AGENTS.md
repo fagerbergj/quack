@@ -174,6 +174,15 @@ Components under `src/components/` have co-located Storybook stories (`.stories.
 | `QUACK_LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error`. `debug` surfaces per-round hot-path trace (vetting/compaction). |
 | `QUACK_LOG_FORMAT` | slog output: `text` (default, human-readable) or `json` (one object per line, for log aggregators). |
 
+## Comments
+
+Comments say what the CODE CANNOT — the incident belongs in the commit message and PR body, not the source.
+
+- Keep: non-obvious constraints and invariants, the ceiling of a deliberate shortcut, warnings that stop the next person breaking something, `ponytail:` markers.
+- Cut: incident narratives (dates, node ids, token counts, quoted model output), what the code plainly does, how we got here, rejected alternatives.
+- A load-bearing war story is ONE clause (`// (a live grep returned 48 MB — bound the bytes, not just the count)`), never a retelling.
+- If one line of code needs 3+ lines of comment, the comment is too long. Test files may keep a short failure narrative (they pin regressions) — a few lines, not twenty.
+
 ## Spec-Driven Development
 
 Before implementing a non-trivial feature, write a brief spec covering:

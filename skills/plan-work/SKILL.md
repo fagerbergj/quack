@@ -52,11 +52,8 @@ Route those to `web-researcher`, which has the tools for it. Reach for `code-exp
 only when you can name the repository whose source holds the answer. When you're not
 sure whether a thing is in public source (a vendor's internal implementation, say),
 send BOTH: a `web-researcher` for what is written about it, and a `code-explorer` only
-for the repository that genuinely exists. Live failure: an explorer was sent to find
-Cloudflare's "code mode" implementation, which is server-side and not public. It cloned
-four repositories, found only an `AllowCodeMode` API flag, correctly concluded the
-implementation wasn't there — and kept searching anyway, because it had been given a
-task no amount of reading could complete.
+for the repository that genuinely exists (an explorer once burned its whole run
+searching public repos for a server-side implementation that was never in them).
 
 Route by what the node must DO, not by topic: any node that must change code,
 commit, or push is `code-implementer` work — never `web-researcher`, which

@@ -162,9 +162,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if err == nil {
 				// Record the gate outcome IN PROCESS first: node_done is assembled
 				// before this node's state delta is appended, so a fresh sessions.Get
-				// cannot see the Set()s below. Live (2026-07-13): a node whose judge
-				// passed at 1.0 persisted judge_final_score=0 and judge_rounds=0 —
-				// every finished node claimed its trust gate had never run.
+				// cannot see the Set()s below.
 				if recordGate != nil {
 					recordGate(node.ID, res.Score, res.Passed, res.Rounds)
 				}
