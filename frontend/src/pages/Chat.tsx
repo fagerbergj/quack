@@ -13,9 +13,9 @@ import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
-// Used as a fallback when the orchestrator presents no top-level text of its own —
-// the answer then lives in the last DAG node's nodeAnswer.
-function liveDagFinalText(dag: DagTurnState): string {
+// This IS the DAG turn's answer — never mix in the orchestrator's own top-level
+// text (that's planning/narration chatter, not the reply; see liveText below).
+export function liveDagFinalText(dag: DagTurnState): string {
   const finalId = terminalNodeId(dag.nodes)
   return finalId != null ? (dag.nodeAnswer[finalId] ?? '') : ''
 }
@@ -325,7 +325,7 @@ export default function Chat() {
             //    request) — never the answer when a DAG exists; falling back to it
             //    only masks a missing/incomplete terminal answer with unrelated text.
             //  - no DAG: the orchestrator answered directly, so its text IS the reply.
-            const liveText = liveDag ? (liveDagFinalText(liveDag) || liveTopText) : liveTopText
+            const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
             // The orchestrator's own activity (deciding to research, plan/execute calls).
             // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
             const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))

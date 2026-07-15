@@ -107,6 +107,37 @@ describe('ChatStore.submit — loading indicator gap (regression)', () => {
     expect(store.get('chat-1').submitting).toBeFalsy()
     await p
   })
+
+  // Regression: the archive GET can race the server's own persistence of the
+  // turn that just finished streaming. If the refetch's `turns` doesn't yet
+  // contain that turn, the previous answer must survive (synthesized from the
+  // in-memory `live`) instead of dropping until a manual refresh.
+  it('keeps the previous answer when the archive refetch omits the just-finished turn', async () => {
+    const sse = [
+      'event: response_created',
+      'data: {"response_id":"resp-1"}',
+      '',
+      'event: agent_token',
+      'data: {"text":"first answer"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('chat-1', 'msg1')
+    expect(store.get('chat-1').live?.id).toBe('resp-1')
+    expect(store.get('chat-1').live?.text).toBe('first answer')
+
+    // The archive GET comes back WITHOUT resp-1 (server hasn't persisted it yet).
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
+    fetchMock.mockResolvedValueOnce(makeStream(''))
+    await store.submit('chat-1', 'msg2')
+
+    const turns = store.get('chat-1').turns
+    expect(turns).toHaveLength(1)
+    expect(turns[0].id).toBe('resp-1')
+    expect(turns[0].input.content).toBe('msg1')
+    const msg = turns[0].output.find(o => o.type === 'message')
+    expect(msg && 'content' in msg ? msg.content[0] : undefined).toEqual({ type: 'output_text', text: 'first answer' })
+  })
 })
 
 describe('ChatStore — mid-node steering', () => {
