@@ -17,6 +17,7 @@ import (
 // the same way assemble() hardcodes "synthesizer" — the roster is name-keyed and both
 // roles carry a fixed contract the plan validation depends on.
 const implementerAgent = "code-implementer"
+const reviewerAgent = "code-reviewer"
 
 // AgentInfo describes one available agent (name + description) — the roster the
 // orchestrator authors a DAG from.
@@ -113,8 +114,13 @@ func (p *Planner) checkImplementationRouting(plan *Plan, message string) error {
 	if !hasImplementer || !implementationIntent(message) {
 		return nil
 	}
+	// A plan that deliberately has a code-reviewer node is a REVIEW, not a botched
+	// implement plan — the orchestrator chose to critique, not to ship. The
+	// implement-intent heuristic misfires here because a PR review's injected
+	// context (the PR's own "Add …"/"Fix …" title and description) reads as
+	// implement-and-deliver; never force an implementer onto a review.
 	for _, n := range plan.Nodes {
-		if n.AgentName == implementerAgent {
+		if n.AgentName == reviewerAgent || n.AgentName == implementerAgent {
 			return nil
 		}
 	}
