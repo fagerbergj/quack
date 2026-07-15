@@ -282,3 +282,36 @@ func TestSanitizePart_DropsForeignBranchEvents(t *testing.T) {
 		})
 	}
 }
+
+// TestDescribeEvent_KeepsMediaParts guards the media-reader bug: the gate's
+// prompt-delivery event is authored "quack-gate" (foreign), so scopeMessage
+// renders it via describeEvent. An attached image rides as an InlineData part
+// on that event; describeEvent must carry it across the wire as a raw file
+// part, not silently drop it (which left the vision model blind).
+func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
+	imgBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A} // PNG magic
+	ev := &session.Event{}
+	ev.Author = "quack-gate"
+	ev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{
+		{Text: "Your task: describe the attached image."},
+		{InlineData: &genai.Blob{MIMEType: "image/png", Data: imgBytes}},
+	}}
+
+	parts := describeEvent(ev)
+
+	var gotImage bool
+	for _, p := range parts {
+		if raw := p.Raw(); raw != nil {
+			gotImage = true
+			if string(raw) != string(imgBytes) {
+				t.Errorf("image bytes mangled: got %v want %v", raw, imgBytes)
+			}
+			if p.MediaType != "image/png" {
+				t.Errorf("image media type = %q, want image/png", p.MediaType)
+			}
+		}
+	}
+	if !gotImage {
+		t.Fatal("describeEvent dropped the image part — the vision model never sees it")
+	}
+}

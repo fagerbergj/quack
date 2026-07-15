@@ -297,6 +297,19 @@ func describeEvent(ev *session.Event) []*a2a.Part {
 			parts = append(parts, a2a.NewTextPart(fmt.Sprintf("[%s] called tool %s with parameters: %v", ev.Author, p.FunctionCall.Name, p.FunctionCall.Args)))
 		case p.FunctionResponse != nil:
 			parts = append(parts, a2a.NewTextPart(fmt.Sprintf("[%s] %s tool returned result: %v", ev.Author, p.FunctionResponse.Name, p.FunctionResponse.Response)))
+		case p.InlineData != nil || p.FileData != nil:
+			// The gate's prompt-delivery event is authored "quack-gate" (foreign),
+			// so a user's attached image/audio rides here as an InlineData part.
+			// It has no textual rendering — carry it across the wire verbatim as a
+			// raw file part, or the vision/audio model never sees it (media-reader
+			// answered "I cannot see the attached image"). Mirrors ADK's own
+			// presentAsUserMessage, whose else-branch keeps such parts as-is.
+			mp, err := adka2a.ToA2APart(p, ev.LongRunningToolIDs)
+			if err != nil {
+				slog.Warn("a2a: media part conversion failed; dropping", "component", "agent", "author", ev.Author, "err", err)
+				continue
+			}
+			parts = append(parts, mp)
 		}
 	}
 	if len(parts) == 0 {
