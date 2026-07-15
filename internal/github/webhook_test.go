@@ -419,6 +419,46 @@ func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
 	}
 }
 
+// Two runs on the SAME PR session must not run concurrently — the second queues
+// on the session lock until the first finishes (concurrent runs on one session
+// corrupt each other).
+func TestDispatchSerializesSameSession(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 4), answer: "ok", block: make(chan struct{})}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	// Two mentions on issue #7 → same session. Both ack 202 and spawn a dispatch.
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d; want 202", rec.Code)
+		}
+	}
+
+	// Wait for the first run to be in flight (it increments calls, then blocks).
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&runner.calls) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(150 * time.Millisecond) // give the second a chance to (wrongly) start
+	if got := atomic.LoadInt32(&runner.calls); got != 1 {
+		t.Fatalf("runner.calls = %d while the first run holds the session lock; want 1 (the second must queue)", got)
+	}
+
+	close(runner.block) // let the first finish; the second then acquires the lock
+	deadline = time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&runner.calls) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&runner.calls); got != 2 {
+		t.Errorf("runner.calls = %d after releasing the lock; want 2 (the queued run should proceed)", got)
+	}
+}
+
 func TestHandleWebhookNoMentionIsNoop(t *testing.T) {
 	runner := &fakeRunner{gotMessage: make(chan string, 1)}
 	ext := newTestExtension(t, runner, "http://unused")

@@ -230,12 +230,19 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 
+	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
+	// Serialise runs on one PR: a follow-up that lands while a review is still
+	// running must WAIT, not run concurrently on the same session (concurrent runs
+	// corrupt each other — the answer skip and cross-run tool events seen in
+	// dogfooding). The webhook already 202'd, so blocking this goroutine is fine.
+	lock := e.sessionLock(sessionID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	var rc reviewContext
 	if p.Issue.PullRequest != nil {
 		rc = e.gatherReviewContext(ctx, owner, repo, number)
 	}
-
-	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
 	message := e.runMessage(p, task, rc)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
@@ -342,12 +349,13 @@ func (e *Extension) gatherReviewContext(ctx context.Context, owner, repo string,
 }
 
 // workVerbRe matches an imperative that asks quack to DO something — review or
-// change code — as opposed to discussing it. An ALLOWLIST on purpose: when a
-// request matches nothing here it is treated as conversational and NOT nudged, so
-// a follow-up like "what did you mean by that finding?" is answered directly
-// instead of being shoved into a DAG. Missing an unusual work phrasing just means
-// that one turn isn't nudged (the auto-review path always says "Review …").
-var workVerbRe = regexp.MustCompile(`(?i)\b(review|audit|critique|assess|implement|fix|add|create|refactor|rewrite|write|update|change|remove|delete|rename|migrate|investigate|analy[sz]e|build|check)\b`)
+// change code — as opposed to discussing it. CLAUSE-ANCHORED (start of text, after
+// sentence punctuation, or after please/and/then/also/to) so a verb buried
+// mid-sentence does not trip it: "No need to re-review" must NOT read as a review
+// request. An ALLOWLIST on purpose — a request matching nothing here is treated as
+// conversational and NOT nudged, so "what did you mean by that finding?" is
+// answered directly instead of being shoved into a DAG.
+var workVerbRe = regexp.MustCompile(`(?i)(?:^|[.;:!?\n]\s*|\b(?:please|and|then|also|to)\s+)(review|audit|critique|assess|implement|fix|add|create|refactor|rewrite|write|update|change|remove|delete|rename|migrate|investigate|analy[sz]e|build|check)\b`)
 
 // isWorkRequest reports whether a webhook task asks quack to DO work (so a run
 // that produced no plan should be nudged) versus a purely conversational
