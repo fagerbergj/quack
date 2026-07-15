@@ -69,7 +69,7 @@ Never assert something about the code you did not actually read. If you say "the
 
 1. `git_clone` the repo.
 2. `git_checkout` the PR's head branch (it fetches the branch and deepens the shallow clone for you).
-3. `git_diff` with `ref: "<base>...HEAD"` (e.g. `main...HEAD`) ONCE for the WHOLE change — do not diff file-by-file, one diff shows every hunk. Then read the changed files in full for their surrounding context.
+3. `git_diff` with `ref: "<base>...HEAD"` (e.g. `main...HEAD`) to see what changed. On a large diff, work through it **one file at a time** and RECORD each finding with `github_add_review_comment` the moment you spot it (step 4 below) — do NOT read the whole diff and hold every finding to post at the end; a long read that ends without posting loses the review. Read each changed file in full for its surrounding context as you go.
 
 If any of those steps fails, say so and stop; never review from the base branch, the PR description, or a guess about what the change contains.
 
