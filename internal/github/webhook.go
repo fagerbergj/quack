@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -109,6 +110,9 @@ type pullRequestPayload struct {
 	Installation struct {
 		ID int64 `json:"id"`
 	} `json:"installation"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
 }
 
 // autoReviewTask is the synthesized request for a pr_opened/label-triggered
@@ -183,6 +187,19 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
+	// The merge label is a human authorization, not an agent run: a deterministic
+	// handler checks quack's own review verdict and merges (or explains why not).
+	// A bot sender can never authorize a merge.
+	if p.Action == "labeled" && e.triggers["merge"] && p.Label.Name == e.labels.Merge &&
+		!strings.HasSuffix(p.Sender.Login, "[bot]") {
+		slog.Info("github webhook received", "component", "github",
+			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
+			"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
+		go e.mergeIfApproved(p)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
 	fires := (p.Action == "opened" && e.triggers["pr_opened"]) ||
 		(p.Action == "labeled" && e.triggers["label"] && p.Label.Name == e.labels.Review)
 	if !fires {
@@ -311,6 +328,70 @@ func planTask(p issuesPayload) string {
 	}
 	b.WriteString("\nInvestigate the repository first, then lay out a concrete plan: the approach, the files to change, and how to verify it. A maintainer will review the plan before any implementation happens.")
 	return b.String()
+}
+
+// mergeTimeout bounds the deterministic merge-label handler (a few API calls).
+const mergeTimeout = 2 * time.Minute
+
+// mergeIfApproved is the merge-label handler: merge ONLY at the intersection of
+// a human's label (repo write access) and quack's own APPROVED review. Anything
+// else gets an explanatory comment — re-applying the label after quack approves
+// is the retry, so no state is stored.
+func (e *Extension) mergeIfApproved(p pullRequestPayload) {
+	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Number
+	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
+	defer cancel()
+
+	comment := func(text string) {
+		if err := e.app.postIssueComment(ctx, owner, repo, number, text); err != nil {
+			slog.Error("github: merge-label comment failed", "component", "github",
+				"repo", owner+"/"+repo, "pr", number, "err", err)
+		}
+	}
+
+	state, err := e.latestOwnReviewState(ctx, owner, repo, number)
+	if err != nil {
+		slog.Error("github: merge-label review lookup failed", "component", "github",
+			"repo", owner+"/"+repo, "pr", number, "err", err)
+		comment(fmt.Sprintf("Not merging: I could not read this PR's reviews (%v). Re-apply the `%s` label to retry.", err, e.labels.Merge))
+		return
+	}
+	if state != "APPROVED" {
+		if state == "" {
+			state = "missing — I have not reviewed this PR"
+		}
+		comment(fmt.Sprintf("Not merging: my latest review is %s. Ask me to review (apply `%s` or mention me), then re-apply `%s` once I approve.",
+			state, e.labels.Review, e.labels.Merge))
+		return
+	}
+	if err := e.app.mergePR(ctx, owner, repo, number); err != nil {
+		slog.Error("github merge failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		comment(fmt.Sprintf("Merge failed: %v", err))
+		return
+	}
+	slog.Info("github pr merged", "component", "github", "repo", owner+"/"+repo, "pr", number, "user", p.Sender.Login)
+	comment(fmt.Sprintf("Merged — my review approved this PR and @%s authorized the merge via the `%s` label.", p.Sender.Login, e.labels.Merge))
+}
+
+// latestOwnReviewState returns the state of quack's most recent VERDICT review
+// (APPROVED / CHANGES_REQUESTED / DISMISSED) on the PR — COMMENTED reviews carry
+// no verdict and are skipped. "" means quack has no verdict on this PR.
+func (e *Extension) latestOwnReviewState(ctx context.Context, owner, repo string, number int) (string, error) {
+	reviews, err := e.app.listReviews(ctx, owner, repo, number)
+	if err != nil {
+		return "", err
+	}
+	bot, err := e.app.botLogin(ctx)
+	if err != nil {
+		return "", err
+	}
+	state := ""
+	for _, r := range reviews { // chronological: the last verdict wins
+		if r.User.Login == bot && r.State != "COMMENTED" {
+			state = r.State
+		}
+	}
+	return state, nil
 }
 
 // ackReaction posts a deterministic 👀 (eyes) reaction on the mentioning comment
