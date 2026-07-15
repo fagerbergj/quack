@@ -349,6 +349,12 @@ components:
         pending_question:
           type: string
           description: The unanswered question blocking the chat, present only when status is `needs_input`.
+        github_url:
+          type: string
+          description: Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
+        github_repo:
+          type: string
+          description: "`<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats."
 
     ChatDetail:
       allOf:

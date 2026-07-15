@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -49,6 +50,7 @@ type Extension struct {
 	triggers map[string]bool // configured trigger set: mention, pr_opened, label, issue_plan
 	labels   config.GitHubLabels
 	runner   Runner
+	store    *store.Store // nil in tests that don't need URL persistence
 	// runLocks serialises dispatches per PR session: a follow-up (or a rapid
 	// re-label) that arrives while a run on the same PR is in flight WAITS instead
 	// of running concurrently on the same session — concurrent runs on one session
@@ -66,7 +68,7 @@ func (e *Extension) sessionLock(sessionID string) *sync.Mutex {
 // NewExtension wraps an already-built App (serve constructs the App early so it
 // can also serve as the git-credential source before the orchestrator exists)
 // with the webhook config and a Runner.
-func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner) *Extension {
+func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st *store.Store) *Extension {
 	cfgTriggers := cfg.Triggers
 	if len(cfgTriggers) == 0 {
 		cfgTriggers = []string{"mention"} // config.applyDefaults normally does this; re-default here so callers that build the struct directly (tests) still get mention-only behavior
@@ -100,6 +102,7 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner) *Ex
 		triggers: triggers,
 		labels:   labels,
 		runner:   runner,
+		store:    st,
 	}
 }
 

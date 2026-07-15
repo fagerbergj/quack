@@ -21,6 +21,14 @@ export type ChatSummary = {
      * The unanswered question blocking the chat, present only when status is `needs_input`.
      */
     pending_question?: string;
+    /**
+     * Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
+     */
+    github_url?: string;
+    /**
+     * `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
+     */
+    github_repo?: string;
 };
 
 export type ChatDetail = ChatSummary & {

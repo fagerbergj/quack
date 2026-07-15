@@ -151,7 +151,7 @@ func newTestExtensionWithTriggers(t *testing.T, runner Runner, apiBase string, t
 		Mention:         "@quack",
 		Triggers:        triggers,
 		AutoReviewLabel: label,
-	}, runner)
+	}, runner, nil)
 }
 
 func pullRequestBody(action, labelName string) []byte {

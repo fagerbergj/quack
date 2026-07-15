@@ -118,6 +118,40 @@ func TestChatEventLog(t *testing.T) {
 	}
 }
 
+// TestSetChatGitHub covers both the create-if-missing path (webhook dispatch
+// can fire before the chat row exists) and updating an existing row.
+func TestSetChatGitHub(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	id := "github-acme-widget-app-42"
+	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/issues/42"); err != nil {
+		t.Fatalf("SetChatGitHub (create): %v", err)
+	}
+	got, err := st.GetChat(ctx, id)
+	if err != nil || got == nil {
+		t.Fatalf("GetChat: %+v err=%v", got, err)
+	}
+	if got.GithubRepo != "acme/widget-app" || got.GithubURL != "https://github.com/acme/widget-app/issues/42" {
+		t.Fatalf("unexpected github fields: %+v", got)
+	}
+
+	// Second call (row now exists) must update in place, not error/duplicate.
+	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/42"); err != nil {
+		t.Fatalf("SetChatGitHub (update): %v", err)
+	}
+	got, err = st.GetChat(ctx, id)
+	if err != nil || got.GithubURL != "https://github.com/acme/widget-app/pull/42" {
+		t.Fatalf("update did not take: %+v err=%v", got, err)
+	}
+	if chats, err := st.ListChats(ctx); err != nil || len(chats) != 1 {
+		t.Fatalf("ListChats: %d err=%v (update must not create a duplicate row)", len(chats), err)
+	}
+}
+
 func TestStoreUnknownKind(t *testing.T) {
 	if _, err := New("mysql", "x"); err == nil {
 		t.Error("New should reject an unknown store kind")

@@ -459,6 +459,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	defer cancel()
 
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
+	e.persistGithubLink(ctx, sessionID, owner, repo, number, p.Issue.PullRequest != nil)
 	// Serialise runs on one PR: a follow-up that lands while a review is still
 	// running must WAIT, not run concurrently on the same session (concurrent runs
 	// corrupt each other — the answer skip and cross-run tool events seen in
@@ -507,6 +508,25 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		return
 	}
 	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number)
+}
+
+// persistGithubLink stores the web URL of the originating issue/PR on the
+// session's chat row, for the frontend's GitHub tab. isPR selects "pull" vs
+// "issues" in the URL; unknown defaults to "issues" (GitHub redirects PRs
+// requested at the issues path). Best-effort: a failure here must not block
+// the run.
+func (e *Extension) persistGithubLink(ctx context.Context, sessionID, owner, repo string, number int, isPR bool) {
+	if e.store == nil {
+		return
+	}
+	kind := "issues"
+	if isPR {
+		kind = "pull"
+	}
+	url := fmt.Sprintf("https://github.com/%s/%s/%s/%d", owner, repo, kind, number)
+	if err := e.store.SetChatGitHub(ctx, sessionID, owner+"/"+repo, url); err != nil {
+		slog.Warn("github: persist chat link failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+	}
 }
 
 // runNudge is delivered when a webhook run answered without running a plan — a

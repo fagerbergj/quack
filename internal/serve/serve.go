@@ -426,7 +426,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// mount the extension's inbound routes.
 	var extensions []extension.Extension
 	if githubApp != nil {
-		extensions = append(extensions, github.NewExtension(githubApp, *cfg.Extensions.GitHub, orch))
+		extensions = append(extensions, github.NewExtension(githubApp, *cfg.Extensions.GitHub, orch, st))
 	}
 
 	handler = server.New(server.Options{

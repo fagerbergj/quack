@@ -20,6 +20,7 @@ import (
 	"google.golang.org/adk/v2/session/database"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -32,6 +33,10 @@ type Chat struct {
 	SystemPrompt string    `json:"system_prompt"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// GithubRepo/GithubURL are set only for GitHub-originated chats (id
+	// github-<owner>-<repo>-<number>) via SetChatGitHub.
+	GithubRepo string `json:"github_repo,omitempty"`
+	GithubURL  string `json:"github_url,omitempty"`
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id exposed
@@ -374,6 +379,18 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 // Touch bumps a chat's updated_at to now.
 func (s *Store) Touch(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("updated_at", time.Now().UTC()).Error
+}
+
+// SetChatGitHub upserts the originating GitHub repo/URL onto a chat. The
+// webhook dispatch may fire before the chat row exists (first message of a
+// new session), so this creates the row if missing rather than only updating.
+func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url string) error {
+	now := time.Now().UTC()
+	c := &Chat{ID: id, CreatedAt: now, UpdatedAt: now, GithubRepo: repo, GithubURL: url}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"github_repo", "github_url", "updated_at"}),
+	}).Create(c).Error
 }
 
 // UpdateTitle sets the human-readable title for a chat.
