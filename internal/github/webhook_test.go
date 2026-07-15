@@ -34,7 +34,8 @@ type fakeRunner struct {
 	answer       string
 	block        chan struct{}
 	calls        int32
-	noPlan       bool // when true, emit no dag_plan event (simulates a narration-only turn)
+	noPlan       bool   // when true, emit no dag_plan event (simulates a narration-only turn)
+	emitTool     string // when set, emit an agent_tool_call with this name (e.g. github_submit_review)
 }
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
@@ -45,6 +46,9 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		}
 		if !f.noPlan {
 			yield(stream.SSEEvent{Name: stream.EventDagPlan}, nil) // a real run executes a plan
+		}
+		if f.emitTool != "" {
+			yield(stream.SSEEvent{Name: stream.EventAgentToolCall, Data: stream.AgentToolCallData{Name: f.emitTool}}, nil)
 		}
 		select {
 		case f.gotMessage <- message:
@@ -382,6 +386,36 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&planned.calls); got != 1 {
 		t.Errorf("runner invoked %d times, want 1 (a plan ran ⇒ no nudge)", got)
+	}
+}
+
+// When the run submits a formal review (github_submit_review), the review IS the
+// deliverable on the PR — dispatch must NOT also post the run's text summary as a
+// duplicate top-level comment.
+func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "I reviewed it.", emitTool: "github_submit_review"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", pullCommentBody("@quack review this PR")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	// The run must have been driven (message delivered) …
+	select {
+	case <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run was not dispatched")
+	}
+	// … but NO summary comment posted (a formal review was submitted).
+	select {
+	case body := <-posted:
+		t.Errorf("a duplicate summary comment was posted despite a submitted review: %q", body)
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 

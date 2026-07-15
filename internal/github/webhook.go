@@ -245,10 +245,21 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// the review. So if a work request ran no plan, nudge once to actually run it.
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly — never nudged.
-	if !e.drive(ctx, sessionID, message, owner, repo, number) && isWorkRequest(task) {
+	planRan, delivered := e.drive(ctx, sessionID, message, owner, repo, number)
+	if !planRan && isWorkRequest(task) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
-		e.drive(ctx, sessionID, runNudge, owner, repo, number)
+		_, d2 := e.drive(ctx, sessionID, runNudge, owner, repo, number)
+		delivered = delivered || d2
+	}
+	// The review (github_submit_review) or PR (github_pull_request) IS the
+	// deliverable and is already on the PR — posting the run's text summary too
+	// would duplicate it. Only fall back to a summary comment when nothing was
+	// delivered (a conversational answer, or a run that produced only text).
+	if delivered {
+		slog.Info("github: work delivered on the PR; skipping the duplicate summary comment",
+			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		return
 	}
 	answer := strings.TrimSpace(e.runner.LatestAnswer(ctx, runUserID, sessionID))
 	if answer == "" {
@@ -266,19 +277,26 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 const runNudge = "You answered without running anything. Do NOT reply in prose: use the plan and execute tools NOW to actually clone the repo, read the change, and carry out the review (or the requested change). Nothing has run yet and the user is waiting."
 
 // drive runs one orchestrator turn to completion and reports whether it EXECUTED
-// a plan (a dag_plan event). A webhook task always expects work, so a turn that
-// ran no plan produced only a direct-text answer — the work never happened.
-func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int) (planRan bool) {
+// a plan (a dag_plan event) and whether it DELIVERED to GitHub — submitted a
+// review or opened a PR. A run with no plan produced only a direct-text answer
+// (the work never happened); a run that delivered has already posted its output,
+// so dispatch skips the redundant summary comment.
+func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int) (planRan, delivered bool) {
 	for ev, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
 		if err != nil {
 			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 			continue
 		}
-		if ev.Name == stream.EventDagPlan {
+		switch ev.Name {
+		case stream.EventDagPlan:
 			planRan = true
+		case stream.EventAgentToolCall:
+			if d, ok := ev.Data.(stream.AgentToolCallData); ok && (d.Name == "github_submit_review" || d.Name == "github_pull_request") {
+				delivered = true
+			}
 		}
 	}
-	return planRan
+	return planRan, delivered
 }
 
 // reviewContext is everything the orchestrator needs to PLAN a PR review without
