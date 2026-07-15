@@ -20,6 +20,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -50,16 +51,21 @@ type Handler struct {
 	store         *store.Store
 	orch          *orchestrator.Orchestrator
 	titler        model.LLM
-	jail          *workspace.Jail // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
-	hub           *stream.Hub     // fans a chat's run to extra subscribers (other devices)
-	eventLog      *eventLog       // durably persists the run stream, backing replay across restarts
-	activeCancels sync.Map        // chatID → *activeRun
+	jail          *workspace.Jail  // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
+	hub           *stream.Hub      // fans a chat's run to extra subscribers (other devices)
+	eventLog      *runlog.EventLog // durably persists the run stream, backing replay across restarts
+	activeCancels sync.Map         // chatID → *activeRun
 }
 
-// NewHandler builds a REST handler. jail may be nil (no workspace configured):
-// DeleteChat then skips per-chat workspace cleanup.
-func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail) *Handler {
-	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: stream.NewHub(), eventLog: newEventLog(s)}
+// NewHandler builds a REST handler. jail may be nil (no workspace configured).
+// hub may be nil to get a private hub; pass a shared *stream.Hub (e.g. from
+// internal/serve) when another driver of runs on the same chats — such as the
+// GitHub webhook dispatcher — needs live subscribers to see the same events.
+func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub) *Handler {
+	if hub == nil {
+		hub = stream.NewHub()
+	}
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s)}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
@@ -319,17 +325,13 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string, attachments []*genai.Part) {
 	// Fresh run: clear the previous run's durable events so this run's seq starts
 	// at 1 (mirrors the hub topic reset on the way in).
-	h.eventLog.reset(runCtx, chatID)
+	h.eventLog.Reset(runCtx, chatID)
 
-	// publish assigns the next per-chat seq, fans the event to live hub subscribers,
+	// pub assigns the next per-chat seq, fans the event to live hub subscribers,
 	// and persists it durably (off the hot path). The run loop is the sole publisher
 	// for this chat, so seq stays monotonic without locking.
-	var seq int64
-	publish := func(ev stream.SSEEvent) {
-		seq++
-		h.hub.Publish(chatID, seq, ev)
-		h.eventLog.append(chatID, seq, ev)
-	}
+	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
+	publish := pub.Publish
 
 	// response_created is always the very first event of the stream.
 	publish(stream.ResponseCreated(turnID))
@@ -380,13 +382,10 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 		if ev.Name == stream.EventDagPlan {
 			if d, ok := ev.Data.(stream.DagPlanData); ok {
 				activePlanID = d.PlanID
-				planJSON, _ := json.Marshal(d)
-				go func() {
-					_ = h.store.SaveDagPlan(context.Background(), chatID, d.PlanID, turnID, string(planJSON))
-				}()
+				runlog.SaveDagPlan(h.store, chatID, turnID, d)
 			}
 		} else if activePlanID != "" {
-			h.persistNodeEvent(activePlanID, ev)
+			runlog.PersistNodeEvent(h.store, activePlanID, ev)
 		}
 		publish(ev)
 	}
@@ -579,13 +578,8 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		}()
 		defer h.hub.Close(chatID)
 
-		h.eventLog.reset(runCtx, chatID)
-		var seq int64
-		publish := func(ev stream.SSEEvent) {
-			seq++
-			h.hub.Publish(chatID, seq, ev)
-			h.eventLog.append(chatID, seq, ev)
-		}
+		h.eventLog.Reset(runCtx, chatID)
+		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
 		publish(stream.ResponseCreated(dp.TurnID))
 
 		for ev, err := range h.orch.RetryNode(runCtx, userID, chatID, seeded, nodeID, guidance) {
@@ -593,7 +587,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 				publish(stream.Errorf(err.Error()))
 				break
 			}
-			h.persistNodeEvent(dp.ID, ev) // update the re-run nodes' persisted state
+			runlog.PersistNodeEvent(h.store, dp.ID, ev) // update the re-run nodes' persisted state
 			publish(ev)
 		}
 		publish(stream.Done())
@@ -631,7 +625,7 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 			return
 		}
 		for _, e := range evs {
-			ev, err := unmarshalEvent(e.Event)
+			ev, err := runlog.UnmarshalEvent(e.Event)
 			if err != nil {
 				continue
 			}
@@ -959,61 +953,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func httpError(w http.ResponseWriter, status int, err error) {
 	http.Error(w, err.Error(), status)
-}
-
-// persistNodeEvent upserts the persisted DagNode state for a node-lifecycle
-// event (running / done / failed / needs_input / cancelled). Ignores non-node
-// events. Every write routes through dag.CanTransition: an illegal transition
-// from the node's current persisted status is a logged bug, not a silent
-// write — the write proceeds regardless, since the SSE event is ground truth
-// for what the executor actually did.
-func (h *Handler) persistNodeEvent(planID string, ev stream.SSEEvent) {
-	t := time.Now().UTC()
-	var nodeID string
-	var to dag.NodeStatus
-	n := store.DagNode{PlanID: planID}
-	switch d := ev.Data.(type) {
-	case stream.NodeQueuedData:
-		// Persist the row at queue time so a reloaded chat (and `chat show`)
-		// sees the node as queued rather than status-less until it starts.
-		nodeID, to = d.NodeID, dag.StatusQueued
-		n.NodeID, n.Status = d.NodeID, string(to)
-	case stream.NodeStartData:
-		nodeID, to = d.NodeID, dag.StatusRunning
-		n.NodeID, n.Status, n.StartedAt = d.NodeID, string(to), &t
-	case stream.NodeDoneData:
-		nodeID, to = d.NodeID, dag.StatusDone
-		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
-		n.OutputPreview, n.Output = d.OutputPreview, d.Output
-		n.Model, n.PromptTokens, n.CompletionTokens = d.Model, d.PromptTokens, d.CompletionTokens
-		n.ReasoningTokens, n.TotalTokens, n.FinishReason = d.ReasoningTokens, d.TotalTokens, d.FinishReason
-		n.DurationMs, n.JudgeRounds = d.DurationMs, d.JudgeRounds
-		n.JudgeFinalScore, n.JudgePassed = d.JudgeFinalScore, d.JudgePassed
-	case stream.NodeFailedData:
-		nodeID, to = d.NodeID, dag.StatusFailed
-		n.NodeID, n.Status, n.Error, n.FinishedAt = d.NodeID, string(to), d.Error, &t
-	case stream.NodeNeedsInputData:
-		nodeID, to = d.NodeID, dag.StatusNeedsInput
-		n.NodeID, n.Status = d.NodeID, string(to)
-	case stream.NodeCancelledData:
-		nodeID, to = d.NodeID, dag.StatusCancelled
-		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
-	default:
-		return
-	}
-	go func() {
-		ctx := context.Background()
-		from := dag.StatusQueued
-		if prev, err := h.store.GetDagNode(ctx, planID, nodeID); err == nil && prev != nil {
-			from = dag.NodeStatus(prev.Status)
-		}
-		if !dag.CanTransition(from, to) {
-			slog.Warn("persistNodeEvent: illegal node-status transition", "component", "dag",
-				"plan_id", planID, "node_id", nodeID, "from", from, "to", to)
-		}
-		if err := h.store.UpsertDagNode(ctx, n); err != nil {
-			slog.Warn("persistNodeEvent: upsert failed", "component", "dag",
-				"plan_id", planID, "node_id", nodeID, "err", err)
-		}
-	}()
 }

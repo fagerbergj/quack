@@ -12,6 +12,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -64,6 +66,28 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 }
 
 func (f *fakeRunner) LatestAnswer(context.Context, string, string) string { return f.answer }
+
+// planRunner is fakeRunner's dag_plan event with real DagPlanData (PlanID +
+// one node), needed to assert the plan actually gets mirrored into the store —
+// fakeRunner's zero-value Data can't round-trip through a real persist path.
+type planRunner struct {
+	gotMessage chan string
+	answer     string
+}
+
+func (f *planRunner) Run(_ context.Context, _, _, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+	return func(yield func(stream.SSEEvent, error) bool) {
+		if !yield(stream.DagPlan("plan-1", []stream.DagNodeDef{{ID: "n1", Agent: "researcher"}}, nil), nil) {
+			return
+		}
+		select {
+		case f.gotMessage <- message:
+		default:
+		}
+	}
+}
+
+func (f *planRunner) LatestAnswer(context.Context, string, string) string { return f.answer }
 
 // stubGitHub serves the REST endpoints dispatch touches (installation resolve,
 // token mint, comment post) and signals postedComment when a comment lands.
@@ -151,7 +175,7 @@ func newTestExtensionWithTriggers(t *testing.T, runner Runner, apiBase string, t
 		Mention:         "@quack",
 		Triggers:        triggers,
 		AutoReviewLabel: label,
-	}, runner, nil)
+	}, runner, nil, nil)
 }
 
 func pullRequestBody(action, labelName string) []byte {
@@ -343,6 +367,77 @@ func TestHandleWebhookMentionTriggersRun(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no comment posted back")
+	}
+}
+
+// A webhook-dispatched run must persist a turn + DAG-carrying chat_events for
+// its session, exactly like a UI-initiated run — otherwise getChat/
+// GetTurnsWithContent has nothing to assemble and the GitHub tab shows an empty
+// session even though the run actually executed a plan (issue: DAG rows existed
+// but 0 turns/chat_events, so the UI rendered nothing).
+func TestHandleWebhookPersistsTurnAndEventsForUI(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+
+	// planRunner emits a real dag_plan (PlanID + a node), unlike fakeRunner's
+	// empty-Data placeholder, so this test can assert the plan was actually
+	// mirrored into the store for getChat to find.
+	runner := &planRunner{gotMessage: make(chan string, 1), answer: "reviewed"}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret,
+		Mention:       "@quack",
+	}, runner, st, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack review this")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back; dispatch never completed")
+	}
+
+	sessionID := "github-acme-widgets-7"
+	// SaveDagPlan (like the REST handler's) persists off the run's hot path in a
+	// bare goroutine, so it can still be in flight the instant the comment posts;
+	// poll briefly rather than racing it.
+	var turns []store.TurnContent
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		turns, err = st.GetTurnsWithContent(context.Background(), "quack", runUserID, sessionID)
+		if err != nil {
+			t.Fatalf("GetTurnsWithContent: %v", err)
+		}
+		if len(turns) == 1 && turns[0].Plan != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("turns = %+v; want 1 turn with a DAG plan attached (the webhook dispatch must persist a turn + dag_plan like a UI-initiated run)", turns)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	events, err := st.LoadChatEvents(context.Background(), sessionID, 0)
+	if err != nil {
+		t.Fatalf("LoadChatEvents: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("chat_events is empty; a github-dispatched run must durably persist its SSE stream like runChat does")
 	}
 }
 

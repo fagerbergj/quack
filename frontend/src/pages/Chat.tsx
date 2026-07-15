@@ -46,13 +46,6 @@ export default function Chat() {
     if (el) el.scrollTop = el.scrollHeight
   }, [activeChatId, state.turns.length])
 
-  useEffect(() => {
-    const stored = localStorage.getItem('theme')
-    if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      document.documentElement.classList.add('dark')
-    }
-  }, [])
-
   const loadChats = useCallback(async () => {
     const result = await api.listChats()
     setChats(result.data)
