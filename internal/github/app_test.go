@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -130,6 +131,117 @@ func TestInstallationForRepoCaching(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Errorf("installation endpoint hit %d times; want 1 (cached)", got)
+	}
+}
+
+func TestListReviews(t *testing.T) {
+	keyPEM, _ := testKeyPEM(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, `[
+				{"commit_id":"aaa111","user":{"login":"alice"},"submitted_at":"2026-07-01T00:00:00Z"},
+				{"commit_id":"bbb222","user":{"login":"quack[bot]"},"submitted_at":"2026-07-02T00:00:00Z"}
+			]`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+
+	reviews, err := app.listReviews(context.Background(), "acme", "widgets", 7)
+	if err != nil {
+		t.Fatalf("listReviews: %v", err)
+	}
+	if len(reviews) != 2 {
+		t.Fatalf("len(reviews) = %d; want 2", len(reviews))
+	}
+	if reviews[0].CommitID != "aaa111" || reviews[0].User.Login != "alice" {
+		t.Errorf("reviews[0] = %+v", reviews[0])
+	}
+	if reviews[1].CommitID != "bbb222" || reviews[1].User.Login != "quack[bot]" {
+		t.Errorf("reviews[1] = %+v", reviews[1])
+	}
+}
+
+func TestLastReviewedSHAPrefersOwnBotLogin(t *testing.T) {
+	keyPEM, _ := testKeyPEM(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
+			// A human review lands AFTER quack's own — lastReviewedSHA must still
+			// prefer quack's own commit, not just the most recent of any review.
+			fmt.Fprint(w, `[
+				{"commit_id":"aaa111","user":{"login":"quack[bot]"},"submitted_at":"2026-07-01T00:00:00Z"},
+				{"commit_id":"bbb222","user":{"login":"alice"},"submitted_at":"2026-07-02T00:00:00Z"}
+			]`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+
+	sha, err := app.lastReviewedSHA(context.Background(), "acme", "widgets", 7)
+	if err != nil {
+		t.Fatalf("lastReviewedSHA: %v", err)
+	}
+	if sha != "aaa111" {
+		t.Errorf("sha = %q; want aaa111 (quack's own review, not alice's later one)", sha)
+	}
+}
+
+func TestLastReviewedSHANoPriorReview(t *testing.T) {
+	keyPEM, _ := testKeyPEM(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, `[]`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+
+	sha, err := app.lastReviewedSHA(context.Background(), "acme", "widgets", 7)
+	if err != nil {
+		t.Fatalf("lastReviewedSHA: %v", err)
+	}
+	if sha != "" {
+		t.Errorf("sha = %q; want \"\" (no prior review)", sha)
 	}
 }
 

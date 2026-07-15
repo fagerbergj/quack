@@ -70,6 +70,10 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 		case strings.HasSuffix(r.URL.Path, "/reactions"):
 			w.WriteHeader(http.StatusCreated) // deterministic 👀 ack; ignored by these tests
 			fmt.Fprint(w, `{"id":1}`)
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.Contains(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, `[]`) // no prior review by default: first-time framing
 		case strings.HasSuffix(r.URL.Path, "/comments"):
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
@@ -485,7 +489,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "review this, focusing on the auth path")
+	msg := ext.runMessage(pr, "review this, focusing on the auth path", "", "")
 	for _, want := range []string{
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
@@ -504,12 +508,72 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(issue, "add a feature")
+	imsg := ext.runMessage(issue, "add a feature", "", "")
 	if strings.Contains(imsg, "github_submit_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
 	if !strings.Contains(imsg, "github_pull_request") {
 		t.Errorf("issue run message should keep implement-path guidance:\n%s", imsg)
+	}
+}
+
+func TestRunMessageChangeAwareFraming(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		prevSHA     string
+		headSHA     string
+		wantContain []string
+		wantAbsent  []string
+	}{
+		{
+			name:        "no prior review keeps full first-time framing",
+			prevSHA:     "",
+			headSHA:     "",
+			wantAbsent:  []string{"previously reviewed", "Focus your review on what changed"},
+			wantContain: []string{"github_submit_review"},
+		},
+		{
+			name:    "prior review adds continuation framing with explicit head",
+			prevSHA: "aaa111",
+			headSHA: "ccc333",
+			wantContain: []string{
+				"previously reviewed this pull request at commit `aaa111`",
+				"current head is `ccc333`",
+				"git_diff aaa111..ccc333",
+				"do NOT repeat findings you already made",
+				"github_submit_review", // implement/review guidance still present
+			},
+		},
+		{
+			name:    "prior review without a known head falls back to HEAD",
+			prevSHA: "aaa111",
+			headSHA: "",
+			wantContain: []string{
+				"current head is `HEAD`",
+				"git_diff aaa111..HEAD",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := ext.runMessage(pr, "review this", tt.prevSHA, tt.headSHA)
+			for _, want := range tt.wantContain {
+				if !strings.Contains(msg, want) {
+					t.Errorf("message missing %q\n---\n%s", want, msg)
+				}
+			}
+			for _, absent := range tt.wantAbsent {
+				if strings.Contains(msg, absent) {
+					t.Errorf("message should not contain %q\n---\n%s", absent, msg)
+				}
+			}
+		})
 	}
 }
 

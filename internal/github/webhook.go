@@ -49,9 +49,14 @@ type issueCommentPayload struct {
 // pullRequestPayload is the subset of GitHub's pull_request webhook we use
 // (opened / labeled actions, for the pr_opened and label triggers).
 type pullRequestPayload struct {
-	Action string `json:"action"`
-	Number int    `json:"number"`
-	Label  struct {
+	Action      string `json:"action"`
+	Number      int    `json:"number"`
+	PullRequest struct {
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	} `json:"pull_request"`
+	Label struct {
 		Name string `json:"name"` // present on the "labeled" action
 	} `json:"label"`
 	Repository struct {
@@ -117,7 +122,7 @@ func (e *Extension) handleIssueComment(w http.ResponseWriter, body []byte) {
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
 		"user", p.Comment.User.Login, "installation", p.Installation.ID)
 	go e.ackReaction(p) // instant 👀 "quack saw it", independent of the model run
-	go e.dispatch(p, task)
+	go e.dispatch(p, task, "")
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -153,7 +158,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 	slog.Info("github webhook received", "component", "github",
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
 		"action", p.Action, "installation", p.Installation.ID)
-	go e.dispatch(synthetic, autoReviewTask)
+	go e.dispatch(synthetic, autoReviewTask, p.PullRequest.Head.SHA)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -213,14 +218,27 @@ func verifySignature(secret, body []byte, header string) bool {
 
 // dispatch runs the orchestrator on the task and posts the final answer back as
 // a comment. Runs in its own goroutine with a detached, bounded context so a
-// slow run never blocks the webhook ack.
-func (e *Extension) dispatch(p issueCommentPayload, task string) {
+// slow run never blocks the webhook ack. headSHA is the PR's current head
+// commit when known (the pr_opened/label auto-review path carries it from the
+// PR event); "" for the mention path, where runMessage falls back to "HEAD".
+func (e *Extension) dispatch(p issueCommentPayload, task, headSHA string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 
+	var prevSHA string
+	if p.Issue.PullRequest != nil {
+		sha, err := e.app.lastReviewedSHA(ctx, owner, repo, number)
+		if err != nil {
+			slog.Warn("github: lastReviewedSHA lookup failed, falling back to first-time review framing",
+				"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		} else {
+			prevSHA = sha
+		}
+	}
+
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
-	message := e.runMessage(p, task)
+	message := e.runMessage(p, task, prevSHA, headSHA)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 	// Drain the stream to drive the run to completion; the answer is read from
@@ -246,7 +264,12 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 // act. It gives BOTH paths — review and implement — since the orchestrator routes
 // review-vs-change from the request; when the mention is on a PR it also surfaces
 // the pull_number the review tools need (a PR shares its issue number).
-func (e *Extension) runMessage(p issueCommentPayload, task string) string {
+//
+// prevSHA is quack's last-reviewed commit on this PR ("" for a first-time
+// review); when set, the framing tells the model to focus on what changed
+// since then instead of re-reviewing everything. headSHA is the PR's current
+// head when known ("" falls back to "HEAD", valid after cloning).
+func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA, headSHA string) string {
 	isPR := p.Issue.PullRequest != nil
 	kind := "issue"
 	if isPR {
@@ -265,6 +288,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task string) string {
 		owner, repo, base, p.Repository.CloneURL)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d). ", p.Issue.Number, p.Issue.Number)
+		if prevSHA != "" {
+			head := headSHA
+			if head == "" {
+				head = "HEAD"
+			}
+			fmt.Fprintf(&b, "You previously reviewed this pull request at commit `%s`. The current head is `%s`. Focus your review on what changed since then — use git_diff %s..%s (or git log %s..%s) — and take the existing review discussion into account; do NOT repeat findings you already made. ",
+				prevSHA, head, prevSHA, head, prevSHA, head)
+		}
 		fmt.Fprintf(&b, "If the request is to REVIEW this PR: read its changes (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). ",
 			owner, repo, p.Issue.Number, p.Issue.Number)
 	}
