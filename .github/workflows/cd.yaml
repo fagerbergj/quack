@@ -1,11 +1,14 @@
 name: cd
 
-# Publish a release image to GHCR on a version tag. Cut a release with:
-#   git tag v1.2.3 && git push origin v1.2.3
-# metadata-action derives the tags (1.2.3, 1.2, latest, sha-<sha>); `latest`
-# moves only on tagged releases, never on a plain push to main.
+# Publishes the GHCR image. TWO triggers:
+#   - push to main  → moves `:latest` (+ sha-<sha>). This is the auto-cut-on-merge
+#     path: every merged PR becomes the new :latest, which Watchtower auto-deploys.
+#   - version tag   → an immutable snapshot `1.2.3` / `1.2` (+ sha). Cut with
+#     `git tag v1.2.3 && git push origin v1.2.3` when you want a pinned release.
+# `:latest` tracks main (not tags), so a tag never silently moves prod.
 on:
   push:
+    branches: [main]
     tags: ["v*.*.*"]
 
 permissions:
@@ -30,9 +33,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha
       - uses: docker/build-push-action@v7
         with:
           context: .
