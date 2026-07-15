@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"iter"
+	"sync"
 	"time"
 
 	"google.golang.org/adk/v2/tool"
@@ -48,6 +49,18 @@ type Extension struct {
 	triggers        map[string]bool // configured trigger set: mention, pr_opened, label
 	autoReviewLabel string
 	runner          Runner
+	// runLocks serialises dispatches per PR session: a follow-up (or a rapid
+	// re-label) that arrives while a run on the same PR is in flight WAITS instead
+	// of running concurrently on the same session — concurrent runs on one session
+	// corrupt each other (garbled answers, cross-run tool events). sessionID →
+	// *sync.Mutex.
+	runLocks sync.Map
+}
+
+// sessionLock returns the per-session mutex, creating it on first use.
+func (e *Extension) sessionLock(sessionID string) *sync.Mutex {
+	m, _ := e.runLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	return m.(*sync.Mutex)
 }
 
 // NewExtension wraps an already-built App (serve constructs the App early so it

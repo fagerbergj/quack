@@ -360,11 +360,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// which carries the user's verbatim request as background: judged against
 		// that, every node in a "commit and open a PR" plan is forever incomplete,
 		// including the read-only explorers.
-		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, activity()); attempt++ {
+		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, activity(), cfg.ReadOnly); attempt++ {
 			act := activity()
 			log.Warn("work not finished; continuing the worker with its tools",
 				"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
-			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks)+markerLine,
+			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly)+markerLine,
 				fmt.Sprintf("worker-cont%d%s", attempt, sfx), promptEmit)
 			if err != nil {
 				log.Error("worker continuation failed", "attempt", attempt, "err", err)
@@ -735,7 +735,7 @@ func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config)
 	// ledger shows it did, and one told to POST a review on a PR cannot pass
 	// unless it submitted one (delivery.go). Untouched for a node whose task
 	// demands neither.
-	for name, c := range incompleteCriteria(cfg.Task, act) {
+	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly) {
 		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)

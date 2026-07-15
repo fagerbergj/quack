@@ -761,6 +761,16 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					break
 				}
 			}
+			// A read-only agent (no git_push in its tool list — a code-reviewer or
+			// code-explorer) can never deliver, so the gate must not demand a
+			// commit/push off a task polluted with a PR's "Add …/open a PR" wording.
+			agentGateCfg.ReadOnly = true
+			for _, tn := range ac.Tools {
+				if tn == "git_push" {
+					agentGateCfg.ReadOnly = false
+					break
+				}
+			}
 			if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
 				return nil, nil, servers, nil, nil, fmtErr(name, "rubric: %v", err)
 			} else if override != "" {

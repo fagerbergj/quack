@@ -199,11 +199,11 @@ func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
 //
 // Everything else (research, analysis, synthesis; a delivered coding task) is
 // complete as far as the gate is concerned — the judge takes it from here.
-func workIncomplete(answer, task string, act workerActivity) bool {
+func workIncomplete(answer, task string, act workerActivity, readOnly bool) bool {
 	if strings.TrimSpace(answer) == "" {
 		return true
 	}
-	for _, c := range incompleteCriteria(task, act) {
+	for _, c := range incompleteCriteria(task, act, readOnly) {
 		if c.Score < 1 {
 			return true
 		}
@@ -270,10 +270,15 @@ func behaviourCriterion(task string, act workerActivity) (criterionScore, bool) 
 // this task — the one definition of "the work is actually done", shared by
 // workIncomplete, foldDeterministic and the continuation prompt so they can
 // never drift apart.
-func incompleteCriteria(task string, act workerActivity) map[string]criterionScore {
+func incompleteCriteria(task string, act workerActivity, readOnly bool) map[string]criterionScore {
 	out := map[string]criterionScore{}
-	if c, ok := deliveryCriterion(task, act); ok {
-		out["delivery_complete"] = c
+	// A read-only agent (code-reviewer / code-explorer) has no commit/push tools, so
+	// a delivery demand read off its task is unsatisfiable — skip it. Its completion
+	// is review_posted / exploration, never delivery.
+	if !readOnly {
+		if c, ok := deliveryCriterion(task, act); ok {
+			out["delivery_complete"] = c
+		}
 	}
 	if c, ok := reviewCriterion(task, act); ok {
 		out["review_posted"] = c

@@ -125,6 +125,20 @@ func TestBuildAcceptsImplementationWithImplementerNode(t *testing.T) {
 	}
 }
 
+// A REVIEW plan (a code-reviewer node) must NOT be rejected even when the request
+// text reads as implement-and-deliver — a PR review's injected context carries the
+// PR's own "Add …/open a PR" title, which would otherwise trip the backstop and
+// loop the planner.
+func TestBuildDoesNotFlagReviewPlanForImplementLookingMessage(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}, {Name: "code-implementer"}}, nil)
+	_, err := p.Build([]RawNode{
+		{ID: "review", Agent: "code-reviewer", Task: "Review PR #5: read the diff and post inline review comments."},
+	}, nil, flappyPR, nil)
+	if err != nil {
+		t.Fatalf("Build: a code-reviewer plan must not be rejected for an implement-looking message: %v", err)
+	}
+}
+
 // A pure-research request with no code-implementer node must NOT be flagged — the
 // backstop is conservative and never rejects a correct research plan.
 func TestBuildDoesNotFlagResearchWithoutImplementerNode(t *testing.T) {

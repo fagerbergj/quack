@@ -34,7 +34,8 @@ type fakeRunner struct {
 	answer       string
 	block        chan struct{}
 	calls        int32
-	noPlan       bool // when true, emit no dag_plan event (simulates a narration-only turn)
+	noPlan       bool   // when true, emit no dag_plan event (simulates a narration-only turn)
+	emitTool     string // when set, emit an agent_tool_call with this name (e.g. github_submit_review)
 }
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
@@ -45,6 +46,9 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		}
 		if !f.noPlan {
 			yield(stream.SSEEvent{Name: stream.EventDagPlan}, nil) // a real run executes a plan
+		}
+		if f.emitTool != "" {
+			yield(stream.SSEEvent{Name: stream.EventAgentToolCall, Data: stream.AgentToolCallData{Name: f.emitTool}}, nil)
 		}
 		select {
 		case f.gotMessage <- message:
@@ -76,15 +80,19 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 			fmt.Fprint(w, `{"id":1}`)
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			fmt.Fprint(w, `{"slug":"quack"}`)
-		case strings.Contains(r.URL.Path, "/reviews"):
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			fmt.Fprint(w, `[]`) // changed-files list (gatherReviewContext); overridden per-test where it matters
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
 			fmt.Fprint(w, `[]`) // no prior review by default: first-time framing
-		case strings.Contains(r.URL.Path, "/pulls/"):
-			fmt.Fprint(w, `{"head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
-		case strings.HasSuffix(r.URL.Path, "/comments"):
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{}`)
 			postedComment <- string(body)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[]`) // GET: review-comment / conversation list (gatherReviewContext)
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprint(w, `{"title":"Test PR","body":"A test PR.","head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -381,6 +389,76 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	}
 }
 
+// When the run submits a formal review (github_submit_review), the review IS the
+// deliverable on the PR — dispatch must NOT also post the run's text summary as a
+// duplicate top-level comment.
+func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "I reviewed it.", emitTool: "github_submit_review"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", pullCommentBody("@quack review this PR")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	// The run must have been driven (message delivered) …
+	select {
+	case <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run was not dispatched")
+	}
+	// … but NO summary comment posted (a formal review was submitted).
+	select {
+	case body := <-posted:
+		t.Errorf("a duplicate summary comment was posted despite a submitted review: %q", body)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// Two runs on the SAME PR session must not run concurrently — the second queues
+// on the session lock until the first finishes (concurrent runs on one session
+// corrupt each other).
+func TestDispatchSerializesSameSession(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 4), answer: "ok", block: make(chan struct{})}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	// Two mentions on issue #7 → same session. Both ack 202 and spawn a dispatch.
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d; want 202", rec.Code)
+		}
+	}
+
+	// Wait for the first run to be in flight (it increments calls, then blocks).
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&runner.calls) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(150 * time.Millisecond) // give the second a chance to (wrongly) start
+	if got := atomic.LoadInt32(&runner.calls); got != 1 {
+		t.Fatalf("runner.calls = %d while the first run holds the session lock; want 1 (the second must queue)", got)
+	}
+
+	close(runner.block) // let the first finish; the second then acquires the lock
+	deadline = time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&runner.calls) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&runner.calls); got != 2 {
+		t.Errorf("runner.calls = %d after releasing the lock; want 2 (the queued run should proceed)", got)
+	}
+}
+
 func TestHandleWebhookNoMentionIsNoop(t *testing.T) {
 	runner := &fakeRunner{gotMessage: make(chan string, 1)}
 	ext := newTestExtension(t, runner, "http://unused")
@@ -538,7 +616,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "review this, focusing on the auth path", "", prRefs{})
+	msg := ext.runMessage(pr, "review this, focusing on the auth path", reviewContext{})
 	for _, want := range []string{
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
@@ -562,7 +640,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 
 	// With the PR's refs known, the reviewer is told to CHECK OUT the head branch —
 	// without it a shallow clone's `git diff base...HEAD` is empty and it flails.
-	withRefs := ext.runMessage(pr, "review this", "", prRefs{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"})
+	withRefs := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}})
 	for _, want := range []string{"git_checkout `feat/x`", "git_diff main...feat/x", "is EMPTY until you check out the head"} {
 		if !strings.Contains(withRefs, want) {
 			t.Errorf("PR review message missing checkout guidance %q\n---\n%s", want, withRefs)
@@ -570,7 +648,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	}
 
 	// A PR request that DOES ask to change code keeps the implement path.
-	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", "", prRefs{})
+	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", reviewContext{})
 	if !strings.Contains(impl, "github_pull_request") {
 		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
 	}
@@ -580,7 +658,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(issue, "add a feature", "", prRefs{})
+	imsg := ext.runMessage(issue, "add a feature", reviewContext{})
 	if strings.Contains(imsg, "github_submit_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
@@ -634,7 +712,7 @@ func TestRunMessageChangeAwareFraming(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := ext.runMessage(pr, "review this", tt.prevSHA, prRefs{HeadSHA: tt.headSHA})
+			msg := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadSHA: tt.headSHA}, prevReviewSHA: tt.prevSHA})
 			for _, want := range tt.wantContain {
 				if !strings.Contains(msg, want) {
 					t.Errorf("message missing %q\n---\n%s", want, msg)
@@ -646,6 +724,61 @@ func TestRunMessageChangeAwareFraming(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The plan-time PR context (title, changed files, discussion) is folded into the
+// run message so the orchestrator can slice the review without a node fetching it.
+func TestRunMessageIncludesReviewContext(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	rc := reviewContext{
+		meta:  prMeta{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main", Title: "Add widget", Body: "This adds a widget."},
+		files: []changedFile{{Filename: "a.go", Additions: 10, Deletions: 2}, {Filename: "b.go", Additions: 1}},
+		discussion: prDiscussion{
+			Comments:       []commentView{{User: "bob", Body: "looks good"}},
+			ReviewComments: []reviewCommentView{{User: "carol", Path: "a.go", Line: 5, Body: "nit"}},
+		},
+	}
+	msg := ext.runMessage(pr, "review this", rc)
+	for _, want := range []string{
+		"PR title: Add widget", "This adds a widget", // intent
+		"Changed files (2)", "a.go (+10/-2)", "b.go (+1/-0)", // slicing data
+		"Existing discussion", "@bob: looks good", "@carol a.go:5: nit", // don't repeat
+		"git_checkout `feat/x`", // checkout guidance
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("run message missing %q\n---\n%s", want, msg)
+		}
+	}
+}
+
+// A conversational follow-up on a PR is answered from the session — the message
+// must NOT hand over the clone-and-review playbook, or the orchestrator re-reviews
+// instead of answering.
+func TestRunMessageConversationalFollowup(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most? No need to re-review."), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msg := ext.runMessage(pr, "which finding matters most? No need to re-review.", reviewContext{})
+	for _, want := range []string{"conversational follow-up", "Answer it directly", "Do NOT clone"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("conversational message missing %q\n---\n%s", want, msg)
+		}
+	}
+	for _, absent := range []string{"git_clone", "github_submit_review", "git_checkout"} {
+		if strings.Contains(msg, absent) {
+			t.Errorf("conversational message must not carry the review playbook (%q)\n---\n%s", absent, msg)
+		}
+	}
+	// A genuine review request still gets the full playbook.
+	if rev := ext.runMessage(pr, "please review this PR", reviewContext{meta: prMeta{HeadRef: "x"}}); !strings.Contains(rev, "github_submit_review") {
+		t.Errorf("a review request must still carry the review tools:\n%s", rev)
 	}
 }
 

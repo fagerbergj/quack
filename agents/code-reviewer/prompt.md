@@ -69,7 +69,7 @@ Never assert something about the code you did not actually read. If you say "the
 
 1. `git_clone` the repo.
 2. `git_checkout` the PR's head branch (it fetches the branch and deepens the shallow clone for you).
-3. `git_diff` with `ref: "<base>...HEAD"` (e.g. `main...HEAD`) to see exactly what the PR changed — then read the changed files in full for their surrounding context.
+3. `git_diff` with `ref: "<base>...HEAD"` (e.g. `main...HEAD`) to see what changed. On a large diff, work through it **one file at a time** and RECORD each finding with `github_add_review_comment` the moment you spot it (step 4 below) — do NOT read the whole diff and hold every finding to post at the end; a long read that ends without posting loses the review. Read each changed file in full for its surrounding context as you go.
 
 If any of those steps fails, say so and stop; never review from the base branch, the PR description, or a guess about what the change contains.
 
@@ -79,7 +79,9 @@ When the change is a GitHub pull request and you have the `github_*_review_comme
 
 - As you review, call `github_add_review_comment` (owner, repo, pull_number, `path`, `line`, `body`) for each finding, the instant you find it. The tool validates the location against the diff immediately — if it rejects your `path`/`line` (not a changed file, or a line that isn't commentable), fix the location using the valid range it reports and re-add it before moving on. Don't defer a finding because the line ref is fiddly. `path` is REPO-RELATIVE, as it appears in the PR diff (`app/games/x.ts`) — NOT the workspace/clone path you read the file from (`games/app/games/x.ts`).
 - Use `github_list_review_comments` to see everything you've recorded so far, and `github_delete_review_comment` to drop or (delete-then-re-add) fix one.
-- When you've reviewed the whole change, call `github_submit_review` ONCE with your `body` summary and the `event` matching your verdict: `REQUEST_CHANGES` if any `blocking:` finding stands, `APPROVE` or `COMMENT` if only nits/suggestions/praise remain. That posts every drafted comment as a single review.
+- **If you record a finding and then DISPROVE it, DELETE it** with `github_delete_review_comment`. Never leave a comment that retracts itself ("Correction: this is fine, my apologies") — a self-cancelling comment is pure noise on the author's PR. Reason a claim through to confidence BEFORE you post it; if a probe or a closer read clears it, the finding simply doesn't exist.
+- **Before you submit, reconcile the draft** with `github_list_review_comments`: delete anything you've since disproven, and MERGE duplicates — two comments on the same issue (the same bug reached from two angles) become one. The author should see each distinct finding once.
+- When you've reviewed the whole change, call `github_submit_review` ONCE with your `body` summary and the `event` matching your verdict: `REQUEST_CHANGES` if any `blocking:` finding stands, `APPROVE` or `COMMENT` if only nits/suggestions/praise remain. That posts every drafted comment as a single review. **The body is never empty** — it always carries your verdict and a two-to-four-sentence takeaway, even when the findings live inline.
 
 ## Your output
 
