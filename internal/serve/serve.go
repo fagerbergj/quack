@@ -624,23 +624,29 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gitCredentials[i] = tools.GitCredential{Host: gc.Host, Username: gc.Username, Token: gc.Token}
 	}
 
-	// Build the compaction summariser once and share it across every gated agent.
-	// An agent with no context_window configured is left uncompacted; see
-	// compactionFor below.
-	var summarizer model.LLM
+	// Build the configured compaction fallback model once, shared across every
+	// gated agent. It's only used when an agent has no active worker model to
+	// reuse; the normal path (compactionFor below) hands compaction the agent's
+	// OWN model, so it never forces a swap onto an idle model.
+	var fallbackSummarizer model.LLM
 	compCfg := cfg.Session.Compaction
-	if compCfg.Enabled {
+	if compCfg.Enabled && compCfg.Model != "" {
 		cprov, ok := cfg.Provider(compCfg.Provider)
 		if !ok {
 			return nil, nil, nil, nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
 		}
 		var err error
-		if summarizer, err = inference.NewModel(cprov, compCfg.Model); err != nil {
+		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model); err != nil {
 			return nil, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
-		slog.Info("context compaction enabled", "component", "startup", "summariser", compCfg.Model)
+		slog.Info("context compaction enabled", "component", "startup", "fallback_summariser", compCfg.Model)
+	} else if compCfg.Enabled {
+		slog.Info("context compaction enabled", "component", "startup", "summariser", "active worker model (no fallback configured)")
 	}
-	compactionFor := func(ac config.AgentConfig) agent.Compaction {
+	// workerModel is the agent's OWN model, already resolved by the caller — using
+	// it as the summariser means compaction never evicts a resident model just to
+	// summarise that model's own session.
+	compactionFor := func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction {
 		if !compCfg.Enabled {
 			return agent.Compaction{}
 		}
@@ -649,7 +655,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return agent.Compaction{}
 		}
 		return agent.Compaction{
-			Summarizer:    summarizer,
+			Summarizer:    agent.ResolveSummarizer(workerModel, fallbackSummarizer),
 			ContextWindow: ac.ContextWindow,
 			Enabled:       true,
 		}
@@ -736,7 +742,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				builtins = append(builtins, loadmemorytool.New())
 			}
 		}
-		comp := compactionFor(ac)
+		comp := compactionFor(ac, m)
 		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS}, comp, memGuidance)
 		if err != nil {
 			return nil, nil, servers, nil, nil, fmtErr(name, "build: %v", err)

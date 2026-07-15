@@ -61,6 +61,18 @@ type Compaction struct {
 	Enabled       bool
 }
 
+// ResolveSummarizer picks which model runs compaction: the active run/node's
+// own worker model when one is available (compacting that run's own session
+// with a model that's already resident — swap-free by construction), falling
+// back to the configured session.compaction.model otherwise (e.g. a
+// standalone compaction with no active worker).
+func ResolveSummarizer(active, fallback model.LLM) model.LLM {
+	if active != nil {
+		return active
+	}
+	return fallback
+}
+
 // usable is the input budget: context window minus a fixed output reserve
 // (compactionBuffer) left for the model's reply.
 func usable(contextWindow int) int {
