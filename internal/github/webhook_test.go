@@ -756,6 +756,32 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 	}
 }
 
+// A conversational follow-up on a PR is answered from the session — the message
+// must NOT hand over the clone-and-review playbook, or the orchestrator re-reviews
+// instead of answering.
+func TestRunMessageConversationalFollowup(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most? No need to re-review."), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msg := ext.runMessage(pr, "which finding matters most? No need to re-review.", reviewContext{})
+	for _, want := range []string{"conversational follow-up", "Answer it directly", "Do NOT clone"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("conversational message missing %q\n---\n%s", want, msg)
+		}
+	}
+	for _, absent := range []string{"git_clone", "github_submit_review", "git_checkout"} {
+		if strings.Contains(msg, absent) {
+			t.Errorf("conversational message must not carry the review playbook (%q)\n---\n%s", absent, msg)
+		}
+	}
+	// A genuine review request still gets the full playbook.
+	if rev := ext.runMessage(pr, "please review this PR", reviewContext{meta: prMeta{HeadRef: "x"}}); !strings.Contains(rev, "github_submit_review") {
+		t.Errorf("a review request must still carry the review tools:\n%s", rev)
+	}
+}
+
 func TestVerifySignature(t *testing.T) {
 	secret := []byte(testSecret)
 	body := []byte(`{"hello":"world"}`)

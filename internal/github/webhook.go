@@ -240,7 +240,9 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	defer lock.Unlock()
 
 	var rc reviewContext
-	if p.Issue.PullRequest != nil {
+	// Only a work request (review/implement) needs the plan-time PR context; a
+	// conversational follow-up answers from the session and skips the API calls.
+	if p.Issue.PullRequest != nil && isWorkRequest(task) {
 		rc = e.gatherReviewContext(ctx, owner, repo, number)
 	}
 	message := e.runMessage(p, task, rc)
@@ -449,12 +451,27 @@ func truncate(s string, n int) string {
 // doesn't repeat it), and quack's last-reviewed commit (change-aware follow-ups).
 func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewContext) string {
 	isPR := p.Issue.PullRequest != nil
+	owner, repo := p.Repository.Owner.Login, p.Repository.Name
+
+	// A PR follow-up that asks for no work (review/implement) is CONVERSATIONAL —
+	// "which finding matters most?", "what did you mean?". Answer it directly from
+	// the durable session (which holds any review already posted); handing over the
+	// clone-and-review playbook makes the orchestrator re-review instead of
+	// answering.
+	if isPR && !isWorkRequest(task) {
+		var b strings.Builder
+		fmt.Fprintf(&b, "GitHub user @%s asked a follow-up on %s/%s pull request #%d (pull_number=%d).\n\n",
+			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)
+		fmt.Fprintf(&b, "Their message:\n%s\n\n", task)
+		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from THIS thread's prior conversation — including any review you already posted, which is in your context. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.")
+		return b.String()
+	}
+
 	reviewOnly := isPR && !vetting.ImplementationIntent(task)
 	kind := "issue"
 	if isPR {
 		kind = "pull request"
 	}
-	owner, repo := p.Repository.Owner.Login, p.Repository.Name
 	base := p.Repository.DefaultBranch
 	if base == "" {
 		base = "main"
