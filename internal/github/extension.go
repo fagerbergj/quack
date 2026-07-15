@@ -90,6 +90,9 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner) *Ex
 	if labels.Implement == "" {
 		labels.Implement = "quack:implement"
 	}
+	if labels.Merge == "" {
+		labels.Merge = "quack:merge"
+	}
 	return &Extension{
 		app:      app,
 		secret:   []byte(cfg.WebhookSecret),

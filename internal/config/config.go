@@ -70,6 +70,7 @@ type GitHubLabels struct {
 	Plan      string `yaml:"plan"`      // on an issue: post an implementation plan ("issue_plan" trigger)
 	Implement string `yaml:"implement"` // on an issue: implement the plan, open a PR ("issue_implement" trigger)
 	Review    string `yaml:"review"`    // on a PR: review it once ("label" trigger; alias auto_review_label)
+	Merge     string `yaml:"merge"`     // on a PR: merge IF quack's latest review approved ("merge" trigger)
 }
 
 // defaultMention is the trigger phrase when github.mention is unset.
@@ -84,10 +85,13 @@ const defaultPlanLabel = "quack:plan"
 // defaultImplementLabel is the label name when github.labels.implement is unset.
 const defaultImplementLabel = "quack:implement"
 
+// defaultMergeLabel is the label name when github.labels.merge is unset.
+const defaultMergeLabel = "quack:merge"
+
 // validGitHubTriggers is the whitelist for github.triggers entries.
 var validGitHubTriggers = map[string]bool{
 	"mention": true, "pr_opened": true, "label": true,
-	"issue_plan": true, "issue_implement": true,
+	"issue_plan": true, "issue_implement": true, "merge": true,
 }
 
 // Workspace defaults (see WorkspaceConfig). Every field is optional; a
@@ -772,7 +776,7 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	for _, t := range g.Triggers {
 		if !validGitHubTriggers[t] {
-			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, issue_plan, or issue_implement)", t)
+			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, issue_plan, issue_implement, or merge)", t)
 		}
 	}
 	// labels.review supersedes auto_review_label; the old key wins only when the
@@ -788,6 +792,9 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	if g.Labels.Implement == "" {
 		g.Labels.Implement = defaultImplementLabel
+	}
+	if g.Labels.Merge == "" {
+		g.Labels.Merge = defaultMergeLabel
 	}
 	return nil
 }

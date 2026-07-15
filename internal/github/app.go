@@ -336,6 +336,19 @@ func (a *App) listIssueComments(ctx context.Context, owner, repo string, number 
 	return out, nil
 }
 
+// mergePR squash-merges a pull request using the repo's installation token.
+// GitHub's error body (branch protection, conflicts, not mergeable) surfaces
+// verbatim via doJSON.
+// ponytail: squash only; add a merge_method config when someone wants otherwise.
+func (a *App) mergePR(ctx context.Context, owner, repo string, number int) error {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, number)
+	return a.doJSON(ctx, http.MethodPut, path, "token "+tok, map[string]string{"merge_method": "squash"}, nil)
+}
+
 // addLabels applies labels to an issue or PR (GitHub's labels endpoint is the
 // issues one for both).
 func (a *App) addLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
@@ -621,6 +634,7 @@ type ghUserRef struct {
 // the state conversational follow-up reviews key off, so no local store is needed.
 type prReview struct {
 	CommitID    string    `json:"commit_id"`
+	State       string    `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED, …
 	User        ghUserRef `json:"user"`
 	SubmittedAt string    `json:"submitted_at"`
 }

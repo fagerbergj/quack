@@ -171,11 +171,14 @@ workspace:
 #     # triggers: which webhook events fire a run. Default [mention]. Others:
 #     # pr_opened (auto-review on PR open), label (review a PR when labels.review
 #     # is applied), issue_plan (plan an issue when labels.plan is applied),
-#     # issue_implement (implement the plan when labels.implement is applied).
-#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement]
+#     # issue_implement (implement the plan when labels.implement is applied),
+#     # merge (squash-merge a PR when labels.merge is applied by a human AND
+#     # quack's own latest review is APPROVED — needs pull request write incl. merge).
+#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
 #     # labels: the repo labels driving the label-based workflow (applying a label
 #     # needs repo write access, so labels double as the permission model).
 #     # labels:
 #     #   plan: "quack:plan"
 #     #   implement: "quack:implement"
 #     #   review: "quack-auto-review"
+#     #   merge: "quack:merge"
