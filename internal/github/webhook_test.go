@@ -953,3 +953,85 @@ func TestHandleWebhookIssueOpenedNoOp(t *testing.T) {
 		t.Error("issues opened should not dispatch a run")
 	}
 }
+
+func TestHandleWebhookIssueImplementLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		triggers []string
+		label    string
+		wantRun  bool
+	}{
+		{"implement label + trigger fires", []string{"issue_implement"}, "quack:implement", true},
+		{"trigger not enabled is a no-op", []string{"issue_plan"}, "quack:implement", false},
+		{"plan label does not fire implement", []string{"issue_implement"}, "quack:plan", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 4)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), gotSessionID: make(chan string, 1), answer: "done"}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", tt.label, "alice", false)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			if !tt.wantRun {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Error("issues event should not have dispatched a run")
+				}
+				return
+			}
+			// The ack comment lands before the run.
+			select {
+			case c := <-posted:
+				if !strings.Contains(c, "Closes #7") {
+					t.Errorf("ack comment = %q, want the Closes #7 promise", c)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no ack comment posted")
+			}
+			select {
+			case msg := <-runner.gotMessage:
+				for _, want := range []string{"Implement issue #7", "Closes #7", `labels=["quack-auto-review"]`, "Never merge"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("implement message missing %q: %q", want, msg)
+					}
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("implement label did not dispatch a run")
+			}
+			select {
+			case sid := <-runner.gotSessionID:
+				if sid != "github-acme-widgets-7" {
+					t.Errorf("sessionID = %q, want the issue's session (plan continuity)", sid)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no session id recorded")
+			}
+		})
+	}
+}
+
+// TestImplementTaskIncludesDiscussion pins that the fetched issue comments (the
+// posted plan) are embedded in the implementation request.
+func TestImplementTaskIncludesDiscussion(t *testing.T) {
+	var p issuesPayload
+	p.Issue.Number = 7
+	p.Issue.Title = "Add widget cache"
+	p.Issue.Body = "Widgets are refetched on every request."
+	comments := []commentView{
+		{User: "quack[bot]", Body: "## Plan\n1. add lru cache to fetcher"},
+		{User: "alice", Body: "looks good, approved"},
+	}
+	msg := implementTask(p, comments, "quack:review")
+	for _, want := range []string{"add lru cache to fetcher", "looks good, approved", "@quack[bot]", "Closes #7", `labels=["quack:review"]`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("implementTask missing %q:\n%s", want, msg)
+		}
+	}
+}
