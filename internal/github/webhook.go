@@ -283,11 +283,11 @@ func implementTask(p issuesPayload, comments []commentView, reviewLabel string) 
 		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
 	}
 	if len(comments) > 0 {
-		const cap = 40
+		const maxComments = 40
 		b.WriteString("\nIssue discussion (includes the approved plan — follow it):\n")
 		for i, c := range comments {
-			if i == cap {
-				fmt.Fprintf(&b, "  … and %d more\n", len(comments)-cap)
+			if i == maxComments {
+				fmt.Fprintf(&b, "  … and %d more\n", len(comments)-maxComments)
 				break
 			}
 			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
