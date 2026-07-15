@@ -603,25 +603,29 @@ func (a *App) listReviews(ctx context.Context, owner, repo string, number int) (
 	return out, nil
 }
 
-// prRefs is a PR's head branch/commit and base branch — what a reviewer needs to
-// check out the changes. git_clone gives a shallow clone of the base branch, so
-// `git diff base...HEAD` is EMPTY until the head branch is fetched and checked
-// out; without these the reviewer flails, re-cloning to find a diff that isn't
-// there.
-type prRefs struct {
-	HeadRef string `json:"-"`
-	HeadSHA string `json:"-"`
-	BaseRef string `json:"-"`
+// prMeta is a PR's head branch/commit, base branch, title and description. The
+// refs let a reviewer check out the changes (git_clone gives a shallow BASE
+// clone, so `git diff base...HEAD` is EMPTY until the head is fetched and checked
+// out); the title/body give the planner the PR's intent.
+type prMeta struct {
+	HeadRef string
+	HeadSHA string
+	BaseRef string
+	Title   string
+	Body    string
 }
 
-// pullRefs fetches a PR's head ref/sha and base ref.
-func (a *App) pullRefs(ctx context.Context, owner, repo string, number int) (prRefs, error) {
+// pullMeta fetches a PR's head ref/sha, base ref, title and description — the
+// git coordinates the reviewer needs plus the intent the planner needs.
+func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prMeta, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
-		return prRefs{}, err
+		return prMeta{}, err
 	}
 	var out struct {
-		Head struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Head  struct {
 			Ref string `json:"ref"`
 			SHA string `json:"sha"`
 		} `json:"head"`
@@ -631,9 +635,34 @@ func (a *App) pullRefs(ctx context.Context, owner, repo string, number int) (prR
 	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number)
 	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
-		return prRefs{}, err
+		return prMeta{}, err
 	}
-	return prRefs{HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref}, nil
+	return prMeta{HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref, Title: out.Title, Body: out.Body}, nil
+}
+
+// changedFile is one file in a PR's diff — path + churn, enough for the planner
+// to slice a review by area BEFORE any node clones (the diff itself is not in the
+// webhook payload).
+type changedFile struct {
+	Filename  string `json:"filename"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Status    string `json:"status"`
+}
+
+// pullFiles lists a PR's changed files (per_page=100 — the same large-PR ceiling
+// commentablePositions accepts; beyond it the planner just sees fewer slices).
+func (a *App) pullFiles(ctx context.Context, owner, repo string, number int) ([]changedFile, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	var out []changedFile
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/files?per_page=100", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // botLogin returns quack's own commenting identity ("{app-slug}[bot]"),

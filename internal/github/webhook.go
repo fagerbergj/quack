@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -229,36 +230,23 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 
-	var prevSHA string
-	var refs prRefs
+	var rc reviewContext
 	if p.Issue.PullRequest != nil {
-		if r, err := e.app.pullRefs(ctx, owner, repo, number); err != nil {
-			slog.Warn("github: pullRefs lookup failed; the reviewer may not find the PR's changes",
-				"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
-		} else {
-			refs = r
-		}
-		if sha, err := e.app.lastReviewedSHA(ctx, owner, repo, number); err != nil {
-			slog.Warn("github: lastReviewedSHA lookup failed, falling back to first-time review framing",
-				"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
-		} else {
-			prevSHA = sha
-		}
+		rc = e.gatherReviewContext(ctx, owner, repo, number)
 	}
 
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
-	message := e.runMessage(p, task, prevSHA, refs)
+	message := e.runMessage(p, task, rc)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
-	// A webhook task always expects WORK (a review or a change), which runs as a
-	// plan. A mid-tier orchestrator model sometimes answers in prose without
-	// calling plan — "Let me start by cloning the repo…" — and that preamble would
-	// be posted as if it were the review. If no plan ran, nudge once to actually
-	// run it. (The orchestrator's own backstops cover empty/plan-not-executed
-	// turns; this covers the text-only-no-tool turn, which they accept as a valid
-	// direct answer — correct for chat, wrong for a webhook that dispatched work.)
-	if !e.drive(ctx, sessionID, message, owner, repo, number) {
-		slog.Warn("github: orchestrator produced no plan; nudging it to run the work once",
+	// A WORK request (review/implement) always runs as a plan. A mid-tier
+	// orchestrator model sometimes answers in prose without calling plan — "Let me
+	// start by cloning the repo…" — and that preamble would be posted as if it were
+	// the review. So if a work request ran no plan, nudge once to actually run it.
+	// A purely conversational follow-up ("what did you mean by that finding?")
+	// legitimately runs no plan and must be answered directly — never nudged.
+	if !e.drive(ctx, sessionID, message, owner, repo, number) && isWorkRequest(task) {
+		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		e.drive(ctx, sessionID, runNudge, owner, repo, number)
 	}
@@ -293,6 +281,132 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 	return planRan
 }
 
+// reviewContext is everything the orchestrator needs to PLAN a PR review without
+// a node cloning first — the webhook payload carries none of it. Every field is
+// best-effort: a failed fetch just omits that slice of context.
+type reviewContext struct {
+	meta          prMeta
+	files         []changedFile
+	discussion    prDiscussion
+	prevReviewSHA string
+}
+
+// gatherReviewContext assembles a PR's plan-time context from the GitHub API.
+// Each fetch is independent and best-effort — a failure logs and omits that part
+// rather than sinking the whole run.
+func (e *Extension) gatherReviewContext(ctx context.Context, owner, repo string, number int) reviewContext {
+	var rc reviewContext
+	if m, err := e.app.pullMeta(ctx, owner, repo, number); err != nil {
+		slog.Warn("github: pullMeta failed; planner lacks the PR's intent and refs",
+			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+	} else {
+		rc.meta = m
+	}
+	if f, err := e.app.pullFiles(ctx, owner, repo, number); err != nil {
+		slog.Warn("github: pullFiles failed; planner cannot slice the review by file",
+			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+	} else {
+		rc.files = f
+	}
+	if d, err := e.app.listPRDiscussion(ctx, owner, repo, number); err != nil {
+		slog.Warn("github: listPRDiscussion failed; planner lacks prior discussion",
+			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+	} else {
+		rc.discussion = d
+	}
+	if sha, err := e.app.lastReviewedSHA(ctx, owner, repo, number); err != nil {
+		slog.Warn("github: lastReviewedSHA failed; first-time review framing",
+			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+	} else {
+		rc.prevReviewSHA = sha
+	}
+	return rc
+}
+
+// workVerbRe matches an imperative that asks quack to DO something — review or
+// change code — as opposed to discussing it. An ALLOWLIST on purpose: when a
+// request matches nothing here it is treated as conversational and NOT nudged, so
+// a follow-up like "what did you mean by that finding?" is answered directly
+// instead of being shoved into a DAG. Missing an unusual work phrasing just means
+// that one turn isn't nudged (the auto-review path always says "Review …").
+var workVerbRe = regexp.MustCompile(`(?i)\b(review|audit|critique|assess|implement|fix|add|create|refactor|rewrite|write|update|change|remove|delete|rename|migrate|investigate|analy[sz]e|build|check)\b`)
+
+// isWorkRequest reports whether a webhook task asks quack to DO work (so a run
+// that produced no plan should be nudged) versus a purely conversational
+// follow-up (answered directly, never nudged).
+func isWorkRequest(task string) bool {
+	return vetting.ImplementationIntent(task) || workVerbRe.MatchString(task)
+}
+
+// changedFilesSummary renders a compact, capped changed-files list for the plan
+// prompt — paths + churn so the planner can slice the review by area. Capped so a
+// huge PR doesn't blow the prompt; the total count still conveys the scale.
+func changedFilesSummary(files []changedFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	const cap = 60
+	var b strings.Builder
+	fmt.Fprintf(&b, "Changed files (%d):\n", len(files))
+	for i, f := range files {
+		if i == cap {
+			fmt.Fprintf(&b, "  … and %d more\n", len(files)-cap)
+			break
+		}
+		fmt.Fprintf(&b, "  %s (+%d/-%d)\n", f.Filename, f.Additions, f.Deletions)
+	}
+	return b.String()
+}
+
+// discussionSummary renders the PR's existing conversation, inline review
+// comments and prior reviews so the reviewer does not repeat what's been said.
+// Capped per section to bound the prompt.
+func discussionSummary(d prDiscussion) string {
+	const perSection = 40
+	var b strings.Builder
+	if len(d.Reviews) > 0 {
+		b.WriteString("Prior reviews:\n")
+		for i, r := range d.Reviews {
+			if i == perSection {
+				fmt.Fprintf(&b, "  … and %d more\n", len(d.Reviews)-perSection)
+				break
+			}
+			fmt.Fprintf(&b, "  @%s [%s]: %s\n", r.User, r.State, truncate(r.Body, 300))
+		}
+	}
+	if len(d.ReviewComments) > 0 {
+		b.WriteString("Inline comments:\n")
+		for i, c := range d.ReviewComments {
+			if i == perSection {
+				fmt.Fprintf(&b, "  … and %d more\n", len(d.ReviewComments)-perSection)
+				break
+			}
+			fmt.Fprintf(&b, "  @%s %s:%d: %s\n", c.User, c.Path, c.Line, truncate(c.Body, 200))
+		}
+	}
+	if len(d.Comments) > 0 {
+		b.WriteString("Conversation:\n")
+		for i, c := range d.Comments {
+			if i == perSection {
+				fmt.Fprintf(&b, "  … and %d more\n", len(d.Comments)-perSection)
+				break
+			}
+			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 300))
+		}
+	}
+	return b.String()
+}
+
+// truncate shortens s to at most n runes, marking any cut with an ellipsis.
+func truncate(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
 // runMessage frames the task for the orchestrator: the user's verbatim request
 // (kept front-and-center — it carries their focus), where the repo is, and how to
 // act. A PR request with no implement-and-deliver intent is a REVIEW and MUST
@@ -302,12 +416,12 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 // — until maxContinueRounds. vetting.ImplementationIntent is the SAME
 // discriminator the planner backstop uses, so the two can't drift.
 //
-// prevSHA is quack's last-reviewed commit on this PR ("" for a first-time
-// review); when set, the framing tells the model to focus on what changed since
-// then. refs carries the PR's head branch/commit and base branch — without a
-// checkout of the head branch a shallow clone's `git diff base...HEAD` is empty
-// and the reviewer flails re-cloning.
-func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA string, refs prRefs) string {
+// rc carries the plan-time PR context the webhook payload lacks — head/base refs
+// (a shallow clone's `git diff base...HEAD` is empty until the head is checked
+// out), the PR's title/description (intent), the changed-files list (so the
+// planner can slice the review by area), the existing discussion (so the reviewer
+// doesn't repeat it), and quack's last-reviewed commit (change-aware follow-ups).
+func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewContext) string {
 	isPR := p.Issue.PullRequest != nil
 	reviewOnly := isPR && !vetting.ImplementationIntent(task)
 	kind := "issue"
@@ -319,11 +433,11 @@ func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA string, refs
 	if base == "" {
 		base = "main"
 	}
-	diffBase := refs.BaseRef
+	diffBase := rc.meta.BaseRef
 	if diffBase == "" {
 		diffBase = base
 	}
-	headSHA := refs.HeadSHA
+	headSHA := rc.meta.HeadSHA
 	if headSHA == "" {
 		headSHA = "HEAD"
 	}
@@ -334,16 +448,29 @@ func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA string, refs
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q); clone it from %s using git_clone (authentication is handled for you). ",
 		owner, repo, base, p.Repository.CloneURL)
 	if isPR {
-		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d). ", p.Issue.Number, p.Issue.Number)
-		if refs.HeadRef != "" {
+		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d).\n\n", p.Issue.Number, p.Issue.Number)
+		if t := strings.TrimSpace(rc.meta.Title); t != "" {
+			fmt.Fprintf(&b, "PR title: %s\n", t)
+		}
+		if body := strings.TrimSpace(rc.meta.Body); body != "" {
+			fmt.Fprintf(&b, "PR description:\n%s\n", truncate(body, 1500))
+		}
+		if s := changedFilesSummary(rc.files); s != "" {
+			b.WriteString("\n" + s)
+		}
+		if s := discussionSummary(rc.discussion); s != "" {
+			b.WriteString("\nExisting discussion — take it into account, do NOT repeat it:\n" + s)
+		}
+		b.WriteString("\n")
+		if rc.meta.HeadRef != "" {
 			// git_clone gives a shallow BASE branch, where `git diff base...HEAD` is
 			// EMPTY. The reviewer MUST check out the head branch to see the changes.
 			fmt.Fprintf(&b, "The PR's changes are on branch `%s` (head commit `%s`), based on `%s`. A git_clone gives only the base branch, so `git diff %s...HEAD` is EMPTY until you check out the head: run git_checkout `%s` FIRST (fetch/unshallow if needed), then `git_diff %s...%s` is exactly this PR's diff. Do this before reviewing — the base branch alone shows no changes. ",
-				refs.HeadRef, headSHA, diffBase, diffBase, refs.HeadRef, diffBase, refs.HeadRef)
+				rc.meta.HeadRef, headSHA, diffBase, diffBase, rc.meta.HeadRef, diffBase, rc.meta.HeadRef)
 		}
-		if prevSHA != "" {
+		if rc.prevReviewSHA != "" {
 			fmt.Fprintf(&b, "You previously reviewed this pull request at commit `%s`. The current head is `%s`. Focus your review on what changed since then — use git_diff %s..%s (or git log %s..%s) — and take the existing review discussion into account; do NOT repeat findings you already made. ",
-				prevSHA, headSHA, prevSHA, headSHA, prevSHA, headSHA)
+				rc.prevReviewSHA, headSHA, rc.prevReviewSHA, headSHA, rc.prevReviewSHA, headSHA)
 		}
 		lead := "If the request is to REVIEW this PR: read its changes"
 		if reviewOnly {
