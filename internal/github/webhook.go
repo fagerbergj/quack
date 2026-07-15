@@ -48,6 +48,41 @@ type issueCommentPayload struct {
 	Installation struct {
 		ID int64 `json:"id"`
 	} `json:"installation"`
+
+	// planOnly marks a synthetic payload for a label-driven planning run: the
+	// task produces a plan comment and must not touch code. Not part of the
+	// GitHub payload.
+	planOnly bool
+}
+
+// issuesPayload is the subset of GitHub's issues webhook we use ("labeled",
+// for the label-driven issue workflow).
+type issuesPayload struct {
+	Action string `json:"action"`
+	Issue  struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		// PullRequest is present when the "issue" is actually a PR.
+		PullRequest *struct{} `json:"pull_request"`
+	} `json:"issue"`
+	Label struct {
+		Name string `json:"name"`
+	} `json:"label"`
+	Repository struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		CloneURL      string `json:"clone_url"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"repository"`
+	Installation struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
 }
 
 // pullRequestPayload is the subset of GitHub's pull_request webhook we use
@@ -105,6 +140,8 @@ func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		e.handleIssueComment(w, body)
 	case "pull_request":
 		e.handlePullRequest(w, body)
+	case "issues":
+		e.handleIssues(w, body)
 	default:
 		w.WriteHeader(http.StatusOK) // unhandled event type: no-op ack
 	}
@@ -114,6 +151,13 @@ func (e *Extension) handleIssueComment(w http.ResponseWriter, body []byte) {
 	var p issueCommentPayload
 	if err := json.Unmarshal(body, &p); err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	// Never act on another bot's comments — quack's own posted plans/summaries
+	// and other integrations must not re-trigger runs.
+	// ponytail: rejects all bots, not just self — bots don't mention quack legitimately.
+	if strings.HasSuffix(p.Comment.User.Login, "[bot]") {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	task, ok := e.triggerTask(p)
@@ -140,7 +184,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 		return
 	}
 	fires := (p.Action == "opened" && e.triggers["pr_opened"]) ||
-		(p.Action == "labeled" && e.triggers["label"] && p.Label.Name == e.autoReviewLabel)
+		(p.Action == "labeled" && e.triggers["label"] && p.Label.Name == e.labels.Review)
 	if !fires {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -164,6 +208,57 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 		"action", p.Action, "installation", p.Installation.ID)
 	go e.dispatch(synthetic, autoReviewTask)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleIssues drives the label-driven issue workflow: applying the configured
+// plan label to an issue dispatches a planning run whose answer (the plan) is
+// posted back as an issue comment. Labels double as the permission model —
+// only repo-write users can apply them.
+func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
+	var p issuesPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	// Only human-applied labels on REAL issues act (PRs surface labels via the
+	// pull_request event; a bot sender must never chain label workflows).
+	if p.Action != "labeled" || p.Issue.PullRequest != nil ||
+		strings.HasSuffix(p.Sender.Login, "[bot]") {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if !(e.triggers["issue_plan"] && p.Label.Name == e.labels.Plan) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	synthetic := issueCommentPayload{Action: "created", planOnly: true}
+	synthetic.Issue.Number = p.Issue.Number
+	synthetic.Comment.User.Login = p.Sender.Login
+	synthetic.Repository.Name = p.Repository.Name
+	synthetic.Repository.Owner.Login = p.Repository.Owner.Login
+	synthetic.Repository.CloneURL = p.Repository.CloneURL
+	synthetic.Repository.DefaultBranch = p.Repository.DefaultBranch
+	synthetic.Installation.ID = p.Installation.ID
+
+	task := planTask(p)
+	slog.Info("github webhook received", "component", "github",
+		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
+		"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
+	go e.dispatch(synthetic, task)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// planTask synthesizes the planning request for a plan-labeled issue — there is
+// no human comment to extract a task from, only the issue itself.
+func planTask(p issuesPayload) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Produce an implementation plan for issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
+	if body := strings.TrimSpace(p.Issue.Body); body != "" {
+		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
+	}
+	b.WriteString("\nInvestigate the repository first, then lay out a concrete plan: the approach, the files to change, and how to verify it. A maintainer will review the plan before any implementation happens.")
+	return b.String()
 }
 
 // ackReaction posts a deterministic 👀 (eyes) reaction on the mentioning comment
@@ -255,7 +350,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly — never nudged.
 	planRan, delivered := e.drive(ctx, sessionID, message, owner, repo, number)
-	if !planRan && isWorkRequest(task) {
+	if !planRan && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		_, d2 := e.drive(ctx, sessionID, runNudge, owner, repo, number)
@@ -528,6 +623,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
 			owner, repo, p.Issue.Number)
 		b.WriteString("Answer concisely and reference the review you posted.")
+		return b.String()
+	}
+	if p.planOnly {
+		// Like reviewOnly: no commit/push/PR words, or the vetting completion gate
+		// reads a phantom delivery demand off the task and loops the worker.
+		b.WriteString("This is a PLANNING-ONLY task: read the repository as needed to ground the plan, but do NOT change code or deliver anything to GitHub beyond comments. ")
+		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer — the plan — is posted back to the issue automatically.",
+			owner, repo, p.Issue.Number)
 		return b.String()
 	}
 	b.WriteString("If the task needs code changes, create a branch, commit your work, push it with git_push, then open a pull request with github_pull_request ")
