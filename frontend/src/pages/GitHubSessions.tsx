@@ -61,32 +61,10 @@ function StatusPill({ status }: { status: ChatSummary['status'] }) {
   )
 }
 
-export default function GitHubSessions() {
-  const [chats, setChats] = useState<ChatSummary[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    api
-      .listChats()
-      .then(list => {
-        if (!cancelled) setChats(list.data)
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  if (error) {
-    return <div className="p-6 text-sm text-red-600 dark:text-red-400">Failed to load: {error}</div>
-  }
-  if (chats === null) {
-    return <div className="p-6 text-sm text-gray-400 dark:text-gray-500">Loading…</div>
-  }
-
+// GitHubSessionsView is the presentational split — it takes already-fetched chats
+// so it can be storied/tested with injected data (Storybook has no MSW to mock the
+// fetch the default export does). The default export below owns data loading.
+export function GitHubSessionsView({ chats }: { chats: ChatSummary[] }) {
   const groups = groupGithubChats(chats)
 
   if (groups.length === 0) {
@@ -141,4 +119,32 @@ export default function GitHubSessions() {
       </div>
     </div>
   )
+}
+
+export default function GitHubSessions() {
+  const [chats, setChats] = useState<ChatSummary[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .listChats()
+      .then(list => {
+        if (!cancelled) setChats(list.data)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (error) {
+    return <div className="p-6 text-sm text-red-600 dark:text-red-400">Failed to load: {error}</div>
+  }
+  if (chats === null) {
+    return <div className="p-6 text-sm text-gray-400 dark:text-gray-500">Loading…</div>
+  }
+  return <GitHubSessionsView chats={chats} />
 }
