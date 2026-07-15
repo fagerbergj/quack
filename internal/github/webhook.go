@@ -125,7 +125,7 @@ func (e *Extension) handleIssueComment(w http.ResponseWriter, body []byte) {
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
 		"user", p.Comment.User.Login, "installation", p.Installation.ID)
 	go e.ackReaction(p) // instant 👀 "quack saw it", independent of the model run
-	go e.dispatch(p, task, "")
+	go e.dispatch(p, task)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -161,7 +161,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 	slog.Info("github webhook received", "component", "github",
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
 		"action", p.Action, "installation", p.Installation.ID)
-	go e.dispatch(synthetic, autoReviewTask, p.PullRequest.Head.SHA)
+	go e.dispatch(synthetic, autoReviewTask)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -223,16 +223,22 @@ func verifySignature(secret, body []byte, header string) bool {
 // a comment. Runs in its own goroutine with a detached, bounded context so a
 // slow run never blocks the webhook ack. headSHA is the PR's current head
 // commit when known (the pr_opened/label auto-review path carries it from the
-// PR event); "" for the mention path, where runMessage falls back to "HEAD".
-func (e *Extension) dispatch(p issueCommentPayload, task, headSHA string) {
+// PR event) — dispatch fetches the PR's head/base refs authoritatively anyway.
+func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 
 	var prevSHA string
+	var refs prRefs
 	if p.Issue.PullRequest != nil {
-		sha, err := e.app.lastReviewedSHA(ctx, owner, repo, number)
-		if err != nil {
+		if r, err := e.app.pullRefs(ctx, owner, repo, number); err != nil {
+			slog.Warn("github: pullRefs lookup failed; the reviewer may not find the PR's changes",
+				"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		} else {
+			refs = r
+		}
+		if sha, err := e.app.lastReviewedSHA(ctx, owner, repo, number); err != nil {
 			slog.Warn("github: lastReviewedSHA lookup failed, falling back to first-time review framing",
 				"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
 		} else {
@@ -241,7 +247,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task, headSHA string) {
 	}
 
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
-	message := e.runMessage(p, task, prevSHA, headSHA)
+	message := e.runMessage(p, task, prevSHA, refs)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 	// A webhook task always expects WORK (a review or a change), which runs as a
@@ -297,10 +303,11 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 // discriminator the planner backstop uses, so the two can't drift.
 //
 // prevSHA is quack's last-reviewed commit on this PR ("" for a first-time
-// review); when set, the framing tells the model to focus on what changed
-// since then instead of re-reviewing everything. headSHA is the PR's current
-// head when known ("" falls back to "HEAD", valid after cloning).
-func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA, headSHA string) string {
+// review); when set, the framing tells the model to focus on what changed since
+// then. refs carries the PR's head branch/commit and base branch — without a
+// checkout of the head branch a shallow clone's `git diff base...HEAD` is empty
+// and the reviewer flails re-cloning.
+func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA string, refs prRefs) string {
 	isPR := p.Issue.PullRequest != nil
 	reviewOnly := isPR && !vetting.ImplementationIntent(task)
 	kind := "issue"
@@ -312,6 +319,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA, headSHA str
 	if base == "" {
 		base = "main"
 	}
+	diffBase := refs.BaseRef
+	if diffBase == "" {
+		diffBase = base
+	}
+	headSHA := refs.HeadSHA
+	if headSHA == "" {
+		headSHA = "HEAD"
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are handling a request from GitHub user @%s, who mentioned you on %s/%s %s #%d.\n\n",
 		p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
@@ -320,13 +335,15 @@ func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA, headSHA str
 		owner, repo, base, p.Repository.CloneURL)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d). ", p.Issue.Number, p.Issue.Number)
+		if refs.HeadRef != "" {
+			// git_clone gives a shallow BASE branch, where `git diff base...HEAD` is
+			// EMPTY. The reviewer MUST check out the head branch to see the changes.
+			fmt.Fprintf(&b, "The PR's changes are on branch `%s` (head commit `%s`), based on `%s`. A git_clone gives only the base branch, so `git diff %s...HEAD` is EMPTY until you check out the head: run git_checkout `%s` FIRST (fetch/unshallow if needed), then `git_diff %s...%s` is exactly this PR's diff. Do this before reviewing — the base branch alone shows no changes. ",
+				refs.HeadRef, headSHA, diffBase, diffBase, refs.HeadRef, diffBase, refs.HeadRef)
+		}
 		if prevSHA != "" {
-			head := headSHA
-			if head == "" {
-				head = "HEAD"
-			}
 			fmt.Fprintf(&b, "You previously reviewed this pull request at commit `%s`. The current head is `%s`. Focus your review on what changed since then — use git_diff %s..%s (or git log %s..%s) — and take the existing review discussion into account; do NOT repeat findings you already made. ",
-				prevSHA, head, prevSHA, head, prevSHA, head)
+				prevSHA, headSHA, prevSHA, headSHA, prevSHA, headSHA)
 		}
 		lead := "If the request is to REVIEW this PR: read its changes"
 		if reviewOnly {

@@ -603,6 +603,39 @@ func (a *App) listReviews(ctx context.Context, owner, repo string, number int) (
 	return out, nil
 }
 
+// prRefs is a PR's head branch/commit and base branch — what a reviewer needs to
+// check out the changes. git_clone gives a shallow clone of the base branch, so
+// `git diff base...HEAD` is EMPTY until the head branch is fetched and checked
+// out; without these the reviewer flails, re-cloning to find a diff that isn't
+// there.
+type prRefs struct {
+	HeadRef string `json:"-"`
+	HeadSHA string `json:"-"`
+	BaseRef string `json:"-"`
+}
+
+// pullRefs fetches a PR's head ref/sha and base ref.
+func (a *App) pullRefs(ctx context.Context, owner, repo string, number int) (prRefs, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return prRefs{}, err
+	}
+	var out struct {
+		Head struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return prRefs{}, err
+	}
+	return prRefs{HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref}, nil
+}
+
 // botLogin returns quack's own commenting identity ("{app-slug}[bot]"),
 // fetched once via GET /app (App-JWT authed, not an installation token) and
 // cached for the process lifetime — an App's slug never changes.

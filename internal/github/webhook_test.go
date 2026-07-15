@@ -78,6 +78,8 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 			fmt.Fprint(w, `{"slug":"quack"}`)
 		case strings.Contains(r.URL.Path, "/reviews"):
 			fmt.Fprint(w, `[]`) // no prior review by default: first-time framing
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprint(w, `{"head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
 		case strings.HasSuffix(r.URL.Path, "/comments"):
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
@@ -536,7 +538,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "review this, focusing on the auth path", "", "")
+	msg := ext.runMessage(pr, "review this, focusing on the auth path", "", prRefs{})
 	for _, want := range []string{
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
@@ -558,8 +560,17 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 		}
 	}
 
+	// With the PR's refs known, the reviewer is told to CHECK OUT the head branch —
+	// without it a shallow clone's `git diff base...HEAD` is empty and it flails.
+	withRefs := ext.runMessage(pr, "review this", "", prRefs{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"})
+	for _, want := range []string{"git_checkout `feat/x`", "git_diff main...feat/x", "is EMPTY until you check out the head"} {
+		if !strings.Contains(withRefs, want) {
+			t.Errorf("PR review message missing checkout guidance %q\n---\n%s", want, withRefs)
+		}
+	}
+
 	// A PR request that DOES ask to change code keeps the implement path.
-	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", "", "")
+	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", "", prRefs{})
 	if !strings.Contains(impl, "github_pull_request") {
 		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
 	}
@@ -569,7 +580,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(issue, "add a feature", "", "")
+	imsg := ext.runMessage(issue, "add a feature", "", prRefs{})
 	if strings.Contains(imsg, "github_submit_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
@@ -623,7 +634,7 @@ func TestRunMessageChangeAwareFraming(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := ext.runMessage(pr, "review this", tt.prevSHA, tt.headSHA)
+			msg := ext.runMessage(pr, "review this", tt.prevSHA, prRefs{HeadSHA: tt.headSHA})
 			for _, want := range tt.wantContain {
 				if !strings.Contains(msg, want) {
 					t.Errorf("message missing %q\n---\n%s", want, msg)
