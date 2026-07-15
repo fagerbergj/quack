@@ -119,6 +119,7 @@ gates:
     threshold: 0.6
 
 dag:
+  max_active_runs: 3    # orchestrator RUNS concurrent server-wide; a burst queues (1-GPU: lower it)
   max_active_nodes: 2
 
 server:

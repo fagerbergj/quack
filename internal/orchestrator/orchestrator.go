@@ -51,6 +51,32 @@ type Orchestrator struct {
 	executor  *dag.Executor
 	skillTS   tool.Toolset  // optional; nil = no skill tools
 	userMem   *memory.Store // optional user-memory store (M6); nil = user memory off
+	// runSem is a server-wide cap on concurrent runs. max_active_nodes bounds nodes
+	// WITHIN one plan; nothing bounded the number of plans, so a burst of webhooks or
+	// REST calls fanned out unbounded onto one model. nil = no limit.
+	runSem chan struct{}
+}
+
+// SetMaxActiveRuns caps concurrent orchestrator runs server-wide (config
+// dag.max_active_runs). Extras block until a slot frees. n < 1 leaves it unlimited.
+func (o *Orchestrator) SetMaxActiveRuns(n int) {
+	if n >= 1 {
+		o.runSem = make(chan struct{}, n)
+	}
+}
+
+// acquireRun blocks for a run slot, returning a release func. A no-op when unlimited
+// or when ctx is cancelled while waiting (the run then proceeds to its own ctx check).
+func (o *Orchestrator) acquireRun(ctx context.Context) func() {
+	if o.runSem == nil {
+		return func() {}
+	}
+	select {
+	case o.runSem <- struct{}{}:
+		return func() { <-o.runSem }
+	case <-ctx.Done():
+		return func() {}
+	}
 }
 
 // CancelNode stops one running node of the chat's active run (continue-but-warn:
@@ -174,6 +200,10 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // media-capable node (the orchestrator model itself stays text/vision-only).
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// Server-wide concurrency gate: a burst of runs queues here instead of all
+		// hitting the model at once (max_active_nodes only bounds within a plan).
+		release := o.acquireRun(ctx)
+		defer release()
 		// Fresh turn: drop any cancelled-node flags from a prior turn so a reused
 		// node ID (n1, n2, …) doesn't inherit last turn's "stopped" rendering.
 		o.executor.ResetNodeCancels(sessionID)
