@@ -215,6 +215,17 @@ func replyString(reply any) string {
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
+	// Continuation and revise rounds build a FRESH prompt from cfg.Task, dropping
+	// the advisor-thread marker the draft prompt carried. That marker is the ONLY
+	// channel telling the worker's file/git tools their per-node workspace scope
+	// (internal/tools scopeFromContext) — without it a continuation/revise round
+	// re-clones into the bare user root instead of resuming the draft's clone.
+	// Re-attach it to every tool-bearing round.
+	markerLine := ""
+	if token, ok := ParseAdvisorThread(prompt); ok {
+		markerLine = "\n\n" + AdvisorThreadMarker(token)
+	}
+
 	// Per-NODE workspace scope: a plan's nodes run concurrently in ONE chat, so
 	// each gets its own directory under the chat scope (<root>/<user>/<chat>/
 	// <node>/) — the default cwd its tools resolve relative paths against (they
@@ -353,7 +364,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			act := activity()
 			log.Warn("work not finished; continuing the worker with its tools",
 				"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
-			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks),
+			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks)+markerLine,
 				fmt.Sprintf("worker-cont%d%s", attempt, sfx), promptEmit)
 			if err != nil {
 				log.Error("worker continuation failed", "attempt", attempt, "err", err)
@@ -431,7 +442,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if res.Passed || round > cfg.JudgeRounds {
 				break
 			}
-			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act, citationOnlyFailure(v, cfg.Threshold)))
+			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
 			revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), promptEmit)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)

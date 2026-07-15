@@ -22,8 +22,9 @@ import (
 // low until the answer is a revision; the worker produces a revision once it sees
 // reviewer feedback — so the refine loop converges in exactly one revise cycle.
 type stubModel struct {
-	workerCalls int
-	judgeCalls  int
+	workerCalls   int
+	judgeCalls    int
+	workerPrompts []string // request text captured on each worker (non-judge) call
 }
 
 func (m *stubModel) Name() string { return "stub" }
@@ -40,6 +41,7 @@ func (m *stubModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 			return
 		}
 		m.workerCalls++
+		m.workerPrompts = append(m.workerPrompts, stubAllText(req))
 		if strings.Contains(stubAllText(req), "Reviewer feedback") {
 			yield(stubText("This is the revised answer with the reviewer's fixes applied."), nil)
 			return
@@ -110,6 +112,51 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 	if stub.judgeCalls != 2 {
 		t.Errorf("judge calls = %d, want 2 (fail then pass)", stub.judgeCalls)
+	}
+}
+
+// TestGateReattachesAdvisorMarkerOnRevise pins the workspace-scope fix: a revise
+// round builds a fresh prompt from cfg.Task and would drop the advisor-thread
+// marker that carries the worker's per-node clone/cwd scope — so the marker must
+// be re-appended, or the revise re-clones into the bare user root.
+func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
+	const token = "planX/nodeY"
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "Answer.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10"}
+	node, err := newTestGatedNode("gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\n" + AdvisorThreadMarker(token)}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	if len(stub.workerPrompts) < 2 {
+		t.Fatalf("expected a draft + a revise worker call, got %d", len(stub.workerPrompts))
+	}
+	revise := stub.workerPrompts[len(stub.workerPrompts)-1]
+	if !strings.Contains(revise, AdvisorThreadMarker(token)) {
+		t.Errorf("revise prompt dropped the advisor-thread marker — the worker's tools lose their node scope and re-clone:\n%s", revise)
 	}
 }
 
