@@ -22,7 +22,7 @@ Match the request to a known shape first; fall back to the general rules below.
 | Several distinct information topics | one `web-researcher` per topic → ONE `synthesizer` (final) |
 | Has an `[User attached: ...]` file | a media node (see Media routing) first; chain to research/synthesis only if a factual question is also asked |
 | Write/fix/refactor code in a repo | ONE `code-implementer` node (the gate derives its checks from the repo — see Code checks) |
-| Review a PR / diff / branch / proposed change (read-only, no edits) | ONE `code-reviewer` node — it reads and critiques, never commits |
+| Review a PR / diff / branch / proposed change (read-only, no edits) | Small/cohesive: ONE `code-reviewer` node. Large/multi-area: one `code-explorer` per slice of the diff → ONE terminal `code-reviewer` that validates the pooled findings and posts. See Reviewing a PR |
 | Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
 | Learn how ANOTHER project (a third-party OSS repo) implements something — "how does OpenHands do X?", "how does goose expose tools?" | ONE `code-explorer` node per project — it CLONES THEIR REPO and reads the real source. NOT `web-researcher`: articles and docs describe code, only the code is the code. Use `web-researcher` only for facts that exist nowhere but the web (a blog post's rationale, a spec, pricing) |
 | Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
@@ -72,6 +72,46 @@ the repo" INTO the `code-implementer`'s own task rather than a separate node —
 see Implement-and-deliver below; reach for a standalone `code-explorer` node when
 understanding the repo IS the deliverable, or when several downstream nodes share
 the same repo understanding.)
+
+## Reviewing a PR
+
+A PR review is read-only: the terminal node POSTS the review (inline comments + a
+verdict) and NEVER commits or pushes. How many nodes depends on the diff — the run
+message gives you the changed-files list up front, so size the review before any
+node clones:
+
+- **Small or cohesive change** (one package, a handful of related files): ONE
+  `code-reviewer` node does the whole job — clone, check out the PR head, read the
+  diff, post the review. Do not fan out a trivial diff.
+- **Large or multi-area change** (several packages/subsystems): one `code-explorer`
+  per natural slice of the diff → ONE terminal `code-reviewer`. The explorers
+  gather findings in parallel; the reviewer validates and posts.
+
+**Slice by cohesion, not by count.** Group the changed files along natural
+boundaries — a package, a subsystem, a layer. Files that must be understood
+together stay in one explorer (a handler and its test; an interface and its
+implementations). CAP the fan-out: a 200-file PR is ~4 slices by subsystem, not
+200 nodes.
+
+**Each `code-explorer` gathers findings only — it MUST NOT post.** Its task names
+its slice: "Review these files in PR #N: `<paths>`. Check out the PR head branch,
+read their diff plus enough surrounding code to judge correctness, and report
+findings as {file, line, severity, issue, why}. Do not stray outside your slice;
+do not post anything." It is judged as exploration (did it find real issues?), not
+as a review.
+
+**The terminal `code-reviewer` is the ONLY node that posts.** It depends on all the
+explorers, VALIDATES each pooled finding against the actual diff (path+line must be
+in it), drops duplicates and false positives, then posts one
+`github_add_review_comment` per survivor and finishes with `github_submit_review`
+(a summary body + an APPROVE / REQUEST_CHANGES / COMMENT verdict). Only this node
+carries the "post the review" completion criterion — an explorer that produced
+findings has done its job.
+
+Carry the run message's changed-files list into each explorer's task (its slice)
+and the existing discussion into the reviewer's task (so it does not repeat prior
+findings). A node that only fetches the diff or lists comments is NOT a real node —
+that context is already in the run message; fold it into the reviewer's own work.
 
 ## Implement-and-deliver requests
 
