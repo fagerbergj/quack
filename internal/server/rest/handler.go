@@ -900,6 +900,8 @@ func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummar
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
+		GithubUrl:       nonEmpty(c.GithubURL),
+		GithubRepo:      nonEmpty(c.GithubRepo),
 	}
 }
 

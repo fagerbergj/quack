@@ -33,6 +33,38 @@ func TestChatStatusIdle(t *testing.T) {
 	}
 }
 
+// TestToSummaryGithubFields: toSummary surfaces the persisted GitHub link
+// fields, and leaves them nil for a chat that never had them set.
+func TestToSummaryGithubFields(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	id := "github-acme-widget-app-7"
+	if err := h.store.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/7"); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+	c, err := h.store.GetChat(ctx, id)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat: %+v err=%v", c, err)
+	}
+	got := h.toSummary(ctx, *c)
+	if got.GithubUrl == nil || *got.GithubUrl != "https://github.com/acme/widget-app/pull/7" {
+		t.Errorf("github_url = %v, want the pull URL", got.GithubUrl)
+	}
+	if got.GithubRepo == nil || *got.GithubRepo != "acme/widget-app" {
+		t.Errorf("github_repo = %v, want acme/widget-app", got.GithubRepo)
+	}
+
+	plain, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	got = h.toSummary(ctx, *plain)
+	if got.GithubUrl != nil || got.GithubRepo != nil {
+		t.Errorf("non-github chat should have nil github fields, got url=%v repo=%v", got.GithubUrl, got.GithubRepo)
+	}
+}
+
 // TestChatStatusRunning: the hub having a live topic for the chat wins over
 // everything else (checked first).
 func TestChatStatusRunning(t *testing.T) {

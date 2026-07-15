@@ -208,7 +208,13 @@ type AgentActivityOutputItemType string
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
 	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
+
+	// GithubRepo `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
+	GithubRepo *string `json:"github_repo,omitempty"`
+
+	// GithubUrl Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
+	GithubUrl *string `json:"github_url,omitempty"`
+	Id        string  `json:"id"`
 
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
@@ -232,7 +238,13 @@ type ChatStatus string
 // ChatSummary defines model for ChatSummary.
 type ChatSummary struct {
 	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
+
+	// GithubRepo `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
+	GithubRepo *string `json:"github_repo,omitempty"`
+
+	// GithubUrl Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
+	GithubUrl *string `json:"github_url,omitempty"`
+	Id        string  `json:"id"`
 
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
