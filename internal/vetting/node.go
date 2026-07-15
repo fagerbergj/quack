@@ -391,7 +391,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// self-contained, so the stateless worker needs no session continuity).
 		var res GateResult
 		steered := ""
-		for round := 1; judge != nil && round <= cfg.JudgeRounds; round++ {
+		// JudgeRounds counts REVISION attempts: round r judges, and on a fail (with
+		// budget left) revises, so N rounds = N revisions / N+1 judgments. The
+		// cfg.JudgeRounds > 0 guard keeps 0 meaning "no judge at all" — judge:false
+		// sets 0 but the global judge factory is non-nil, so only this bound skips it.
+		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
 			// Cooperative cancel/steer, checked before each judge round AND before the
 			// empty-answer guard below — so an empty node (a reasoning model that
 			// produced nothing) can still be cancelled or steered into a fresh attempt.
@@ -424,7 +428,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
-			if res.Passed || round >= cfg.JudgeRounds {
+			if res.Passed || round > cfg.JudgeRounds {
 				break
 			}
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act, citationOnlyFailure(v, cfg.Threshold)))

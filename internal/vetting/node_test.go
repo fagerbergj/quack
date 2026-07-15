@@ -113,11 +113,11 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 }
 
-// TestGatedWorkerNode_SingleRoundNoRevise asserts the loop semantics at
-// JudgeRounds=1: the judge scores the draft ONCE and, on a fail, the node
-// returns the (un-revised) draft under continue-but-warn — no revise cycle
-// runs. This is the per-agent economics the web-researcher/synthesizer rely on.
-func TestGatedWorkerNode_SingleRoundNoRevise(t *testing.T) {
+// TestGatedWorkerNode_SingleRoundRevisesOnce asserts the loop semantics at
+// JudgeRounds=1: JudgeRounds counts REVISIONS, so one round judges the draft,
+// revises on the fail, and re-judges — 1 revision / 2 judgments. (Previously 1
+// meant "judge once, never fix", which shipped failing drafts unvetted.)
+func TestGatedWorkerNode_SingleRoundRevisesOnce(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher",
@@ -168,16 +168,65 @@ func TestGatedWorkerNode_SingleRoundNoRevise(t *testing.T) {
 		}
 	}
 
-	// The draft failed the judge, but with one round there's no revision — the
-	// draft is surfaced as-is.
-	if strings.Contains(final, "revised") {
-		t.Fatalf("single-round gate must not revise; got a revised answer: %q", final)
+	// The draft failed the judge, so one round (= one revision) revises and
+	// re-judges: the vetted revision is surfaced.
+	if !strings.Contains(final, "revised") {
+		t.Fatalf("single-round gate must revise once; got the un-revised draft: %q", final)
+	}
+	if stub.workerCalls != 2 {
+		t.Errorf("worker calls = %d, want 2 (draft + 1 revise)", stub.workerCalls)
+	}
+	if stub.judgeCalls != 2 {
+		t.Errorf("judge calls = %d, want 2 (judge draft, then judge the revision)", stub.judgeCalls)
+	}
+}
+
+// TestGatedWorkerNode_ZeroRoundsSkipsJudge pins the 0 = "no judge at all"
+// contract the media readers rely on (judge:false ⇒ JudgeRounds=0): even though
+// the judge factory is non-nil, JudgeRounds=0 must never invoke it, so the draft
+// is surfaced unjudged.
+func TestGatedWorkerNode_ZeroRoundsSkipsJudge(t *testing.T) {
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "media-reader", Model: stub, Description: "reader",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{JudgeRounds: 0, Threshold: 0.7, Rubric: "score the answer 0-10"}
+	node, err := newTestGatedNode("reader-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	if stub.judgeCalls != 0 {
+		t.Errorf("judge calls = %d, want 0 (JudgeRounds=0 must never judge)", stub.judgeCalls)
 	}
 	if stub.workerCalls != 1 {
 		t.Errorf("worker calls = %d, want 1 (draft only, no revise)", stub.workerCalls)
-	}
-	if stub.judgeCalls != 1 {
-		t.Errorf("judge calls = %d, want 1 (judged once, no second round)", stub.judgeCalls)
 	}
 }
 
