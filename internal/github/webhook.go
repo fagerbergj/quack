@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // maxWebhookBody caps the raw webhook payload we read (GitHub payloads are well
@@ -261,9 +263,12 @@ func (e *Extension) dispatch(p issueCommentPayload, task, headSHA string) {
 
 // runMessage frames the task for the orchestrator: the user's verbatim request
 // (kept front-and-center — it carries their focus), where the repo is, and how to
-// act. It gives BOTH paths — review and implement — since the orchestrator routes
-// review-vs-change from the request; when the mention is on a PR it also surfaces
-// the pull_number the review tools need (a PR shares its issue number).
+// act. A PR request with no implement-and-deliver intent is a REVIEW and MUST
+// carry no commit/push/PR language: otherwise the planner echoes it into the node
+// task and the vetting completion gate reads a phantom delivery demand off it
+// (delivery.go's demandedDelivery), looping the worker — re-cloning, re-reviewing
+// — until maxContinueRounds. vetting.ImplementationIntent is the SAME
+// discriminator the planner backstop uses, so the two can't drift.
 //
 // prevSHA is quack's last-reviewed commit on this PR ("" for a first-time
 // review); when set, the framing tells the model to focus on what changed
@@ -271,6 +276,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task, headSHA string) {
 // head when known ("" falls back to "HEAD", valid after cloning).
 func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA, headSHA string) string {
 	isPR := p.Issue.PullRequest != nil
+	reviewOnly := isPR && !vetting.ImplementationIntent(task)
 	kind := "issue"
 	if isPR {
 		kind = "pull request"
@@ -296,8 +302,20 @@ func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA, headSHA str
 			fmt.Fprintf(&b, "You previously reviewed this pull request at commit `%s`. The current head is `%s`. Focus your review on what changed since then — use git_diff %s..%s (or git log %s..%s) — and take the existing review discussion into account; do NOT repeat findings you already made. ",
 				prevSHA, head, prevSHA, head, prevSHA, head)
 		}
-		fmt.Fprintf(&b, "If the request is to REVIEW this PR: read its changes (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). ",
-			owner, repo, p.Issue.Number, p.Issue.Number)
+		lead := "If the request is to REVIEW this PR: read its changes"
+		if reviewOnly {
+			lead = "Review it: read its changes"
+		}
+		fmt.Fprintf(&b, "%s (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). ",
+			lead, owner, repo, p.Issue.Number, p.Issue.Number)
+	}
+	if reviewOnly {
+		// No commit/push/PR words: a review posts findings, it does not deliver code.
+		b.WriteString("This is a REVIEW-ONLY task: do NOT create a branch, commit, push, or open a pull request — deliver your findings with the review tools. ")
+		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
+			owner, repo, p.Issue.Number)
+		b.WriteString("Answer concisely and reference the review you posted.")
+		return b.String()
 	}
 	b.WriteString("If the task needs code changes, create a branch, commit your work, push it with git_push, then open a pull request with github_pull_request ")
 	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q). ", owner, repo, base)

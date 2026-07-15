@@ -496,14 +496,28 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 		"github_add_review_comment",
 		"github_submit_review",
 		"github_list_pr_comments",
-		"github_pull_request", // implement-path guidance still present
+		"REVIEW-ONLY", // a review carries no delivery path
 	} {
 		if !strings.Contains(msg, want) {
-			t.Errorf("PR run message missing %q\n---\n%s", want, msg)
+			t.Errorf("PR review message missing %q\n---\n%s", want, msg)
+		}
+	}
+	// A review must carry NO delivery language, or the vetting gate reads a phantom
+	// commit/push demand off the node task and loops the worker (re-cloning,
+	// re-reviewing) to no end. This is the regression that made a review take 30+ min.
+	for _, forbidden := range []string{"github_pull_request", "git_push", "commit your work"} {
+		if strings.Contains(msg, forbidden) {
+			t.Errorf("PR review message must not mention delivery (%q):\n%s", forbidden, msg)
 		}
 	}
 
-	// A non-PR issue stays implement-only: no review-tool guidance.
+	// A PR request that DOES ask to change code keeps the implement path.
+	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", "", "")
+	if !strings.Contains(impl, "github_pull_request") {
+		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
+	}
+
+	// A non-PR issue stays implement-capable: no review-tool guidance.
 	var issue issueCommentPayload
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
