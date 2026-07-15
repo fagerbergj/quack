@@ -42,21 +42,37 @@ type Runner interface {
 // webhook, all sharing the App's installation-token auth. Implements
 // extension.Extension.
 type Extension struct {
-	app     *App
-	secret  []byte
-	mention string
-	runner  Runner
+	app             *App
+	secret          []byte
+	mention         string
+	triggers        map[string]bool // configured trigger set: mention, pr_opened, label
+	autoReviewLabel string
+	runner          Runner
 }
 
 // NewExtension wraps an already-built App (serve constructs the App early so it
 // can also serve as the git-credential source before the orchestrator exists)
 // with the webhook config and a Runner.
 func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner) *Extension {
+	cfgTriggers := cfg.Triggers
+	if len(cfgTriggers) == 0 {
+		cfgTriggers = []string{"mention"} // config.applyDefaults normally does this; re-default here so callers that build the struct directly (tests) still get mention-only behavior
+	}
+	triggers := make(map[string]bool, len(cfgTriggers))
+	for _, t := range cfgTriggers {
+		triggers[t] = true
+	}
+	label := cfg.AutoReviewLabel
+	if label == "" {
+		label = "quack-auto-review"
+	}
 	return &Extension{
-		app:     app,
-		secret:  []byte(cfg.WebhookSecret),
-		mention: cfg.Mention,
-		runner:  runner,
+		app:             app,
+		secret:          []byte(cfg.WebhookSecret),
+		mention:         cfg.Mention,
+		triggers:        triggers,
+		autoReviewLabel: label,
+		runner:          runner,
 	}
 }
 

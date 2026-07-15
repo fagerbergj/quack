@@ -46,6 +46,35 @@ type issueCommentPayload struct {
 	} `json:"installation"`
 }
 
+// pullRequestPayload is the subset of GitHub's pull_request webhook we use
+// (opened / labeled actions, for the pr_opened and label triggers).
+type pullRequestPayload struct {
+	Action string `json:"action"`
+	Number int    `json:"number"`
+	Label  struct {
+		Name string `json:"name"` // present on the "labeled" action
+	} `json:"label"`
+	Repository struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		CloneURL      string `json:"clone_url"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"repository"`
+	Installation struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
+}
+
+// autoReviewTask is the synthesized request for a pr_opened/label-triggered
+// auto-review — there is no human comment to extract a task from.
+const autoReviewTask = "Review this pull request."
+
+// autoReviewUser is the synthetic "commenter" attributed to an auto-review run
+// (no human triggered it).
+const autoReviewUser = "quack-auto-review"
+
 // handleWebhook is the inbound trust boundary: it verifies the HMAC signature
 // over the RAW body before doing anything else, then dispatches by event type
 // and returns FAST — the orchestrator run happens in a goroutine (GitHub
@@ -62,12 +91,17 @@ func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event := r.Header.Get("X-GitHub-Event")
-	if event != "issue_comment" {
+	switch r.Header.Get("X-GitHub-Event") {
+	case "issue_comment":
+		e.handleIssueComment(w, body)
+	case "pull_request":
+		e.handlePullRequest(w, body)
+	default:
 		w.WriteHeader(http.StatusOK) // unhandled event type: no-op ack
-		return
 	}
+}
 
+func (e *Extension) handleIssueComment(w http.ResponseWriter, body []byte) {
 	var p issueCommentPayload
 	if err := json.Unmarshal(body, &p); err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
@@ -84,6 +118,42 @@ func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		"user", p.Comment.User.Login, "installation", p.Installation.ID)
 	go e.ackReaction(p) // instant 👀 "quack saw it", independent of the model run
 	go e.dispatch(p, task)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// handlePullRequest fires an auto-review on "opened" (pr_opened trigger) or
+// "labeled" with the configured auto_review_label (label trigger). There is no
+// comment to react to, so no ackReaction here.
+func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
+	var p pullRequestPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	fires := (p.Action == "opened" && e.triggers["pr_opened"]) ||
+		(p.Action == "labeled" && e.triggers["label"] && p.Label.Name == e.autoReviewLabel)
+	if !fires {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Reuse the mention path's dispatch/runMessage by shaping the PR event as an
+	// issueCommentPayload — same session key, same review-tool guidance, no
+	// duplicated prompt.
+	synthetic := issueCommentPayload{Action: "created"}
+	synthetic.Issue.Number = p.Number
+	synthetic.Issue.PullRequest = &struct{}{}
+	synthetic.Comment.User.Login = autoReviewUser
+	synthetic.Repository.Name = p.Repository.Name
+	synthetic.Repository.Owner.Login = p.Repository.Owner.Login
+	synthetic.Repository.CloneURL = p.Repository.CloneURL
+	synthetic.Repository.DefaultBranch = p.Repository.DefaultBranch
+	synthetic.Installation.ID = p.Installation.ID
+
+	slog.Info("github webhook received", "component", "github",
+		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
+		"action", p.Action, "installation", p.Installation.ID)
+	go e.dispatch(synthetic, autoReviewTask)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -108,6 +178,9 @@ func (e *Extension) ackReaction(p issueCommentPayload) {
 // text after the mention. The trigger is: a created issue_comment whose body
 // contains the configured mention. Returns ("", false) otherwise.
 func (e *Extension) triggerTask(p issueCommentPayload) (string, bool) {
+	if !e.triggers["mention"] {
+		return "", false
+	}
 	if p.Action != "created" {
 		return "", false
 	}

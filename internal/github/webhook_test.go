@@ -29,13 +29,14 @@ const testSecret = "shhh-webhook-secret"
 // iterator optionally blocks on `block` (to prove the handler acks before the
 // run finishes).
 type fakeRunner struct {
-	gotMessage chan string
-	answer     string
-	block      chan struct{}
-	calls      int32
+	gotMessage   chan string
+	gotSessionID chan string
+	answer       string
+	block        chan struct{}
+	calls        int32
 }
 
-func (f *fakeRunner) Run(_ context.Context, _, _, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		atomic.AddInt32(&f.calls, 1)
 		if f.block != nil {
@@ -44,6 +45,12 @@ func (f *fakeRunner) Run(_ context.Context, _, _, message string, _ []*genai.Par
 		select {
 		case f.gotMessage <- message:
 		default:
+		}
+		if f.gotSessionID != nil {
+			select {
+			case f.gotSessionID <- sessionID:
+			default:
+			}
 		}
 	}
 }
@@ -108,13 +115,184 @@ func signedRequest(event string, body []byte) *http.Request {
 
 func newTestExtension(t *testing.T, runner Runner, apiBase string) *Extension {
 	t.Helper()
+	return newTestExtensionWithTriggers(t, runner, apiBase, nil, "")
+}
+
+// newTestExtensionWithTriggers builds an Extension with an explicit trigger
+// set (nil/empty defaults to mention-only, matching applyDefaults) and label.
+func newTestExtensionWithTriggers(t *testing.T, runner Runner, apiBase string, triggers []string, label string) *Extension {
+	t.Helper()
 	keyPEM, _ := testKeyPEM(t)
 	app, err := NewApp("1", keyPEM)
 	if err != nil {
 		t.Fatalf("NewApp: %v", err)
 	}
 	app.apiBase = apiBase
-	return NewExtension(app, config.GitHubExtensionConfig{WebhookSecret: testSecret, Mention: "@quack"}, runner)
+	return NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret:   testSecret,
+		Mention:         "@quack",
+		Triggers:        triggers,
+		AutoReviewLabel: label,
+	}, runner)
+}
+
+func pullRequestBody(action, labelName string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"action":%q,
+		"number":7,
+		"label":{"name":%q},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5}
+	}`, action, labelName))
+}
+
+func TestHandleWebhookPROpenedTrigger(t *testing.T) {
+	tests := []struct {
+		name     string
+		triggers []string
+		wantRun  bool
+	}{
+		{"pr_opened enabled fires", []string{"pr_opened"}, true},
+		{"mention only is a no-op", []string{"mention"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 1)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("pull_request", pullRequestBody("opened", "")))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+
+			if tt.wantRun {
+				select {
+				case msg := <-runner.gotMessage:
+					if !strings.Contains(msg, "acme/widgets") || !strings.Contains(msg, "pull_number=7") {
+						t.Errorf("run message missing repo/pull_number: %q", msg)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("pr_opened trigger did not dispatch a run")
+				}
+			} else {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Error("pr_opened should not fire when only mention is configured")
+				}
+			}
+		})
+	}
+}
+
+func TestHandleWebhookLabelTrigger(t *testing.T) {
+	tests := []struct {
+		name      string
+		triggers  []string
+		labelName string
+		wantRun   bool
+	}{
+		{"matching label + label trigger fires", []string{"label"}, "quack-auto-review", true},
+		{"non-matching label is a no-op", []string{"label"}, "other-label", false},
+		{"matching label but trigger not enabled is a no-op", []string{"mention"}, "quack-auto-review", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 1)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "quack-auto-review")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("pull_request", pullRequestBody("labeled", tt.labelName)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+
+			if tt.wantRun {
+				select {
+				case <-runner.gotMessage:
+				case <-time.After(2 * time.Second):
+					t.Fatal("label trigger did not dispatch a run")
+				}
+			} else {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Errorf("%s: should not have dispatched a run", tt.name)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleWebhookAutoReviewUsesPRSessionID(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), gotSessionID: make(chan string, 1), answer: "reviewed"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"pr_opened"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("pull_request", pullRequestBody("opened", "")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+
+	select {
+	case sessionID := <-runner.gotSessionID:
+		if sessionID != "github-acme-widgets-7" {
+			t.Errorf("session id = %q; want github-acme-widgets-7", sessionID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto-review did not dispatch a run")
+	}
+}
+
+func TestHandleWebhookMentionRespectsTriggerSet(t *testing.T) {
+	tests := []struct {
+		name     string
+		triggers []string
+		wantRun  bool
+	}{
+		{"mention enabled fires", []string{"mention"}, true},
+		{"mention not configured is a no-op", []string{"pr_opened"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 1)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done"}
+			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+
+			if tt.wantRun {
+				select {
+				case <-runner.gotMessage:
+				case <-time.After(2 * time.Second):
+					t.Fatal("mention trigger did not dispatch a run")
+				}
+			} else {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Error("mention should not fire when not in the trigger set")
+				}
+			}
+		})
+	}
 }
 
 func TestHandleWebhookMentionTriggersRun(t *testing.T) {
