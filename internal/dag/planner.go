@@ -3,6 +3,8 @@ package dag
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -18,6 +20,30 @@ import (
 // roles carry a fixed contract the plan validation depends on.
 const implementerAgent = "code-implementer"
 const reviewerAgent = "code-reviewer"
+const explorerAgent = "code-explorer"
+
+// reviewChurnThreshold is the changed-line count above which a single
+// code-reviewer node reliably chokes on the whole diff (compaction churn +
+// slow re-diffing — a live +1271-line PR stalled for 30+ min). Above it, the
+// review must fan out into per-file-group explorers feeding one reviewer.
+const reviewChurnThreshold = 800
+
+// changedChurnRe matches the "(+add/-del)" churn markers the webhook's
+// changed-files summary renders per file, so the backstop can size a PR from the
+// run message without threading the file list through the planner.
+var changedChurnRe = regexp.MustCompile(`\(\+(\d+)/-(\d+)\)`)
+
+// totalChurn sums the added+deleted lines named in the run message's
+// changed-files summary; 0 when the message carries no such summary.
+func totalChurn(message string) int {
+	sum := 0
+	for _, m := range changedChurnRe.FindAllStringSubmatch(message, -1) {
+		a, _ := strconv.Atoi(m[1])
+		d, _ := strconv.Atoi(m[2])
+		sum += a + d
+	}
+	return sum
+}
 
 // AgentInfo describes one available agent (name + description) — the roster the
 // orchestrator authors a DAG from.
@@ -81,6 +107,9 @@ func (p *Planner) Build(nodes []RawNode, history []HistoryTurn, message string, 
 	if err := p.checkImplementationRouting(plan, message); err != nil {
 		return nil, err
 	}
+	if err := p.checkReviewFanout(plan, message); err != nil {
+		return nil, err
+	}
 	plan.History = history
 	plan.UserMessage = message
 	plan.Attachments = attachments
@@ -139,6 +168,46 @@ func (p *Planner) checkImplementationRouting(plan *Plan, message string) error {
 		"TO FIX: keep the nodes you already have and ADD ONE node with agent %q, depending on them, "+
 		"as the LAST node. Do NOT add more research/explorer nodes — research is not what is missing.",
 		implementerAgent, implementerAgent, implementerAgent)
+}
+
+// checkReviewFanout is the deterministic backstop for a large PR review planned as
+// a SINGLE code-reviewer node: the whole diff lands in one agent's context, which
+// churns compaction and re-diffs slowly (a +1271-line PR stalled 30+ min). When
+// the run message reports churn above reviewChurnThreshold and the plan has a
+// reviewer but NO explorer to spread the reading across, reject with a targeted
+// fix — slice the changed files into per-group explorers feeding the one reviewer.
+// Inert when the roster has no code-explorer, or when the plan already fans out.
+func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
+	hasExplorer := false
+	for _, a := range p.agents {
+		if a.Name == explorerAgent {
+			hasExplorer = true
+			break
+		}
+	}
+	if !hasExplorer || totalChurn(message) < reviewChurnThreshold {
+		return nil
+	}
+	var reviewers, explorers int
+	for _, n := range plan.Nodes {
+		switch n.AgentName {
+		case reviewerAgent:
+			reviewers++
+		case explorerAgent:
+			explorers++
+		}
+	}
+	if reviewers == 0 || explorers > 0 {
+		return nil // not a review plan, or already fanned out
+	}
+	slog.Warn("plan rejected: large PR review not fanned out",
+		"component", "planner", "churn", totalChurn(message), "threshold", reviewChurnThreshold)
+	return fmt.Errorf("this PR is large (%d changed lines, over the %d-line threshold) and a single %s node will "+
+		"choke on the whole diff. Split the review: read the changed-files list in the request, group the files into "+
+		"slices of roughly 300 changed lines each, and add ONE %s node per slice (its task: review ONLY the files in "+
+		"its slice, gather findings, do NOT post). Keep ONE %s node that depends on all the explorers, validates their "+
+		"pooled findings against the diff, and posts. Do NOT keep a lone %s node.",
+		totalChurn(message), reviewChurnThreshold, reviewerAgent, explorerAgent, reviewerAgent, reviewerAgent)
 }
 
 // implementationIntent reports whether message asks for code to be implemented AND

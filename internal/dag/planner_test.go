@@ -139,6 +139,35 @@ func TestBuildDoesNotFlagReviewPlanForImplementLookingMessage(t *testing.T) {
 	}
 }
 
+// A large PR review planned as a LONE code-reviewer must be rejected and told to
+// fan out (per-file-group explorers → one reviewer); a fanned-out plan, a small
+// PR, and a roster without a code-explorer all pass.
+func TestReviewFanoutBackstop(t *testing.T) {
+	roster := []AgentInfo{{Name: "code-explorer"}, {Name: "code-reviewer"}}
+	p := NewPlanner(roster, nil)
+	largeMsg := "Review PR #3.\n\nChanged files (3):\n  a.ts (+600/-0)\n  b.ts (+400/-10)\n  c.ts (+50/-5)\n" // churn 1065 > 800
+	smallMsg := "Review PR #7.\n\nChanged files (1):\n  a.ts (+100/-20)\n"                                    // churn 120
+
+	if _, err := p.Build([]RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review the PR and post."}}, nil, largeMsg, nil); err == nil {
+		t.Error("a lone code-reviewer for a large PR must be rejected (fan out expected)")
+	}
+	if _, err := p.Build([]RawNode{
+		{ID: "e1", Agent: "code-explorer", Task: "Review a.ts, gather findings."},
+		{ID: "e2", Agent: "code-explorer", Task: "Review b.ts and c.ts, gather findings."},
+		{ID: "r", Agent: "code-reviewer", Task: "Validate the pooled findings and post.", DependsOn: []string{"e1", "e2"}},
+	}, nil, largeMsg, nil); err != nil {
+		t.Errorf("a fanned-out large review (explorers → reviewer) must pass: %v", err)
+	}
+	if _, err := p.Build([]RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, smallMsg, nil); err != nil {
+		t.Errorf("a small PR as one reviewer node must pass: %v", err)
+	}
+	// No code-explorer in the roster ⇒ backstop inert (can't fan out).
+	p2 := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil)
+	if _, err := p2.Build([]RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, largeMsg, nil); err != nil {
+		t.Errorf("no code-explorer in the roster ⇒ backstop must be inert: %v", err)
+	}
+}
+
 // A pure-research request with no code-implementer node must NOT be flagged — the
 // backstop is conservative and never rejects a correct research plan.
 func TestBuildDoesNotFlagResearchWithoutImplementerNode(t *testing.T) {

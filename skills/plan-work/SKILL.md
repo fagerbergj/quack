@@ -80,12 +80,16 @@ verdict) and NEVER commits or pushes. How many nodes depends on the diff — the
 message gives you the changed-files list up front, so size the review before any
 node clones:
 
-- **Small or cohesive change** (one package, a handful of related files): ONE
-  `code-reviewer` node does the whole job — clone, check out the PR head, read the
-  diff, post the review. Do not fan out a trivial diff.
-- **Large or multi-area change** (several packages/subsystems): one `code-explorer`
-  per natural slice of the diff → ONE terminal `code-reviewer`. The explorers
-  gather findings in parallel; the reviewer validates and posts.
+- **Small or cohesive change** (one package, a handful of related files, roughly
+  UNDER ~800 changed lines): ONE `code-reviewer` node does the whole job — clone,
+  check out the PR head, read the diff, post the review. Do not fan out a trivial diff.
+- **Large change — multi-area OR high-churn** (several packages/subsystems, OR
+  roughly OVER ~800 changed lines even in one directory): one `code-explorer` per
+  slice of the diff → ONE terminal `code-reviewer`. The explorers gather findings
+  in parallel; the reviewer validates and posts. A single reviewer node CHOKES on a
+  large diff (it stalls on compaction and re-reads) — the run message's changed-
+  files list carries each file's `(+add/-del)` churn, so size the review from it
+  and slice a big PR into groups of ~300 changed lines each, one explorer per group.
 
 **Slice by cohesion, not by count.** Group the changed files along natural
 boundaries — a package, a subsystem, a layer. Files that must be understood
