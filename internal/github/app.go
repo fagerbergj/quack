@@ -50,6 +50,7 @@ type App struct {
 	tokens    map[int64]cachedToken // installation id → token
 	installs  map[string]int64      // "owner/repo" → installation id (stable; cached forever)
 	noInstall map[string]struct{}   // repos the App is NOT installed on (negative cache)
+	slug      string                // App's own slug (GET /app), cached; "" until first lookup
 
 	// Review-draft state. A PR review is built up comment-by-comment (each
 	// location-validated against the diff at add time) then submitted as one
@@ -577,6 +578,123 @@ func (a *App) listPRDiscussion(ctx context.Context, owner, repo string, number i
 // ghUserRef decodes GitHub's nested user object down to its login.
 type ghUserRef struct {
 	Login string `json:"login"`
+}
+
+// prReview is one submitted PR review, in the order GitHub returns them
+// (chronological). commit_id is GitHub's own durable "reviewed as of" marker —
+// the state conversational follow-up reviews key off, so no local store is needed.
+type prReview struct {
+	CommitID    string    `json:"commit_id"`
+	User        ghUserRef `json:"user"`
+	SubmittedAt string    `json:"submitted_at"`
+}
+
+// listReviews fetches a PR's submitted reviews in API (chronological) order.
+func (a *App) listReviews(ctx context.Context, owner, repo string, number int) ([]prReview, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	var out []prReview
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews?per_page=100", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// prRefs is a PR's head branch/commit and base branch — what a reviewer needs to
+// check out the changes. git_clone gives a shallow clone of the base branch, so
+// `git diff base...HEAD` is EMPTY until the head branch is fetched and checked
+// out; without these the reviewer flails, re-cloning to find a diff that isn't
+// there.
+type prRefs struct {
+	HeadRef string `json:"-"`
+	HeadSHA string `json:"-"`
+	BaseRef string `json:"-"`
+}
+
+// pullRefs fetches a PR's head ref/sha and base ref.
+func (a *App) pullRefs(ctx context.Context, owner, repo string, number int) (prRefs, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return prRefs{}, err
+	}
+	var out struct {
+		Head struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return prRefs{}, err
+	}
+	return prRefs{HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref}, nil
+}
+
+// botLogin returns quack's own commenting identity ("{app-slug}[bot]"),
+// fetched once via GET /app (App-JWT authed, not an installation token) and
+// cached for the process lifetime — an App's slug never changes.
+func (a *App) botLogin(ctx context.Context) (string, error) {
+	a.mu.Lock()
+	if a.slug != "" {
+		s := a.slug
+		a.mu.Unlock()
+		return s + "[bot]", nil
+	}
+	a.mu.Unlock()
+
+	jwtStr, err := a.appJWT()
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Slug string `json:"slug"`
+	}
+	if err := a.doJSON(ctx, http.MethodGet, "/app", "Bearer "+jwtStr, nil, &out); err != nil {
+		return "", err
+	}
+	if out.Slug == "" {
+		return "", fmt.Errorf("github: /app returned an empty slug")
+	}
+	a.mu.Lock()
+	a.slug = out.Slug
+	a.mu.Unlock()
+	return out.Slug + "[bot]", nil
+}
+
+// lastReviewedSHA returns the commit_id of quack's most recent review of a PR,
+// or "" if quack has never reviewed it (not an error). Prefers a review
+// matching quack's own bot login; falls back to the latest review with any
+// commit_id if the identity lookup fails or no review matches (e.g. slug
+// changed) — still a useful continuation marker.
+func (a *App) lastReviewedSHA(ctx context.Context, owner, repo string, number int) (string, error) {
+	reviews, err := a.listReviews(ctx, owner, repo, number)
+	if err != nil {
+		return "", err
+	}
+	login, err := a.botLogin(ctx)
+	if err != nil {
+		login = "" // identity lookup failed; fall back to latest-any below
+	}
+	var latestAny, latestOwn string
+	for _, r := range reviews {
+		if r.CommitID == "" {
+			continue
+		}
+		latestAny = r.CommitID
+		if login != "" && r.User.Login == login {
+			latestOwn = r.CommitID
+		}
+	}
+	if latestOwn != "" {
+		return latestOwn, nil
+	}
+	return latestAny, nil
 }
 
 // replyToReviewComment posts an in-thread reply to an existing inline review

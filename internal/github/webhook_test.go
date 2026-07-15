@@ -34,6 +34,7 @@ type fakeRunner struct {
 	answer       string
 	block        chan struct{}
 	calls        int32
+	noPlan       bool // when true, emit no dag_plan event (simulates a narration-only turn)
 }
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
@@ -41,6 +42,9 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		atomic.AddInt32(&f.calls, 1)
 		if f.block != nil {
 			<-f.block
+		}
+		if !f.noPlan {
+			yield(stream.SSEEvent{Name: stream.EventDagPlan}, nil) // a real run executes a plan
 		}
 		select {
 		case f.gotMessage <- message:
@@ -70,6 +74,12 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 		case strings.HasSuffix(r.URL.Path, "/reactions"):
 			w.WriteHeader(http.StatusCreated) // deterministic 👀 ack; ignored by these tests
 			fmt.Fprint(w, `{"id":1}`)
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.Contains(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, `[]`) // no prior review by default: first-time framing
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprint(w, `{"head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
 		case strings.HasSuffix(r.URL.Path, "/comments"):
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
@@ -328,6 +338,49 @@ func TestHandleWebhookMentionTriggersRun(t *testing.T) {
 	}
 }
 
+// A webhook run that answers WITHOUT executing a plan (a narration preamble like
+// "Let me start by cloning the repo…") is nudged exactly once to actually run the
+// work — the fix for reviews that posted the preamble as if it were the review.
+func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 4), answer: "reviewed", noPlan: true}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-posted: // wait for dispatch to finish
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back")
+	}
+	if got := atomic.LoadInt32(&runner.calls); got != 2 {
+		t.Errorf("runner invoked %d times, want 2 (initial run + one nudge when no plan ran)", got)
+	}
+
+	// Control: a run that DOES execute a plan is not nudged.
+	posted2 := make(chan string, 1)
+	gh2 := stubGitHub(t, posted2)
+	defer gh2.Close()
+	planned := &fakeRunner{gotMessage: make(chan string, 4), answer: "reviewed"} // noPlan=false ⇒ emits dag_plan
+	ext2 := newTestExtension(t, planned, gh2.URL)
+	rec2 := httptest.NewRecorder()
+	ext2.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	select {
+	case <-posted2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back (control)")
+	}
+	if got := atomic.LoadInt32(&planned.calls); got != 1 {
+		t.Errorf("runner invoked %d times, want 1 (a plan ran ⇒ no nudge)", got)
+	}
+}
+
 func TestHandleWebhookNoMentionIsNoop(t *testing.T) {
 	runner := &fakeRunner{gotMessage: make(chan string, 1)}
 	ext := newTestExtension(t, runner, "http://unused")
@@ -485,31 +538,114 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "review this, focusing on the auth path")
+	msg := ext.runMessage(pr, "review this, focusing on the auth path", "", prRefs{})
 	for _, want := range []string{
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
 		"github_add_review_comment",
 		"github_submit_review",
 		"github_list_pr_comments",
-		"github_pull_request", // implement-path guidance still present
+		"REVIEW-ONLY", // a review carries no delivery path
 	} {
 		if !strings.Contains(msg, want) {
-			t.Errorf("PR run message missing %q\n---\n%s", want, msg)
+			t.Errorf("PR review message missing %q\n---\n%s", want, msg)
+		}
+	}
+	// A review must carry NO delivery language, or the vetting gate reads a phantom
+	// commit/push demand off the node task and loops the worker (re-cloning,
+	// re-reviewing) to no end. This is the regression that made a review take 30+ min.
+	for _, forbidden := range []string{"github_pull_request", "git_push", "commit your work"} {
+		if strings.Contains(msg, forbidden) {
+			t.Errorf("PR review message must not mention delivery (%q):\n%s", forbidden, msg)
 		}
 	}
 
-	// A non-PR issue stays implement-only: no review-tool guidance.
+	// With the PR's refs known, the reviewer is told to CHECK OUT the head branch —
+	// without it a shallow clone's `git diff base...HEAD` is empty and it flails.
+	withRefs := ext.runMessage(pr, "review this", "", prRefs{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"})
+	for _, want := range []string{"git_checkout `feat/x`", "git_diff main...feat/x", "is EMPTY until you check out the head"} {
+		if !strings.Contains(withRefs, want) {
+			t.Errorf("PR review message missing checkout guidance %q\n---\n%s", want, withRefs)
+		}
+	}
+
+	// A PR request that DOES ask to change code keeps the implement path.
+	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", "", prRefs{})
+	if !strings.Contains(impl, "github_pull_request") {
+		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
+	}
+
+	// A non-PR issue stays implement-capable: no review-tool guidance.
 	var issue issueCommentPayload
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(issue, "add a feature")
+	imsg := ext.runMessage(issue, "add a feature", "", prRefs{})
 	if strings.Contains(imsg, "github_submit_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
 	if !strings.Contains(imsg, "github_pull_request") {
 		t.Errorf("issue run message should keep implement-path guidance:\n%s", imsg)
+	}
+}
+
+func TestRunMessageChangeAwareFraming(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		prevSHA     string
+		headSHA     string
+		wantContain []string
+		wantAbsent  []string
+	}{
+		{
+			name:        "no prior review keeps full first-time framing",
+			prevSHA:     "",
+			headSHA:     "",
+			wantAbsent:  []string{"previously reviewed", "Focus your review on what changed"},
+			wantContain: []string{"github_submit_review"},
+		},
+		{
+			name:    "prior review adds continuation framing with explicit head",
+			prevSHA: "aaa111",
+			headSHA: "ccc333",
+			wantContain: []string{
+				"previously reviewed this pull request at commit `aaa111`",
+				"current head is `ccc333`",
+				"git_diff aaa111..ccc333",
+				"do NOT repeat findings you already made",
+				"github_submit_review", // implement/review guidance still present
+			},
+		},
+		{
+			name:    "prior review without a known head falls back to HEAD",
+			prevSHA: "aaa111",
+			headSHA: "",
+			wantContain: []string{
+				"current head is `HEAD`",
+				"git_diff aaa111..HEAD",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := ext.runMessage(pr, "review this", tt.prevSHA, prRefs{HeadSHA: tt.headSHA})
+			for _, want := range tt.wantContain {
+				if !strings.Contains(msg, want) {
+					t.Errorf("message missing %q\n---\n%s", want, msg)
+				}
+			}
+			for _, absent := range tt.wantAbsent {
+				if strings.Contains(msg, absent) {
+					t.Errorf("message should not contain %q\n---\n%s", absent, msg)
+				}
+			}
+		})
 	}
 }
 

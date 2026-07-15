@@ -11,6 +11,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // maxWebhookBody caps the raw webhook payload we read (GitHub payloads are well
@@ -49,9 +52,14 @@ type issueCommentPayload struct {
 // pullRequestPayload is the subset of GitHub's pull_request webhook we use
 // (opened / labeled actions, for the pr_opened and label triggers).
 type pullRequestPayload struct {
-	Action string `json:"action"`
-	Number int    `json:"number"`
-	Label  struct {
+	Action      string `json:"action"`
+	Number      int    `json:"number"`
+	PullRequest struct {
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	} `json:"pull_request"`
+	Label struct {
 		Name string `json:"name"` // present on the "labeled" action
 	} `json:"label"`
 	Repository struct {
@@ -213,22 +221,46 @@ func verifySignature(secret, body []byte, header string) bool {
 
 // dispatch runs the orchestrator on the task and posts the final answer back as
 // a comment. Runs in its own goroutine with a detached, bounded context so a
-// slow run never blocks the webhook ack.
+// slow run never blocks the webhook ack. headSHA is the PR's current head
+// commit when known (the pr_opened/label auto-review path carries it from the
+// PR event) — dispatch fetches the PR's head/base refs authoritatively anyway.
 func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 
+	var prevSHA string
+	var refs prRefs
+	if p.Issue.PullRequest != nil {
+		if r, err := e.app.pullRefs(ctx, owner, repo, number); err != nil {
+			slog.Warn("github: pullRefs lookup failed; the reviewer may not find the PR's changes",
+				"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		} else {
+			refs = r
+		}
+		if sha, err := e.app.lastReviewedSHA(ctx, owner, repo, number); err != nil {
+			slog.Warn("github: lastReviewedSHA lookup failed, falling back to first-time review framing",
+				"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		} else {
+			prevSHA = sha
+		}
+	}
+
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
-	message := e.runMessage(p, task)
+	message := e.runMessage(p, task, prevSHA, refs)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
-	// Drain the stream to drive the run to completion; the answer is read from
-	// the persisted session afterwards.
-	for _, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
-		if err != nil {
-			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
-		}
+	// A webhook task always expects WORK (a review or a change), which runs as a
+	// plan. A mid-tier orchestrator model sometimes answers in prose without
+	// calling plan — "Let me start by cloning the repo…" — and that preamble would
+	// be posted as if it were the review. If no plan ran, nudge once to actually
+	// run it. (The orchestrator's own backstops cover empty/plan-not-executed
+	// turns; this covers the text-only-no-tool turn, which they accept as a valid
+	// direct answer — correct for chat, wrong for a webhook that dispatched work.)
+	if !e.drive(ctx, sessionID, message, owner, repo, number) {
+		slog.Warn("github: orchestrator produced no plan; nudging it to run the work once",
+			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		e.drive(ctx, sessionID, runNudge, owner, repo, number)
 	}
 	answer := strings.TrimSpace(e.runner.LatestAnswer(ctx, runUserID, sessionID))
 	if answer == "" {
@@ -241,13 +273,43 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number)
 }
 
+// runNudge is delivered when a webhook run answered without running a plan — a
+// firm instruction to actually do the work rather than narrate intent.
+const runNudge = "You answered without running anything. Do NOT reply in prose: use the plan and execute tools NOW to actually clone the repo, read the change, and carry out the review (or the requested change). Nothing has run yet and the user is waiting."
+
+// drive runs one orchestrator turn to completion and reports whether it EXECUTED
+// a plan (a dag_plan event). A webhook task always expects work, so a turn that
+// ran no plan produced only a direct-text answer — the work never happened.
+func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int) (planRan bool) {
+	for ev, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
+		if err != nil {
+			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+			continue
+		}
+		if ev.Name == stream.EventDagPlan {
+			planRan = true
+		}
+	}
+	return planRan
+}
+
 // runMessage frames the task for the orchestrator: the user's verbatim request
 // (kept front-and-center — it carries their focus), where the repo is, and how to
-// act. It gives BOTH paths — review and implement — since the orchestrator routes
-// review-vs-change from the request; when the mention is on a PR it also surfaces
-// the pull_number the review tools need (a PR shares its issue number).
-func (e *Extension) runMessage(p issueCommentPayload, task string) string {
+// act. A PR request with no implement-and-deliver intent is a REVIEW and MUST
+// carry no commit/push/PR language: otherwise the planner echoes it into the node
+// task and the vetting completion gate reads a phantom delivery demand off it
+// (delivery.go's demandedDelivery), looping the worker — re-cloning, re-reviewing
+// — until maxContinueRounds. vetting.ImplementationIntent is the SAME
+// discriminator the planner backstop uses, so the two can't drift.
+//
+// prevSHA is quack's last-reviewed commit on this PR ("" for a first-time
+// review); when set, the framing tells the model to focus on what changed since
+// then. refs carries the PR's head branch/commit and base branch — without a
+// checkout of the head branch a shallow clone's `git diff base...HEAD` is empty
+// and the reviewer flails re-cloning.
+func (e *Extension) runMessage(p issueCommentPayload, task, prevSHA string, refs prRefs) string {
 	isPR := p.Issue.PullRequest != nil
+	reviewOnly := isPR && !vetting.ImplementationIntent(task)
 	kind := "issue"
 	if isPR {
 		kind = "pull request"
@@ -257,6 +319,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task string) string {
 	if base == "" {
 		base = "main"
 	}
+	diffBase := refs.BaseRef
+	if diffBase == "" {
+		diffBase = base
+	}
+	headSHA := refs.HeadSHA
+	if headSHA == "" {
+		headSHA = "HEAD"
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are handling a request from GitHub user @%s, who mentioned you on %s/%s %s #%d.\n\n",
 		p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
@@ -265,8 +335,30 @@ func (e *Extension) runMessage(p issueCommentPayload, task string) string {
 		owner, repo, base, p.Repository.CloneURL)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d). ", p.Issue.Number, p.Issue.Number)
-		fmt.Fprintf(&b, "If the request is to REVIEW this PR: read its changes (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). ",
-			owner, repo, p.Issue.Number, p.Issue.Number)
+		if refs.HeadRef != "" {
+			// git_clone gives a shallow BASE branch, where `git diff base...HEAD` is
+			// EMPTY. The reviewer MUST check out the head branch to see the changes.
+			fmt.Fprintf(&b, "The PR's changes are on branch `%s` (head commit `%s`), based on `%s`. A git_clone gives only the base branch, so `git diff %s...HEAD` is EMPTY until you check out the head: run git_checkout `%s` FIRST (fetch/unshallow if needed), then `git_diff %s...%s` is exactly this PR's diff. Do this before reviewing — the base branch alone shows no changes. ",
+				refs.HeadRef, headSHA, diffBase, diffBase, refs.HeadRef, diffBase, refs.HeadRef)
+		}
+		if prevSHA != "" {
+			fmt.Fprintf(&b, "You previously reviewed this pull request at commit `%s`. The current head is `%s`. Focus your review on what changed since then — use git_diff %s..%s (or git log %s..%s) — and take the existing review discussion into account; do NOT repeat findings you already made. ",
+				prevSHA, headSHA, prevSHA, headSHA, prevSHA, headSHA)
+		}
+		lead := "If the request is to REVIEW this PR: read its changes"
+		if reviewOnly {
+			lead = "Review it: read its changes"
+		}
+		fmt.Fprintf(&b, "%s (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). ",
+			lead, owner, repo, p.Issue.Number, p.Issue.Number)
+	}
+	if reviewOnly {
+		// No commit/push/PR words: a review posts findings, it does not deliver code.
+		b.WriteString("This is a REVIEW-ONLY task: do NOT create a branch, commit, push, or open a pull request — deliver your findings with the review tools. ")
+		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
+			owner, repo, p.Issue.Number)
+		b.WriteString("Answer concisely and reference the review you posted.")
+		return b.String()
 	}
 	b.WriteString("If the task needs code changes, create a branch, commit your work, push it with git_push, then open a pull request with github_pull_request ")
 	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q). ", owner, repo, base)
