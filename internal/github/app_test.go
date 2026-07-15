@@ -311,3 +311,32 @@ func TestCreatePullRequestAndAddLabels(t *testing.T) {
 		t.Errorf("labels request body = %q", got)
 	}
 }
+
+// A failed labels API call must surface as an error — a PR that opens but never
+// gets its review label would silently stall the plan→implement→review chain.
+func TestAddLabelsAPIErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			http.Error(w, `{"message":"Validation Failed"}`, http.StatusUnprocessableEntity)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+
+	if err := app.addLabels(context.Background(), "acme", "widgets", 42, []string{"quack:review"}); err == nil {
+		t.Fatal("addLabels: expected error on 422 response, got nil")
+	}
+}
