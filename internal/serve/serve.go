@@ -773,6 +773,13 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if ac.JudgeRounds > 0 {
 				agentGateCfg.JudgeRounds = ac.JudgeRounds
 			}
+			// judge: false forces JudgeRounds to 0, so the gate skips the independent
+			// judge entirely (RunGatedRefine's round loop is round <= JudgeRounds). Used
+			// where the judge model cannot evaluate the output at all — a text judge
+			// scoring a media transcription it never saw is noise, not a check.
+			if ac.Judge != nil && !*ac.Judge {
+				agentGateCfg.JudgeRounds = 0
+			}
 			slog.Info("per-agent trust gate config", "component", "startup", "agent", name, "judge_rounds", agentGateCfg.JudgeRounds)
 			gateCfgs[name] = agentGateCfg
 		}
