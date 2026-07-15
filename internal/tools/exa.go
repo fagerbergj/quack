@@ -53,6 +53,7 @@ func (e *exaSearcher) Search(ctx context.Context, query string) ([]SearchResult,
 func (e *exaSearcher) searchREST(ctx context.Context, query string) ([]SearchResult, string, error) {
 	body, err := json.Marshal(map[string]any{
 		"query":      query,
+		"type":       "auto",
 		"numResults": exaNumResults,
 		"contents":   map[string]any{"highlights": true},
 	})

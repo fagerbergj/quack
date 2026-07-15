@@ -206,12 +206,10 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 	}
 	sb.WriteString("Scoring rubric:\n")
 	sb.WriteString(rubric)
-	// Score the node against ITS OWN task. The question below is the worker's full
-	// prompt, which carries the user's whole request as background (dag.buildTask) —
-	// and in a plan that ends in "commit, push, open a PR", judging a READ-ONLY node
-	// against that fails it for work that was never its to do and is already assigned
-	// to a sibling. The continuation loop made exactly this mistake and left every
-	// explorer unfinishable (see node.go); the judge must not repeat it one stage later.
+	// Score the node against ITS OWN task: the question below is the worker's
+	// full prompt, which carries the user's whole request as background —
+	// judged against that, a read-only node fails for work that was never its
+	// to do (the continuation loop once made the same mistake; see node.go).
 	if strings.TrimSpace(nodeTask) != "" {
 		sb.WriteString("\n\nWHAT YOU ARE SCORING — this node's own task, and nothing else:\n")
 		sb.WriteString(nodeTask)
@@ -248,9 +246,8 @@ const (
 // buildChangedFilesSection re-reads the files the worker actually wrote/edited
 // (act.written) off disk through the SAME jail its tools used and formats them
 // for the judge prompt, so a judge that (being a small model) won't tool-call
-// still scores the REAL post-edit source instead of the worker's self-report —
-// the fix for the 2026-07-12 run where a blind judge passed an incomplete,
-// non-compiling deliverable it never opened. Returns "" when there are no
+// still scores the REAL post-edit source instead of the worker's self-report.
+// Returns "" when there are no
 // written files or no jail is wired (pure-research nodes, unjailed deployments).
 // Best-effort: a path that fails to resolve/read is skipped, degrading to
 // today's no-injection behaviour rather than erroring.
@@ -646,10 +643,7 @@ func buildActivitySection(act workerActivity) string {
 // That prompt becomes contents[0] of the worker's next request, which context
 // compaction structurally CANNOT touch (summarisation leaves contents[0]
 // verbatim) — so an unbounded revise prompt is the one input that can push a
-// request past the model window with no recovery, spiral into an empty draft →
-// tool-less recovery → judge 0 → a bigger revise prompt, and strand the node
-// (live failure 2026-07-12: an implement node whose revise prompt inlined the
-// full upstream explore-repo report + the previous answer verbatim). A coding
+// request past the model window with no recovery and strand the node. A coding
 // worker has the repo on disk and its own session/tools, so a bounded excerpt
 // (head+tail, with a marker) carries the intent without a 20k-token replay.
 const (

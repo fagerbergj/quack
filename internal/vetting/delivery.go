@@ -1,17 +1,12 @@
 // The deterministic delivery check: a node whose task says "commit / push /
 // open a PR" cannot pass unless the workspace ledger shows it actually did.
 //
-// Live e2e 2026-07-13 (TC2): a code-implementer told to add a game and open a
-// pull request cloned the repo, wrote the game, ran the tests — then STOPPED,
-// ending its answer with a markdown code block showing the contents of the
-// registration file it was supposed to write. It never wrote that file, never
-// committed, never pushed, never opened the PR. The judge PASSED it at 0.7. The
-// rubric's task_completeness criterion is meant to catch exactly this (and did,
-// in two earlier runs) — but it is an LLM judgment, and it is flaky. Delivery is
-// mechanically checkable, so it is checked mechanically, in the cheap
-// deterministic stage, where a failure drives a targeted revise round BEFORE the
-// judge and sinks the round on its own (weakest-link) no matter what the judge
-// thinks.
+// The rubric's task_completeness criterion is an LLM judgment and it is flaky
+// (a live implementer "delivered" a markdown code block of the file it never
+// wrote, and passed). Delivery is mechanically checkable, so it is checked
+// mechanically, in the cheap deterministic stage, where a failure drives a
+// targeted revise round BEFORE the judge and sinks the round on its own
+// (weakest-link) no matter what the judge thinks.
 package vetting
 
 import (
@@ -65,12 +60,10 @@ var (
 // Shared with internal/dag's planner backstop so there is ONE delivery
 // vocabulary, not two that drift.
 //
-// Live 2026-07-13: "Review pull request #4 … (branch add-flappy-bird-openhands)"
-// was classified as implement-and-deliver — the verb matched only inside the
-// BRANCH NAME — so the planner's backstop demanded a code-implementer node for a
-// read-only review and rejected the plan 8 times, exhausting the re-plan budget.
-// Hence: verbs are looked for in prose only (identifiers and URLs are dropped),
-// and a request whose instruction is to REVIEW is not a request to change.
+// Verbs are looked for in prose only — identifiers and URLs are dropped (a
+// delivery verb inside a branch name once forced a code-implementer node onto a
+// read-only review) — and a request whose instruction is to REVIEW is not a
+// request to change.
 func ImplementationIntent(text string) bool {
 	if !deliveryRe.MatchString(text) {
 		return false
@@ -110,8 +103,8 @@ func demandedDelivery(task string) deliveryDemand {
 // delivery: research, analysis, synthesis), leaving those nodes untouched.
 //
 // The hard requirement stops at git_push on purpose. Committing and pushing are
-// mechanically universal (every code-implementer has the git tools) and are
-// exactly what the live failure lacked. Opening the PR itself goes through
+// mechanically universal (every code-implementer has the git tools). Opening
+// the PR itself goes through
 // github_pull_request, an OPTIONAL extension tool (a deployment without the
 // GitHub App installed has no way to call it) — hard-requiring it would deadlock
 // such a node in revise rounds it can never satisfy. It is recorded
@@ -161,12 +154,9 @@ var postedReviewRe = regexp.MustCompile(
 // github_submit_review, 1 when it does. ok=false ⇒ the criterion does not apply
 // (the task asks for no posted review), leaving every other node untouched.
 //
-// Live e2e 2026-07-13: a code-reviewer told to review a PR and post its findings
-// produced a non-empty answer — a status update about shallow-clone trouble —
-// and posted NOTHING (0 inline comments, 0 reviews on the PR). Non-empty answer,
-// no commit/push demanded ⇒ workIncomplete said "done" and the half-finished work
-// went to the flaky judge. Posting a review is mechanically checkable, so it is
-// checked mechanically, exactly like a commit/push.
+// A non-empty answer with nothing posted otherwise reads as "done" to
+// workIncomplete. Posting a review is mechanically checkable, so it is checked
+// mechanically, exactly like a commit/push.
 //
 // The submit is the whole requirement: github_add_review_comment only accumulates
 // a process-local DRAFT (see internal/github) — nothing is on the PR until
@@ -254,16 +244,11 @@ func noRunnableSurface(act workerActivity) bool {
 // criterion does not apply (no code change to execute, or nothing runnable in
 // it), leaving every other node untouched.
 //
-// Live e2e 2026-07-13: given run_command + write_file, the code-reviewer wrote a
-// throwaway trace harness, ran it, and printed "Final Y after 30 frames: 285.0 →
-// BUG CONFIRMED — bird Y NEVER CHANGES" — a show-stopper in a PR that passed
-// typecheck, lint and all 19 of its own unit tests (the tests assert the same
-// absent behaviour). On the NEXT run, same PR, it wrote no probe, reviewed by
-// reading, and called the game "fully functional". Roughly half the time, then.
-// Prompt guidance is not reliability, so the execution is required mechanically:
-// a read-only review is INCOMPLETE work (workIncomplete), which hands the
-// reviewer its tools back in a continuation round instead of letting a review
-// that verified nothing reach the flaky judge.
+// Merely prompting a reviewer to run the code works about half the time (a live
+// probe caught a show-stopper that a read-only review of the same PR then called
+// "fully functional"). Prompt guidance is not reliability, so the execution is
+// required mechanically: a read-only review is INCOMPLETE work (workIncomplete),
+// which hands the reviewer its tools back in a continuation round.
 //
 // Deliberately weak on WHAT ran: any successful run_command counts (the test
 // suite, a build, a probe). Grading the command itself would be an LLM judgment,

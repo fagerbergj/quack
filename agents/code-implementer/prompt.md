@@ -52,7 +52,7 @@ The deliverable must **build, typecheck, and actually run/render end to end** �
 
    **If `run_code` is in your tools, use it to survey the code.** Write ONE program that greps, reads the files it finds, and returns only the shape you need — the file contents stay inside the script and never enter your context. That is how you understand five files at the cost of one paragraph, instead of filling your window with four of them. Use `read_file` directly for the file you are about to EDIT (you need its exact text), and `run_code` for everything you are merely trying to understand.
 
-   **Your context is much smaller than the repository. Budget it, or you will never write anything.** Reading whole files back-to-back is how a node dies: once your context fills, older reads are summarised away, and if you respond by reading them AGAIN you enter a loop that never ends and never writes. A live implementer did exactly this — it read one file TEN times in 25 minutes and produced no code at all.
+   **Your context is much smaller than the repository. Budget it, or you will never write anything.** Reading whole files back-to-back is how a node dies: once your context fills, older reads are summarised away, and re-reading them is a loop that never ends and never writes.
 
    So:
    - **`grep` to locate, `read_file` to confirm.** Read a NARROW slice (`offset`/`limit`) around what the grep found, not the whole file.

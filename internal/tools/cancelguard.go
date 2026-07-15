@@ -12,28 +12,12 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// cancelGuard is the tool-layer half of node cancellation: a wrapper applied at
-// tool-registration time (registry.go's Build) around EVERY built-in tool, which
-// refuses the call outright when the calling node has been cancelled.
-//
-// Why the tool layer. vetting.NodeControl is cooperative and checked only at the
-// gate's STAGE boundaries (before drafting, between judge rounds) — mid-model-call
-// cancellation isn't available to us on ADK v2: the nodes of one plan share a
-// runner and its event stream, so cancelling the ADK run's context out from under
-// a worker would take out its siblings. That ceiling stands. But a worker in a
-// 44-tool-call draft loop is many MINUTES from its next stage boundary, so a user
-// cancel was indistinguishable from a no-op (live, 2026-07-13: "cancel and steer
-// is seemingly doing nothing").
-//
-// Tools are the one thing such a worker does constantly, and they already know
-// which node they run for — the advisor-thread marker in the prompt, the same
-// identity channel the per-node jail and the guard ladder ride (see cwd.go's
-// scopeFromContext). So the guard closes the gap where it is cheapest: a cancelled
-// node's NEXT tool call fails immediately with an instruction the model cannot
-// misread, and the gate's stage check remains the backstop that actually ends the
-// node and keeps its partial answer (continue-but-warn).
-//
-// Latency after this: one tool call, not instant. That is the honest number.
+// cancelGuard is the tool-layer half of node cancellation: applied around EVERY
+// built-in tool at registration (registry.Build), it refuses the call when the
+// calling node has been cancelled. The gate's stage check is cooperative and can
+// be many minutes of tool loop away (mid-model-call cancellation would take out
+// sibling nodes sharing the runner — that ceiling stands), so the guard makes a
+// cancel land on the node's NEXT tool call. Latency: one tool call, not instant.
 type cancelGuard struct {
 	inner     runnableTool
 	cancelled func(chatID, nodeID string) bool

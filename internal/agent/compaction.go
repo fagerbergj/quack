@@ -12,51 +12,18 @@ import (
 	"google.golang.org/genai"
 )
 
-// Context compaction runs as an ADK BeforeModelCallback, the only v1.4.0 hook
-// that sees the assembled request before it hits the model. The ADK runner
-// rebuilds every request from the full session history with no trimming, so a
-// node's worker session (worker tool loop + the trust gate's self-critique /
-// revision rounds, all in one session) grows past the model's window on large
-// research runs. The callback fires before each model call and, when the request
-// would overflow, summarises the older turns via a separate summariser model
-// into an anchored summary kept in session state, then DROPS those turns
-// (reusing the stored summary when the live tail still fits, so most turns cost
-// no summariser call).
+// Context compaction runs as an ADK BeforeModelCallback (the only hook that sees
+// the assembled request). When a request would overflow the window, older turns
+// are summarised into an anchored summary in session state and DROPPED; the
+// stored summary is reused while the live tail still fits.
 //
-// Compaction folds old turns into KNOWLEDGE; it never hollows them out in place.
-// The original port of opencode's cheap "prune" pass blanked old tool-output
-// payloads while keeping the call (opencode does the same:
-// packages/opencode/src/session/message-v2.ts:293 substitutes "[Old tool result
-// content cleared]" for a compacted part), leaving the model looking at
+// Invariant: after compaction the model never sees a tool call whose result was
+// replaced by a placeholder — a turn is gone (folded into the summary) or intact.
+// (A hollowed-out result reads as deleted work, and the model just redoes the call.)
 //
-//	FunctionCall:     read_file("crates/goose/src/agents/mod.rs")
-//	FunctionResponse: "[earlier tool output elided to fit the context window]"
-//
-// — evidence that the work happened with the learning deleted, whose only
-// rational response is to redo the call (live code run: the same file read 8x,
-// list_dir "." 9x per node). opencode survives it because it is driven by
-// huge-context frontier models where prune rarely fires; quack runs a 65k window
-// on a local model, so it fired constantly. Worse, prune ran FIRST and could
-// satisfy the budget on its own, short-circuiting the summariser, so the
-// knowledge was destroyed before anything could preserve it.
-//
-// The invariant now (goose's and OpenHands' design): after compaction the model
-// never sees a tool call whose result was replaced by a placeholder — either the
-// turn is gone, its content folded into the anchored summary, or it is intact.
-// goose summarises and then hides the old messages
-// (crates/goose/src/context_mgmt/mod.rs compact_messages), telling the model its
-// context was compacted; OpenHands' LLMSummarizingCondenser
-// (sdk/context/condenser/llm_summarizing_condenser.py) drops the forgotten events
-// and replaces them with a single summary event.
-//
-// Token counts are estimated as bytes/charsPerToken, then CALIBRATED by the
-// measured/estimated ratio of the previous turn (see calibrationRatio): the raw
-// estimate undercounts code-dense content (~3 chars/token or worse for
-// symbols/JSON) and cannot see the system instruction + tool declarations the
-// framework appends outside req.Contents, which together made the callback
-// declare victory at an estimated ~40k while the provider counted 66k and
-// 400'd. An exact tokenizer round trip per model turn isn't worth it (see
-// [llama-swap tokenize endpoint] if it ever needs to be exact).
+// Token counts are estimated as bytes/charsPerToken, then calibrated against the
+// provider's measured count from the previous turn — the raw estimate undercounts
+// code-dense content and can't see the system prompt + tool schemas.
 const (
 	charsPerToken = 4
 
@@ -74,32 +41,16 @@ const (
 	calibrationKey   = "quack.compaction.calibration"    // measured/estimated ratio from the last completed turn
 	overheadKey      = "quack.compaction.overhead"       // provider tokens NOT explained by req.Contents (system + tool schemas): ADDITIVE, not a multiplier
 
-	// Calibration ratio bounds. The floor is the DEFAULT (not 1.0) on purpose:
-	// undercounting is the fatal failure mode — a provider 400 strands the
-	// node's session for good, while over-compaction merely costs context — and
-	// the raw bytes/4 estimate structurally CANNOT see the system-instruction +
-	// tool-schema overhead the provider bills, an overhead that only grows as a
-	// session accretes tools/history. A turn whose measured prompt tokens happen
-	// to land at or below the estimate (prose the provider tokenizes more
-	// efficiently than 4 chars/token, a whitespace/markup-heavy turn) would, with
-	// a 1.0 floor, store calibration 1.0 and then trust it FOREVER — the estimate
-	// stops being inflated at all and the very next code-dense revise round
-	// undercounts and 400s (live spiral 2026-07-12: implement node, ratio=1,
-	// calibrated_tokens≈54k over a 45k budget, judge rounds 4–6 each dead in ~1m).
-	// So we never trust a factor below the 1.3 safety margin; a real measurement
-	// only ever scales the estimate UP from there. The ceiling caps freak ratios
-	// (a tiny request whose measurement is dominated by tool schemas, or a media
-	// turn the estimate doesn't count) so a single skewed turn can't force
-	// pathological over-compaction forever — the ratio is re-measured every turn.
+	// Calibration ratio bounds. The floor is the default, not 1.0: undercounting
+	// is the fatal failure mode (a 400 strands the session; over-compaction only
+	// costs context), so a measurement never drags the ratio below the safety
+	// margin. The ceiling caps freak ratios from a single skewed turn (tiny
+	// request dominated by tool schemas, uncounted media).
 	minCalibrationRatio = defaultCalibrationRatio
 	maxCalibrationRatio = 8.0
-	// Before any measurement exists (first model call of a session) we apply a
-	// mildly conservative default rather than trusting bytes/4: chars/4 already
-	// runs slightly under on prose and badly under on code, and the first
-	// request carries the full unseen system-prompt + tool-schema overhead.
-	// Triggering compaction a touch early is survivable; overflowing is not.
-	// minCalibrationRatio is pinned to this so a degenerate measured≤estimate
-	// turn can never drag the trusted ratio below the first-turn safety margin.
+	// First-turn default before any measurement: mildly conservative, because
+	// bytes/4 undercounts code and can't see the system-prompt + tool-schema
+	// overhead. Compacting a touch early is survivable; overflowing is not.
 	defaultCalibrationRatio = 1.3
 )
 
@@ -173,39 +124,22 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 		req.Contents = out
 		slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
 	}
-	// Last-resort backstop: summarisation leaves contents[0] verbatim
-	// (it's the self-contained task / revise prompt), so if contents[0] ALONE
-	// overflows the budget nothing above could have helped and the request is
-	// unsendable — the provider 400s and the session is stranded for good (the
-	// revise-round spiral, live failure 2026-07-12). Truncate the MIDDLE of an
-	// oversized contents[0] with a loud marker: losing the middle of an over-long
-	// task beats a dead session, and the worker still has its tools + (for a
-	// coding node) the repo on disk. Primary defence is not building a pathological
-	// contents[0] in the first place (see vetting.buildRevisionContent bounds);
-	// this only fires if some prompt still balloons past the window.
-	//
-	// This must key on contents[0]'s OWN size, not the whole request's. It used to
-	// test the whole request, so anything that inflated the estimate — notably a
-	// calibration ratio pinned at its 8.0 ceiling, which happens whenever the
-	// provider's FIXED overhead (system instruction + ~20 tool schemas, easily 6k
-	// tokens) dwarfs a small contents[0] — made it shred a task that was never too
-	// big. Live: a 728-character code-explorer task was truncated to nothing, and the
-	// worker woke up asking "Which repository would you like me to explore?".
+	// Last-resort backstop: summarisation never touches contents[0] (the task /
+	// revise prompt), so if it ALONE overflows the budget the request is
+	// unsendable. Truncate its middle with a loud marker — losing the middle of
+	// an over-long task beats a dead session. Must key on contents[0]'s OWN size,
+	// not the whole request's (a ceiling-pinned ratio once shredded a small task
+	// that was never too big).
 	if head := calibrated(estimateTokens(req.Contents[:1]), ratio, overhead); head > budget {
 		if truncateHeadToFit(req.Contents, budget, ratio) {
 			slog.Warn("compaction truncated an oversized task/revise prompt (contents[0]) as a last resort",
 				"component", "agent", "budget", budget, "head_tokens", head, "ratio", ratio, "session", ctx.SessionID())
 		}
 	}
-	// The verbatim tail is the last thing standing between us and a 400. splitHead
-	// admits the MOST RECENT content unconditionally — whatever its size — so one
-	// colossal tool result there survives every rung above. Live (2026-07-13): a
-	// `grep` matched inside a Next.js build dir and returned a 48 MB result; the
-	// request reached the provider at 520,756 tokens against a 65,536 window, 400'd,
-	// and killed two explorer nodes that had been working for hours.
-	//
-	// A truncated tool result is RECOVERABLE — the model re-runs the tool with a
-	// narrower query. A 400 is not. So clamp tool results in the tail, hardest last.
+	// splitHead admits the most recent content unconditionally, so one colossal
+	// tool result in the tail survives every rung above (a live grep once returned
+	// 48 MB). A truncated tool result is recoverable — the model re-runs the tool
+	// narrower; a 400 is not. Clamp tool results in the tail, hardest last.
 	for _, cap := range []int{8_000, toolOutputMaxChars, 500} {
 		if calibrated(estimateTokens(req.Contents), ratio, overhead) <= budget {
 			break
@@ -259,38 +193,15 @@ func clampToolResults(contents []*genai.Content, maxChars int) int {
 	return clamped
 }
 
-// preserveFor returns how much RECENT VERBATIM history to keep, in real tokens.
+// preserveFor returns how much recent verbatim history to keep, in ESTIMATE-space
+// tokens (what splitHead sums). It is the whole budget minus what the task +
+// summary need — a fraction of the budget, not a constant (a fixed cap on a small
+// window left room for only one file's worth of tail, evicting every prior read).
 //
-// It is a FRACTION OF THE BUDGET, not a constant — the point of compaction is to fit
-// the window, not to shrink to some fixed size and throw the rest of the window away.
-//
-// It used to be `min(max(budget/4, 2000), 8000)`, which on this deployment meant:
-//
-//	context window            65,536
-//	budget (minus output)     45,536
-//	preserved                  8,000   ← everything else summarised away
-//
-// 8_000 is opencode's MAX_PRESERVE_RECENT_TOKENS, ported here without its premise:
-// opencode runs 200k+ windows, where 8k of recent turns is a rounding error. On a 65k
-// window it is catastrophic. One source file is 6-7k tokens, so the tail could hold
-// exactly ONE FILE — every new read evicted the previous one, and we then blamed the
-// model for re-reading what we had deleted.
-//
-// Live (2026-07-13): a code-implementer ran 25 minutes, made 98 tool calls, and wrote
-// nothing. It read internal/tools/registry.go TEN TIMES. It was not confused; it simply
-// could never hold two files at once, so it could never write code that used both.
-//
-// What's left is the room the summary and the task actually need: contents[0] is kept
-// verbatim, and the anchored summary rides on it (mergeTaskSummary), so reserve those
-// plus the calibration overhead and preserve everything else.
-// It returns ESTIMATE-space tokens (what splitHead sums), not real ones.
-//
-// measured is the provider's own prompt-token count for the previous turn (0 if never
-// measured). When the provider says we are OVER budget while our estimate says we fit,
-// the estimate is simply wrong — that is what a measurement is for — and preserving
-// "budget minus reserved" would preserve us straight into a 400. In that case the tail
-// is bounded by the fraction of the CURRENT request that actually fits, which shrinks
-// in proportion to the real overshoot however wrong the ratio is.
+// measured is the provider's prompt-token count for the previous turn (0 if none).
+// When the provider says we are over budget while the estimate says we fit, the
+// estimate is wrong — bound the tail by the fraction of the current request that
+// actually fits, which shrinks with the real overshoot however wrong the ratio is.
 func preserveFor(budget int, contents []*genai.Content, ratio float64, overhead, measured int) int {
 	reserved := calibrated(estimateTokens(contents[:1]), ratio, overhead) + summaryOutputTokens
 	est := int(float64(budget-reserved) / ratio) // real tokens → estimate space
@@ -533,13 +444,9 @@ func recordUsage() llmagent.AfterModelCallback {
 		if e := ctx.State().Set(measuredInputKey, measured); e != nil {
 			slog.Warn("compaction: record usage", "component", "agent", "err", e)
 		}
-		// Calibrate the estimator: the BeforeModelCallback stashed the raw
-		// estimate for this same request, so measured/estimate is the true
-		// correction factor for this session's content mix + fixed overhead.
-		// Solve measured ≈ overhead + density×estimate for the OVERHEAD, holding the
-		// density at its conservative default. One equation, one unknown — and the
-		// overhead is the part that is actually fixed (system + tool schemas), so it
-		// generalises to the next turn instead of exploding on small content.
+		// Calibrate: solve measured ≈ overhead + density×estimate for the
+		// OVERHEAD, holding density at its default — the overhead is the part
+		// that is actually fixed, so it generalises to the next turn.
 		if est := intState(ctx, estimateKey); est > 0 {
 			overhead := measured - int(float64(est)*defaultCalibrationRatio)
 			if overhead < 0 {
@@ -578,21 +485,13 @@ func clampRatio(r float64) float64 {
 	return min(max(r, minCalibrationRatio), maxCalibrationRatio)
 }
 
-// calibrated scales a raw bytes/4 estimate into approximate real prompt tokens.
-// calibrated models the provider's prompt tokens as
+// calibrated scales a raw bytes/4 estimate into approximate real prompt tokens:
 //
 //	measured ≈ overhead + density × estimate(req.Contents)
 //
-// The overhead (system instruction + ~20 tool schemas — easily 6k tokens) is FIXED
-// and cannot be seen by estimateTokens; the density corrects bytes/4 for code-dense
-// content. Modelling that overhead as a MULTIPLIER — the old `estimate * ratio` —
-// blows up precisely when the content is small: a node's first turn carries a
-// 728-char task (~200 tokens estimated) while the provider bills ~6000, so
-// measured/estimate ≈ 30, pinned to the 8.0 ceiling. Every later turn was then
-// multiplied by 8, and a genuinely ~7k-token request was declared to be 56344 —
-// a number ~49k of which never existed. Compaction then panicked, found nothing to
-// free on a fresh session, and shredded contents[0]: the worker lost its task and
-// woke up asking "Which repository would you like me to explore?".
+// The overhead (system instruction + tool schemas) is FIXED and invisible to
+// estimateTokens, so it must be additive — folding it into a multiplier blows up
+// exactly when the content is small.
 func calibrated(estimate int, density float64, overhead int) int {
 	return overhead + int(float64(estimate)*density)
 }

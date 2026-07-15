@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"os"
+	"sync"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -78,6 +79,11 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	}
 	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"coder": ag}, nil,
 		vetting.NewJudgeFactory(stub, nil, nil), cfgFor, nil)
+	// One node at a time: the three root nodes share this ONE local llmagent, and a
+	// local llmagent is not safe for concurrent RunNode (production serves agents over
+	// A2A — separate sessions per call — so this only bites the test's local agent).
+	// The checks-folding assertions don't depend on concurrency; serial is deterministic.
+	ex.SetMaxActive(1)
 
 	// Single-terminal native graph rule (nativegraph.go): the three
 	// independent-checks nodes are roots (no DependsOn between each other —
@@ -99,9 +105,12 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	// multi-root-node graph, currently unreliable — a pre-existing gap
 	// unrelated to this change) read-back path entirely.
 	judgeDone := map[string]stream.AgentCompleteData{}
+	var judgeMu sync.Mutex
 	record := func(ev stream.SSEEvent, _ error) bool {
 		if d, ok := ev.Data.(stream.AgentCompleteData); ok && d.Stage == stream.StageJudge {
+			judgeMu.Lock()
 			judgeDone[d.NodeID] = d
+			judgeMu.Unlock()
 		}
 		return true
 	}

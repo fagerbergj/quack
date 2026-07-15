@@ -249,6 +249,7 @@ type AgentConfig struct {
 	Inputs        []string `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
 	Gated         *bool    `yaml:"gated"`          // wrap in the trust gate? default true; set false for side-effecting/action agents
 	JudgeRounds   int      `yaml:"judge_rounds"`   // per-agent judge/revise round budget; 0 ⇒ inherit gates.judge.max_rounds
+	Judge         *bool    `yaml:"judge"`          // run the independent judge? default true; set false when the judge model cannot evaluate this output (a text judge cannot see media)
 	MemoryRole    string   `yaml:"memory_role"`    // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no role bucket)
 }
 

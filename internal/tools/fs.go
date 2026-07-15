@@ -28,11 +28,9 @@ const defaultReadLimit = 500
 // decide whether it's binary (read_file, grep).
 const binarySniffBytes = 8 * 1024
 
-// grep's size bounds. caps.MaxResults bounds how MANY matches come back, which is
-// no bound at all on how BIG they are: one "line" of a minified bundle or a source
-// map is megabytes. Live (2026-07-13): a grep that matched inside a Next.js build
-// dir returned a 48 MB tool result, blew the 65k context window, and 400'd the node
-// dead. Bound the bytes, not just the count.
+// grep's size bounds. caps.MaxResults bounds how MANY matches come back, not how
+// BIG they are — one "line" of a minified bundle is megabytes (a live grep once
+// returned 48 MB). Bound the bytes, not just the count.
 const (
 	grepMatchMaxChars = 400             // per match, middle-elided (a minified line has no value anyway)
 	grepTotalMaxBytes = 256 * 1024      // per call, across all matches
@@ -52,37 +50,24 @@ func truncateMiddle(s string, maxChars int) string {
 	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
-// fsBinding is the (userID, jail, caps) triple every filesystem tool closes
-// over at construction — the isolation model's "workspace tools are built
-// bound to (userID, jail) per run — no identity parsing inside tool handlers"
-// rule (mirrors commit_memory's userID binding; see commit_memory.go). Quack
-// is single-user today (userID is always the "local" constant — see
-// internal/serve), so binding happens once at startup; the jail's path
-// resolution already keys on userID, so nothing here changes the day
-// multi-user lands. Each tool's actual logic lives in a method on fsBinding
-// (readFile, writeFile, …) so it's directly unit-testable without ADK's
-// agent.Context plumbing — the functiontool closure is a one-line adapter.
+// fsBinding is the (userID, jail, caps) triple every filesystem tool closes over
+// at construction — no identity parsing inside tool handlers. Tool logic lives in
+// methods on fsBinding so it's unit-testable without ADK's agent.Context; the
+// functiontool closure is a one-line adapter.
 type fsBinding struct {
 	userID string
 	jail   *workspace.Jail
 	caps   workspace.Caps
 	// cwd is the session working directory (NODE-relative, "" = the node's own
-	// root) a per-call copy carries — set by withCwd from ctx state, so the shared
-	// startup-constructed binding stays immutable. Every path this binding resolves
-	// goes through resolve, which applies cwd and the node dir (jailPath) before
-	// Jail.Resolve.
+	// root), set per call by withCwd so the shared startup binding stays immutable.
 	cwd string
-	// chatID is the per-chat scope (the workflow/chat session id) this call's
-	// paths resolve under (<root>/<user>/<chatID>/…) — set by withCwd from the
-	// advisor-thread marker in ctx (scopeFromContext). "" (a direct/un-gated
-	// call that can't recover the chat id) resolves the per-user root.
+	// chatID is the per-chat scope this call's paths resolve under
+	// (<root>/<user>/<chatID>/…). "" resolves the per-user root.
 	chatID string
-	// nodeDir is the calling DAG node's own directory within that chat scope
-	// (<chatID>/<nodeID>/) — the node's INVISIBLE ROOT: every model-supplied path
-	// is relative to it, and it is applied only here, at resolve time (jailPath),
-	// so concurrent nodes of one plan clone and read in separate trees instead of
-	// tripping over each other's repos, without the model ever seeing the dir.
-	// "" outside a gated node (see scopeFromContext).
+	// nodeDir is the calling node's directory within the chat scope — the node's
+	// INVISIBLE ROOT: every model-supplied path is relative to it, applied only at
+	// resolve time, so concurrent nodes work in separate trees without the model
+	// ever seeing the dir. "" outside a gated node.
 	nodeDir string
 }
 
