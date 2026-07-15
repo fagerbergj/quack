@@ -227,12 +227,7 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if !(e.triggers["issue_plan"] && p.Label.Name == e.labels.Plan) {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	synthetic := issueCommentPayload{Action: "created", planOnly: true}
+	synthetic := issueCommentPayload{Action: "created"}
 	synthetic.Issue.Number = p.Issue.Number
 	synthetic.Comment.User.Login = p.Sender.Login
 	synthetic.Repository.Name = p.Repository.Name
@@ -241,12 +236,69 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	synthetic.Repository.DefaultBranch = p.Repository.DefaultBranch
 	synthetic.Installation.ID = p.Installation.ID
 
-	task := planTask(p)
+	switch {
+	case e.triggers["issue_plan"] && p.Label.Name == e.labels.Plan:
+		synthetic.planOnly = true
+		go e.dispatch(synthetic, planTask(p))
+	case e.triggers["issue_implement"] && p.Label.Name == e.labels.Implement:
+		go e.runImplement(p, synthetic)
+	default:
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	slog.Info("github webhook received", "component", "github",
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
 		"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
-	go e.dispatch(synthetic, task)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// runImplement acks the implement label with a comment, gathers the issue's
+// discussion (the posted plan lives there), and dispatches the implementation
+// run on the issue's session — the same session the planning run used, so the
+// plan is also in the model's own history.
+func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload) {
+	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
+	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
+	ack := fmt.Sprintf("On it — implementing per the plan above. I'll open a pull request that references this issue (`Closes #%d`).", number)
+	if err := e.app.postIssueComment(ctx, owner, repo, number, ack); err != nil {
+		slog.Warn("github: implement ack comment failed", "component", "github",
+			"repo", owner+"/"+repo, "issue", number, "err", err)
+	}
+	comments, err := e.app.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		slog.Warn("github: listIssueComments failed; implementing from the issue body and session history alone",
+			"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+	}
+	cancel()
+	e.dispatch(synthetic, implementTask(p, comments, e.labels.Review))
+}
+
+// implementTask synthesizes the implementation request for an implement-labeled
+// issue: the issue itself plus its discussion (which carries the approved plan),
+// and delivery instructions that chain the new PR into the review label flow.
+func implementTask(p issuesPayload, comments []commentView, reviewLabel string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Implement issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
+	if body := strings.TrimSpace(p.Issue.Body); body != "" {
+		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
+	}
+	if len(comments) > 0 {
+		const cap = 40
+		b.WriteString("\nIssue discussion (includes the approved plan — follow it):\n")
+		for i, c := range comments {
+			if i == cap {
+				fmt.Fprintf(&b, "  … and %d more\n", len(comments)-cap)
+				break
+			}
+			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
+		}
+	}
+	fmt.Fprintf(&b, "\nA maintainer approved this for implementation. Implement it per the plan and discussion, then open a pull request whose body includes `Closes #%d`", p.Issue.Number)
+	if reviewLabel != "" {
+		fmt.Fprintf(&b, " and pass labels=[%q] to github_pull_request so the PR is queued for review", reviewLabel)
+	}
+	b.WriteString(". Never merge anything — merging is a human decision.")
+	return b.String()
 }
 
 // planTask synthesizes the planning request for a plan-labeled issue — there is

@@ -67,8 +67,9 @@ type GitHubExtensionConfig struct {
 // Applying a label requires repo write access, so labels double as the
 // permission model — no separate allowlist.
 type GitHubLabels struct {
-	Plan   string `yaml:"plan"`   // on an issue: post an implementation plan ("issue_plan" trigger)
-	Review string `yaml:"review"` // on a PR: review it once ("label" trigger; alias auto_review_label)
+	Plan      string `yaml:"plan"`      // on an issue: post an implementation plan ("issue_plan" trigger)
+	Implement string `yaml:"implement"` // on an issue: implement the plan, open a PR ("issue_implement" trigger)
+	Review    string `yaml:"review"`    // on a PR: review it once ("label" trigger; alias auto_review_label)
 }
 
 // defaultMention is the trigger phrase when github.mention is unset.
@@ -80,8 +81,14 @@ const defaultAutoReviewLabel = "quack-auto-review"
 // defaultPlanLabel is the label name when github.labels.plan is unset.
 const defaultPlanLabel = "quack:plan"
 
+// defaultImplementLabel is the label name when github.labels.implement is unset.
+const defaultImplementLabel = "quack:implement"
+
 // validGitHubTriggers is the whitelist for github.triggers entries.
-var validGitHubTriggers = map[string]bool{"mention": true, "pr_opened": true, "label": true, "issue_plan": true}
+var validGitHubTriggers = map[string]bool{
+	"mention": true, "pr_opened": true, "label": true,
+	"issue_plan": true, "issue_implement": true,
+}
 
 // Workspace defaults (see WorkspaceConfig). Every field is optional; a
 // config with no workspace: section at all still gets a working (default)
@@ -765,7 +772,7 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	for _, t := range g.Triggers {
 		if !validGitHubTriggers[t] {
-			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, or issue_plan)", t)
+			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, issue_plan, or issue_implement)", t)
 		}
 	}
 	// labels.review supersedes auto_review_label; the old key wins only when the
@@ -778,6 +785,9 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	if g.Labels.Plan == "" {
 		g.Labels.Plan = defaultPlanLabel
+	}
+	if g.Labels.Implement == "" {
+		g.Labels.Implement = defaultImplementLabel
 	}
 	return nil
 }

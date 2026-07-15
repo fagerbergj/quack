@@ -294,21 +294,57 @@ func (a *App) postIssueComment(ctx context.Context, owner, repo string, number i
 }
 
 // createPullRequest opens a PR (head → base) using the repo's installation
-// token and returns the new PR's html_url.
-func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, base, bodyText string) (string, error) {
+// token and returns the new PR's html_url and number.
+func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, base, bodyText string) (string, int, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var out struct {
 		HTMLURL string `json:"html_url"`
+		Number  int    `json:"number"`
 	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls", owner, repo)
 	reqBody := map[string]string{"title": title, "head": head, "base": base, "body": bodyText}
 	if err := a.doJSON(ctx, http.MethodPost, path, "token "+tok, reqBody, &out); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return out.HTMLURL, nil
+	return out.HTMLURL, out.Number, nil
+}
+
+// listIssueComments fetches an issue's conversation comments (where a posted
+// plan lives), flattening the nested user object to a login string.
+func (a *App) listIssueComments(ctx context.Context, owner, repo string, number int) ([]commentView, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID        int64     `json:"id"`
+		Body      string    `json:"body"`
+		User      ghUserRef `json:"user"`
+		CreatedAt string    `json:"created_at"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]commentView, 0, len(raw))
+	for _, c := range raw {
+		out = append(out, commentView{ID: c.ID, Body: c.Body, User: c.User.Login, CreatedAt: c.CreatedAt})
+	}
+	return out, nil
+}
+
+// addLabels applies labels to an issue or PR (GitHub's labels endpoint is the
+// issues one for both).
+func (a *App) addLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", owner, repo, number)
+	return a.doJSON(ctx, http.MethodPost, path, "token "+tok, map[string][]string{"labels": labels}, nil)
 }
 
 // createReview submits one PR review (a summary body + a verdict event, plus any
