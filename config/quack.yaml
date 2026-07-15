@@ -121,6 +121,7 @@ agents:
     context_window: 32768       # qwen3-omni-30b served -c 32768 --parallel 1
     tools: []
     inputs: [text, image, audio]
+    judge: false      # gemma (the judge) cannot open media — its verdict is noise
   image-reader:
     bundle: agents/image-reader
     provider: default
@@ -128,6 +129,7 @@ agents:
     context_window: 32768       # qwen3-vl-32b served -c 32768
     tools: []
     inputs: [text, image]
+    judge: false      # gemma (the judge) cannot open media — its verdict is noise
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
