@@ -95,6 +95,21 @@ function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
   return set
 }
 
+// turnFromLiveTurn synthesizes a persisted-shaped Turn from a finished LiveTurn,
+// for when a refetch races the server's own persistence of that turn (submit()
+// archiving a previous `live` before sending a follow-up). DAG turns keep only
+// the terminal node's answer text — enough to render, not a full DagOutputItem.
+function turnFromLiveTurn(live: LiveTurn): Turn {
+  const finalId = live.dag ? terminalNodeId(live.dag.nodes) : undefined
+  const text = live.dag ? (finalId != null ? (live.dag.nodeAnswer[finalId] ?? '') : live.text) : live.text
+  return {
+    id: live.id,
+    created_at: new Date().toISOString(),
+    input: { role: 'user', content: live.userText },
+    output: [{ id: `${live.id}-msg`, type: 'message', status: 'completed', content: [{ type: 'output_text', text }] }],
+  }
+}
+
 export class ChatStore {
   private states = new Map<string, ChatState>()
   private listeners = new Map<string, Set<Listener>>()
@@ -155,6 +170,12 @@ export class ChatStore {
         const res = await fetch(`/api/v1/chats/${chatId}`)
         if (res.ok) turns = ((await res.json()) as { turns?: Turn[] }).turns ?? turns
       } catch { /* keep local state; worst case the previous turn drops until refresh */ }
+      // The refetch can race the server's own persistence of the turn that just
+      // finished streaming — if it's missing from `turns`, keep it by synthesizing
+      // a Turn from the in-memory `live` rather than dropping the answer.
+      if (cur.live && !turns.some(t => t.id === cur.live!.id)) {
+        turns = [...turns, turnFromLiveTurn(cur.live)]
+      }
       cur = { ...this.get(chatId), turns }
     }
 
