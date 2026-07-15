@@ -745,7 +745,7 @@ const continuationMarker = "CONTINUE THE TASK — it is not finished."
 // asks for a WRITE-UP, which is exactly how half-finished work got frozen in place
 // and passed off to the judge. This one says: do the remaining work, with your
 // tools, and name the known gap.
-func buildContinuationPrompt(task string, act workerActivity, checks []string) string {
+func buildContinuationPrompt(task string, act workerActivity, checks []string, readOnly bool) string {
 	var sb strings.Builder
 	sb.WriteString(continuationMarker + "\n\n" +
 		"Your last turn produced no answer, or produced an answer for work you have not actually delivered. " +
@@ -761,7 +761,7 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string) s
 		sb.WriteString("Checks this node must pass: " + strings.Join(checks, ", ") + "\n\n")
 	}
 	var gaps []string
-	for _, c := range incompleteCriteria(task, act) {
+	for _, c := range incompleteCriteria(task, act, readOnly) {
 		if c.Score < 1 {
 			gaps = append(gaps, "Known gap: "+c.Reason+"\n\n")
 		}

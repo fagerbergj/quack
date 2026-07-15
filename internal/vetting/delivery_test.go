@@ -282,17 +282,33 @@ func TestActivityFromSessionRecordsReview(t *testing.T) {
 	}
 }
 
+// A read-only reviewer (ReadOnly=true — no commit/push tools) must NOT be held to a
+// delivery demand read off a task polluted with the PR's own "Add …/open a PR"
+// wording. It CANNOT commit, so demanding it loops forever; its completion is
+// review_posted, not delivery.
+func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
+	pollutedTask := "Review PR #5, and open a pull request is what it does — it will Add a Flappy Bird game. " +
+		"Read the diff and post inline review comments; submit the review."
+	act := workerActivity{reviewSubmitted: true, ranCommand: true}
+	if !workIncomplete("Reviewed.", pollutedTask, act, false) {
+		t.Skip("polluted task no longer reads as implement-and-deliver; the ReadOnly guard would not fire")
+	}
+	if workIncomplete("Reviewed.", pollutedTask, act, true) {
+		t.Error("a read-only reviewer with a submitted review must be COMPLETE — delivery must not apply to an agent that cannot commit")
+	}
+}
+
 // The continuation condition: a non-empty answer that posted no review is NOT
 // done — this is the exact live regression (a status update passed as an answer).
 func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	statusUpdate := "I encountered technical difficulties with the shallow clone and could not complete the review."
-	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}) {
+	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false) {
 		t.Error("a non-empty answer that posted no review must be incomplete — the continuation loop has to re-invoke the reviewer with its tools")
 	}
-	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}) {
+	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false) {
 		t.Error("a submitted review is complete work")
 	}
-	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}) {
+	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}, false) {
 		t.Error("a prose task with a non-empty answer must not be held incomplete")
 	}
 }
@@ -327,7 +343,7 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	if !strings.Contains(got.Reason, "run_command") {
 		t.Errorf("Reason = %q, want it to name run_command", got.Reason)
 	}
-	if !workIncomplete("The game is fully functional.", reviewTask, act) {
+	if !workIncomplete("The game is fully functional.", reviewTask, act, false) {
 		t.Error("a read-only review must be INCOMPLETE work — the continuation loop has to hand the reviewer its tools back")
 	}
 }
@@ -378,7 +394,7 @@ func TestBehaviourCriterionDoesNotFireOnProseTask(t *testing.T) {
 		if _, ok := behaviourCriterion(task, workerActivity{}); ok {
 			t.Errorf("behaviour_verified fired on a task with no code change to execute: %q", task)
 		}
-		if workIncomplete("…", task, workerActivity{}) {
+		if workIncomplete("…", task, workerActivity{}, false) {
 			t.Errorf("prose task held incomplete: %q", task)
 		}
 	}
@@ -398,7 +414,7 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 	}
 	if workIncomplete("Docs look good.", reviewTask, workerActivity{
 		paths: act.paths, reviewSubmitted: true,
-	}) {
+	}, false) {
 		t.Error("a submitted docs-only review is complete work")
 	}
 }

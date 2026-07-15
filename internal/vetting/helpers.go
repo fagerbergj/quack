@@ -35,6 +35,13 @@ type Config struct {
 	// URLs without retrieving anything themselves.
 	RequireRetrieval bool
 
+	// ReadOnly marks an agent with no delivery tools (no git_commit/git_push) — a
+	// code-reviewer or code-explorer. Such an agent can NEVER commit or push, so a
+	// delivery demand read off its task (e.g. a review task polluted with the PR's
+	// own "Add …/open a PR" description) is unsatisfiable and must not apply — its
+	// completion is review_posted / exploration, never delivery.
+	ReadOnly bool
+
 	// Memory, when set, receives the agent's staged tradecraft on a judge pass
 	// (M6). nil disables the gated commit path.
 	// ponytail: the gated-commit-on-pass path is not yet wired into RunGatedRefine
