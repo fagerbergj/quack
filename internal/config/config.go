@@ -50,10 +50,22 @@ type GitHubExtensionConfig struct {
 	PrivateKeyPath string `yaml:"private_key_path"` // path to a .pem file (alternative to private_key)
 	WebhookSecret  string `yaml:"webhook_secret"`   // ${VAR}
 	Mention        string `yaml:"mention"`          // trigger phrase, default "@quack"
+
+	// Triggers selects which webhook events fire a run: "mention" (default),
+	// "pr_opened" (auto-review on PR open), "label" (auto-review when
+	// AutoReviewLabel is applied).
+	Triggers        []string `yaml:"triggers"`
+	AutoReviewLabel string   `yaml:"auto_review_label"` // label name for the "label" trigger, default "quack-auto-review"
 }
 
 // defaultMention is the trigger phrase when github.mention is unset.
 const defaultMention = "@quack"
+
+// defaultAutoReviewLabel is the label name when github.auto_review_label is unset.
+const defaultAutoReviewLabel = "quack-auto-review"
+
+// validGitHubTriggers is the whitelist for github.triggers entries.
+var validGitHubTriggers = map[string]bool{"mention": true, "pr_opened": true, "label": true}
 
 // Workspace defaults (see WorkspaceConfig). Every field is optional; a
 // config with no workspace: section at all still gets a working (default)
@@ -731,6 +743,17 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	if g.Mention == "" {
 		g.Mention = defaultMention
+	}
+	if len(g.Triggers) == 0 {
+		g.Triggers = []string{"mention"}
+	}
+	for _, t := range g.Triggers {
+		if !validGitHubTriggers[t] {
+			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, or label)", t)
+		}
+	}
+	if g.AutoReviewLabel == "" {
+		g.AutoReviewLabel = defaultAutoReviewLabel
 	}
 	return nil
 }
