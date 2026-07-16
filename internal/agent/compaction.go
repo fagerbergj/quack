@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -116,6 +117,9 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 	if measuredInput(ctx) < budget && calibrated(estimateTokens(req.Contents), ratio, overhead) <= budget {
 		return
 	}
+	// before/after at Info: a compaction silently reshaping the model's context
+	// is undiagnosable from the outside (#277) — one line per applied compaction.
+	beforeMsgs, beforeTokens := len(req.Contents), estimateTokens(req.Contents)
 	// Reuse fast-path: session events are append-only, so the summary's
 	// coverage boundary is a stable index. If the anchored summary plus the
 	// live tail since it still fits, reapply it with NO summariser call — only
@@ -124,7 +128,10 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 		reused := append([]*genai.Content{mergeTaskSummary(req.Contents[0], prev)}, req.Contents[n:]...)
 		if calibrated(estimateTokens(reused), ratio, overhead) <= budget {
 			req.Contents = reused
-			slog.Debug("compaction reused anchored summary; no summariser call", "component", "agent", "covers_msgs", n, "session", ctx.SessionID())
+			slog.Info("compaction applied (reused anchored summary)", "component", "agent",
+				"msgs", fmt.Sprintf("%d→%d", beforeMsgs, len(req.Contents)),
+				"est_tokens", fmt.Sprintf("%d→%d", beforeTokens, estimateTokens(req.Contents)),
+				"covers_msgs", n, "budget", budget, "session", ctx.SessionID())
 			return
 		}
 	}
@@ -134,7 +141,10 @@ func enforceBudget(ctx adkagent.Context, c Compaction, budget int, req *model.LL
 	preserve := preserveFor(budget, req.Contents, ratio, overhead, measuredInput(ctx))
 	if out, ok := compact(ctx, c.Summarizer, req.Contents, preserve); ok {
 		req.Contents = out
-		slog.Debug("compaction summarised head", "component", "agent", "tokens_now", estimateTokens(req.Contents), "session", ctx.SessionID())
+		slog.Info("compaction applied (summarised head)", "component", "agent",
+			"msgs", fmt.Sprintf("%d→%d", beforeMsgs, len(req.Contents)),
+			"est_tokens", fmt.Sprintf("%d→%d", beforeTokens, estimateTokens(req.Contents)),
+			"budget", budget, "session", ctx.SessionID())
 	}
 	// Last-resort backstop: summarisation never touches contents[0] (the task /
 	// revise prompt), so if it ALONE overflows the budget the request is
