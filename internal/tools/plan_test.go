@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewPlanToolMetadata(t *testing.T) {
-	planner := dag.NewPlanner(nil, nil)
+	planner := dag.NewPlanner(nil, nil, nil)
 	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "")
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)

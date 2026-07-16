@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -64,12 +65,19 @@ type Planner struct {
 	// .quack/plan-pr5-tool-schemas.md. Empty (default) means checks are
 	// unavailable: any node that sets `checks` is rejected at plan time.
 	checkCommands []string
+	// judge scores a proposed plan against the plan-quality rubric
+	// (vetting.PlanJudge) — replaces the old regex routing backstop. nil when
+	// the judge stage is disabled (config.Gates.JudgeEnabled() == false):
+	// judgeRouting then no-ops rather than blocking plan validation on a
+	// dependency that was never wired.
+	judge vetting.PlanJudge
 }
 
-// NewPlanner returns a Planner over the available agent roster and the
-// configured check-command prefixes (workspace.check_commands; may be empty).
-func NewPlanner(agents []AgentInfo, checkCommands []string) *Planner {
-	return &Planner{agents: agents, checkCommands: checkCommands}
+// NewPlanner returns a Planner over the available agent roster, the
+// configured check-command prefixes (workspace.check_commands; may be empty),
+// and the plan judge (may be nil — see Planner.judge).
+func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
+	return &Planner{agents: agents, checkCommands: checkCommands, judge: judge}
 }
 
 // CheckCommands returns the configured check-command prefixes (may be empty).
@@ -97,14 +105,15 @@ type RawNode struct {
 
 // Build validates the submitted nodes into a Plan and stamps the turn context.
 // message is the verbatim user request, history the prior turns, attachments the
-// current media — all threaded to every node by the executor. Returns an error
-// (no silent fallback) so the orchestrator can fix and re-submit.
-func (p *Planner) Build(nodes []RawNode, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
+// current media — all threaded to every node by the executor. ctx bounds the
+// (optional) plan-judge call. Returns an error (no silent fallback) so the
+// orchestrator can fix and re-submit.
+func (p *Planner) Build(ctx context.Context, nodes []RawNode, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
 	plan, err := assemble(nodes, p.agents, p.checkCommands)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.checkImplementationRouting(plan, message); err != nil {
+	if err := p.judgeRouting(ctx, plan, message); err != nil {
 		return nil, err
 	}
 	if err := p.checkReviewFanout(plan, message); err != nil {
@@ -116,58 +125,50 @@ func (p *Planner) Build(nodes []RawNode, history []HistoryTurn, message string, 
 	return plan, nil
 }
 
-// checkImplementationRouting is the deterministic backstop for the (observed,
-// non-deterministic) failure where the orchestrator collapses a "implement X and
-// open a PR" request into a lone web-researcher analyze node and calls the run
-// done after merely describing the repo — the code is never written, committed,
-// or pushed. When the request reads as implement-AND-deliver (implementationIntent)
-// yet the plan has ZERO code-implementer nodes, the plan is malformed: reject it
-// with a targeted, fixable error so the orchestrator re-authors the DAG (its own
-// re-plan loop is the retry budget; the plan tool tells it to "fix the nodes and
-// call again"). A loud WARN also surfaces every firing for operators.
+// judgeRouting replaces the old regex routing backstop (checkImplementationRouting)
+// with a small rubric judged by the existing judge (vetting.PlanJudge): the
+// judge reads the proposed plan against the user's actual request and scores
+// its SHAPE — right terminal deliverable, addresses the ask, grounded, minimal
+// decomposition, verifiable — so intent comes from context rather than
+// verb/delivery-term string matching, which mis-fired on a plan-only run whose
+// injected acceptance text ("open a PR") described the EVENTUAL implementation,
+// not this request.
 //
-// Only a backstop for the obvious case — the plan-work skill guidance carries the
-// rest. The intent heuristic can't catch every phrasing and can't read intent
-// across a multi-turn conversation; it is deliberately conservative (verb AND
-// delivery term) so a correct research plan is never wrongly rejected.
-func (p *Planner) checkImplementationRouting(plan *Plan, message string) error {
-	// Meaningful only when the roster actually offers a code-implementer AND the
-	// request reads as implement-and-deliver.
-	hasImplementer := false
-	for _, a := range p.agents {
-		if a.Name == implementerAgent {
-			hasImplementer = true
-			break
-		}
-	}
-	if !hasImplementer || !implementationIntent(message) {
+// Graceful degradation: judge==nil (judge stage disabled) or a judge call error
+// both ALLOW the plan rather than blocking it — a routing check must never wedge
+// a run on its own failure. Only an explicit reject from a judge that actually
+// ran turns into an error, so the orchestrator's existing re-plan loop is the
+// retry budget (same contract checkImplementationRouting had).
+func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
+	if p.judge == nil {
 		return nil
 	}
-	// A plan that deliberately has a code-reviewer node is a REVIEW, not a botched
-	// implement plan — the orchestrator chose to critique, not to ship. The
-	// implement-intent heuristic misfires here because a PR review's injected
-	// context (the PR's own "Add …"/"Fix …" title and description) reads as
-	// implement-and-deliver; never force an implementer onto a review.
-	for _, n := range plan.Nodes {
-		if n.AgentName == reviewerAgent || n.AgentName == implementerAgent {
-			return nil
-		}
+	accept, reason, err := p.judge(ctx, message, planSummary(plan))
+	if err != nil {
+		slog.Warn("plan judge unavailable, allowing plan", "component", "planner", "error", err)
+		return nil
 	}
-	slog.Warn("plan rejected: implement-and-deliver request has no code-implementer node",
-		"component", "planner", "message", message)
-	// Be explicit about the ONE edit that fixes this. The first version of this
-	// message said only "re-author the plan with a code-implementer node", and a live
-	// orchestrator answered it TWICE by adding another RESEARCH node — it read the
-	// rejection as "your plan is incomplete" rather than "one specific node is
-	// missing". Name the fix; forbid the wrong one.
-	return fmt.Errorf("this request asks to implement and deliver code (commit/push/open a PR) "+
-		"but the plan has no %s node. The terminal deliverable MUST be a %s node whose task is to "+
-		"clone the repo, study its conventions, implement the change with tests, run the repo's "+
-		"checks, commit, push a branch, and open the PR — a repo analysis is a feeder step, never "+
-		"the deliverable.\n"+
-		"TO FIX: keep the nodes you already have and ADD ONE node with agent %q, depending on them, "+
-		"as the LAST node. Do NOT add more research/explorer nodes — research is not what is missing.",
-		implementerAgent, implementerAgent, implementerAgent)
+	if accept {
+		return nil
+	}
+	slog.Warn("plan rejected by plan judge", "component", "planner", "reason", reason, "message", message)
+	return fmt.Errorf("this plan was rejected: %s\nFix the nodes and call plan again.", reason)
+}
+
+// planSummary renders the plan for the plan judge: each node's id, agent,
+// dependencies, and full task text — enough for the judge to assess the
+// decomposition and terminal deliverable without re-running anything.
+func planSummary(p *Plan) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
+	for _, n := range p.Nodes {
+		fmt.Fprintf(&sb, "\n- %s (%s)", n.ID, n.AgentName)
+		if len(n.DependsOn) > 0 {
+			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
+		}
+		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
+	}
+	return sb.String()
 }
 
 // checkReviewFanout is the deterministic backstop for a large PR review planned as
@@ -208,15 +209,6 @@ func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 		"its slice, gather findings, do NOT post). Keep ONE %s node that depends on all the explorers, validates their "+
 		"pooled findings against the diff, and posts. Do NOT keep a lone %s node.",
 		totalChurn(message), reviewChurnThreshold, reviewerAgent, explorerAgent, reviewerAgent, reviewerAgent)
-}
-
-// implementationIntent reports whether message asks for code to be implemented AND
-// shipped (committed / pushed / PR'd) — the shape that MUST route to a
-// code-implementer node. The vocabulary lives in vetting (delivery.go), shared
-// with the deterministic delivery check that holds such a node to its word, so
-// routing and gating can never drift apart.
-func implementationIntent(message string) bool {
-	return vetting.ImplementationIntent(message)
 }
 
 // AttachmentDesc returns a human-readable description of the attachment list

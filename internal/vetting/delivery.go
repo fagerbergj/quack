@@ -21,8 +21,10 @@ import (
 // a version-control term that means the ask is to SHIP the code, not merely
 // describe it. Both must match for text to read as implement-AND-deliver
 // (ImplementationIntent) — which keeps pure-research asks ("how does X work")
-// from ever tripping either consumer: dag's planner routing backstop
-// (checkImplementationRouting) and this check.
+// from ever tripping this deterministic delivery check. The dag package's plan
+// routing check is now the rubric-judged PlanJudge (plan_judge.go), not this
+// vocabulary — ImplementationIntent is scoped to gating a NODE's own delivery
+// now, not to plan-time routing.
 var (
 	implVerbs  = `add|implement|create|write|fix|refactor|build|port|migrate|scaffold|generate`
 	implVerbRe = regexp.MustCompile(`(?i)\b(` + implVerbs + `)\b`)

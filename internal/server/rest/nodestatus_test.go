@@ -62,7 +62,7 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 	}
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
-	planner := dag.NewPlanner(nil, nil)
+	planner := dag.NewPlanner(nil, nil, nil)
 	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil)
 	return NewHandler(st, orch, nil, nil, nil)
 }
