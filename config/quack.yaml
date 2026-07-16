@@ -34,7 +34,10 @@ session:
   compaction:
     enabled: ${QUACK_COMPACTION_ENABLED}  # unset ⇒ false
     provider: default
-    model: ${QUACK_COMPACTION_MODEL}      # required when enabled; pick a worker-co-resident model (gemma)
+    # optional fallback only — compaction normally runs on the active run/node's
+    # own worker model (already resident, so it's swap-free by construction).
+    # Used only when there's no active worker model to reuse (e.g. standalone).
+    model: ${QUACK_COMPACTION_MODEL}      # unset ⇒ no fallback, active model only
 
 orchestrator:
   provider: default

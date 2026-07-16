@@ -207,12 +207,15 @@ type ProviderModel struct {
 
 // CompactionConfig configures automatic context compaction. When enabled, every
 // gated agent gets a BeforeModelCallback that, once a request would overflow the
-// model's context window, summarises the older conversation via the named
-// summariser model into an anchored summary and drops those turns.
+// model's context window, summarises the older conversation into an anchored
+// summary and drops those turns. Compaction runs on the active run/node's OWN
+// worker model — it's already resident, so this is swap-free by construction.
+// Provider/Model below are an optional FALLBACK, used only when no active
+// worker model is available (e.g. a standalone compaction).
 type CompactionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
-	Provider string `yaml:"provider"` // inference provider for the summariser model
-	Model    string `yaml:"model"`    // summariser model
+	Provider string `yaml:"provider"` // inference provider for the fallback summariser model
+	Model    string `yaml:"model"`    // fallback summariser model; empty ⇒ no fallback, active model only
 }
 
 // DagConfig tunes how the orchestrator's DAG is executed.
@@ -695,11 +698,13 @@ func (c *Config) validate() error {
 	}
 	if c.Session.Compaction.Enabled {
 		cc := c.Session.Compaction
-		if _, ok := c.Providers[cc.Provider]; !ok {
-			return fmt.Errorf("config: session.compaction.provider %q is not defined under providers", cc.Provider)
-		}
-		if cc.Model == "" {
-			return fmt.Errorf("config: session.compaction.enabled is true but session.compaction.model is empty")
+		// model is now an optional fallback: compaction normally rides the active
+		// run/node's own worker model. Only validate provider/model together when
+		// a fallback is actually configured.
+		if cc.Model != "" {
+			if _, ok := c.Providers[cc.Provider]; !ok {
+				return fmt.Errorf("config: session.compaction.provider %q is not defined under providers", cc.Provider)
+			}
 		}
 	}
 	// Tools: a store-backed tool must reference a defined store. (Embedder /
