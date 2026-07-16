@@ -52,7 +52,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"directly. If validation fails, fix the nodes and call again.",
 		},
 		func(tc agent.Context, a planArgs) (planResult, error) {
-			p, err := planner.Build(a.Nodes, history, message, attachments)
+			p, err := planner.Build(tc, a.Nodes, history, message, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}

