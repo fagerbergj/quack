@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # 1) Build the SPA (the committed src/generated client is used as-is).
-FROM node:24-alpine AS frontend
+# bookworm (glibc), NOT alpine (musl): the runtime stage copies node out of this
+# stage, and a musl-linked node cannot run on the debian runtime base.
+FROM node:24-bookworm-slim AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 # Cache mount: npm's download cache persists across builds, never lands in a layer.
@@ -10,7 +12,9 @@ COPY frontend/ ./
 RUN npm run build
 
 # 2) Build the Go server with the SPA embedded.
-FROM golang:1.25-alpine AS backend
+# bookworm (glibc), NOT alpine (musl) — same reason as the frontend stage: the
+# runtime copies /usr/local/go from here and must be able to execute it.
+FROM golang:1.25-bookworm AS backend
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -47,6 +51,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 WORKDIR /
 COPY --from=backend /quack /quack
+# Build toolchains for the coding agents (#283): the code-implementer must be
+# able to `go build/test` and `npx tsc`/`npm test` what it writes — without them
+# every check fails with "not found" and the worker grinds hunting a toolchain
+# that isn't there. Copied from the build stages, so runtime versions exactly
+# match what CI builds with (~+500MB, a deliberate size tradeoff). Go's
+# per-user caches (GOPATH/GOCACHE) default under $HOME, which quack points at
+# the writable workspace volume — nothing writes outside it.
+COPY --from=backend /usr/local/go /usr/local/go
+COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
+COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+ENV PATH=/usr/local/go/bin:$PATH
 # The config directory: quack.yaml plus files it references by relative path
 # (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
 COPY config/ /config/
