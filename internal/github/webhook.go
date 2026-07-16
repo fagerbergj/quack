@@ -329,7 +329,7 @@ func planTask(p issuesPayload) string {
 	if body := strings.TrimSpace(p.Issue.Body); body != "" {
 		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
 	}
-	b.WriteString("\nInvestigate the repository first, then lay out a concrete plan: the approach, the files to change, and how to verify it. A maintainer will review the plan before any implementation happens. Load and follow the `present-github-work` skill (load_skill) for how to structure and format the plan comment.")
+	b.WriteString("\nInvestigate the repository first, then lay out a concrete plan: the approach, the files to change, and how to verify it. A maintainer will review the plan before any implementation happens. Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the plan comment.")
 	return b.String()
 }
 
@@ -805,7 +805,7 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		if reviewOnly {
 			lead = "Review it: read its changes"
 		}
-		fmt.Fprintf(&b, "%s (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). Load and follow the `present-github-work` skill (load_skill) for how to structure and format the summary body. ",
+		fmt.Fprintf(&b, "%s (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the summary body. ",
 			lead, owner, repo, p.Issue.Number, p.Issue.Number)
 	}
 	if reviewOnly {

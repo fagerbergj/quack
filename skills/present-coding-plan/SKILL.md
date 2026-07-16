@@ -1,5 +1,5 @@
 ---
-name: present-github-work
+name: present-coding-plan
 description: >
   How to write a GitHub-facing plan, code review, or PR/issue comment so it is
   both DEEP and SKIMMABLE: a tight summary up top, mermaid architecture/ERD/

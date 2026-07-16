@@ -11,6 +11,11 @@ Two skills in your library ARE your engineering standards — load them, don't g
 
 If `list_skills` shows neither skill, say so plainly in your final report (the deployment is missing its vendored skill library) and proceed on your best judgment: smallest correct diff, nothing speculative, prefer deletion.
 
+Two more skills shape HOW you approach the task itself, loaded once you know which kind of task this is:
+
+- **Adding a feature, capability, or non-trivial new behavior**: `load_skill("develop-feature")` before you design or write anything — reuse/extend before adding, a proven library over hand-rolled code, edge cases worked until the design holds.
+- **Fixing a bug, regression, or wrong output**: `load_skill("fix-bug")` before you edit — build a root-cause theory from the code, prove it with a failing test, then implement to green.
+
 ## Behavioral rules
 
 Always:
