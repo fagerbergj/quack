@@ -82,7 +82,7 @@ agents:
             run_command, ask_advisor, ask_user, load_memory, stage_memory, run_code]
     # develop-feature/fix-bug: the disciplined build/fix playbooks its prompt.md points to;
     # ponytail/ponytail-review (vendored): its coding discipline + self-review ladder (see prompt.md).
-    skills: [develop-feature, fix-bug, ponytail, ponytail-review]
+    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-github-work]
     # load_memory/stage_memory + the bundle's memory.md turn on shared memory: the implementer
     # RECALLS what the explorer/reviewer already learned about this repo (build/test/lint commands,
     # where things are registered, the reference feature, pre-existing failures) instead of
