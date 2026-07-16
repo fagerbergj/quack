@@ -72,6 +72,10 @@ type Deps struct {
 	// (Tier 0 walls — the fs/git path jail, the OS sandbox around child
 	// processes — still always apply).
 	Guards map[string]string
+	// RunCodeGuardStandalone opts run_code out of the scriptTier floor: it is
+	// guarded at ONLY its own Guards[run_code] tier, not raised to the union of
+	// its bound tools' tiers. See config.Workspace.RunCodeGuardStandalone.
+	RunCodeGuardStandalone bool
 	// SafetyJudge backs the guard ladder's judge tier: an independent model
 	// call that allows/denies a proposed operation. nil ⇒ a tool configured
 	// for a judge tier fails closed at build time (see buildGuarded).
@@ -252,10 +256,17 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 // and a tool given a guard tier tomorrow cannot become reachable through a script
 // under a weaker guard than its own — even if nobody remembers to touch run_code's
 // entry.
+//
+// RunCodeGuardStandalone opts out of the floor: run_code is then guarded at only its
+// own configured tier. This can lower run_code below a bound tool's guard, so it is
+// for trusted single-tenant deployments where the container is the boundary and the
+// in-script judge gate would only thrash the model (its whole reason to exist).
 func scriptTier(floor guardTier, d Deps) (guardTier, bool) {
 	tier, _ := parseGuardTier(d.Guards[vetting.RunCodeToolName])
-	tier.Judge = tier.Judge || floor.Judge
-	tier.Confirm = tier.Confirm || floor.Confirm
+	if !d.RunCodeGuardStandalone {
+		tier.Judge = tier.Judge || floor.Judge
+		tier.Confirm = tier.Confirm || floor.Confirm
+	}
 	return tier, tier.Judge || tier.Confirm
 }
 

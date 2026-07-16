@@ -597,10 +597,11 @@ func TestScriptIsGuardedAsAWhole(t *testing.T) {
 // than its own, even if someone forgets to touch the config.
 func TestScriptTierIsAtLeastTheUnionOfItsTools(t *testing.T) {
 	cases := map[string]struct {
-		names  []string
-		guards map[string]string
-		want   guardTier
-		none   bool
+		names      []string
+		guards     map[string]string
+		standalone bool
+		want       guardTier
+		none       bool
 	}{
 		"a judge-tier tool raises the script to judge": {
 			names:  []string{"read_file", "delete_path"},
@@ -633,6 +634,21 @@ func TestScriptTierIsAtLeastTheUnionOfItsTools(t *testing.T) {
 			names: []string{"read_file"},
 			none:  true,
 		},
+		// Opt-out: RunCodeGuardStandalone drops the floor, so a bound judge-tier
+		// tool no longer raises run_code — it stays at its own (unset ⇒ none) tier.
+		"standalone opts out of the bound-tool floor": {
+			names:      []string{"read_file", "delete_path"},
+			guards:     map[string]string{"delete_path": "judge"},
+			standalone: true,
+			none:       true,
+		},
+		// Standalone still honors run_code's OWN configured tier.
+		"standalone still applies run_code's own tier": {
+			names:      []string{"read_file", "delete_path"},
+			guards:     map[string]string{"delete_path": "judge", vetting.RunCodeToolName: "confirm"},
+			standalone: true,
+			want:       guardTier{Confirm: true},
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -641,9 +657,10 @@ func TestScriptTierIsAtLeastTheUnionOfItsTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			built, err := Build(append(c.names, vetting.RunCodeToolName), Deps{
-				Workspace:       j,
-				WorkspaceUserID: "u1",
-				Guards:          c.guards,
+				Workspace:              j,
+				WorkspaceUserID:        "u1",
+				Guards:                 c.guards,
+				RunCodeGuardStandalone: c.standalone,
 				SafetyJudge: func(context.Context, string, string, string, map[string]any, string) (bool, string, error) {
 					return true, "", nil
 				},
