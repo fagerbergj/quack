@@ -293,6 +293,7 @@ type AgentConfig struct {
 	JudgeRounds   int      `yaml:"judge_rounds"`   // per-agent judge/revise round budget; 0 ⇒ inherit gates.judge.max_rounds
 	Judge         *bool    `yaml:"judge"`          // run the independent judge? default true; set false when the judge model cannot evaluate this output (a text judge cannot see media)
 	MemoryRole    string   `yaml:"memory_role"`    // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no role bucket)
+	Skills        []string `yaml:"skills"`         // built-in skill names this agent may load_skill (empty ⇒ none); project skills discovered in its jailed repo stay additive regardless (internal/skillsource)
 }
 
 // IsGated reports whether the agent runs under the trust gate (default true).
@@ -479,6 +480,7 @@ type OrchestratorConfig struct {
 	Provider string   `yaml:"provider"`
 	Model    string   `yaml:"model"`
 	Tools    []string `yaml:"tools"`
+	Skills   []string `yaml:"skills"` // built-in skill names the orchestrator may load_skill (see AgentConfig.Skills)
 }
 
 // ServerConfig holds HTTP server settings.

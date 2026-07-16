@@ -39,6 +39,8 @@ session:
   store: default_postgres
 
 orchestrator:
+  # see config/quack.yaml's orchestrator.skills comment for the routing rationale.
+  skills: [plan-work, format-markdown, present-github-work, contribute]
   provider: default
   model: ${QUACK_ORCH_MODEL}
   tools: [web_search, web_fetch, summarize, current_date]
@@ -52,6 +54,7 @@ agents:
     context_window: 65536
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
+    # no skills scoped: see config/quack.yaml's web-researcher comment
   code-implementer:
     bundle: agents/code-implementer
     provider: default
@@ -67,6 +70,7 @@ agents:
             cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
             run_command, ask_advisor, load_memory, stage_memory, run_code]
+    skills: [develop-feature, fix-bug, ponytail, ponytail-review]
     # load_memory/stage_memory + memory.md turn on shared memory: the implementer recalls what the
     # explorer/reviewer learned about THIS repo (buckets are by subject, not agent — internal/memory/scope.go).
   code-reviewer:
@@ -81,6 +85,7 @@ agents:
     # web_fetch (no web_search): verify a specific external claim; RequireRetrieval is already met by read_file.
     tools: [read_file, list_dir, glob, grep, web_fetch,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+    skills: [review-code, present-github-work]
   code-explorer:
     bundle: agents/code-explorer      # read-only explorer; rubric grades EXPLORATION quality (code-grounding/accuracy/usefulness), not web citations
     provider: default
@@ -94,6 +99,7 @@ agents:
     # run_code = CODE MODE: exploration is the read-many-files-and-summarize shape code mode is for.
     tools: [read_file, list_dir, glob, grep,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command, run_code]
+    skills: [research-git-repos]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

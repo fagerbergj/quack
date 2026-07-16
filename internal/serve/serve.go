@@ -237,20 +237,34 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		slog.Info("github extension enabled", "component", "startup", "issuer", gh.Issuer(), "mention", gh.Mention)
 	}
 
-	// Load skills once at startup; pass the toolset to every specialist agent so
-	// all agents can call load_skill / list_skills / load_skill_resource. Skills
-	// resolve from disk in cwd first (live repo edits) then the embedded copy,
-	// so an installed binary works from any directory; the vendored ponytail
-	// library (a git submodule — see vendorSkillsDir) merges in when present.
-	// Project-aware: on top of the built-in library (shipped + vendored), also
-	// surface a cloned repo's own .agents/skills / .claude/skills at load_skill
-	// time (discovered in the jail per query). Built-in ALWAYS wins a name
-	// collision — a cloned repo can't hijack a core skill; project skills are
-	// purely additive (see internal/skillsource).
-	skillSrc := skillsource.New(newSkillSource(vendorSkillsDir), jail, localUserID)
+	// Load skills once at startup. Skills resolve from disk in cwd first (live
+	// repo edits) then the embedded copy, so an installed binary works from any
+	// directory; the vendored ponytail library (a git submodule — see
+	// vendorSkillsDir) merges in when present. builtinSkillSrc is the raw
+	// built-in library (shipped + vendored) with no per-agent restriction — each
+	// agent gets its OWN load_skill/list_skills toolset scoped to its declared
+	// config.AgentConfig.Skills / OrchestratorConfig.Skills (buildAgents, and
+	// the orchestrator toolset built below), so an agent only sees the skills
+	// its role needs (internal/skillsource.Scoped). Project-aware wrapping (a
+	// cloned repo's own .agents/skills / .claude/skills, discovered in the jail
+	// per query) is applied AFTER scoping so project skills stay fully additive
+	// regardless of an agent's built-in scope, and built-in still wins any name
+	// collision (see internal/skillsource).
+	//
+	// skillSrc/skillTS (unscoped, full library) stay around for: the judge
+	// (it reasons about principles across the whole library, not one worker's
+	// slice — see buildAgents) and the orchestrator's static frontmatter loads
+	// just below (those list a skill's description in the prompt; they don't
+	// grant load_skill access on their own).
+	builtinSkillSrc := newSkillSource(vendorSkillsDir)
+	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("skills toolset init failed: %w", err)
+	}
+	newScopedSkillTS := func(names []string) (*skilltoolset.SkillToolset, error) {
+		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
+		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
 
 	// Semantic memory (M6): a memory tool bound to a vector store (with QUACK_QDRANT_URL
@@ -342,7 +356,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, nodeCancelled, nodeSteerGuidance)
+	clientMap, modelMap, servers, judgeFactory, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, nodeCancelled, nodeSteerGuidance)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -407,6 +421,13 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	}
 	orchSysPrompt := promptbuilder.Orchestrator(rosterSB.String(), []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
 
+	// The orchestrator's own load_skill scope — declarative, config/quack.yaml's
+	// orchestrator.skills — not the full library (see newScopedSkillTS above).
+	orchSkillTS, err := newScopedSkillTS(cfg.Orchestrator.Skills)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("orchestrator skills toolset init failed: %w", err)
+	}
+
 	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands)
 	// cfgFor supplies the per-agent trust-gate config to the graph executor; a
 	// non-gated (or gates-disabled) agent gets the zero Config (JudgeRounds=0), so
@@ -415,7 +436,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	executorRef.Store(executor) // arms the tools' cancel guard (see nodeCancelled above)
-	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, skillTS, userStore)
+	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
 
 	spa, err := fs.Sub(webDist, "web/dist")
@@ -466,7 +487,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, map[string]vetting.Config, error) {
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
@@ -742,8 +763,16 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				builtins = append(builtins, loadmemorytool.New())
 			}
 		}
+		// Each agent gets its OWN load_skill/list_skills scope — config's
+		// agents.<name>.skills — not the full library (see newScopedSkillTS /
+		// internal/skillsource.Scoped): a researcher shouldn't see code-review
+		// skills, an implementer shouldn't see the planner's, etc.
+		agentSkillTS, err := newScopedSkillTS(ac.Skills)
+		if err != nil {
+			return nil, nil, servers, nil, nil, fmtErr(name, "skills toolset: %v", err)
+		}
 		comp := compactionFor(ac, m)
-		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{skillTS}, comp, memGuidance)
+		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance)
 		if err != nil {
 			return nil, nil, servers, nil, nil, fmtErr(name, "build: %v", err)
 		}

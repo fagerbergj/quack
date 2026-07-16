@@ -40,6 +40,12 @@ session:
     model: ${QUACK_COMPACTION_MODEL}      # unset ⇒ no fallback, active model only
 
 orchestrator:
+  # plan-work: DAG-authoring playbook; format-markdown: direct-answer replies;
+  # present-github-work: plan/comment structure for GitHub-facing replies (#253);
+  # contribute: the issue→plan→agree→implement→review→merge umbrella that hands
+  # off to the others (kept alongside them, not on a worker — the orchestrator
+  # is the only agent that owns the whole loop).
+  skills: [plan-work, format-markdown, present-github-work, contribute]
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
   # tools: [commit_memory]        # bind commit_memory to enable user memory (recall + commit of personal facts)
@@ -57,6 +63,7 @@ agents:
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor,
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
+    # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
   code-implementer:
     bundle: agents/code-implementer   # prompt.md (ponytail ladder) + rubric.md (code-quality research + ponytail criteria)
     provider: default
@@ -73,6 +80,9 @@ agents:
             cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
             run_command, ask_advisor, ask_user, load_memory, stage_memory, run_code]
+    # develop-feature/fix-bug: the disciplined build/fix playbooks its prompt.md points to;
+    # ponytail/ponytail-review (vendored): its coding discipline + self-review ladder (see prompt.md).
+    skills: [develop-feature, fix-bug, ponytail, ponytail-review]
     # load_memory/stage_memory + the bundle's memory.md turn on shared memory: the implementer
     # RECALLS what the explorer/reviewer already learned about this repo (build/test/lint commands,
     # where things are registered, the reference feature, pre-existing failures) instead of
@@ -93,6 +103,9 @@ agents:
     # so a normal review that reads the changed files is fine; web_fetch does not force every review to fetch.
     tools: [read_file, list_dir, glob, grep, web_fetch,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+    # review-code: the review process its prompt.md follows; present-github-work: structure/depth
+    # for a GitHub-facing review body (see prompt.md and internal/github/webhook.go).
+    skills: [review-code, present-github-work]
   code-explorer:
     bundle: agents/code-explorer      # prompt.md (read-only explorer, research-git-repos) + rubric.md (grades EXPLORATION: code-grounding/accuracy/usefulness, NOT web citations) + memory.md (repo layout/conventions)
     provider: default
@@ -110,6 +123,8 @@ agents:
     # is for — the files it reads never enter its context. See docs/code-mode.md.
     tools: [read_file, list_dir, glob, grep,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command, run_code]
+    # research-git-repos: clone-and-read-locally discipline for understanding a repo (see prompt.md).
+    skills: [research-git-repos]
   synthesizer:
     bundle: agents/synthesizer
     provider: default

@@ -3,6 +3,7 @@ package skillsource
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -208,5 +209,82 @@ func TestMalformedSkillWarnsOnce(t *testing.T) {
 
 	if n := strings.Count(buf.String(), "bad-skill"); n != 1 {
 		t.Errorf("bad skill warned %d times across 3 listings, want exactly 1:\n%s", n, buf.String())
+	}
+}
+
+// TestScopedRestrictsListingAndLoad proves the per-agent scoping contract
+// (#251): a name outside an agent's declared scope is invisible to
+// ListFrontmatters and unloadable — exactly as if it never existed.
+func TestScopedRestrictsListingAndLoad(t *testing.T) {
+	_, _, builtin := setup(t, map[string]string{
+		"develop-feature": "builtin body",
+		"review-code":     "builtin body",
+	})
+	src := Scoped(builtin, []string{"develop-feature"})
+	ctx := context.Background()
+
+	fms, err := src.ListFrontmatters(ctx)
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+	got := names(fms)
+	if !got["develop-feature"] {
+		t.Errorf("names = %v, want in-scope develop-feature listed", got)
+	}
+	if got["review-code"] {
+		t.Errorf("names = %v, want out-of-scope review-code hidden", got)
+	}
+
+	if _, err := src.LoadFrontmatter(ctx, "develop-feature"); err != nil {
+		t.Errorf("LoadFrontmatter(develop-feature): %v", err)
+	}
+	if _, err := src.LoadFrontmatter(ctx, "review-code"); !errors.Is(err, skill.ErrSkillNotFound) {
+		t.Errorf("LoadFrontmatter(review-code) = %v, want ErrSkillNotFound (out of scope)", err)
+	}
+	if _, err := src.LoadInstructions(ctx, "review-code"); !errors.Is(err, skill.ErrSkillNotFound) {
+		t.Errorf("LoadInstructions(review-code) = %v, want ErrSkillNotFound (out of scope)", err)
+	}
+}
+
+// TestScopedPreservesProjectSkillDiscovery proves a cloned repo's own project
+// skills stay fully additive and unrestricted when Scoped is applied to only
+// the built-in layer (the wiring internal/serve/serve.go uses): a web-researcher-
+// shaped scope with NO code-review skills still sees a project skill discovered
+// in the jail, and the built-in library still wins a name collision.
+func TestScopedPreservesProjectSkillDiscovery(t *testing.T) {
+	j, userRoot, builtin := setup(t, map[string]string{
+		"plan-work":   "builtin body",
+		"review-code": "builtin body",
+	})
+	skillsDir := filepath.Join(userRoot, "chatA", "myrepo", ".agents", "skills")
+	writeSkill(t, skillsDir, "project-only-skill", "a project skill", "body")
+
+	restricted := Scoped(builtin, []string{"plan-work"}) // this agent's built-in scope is just plan-work
+	src := New(restricted, j, "u1")
+
+	fms, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+	got := names(fms)
+	if !got["plan-work"] {
+		t.Errorf("names = %v, want the in-scope built-in plan-work listed", got)
+	}
+	if got["review-code"] {
+		t.Errorf("names = %v, want out-of-scope built-in review-code hidden", got)
+	}
+	if !got["project-only-skill"] {
+		t.Errorf("names = %v, want the project skill visible regardless of built-in scope", got)
+	}
+
+	// Collision precedence is unaffected by scoping: the built-in "plan-work"
+	// still wins even though it's IN this agent's scope.
+	writeSkill(t, skillsDir, "plan-work", "a hijack attempt", "body")
+	fm, err := src.LoadFrontmatter(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatalf("LoadFrontmatter(plan-work): %v", err)
+	}
+	if fm.Description != "builtin plan-work" {
+		t.Errorf("LoadFrontmatter(plan-work).Description = %q, want the built-in one to win the collision", fm.Description)
 	}
 }
