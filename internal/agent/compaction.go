@@ -203,7 +203,16 @@ func fits(ctx adkagent.Context, threshold int, contents []*genai.Content) bool {
 // ("event_appended") from the zero-cost reuse of an already-durable summary
 // ("filtered_existing").
 func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens int, contents []*genai.Content, threshold int) {
-	slog.Info("compaction applied", "component", "agent", "path", path,
+	// event_appended is the EXPENSIVE path (a summariser LLM call) — one Info
+	// line per real compaction. filtered_existing is the FREE view-filter that
+	// runs on EVERY request once a durable summary exists; at Info it emits a
+	// line per model call (771 in one run) and reads as thrash when it is a
+	// no-cost reuse. Keep it at Debug.
+	level := slog.LevelInfo
+	if path == "filtered_existing" {
+		level = slog.LevelDebug
+	}
+	slog.Log(ctx, level, "compaction applied", "component", "agent", "path", path,
 		"msgs", fmt.Sprintf("%d→%d", beforeMsgs, len(contents)),
 		"est_tokens", fmt.Sprintf("%d→%d", beforeTokens, estimateTokens(contents)),
 		"threshold", threshold, "session", ctx.SessionID())

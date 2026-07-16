@@ -22,7 +22,12 @@ import (
 )
 
 // defaultReadLimit is read_file's default line window when `limit` is unset.
-const defaultReadLimit = 500
+// 2000 (not 500) so ordinary source files read WHOLE in one call: a truncated
+// read of a file the model needs entire (e.g. to append to it) sent weaker
+// models into re-reading the same head instead of paging — a harness-induced
+// loop (the repeat guard now backstops it, but the fix is to not truncate a
+// normal file at all).
+const defaultReadLimit = 2000
 
 // binarySniffBytes is how much of a file's head is checked for a NUL byte to
 // decide whether it's binary (read_file, grep).
@@ -142,6 +147,10 @@ type readFileResult struct {
 	Content    string `json:"content"`
 	Truncated  bool   `json:"truncated"`
 	TotalLines int    `json:"total_lines"`
+	// NextOffset is the `offset` to pass to read the NEXT window when Truncated;
+	// omitted otherwise. An explicit next step in the RESULT (not just the tool
+	// description) is what stops a model from re-reading offset 0 in a loop.
+	NextOffset int `json:"next_offset,omitempty"`
 }
 
 func newReadFile(d Deps) (tool.Tool, error) {
@@ -155,7 +164,8 @@ func newReadFile(d Deps) (tool.Tool, error) {
 			Description: fmt.Sprintf("Read a text file from your workspace. `path` is workspace-relative (never "+
 				"absolute). `offset` (0-based line, default 0) and `limit` (lines, default %d) window a large "+
 				"file; the result reports `total_lines` and sets `truncated: true` when more content exists than "+
-				"was returned — never an error, call again with a later offset. Binary files are rejected.",
+				"was returned. When truncated, the result gives `next_offset` — call again with `offset: next_offset` "+
+				"to continue (or read the file's END with `offset: total_lines - limit`). Never an error. Binary files are rejected.",
 				defaultReadLimit),
 		},
 		func(ctx agent.Context, a readFileArgs) (readFileResult, error) { return b.withCwd(ctx).readFile(a) },
@@ -215,12 +225,14 @@ func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 
 	var window []string
 	truncated := byteCapped
+	nextOffset := 0
 	if offset < total {
 		end := offset + limit
 		if end >= total {
 			end = total
 		} else {
 			truncated = true
+			nextOffset = end
 		}
 		window = lines[offset:end]
 	}
@@ -228,6 +240,7 @@ func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 		Content:    strings.Join(window, "\n"),
 		Truncated:  truncated,
 		TotalLines: total,
+		NextOffset: nextOffset,
 	}, nil
 }
 
