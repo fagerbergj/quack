@@ -356,6 +356,38 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 	}
 }
 
+// logRequestTail logs, at Debug, the shape of the request the model actually
+// receives: content count and the last 12 entries as role/kind (CALL:name /
+// RESP:name(bytes) / text). This is the ground truth for loop and compaction
+// diagnosis — "is the tool result the model should act on actually IN the
+// request?" — which the #252 investigation could otherwise only answer by
+// shipping a temporary instrumented image. QUACK_LOG_LEVEL=debug turns it on.
+func logRequestTail(req *model.LLMRequest, modelName string) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	start := len(req.Contents) - 12
+	if start < 0 {
+		start = 0
+	}
+	tail := make([]string, 0, len(req.Contents)-start)
+	for _, c := range req.Contents[start:] {
+		kind := "text"
+		for _, p := range c.Parts {
+			switch {
+			case p.FunctionCall != nil:
+				kind = "CALL:" + p.FunctionCall.Name
+			case p.FunctionResponse != nil:
+				rb, _ := json.Marshal(p.FunctionResponse.Response)
+				kind = fmt.Sprintf("RESP:%s(%db)", p.FunctionResponse.Name, len(rb))
+			}
+		}
+		tail = append(tail, c.Role+"/"+kind)
+	}
+	slog.Debug("request tail", "component", "inference", "model", modelName,
+		"n_contents", len(req.Contents), "tail", strings.Join(tail, " | "))
+}
+
 // toolCallBuilder helps aggregate tool call information across streaming chunks.
 type toolCallBuilder struct {
 	id   string
@@ -372,6 +404,7 @@ func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (ope
 		}
 		messages = append(messages, msgs...)
 	}
+	logRequestTail(req, modelName)
 
 	openaiReq := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(modelName),
