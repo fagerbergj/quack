@@ -458,7 +458,7 @@ func verifySignature(secret, body []byte, header string) bool {
 // PR event) — dispatch fetches the PR's head/base refs authoritatively anyway.
 func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
-	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), e.runTimeout)
 	defer cancel()
 
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
@@ -520,15 +520,29 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		return
 	}
-	answer := strings.TrimSpace(e.runner.LatestAnswer(ctx, runUserID, sessionID))
-	if answer == "" {
+	// The tail must OUTLIVE the run: after a deadline kill, ctx is dead and both
+	// LatestAnswer and the comment post would fail with it — the run then dies
+	// with zero external signal (#286: a 2h-deadline kill posted nothing). Use a
+	// fresh bounded context, and say what actually happened.
+	tailCtx := ctx
+	timedOut := ctx.Err() != nil
+	if timedOut {
+		var tailCancel context.CancelFunc
+		tailCtx, tailCancel = context.WithTimeout(context.Background(), time.Minute)
+		defer tailCancel()
+	}
+	answer := strings.TrimSpace(e.runner.LatestAnswer(tailCtx, runUserID, sessionID))
+	if timedOut {
+		answer = fmt.Sprintf("⚠️ quack hit its run deadline (%s) before finishing; nothing was delivered. Re-apply the label to retry.\n\nLast progress:\n\n%s",
+			e.runTimeout, answer)
+	} else if answer == "" {
 		answer = "quack finished but produced no answer."
 	}
-	if err := e.app.postIssueComment(ctx, owner, repo, number, answer); err != nil {
+	if err := e.app.postIssueComment(tailCtx, owner, repo, number, answer); err != nil {
 		slog.Error("github comment post failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 		return
 	}
-	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number)
+	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number, "timed_out", timedOut)
 }
 
 // persistGithubLink stores the web URL of the originating issue/PR on the
@@ -579,9 +593,16 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 					runlog.SaveDagPlan(e.store, sessionID, turnID, d)
 				}
 			}
-		case stream.EventAgentToolCall:
-			if d, ok := ev.Data.(stream.AgentToolCallData); ok && (d.Name == "github_submit_review" || d.Name == "github_pull_request") {
-				delivered = true
+		case stream.EventAgentToolResult:
+			// Delivered = the tool SUCCEEDED, not merely that it was called: a
+			// failed github_pull_request (e.g. killed at the run deadline before
+			// the branch was pushed) previously flipped this on the CALL alone and
+			// suppressed the failure comment — a silent death with a "delivered"
+			// log line and nothing on GitHub (#286).
+			if d, ok := ev.Data.(stream.AgentToolResultData); ok && (d.Name == "github_submit_review" || d.Name == "github_pull_request") {
+				if m, ok := d.Result.(map[string]any); !ok || m["error"] == nil {
+					delivered = true
+				}
 			}
 		}
 		if pub != nil {

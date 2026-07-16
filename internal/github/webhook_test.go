@@ -37,7 +37,8 @@ type fakeRunner struct {
 	block        chan struct{}
 	calls        int32
 	noPlan       bool   // when true, emit no dag_plan event (simulates a narration-only turn)
-	emitTool     string // when set, emit an agent_tool_call with this name (e.g. github_submit_review)
+	emitTool     string // when set, emit a call + successful result for this tool (e.g. github_submit_review)
+	emitToolErr  string // when set with emitTool, the result carries this error instead (a FAILED delivery)
 }
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
@@ -51,6 +52,11 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		}
 		if f.emitTool != "" {
 			yield(stream.SSEEvent{Name: stream.EventAgentToolCall, Data: stream.AgentToolCallData{Name: f.emitTool}}, nil)
+			result := map[string]any{"url": "https://github.com/acme/widgets/pull/7"}
+			if f.emitToolErr != "" {
+				result = map[string]any{"error": f.emitToolErr}
+			}
+			yield(stream.SSEEvent{Name: stream.EventAgentToolResult, Data: stream.AgentToolResultData{Name: f.emitTool, Result: result}}, nil)
 		}
 		select {
 		case f.gotMessage <- message:
@@ -511,6 +517,39 @@ func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
 	case body := <-posted:
 		t.Errorf("a duplicate summary comment was posted despite a submitted review: %q", body)
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// A FAILED delivery must not count as delivered: a github_pull_request whose
+// result carries an error (e.g. the run was killed before the branch was pushed)
+// previously suppressed the summary/failure comment on the CALL alone — a silent
+// death with a "delivered" log line and nothing on GitHub (#286).
+func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "partial progress",
+		emitTool: "github_pull_request", emitToolErr: "github_pull_request: branch not pushed"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", pullCommentBody("@quack implement this")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run was not dispatched")
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "partial progress") {
+			t.Errorf("fallback comment = %q; want the run's answer", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted after a FAILED delivery — the silent-death bug")
 	}
 }
 

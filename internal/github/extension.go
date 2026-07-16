@@ -24,8 +24,10 @@ const WebhookPath = "/api/v1/github/webhook"
 // the local UI's "local" user, so App runs keep their own sessions.
 const runUserID = "github"
 
-// runTimeout bounds a single webhook-driven orchestrator run.
-const runTimeout = 2 * time.Hour
+// defaultRunTimeout bounds a single webhook-driven orchestrator run when
+// extensions.github.run_timeout_minutes is unset (mirrors config.applyDefaults
+// for callers that build the struct directly).
+const defaultRunTimeout = 2 * time.Hour
 
 // reactionTimeout bounds the deterministic 👀 acknowledgment reaction on a
 // mention — a quick, best-effort POST that must not linger.
@@ -60,6 +62,8 @@ type Extension struct {
 	// corrupt each other (garbled answers, cross-run tool events). sessionID →
 	// *sync.Mutex.
 	runLocks sync.Map
+	// runTimeout bounds one webhook-driven run (extensions.github.run_timeout_minutes).
+	runTimeout time.Duration
 }
 
 // sessionLock returns the per-session mutex, creating it on first use.
@@ -107,16 +111,21 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 	if st != nil {
 		eventLog = runlog.NewEventLog(st)
 	}
+	runTimeout := defaultRunTimeout
+	if cfg.RunTimeoutMinutes > 0 {
+		runTimeout = time.Duration(cfg.RunTimeoutMinutes) * time.Minute
+	}
 	return &Extension{
-		app:      app,
-		secret:   []byte(cfg.WebhookSecret),
-		mention:  cfg.Mention,
-		triggers: triggers,
-		labels:   labels,
-		runner:   runner,
-		store:    st,
-		hub:      hub,
-		eventLog: eventLog,
+		app:        app,
+		secret:     []byte(cfg.WebhookSecret),
+		mention:    cfg.Mention,
+		triggers:   triggers,
+		labels:     labels,
+		runner:     runner,
+		store:      st,
+		hub:        hub,
+		eventLog:   eventLog,
+		runTimeout: runTimeout,
 	}
 }
 

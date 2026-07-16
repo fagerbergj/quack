@@ -61,6 +61,13 @@ type GitHubExtensionConfig struct {
 	// Labels names the labels that drive the label-based workflow. Each label
 	// only acts when its trigger is enabled (see Triggers).
 	Labels GitHubLabels `yaml:"labels"`
+
+	// RunTimeoutMinutes bounds a single webhook-driven run. Default 120. Size it
+	// to the DEPLOYMENT's model speed: a ~30 tok/s local coder with judge+revise
+	// rounds can legitimately need hours on an implement run — a too-small value
+	// kills the run mid-push (dogfood: died at exactly 2h, before the branch
+	// was pushed).
+	RunTimeoutMinutes int `yaml:"run_timeout_minutes"`
 }
 
 // GitHubLabels names the repo labels that drive quack's label-based workflow.
@@ -782,6 +789,9 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	if g.WebhookSecret == "" {
 		return fmt.Errorf("config: extensions.github.webhook_secret is required")
+	}
+	if g.RunTimeoutMinutes <= 0 {
+		g.RunTimeoutMinutes = 120
 	}
 	if g.Mention == "" {
 		g.Mention = defaultMention
