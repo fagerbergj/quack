@@ -150,6 +150,9 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	if d.Guarded == nil {
 		d.Guarded = GuardedClient()
 	}
+	// One repeat-state per build (= per agent): consecutive identical calls are
+	// judged across ALL of the agent's tools within a session (see repeatguard.go).
+	repeats := newRepeatStates()
 	// Every tool is built ONCE and then viewed two ways:
 	//
 	//   out       — the MODEL's direct, one-call-per-turn tools: the full guard
@@ -196,6 +199,9 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 				return nil, fmt.Errorf("tools: guard %q: %w", name, err)
 			}
 		}
+		if direct, err = repeatWrap(direct, repeats); err != nil {
+			return nil, fmt.Errorf("tools: repeat guard %q: %w", name, err)
+		}
 		if direct, err = steerWrap(direct, name, d); err != nil {
 			return nil, err
 		}
@@ -204,7 +210,11 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		}
 		out = append(out, direct)
 
-		script, err := steerWrap(t, name, d)
+		script, err := repeatWrap(t, repeats)
+		if err != nil {
+			return nil, fmt.Errorf("tools: repeat guard %q: %w", name, err)
+		}
+		script, err = steerWrap(script, name, d)
 		if err != nil {
 			return nil, err
 		}
