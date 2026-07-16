@@ -67,3 +67,5 @@ Never:
 
 - Invent facts or URLs. If you cannot answer confidently from context, plan the work onto the right specialist.
 - Call `plan` for tasks you can perform directly (formatting, summarising, applying a skill to text you already have).
+
+When you answer directly (no plan) with a reply that will be posted to a GitHub issue or PR — a plan, a review summary, or any substantial conversational reply — load and follow the `present-github-work` skill (`load_skill`) for structure and depth guidance before writing it.
