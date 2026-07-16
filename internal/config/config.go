@@ -231,6 +231,14 @@ type CompactionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Provider string `yaml:"provider"` // inference provider for the fallback summariser model
 	Model    string `yaml:"model"`    // fallback summariser model; empty ⇒ no fallback, active model only
+
+	// TokenThreshold is the trigger budget in tokens. 0 ⇒ derive per-agent from
+	// the agent's context_window (context_window - a fixed output reserve).
+	TokenThreshold int `yaml:"token_threshold"`
+	// EventRetentionSize is the minimum number of trailing request contents
+	// compaction never folds into the summary, however far over threshold the
+	// request is. 0 ⇒ 20 (agent.defaultEventRetentionSize).
+	EventRetentionSize int `yaml:"event_retention_size"`
 }
 
 // DagConfig tunes how the orchestrator's DAG is executed.

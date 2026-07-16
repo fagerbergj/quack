@@ -41,18 +41,19 @@ func TestCompactionUsesActiveModelNotFixedConfigModel(t *testing.T) {
 	active := &fakeLLM{text: "## Goal\n- from active model"}
 	fixedConfig := &fakeLLM{text: "## Goal\n- from fixed config model"}
 
+	task := textContent(genai.RoleUser, "the self-contained task")
+	contents := []*genai.Content{task}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+
 	comp := Compaction{
 		Summarizer:    ResolveSummarizer(active, fixedConfig),
-		ContextWindow: 25_000,
+		ContextWindow: budgetWindow(contents, defaultEventRetentionSize),
 		Enabled:       true,
 	}
 	cb := compactionCallback(comp)
 
-	task := textContent(genai.RoleUser, "the self-contained task")
-	contents := []*genai.Content{task}
-	for i := 0; i < 20; i++ {
-		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
-	}
 	req := &model.LLMRequest{Contents: contents}
 	if _, err := cb(newFakeCtx(), req); err != nil {
 		t.Fatalf("callback err: %v", err)
@@ -64,8 +65,11 @@ func TestCompactionUsesActiveModelNotFixedConfigModel(t *testing.T) {
 	if fixedConfig.calls != 0 {
 		t.Fatalf("fixed config model called %d times; want 0 (active model should be used)", fixedConfig.calls)
 	}
-	parts := req.Contents[0].Parts
-	if got := parts[len(parts)-1].Text; !strings.Contains(got, "from active model") {
+	idx := sentinelIndex(req.Contents)
+	if idx < 0 {
+		t.Fatalf("no durable summary content in the request")
+	}
+	if got := req.Contents[idx].Parts[0].Text; !strings.Contains(got, "from active model") {
 		t.Fatalf("summary did not come from the active model: %q", got)
 	}
 }

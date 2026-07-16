@@ -30,11 +30,14 @@ If the prompt includes a <previous-summary> block, treat it as the current summa
 
 This summary will only be read by you, so it is OK to make it MUCH LONGER than a normal summary. Do not exclude any information that might be important to continuing the session. Preserve exact file paths, symbols, commands, and error strings.
 
+Explicitly identify and state the primary language used by the user at the top of your summary (e.g., "Conversation Language: English"). If the agent called any tools, accurately list their exact names to maintain tool grounding — do not paraphrase or invent a tool name.
+
 Do not answer the conversation itself. Do not mention that you are summarizing or compacting. Respond in the same language as the conversation.`
 
 const summaryTemplate = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
 <template>
 ## Goal
+- Conversation Language: [the primary language used by the user, e.g. "English"]
 - [single-sentence task summary]
 
 ## Constraints & Preferences
@@ -78,9 +81,11 @@ Rules:
 - Preserve exact file paths, commands, error strings, and identifiers.
 - Do not mention the summary process or that context was compacted.`
 
-// compactionNotice is prepended to the anchored summary in the agent's own
-// context so the model knows the history it can no longer see is folded into the
-// summary rather than lost — goose tells the model plainly: "Your context was
-// compacted. The previous message contains a summary of the conversation so far."
-// (crates/goose/src/context_mgmt/mod.rs).
+// compactionNotice is both the model's framing (so it knows the history it
+// can no longer see is folded into the summary rather than lost — goose tells
+// the model plainly: "Your context was compacted. The previous message
+// contains a summary of the conversation so far.", crates/goose/src/
+// context_mgmt/mod.rs) and the SENTINEL: it prefixes the durable summary
+// content's first text part, and isSentinel/applyView identify a compaction
+// event by this exact prefix. Do not change it without updating both readers.
 const compactionNotice = "\n\nYour context was compacted: the older turns of this session are no longer shown, and the summary below is what they contained. Treat it as your own memory of work already done — do not re-read files or re-run commands it already covers.\n\n"

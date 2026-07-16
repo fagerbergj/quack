@@ -38,6 +38,8 @@ session:
     # own worker model (already resident, so it's swap-free by construction).
     # Used only when there's no active worker model to reuse (e.g. standalone).
     model: ${QUACK_COMPACTION_MODEL}      # unset ⇒ no fallback, active model only
+    # token_threshold: 0             # unset ⇒ derive per-agent from context_window
+    # event_retention_size: 0        # unset ⇒ 20 trailing request contents kept verbatim
 
 orchestrator:
   # plan-work: DAG-authoring playbook; format-markdown: direct-answer replies;
