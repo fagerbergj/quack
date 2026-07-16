@@ -146,11 +146,21 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := tools[0].(*guardedTool); !ok {
-		t.Errorf("ask_user (guards: judge) = %T, want *guardedTool", tools[0])
+	// Build always adds the repeat guard as the outer layer (repeatguard.go);
+	// the guard-ladder wrapper sits inside it.
+	rg0, ok := tools[0].(*repeatGuard)
+	if !ok {
+		t.Fatalf("ask_user = %T, want *repeatGuard(outer)", tools[0])
 	}
-	if _, ok := tools[1].(*guardedTool); ok {
-		t.Error("current_date (unlisted) must NOT be wrapped")
+	if _, ok := rg0.inner.(*guardedTool); !ok {
+		t.Errorf("ask_user (guards: judge) inner = %T, want *guardedTool", rg0.inner)
+	}
+	rg1, ok := tools[1].(*repeatGuard)
+	if !ok {
+		t.Fatalf("current_date = %T, want *repeatGuard(outer)", tools[1])
+	}
+	if _, ok := rg1.inner.(*guardedTool); ok {
+		t.Error("current_date (unlisted) must NOT be guard-laddered")
 	}
 }
 

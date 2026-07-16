@@ -161,6 +161,8 @@ func scrubbed(t tool.Tool) bool {
 			return true
 		case *cancelGuard:
 			t = v.inner
+		case *repeatGuard:
+			t = v.inner
 		case *guardedTool:
 			t = v.inner
 		default:
