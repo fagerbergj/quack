@@ -56,6 +56,7 @@ orchestrator:
 agents:
   web-researcher:
     bundle: agents/web-researcher
+    skills: [format-markdown, research-git-repos]
     provider: default
     memory_role: research   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_RESEARCHER_MODEL}
@@ -82,7 +83,7 @@ agents:
             run_command, ask_advisor, ask_user, load_memory, stage_memory, run_code]
     # develop-feature/fix-bug: the disciplined build/fix playbooks its prompt.md points to;
     # ponytail/ponytail-review (vendored): its coding discipline + self-review ladder (see prompt.md).
-    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-github-work]
+    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-github-work, format-markdown]
     # load_memory/stage_memory + the bundle's memory.md turn on shared memory: the implementer
     # RECALLS what the explorer/reviewer already learned about this repo (build/test/lint commands,
     # where things are registered, the reference feature, pre-existing failures) instead of
@@ -105,7 +106,7 @@ agents:
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
     # review-code: the review process its prompt.md follows; present-github-work: structure/depth
     # for a GitHub-facing review body (see prompt.md and internal/github/webhook.go).
-    skills: [review-code, present-github-work]
+    skills: [review-code, present-github-work, format-markdown, ponytail]
   code-explorer:
     bundle: agents/code-explorer      # prompt.md (read-only explorer, research-git-repos) + rubric.md (grades EXPLORATION: code-grounding/accuracy/usefulness, NOT web citations) + memory.md (repo layout/conventions)
     provider: default
@@ -124,9 +125,10 @@ agents:
     tools: [read_file, list_dir, glob, grep,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command, run_code]
     # research-git-repos: clone-and-read-locally discipline for understanding a repo (see prompt.md).
-    skills: [research-git-repos]
+    skills: [research-git-repos, format-markdown, ponytail]
   synthesizer:
     bundle: agents/synthesizer
+    skills: [format-markdown]
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # same model as web-researcher
@@ -134,6 +136,7 @@ agents:
     tools: []
   media-reader:
     bundle: agents/media-reader
+    skills: [format-markdown]
     provider: default
     model: ${QUACK_MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 32768       # qwen3-omni-30b served -c 32768 --parallel 1
@@ -142,6 +145,7 @@ agents:
     judge: false      # gemma (the judge) cannot open media — its verdict is noise
   image-reader:
     bundle: agents/image-reader
+    skills: [format-markdown]
     provider: default
     model: ${QUACK_IMAGE_MODEL}       # Qwen3-VL-32B (vision llm-swap group); specialist for hard image reading
     context_window: 32768       # qwen3-vl-32b served -c 32768
