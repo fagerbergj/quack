@@ -331,13 +331,12 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string) (*Pla
 
 // validateChecks enforces §4's plan-time rule: every check must PREFIX-MATCH a
 // configured workspace.check_commands entry (the planner fills in arguments to
-// an operator-approved prefix; it never invents an executable command) and
-// contain no shell metacharacters (checks run shell-less — pipes are native
-// via workspace.RunPipeline; & ; $ < > ` ( ) stay unexpressible, see
-// internal/workspace.ContainsShellMetachar). An empty checkCommands (the
-// default) means checks are unavailable at all — a plan node that sets them
-// is rejected with a targeted, fixable error rather than silently dropped or
-// run unchecked.
+// an operator-approved prefix; it never invents an executable command). Checks
+// run shell-less (workspace.RunPipeline), so metachars are literal argv content
+// — the prefix allowlist, not a metachar scan, is the boundary. An empty
+// checkCommands (the default) means checks are unavailable at all — a plan node
+// that sets them is rejected with a targeted, fixable error rather than silently
+// dropped or run unchecked.
 func validateChecks(checks, checkCommands []string) error {
 	if len(checkCommands) == 0 {
 		return fmt.Errorf("checks are unavailable (workspace.check_commands is empty) — omit `checks`")
@@ -347,9 +346,9 @@ func validateChecks(checks, checkCommands []string) error {
 		if c == "" {
 			return fmt.Errorf("empty check command")
 		}
-		if workspace.ContainsShellMetachar(c) {
-			return fmt.Errorf("check %q contains a shell metacharacter (& ; $ < > ` ( )) — checks never invoke a shell; pipes are supported natively, the rest is unavailable", c)
-		}
+		// No metachar rejection: checks run shell-less (RunPipeline), so a
+		// metachar is literal argv content, never an operator. The prefix
+		// allowlist below is the real boundary.
 		if !workspace.MatchesCheckPrefix(c, checkCommands) {
 			return fmt.Errorf("check %q does not match any configured workspace.check_commands prefix (%s)",
 				c, strings.Join(checkCommands, ", "))

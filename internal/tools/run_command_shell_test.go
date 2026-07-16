@@ -112,26 +112,24 @@ func TestShellCannotWiden(t *testing.T) {
 	}
 }
 
-// TestNoSandboxKeepsTheMetacharGuard is the asymmetry, stated as a test: the
-// shell is available BECAUSE the sandbox is real, so with `sandbox: none` the
-// habit guard is all there is and it stays exactly as it was.
-func TestNoSandboxKeepsTheMetacharGuard(t *testing.T) {
+// TestNoSandboxRunsArgvLiterally: with `sandbox: none` there is no shell, so
+// metachars are literal argv content, never operators — no rejection. `echo
+// hi; rm -rf /` runs echo with the literal args "hi;" "rm" … and does NOT spawn
+// a second process (#277). (The real boundary is the OS sandbox, not this scan.)
+func TestNoSandboxRunsArgvLiterally(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	b.caps.Sandbox = workspace.SandboxNone
 	ensureUserRoot(t, b)
 
-	for _, cmd := range []string{
-		`python3 -c "import sys; print(sys.path)"`,
-		"ls > out.txt",
-		"echo hi; rm -rf /",
-		"echo $HOME",
-	} {
-		if _, err := b.runCommand(runCommandArgs{Command: cmd}); err == nil {
-			t.Errorf("run_command(%q) with sandbox: none — want a metachar rejection, got nil", cmd)
-		}
+	res, err := b.runCommand(runCommandArgs{Command: "echo hi; rm -rf /tmp/nope"})
+	if err != nil {
+		t.Fatalf("run_command(literal ;) with sandbox: none: %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "rm -rf") {
+		t.Errorf("want the ';' passed to echo as a literal arg: exit=%d out=%q", res.ExitCode, res.Output)
 	}
 	// …and native pipelines still work there.
-	res, err := b.runCommand(runCommandArgs{Command: "printf 'b\\na\\n' | sort | head -1"})
+	res, err = b.runCommand(runCommandArgs{Command: "printf 'b\\na\\n' | sort | head -1"})
 	if err != nil {
 		t.Fatalf("run_command(pipeline, sandbox: none): %v", err)
 	}

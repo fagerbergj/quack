@@ -40,20 +40,27 @@ func TestRunCommandBasic(t *testing.T) {
 	}
 }
 
-func TestRunCommandRejectsShellMetachars(t *testing.T) {
+func TestRunCommandAcceptsQuotedMetachars(t *testing.T) {
+	// Regression (#276/#277): a quoted grep pattern with parens (a Go receiver)
+	// is literal argv, not shell operators. The old metachar gate rejected it
+	// and looped the worker; it must now run. With no shell, metachars are never
+	// interpreted — an unquoted `;` is a literal arg, NOT a command separator.
 	b := newTestBinding(t, "u1")
-	for _, cmd := range []string{
-		"echo hi; rm -rf /",
-		"echo $HOME",
-		"echo `whoami`",
-		"echo hi > out.txt",
-		"cat < in.txt",
-		"echo hi && echo bye",
-		"(echo hi)",
-	} {
-		if _, err := b.runCommand(runCommandArgs{Dir: "", Command: cmd}); err == nil {
-			t.Errorf("runCommand(%q): want error (shell metacharacter), got nil", cmd)
-		}
+	ensureUserRoot(t, b)
+	res, err := b.runCommand(runCommandArgs{Command: `printf 'func (e *Extension) X()\n' | grep -Fn 'func (e *Extension)'`})
+	if err != nil {
+		t.Fatalf("runCommand(quoted parens): %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "Extension") {
+		t.Errorf("quoted grep: exit=%d out=%q, want match", res.ExitCode, res.Output)
+	}
+	// `;` must NOT spawn a second process — echo prints it literally, exit 0.
+	res, err = b.runCommand(runCommandArgs{Command: "echo hi; rm -rf /tmp/nope"})
+	if err != nil {
+		t.Fatalf("runCommand(literal ;): %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "rm -rf") {
+		t.Errorf("literal ;: exit=%d out=%q, want the ';' passed to echo as a literal arg", res.ExitCode, res.Output)
 	}
 }
 
@@ -199,19 +206,26 @@ func TestRunCommandCDPrefixJailStillApplies(t *testing.T) {
 	}
 }
 
-// Only a single leading `cd X &&` is special — everything else still hits
-// the metachar wall.
+// Only a single leading `cd X &&` is folded into the dir — a later `&&` or a
+// non-leading `cd` is left as literal argv (no shell interprets it).
 func TestRunCommandCDPrefixOnlyStripsThePrefix(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	ensureUserRoot(t, b)
-	for _, cmd := range []string{
-		"cd repo && echo a && echo b", // chained && beyond the prefix
-		"cd repo; echo hi",            // semicolon, not &&
-		"echo hi && cd repo",          // cd not leading
-	} {
-		if _, err := b.runCommand(runCommandArgs{Dir: "", Command: cmd}); err == nil {
-			t.Errorf("runCommand(%q): want metachar rejection, got nil", cmd)
-		}
+	// Leading `cd . &&` folds; the SECOND `&&` survives as a literal arg to echo.
+	res, err := b.runCommand(runCommandArgs{Command: "cd . && echo a && echo b"})
+	if err != nil {
+		t.Fatalf("runCommand(leading cd fold): %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "&& echo b") {
+		t.Errorf("only the leading cd should fold: exit=%d out=%q", res.ExitCode, res.Output)
+	}
+	// A non-leading `cd` is not folded — echo prints it literally, cd never runs.
+	res, err = b.runCommand(runCommandArgs{Command: "echo hi && cd repo"})
+	if err != nil {
+		t.Fatalf("runCommand(non-leading cd): %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "cd repo") {
+		t.Errorf("non-leading cd should be literal: exit=%d out=%q", res.ExitCode, res.Output)
 	}
 }
 
@@ -245,31 +259,22 @@ func TestRunCommandStderrMergeTokenDropped(t *testing.T) {
 }
 
 func TestRunCommandQuotedStderrMergeUntouched(t *testing.T) {
-	// A quoted "2>&1" is a literal argument, not the idiom — it is NOT
-	// stripped, so the string still (correctly) trips the metachar wall.
+	// A quoted "2>&1" is a literal argument, not the idiom — it is NOT stripped,
+	// and (no shell) not rejected: echo prints it verbatim.
 	b := newTestBinding(t, "u1")
 	ensureUserRoot(t, b)
-	if _, err := b.runCommand(runCommandArgs{Dir: "", Command: `echo "2>&1"`}); err == nil {
-		t.Fatal(`runCommand(echo "2>&1"): want metachar rejection`)
+	res, err := b.runCommand(runCommandArgs{Command: `echo "2>&1"`})
+	if err != nil {
+		t.Fatalf(`runCommand(echo "2>&1"): %v`, err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "2>&1") {
+		t.Errorf("quoted 2>&1 should print literally: exit=%d out=%q", res.ExitCode, res.Output)
 	}
 }
 
-func TestRunCommandMetacharErrorCoachesIdioms(t *testing.T) {
-	b := newTestBinding(t, "u1")
-	_, err := b.runCommand(runCommandArgs{Dir: "", Command: "npm test > out.txt"})
-	if err == nil {
-		t.Fatal("runCommand(redirect): want error")
-	}
-	for _, want := range []string{"dir", "cd X &&", "2>&1", "write_file"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("err = %v, want coaching mention of %q", err, want)
-		}
-	}
-}
-
-// sanity: workspace.ContainsShellMetachar/SplitPipeline are exercised directly
-// in internal/workspace/exec_test.go; this just confirms run_command wires
-// them up (pipes pass, the rest of the metachar set still rejects).
+// sanity: ContainsShellMetachar is no longer a rejection gate — it survives
+// only as cd-fold eligibility (see internal/workspace/exec.go). This confirms
+// the function's contract that run_command's fold check relies on.
 func TestRunCommandUsesWorkspaceValidation(t *testing.T) {
 	if workspace.ContainsShellMetachar("a|b") {
 		t.Fatal("sanity: pipes must not be metachars (they run natively)")

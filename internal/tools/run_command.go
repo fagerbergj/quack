@@ -144,12 +144,14 @@ func stripCDPrefix(command string) (target, rest string, ok bool) {
 //     never was one: `sh -c "…"` contains none of the rejected characters). The
 //     jail still decides the child's CWD, and the sandbox still binds only that
 //     cwd + the isolated $HOME writable; a shell cannot widen that.
-//   - UNSANDBOXED (workspace.sandbox: none): exactly as before — normalize the
-//     two rejected-but-harmless idioms the worker LLM habitually emits (a
-//     leading `cd X &&` folds into the dir resolution; a standalone `2>&1` is
-//     dropped, output is already combined), reject shell metacharacters, split
-//     on unquoted `|`, and run argv-only through workspace.RunPipeline. With no
-//     OS boundary the habit guard is all there is, so it stays.
+//   - UNSANDBOXED (workspace.sandbox: none): normalize the two harmless idioms
+//     the worker LLM habitually emits (a leading `cd X &&` folds into the dir
+//     resolution; a standalone `2>&1` is dropped, output is already combined),
+//     split on unquoted `|`, and run argv-only through workspace.RunPipeline.
+//     No metachar rejection: with no shell, metacharacters are literal argv
+//     content, not operators — the guard only ever mis-fired on quoted args
+//     (a grep pattern with parens) and looped the worker. The real boundary is
+//     an OS sandbox (bwrap, above; #277 to enable it on the deployment).
 //
 // Either way `dir` resolves through the jail exactly as it always did, and the
 // runner is workspace's — one internal runner, two consumers (run_command and
@@ -186,14 +188,11 @@ func (b fsBinding) runCommand(a runCommandArgs) (runCommandResult, error) {
 		if strings.TrimSpace(command) == "" {
 			return runCommandResult{}, fmt.Errorf("run_command: command must not be empty")
 		}
-		if workspace.ContainsShellMetachar(command) {
-			return runCommandResult{}, fmt.Errorf(
-				"run_command: command contains a shell metacharacter (& ; $ < > ` ( )) — this deployment runs " +
-					"commands without an OS sandbox, so no shell is involved; pipes are supported natively, but " +
-					"redirects, backgrounding, subshells, and substitution are unavailable. Use the `dir` argument " +
-					"instead of a 'cd X &&' prefix; stderr is already merged into the output (drop '2>&1'); write " +
-					"output to a file with the write_file tool instead of '>'")
-		}
+		// No metachar rejection: with no shell, metacharacters are never
+		// operators — SplitArgv/SplitPipeline treat them as literal argv content
+		// (a quoted grep pattern like 'func (e *Extension)' is one arg). The
+		// rejection only ever mis-fired on legitimate quoted args and looped the
+		// worker; the real boundary is an OS sandbox (see #277), not this guard.
 		var err error
 		if stages, err = workspace.SplitPipeline(command); err != nil {
 			return runCommandResult{}, fmt.Errorf("run_command: %w", err)
