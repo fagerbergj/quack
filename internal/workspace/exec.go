@@ -9,32 +9,17 @@ import (
 	"strings"
 )
 
-// shellMetachars are the characters whose presence in a raw command string
-// signals shell-interpretation intent (backgrounding, command chaining,
-// redirects, command/variable substitution, subshells).
-//
-// Where this still applies, and where it deliberately does not:
-//
-//   - run_command with NO OS sandbox (workspace.sandbox: none): rejected. With
-//     no namespace around the child, this habit guard is all there is, so it
-//     stays exactly as it was.
-//   - run_command INSIDE the sandbox (the default): not applied at all — the
-//     command line goes to a real /bin/sh (RunShell). The wall is the OS
-//     namespace, not a punctuation blacklist: `sh -c "…"` always contained none
-//     of these characters, so the guard blocked no attack — it only blocked the
-//     model, which then wrote script files to disk to route around us.
-//   - a plan node's `checks` (internal/dag's planner): rejected, unchanged.
-//     Checks are matched against the operator's `workspace.check_commands`
-//     PREFIX allowlist, and a prefix allowlist means nothing if the suffix can
-//     open a shell.
-//
-// `|` is deliberately NOT in this set: pipes don't need a shell — SplitPipeline
-// splits a pipeline on unquoted `|` and RunPipeline chains the stages as plain
-// argv processes connected by real pipes.
+// shellMetachars are the characters that signal shell-interpretation intent
+// (backgrounding, command chaining, redirects, substitution, subshells). They
+// are NOT a rejection gate: run_command and checks run shell-less (SplitArgv /
+// RunPipeline), so with no shell these are literal argv content, never
+// operators — a quoted grep pattern with parens is one argument (#277). The
+// remaining use is cd-fold eligibility (run_command's `cd X &&` idiom): a
+// target carrying a metachar isn't a plain directory, so don't fold it.
 const shellMetachars = "&;$<>`()"
 
 // ContainsShellMetachar reports whether s contains a shell metacharacter. See
-// the shellMetachars doc comment for why these are rejected outright.
+// the shellMetachars doc comment for its one remaining use (cd-fold eligibility).
 func ContainsShellMetachar(s string) bool {
 	return strings.ContainsAny(s, shellMetachars)
 }
