@@ -71,6 +71,11 @@ func TestReadFileOffsetLimit(t *testing.T) {
 	if !res.Truncated {
 		t.Error("Truncated = false, want true (more lines exist past the window)")
 	}
+	// A truncated read must hand back the exact next window offset so the model
+	// pages forward instead of re-reading offset 0 (the loop this prevents).
+	if res.NextOffset != 3 {
+		t.Errorf("NextOffset = %d, want 3 (offset 1 + limit 2)", res.NextOffset)
+	}
 	if res.TotalLines != 5 {
 		t.Errorf("TotalLines = %d, want 5", res.TotalLines)
 	}
