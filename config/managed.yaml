@@ -40,7 +40,7 @@ session:
 
 orchestrator:
   # see config/quack.yaml's orchestrator.skills comment for the routing rationale.
-  skills: [plan-work, format-markdown, present-github-work, contribute]
+  skills: [plan-work, format-markdown, present-coding-plan, contribute]
   provider: default
   model: ${QUACK_ORCH_MODEL}
   tools: [web_search, web_fetch, summarize, current_date]
@@ -71,7 +71,7 @@ agents:
             cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
             git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
             run_command, ask_advisor, load_memory, stage_memory, run_code]
-    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-github-work, format-markdown]
+    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-coding-plan, format-markdown]
     # load_memory/stage_memory + memory.md turn on shared memory: the implementer recalls what the
     # explorer/reviewer learned about THIS repo (buckets are by subject, not agent — internal/memory/scope.go).
   code-reviewer:
@@ -86,7 +86,7 @@ agents:
     # web_fetch (no web_search): verify a specific external claim; RequireRetrieval is already met by read_file.
     tools: [read_file, list_dir, glob, grep, web_fetch,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
-    skills: [review-code, present-github-work, format-markdown, ponytail]
+    skills: [review-code, present-coding-plan, format-markdown, ponytail, ponytail-review]
   code-explorer:
     bundle: agents/code-explorer      # read-only explorer; rubric grades EXPLORATION quality (code-grounding/accuracy/usefulness), not web citations
     provider: default
@@ -103,7 +103,7 @@ agents:
     skills: [research-git-repos, format-markdown, ponytail]
   synthesizer:
     bundle: agents/synthesizer
-    skills: [format-markdown]
+    skills: [format-markdown, present-coding-plan]
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536

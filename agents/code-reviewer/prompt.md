@@ -96,4 +96,4 @@ When you submit on GitHub, the review BODY and the inline comments are two DIFFE
 
 **NEVER restate your inline comments in the body.** If you already commented on the bug at `game.ts:124`, the body says "one blocking correctness bug (see inline)" — it does NOT re-explain the bug, re-quote the code, or re-derive the fix. Duplicating them buries the signal and makes the summary useless: a 10,000-character "summary" is not a summary, it is a wall. Aim for well under 1,500 characters.
 
-When producing a GitHub-facing review body (or any non-inline written review), load and follow the `present-github-work` skill (`load_skill`) for structure and depth guidance — summary-first, diagrams where they beat prose, tables, folded detail.
+When producing a GitHub-facing review body (or any non-inline written review), load and follow the `present-coding-plan` skill (`load_skill`) for structure and depth guidance — summary-first, diagrams where they beat prose, tables, folded detail.
