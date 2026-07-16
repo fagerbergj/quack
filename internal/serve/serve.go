@@ -681,9 +681,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return agent.Compaction{}
 		}
 		return agent.Compaction{
-			Summarizer:    agent.ResolveSummarizer(workerModel, fallbackSummarizer),
-			ContextWindow: ac.ContextWindow,
-			Enabled:       true,
+			Summarizer:         agent.ResolveSummarizer(workerModel, fallbackSummarizer),
+			ContextWindow:      ac.ContextWindow,
+			Enabled:            true,
+			Sessions:           sessions,
+			TokenThreshold:     compCfg.TokenThreshold,
+			EventRetentionSize: compCfg.EventRetentionSize,
 		}
 	}
 

@@ -4,76 +4,54 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 )
 
-// The preserved (verbatim, recent) tail must be a FRACTION OF THE BUDGET, not a constant.
+// The retained tail must hold SEVERAL recent tool round-trips, not collapse
+// to one file at a time.
 //
-// THE ROOT CAUSE (code-mode dogfood, 2026-07-13). A code-implementer ran 25 minutes, made
-// 98 tool calls, and wrote nothing. It read internal/tools/registry.go TEN TIMES. Its
-// session had reached ~166k tokens against a 65,536-token window, so compaction ran every
-// turn — and compaction preserved only:
-//
-//	min(max(budget/4, 2000), 8000) = 8_000 tokens
-//
-// out of a 45,536-token budget. Everything else was summarised away. A Go source file is
-// 6-7k tokens, so the tail could hold exactly ONE FILE: every new read evicted the
-// previous one. The model could never hold two files at once, so it could never write
-// code that used both — and each time it re-read what we had just deleted, we counted
-// that against it as churn.
-//
-// 8_000 is opencode's MAX_PRESERVE_RECENT_TOKENS, ported without its premise: opencode
-// runs 200k+ context windows, where 8k of recent turns is a rounding error.
-func TestPreserveScalesWithTheBudgetInsteadOfCollapsingTo8k(t *testing.T) {
-	const window = 65_536
-	budget := usable(window) // 45,536
-	const head = 500         // a normal node task
-	const ratio = defaultCalibrationRatio
-	const overhead = 6_000 // the provider's fixed system+tools overhead
+// THE ROOT CAUSE (code-mode dogfood, 2026-07-13): a fixed 8k-token preserve
+// cap (opencode's MAX_PRESERVE_RECENT_TOKENS, ported without opencode's
+// 200k+-context premise) left room for exactly one Go source file (~6-7k
+// tokens) in the tail, so every new read evicted the previous one and the
+// model reread the same file eight times. The ADK port replaces that
+// token-fraction cap with a count-based EventRetentionSize (default 20
+// request contents); this pins the same invariant against the new mechanism.
+func TestRetentionHoldsSeveralFilesNotJustOne(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	// threshold = 120_000 - 20_000 = 100_000: small enough to force
+	// compaction, generous enough that the default retention's tail (10
+	// pairs) still fits without the backstop clamp ladder engaging.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 120_000, Enabled: true})
 
-	// A normal turn: nothing measured over budget, a small task, a few big reads.
-	contents := []*genai.Content{textContent(genai.RoleUser, strings.Repeat("t", head*charsPerToken))}
-	contents = append(contents, textContent(genai.RoleModel, strings.Repeat("f", 20_000*charsPerToken)))
-	got := int(float64(preserveFor(budget, contents, ratio, overhead, 0)) * ratio) // back to real tokens
-
-	// The old model's answer, for contrast — it must not be reachable.
-	old := min(max(budget/4, minPreserveTokens), 8_000)
-	if got <= old {
-		t.Fatalf("preserve = %d, no better than the old fixed cap (%d) — the model still cannot hold two files", got, old)
+	const sourceFileChars = 28_000 // ~7k tokens, a normal Go source file
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 15; i++ {
+		contents = append(contents, toolCall("read_file", "c"))
+		contents = append(contents, toolResult("read_file", "c", sourceFileChars))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("test precondition broken: compaction did not fire (calls=%d)", llm.calls)
 	}
 
-	// A source file is ~6-7k tokens. The tail must hold SEVERAL, or a coding agent
-	// cannot write code that spans them.
-	const sourceFile = 7_000
-	if got < 3*sourceFile {
-		t.Errorf("preserve = %d tokens: that is fewer than 3 source files (%d). An implementer must be able to hold "+
-			"the file it is editing, the file it is calling, and its test at the same time", got, 3*sourceFile)
+	intact := strings.Repeat("x", sourceFileChars)
+	held := 0
+	for _, c := range req.Contents {
+		for _, p := range c.Parts {
+			if fr := p.FunctionResponse; fr != nil {
+				if got, _ := fr.Response["result"].(string); got == intact {
+					held++
+				}
+			}
+		}
 	}
-
-	// ...and it must still leave room for the task and the summary that ride on it.
-	if got >= budget {
-		t.Errorf("preserve = %d >= budget %d: nothing left for the task or the anchored summary", got, budget)
-	}
-}
-
-// A pathological head (an enormous task/revise prompt) must not drive preserve negative
-// or to zero — truncateHeadToFit owns that case, and the tail keeps a usable floor.
-func TestPreserveNeverCollapsesOnAnOversizedHead(t *testing.T) {
-	budget := usable(65_536)
-	huge := []*genai.Content{textContent(genai.RoleUser, strings.Repeat("t", 1_000_000*charsPerToken))}
-	got := preserveFor(budget, huge, defaultCalibrationRatio, 6_000, 0)
-	if got < minPreserveTokens {
-		t.Fatalf("preserve = %d, below the %d floor — an oversized task must not leave the model with no history",
-			got, minPreserveTokens)
-	}
-}
-
-// A tiny window still behaves: preserve stays positive and under budget.
-func TestPreserveOnASmallWindow(t *testing.T) {
-	budget := usable(32_768)
-	small := []*genai.Content{textContent(genai.RoleUser, "task"), textContent(genai.RoleModel, strings.Repeat("x", 40_000))}
-	got := preserveFor(budget, small, defaultCalibrationRatio, 2_000, 0)
-	if got <= 0 || got >= budget {
-		t.Fatalf("preserve = %d for budget %d", got, budget)
+	if held < 3 {
+		t.Fatalf("tail holds %d full source files; want at least 3 — an implementer must hold the file it is "+
+			"editing, the file it is calling, and its test at the same time", held)
 	}
 }

@@ -23,13 +23,15 @@ func toolResultModel(name, id string, n int) *genai.Content {
 // ejects worker tool results and the model re-reads the same file/command forever.
 func TestNoBlankedToolResultsSurviveCompaction_ModelRole(t *testing.T) {
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 80_000, Enabled: true})
 
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
 	for i := 0; i < 12; i++ {
 		contents = append(contents, toolCall("read_file", "c"))
 		contents = append(contents, toolResultModel("read_file", "c", 40_000))
 	}
+	// A threshold strictly between "everything" and "just the retained tail":
+	// compaction must fire, but the retained tail fits verbatim on its own.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
 	req := &model.LLMRequest{Contents: contents}
 	if _, err := cb(newFakeCtx(), req); err != nil {
 		t.Fatalf("callback err: %v", err)

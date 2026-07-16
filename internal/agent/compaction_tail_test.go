@@ -11,10 +11,10 @@ import (
 //
 // The live failure (2026-07-13): a code-implementer's `grep` matched inside a Next.js
 // build directory (games_repo/.next/build/chunks/*.js.map) and returned an UNBOUNDED
-// match list — one session event of 48 MB. splitHead admits the most recent content
-// unconditionally, whatever its size, so that result sailed through every rung of the
-// compaction ladder. The request hit the provider at 520,756 tokens against a 65,536
-// window:
+// match list — one session event of 48 MB. The retained tail admits its most recent
+// content unconditionally, whatever its size, so that result sailed through every rung
+// of the compaction ladder. The request hit the provider at 520,756 tokens against a
+// 65,536 window:
 //
 //	400 {"message":"request (520756 tokens) exceeds the available context size (65536 tokens)"}
 //

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
 	"testing"
@@ -76,6 +77,18 @@ func (f *fakeLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 	}
 }
 
+// failingLLM always errors — for exercising the "summariser call failed"
+// skip-and-continue path.
+type failingLLM struct{ calls int }
+
+func (f *failingLLM) Name() string { return "failing" }
+func (f *failingLLM) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		f.calls++
+		yield(nil, fmt.Errorf("summariser unavailable"))
+	}
+}
+
 // --- builders --------------------------------------------------------------
 
 func textContent(role, s string) *genai.Content {
@@ -92,6 +105,39 @@ func toolResult(name, id string, n int) *genai.Content {
 	return &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{
 		FunctionResponse: &genai.FunctionResponse{Name: name, ID: id, Response: map[string]any{"result": strings.Repeat("x", n)}},
 	}}}
+}
+
+// sentinelIndex returns the index of the durable summary content in contents,
+// or -1.
+func sentinelIndex(contents []*genai.Content) int {
+	for i, c := range contents {
+		if isSentinel(c) {
+			return i
+		}
+	}
+	return -1
+}
+
+// budgetWindow returns a ContextWindow whose usable() threshold sits strictly
+// between the calibrated size of ALL of contents and the calibrated size of
+// just its last `retention` items — enough to force exactly one compaction
+// round whose resulting tail already fits under budget (no backstop clamp
+// ladder needed). Requires len(contents) > retention+1.
+func budgetWindow(contents []*genai.Content, retention int) int {
+	all := calibrated(estimateTokens(contents), defaultCalibrationRatio, 0)
+	tailStart := len(contents) - retention
+	tail := calibrated(estimateTokens(contents[tailStart:]), defaultCalibrationRatio, 0)
+	return (all+tail)/2 + compactionBuffer
+}
+
+func newSessions(t *testing.T, ctx *fakeCtx) (session.Service, session.Session) {
+	t.Helper()
+	sessions := session.InMemoryService()
+	resp, err := sessions.Create(ctx, &session.CreateRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
+	if err != nil {
+		t.Fatalf("session create: %v", err)
+	}
+	return sessions, resp.Session
 }
 
 // --- tests -----------------------------------------------------------------
@@ -121,15 +167,18 @@ func TestCompactionNoOpUnderBudget(t *testing.T) {
 // file read 8x, list_dir 9x in one node).
 func TestNoBlankedToolResultsSurviveCompaction(t *testing.T) {
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	// budget = 80_000 - 20_000 = 60_000 real tokens.
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 80_000, Enabled: true})
 
-	// 12 old tool fetches of 40k chars (10k est tokens) each ⇒ way over budget.
+	// 12 old tool fetches of 40k chars (10k est tokens) each.
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
 	for i := 0; i < 12; i++ {
 		contents = append(contents, toolCall("read_file", "c"))
 		contents = append(contents, toolResult("read_file", "c", 40_000))
 	}
+
+	// A threshold strictly between "everything" and "just the retained tail":
+	// compaction must fire, but the retained tail (EventRetentionSize contents)
+	// fits verbatim on its own — no backstop clamp ladder needed.
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
 	req := &model.LLMRequest{Contents: contents}
 	if _, err := cb(newFakeCtx(), req); err != nil {
 		t.Fatalf("callback err: %v", err)
@@ -153,60 +202,104 @@ func TestNoBlankedToolResultsSurviveCompaction(t *testing.T) {
 	}
 }
 
-// Over budget (all-text history): the head is summarised and the
-// request is rebuilt as [task, summary, ...tail] within budget.
+// Over budget (all-text history): the head is summarised into a durable
+// summary content, and the request is rebuilt as [task, summary, ...tail]
+// within budget.
 func TestCompactSummarises(t *testing.T) {
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	// context_window 10k tokens, reserve 8k ⇒ usable 2k tokens (8k chars).
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Enabled: true})
 
 	task := textContent(genai.RoleUser, "the self-contained task")
 	contents := []*genai.Content{task}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 30; i++ {
 		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
 	}
-	req := &model.LLMRequest{Contents: contents}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
 	if _, err := cb(newFakeCtx(), req); err != nil {
 		t.Fatalf("callback err: %v", err)
 	}
 	if llm.calls != 1 {
 		t.Fatalf("summariser called %d times; want 1", llm.calls)
 	}
-	// The summary is merged into the task content (no separate inserted turn).
-	parts := req.Contents[0].Parts
-	if parts[0].Text != task.Parts[0].Text {
-		t.Fatalf("task text not preserved as first part: %q", parts[0].Text)
+	if req.Contents[0].Parts[0].Text != task.Parts[0].Text {
+		t.Fatalf("task text not preserved verbatim at contents[0]: %q", req.Contents[0].Parts[0].Text)
 	}
-	if got := parts[len(parts)-1].Text; !strings.Contains(got, "compacted") {
-		t.Fatalf("summary not appended to task content: %q", got)
+	idx := sentinelIndex(req.Contents)
+	if idx != 1 {
+		t.Fatalf("expected the durable summary content at index 1, got sentinel index %d", idx)
+	}
+	if got := req.Contents[idx].Parts[0].Text; !strings.Contains(got, "compacted") {
+		t.Fatalf("summary content missing summariser output: %q", got)
 	}
 	if len(req.Contents) >= len(contents) {
 		t.Fatalf("compaction did not shrink contents: %d → %d", len(contents), len(req.Contents))
 	}
 }
 
-// splitHead never empties the tail or starts it on a dangling FunctionResponse:
-// a recent oversized tool result is kept verbatim together with its call.
-func TestSplitHeadKeepsTrailingToolResult(t *testing.T) {
+// longestSelfContainedPrefix must never end between a FunctionCall and its
+// matching FunctionResponse — a recent tool round-trip stays paired, never
+// split by the boundary (port of splitHead's dangling-response walk).
+func TestLongestSelfContainedPrefixKeepsCallAndResponsePaired(t *testing.T) {
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
 	for i := 0; i < 8; i++ {
 		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
 	}
 	contents = append(contents, toolCall("web_fetch", "c"))
-	contents = append(contents, toolResult("web_fetch", "c", 40_000)) // bigger than preserve
+	contents = append(contents, toolResult("web_fetch", "c", 40_000))
 
-	ts := splitHead(contents, 2_000)
-	if ts <= 1 || ts >= len(contents) {
-		t.Fatalf("tail empty or whole-history kept: ts=%d len=%d", ts, len(contents))
+	// A window ending right after the call (before its response) must not be
+	// reported as balanced there.
+	if n := longestSelfContainedPrefix(contents[1 : len(contents)-1]); n >= len(contents)-2 {
+		t.Fatalf("prefix included the dangling call without its response: n=%d", n)
 	}
-	if hasFunctionResponse(contents[ts]) {
-		t.Fatalf("tail starts with a dangling FunctionResponse at %d", ts)
+	// The full range, including the matching response, is balanced end to end.
+	if got := longestSelfContainedPrefix(contents[1:]); got != len(contents)-1 {
+		t.Fatalf("full range including the matched response should be fully balanced: got %d, want %d", got, len(contents)-1)
 	}
-	if contents[ts].Parts[0].FunctionCall == nil {
-		t.Fatal("tail should start at the FunctionCall matching the trailing result")
+}
+
+// boundary must never cut between an open call and its response even when the
+// count-based retention target alone would land exactly there — the pair is
+// pulled into the tail together instead.
+func TestBoundaryNeverSplitsAnOpenCall(t *testing.T) {
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 8; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
 	}
-	if contents[len(contents)-1].Parts[0].FunctionResponse == nil {
-		t.Fatal("trailing tool result must remain in the verbatim tail")
+	contents = append(contents, toolCall("web_fetch", "c"))
+	contents = append(contents, toolResult("web_fetch", "c", 40_000))
+
+	headEnd, ok := boundary(contents, 1) // retention=1 would, by count alone, cut right between the call and response
+	if !ok {
+		t.Fatalf("boundary found no safe cut at all")
+	}
+	if headEnd == len(contents)-1 {
+		t.Fatalf("boundary cut between the call (%d) and its response (%d), splitting them", len(contents)-2, len(contents)-1)
+	}
+}
+
+// Boundary: every candidate split leaves a FunctionCall open (its response
+// never appears within the window) → compaction is SKIPPED entirely this
+// round (port of test_token_threshold_excludes_pending_function_call_events).
+func TestBoundarySkippedWhenEveryCandidateSplitIsOpen(t *testing.T) {
+	llm := &fakeLLM{text: "must not be called"}
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	contents = append(contents, toolCall("long_running_op", "c1")) // no matching response anywhere
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Enabled: true})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("summariser called %d times; compaction should have been skipped entirely (every split leaves the call open)", llm.calls)
+	}
+	if sentinelIndex(req.Contents) >= 0 {
+		t.Fatalf("a summary was appended despite no safe cut existing this round")
 	}
 }
 
@@ -218,6 +311,85 @@ func TestEstimateExcludesMedia(t *testing.T) {
 	}}}
 	if got := estimateTokens([]*genai.Content{img}); got > 10 {
 		t.Fatalf("4MB image estimated at %d tokens; media bytes must be excluded", got)
+	}
+}
+
+// A media part inside the summarised head must render as a placeholder in the
+// summariser's prompt, not vanish silently.
+func TestMediaPlaceholderInSummaryPrompt(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Enabled: true})
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{
+		{InlineData: &genai.Blob{MIMEType: "image/png", Data: make([]byte, 1024)}},
+	}})
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("summariser calls=%d; want 1", llm.calls)
+	}
+	if !strings.Contains(llm.lastPrompt, "[media: image/png omitted]") {
+		t.Fatalf("summariser prompt does not carry a media placeholder; media vanished silently:\n%s", llm.lastPrompt)
+	}
+}
+
+// A failed summarise must not block the model call, must not append a durable
+// event, and must leave the request otherwise intact (existing behavior).
+func TestSummariserFailureSkipsAppendAndContinues(t *testing.T) {
+	ctx := newFakeCtx()
+	sessions, _ := newSessions(t, ctx)
+
+	failing := &failingLLM{}
+	cb := compactionCallback(Compaction{Summarizer: failing, Sessions: sessions, ContextWindow: 25_000, Enabled: true})
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback must not error on a failed summarise: %v", err)
+	}
+	if failing.calls != 1 {
+		t.Fatalf("summariser calls=%d; want 1", failing.calls)
+	}
+	if sentinelIndex(req.Contents) >= 0 {
+		t.Fatalf("a summary was appended despite the summariser failing")
+	}
+	resp, err := sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
+	if err != nil {
+		t.Fatalf("session get: %v", err)
+	}
+	if n := resp.Session.Events().Len(); n != 0 {
+		t.Fatalf("%d events appended despite the summariser failing; want 0", n)
+	}
+}
+
+// Sessions == nil must not panic: the in-request view still compacts (and the
+// summary still benefits THIS request), it just isn't durably persisted.
+func TestNilSessionsStillCompactsRequestWithoutPanic(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Enabled: true}) // Sessions left nil
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err with nil Sessions: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("summariser calls=%d; want 1 (nil Sessions must still allow the in-request view to compact)", llm.calls)
+	}
+	if sentinelIndex(req.Contents) < 0 {
+		t.Fatalf("no sentinel in the filtered view despite a successful summarise")
 	}
 }
 
@@ -233,15 +405,15 @@ func TestMeasuredUsageTriggers(t *testing.T) {
 	}
 
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	// budget = 200000 - 8192 = 191808. Estimate stays far under; measured (195000) is over.
 	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Enabled: true})
+	threshold := usable(200_000)
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 30; i++ {
 		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
 	}
 	req := &model.LLMRequest{Contents: contents}
-	if est := estimateTokens(contents); est >= 191_808 {
-		t.Fatalf("test precondition broken: estimate %d not under budget", est)
+	if est := estimateTokens(contents); est >= threshold {
+		t.Fatalf("test precondition broken: estimate %d not under threshold %d", est, threshold)
 	}
 	if _, err := cb(ctx, req); err != nil {
 		t.Fatalf("callback err: %v", err)
@@ -266,7 +438,7 @@ func TestOverBudgetCheckIsCalibrated(t *testing.T) {
 	}, nil)
 
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	// budget = 80_000 - 20_000 = 60_000 real tokens.
+	// threshold = 80_000 - 20_000 = 60_000 real tokens.
 	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 80_000, Enabled: true})
 
 	// 12 old tool fetches of 40k chars (10k est tokens) each ⇒ raw est ~120k.
@@ -299,7 +471,7 @@ func TestSummaryCarriesCodeKnowledge(t *testing.T) {
 	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 25_000, Enabled: true})
 
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 15; i++ {
 		contents = append(contents, toolCall("read_file", "c"))
 		contents = append(contents, toolResult("read_file", "c", 4_000))
 	}
@@ -307,13 +479,19 @@ func TestSummaryCarriesCodeKnowledge(t *testing.T) {
 	if _, err := cb(newFakeCtx(), req); err != nil {
 		t.Fatalf("callback err: %v", err)
 	}
+	if llm.calls != 1 {
+		t.Fatalf("summariser not called: calls=%d", llm.calls)
+	}
 	for _, want := range []string{"Files & Code State", "Commands & Tools Run", "Errors & Fixes", "Repository State"} {
 		if !strings.Contains(llm.lastPrompt, want) {
 			t.Fatalf("summariser prompt does not ask for %q — the knowledge whose absence makes the agent re-read a file", want)
 		}
 	}
-	parts := req.Contents[0].Parts
-	if got := parts[len(parts)-1].Text; !strings.Contains(got, "Your context was compacted") {
+	idx := sentinelIndex(req.Contents)
+	if idx < 0 {
+		t.Fatalf("no durable summary content in the request")
+	}
+	if got := req.Contents[idx].Parts[0].Text; !strings.Contains(got, "Your context was compacted") {
 		t.Fatalf("model not told its context was compacted: %q", got)
 	}
 }
@@ -348,7 +526,7 @@ func TestCalibrationNeverBelowDefault(t *testing.T) {
 // spiral). Non-text parts are preserved; the head keeps a usable core.
 func TestTruncateOversizedHead(t *testing.T) {
 	llm := &fakeLLM{text: "S"}
-	// budget = 60_000 - 20_000 = 40_000 real tokens; default ratio 1.3.
+	// threshold = 60_000 - 20_000 = 40_000 real tokens; default ratio 1.3.
 	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 60_000, Enabled: true})
 
 	// A single huge task content (~50k tokens estimate ⇒ ~65k calibrated) with no
@@ -406,82 +584,200 @@ func TestCalibrationDefaultBeforeMeasurement(t *testing.T) {
 	}
 }
 
-// Once the anchored summary covers the older prefix, a later over-budget turn
-// whose live tail still fits is served from the stored summary with NO new
-// summariser call (fixes the "re-summarise every turn" cost).
+// Once a summary event is durably appended, a later request that already
+// carries it (ADK's real request-builder folds every session event into
+// req.Contents by itself) is served by VIEW FILTERING alone — no new
+// summariser call (the reuse path; the whole point of the ADK port is a
+// stable prompt-cache prefix across turns like this one).
 func TestReuseSkipsSummariser(t *testing.T) {
 	ctx := newFakeCtx()
-	// budget = 200000 - 8192 = 191808; measured (195000) keeps the trigger firing.
-	recordUsage()(ctx, &model.LLMResponse{
-		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 195_000},
-	}, nil)
+	sessions, _ := newSessions(t, ctx)
 
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 200_000, Enabled: true})
-
-	build := func() *model.LLMRequest {
+	build := func() []*genai.Content {
 		c := []*genai.Content{textContent(genai.RoleUser, "task")}
 		for i := 0; i < 30; i++ {
 			c = append(c, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
 		}
-		return &model.LLMRequest{Contents: c}
+		return c
 	}
+	cb := compactionCallback(Compaction{Summarizer: llm, Sessions: sessions, ContextWindow: budgetWindow(build(), defaultEventRetentionSize), Enabled: true})
 
-	// First turn summarises once and records the coverage boundary.
-	if _, err := cb(ctx, build()); err != nil {
+	// First turn: over threshold, summarises once.
+	req := &model.LLMRequest{Contents: build()}
+	if _, err := cb(ctx, req); err != nil {
 		t.Fatalf("first callback err: %v", err)
 	}
 	if llm.calls != 1 {
 		t.Fatalf("first turn: summariser calls=%d; want 1", llm.calls)
 	}
+	idx := sentinelIndex(req.Contents)
+	if idx < 0 {
+		t.Fatalf("no durable summary content after first compaction")
+	}
+	firstSummary := req.Contents[idx].Parts[0].Text
 
-	// Second turn (same grown session re-fed by ADK): reuse, no summariser call.
-	req := build()
-	if _, err := cb(ctx, req); err != nil {
+	// Second turn: the session grew by one more small turn since the durable
+	// summary was appended — exactly what ADK's real request-builder would
+	// hand back (the summary event flows into req.Contents by itself).
+	grown := append(append([]*genai.Content{}, req.Contents...), textContent(genai.RoleModel, "one more turn"))
+	req2 := &model.LLMRequest{Contents: grown}
+	if _, err := cb(ctx, req2); err != nil {
 		t.Fatalf("second callback err: %v", err)
 	}
 	if llm.calls != 1 {
-		t.Fatalf("second turn re-summarised (calls=%d); should have reused the anchored summary", llm.calls)
+		t.Fatalf("second turn re-summarised (calls=%d); should have reused the durable summary via view filtering", llm.calls)
 	}
-	parts := req.Contents[0].Parts
-	if got := parts[len(parts)-1].Text; !strings.Contains(got, "compacted") {
-		t.Fatalf("reuse did not reapply the summary to the task content: %q", got)
-	}
-	if len(req.Contents) >= len(build().Contents) {
-		t.Fatalf("reuse did not shrink contents: %d", len(req.Contents))
+	idx2 := sentinelIndex(req2.Contents)
+	if idx2 < 0 || req2.Contents[idx2].Parts[0].Text != firstSummary {
+		t.Fatalf("reuse did not carry the same durable summary forward")
 	}
 }
 
-// The anchored summary is persisted to state and fed back as <previous-summary>
-// on the next compaction.
+// Rolling summaries: a second firing seeds the summariser with the FIRST
+// summary (present in the request as the prior sentinel content) — and
+// filtering keys on the LAST sentinel, so the old summary event goes inert in
+// the log (subsumption for free) even though it is never deleted.
 func TestAnchoredSummaryFedBack(t *testing.T) {
-	llm := &fakeLLM{text: "FIRST-SUMMARY"}
-	// usable = ctx - min(MaxOutputTokens, compactionBuffer=20000) = 1808: a small
-	// budget so the second oversized turn re-summarises (not the reuse fast-path).
-	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 21_808, Enabled: true})
 	ctx := newFakeCtx()
+	sessions, _ := newSessions(t, ctx)
 
-	oversized := func() *model.LLMRequest {
+	llm := &fakeLLM{text: "FIRST-SUMMARY"}
+	build := func() []*genai.Content {
 		c := []*genai.Content{textContent(genai.RoleUser, "task")}
-		for i := 0; i < 20; i++ {
+		for i := 0; i < 30; i++ {
 			c = append(c, textContent(genai.RoleModel, strings.Repeat("z", 2_000)))
 		}
-		return &model.LLMRequest{Contents: c}
+		return c
 	}
+	cb := compactionCallback(Compaction{Summarizer: llm, Sessions: sessions, ContextWindow: budgetWindow(build(), defaultEventRetentionSize), Enabled: true})
 
-	if _, err := cb(ctx, oversized()); err != nil {
+	req := &model.LLMRequest{Contents: build()}
+	if _, err := cb(ctx, req); err != nil {
 		t.Fatalf("first callback err: %v", err)
 	}
-	if got, _ := ctx.state.Get(summaryStateKey); got != "FIRST-SUMMARY" {
-		t.Fatalf("summary not anchored to state: %v", got)
+	if llm.calls != 1 {
+		t.Fatalf("first turn did not summarise: calls=%d", llm.calls)
+	}
+	idx := sentinelIndex(req.Contents)
+	if idx < 0 || !strings.Contains(req.Contents[idx].Parts[0].Text, "FIRST-SUMMARY") {
+		t.Fatalf("first summary not durably present: %+v", req.Contents)
 	}
 
+	// Pile on another full batch of turns — comfortably past what the same
+	// threshold can hold — forcing a SECOND compaction.
 	llm.text = "SECOND-SUMMARY"
-	if _, err := cb(ctx, oversized()); err != nil {
+	grown := append(append([]*genai.Content{}, req.Contents...), build()[1:]...)
+	req2 := &model.LLMRequest{Contents: grown}
+	if _, err := cb(ctx, req2); err != nil {
 		t.Fatalf("second callback err: %v", err)
 	}
+	if llm.calls != 2 {
+		t.Fatalf("second turn did not re-summarise: calls=%d", llm.calls)
+	}
 	if !strings.Contains(llm.lastPrompt, "<previous-summary>") || !strings.Contains(llm.lastPrompt, "FIRST-SUMMARY") {
-		t.Fatalf("second summarise did not receive the anchored previous summary; prompt:\n%s", llm.lastPrompt)
+		t.Fatalf("second summarise did not receive the durable previous summary; prompt:\n%s", llm.lastPrompt)
+	}
+	idx2 := sentinelIndex(req2.Contents)
+	if idx2 < 0 || !strings.Contains(req2.Contents[idx2].Parts[0].Text, "SECOND-SUMMARY") {
+		t.Fatalf("second summary not present in the durable view: %+v", req2.Contents)
+	}
+
+	// The first summary event is superseded, not deleted — raw events are
+	// never mutated or removed (ADK invariant).
+	resp, err := sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
+	if err != nil {
+		t.Fatalf("session get: %v", err)
+	}
+	var sentinels int
+	for ev := range resp.Session.Events().All() {
+		if ev.Content != nil && isSentinel(ev.Content) {
+			sentinels++
+		}
+	}
+	if sentinels != 2 {
+		t.Fatalf("durable log has %d sentinel events; want 2 (both compactions survive, the old one inert)", sentinels)
+	}
+}
+
+// Over-threshold history durably appends exactly ONE summary event (author
+// model, sentinel prefix), the request becomes [task, summary, retained
+// tail] with the tail sized to EventRetentionSize, and every original session
+// event survives untouched (log-preserving, ADK invariant).
+func TestDurableSummaryEventAppended(t *testing.T) {
+	ctx := newFakeCtx()
+	sessions, sess := newSessions(t, ctx)
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "the task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
+	}
+	// Persist the turns as REAL session events first, as ADK's own runtime
+	// would have — proves compaction only ever APPENDS, never deletes.
+	for _, c := range contents {
+		ev := session.NewEvent(ctx, ctx.InvocationID())
+		ev.Author = c.Role
+		ev.Content = c
+		if err := sessions.AppendEvent(ctx, sess, ev); err != nil {
+			t.Fatalf("seed append: %v", err)
+		}
+	}
+	before, err := sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
+	if err != nil {
+		t.Fatalf("session get: %v", err)
+	}
+	beforeIDs := map[string]bool{}
+	for ev := range before.Session.Events().All() {
+		beforeIDs[ev.ID] = true
+	}
+	if len(beforeIDs) != len(contents) {
+		t.Fatalf("seed: %d events persisted, want %d", len(beforeIDs), len(contents))
+	}
+
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	cb := compactionCallback(Compaction{Summarizer: llm, Sessions: sessions, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("summariser calls=%d; want 1", llm.calls)
+	}
+
+	if req.Contents[0].Parts[0].Text != contents[0].Parts[0].Text {
+		t.Fatalf("task not preserved verbatim at contents[0]")
+	}
+	if !isSentinel(req.Contents[1]) {
+		t.Fatalf("contents[1] is not the durable summary: %+v", req.Contents[1])
+	}
+	if got := len(req.Contents) - 2; got != defaultEventRetentionSize {
+		t.Fatalf("retained tail = %d contents; want EventRetentionSize %d", got, defaultEventRetentionSize)
+	}
+
+	after, err := sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
+	if err != nil {
+		t.Fatalf("session get: %v", err)
+	}
+	var afterCount, newSentinels int
+	for ev := range after.Session.Events().All() {
+		afterCount++
+		if beforeIDs[ev.ID] {
+			continue
+		}
+		// Author = the appending agent's name (fakeCtx.AgentName() == "test"):
+		// same-author events are the class proven to re-enter that agent's
+		// request assembly (review fix — an invented author risks exclusion).
+		if ev.Author != "test" || ev.Content == nil || !isSentinel(ev.Content) {
+			t.Fatalf("unexpected new event: author=%q sentinel=%v", ev.Author, ev.Content != nil && isSentinel(ev.Content))
+		}
+		newSentinels++
+	}
+	if afterCount != len(beforeIDs)+1 {
+		t.Fatalf("session has %d events after compaction; want %d (raw events untouched + one summary)", afterCount, len(beforeIDs)+1)
+	}
+	if newSentinels != 1 {
+		t.Fatalf("appended %d new sentinel events; want exactly 1", newSentinels)
 	}
 }
 
