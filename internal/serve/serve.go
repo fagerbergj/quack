@@ -1036,12 +1036,22 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 			"models":  m{ac.Model: modelCfg},
 		}},
 		"model": "quack/" + ac.Model,
-		// Everything else keeps opencode's defaults — external_directory,
-		// .env reads and doom_loop stay "ask", and the ACP handler routes
-		// each ask to the SAFETY JUDGE (acp.Options.PermissionJudge), the
-		// same judge tier the native guard ladder used.
+		// Every KNOWN ask class gets a deterministic config-side answer, so
+		// no ask crosses ACP in the common path — an ask would route to the
+		// safety judge (acp.Options.PermissionJudge), and on a 1-GPU deploy
+		// a mid-round judge call evicts the coder model (the per-step swap
+		// thrash class). The judge stays as the fallback for NOVEL asks only.
+		//   external_directory: the node's cwd is the boundary — a sibling
+		//     node's workspace is never legitimate; foreign repos get cloned
+		//     into cwd (deep-merged, so skills.paths allowances survive).
+		//   doom_loop: opencode's own stuck-detector asking "continue?" — no
+		//     is the loop-breaker semantics; the gate judges what came back.
+		//   .env reads: secrets hygiene.
 		"permission": m{
-			"bash": m{"git push": "deny", "git push *": "deny", "*": "allow"},
+			"bash":               m{"git push": "deny", "git push *": "deny", "*": "allow"},
+			"external_directory": m{"*": "deny"},
+			"doom_loop":          "deny",
+			"read":               m{"*.env": "deny", "*.env.*": "deny"},
 		},
 	}
 	// quack's own skill library, discovered by opencode's skills.paths glob
