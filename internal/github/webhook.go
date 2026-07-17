@@ -546,7 +546,14 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// rejected branch) must NOT be read as delivered (the #286/#287 failure
 	// this dispatch has always guarded against). judgePassed is only the
 	// fallback for the case nothing was ever staged.
-	delivered := judgePassed && isWorkRequest(task)
+	//
+	// A plan-only run NEVER delivers a PR/review — its deliverable IS the plan
+	// comment — so it must never be read as "delivered" no matter how work-verby
+	// the issue text is (isWorkRequest keys off the task, and "implement X"
+	// issues make it true). Before delivery was gate-committed the worker posted
+	// the plan itself via github_comment, masking this; once that tool was
+	// removed the skip dropped the plan silently.
+	delivered := judgePassed && isWorkRequest(task) && !p.planOnly
 	if d, ok := takeDeliveryDetail(sessionID); ok {
 		delivered = d.err == nil
 		if d.err != nil {

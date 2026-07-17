@@ -1415,3 +1415,35 @@ func TestHandleWebhookMergeLabel(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleWebhookPlanLabelPostsPlanEvenWhenDelivered pins the regression where a
+// plan-only run silently dropped its plan: isWorkRequest keys off the (work-verby)
+// issue text, so judgePassed && isWorkRequest made `delivered` true and dispatch
+// skipped the summary comment — but a plan-only run's deliverable IS that comment.
+// (Latent until github_comment was removed; before that the worker posted the plan
+// itself, masking the skip.) The prior plan-label test never set judgePassed, so it
+// couldn't catch this.
+func TestHandleWebhookPlanLabelPostsPlanEvenWhenDelivered(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	// judgePassed:true + the work-verby stub issue ("Add widget cache") is exactly
+	// the production condition: pre-fix, `delivered` was true and the plan was dropped.
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## Plan\n\nthe plan", judgePassed: true}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_plan"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:plan", "alice", false)))
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "the plan") {
+			t.Errorf("posted comment is not the plan: %q", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("plan-only run did not post its plan — the delivered-skip dropped it")
+	}
+}
