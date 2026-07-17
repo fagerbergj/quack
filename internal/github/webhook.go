@@ -538,65 +538,90 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// endpoint can never miss the run.
 	runCtx, cancelRun := context.WithCancel(ctx)
 	e.activeCancels.Store(sessionID, &activeRun{responseID: turnID, cancel: cancelRun})
-	go func() {
-		// Mark the run finished for hub subscribers once it returns (after its
-		// final Done is published) — LAST, so that by the time a viewer sees the
-		// stream close, the run is already off activeCancels (cancelling it now 404s).
-		defer e.hub.Close(sessionID)
-		defer func() {
-			cancelRun()
-			e.activeCancels.Delete(sessionID)
-		}()
-
-		// A WORK request (review/implement) always runs as a plan. A mid-tier
-		// orchestrator model sometimes answers in prose without calling plan — "Let me
-		// start by cloning the repo…" — and that preamble would be posted as if it were
-		// the review. So if a work request ran no plan, nudge once to actually run it.
-		// A purely conversational follow-up ("what did you mean by that finding?")
-		// legitimately runs no plan and must be answered directly — never nudged.
-		planRan, judgePassed := e.drive(runCtx, sessionID, message, owner, repo, number, turnID, pub)
-		if !planRan && (isWorkRequest(task) || p.planOnly) {
-			slog.Warn("github: work request produced no plan; nudging it to run the work once",
-				"component", "github", "repo", owner+"/"+repo, "issue", number)
-			_, jp2 := e.drive(runCtx, sessionID, runNudge, owner, repo, number, turnID, pub)
-			judgePassed = judgePassed || jp2
-		}
-		if pub != nil {
-			pub.Publish(stream.Done())
-			_ = e.store.Touch(runCtx, sessionID)
-		}
-
-		// The tail must OUTLIVE the run: after a deadline kill, ctx is dead and both
-		// LatestAnswer and the comment post would fail with it — the run then dies
-		// with zero external signal (#286: a 2h-deadline kill posted nothing). Use a
-		// fresh bounded context, and say what actually happened.
-		tailCtx := runCtx
-		timedOut := runCtx.Err() != nil
-		if timedOut {
-			var tailCancel context.CancelFunc
-			tailCtx, tailCancel = context.WithTimeout(context.Background(), time.Minute)
-			defer tailCancel()
-		}
-		answer := strings.TrimSpace(e.runner.LatestAnswer(tailCtx, runUserID, sessionID))
-		if timedOut {
-			answer = fmt.Sprintf("⚠️ quack hit its run deadline (%s) before finishing; nothing was delivered. Re-apply the label to retry.\n\nLast progress:\n\n%s",
-				e.runTimeout, answer)
-		} else if answer == "" {
-			answer = "quack finished but produced no answer."
-		} else if p.planOnly {
-			// A genuine plan (not a timeout/empty placeholder): collapse any PRIOR
-			// plan comment on this issue before posting the new one, so the thread
-			// shows the CURRENT plan, not a pile of dead attempts. The marker
-			// is what a later run's collapse finds.
-			e.app.collapsePriorComments(tailCtx, owner, repo, number, "plan")
-			answer += "\n\n" + deliveryMarker("plan")
-		}
-		if err := e.app.postIssueComment(tailCtx, owner, repo, number, answer); err != nil {
-			slog.Error("github comment post failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
-			return
-		}
-		slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number, "timed_out", timedOut)
+	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
+	// stays INLINE — wrapping it in another goroutine would let this function's
+	// `defer cancel()` (run ctx) and `defer lock.Unlock()` (session lock) fire the
+	// moment it spawned, before the run finished. Deregister LAST (deferred
+	// cancel+Delete, then hub.Close) so a viewer sees the stream close only after
+	// the run is already off activeCancels (cancelling it then 404s).
+	defer e.hub.Close(sessionID)
+	defer func() {
+		cancelRun()
+		e.activeCancels.Delete(sessionID)
 	}()
+
+	// A WORK request (review/implement) always runs as a plan. A mid-tier
+	// orchestrator model sometimes answers in prose without calling plan — "Let me
+	// start by cloning the repo…" — and that preamble would be posted as if it were
+	// the review. So if a work request ran no plan, nudge once to actually run it.
+	// A purely conversational follow-up ("what did you mean by that finding?")
+	// legitimately runs no plan and must be answered directly — never nudged.
+	planRan, judgePassed := e.drive(runCtx, sessionID, message, owner, repo, number, turnID, pub)
+	if !planRan && (isWorkRequest(task) || p.planOnly) {
+		slog.Warn("github: work request produced no plan; nudging it to run the work once",
+			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		_, jp2 := e.drive(runCtx, sessionID, runNudge, owner, repo, number, turnID, pub)
+		judgePassed = judgePassed || jp2
+	}
+	if pub != nil {
+		pub.Publish(stream.Done())
+		_ = e.store.Touch(runCtx, sessionID)
+	}
+
+	// A judge-passed work request already had its staged review/PR posted by the
+	// trust gate itself (commitDelivery) — posting the run's text summary too would
+	// duplicate it. Only fall back to a summary comment when nothing was delivered.
+	// takeDeliveryDetail is AUTHORITATIVE when present (the delivery call's own
+	// outcome, not a proxy): a gate that passed but whose push then failed must NOT
+	// read as delivered. A plan-only run NEVER delivers a PR/review — its
+	// deliverable is the plan comment — so it must never read as delivered no
+	// matter how work-verby the task text is.
+	delivered := judgePassed && isWorkRequest(task) && !p.planOnly
+	if d, ok := takeDeliveryDetail(sessionID); ok {
+		delivered = d.err == nil
+		if d.err != nil {
+			slog.Error("github: staged delivery failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", d.err)
+		} else {
+			slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
+				"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
+		}
+	}
+	if delivered {
+		slog.Info("github: work delivered on the PR; skipping the duplicate summary comment",
+			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		return
+	}
+
+	// The tail must OUTLIVE the run: after a deadline kill, ctx is dead and both
+	// LatestAnswer and the comment post would fail with it — the run then dies
+	// with zero external signal (#286: a 2h-deadline kill posted nothing). Use a
+	// fresh bounded context, and say what actually happened.
+	tailCtx := runCtx
+	timedOut := runCtx.Err() != nil
+	if timedOut {
+		var tailCancel context.CancelFunc
+		tailCtx, tailCancel = context.WithTimeout(context.Background(), time.Minute)
+		defer tailCancel()
+	}
+	answer := strings.TrimSpace(e.runner.LatestAnswer(tailCtx, runUserID, sessionID))
+	if timedOut {
+		answer = fmt.Sprintf("⚠️ quack hit its run deadline (%s) before finishing; nothing was delivered. Re-apply the label to retry.\n\nLast progress:\n\n%s",
+			e.runTimeout, answer)
+	} else if answer == "" {
+		answer = "quack finished but produced no answer."
+	} else if p.planOnly {
+		// A genuine plan (not a timeout/empty placeholder): collapse any PRIOR
+		// plan comment on this issue before posting the new one, so the thread
+		// shows the CURRENT plan, not a pile of dead attempts. The marker
+		// is what a later run's collapse finds.
+		e.app.collapsePriorComments(tailCtx, owner, repo, number, "plan")
+		answer += "\n\n" + deliveryMarker("plan")
+	}
+	if err := e.app.postIssueComment(tailCtx, owner, repo, number, answer); err != nil {
+		slog.Error("github comment post failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+		return
+	}
+	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number, "timed_out", timedOut)
 }
 
 // persistGithubLink stores the web URL of the originating issue/PR on the
