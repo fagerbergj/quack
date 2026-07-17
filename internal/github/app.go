@@ -293,6 +293,18 @@ func (a *App) postIssueComment(ctx context.Context, owner, repo string, number i
 	return a.doJSON(ctx, http.MethodPost, path, "token "+tok, map[string]string{"body": bodyText}, nil)
 }
 
+// editIssueComment overwrites an existing issue/PR comment's body in place —
+// the revise-before-post path for a staged comment carrying a delivery marker
+// already posted by an earlier run (T3.3).
+func (a *App) editIssueComment(ctx context.Context, owner, repo string, id int64, bodyText string) error {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/repos/%s/%s/issues/comments/%d", owner, repo, id)
+	return a.doJSON(ctx, http.MethodPatch, path, "token "+tok, map[string]string{"body": bodyText}, nil)
+}
+
 // createPullRequest opens a PR (head → base) using the repo's installation
 // token and returns the new PR's html_url and number.
 func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, base, bodyText string) (string, int, error) {
@@ -312,6 +324,67 @@ func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, b
 	return out.HTMLURL, out.Number, nil
 }
 
+// findOpenPR looks up an OPEN pull request already open from head branch, via
+// GitHub's own state — not a session's memory of having opened one before —
+// so a re-run's revise lands on the SAME PR instead of a duplicate (T3.1).
+// ok is false when none is open (not an error).
+func (a *App) findOpenPR(ctx context.Context, owner, repo, branch string) (number int, url string, ok bool, err error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return 0, "", false, err
+	}
+	var out []struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls?head=%s:%s&state=open", owner, repo, owner, branch)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return 0, "", false, err
+	}
+	if len(out) == 0 {
+		return 0, "", false, nil
+	}
+	return out[0].Number, out[0].HTMLURL, true, nil
+}
+
+// updatePullRequest edits an existing PR's title/body — the revise-before-post
+// path when findOpenPR finds one already open (T3.1).
+func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number int, title, bodyText string) (string, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		HTMLURL string `json:"html_url"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number)
+	reqBody := map[string]string{"title": title, "body": bodyText}
+	if err := a.doJSON(ctx, http.MethodPatch, path, "token "+tok, reqBody, &out); err != nil {
+		return "", err
+	}
+	return out.HTMLURL, nil
+}
+
+// branchHeadSHA returns the SHA GitHub reports as branch's current head — the
+// ground truth a push must match. A `git push` that exits 0 but the ref never
+// actually updates on GitHub's side must not be read as delivered (T3.2).
+func (a *App) branchHeadSHA(ctx context.Context, owner, repo, branch string) (string, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/git/ref/heads/%s", owner, repo, branch)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return "", err
+	}
+	return out.Object.SHA, nil
+}
+
 // listIssueComments fetches an issue's conversation comments (where a posted
 // plan lives), flattening the nested user object to a login string.
 func (a *App) listIssueComments(ctx context.Context, owner, repo string, number int) ([]commentView, error) {
@@ -321,6 +394,7 @@ func (a *App) listIssueComments(ctx context.Context, owner, repo string, number 
 	}
 	var raw []struct {
 		ID        int64     `json:"id"`
+		NodeID    string    `json:"node_id"`
 		Body      string    `json:"body"`
 		User      ghUserRef `json:"user"`
 		CreatedAt string    `json:"created_at"`
@@ -331,9 +405,49 @@ func (a *App) listIssueComments(ctx context.Context, owner, repo string, number 
 	}
 	out := make([]commentView, 0, len(raw))
 	for _, c := range raw {
-		out = append(out, commentView{ID: c.ID, Body: c.Body, User: c.User.Login, CreatedAt: c.CreatedAt})
+		out = append(out, commentView{ID: c.ID, NodeID: c.NodeID, Body: c.Body, User: c.User.Login, CreatedAt: c.CreatedAt})
 	}
 	return out, nil
+}
+
+// doGraphQL executes one authenticated GraphQL query/mutation against
+// apiBase+"/graphql". GitHub's GraphQL errors surface inside a 200 response
+// body (not the status code), so they're checked explicitly.
+func (a *App) doGraphQL(ctx context.Context, authz, query string, variables map[string]any, out any) error {
+	var raw struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	reqBody := map[string]any{"query": query, "variables": variables}
+	if err := a.doJSON(ctx, http.MethodPost, "/graphql", authz, reqBody, &raw); err != nil {
+		return err
+	}
+	if len(raw.Errors) > 0 {
+		return fmt.Errorf("github: graphql: %s", raw.Errors[0].Message)
+	}
+	if out != nil && len(raw.Data) > 0 {
+		return json.Unmarshal(raw.Data, out)
+	}
+	return nil
+}
+
+// minimizeComment marks a minimizable GitHub node (an issue comment, a PR
+// review, a PR review comment — anything with a GraphQL node_id) OUTDATED, so
+// the thread shows current state instead of a pile of dead attempts (T4.1).
+// Best-effort: callers log a failure and move on, they never fail delivery.
+func (a *App) minimizeComment(ctx context.Context, owner, repo, nodeID string) error {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return err
+	}
+	const mutation = `mutation($id: ID!) {
+		minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) {
+			minimizedComment { isMinimized }
+		}
+	}`
+	return a.doGraphQL(ctx, "token "+tok, mutation, map[string]any{"id": nodeID}, nil)
 }
 
 // mergePR squash-merges a pull request using the repo's installation token.
@@ -550,8 +664,11 @@ type reviewCommentView struct {
 }
 
 // commentView is one top-level conversation comment (from issues/{n}/comments).
+// NodeID is its GraphQL id, needed only to minimizeComment it (T4.1); "" for
+// call sites (like listPRDiscussion's) that don't fetch it.
 type commentView struct {
 	ID        int64  `json:"id"`
+	NodeID    string `json:"node_id,omitempty"`
 	Body      string `json:"body"`
 	User      string `json:"user"`
 	CreatedAt string `json:"created_at"`
@@ -632,9 +749,12 @@ type ghUserRef struct {
 // prReview is one submitted PR review, in the order GitHub returns them
 // (chronological). commit_id is GitHub's own durable "reviewed as of" marker —
 // the state conversational follow-up reviews key off, so no local store is needed.
+// NodeID + Body are only needed to find/collapse quack's own prior reviews (T4.1).
 type prReview struct {
+	NodeID      string    `json:"node_id"`
 	CommitID    string    `json:"commit_id"`
 	State       string    `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED, …
+	Body        string    `json:"body"`
 	User        ghUserRef `json:"user"`
 	SubmittedAt string    `json:"submitted_at"`
 }

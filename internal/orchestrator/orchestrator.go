@@ -644,6 +644,18 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 	yield(stream.Done(), nil)
 }
 
+// ResetSession deletes a session's stored history so the next Run starts a
+// fresh segment (Run's runner.Config sets AutoCreateSession, so the session is
+// simply recreated empty on next use; deleting one that doesn't exist is a
+// no-op in both session.Service implementations we run). Used by the GitHub
+// extension's webhook dispatch for a LABEL-driven work request
+// (quack:implement/quack:review/quack:plan): unlike a conversational @mention,
+// which needs full history for continuity, a fresh attempt must not inherit
+// thousands of events from prior ones (T4 session hygiene).
+func (o *Orchestrator) ResetSession(ctx context.Context, userID, sessionID string) error {
+	return o.sessions.Delete(ctx, &session.DeleteRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+}
+
 // PriorEvents reads a chat's persisted session events (nil if the session is
 // missing). Within Run, called BEFORE the runner appends the current turn, so it
 // holds only earlier turns; shared by buildHistory and LatestPendingQuestion so

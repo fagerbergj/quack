@@ -28,29 +28,43 @@ import (
 // pass means commitDeliveryOnPass RAN, not that it succeeded — see drive's
 // doc comment). Process-local: one process serves one App instance, and a
 // result is read (and cleared) exactly once, by the dispatch that caused it.
-var deliveryResults sync.Map // chatID → error (nil = success)
+var deliveryResults sync.Map // chatID → deliveryOutcome
 
 func recordDeliveryResult(chatID string, err error) {
+	recordDelivery(chatID, deliveryOutcome{err: err})
+}
+
+// recordDelivery is recordDeliveryResult plus the verified GitHub state a
+// successful delivery produced (real PR number/url, the pushed SHA) — so a
+// caller reads what GitHub actually has, not what the worker claimed (T3.4).
+func recordDelivery(chatID string, o deliveryOutcome) {
 	if chatID == "" {
 		return
 	}
-	deliveryResults.Store(chatID, deliveryOutcome{err})
+	deliveryResults.Store(chatID, o)
 }
 
-// takeDeliveryResult returns and clears the last delivery outcome for chatID.
-// ok is false when nothing was ever staged for this chat (dispatch then falls
-// back to its own judge-pass proxy).
-func takeDeliveryResult(chatID string) (err error, ok bool) {
+// takeDeliveryDetail returns and clears the last delivery outcome for chatID
+// — its error, plus (on success) the verified PR/SHA info (T3.4). ok is false
+// when nothing was ever staged for this chat (dispatch then falls back to its
+// own judge-pass proxy).
+func takeDeliveryDetail(chatID string) (deliveryOutcome, bool) {
 	v, ok := deliveryResults.LoadAndDelete(chatID)
 	if !ok {
-		return nil, false
+		return deliveryOutcome{}, false
 	}
-	return v.(deliveryOutcome).err, true
+	return v.(deliveryOutcome), true
 }
 
-// deliveryOutcome wraps a possibly-nil error so sync.Map can distinguish "no
-// entry" (LoadAndDelete's own ok=false) from "entry present, err is nil".
-type deliveryOutcome struct{ err error }
+// deliveryOutcome wraps a possibly-nil error (so sync.Map can distinguish "no
+// entry" from "entry present, err is nil") plus, on a successful pull-request
+// delivery, the real GitHub state it produced.
+type deliveryOutcome struct {
+	err       error
+	prNumber  int
+	prURL     string
+	pushedSHA string
+}
 
 // gitHost is the only host this extension supplies credentials for.
 const gitHost = "github.com"
@@ -478,12 +492,113 @@ func (a *App) submitReview(ctx context.Context, args submitReviewArgs) (submitRe
 		// the verdict and the inline count so the PR always shows one.
 		body = defaultReviewBody(event, len(comments))
 	}
+	// The marker makes a later run's collapse (T4.1) able to find this review
+	// again; it never fails silently into a defaultReviewBody-free blank post.
+	body += "\n\n" + deliveryMarker("review")
 	url, id, err := a.createReview(ctx, args.Owner, args.Repo, args.PullNumber, event, body, comments)
 	if err != nil {
 		return submitReviewResult{}, err
 	}
 	a.draftTake(args.Owner, args.Repo, args.PullNumber) // clear only after a successful post
 	return submitReviewResult{URL: url, ReviewID: id, Comments: len(comments)}, nil
+}
+
+// deliveryMarker is the hidden HTML-comment marker embedded in a quack-
+// authored comment/review, so a later run can find its own prior post — to
+// edit it in place (comment idempotency, T3.3) or collapse it as superseded
+// (T4.1) — without touching a human's discussion. family is "plan", "review",
+// or "comment:<slot>" (mirrors the staged-delivery target keys in node.go).
+func deliveryMarker(family string) string {
+	return "<!-- quack:delivery:" + family + " -->"
+}
+
+// collapsePriorReviews minimizes every existing quack-authored PR review
+// (GraphQL minimizeComment, classifier OUTDATED) before a new one is
+// submitted for the same PR, so the thread shows the CURRENT review, not a
+// pile of dead attempts (T4.1). Best-effort: a failure is logged, never fails
+// the new review's delivery.
+func (a *App) collapsePriorReviews(ctx context.Context, owner, repo string, number int) {
+	reviews, err := a.listReviews(ctx, owner, repo, number)
+	if err != nil {
+		slog.Warn("github: collapse: list reviews failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		return
+	}
+	bot, err := a.botLogin(ctx)
+	if err != nil {
+		slog.Warn("github: collapse: bot identity lookup failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		return
+	}
+	marker := deliveryMarker("review")
+	for _, r := range reviews {
+		if r.User.Login != bot || r.NodeID == "" || !strings.Contains(r.Body, marker) {
+			continue
+		}
+		if err := a.minimizeComment(ctx, owner, repo, r.NodeID); err != nil {
+			slog.Warn("github: collapse review failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		}
+	}
+}
+
+// collapsePriorComments minimizes every existing quack-authored issue comment
+// carrying marker family (T4.1) — same idea as collapsePriorReviews, for
+// comments rather than PR reviews (e.g. a superseded plan comment). Best-effort.
+func (a *App) collapsePriorComments(ctx context.Context, owner, repo string, number int, family string) {
+	comments, err := a.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		slog.Warn("github: collapse: list comments failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+		return
+	}
+	bot, err := a.botLogin(ctx)
+	if err != nil {
+		slog.Warn("github: collapse: bot identity lookup failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+		return
+	}
+	marker := deliveryMarker(family)
+	for _, c := range comments {
+		if c.User != bot || c.NodeID == "" || !strings.Contains(c.Body, marker) {
+			continue
+		}
+		if err := a.minimizeComment(ctx, owner, repo, c.NodeID); err != nil {
+			slog.Warn("github: collapse comment failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+		}
+	}
+}
+
+// findQuackComment returns the ID of an existing quack-authored issue comment
+// carrying marker, if any — the revise-before-post lookup for T3.3. ok is
+// false when none is found; err explains a lookup failure (the caller then
+// falls back to posting fresh rather than risk never posting at all).
+func (a *App) findQuackComment(ctx context.Context, owner, repo string, number int, marker string) (id int64, ok bool, err error) {
+	comments, err := a.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return 0, false, err
+	}
+	bot, err := a.botLogin(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	for _, c := range comments {
+		if c.User == bot && strings.Contains(c.Body, marker) {
+			return c.ID, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+// deliverStagedComment posts (or, if a prior quack comment for this SAME slot
+// already exists, edits) a staged comment — the marker makes a revise-before-
+// post re-run idempotent instead of piling up duplicates (T3.3).
+func (a *App) deliverStagedComment(ctx context.Context, owner, repo string, number int, slot, bodyText string) error {
+	marker := deliveryMarker("comment:" + slot)
+	withMarker := strings.TrimSpace(bodyText) + "\n\n" + marker
+	id, found, err := a.findQuackComment(ctx, owner, repo, number, marker)
+	if err != nil {
+		slog.Warn("github: find prior comment failed; posting fresh", "component", "github", "repo", owner+"/"+repo, "issue", number, "slot", slot, "err", err)
+	}
+	if found {
+		return a.editIssueComment(ctx, owner, repo, id, withMarker)
+	}
+	return a.postIssueComment(ctx, owner, repo, number, withMarker)
 }
 
 // defaultReviewBody synthesises a one-line summary for a review submitted with an
@@ -626,20 +741,42 @@ func (a *App) react(ctx context.Context, args reactArgs) (reactResult, error) {
 // step's own call (internal/github/webhook.go's commitDelivery, post-judge-
 // pass only); no longer exposed as a model tool (see App.Tools). A label
 // failure never fails the open (a retry would duplicate the PR).
-func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string) (string, error) {
+func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string) (string, int, error) {
 	if base == "" {
 		base = "main"
 	}
 	u, number, err := a.createPullRequest(ctx, owner, repo, title, head, base, body)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if len(labels) > 0 {
 		if err := a.addLabels(ctx, owner, repo, number, labels); err != nil {
 			slog.Warn("github: labeling the new PR failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
 		}
 	}
-	return u, nil
+	return u, number, nil
+}
+
+// openOrUpdatePullRequest is the idempotent PR delivery (T3.1): it opens a NEW
+// pull request for head only when GitHub has no OPEN one already; otherwise it
+// UPDATES the existing PR's title/body — "revise on re-run" instead of a
+// second PR. Labels are applied only on the first open (an update never risks
+// re-labeling). A failed existence check degrades to "open a new one" rather
+// than blocking delivery outright — GitHub itself still rejects a genuine
+// duplicate branch-to-PR mapping.
+func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string) (url string, number int, err error) {
+	if num, _, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
+		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
+	} else if ok {
+		u, uerr := a.updatePullRequest(ctx, owner, repo, num, title, body)
+		if uerr != nil {
+			return "", 0, fmt.Errorf("update existing pull request #%d: %w", num, uerr)
+		}
+		slog.Info("github: updated the existing open pull request instead of opening a duplicate",
+			"component", "github", "repo", owner+"/"+repo, "pr", num, "url", u)
+		return u, num, nil
+	}
+	return a.openPullRequest(ctx, owner, repo, title, head, base, body, labels)
 }
 
 // Deliver is the vetting.DeliverFunc this extension provides (wired in
@@ -655,7 +792,11 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 //
 // jailRoot anchors the askpass symlink PushBranch needs (workspace.Jail.Root()).
 func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryContext) (err error) {
-	defer func() { recordDeliveryResult(dc.ChatID, err) }()
+	var detail deliveryOutcome
+	defer func() {
+		detail.err = err
+		recordDelivery(dc.ChatID, detail)
+	}()
 	if len(dc.Items) == 0 {
 		return nil
 	}
@@ -669,58 +810,84 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 			return fmt.Errorf("github: delivery: %w", terr)
 		}
 		cred := tools.GitCredential{Host: gitHost, Username: gitUsername, Token: tok}
-		if _, perr := tools.PushBranch(ctx, jailRoot, dc.CloneDir, dc.Branch, cred, workspace.DefaultCaps()); perr != nil {
+		localSHA, perr := tools.PushBranch(ctx, jailRoot, dc.CloneDir, dc.Branch, cred, workspace.DefaultCaps())
+		if perr != nil {
 			return fmt.Errorf("github: delivery: push %q: %w", dc.Branch, perr)
 		}
+		// A `git push` that exits 0 is not proof the branch landed (a dropped
+		// connection mid-push, a revoked installation) — confirm against GitHub's
+		// OWN state before claiming anything downstream (T3.2). localSHA is a
+		// short hash; GitHub's ref API returns the full one.
+		remoteSHA, verr := a.branchHeadSHA(ctx, owner, repo, dc.Branch)
+		if verr != nil {
+			return fmt.Errorf("github: delivery: push %q: verify against GitHub: %w", dc.Branch, verr)
+		}
+		if !strings.HasPrefix(remoteSHA, localSHA) {
+			return fmt.Errorf("github: delivery: push %q: local head %s not reflected on GitHub (remote head %s) — not delivering", dc.Branch, localSHA, remoteSHA)
+		}
+		detail.pushedSHA = remoteSHA
 	}
 	var errs []error
 	for _, item := range dc.Items {
-		if ierr := a.deliverOne(ctx, owner, repo, dc, item); ierr != nil {
+		res, ierr := a.deliverOne(ctx, owner, repo, dc, item)
+		if ierr != nil {
 			errs = append(errs, ierr)
+			continue
+		}
+		if res.prNumber != 0 {
+			detail.prNumber, detail.prURL = res.prNumber, res.prURL
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// deliveryItemResult is what one staged item's delivery produced worth
+// recording — currently only a pull request's real number/url (T3.4).
+type deliveryItemResult struct {
+	prNumber int
+	prURL    string
 }
 
 // deliverOne posts one staged item, past Deliver's push. A review or comment
 // with no known PR (dc.IssueNumber == 0 — the worker never named one via
 // github_add_review_comment/github_submit_review) is a clear, actionable
 // error rather than a guess.
-func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.DeliveryContext, item vetting.StagedDelivery) error {
+func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.DeliveryContext, item vetting.StagedDelivery) (deliveryItemResult, error) {
 	switch item.Kind {
 	case "pull_request":
 		if dc.Branch == "" {
-			return fmt.Errorf("github: delivery: staged pull request %q has no branch to open it from", item.Title)
+			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged pull request %q has no branch to open it from", item.Title)
 		}
-		u, err := a.openPullRequest(ctx, owner, repo, item.Title, dc.Branch, "", item.Body, nil)
+		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", item.Body, nil)
 		if err != nil {
-			return fmt.Errorf("github: delivery: open pull request: %w", err)
+			return deliveryItemResult{}, fmt.Errorf("github: delivery: open pull request: %w", err)
 		}
-		slog.Info("github: delivered a pull request", "component", "github", "repo", owner+"/"+repo, "url", u)
-		return nil
+		slog.Info("github: delivered a pull request", "component", "github", "repo", owner+"/"+repo, "pr", num, "url", u)
+		return deliveryItemResult{prNumber: num, prURL: u}, nil
 	case "review":
 		if dc.IssueNumber == 0 {
-			return fmt.Errorf("github: delivery: staged review has no pull request number to submit against")
+			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review has no pull request number to submit against")
 		}
 		event := strings.ToUpper(item.Event)
 		if !reviewEvents[event] {
-			return fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
+			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
 		}
+		a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts (T4.1)
 		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: item.Body, Event: event})
 		if err != nil {
-			return fmt.Errorf("github: delivery: submit review: %w", err)
+			return deliveryItemResult{}, fmt.Errorf("github: delivery: submit review: %w", err)
 		}
 		slog.Info("github: delivered a review", "component", "github", "repo", owner+"/"+repo, "url", res.URL)
-		return nil
+		return deliveryItemResult{}, nil
 	case "comment":
 		if dc.IssueNumber == 0 {
-			return fmt.Errorf("github: delivery: staged comment %q has no issue/PR number to post to", item.Slot)
+			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged comment %q has no issue/PR number to post to", item.Slot)
 		}
-		if err := a.postIssueComment(ctx, owner, repo, dc.IssueNumber, item.Body); err != nil {
-			return fmt.Errorf("github: delivery: post comment %q: %w", item.Slot, err)
+		if err := a.deliverStagedComment(ctx, owner, repo, dc.IssueNumber, item.Slot, item.Body); err != nil {
+			return deliveryItemResult{}, fmt.Errorf("github: delivery: post comment %q: %w", item.Slot, err)
 		}
-		return nil
+		return deliveryItemResult{}, nil
 	default:
-		return fmt.Errorf("github: delivery: unknown staged kind %q", item.Kind)
+		return deliveryItemResult{}, fmt.Errorf("github: delivery: unknown staged kind %q", item.Kind)
 	}
 }
