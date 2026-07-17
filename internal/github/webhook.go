@@ -890,23 +890,20 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 	if reviewOnly {
 		// No commit/push/PR words: a review posts findings, it does not deliver code.
 		b.WriteString("This is a REVIEW-ONLY task: do NOT create a branch, commit, or push — deliver your findings with the review tools (github_add_review_comment, stage_review). ")
-		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
-			owner, repo, p.Issue.Number)
+		b.WriteString("Your final answer is posted back automatically. ")
 		b.WriteString("Answer concisely and reference the review you staged.")
 		return b.String()
 	}
 	if p.planOnly {
 		// Like reviewOnly: no commit/push/PR words, or the vetting completion gate
 		// reads a phantom delivery demand off the task and loops the worker.
-		b.WriteString("This is a PLANNING-ONLY task: read the repository as needed to ground the plan, but do NOT change code or deliver anything to GitHub beyond comments. ")
-		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer — the plan — is posted back to the issue automatically.",
-			owner, repo, p.Issue.Number)
+		b.WriteString("This is a PLANNING-ONLY task: read the repository as needed to ground the plan, but do NOT change code or deliver anything to GitHub. ")
+		b.WriteString("Your final answer — the plan — is posted back to the issue automatically.")
 		return b.String()
 	}
 	b.WriteString("If the task needs code changes, work at your workspace root (the repo is already cloned and checked out there for you — plain relative paths, no prefix), commit your work locally on the branch already checked out for you, then call stage_pr with a title and body — you do not push or open the pull request yourself ")
 	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); it is opened for you once your work passes review. ", owner, repo, base)
-	fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
-		owner, repo, p.Issue.Number)
+	b.WriteString("Your final answer is posted back automatically. ")
 	b.WriteString("Answer concisely and reference any branch, PR, or review you staged.")
 	return b.String()
 }
