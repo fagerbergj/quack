@@ -30,12 +30,18 @@ const ServiceName = "quack"
 const ChatIDKey = "chat_id"
 
 // Providers holds the process-wide OTel wiring: the tracer/meter providers,
-// also installed as the otel package globals so ADK's own internal
-// instrumentation flows through them for free. Emission-only: quack keeps no
-// local trace/metric store of its own — Tempo/Grafana (the home-server
-// monitoring stack, staged behind otel.otlp_endpoint) own trace and metric
-// viewing. The durable event log (internal/store ChatEvents) is the
-// zero-infra observability surface `quack obs` reads.
+// also installed as the otel package globals via otel.SetTracerProvider/
+// SetMeterProvider. Emission-only — quack keeps no local trace/metric store
+// or read API of its own; Tempo/Grafana (the home-server monitoring stack,
+// staged behind otel.otlp_endpoint) own trace and metric viewing.
+//
+// KNOWN LIMITATION: ADK v2's own internal spans do NOT flow through this
+// provider. internal/telemetry (ADK) captures its tracer at package-init
+// time — `var tracer = otel.GetTracerProvider().Tracer(...)` — which runs
+// before Init below ever executes, so it is permanently bound to the SDK's
+// default no-op provider; ADK exposes no production API to rebind it (only
+// a test-only OverrideTracerForTesting). Every span in this package is
+// quack's own explicit instrumentation, not "free" ADK auto-instrumentation.
 type Providers struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider

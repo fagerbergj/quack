@@ -193,10 +193,11 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// OTel tracing/metrics (internal/otelobs), emission-only — Tempo/Grafana (the
 	// home-server monitoring stack) own trace/metric viewing, not quack itself.
-	// Set up FIRST — before any agent/session wiring — so every span from here
-	// on (including ADK's own internal instrumentation, once a provider is
-	// installed globally) is captured. Disabled (otel.enabled: false) yields a
-	// no-op Providers; every otelobs call site stays safe to call unconditionally.
+	// Set up FIRST — before any agent/session wiring — so every quack-authored
+	// span from here on is captured (ADK's OWN internal spans are NOT covered;
+	// see the KNOWN LIMITATION on otelobs.Providers). Disabled (otel.enabled:
+	// false) yields a no-op Providers; every otelobs call site stays safe to
+	// call unconditionally.
 	_, otelShutdown, err := otelobs.Init(ctx, cfg.Otel)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
