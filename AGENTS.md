@@ -76,44 +76,45 @@ Module path: `github.com/fagerbergj/quack`. The binary entrypoint is `cmd/server
 HTTP request
   → internal/server/router.go   (chi router; registers generated REST routes + MCP mount)
   → internal/server/rest/       (REST handler; dispatches to orchestrator)
-  → internal/orchestrator/      (Orchestrator.Run: plan → execute → persist)
-  → internal/dag/planner.go     (Planner.Plan: LLM call → DAG)
-  → internal/dag/executor.go    (Executor.Execute: topological walk, layered concurrency)
-  → each node → gated agent     (internal/vetting/gate.go wraps the worker)
+  → internal/orchestrator/      (Orchestrator.Run: one workflow/runner; plan → native ADK graph)
+  → internal/dag/planner.go     (Planner: LLM plan → DAG) + nativegraph.go (RunPlanAsGraph)
+  → each node → vetting.RunGatedRefine (internal/vetting/node.go — worker rounds + gate)
   → internal/vetting/judge.go   (independent judge model scores output)
-  → SSE events streamed back
+  → internal/dag/executor.go    (dagStream: ADK session events → SSE vocabulary)
 ```
 
 ### DAG execution (`internal/dag/`)
 
-- `plan.go` — `Plan` and `Node` structs; `Node.DependsOn` encodes edges.
-- `planner.go` — `Planner` makes a single LLM call to decompose a request into a `Plan`. The planner writes a per-node acceptance rubric alongside each node's task.
-- `executor.go` — `Executor.Execute` topologically sorts the plan into layers, then runs each layer's nodes concurrently (bounded by a semaphore, default `maxActive=2`). Each node runs in a fresh ADK session (`plan.ID:node.ID`). Nodes downstream of a failed-gate node receive a warning prefix but execution continues (continue-but-warn policy).
+- `plan.go` — `Plan` and `Node` structs; `Node.DependsOn` encodes edges; `Plan.Setup` (repo/base/branch) declares the pre-provisioned clone.
+- `planner.go` — one LLM call decomposes a request into a `Plan`, with a per-node acceptance rubric.
+- `nativegraph.go`/`graph.go` — the plan runs as ONE native ADK workflow graph under one runner (`WithMaxConcurrency`); all nodes share one workflow session (id = chatID), isolated by branch + isolation scope. `buildGateNodes` wraps each node's worker in `vetting.RunGatedRefine`. Continue-but-warn on gate-failed dependencies.
+- `executor.go` — `dagStream` translates raw ADK session events (by `NodeInfo.Path` + `worker-rN` run ids) into the SSE vocabulary.
 
 ### Trust gate (`internal/vetting/`)
 
-Every node's output passes three cheapest-first stages before the DAG propagates it:
+`RunGatedRefine` (node.go) runs the worker, then loops cheapest-first before the DAG propagates its output:
 
-1. **Deterministic checks** (`gate.go`) — citation backing score + length check; targeted revise cycles up to `DeterministicRounds`.
-2. **Self-refine** (`gate.go`) — the worker agent continues its own session to address its draft's gaps.
-3. **Independent judge** (`judge.go`) — a separate agent with a different model calls `submit_verdict` (G-Eval style, 0–10 per criterion). Overall score = lowest criterion (weakest-link; no averaging). Score is normalised 0–1; threshold default `0.7`.
+1. **Continuation** — mechanical completion signals (empty answer, undelivered commit, unposted review) hand the worker another tool-bearing round, up to 4.
+2. **Deterministic checks** — citation backing, length, delivery/review/behaviour criteria, and `checksPassCriterion` (checks.go): the repo's own build/vet/test commands derived from the clone and run via `workspace.RunPipeline` (allowlist `workspace.check_commands`, default ON, toolchain-gated).
+3. **Independent judge** (judge.go) — a separate model scores G-Eval style; weakest-link (lowest criterion), threshold default `0.7`. Judge/revise rounds re-prompt the worker with self-contained feedback.
 
-### Agent bundles (`internal/agent/`, `agents/`)
+Ground-truth probes for external (ACP) workers: `augmentFromRepo` (gitprobe.go) reads commits/changed files off the clone and synthesizes the staged PR; `augmentFromAnswer` (answerreview.go) parses a reviewer's `VERDICT:`/`FINDINGS:` tail into the staged review with inline comments. Delivery is gate-owned (`commitDelivery` → the GitHub extension), fires exactly once, and a gate-failed PR opens as a draft.
 
-An agent bundle is a directory with exactly two required files (plus two optional ones):
+### Agents: external ACP subprocesses + native bundles (`internal/acp/`, `internal/agent/`, `agents/`)
+
+ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`, docs/acp-coder.md) — `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
+
+Native (llmagent) bundles remain for the non-code agents (web-researcher, synthesizer, media/image readers, advisor, orchestrator):
 
 ```
 agents/<name>/
   agent-card.json   # A2A AgentCard: identity + skills
-  prompt.md         # system prompt
+  prompt.md         # system prompt (for ACP agents: the per-round preamble)
   rubric.md         # optional: per-agent judge rubric (falls back to config/rubric.md)
-  memory.md         # optional: "what to remember" guidance (M6); appended to the
-                    #   prompt only when the memory feature is on (agent.LoadBundleMemory).
-                    #   Assumes the agent's tool list includes the memory tools
-                    #   (load_memory / stage_memory) it refers to.
+  memory.md         # optional: "what to remember" guidance (M6), native agents only
 ```
 
-`agent.LoadBundle` reads the bundle; `agent.Build` turns it into an LLM agent. The config (`config/quack.yaml`) binds a model and tool list to each bundle. No code changes are needed to add or modify an agent.
+`agent.LoadBundle` reads the bundle; `agent.Build` turns a native one into an LLM agent. The config (`config/quack.yaml`) binds a model (and, for native agents, a tool list) to each bundle.
 
 ### Inference (`internal/inference/`)
 

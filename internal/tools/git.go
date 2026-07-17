@@ -9,13 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
-
-	"google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -171,44 +166,12 @@ type gitBinding struct {
 	nodeDir string
 }
 
-// withCwd returns a copy of b bound to this call's context: the per-chat scope,
-// the calling node's dir, and the session working directory — all derived from ctx
-// (mirrors fsBinding.withCwd). Value receiver ⇒ copy; the shared binding is never
-// mutated.
-func (b gitBinding) withCwd(ctx agent.Context) gitBinding {
-	b.chatID, b.nodeDir = scopeFromContext(ctx)
-	b.cwd = cwdFromState(ctx)
-	return b
-}
-
 // resolve is the cwd-, node- and chat-aware Jail.Resolve every git tool uses for
 // its `dir`/`path` argument: relative to b.cwd under the node's own root,
 // "/"-prefixed to the chat root (jailPath), scoped under b.chatID, always
 // containment-checked by Jail.Resolve.
 func (b gitBinding) resolve(p string) (string, error) {
 	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
-}
-
-// newGitBinding resolves Deps into a gitBinding, defaulting caps when unset.
-// Deps.Workspace nil is an error (a git tool listed for an agent without
-// workspace: configured is a config mistake, not a silent no-op) — mirrors
-// newFSBinding.
-func newGitBinding(d Deps) (gitBinding, error) {
-	if d.Workspace == nil {
-		return gitBinding{}, fmt.Errorf("tools: git tools require workspace to be configured (see workspace.root in quack.yaml)")
-	}
-	userID := d.WorkspaceUserID
-	if userID == "" {
-		return gitBinding{}, fmt.Errorf("tools: git tools require a WorkspaceUserID")
-	}
-	caps := d.WorkspaceCaps
-	if caps.IsZero() {
-		caps = workspace.DefaultCaps()
-	}
-	return gitBinding{
-		userID: userID, jail: d.Workspace, caps: caps,
-		credentials: d.GitCredentials, tokenSource: d.GitTokenSource, allowPush: d.GitPush,
-	}, nil
 }
 
 // credentialFor returns the configured credential matching rawURL's host
@@ -358,15 +321,6 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 // git_clone
 // ---------------------------------------------------------------------------
 
-type gitCloneArgs struct {
-	URL string `json:"url"`
-	Dir string `json:"dir,omitempty"`
-	// Depth is a pointer so an EXPLICIT 0 ("full history") is distinguishable
-	// from absent ("default shallow depth 1") — the schema's contract.
-	Depth  *int   `json:"depth,omitempty"`  // default 1 (shallow); 0 = full
-	Branch string `json:"branch,omitempty"` // clone straight to this branch/tag (default: the repo's default branch)
-}
-
 type gitCloneResult struct {
 	Dir           string `json:"dir"`
 	Head          string `json:"head"`
@@ -374,25 +328,6 @@ type gitCloneResult struct {
 	// Cwd is where you are standing. NOTE: `dir` is relative to it — the clone
 	// landed at <cwd>/<dir>, and `cd` into it with exactly that `dir`.
 	Cwd string `json:"cwd"`
-}
-
-func newGitClone(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitCloneArgs, gitCloneResult](
-		functiontool.Config{
-			Name: "git_clone",
-			Description: "Clone a git repository into your workspace. `url` must be a plain https:// URL with no " +
-				"embedded credentials — configure a deployment-level credential (workspace.git_credentials) for " +
-				"private repos instead. `dir` (workspace-relative) defaults to the repo name; `depth` defaults to " +
-				"1 (a shallow clone) — pass 0 for full history. `branch` clones straight to that branch/tag instead " +
-				"of the repo's default branch (to review a pull request, clone then use git_checkout, which also " +
-				"fetches the history a diff against the base branch needs).",
-		},
-		func(ctx agent.Context, a gitCloneArgs) (gitCloneResult, error) { return b.withCwd(ctx).gitClone(a) },
-	)
 }
 
 // validateCloneURL enforces https-only and rejects any URL carrying
@@ -422,18 +357,6 @@ func defaultCloneDir(u *url.URL) string {
 		name = "repo"
 	}
 	return name
-}
-
-func (b gitBinding) gitClone(a gitCloneArgs) (gitCloneResult, error) {
-	u, err := validateCloneURL(a.URL)
-	if err != nil {
-		return gitCloneResult{}, err
-	}
-	dir := a.Dir
-	if dir == "" {
-		dir = defaultCloneDir(u)
-	}
-	return b.cloneRepo(a.URL, dir, a.Depth, a.Branch)
 }
 
 // cloneRepo is the clone itself, past git_clone's URL validation: resolve the
@@ -508,17 +431,6 @@ func gitHeadInfo(dir string, caps workspace.Caps) (head, branch string, err erro
 // git_checkout
 // ---------------------------------------------------------------------------
 
-type gitCheckoutArgs struct {
-	Dir string `json:"dir"`
-	Ref string `json:"ref"`
-}
-
-type gitCheckoutResult struct {
-	Ref    string `json:"ref"`
-	Head   string `json:"head"`
-	Branch string `json:"branch"` // "HEAD" when the ref was a SHA/tag (detached)
-}
-
 // validateRef rejects a ref that would be read by git as an OPTION rather than
 // a ref (anything leading with "-", e.g. "--upload-pack=…"). argv-only exec
 // means a ref can never become a shell command, but it could still smuggle a
@@ -534,218 +446,17 @@ func validateRef(ref, tool string) error {
 	return nil
 }
 
-func newGitCheckout(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitCheckoutArgs, gitCheckoutResult](
-		functiontool.Config{
-			Name: "git_checkout",
-			Description: "Switch a cloned repository's working tree to an EXISTING branch, tag or commit. " +
-				"Use this to reach a pull request's branch: git_clone lands on the default branch only " +
-				"(and shallow, by default), so a PR's code is otherwise unreachable. The ref is fetched from " +
-				"origin first and the clone is deepened as needed, so afterwards `git_diff` against the base " +
-				"branch (e.g. ref `main...HEAD`) shows exactly what the PR changed. " +
-				"Do NOT use to create a new branch — that's git_branch.",
-		},
-		func(ctx agent.Context, a gitCheckoutArgs) (gitCheckoutResult, error) {
-			return b.withCwd(ctx).gitCheckout(a)
-		},
-	)
-}
-
-func (b gitBinding) gitCheckout(a gitCheckoutArgs) (gitCheckoutResult, error) {
-	if err := validateRef(a.Ref, "git_checkout"); err != nil {
-		return gitCheckoutResult{}, err
-	}
-	ref := strings.TrimSpace(a.Ref)
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitCheckoutResult{}, err
-	}
-	ctx := context.Background()
-
-	// Fetch first: after `clone --depth 1` (which implies --single-branch) the
-	// repo holds ONE branch at ONE commit, so neither the PR branch nor a
-	// merge-base with the base branch exists locally. Widen the refspec back to
-	// all branches, then fetch — deepening a shallow clone to full history,
-	// because a review's whole product is `git diff main...HEAD` and a shallow
-	// repo has no merge-base to compute it from. Best-effort: a repo with no
-	// origin (or an offline one) must still be able to check out a local ref.
-	if remoteURL, rerr := gitRemoteURL(dir, b.caps); rerr == nil {
-		auth, err := b.authFor(remoteURL)
-		if err != nil {
-			return gitCheckoutResult{}, err
-		}
-		_, _, _ = runGit(ctx, dir, []string{"remote", "set-branches", "origin", "*"}, b.caps, nil)
-		argv := []string{"fetch", "--quiet", "--tags"}
-		if shallow, _, _ := runGit(ctx, dir, []string{"rev-parse", "--is-shallow-repository"}, b.caps, nil); strings.TrimSpace(shallow) == "true" {
-			argv = append(argv, "--unshallow") // errors on a complete repo, hence the probe
-		}
-		_, _, _ = runGit(ctx, dir, append(argv, "origin"), b.caps, auth)
-	}
-
-	// A remote-only branch DWIMs into a local tracking branch here; a tag or SHA
-	// checks out detached. An unknown ref surfaces git's own error verbatim.
-	if _, _, err := runGit(ctx, dir, []string{"checkout", "--quiet", ref}, b.caps, nil); err != nil {
-		return gitCheckoutResult{}, err
-	}
-	head, branch, err := gitHeadInfo(dir, b.caps)
-	if err != nil {
-		return gitCheckoutResult{}, err
-	}
-	return gitCheckoutResult{Ref: ref, Head: head, Branch: branch}, nil
-}
-
 // ---------------------------------------------------------------------------
 // git_status
 // ---------------------------------------------------------------------------
-
-type gitStatusArgs struct {
-	Dir string `json:"dir"`
-}
-
-type gitChange struct {
-	Path  string `json:"path"`
-	State string `json:"state"`
-}
-
-type gitStatusResult struct {
-	Branch  string      `json:"branch"`
-	Clean   bool        `json:"clean"`
-	Changes []gitChange `json:"changes"`
-}
-
-func newGitStatus(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitStatusArgs, gitStatusResult](
-		functiontool.Config{
-			Name:        "git_status",
-			Description: "Show a repository's current branch and working-tree changes. `dir` is the workspace-relative repo root.",
-		},
-		func(ctx agent.Context, a gitStatusArgs) (gitStatusResult, error) { return b.withCwd(ctx).gitStatus(a) },
-	)
-}
-
-func (b gitBinding) gitStatus(a gitStatusArgs) (gitStatusResult, error) {
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitStatusResult{}, err
-	}
-	out, _, err := runGit(context.Background(), dir, []string{"status", "--porcelain=v1", "-b"}, b.caps, nil)
-	if err != nil {
-		return gitStatusResult{}, err
-	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	res := gitStatusResult{Clean: true}
-	for i, ln := range lines {
-		if i == 0 && strings.HasPrefix(ln, "## ") {
-			res.Branch = parseBranchLine(ln)
-			continue
-		}
-		if strings.TrimSpace(ln) == "" {
-			continue
-		}
-		if len(ln) < 3 {
-			continue
-		}
-		state := strings.TrimSpace(ln[:2])
-		path := strings.TrimSpace(ln[3:])
-		res.Changes = append(res.Changes, gitChange{Path: path, State: state})
-		res.Clean = false
-	}
-	return res, nil
-}
-
-// parseBranchLine extracts the branch name from porcelain -b's "## " header,
-// e.g. "## main...origin/main [ahead 1]" → "main"; "## HEAD (no branch)" (a
-// detached HEAD) is returned verbatim.
-func parseBranchLine(ln string) string {
-	s := strings.TrimPrefix(ln, "## ")
-	if i := strings.Index(s, "..."); i >= 0 {
-		s = s[:i]
-	}
-	if i := strings.Index(s, " "); i >= 0 {
-		s = s[:i]
-	}
-	return s
-}
 
 // ---------------------------------------------------------------------------
 // git_diff
 // ---------------------------------------------------------------------------
 
-type gitDiffArgs struct {
-	Dir  string `json:"dir"`
-	Ref  string `json:"ref,omitempty"`
-	Path string `json:"path,omitempty"`
-}
-
-type gitDiffResult struct {
-	Diff      string `json:"diff"`
-	Truncated bool   `json:"truncated"`
-}
-
-func newGitDiff(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitDiffArgs, gitDiffResult](
-		functiontool.Config{
-			Name: "git_diff",
-			Description: "Show a diff. `ref` defaults to the worktree vs HEAD (uncommitted changes); pass a " +
-				"commit/branch to diff against it instead (e.g. `HEAD~1`, `main`). `path` scopes the diff to one file.",
-		},
-		func(ctx agent.Context, a gitDiffArgs) (gitDiffResult, error) { return b.withCwd(ctx).gitDiff(a) },
-	)
-}
-
-func (b gitBinding) gitDiff(a gitDiffArgs) (gitDiffResult, error) {
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitDiffResult{}, err
-	}
-	ref := a.Ref
-	if ref == "" {
-		ref = "HEAD"
-	}
-	argv := []string{"diff", ref}
-	if a.Path != "" {
-		argv = append(argv, "--", a.Path)
-	}
-	out, _, err := runGit(context.Background(), dir, argv, b.caps, nil)
-	if err != nil {
-		return gitDiffResult{}, err
-	}
-	truncated := strings.HasSuffix(out, "\n... (truncated)")
-	return gitDiffResult{Diff: out, Truncated: truncated}, nil
-}
-
 // ---------------------------------------------------------------------------
 // git_log
 // ---------------------------------------------------------------------------
-
-type gitLogArgs struct {
-	Dir  string `json:"dir"`
-	N    int    `json:"n,omitempty"` // default 20
-	Path string `json:"path,omitempty"`
-}
-
-type gitCommitInfo struct {
-	SHA     string `json:"sha"`
-	Author  string `json:"author"`
-	Date    string `json:"date"`
-	Subject string `json:"subject"`
-}
-
-type gitLogResult struct {
-	Commits []gitCommitInfo `json:"commits"`
-}
 
 // gitLogFieldSep/gitLogRecordSep are unit/record separators (ASCII 0x1f/0x1e)
 // used to delimit git log's %h/%an <%ae>/%aI/%s fields — subjects and author
@@ -756,79 +467,9 @@ const (
 	gitLogRecordSep = "\x1e"
 )
 
-func newGitLog(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitLogArgs, gitLogResult](
-		functiontool.Config{
-			Name:        "git_log",
-			Description: "Show recent commits. `n` defaults to 20. `path` scopes the log to one file's history.",
-		},
-		func(ctx agent.Context, a gitLogArgs) (gitLogResult, error) { return b.withCwd(ctx).gitLog(a) },
-	)
-}
-
-func (b gitBinding) gitLog(a gitLogArgs) (gitLogResult, error) {
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitLogResult{}, err
-	}
-	n := a.N
-	if n <= 0 {
-		n = 20
-	}
-	format := "%h" + gitLogFieldSep + "%an <%ae>" + gitLogFieldSep + "%aI" + gitLogFieldSep + "%s" + gitLogRecordSep
-	argv := []string{"log", "-n", strconv.Itoa(n), "--pretty=format:" + format}
-	if a.Path != "" {
-		argv = append(argv, "--", a.Path)
-	}
-	out, _, err := runGit(context.Background(), dir, argv, b.caps, nil)
-	if err != nil {
-		// An empty repo (no commits yet) is not an error — git log fails with
-		// "does not have any commits yet"; surface an empty list instead.
-		if strings.Contains(err.Error(), "does not have any commits yet") {
-			return gitLogResult{}, nil
-		}
-		return gitLogResult{}, err
-	}
-	var commits []gitCommitInfo
-	for _, rec := range strings.Split(out, gitLogRecordSep) {
-		rec = strings.Trim(rec, "\n")
-		if strings.TrimSpace(rec) == "" {
-			continue
-		}
-		fields := strings.Split(rec, gitLogFieldSep)
-		if len(fields) != 4 {
-			continue
-		}
-		commits = append(commits, gitCommitInfo{SHA: fields[0], Author: fields[1], Date: fields[2], Subject: fields[3]})
-	}
-	return gitLogResult{Commits: commits}, nil
-}
-
 // ---------------------------------------------------------------------------
 // git_commit
 // ---------------------------------------------------------------------------
-
-type gitCommitArgs struct {
-	Dir     string `json:"dir"`
-	Message string `json:"message"`
-	AddAll  *bool  `json:"add_all,omitempty"` // default true
-	// Paths, when non-empty, stages exactly these workspace-relative paths
-	// (`git add -- <paths>`) instead of `git add -A`'s blind "everything in
-	// the tree" sweep — the escape hatch for a large but genuinely intentional
-	// commit (vendoring, an initial scaffold): naming a path explicitly is
-	// itself the sign the staging was deliberate, so it bypasses
-	// maxAddAllFiles (see gitCommit). Ignored when AddAll is false.
-	Paths []string `json:"paths,omitempty"`
-}
-
-type gitCommitResult struct {
-	SHA          string `json:"sha"`
-	FilesChanged int    `json:"files_changed"`
-}
 
 // gitCommitAuthorName/Email fix every quack commit's author AND committer to
 // a system identity — commits are attributable to the system, not
@@ -853,217 +494,18 @@ const (
 // thousand files nobody asked for" is a fact a threshold answers directly.
 const maxAddAllFiles = 100
 
-func newGitCommit(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitCommitArgs, gitCommitResult](
-		functiontool.Config{
-			Name: "git_commit",
-			Description: fmt.Sprintf("Commit staged (or, by default, all) changes. `add_all` defaults to true "+
-				"(stages everything before committing); pass false to commit only what's already staged. "+
-				"A blind add_all that would stage more than %d files is refused — pass `paths` naming exactly what "+
-				"to stage instead (e.g. for an intentionally large commit like vendoring). "+
-				"Every commit is attributed to %s <%s> — not the user.",
-				maxAddAllFiles, gitCommitAuthorName, gitCommitAuthorEmail),
-		},
-		func(ctx agent.Context, a gitCommitArgs) (gitCommitResult, error) { return b.withCwd(ctx).gitCommit(a) },
-	)
-}
-
-func (b gitBinding) gitCommit(a gitCommitArgs) (gitCommitResult, error) {
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitCommitResult{}, err
-	}
-	if strings.TrimSpace(a.Message) == "" {
-		return gitCommitResult{}, fmt.Errorf("git_commit: message must not be empty")
-	}
-	addAll := a.AddAll == nil || *a.AddAll
-	scoped := len(a.Paths) > 0 // explicit allowlist: caller named exactly what to stage
-	if addAll {
-		argv := []string{"add", "-A"}
-		if scoped {
-			argv = append([]string{"add", "--"}, a.Paths...)
-		}
-		if _, _, err := runGit(context.Background(), dir, argv, b.caps, nil); err != nil {
-			return gitCommitResult{}, err
-		}
-	}
-	staged, _, err := runGit(context.Background(), dir, []string{"diff", "--cached", "--name-only"}, b.caps, nil)
-	if err != nil {
-		return gitCommitResult{}, err
-	}
-	filesChanged := 0
-	for _, ln := range strings.Split(staged, "\n") {
-		if strings.TrimSpace(ln) != "" {
-			filesChanged++
-		}
-	}
-	// Bulk-commit sanity wall — only the blind add_all path (no explicit
-	// `paths`) is gated; see maxAddAllFiles.
-	if addAll && !scoped && filesChanged > maxAddAllFiles {
-		_, _, _ = runGit(context.Background(), dir, []string{"reset"}, b.caps, nil) // best-effort: unstage, leave the tree as we found it
-		return gitCommitResult{}, fmt.Errorf(
-			"git_commit: add_all staged %d files, over the %d-file sanity limit — this usually means something "+
-				"outside the intended change got swept in (a build/cache directory, an unrelated tree). Run "+
-				"git_status to see what's staged; if this commit is genuinely meant to be this large, retry with "+
-				"`paths` naming exactly what to stage instead of add_all", filesChanged, maxAddAllFiles)
-	}
-	argv := []string{
-		"-c", "user.name=" + gitCommitAuthorName,
-		"-c", "user.email=" + gitCommitAuthorEmail,
-		"commit", "--quiet", "-m", a.Message,
-	}
-	if _, _, err := runGit(context.Background(), dir, argv, b.caps, nil); err != nil {
-		return gitCommitResult{}, err
-	}
-	out, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--short", "HEAD"}, b.caps, nil)
-	if err != nil {
-		return gitCommitResult{}, err
-	}
-	slog.Info("workspace mutation", "component", "tools", "tool", "git_commit", "user", b.userID, "dir", a.Dir, "files", filesChanged)
-	return gitCommitResult{SHA: strings.TrimSpace(out), FilesChanged: filesChanged}, nil
-}
-
 // ---------------------------------------------------------------------------
 // git_branch
 // ---------------------------------------------------------------------------
-
-type gitBranchArgs struct {
-	Dir  string `json:"dir"`
-	Name string `json:"name,omitempty"` // create+switch; absent = list
-	From string `json:"from,omitempty"`
-}
-
-type gitBranchResult struct {
-	Current  string   `json:"current"`
-	Branches []string `json:"branches"`
-}
-
-func newGitBranch(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitBranchArgs, gitBranchResult](
-		functiontool.Config{
-			Name: "git_branch",
-			Description: "List branches, or create+switch to a new one. Pass `name` to create a new branch " +
-				"(optionally `from` a base ref, default HEAD) and switch to it; omit `name` to just list.",
-		},
-		func(ctx agent.Context, a gitBranchArgs) (gitBranchResult, error) { return b.withCwd(ctx).gitBranch(a) },
-	)
-}
-
-func (b gitBinding) gitBranch(a gitBranchArgs) (gitBranchResult, error) {
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitBranchResult{}, err
-	}
-	if a.Name != "" {
-		argv := []string{"checkout", "-b", a.Name}
-		if a.From != "" {
-			argv = append(argv, a.From)
-		}
-		if _, _, err := runGit(context.Background(), dir, argv, b.caps, nil); err != nil {
-			return gitBranchResult{}, err
-		}
-	}
-	out, _, err := runGit(context.Background(), dir, []string{"branch", "--format=%(refname:short)"}, b.caps, nil)
-	if err != nil {
-		return gitBranchResult{}, err
-	}
-	var branches []string
-	for _, ln := range strings.Split(out, "\n") {
-		if ln = strings.TrimSpace(ln); ln != "" {
-			branches = append(branches, ln)
-		}
-	}
-	cur, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
-	if err != nil {
-		return gitBranchResult{}, err
-	}
-	return gitBranchResult{Current: strings.TrimSpace(cur), Branches: branches}, nil
-}
 
 // ---------------------------------------------------------------------------
 // git_push
 // ---------------------------------------------------------------------------
 
-type gitPushArgs struct {
-	Dir    string `json:"dir"`
-	Branch string `json:"branch,omitempty"` // default: current
-}
-
-type gitPushResult struct {
-	Remote string `json:"remote"`
-	Branch string `json:"branch"`
-	SHA    string `json:"sha"`
-}
-
 // protectedBranches can NEVER be pushed to by an agent — humans merge into
 // them. Force-push is unexpressible (no argv path ever adds --force); this is
 // the other half of "the one outward-facing, non-undoable operation" guard.
 var protectedBranches = map[string]bool{"main": true, "master": true}
-
-func newGitPush(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitPushArgs, gitPushResult](
-		functiontool.Config{
-			Name: "git_push",
-			Description: "Push the current (or named) branch to origin. Disabled by default " +
-				"(workspace.git_push: true to enable); requires a configured credential for the remote's host; " +
-				"NEVER force-pushes; pushing to main/master is always rejected — propose via a branch instead.",
-		},
-		func(ctx agent.Context, a gitPushArgs) (gitPushResult, error) { return b.withCwd(ctx).gitPush(a) },
-	)
-}
-
-func (b gitBinding) gitPush(a gitPushArgs) (gitPushResult, error) {
-	if !b.allowPush {
-		return gitPushResult{}, fmt.Errorf("git_push: disabled — set workspace.git_push: true to enable")
-	}
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitPushResult{}, err
-	}
-	branch := a.Branch
-	if branch == "" {
-		cur, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
-		if err != nil {
-			return gitPushResult{}, err
-		}
-		branch = strings.TrimSpace(cur)
-	}
-	if protectedBranches[branch] {
-		return gitPushResult{}, fmt.Errorf("git_push: pushing to %q is rejected — propose changes via a branch; a human merges", branch)
-	}
-	remoteURL, err := gitRemoteURL(dir, b.caps)
-	if err != nil {
-		return gitPushResult{}, err
-	}
-	auth, err := b.authFor(remoteURL)
-	if err != nil {
-		return gitPushResult{}, err
-	}
-	if auth == nil {
-		return gitPushResult{}, fmt.Errorf("git_push: no credential configured for this remote's host (see workspace.git_credentials)")
-	}
-	if _, _, err := runGit(context.Background(), dir, []string{"push", "--quiet", "origin", branch}, b.caps, auth); err != nil {
-		return gitPushResult{}, err
-	}
-	sha, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--short", branch}, b.caps, nil)
-	if err != nil {
-		return gitPushResult{}, err
-	}
-	slog.Info("workspace mutation", "component", "tools", "tool", "git_push", "user", b.userID, "dir", a.Dir, "branch", branch)
-	return gitPushResult{Remote: "origin", Branch: branch, SHA: strings.TrimSpace(sha)}, nil
-}
 
 // gitRemoteURL reads the "origin" remote's URL — used both to pick a matching
 // credential and, implicitly, to confirm a remote is even configured.
@@ -1105,303 +547,6 @@ func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCrede
 // git_worktree_create / git_worktree_remove
 // ---------------------------------------------------------------------------
 
-type gitWorktreeCreateArgs struct {
-	Dir    string `json:"dir"`
-	Branch string `json:"branch"`
-	Path   string `json:"path,omitempty"`
-	From   string `json:"from,omitempty"`
-}
-
-type gitWorktreeCreateResult struct {
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
-}
-
-func newGitWorktreeCreate(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitWorktreeCreateArgs, gitWorktreeCreateResult](
-		functiontool.Config{
-			Name: "git_worktree_create",
-			Description: "Create a new git worktree with a new branch. `path` (workspace-relative) defaults to " +
-				"`<repo>-wt-<branch>`, a sibling of the repo; `from` (default HEAD) is the base ref for the new branch.",
-		},
-		func(ctx agent.Context, a gitWorktreeCreateArgs) (gitWorktreeCreateResult, error) {
-			return b.withCwd(ctx).gitWorktreeCreate(a)
-		},
-	)
-}
-
-func (b gitBinding) gitWorktreeCreate(a gitWorktreeCreateArgs) (gitWorktreeCreateResult, error) {
-	if strings.TrimSpace(a.Branch) == "" {
-		return gitWorktreeCreateResult{}, fmt.Errorf("git_worktree_create: branch must not be empty")
-	}
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitWorktreeCreateResult{}, err
-	}
-	relPath := a.Path
-	if relPath == "" {
-		relPath = filepath.ToSlash(filepath.Join(filepath.Dir(a.Dir), filepath.Base(a.Dir)+"-wt-"+a.Branch))
-	}
-	wtPath, err := b.resolve(relPath)
-	if err != nil {
-		return gitWorktreeCreateResult{}, err
-	}
-	relRoot, err := b.resolve("")
-	if err != nil {
-		return gitWorktreeCreateResult{}, err
-	}
-	argv := []string{"worktree", "add", "-b", a.Branch, wtPath}
-	if a.From != "" {
-		argv = append(argv, a.From)
-	}
-	if _, _, err := runGit(context.Background(), dir, argv, b.caps, nil); err != nil {
-		return gitWorktreeCreateResult{}, err
-	}
-	relOut, err := filepath.Rel(relRoot, wtPath)
-	if err != nil {
-		relOut = relPath
-	}
-	slog.Info("workspace mutation", "component", "tools", "tool", "git_worktree_create", "user", b.userID, "dir", a.Dir, "branch", a.Branch)
-	return gitWorktreeCreateResult{Path: filepath.ToSlash(relOut), Branch: a.Branch}, nil
-}
-
-type gitWorktreeRemoveArgs struct {
-	Dir  string `json:"dir"`
-	Path string `json:"path"`
-}
-
-type gitWorktreeRemoveResult struct {
-	Removed bool `json:"removed"`
-}
-
-func newGitWorktreeRemove(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitWorktreeRemoveArgs, gitWorktreeRemoveResult](
-		functiontool.Config{
-			Name: "git_worktree_remove",
-			Description: "Remove a git worktree. Refuses (errors) if the worktree has uncommitted changes — " +
-				"delete or commit them first if you truly mean to discard it.",
-		},
-		func(ctx agent.Context, a gitWorktreeRemoveArgs) (gitWorktreeRemoveResult, error) {
-			return b.withCwd(ctx).gitWorktreeRemove(a)
-		},
-	)
-}
-
-func (b gitBinding) gitWorktreeRemove(a gitWorktreeRemoveArgs) (gitWorktreeRemoveResult, error) {
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitWorktreeRemoveResult{}, err
-	}
-	wtPath, err := b.resolve(a.Path)
-	if err != nil {
-		return gitWorktreeRemoveResult{}, err
-	}
-	statusOut, _, err := runGit(context.Background(), wtPath, []string{"status", "--porcelain"}, b.caps, nil)
-	if err != nil {
-		return gitWorktreeRemoveResult{}, err
-	}
-	if strings.TrimSpace(statusOut) != "" {
-		return gitWorktreeRemoveResult{}, fmt.Errorf("git_worktree_remove: %q has uncommitted changes; commit or delete them first", a.Path)
-	}
-	if _, _, err := runGit(context.Background(), dir, []string{"worktree", "remove", wtPath}, b.caps, nil); err != nil {
-		return gitWorktreeRemoveResult{}, err
-	}
-	if _, _, err := runGit(context.Background(), dir, []string{"worktree", "prune"}, b.caps, nil); err != nil {
-		return gitWorktreeRemoveResult{}, err
-	}
-	slog.Info("workspace mutation", "component", "tools", "tool", "git_worktree_remove", "user", b.userID, "dir", a.Dir, "path", a.Path)
-	return gitWorktreeRemoveResult{Removed: true}, nil
-}
-
 // ---------------------------------------------------------------------------
 // git_pull / git_rebase — auto-abort-on-conflict + report
 // ---------------------------------------------------------------------------
-
-type gitPullArgs struct {
-	Dir    string `json:"dir"`
-	Rebase *bool  `json:"rebase,omitempty"` // default true — linear history
-}
-
-type gitPullResult struct {
-	Branch    string   `json:"branch"`
-	SHA       string   `json:"sha"`
-	Updated   bool     `json:"updated"`
-	Conflicts []string `json:"conflicts,omitempty"`
-}
-
-func newGitPull(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitPullArgs, gitPullResult](
-		functiontool.Config{
-			Name: "git_pull",
-			Description: "Pull the current branch's upstream (`rebase` defaults to true — linear history). " +
-				"On a conflict the pull is automatically ABORTED (the repo is left exactly as it was) and the " +
-				"conflicting files are listed — resolve by inspecting them with your other tools and retrying, " +
-				"never mid-conflict.",
-		},
-		func(ctx agent.Context, a gitPullArgs) (gitPullResult, error) { return b.withCwd(ctx).gitPull(a) },
-	)
-}
-
-func (b gitBinding) gitPull(a gitPullArgs) (gitPullResult, error) {
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitPullResult{}, err
-	}
-	branchOut, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
-	if err != nil {
-		return gitPullResult{}, err
-	}
-	branch := strings.TrimSpace(branchOut)
-	before, _, err := runGit(context.Background(), dir, []string{"rev-parse", "HEAD"}, b.caps, nil)
-	if err != nil {
-		return gitPullResult{}, err
-	}
-
-	remoteURL, err := gitRemoteURL(dir, b.caps)
-	if err != nil {
-		return gitPullResult{}, err
-	}
-	auth, err := b.authFor(remoteURL)
-	if err != nil {
-		return gitPullResult{}, err
-	}
-
-	rebase := a.Rebase == nil || *a.Rebase
-	argv := []string{"pull", "--quiet"}
-	if rebase {
-		argv = append(argv, "--rebase")
-	}
-	argv = append(argv, "origin", branch)
-
-	if _, _, pullErr := runGit(context.Background(), dir, argv, b.caps, auth); pullErr != nil {
-		conflicts, cerr := abortOnConflict(dir, b.caps, rebase)
-		if cerr != nil {
-			return gitPullResult{}, fmt.Errorf("git_pull: %w (and abort failed: %v)", pullErr, cerr)
-		}
-		if len(conflicts) > 0 {
-			return gitPullResult{Branch: branch, SHA: strings.TrimSpace(before), Conflicts: conflicts}, nil
-		}
-		return gitPullResult{}, pullErr
-	}
-	after, _, err := runGit(context.Background(), dir, []string{"rev-parse", "HEAD"}, b.caps, nil)
-	if err != nil {
-		return gitPullResult{}, err
-	}
-	return gitPullResult{
-		Branch:  branch,
-		SHA:     strings.TrimSpace(after),
-		Updated: strings.TrimSpace(before) != strings.TrimSpace(after),
-	}, nil
-}
-
-type gitRebaseArgs struct {
-	Dir    string `json:"dir"`
-	Onto   string `json:"onto"`
-	Branch string `json:"branch,omitempty"`
-}
-
-type gitRebaseResult struct {
-	SHA       string   `json:"sha"`
-	Rebased   bool     `json:"rebased"`
-	Conflicts []string `json:"conflicts,omitempty"`
-}
-
-func newGitRebase(d Deps) (tool.Tool, error) {
-	b, err := newGitBinding(d)
-	if err != nil {
-		return nil, err
-	}
-	return functiontool.New[gitRebaseArgs, gitRebaseResult](
-		functiontool.Config{
-			Name: "git_rebase",
-			Description: "Rebase the current (or named) branch onto `onto` (e.g. `origin/main`; remote refs are " +
-				"fetched first). On a conflict the rebase is automatically ABORTED (the repo is left exactly as " +
-				"it was) and the conflicting files are listed. Never interactive — there is no editor to drive.",
-		},
-		func(ctx agent.Context, a gitRebaseArgs) (gitRebaseResult, error) { return b.withCwd(ctx).gitRebase(a) },
-	)
-}
-
-func (b gitBinding) gitRebase(a gitRebaseArgs) (gitRebaseResult, error) {
-	if strings.TrimSpace(a.Onto) == "" {
-		return gitRebaseResult{}, fmt.Errorf("git_rebase: onto must not be empty")
-	}
-	dir, err := b.resolve(a.Dir)
-	if err != nil {
-		return gitRebaseResult{}, err
-	}
-	if a.Branch != "" {
-		if _, _, err := runGit(context.Background(), dir, []string{"checkout", "--quiet", a.Branch}, b.caps, nil); err != nil {
-			return gitRebaseResult{}, err
-		}
-	}
-	remoteURL, rerr := gitRemoteURL(dir, b.caps)
-	var auth *gitAuth
-	if rerr == nil {
-		// Best-effort auth too: an askpass-symlink failure here degrades to an
-		// unauthenticated fetch, matching the best-effort fetch below.
-		auth, _ = b.authFor(remoteURL)
-	}
-	// Best-effort fetch: a purely-local rebase target (e.g. onto a local branch,
-	// no remote configured) should still work, so a fetch failure here is not fatal.
-	_, _, _ = runGit(context.Background(), dir, []string{"fetch", "--quiet", "origin"}, b.caps, auth)
-
-	if _, _, rbErr := runGit(context.Background(), dir, []string{"rebase", a.Onto}, b.caps, nil); rbErr != nil {
-		conflicts, cerr := abortOnConflict(dir, b.caps, true)
-		if cerr != nil {
-			return gitRebaseResult{}, fmt.Errorf("git_rebase: %w (and abort failed: %v)", rbErr, cerr)
-		}
-		if len(conflicts) > 0 {
-			return gitRebaseResult{Conflicts: conflicts}, nil
-		}
-		return gitRebaseResult{}, rbErr
-	}
-	sha, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--short", "HEAD"}, b.caps, nil)
-	if err != nil {
-		return gitRebaseResult{}, err
-	}
-	return gitRebaseResult{SHA: strings.TrimSpace(sha), Rebased: true}, nil
-}
-
-// abortOnConflict is the shared conflict policy for git_pull/git_rebase: on
-// any failure, check for unmerged (conflicting) paths BEFORE aborting (abort
-// discards that state), then run `rebase --abort` or `merge --abort` to leave
-// the repo exactly as it was. Returns the sorted conflict file list (empty
-// when the failure wasn't actually a conflict — e.g. a network error — so the
-// caller falls back to surfacing the original error untouched).
-func abortOnConflict(dir string, caps workspace.Caps, rebase bool) ([]string, error) {
-	out, _, err := runGit(context.Background(), dir, []string{"diff", "--name-only", "--diff-filter=U"}, caps, nil)
-	if err != nil {
-		return nil, err
-	}
-	var conflicts []string
-	for _, ln := range strings.Split(out, "\n") {
-		if ln = strings.TrimSpace(ln); ln != "" {
-			conflicts = append(conflicts, ln)
-		}
-	}
-	if len(conflicts) == 0 {
-		return nil, nil
-	}
-	sort.Strings(conflicts)
-	abortArgv := []string{"merge", "--abort"}
-	if rebase {
-		abortArgv = []string{"rebase", "--abort"}
-	}
-	if _, _, err := runGit(context.Background(), dir, abortArgv, caps, nil); err != nil {
-		return conflicts, err
-	}
-	return conflicts, nil
-}

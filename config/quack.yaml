@@ -68,83 +68,45 @@ agents:
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
     # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
   code-implementer:
-    bundle: agents/code-implementer   # prompt.md (ponytail ladder) + rubric.md (code-quality research + ponytail criteria)
+    bundle: agents/code-implementer   # card + prompt.md (ACP preamble: ponytail discipline, commit-only) + rubric.md
     provider: default
-    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
-    # run_code = CODE MODE (internal/tools/run_code.go): the model writes a JS program and the
-    # tools above are its API, so one turn can read five files, grep and write a patch without any
-    # of that bulk entering a 65k context. Per-agent opt-in; every tool above stays callable the
-    # normal way. In-script calls go through the SAME guarded tool objects, and the trust gate's
-    # ledger expands them, so nothing is unwatched. See docs/code-mode.md.
-    # NO git_push, NO github_pull_request (the latter isn't even a tool anymore — see
-    # internal/github/tools.go): commit LOCALLY, then stage_pr/stage_review/stage_comment
-    # to hand delivery off — the trust gate pushes and opens the PR, exactly once, only on
-    # a judge pass (internal/vetting commitDeliveryOnPass). unstage drops a staged item
-    # you've decided against.
-    tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
-            git_worktree_create, git_worktree_remove, git_pull, git_rebase,
-            run_command, ask_advisor, ask_user, load_memory, stage_memory, stage_pr, stage_comment, unstage, run_code]
-    # develop-feature/fix-bug: the disciplined build/fix playbooks its prompt.md points to;
-    # ponytail/ponytail-review (vendored): its coding discipline + self-review ladder (see prompt.md);
-    # commit-authoring/pr-authoring: how to write the local commit and the PR it stages (see prompt.md).
-    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-coding-plan, format-markdown,
-             commit-authoring, pr-authoring]
-    # load_memory/stage_memory + the bundle's memory.md turn on shared memory: the implementer
-    # RECALLS what the explorer/reviewer already learned about this repo (build/test/lint commands,
-    # where things are registered, the reference feature, pre-existing failures) instead of
-    # rediscovering it every run — memory is bucketed by SUBJECT, not by agent (internal/memory/scope.go).
+    # The worker is an EXTERNAL coding agent over ACP (internal/acp, docs/acp-coder.md):
+    # opencode drives the model bound above (OPENCODE_CONFIG_CONTENT: OpenAI-compatible
+    # endpoint, headless permissions, git push DENIED — delivery stays gate-owned). The
+    # gate reads its commits off the clone itself (vetting.augmentFromRepo) and quack's
+    # skill library is injected via opencode's skills.paths. No quack tools, no memory.
+    acp:
+      command: ["opencode", "acp"]
   code-reviewer:
-    bundle: agents/code-reviewer      # prompt.md (reviewer identity/values) + rubric.md (is the REVIEW good) + review-code skill
+    bundle: agents/code-reviewer      # card + prompt.md (ACP preamble: values + VERDICT/FINDINGS output contract) + rubric.md
     provider: default
-    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 1             # 1 round: a review is one-pass, and we're diagnosing the gate
-    # READ-ONLY: reviews code, never modifies it — no write_file/edit_file/git_commit/git_push/delete_path/run_command.
-    # load_skill/list_skills are auto-registered on every agent (see internal/serve/serve.go), so they're not listed here.
-    # load_memory/stage_memory + the bundle's memory.md turn on task memory (M6): recall project conventions/decisions,
-    # stage durable ones as it learns them — safe on a worker (its review is gate-judged, unlike the independent judge).
-    # web_fetch (no web_search): verify a specific external claim (API contract, library doc, known-vuln pattern) —
-    # "verify don't trust" past the repo. It flips on the gate's RequireRetrieval, but read_file already satisfies that,
-    # so a normal review that reads the changed files is fine; web_fetch does not force every review to fetch.
-    # stage_review/stage_comment hand review delivery off to the gate (github_submit_review
-    # is no longer a model tool at all — see internal/github/tools.go); unstage drops a
-    # staged item you've decided against. No stage_pr: a read-only reviewer never opens one.
-    # github_add_review_comment/github_list_review_comments/github_delete_review_comment build
-    # and edit the inline-comment DRAFT (never posts — stage_review still gates the actual
-    # submit); github_list_pr_comments reads existing discussion so it doesn't repeat what's
-    # already been said. Extension tools are opt-in per agent (internal/tools.Deps.ExtTools) —
-    # NOT github_comment, which posts immediately with no gate in front of it.
-    tools: [read_file, list_dir, glob, grep, web_fetch,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory,
-            stage_review, stage_comment, unstage,
-            github_add_review_comment, github_list_review_comments, github_delete_review_comment, github_list_pr_comments]
-    # review-code: the review process its prompt.md follows; present-coding-plan: structure/depth
-    # for a GitHub-facing review body (see prompt.md and internal/github/webhook.go).
-    skills: [review-code, present-coding-plan, format-markdown, ponytail, ponytail-review]
+    # External ACP reviewer, read_only: it runs the change with its own tools but never
+    # commits/pushes; its ANSWER carries the review — the gate parses the structured
+    # VERDICT/FINDINGS tail into a staged review with inline comments
+    # (vetting.augmentFromAnswer) and posts it exactly once, gate-owned.
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
   code-explorer:
-    bundle: agents/code-explorer      # prompt.md (read-only explorer, research-git-repos) + rubric.md (grades EXPLORATION: code-grounding/accuracy/usefulness, NOT web citations) + memory.md (repo layout/conventions)
+    bundle: agents/code-explorer      # card + prompt.md (ACP preamble: read-only exploration, cite <repo>@<path>) + rubric.md
     provider: default
-    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap
-    # READ-ONLY: understands a repo, never changes it — NO write/edit/commit/push/delete/run_command.
-    # No web_search/web_fetch: its sources are the FILES it reads (cited <repo>@<path>), not web pages — so
-    # RequireRetrieval does NOT fire (only web tools flip it; see internal/serve/serve.go) and it's judged by
-    # its bundle rubric (exploration quality), not the web-researcher's harsh web-citation bar.
-    # load_skill/list_skills are auto-registered. load_memory/stage_memory + memory.md turn on task memory (M6):
-    # recall/stage durable repo layout & conventions so repeat exploration of the same repo is faster.
-    # run_code = CODE MODE: exploration is exactly the read-many-files-and-summarize shape code mode
-    # is for — the files it reads never enter its context. See docs/code-mode.md.
-    tools: [read_file, list_dir, glob, grep,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command, run_code]
-    # research-git-repos: clone-and-read-locally discipline for understanding a repo (see prompt.md).
-    skills: [research-git-repos, format-markdown, ponytail]
+    # External ACP explorer, read_only: clones/reads with its own tools, never commits.
+    # Judged by its bundle rubric (exploration quality), not web citations.
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
   synthesizer:
     bundle: agents/synthesizer
     # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic
@@ -315,13 +277,13 @@ workspace:
   #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
   # check_commands: allowed command PREFIXES the planner may complete into a
   # code-implementer node's `checks` (§4) — the trust gate runs these against
-  # the node's own workdir after each draft. Empty = checks unavailable (the
-  # planner is told to omit `checks` entirely).
-  # check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]
-  check_commands: []            # command PREFIXES plan nodes may use as deterministic gate checks.
-                                # Empty (default) = checks unavailable. Enable ONLY when the server's
-                                # runtime actually has the toolchain — the shipped Docker image does NOT
-                                # (git only); a check whose binary is missing fails the node closed.
+  # the node's own workdir after each draft, and DERIVES a repo's own build/
+  # vet/test commands from them when the planner set none. Defaults ON (this
+  # list); each derived check is additionally gated on its binary existing on
+  # the host, so a runtime without go/npm (the shipped Docker image has git
+  # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
+  # disables checks entirely.
+  check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
 
   # Deployment-level per-host HTTPS git credentials — ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos
@@ -334,26 +296,14 @@ workspace:
 
   # git_push gates the git_push tool — the one outward-facing, non-undoable
   # git operation in the set. Off by default even with a credential configured.
-  git_push: false
-
   # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
-  # confirm | judge+confirm. Tier-0 always applies regardless of guard tier: the
-  # path jail for the fs/git TOOLS, the sandbox + rlimits for their CHILD
-  # PROCESSES, no force-push/push-to-main. ("No shell" is NOT a wall and is not
-  # Tier 0: a sandboxed run_command takes a real shell command line. The judge
-  # tier is what decides what a command may DO.)
-  guards:
-    delete_path: judge
-    git_rebase: judge
-    git_push: judge+confirm
-    run_command: judge+confirm   # the sandbox contains WHERE it can reach; the judge contains WHAT it does
-    # Code mode: the guard is on the SCRIPT. run_code is one tool call, so the judge
-    # and the human see the whole PROGRAM and approve it ONCE, before a line of it
-    # runs — and its calls are then not re-gated individually. A script that can run
-    # commands must be at least as guarded as a command, hence the same tier.
-    # (Lowering this entry cannot open a hole: run_code's tier is RAISED to the union
-    # of the tiers of every tool it binds — see tools.scriptTier.)
-    run_code: judge+confirm
+  # confirm | judge+confirm. No entries by default since 0.6.0: the code agents
+  # run as external ACP subprocesses (docs/acp-coder.md), so the write-side
+  # tools the ladder guarded are gone — the walls that remain are the jail on
+  # the surviving read tools, the OS sandbox around gate-check children, and
+  # gate-owned delivery (git push denied inside the subprocess).
+  # guards:
+  #   web_fetch: judge
 
 # Bundled integrations (inbound + outbound). Optional; each is off unless its
 # sub-section is present. Commented out here because dev/local runs typically

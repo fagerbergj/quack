@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"google.golang.org/genai"
@@ -39,26 +41,21 @@ func newGatedCtx(t *testing.T, planID, nodeID, chatID string) *gatedCtx {
 // one per-chat dir, so `list_dir .` showed both — and a research node happily
 // read the other node's repo (live: the OpenHands explorer grepping goose's src).
 func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
-	requireGit(t)
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	gb := gitBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
 	fb := fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
-
-	gooseBare := newBareRepoFixture(t)
-	openhandsBare := newBareRepoFixture(t)
 
 	gooseCtx := newGatedCtx(t, "plan-1", "goose_research", "chat-1")
 	ohCtx := newGatedCtx(t, "plan-1", "openhands_research", "chat-1")
 
-	// Each node clones its own repo, with a jail-relative dir exactly as the tool
-	// would default it (the repo name) — resolved against the node's OWN cwd.
-	if _, err := gb.withCwd(gooseCtx).cloneRepo("file://"+gooseBare, "goose", nil, ""); err != nil {
+	// Each node gets its own tree under its OWN scope dir — what a clone made by
+	// the node's external (ACP) worker looks like to the surviving read tools.
+	if err := seedNodeFile(fb, gooseCtx, "goose/README.md", "# goose"); err != nil {
 		t.Fatalf("goose clone: %v", err)
 	}
-	if _, err := gb.withCwd(ohCtx).cloneRepo("file://"+openhandsBare, "openhands", nil, ""); err != nil {
+	if err := seedNodeFile(fb, ohCtx, "openhands/README.md", "# openhands"); err != nil {
 		t.Fatalf("openhands clone: %v", err)
 	}
 
@@ -128,42 +125,29 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	}
 }
 
-// TestCdComposesWithTheNodeDir: `cd` composes against the node's own dir, and a
-// deliberate `cd /` (to the chat root) is NOT silently undone by the node
-// default on the next tool call.
-func TestCdComposesWithTheNodeDir(t *testing.T) {
-	j, err := workspace.NewJail(t.TempDir())
+// seedNodeFile writes content under the node scope the ctx's advisor-thread
+// marker names — standing in for the clone the node's external worker makes.
+func seedNodeFile(b fsBinding, ctx *gatedCtx, rel, content string) error {
+	scoped := b.withCwd(ctx)
+	real, err := scoped.resolve(rel)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	b := fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
-	ctx := newGatedCtx(t, "plan-1", "node-1", "chat-1")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(real, []byte(content), 0o644)
+}
 
-	// The node's own dir is the default cwd: a relative write lands in it.
-	if _, err := b.withCwd(ctx).writeFile(writeFileArgs{Path: "notes.md", Content: "hi"}); err != nil {
-		t.Fatalf("write_file: %v", err)
+// firstComponent returns the first path segment of a slash path ("" for the
+// root) — the immediate-child dir a listing entry sits in. (Was cd.go's helper;
+// the cd tool is gone, the test invariant is not.)
+func firstComponent(rel string) string {
+	if rel == "" || rel == "." {
+		return ""
 	}
-	// "/" is the node's own root: the absolute form of the very same file.
-	if got, err := b.withCwd(ctx).readFile(readFileArgs{Path: "/notes.md"}); err != nil || got.Content != "hi" {
-		t.Fatalf("write_file did not land under the node dir: %v", err)
+	if i := strings.IndexByte(rel, '/'); i >= 0 {
+		return rel[:i]
 	}
-
-	// `cd` into a subdir, then `cd /` returns to the node root — and a relative read
-	// resolves THERE, not back inside the subdir.
-	if _, err := b.withCwd(ctx).writeFile(writeFileArgs{Path: "repo/inner.md", Content: "in"}); err != nil {
-		t.Fatalf("write_file repo/inner.md: %v", err)
-	}
-	if _, err := b.withCwd(ctx).cd(ctx, cdArgs{Dir: "repo"}); err != nil {
-		t.Fatalf("cd repo: %v", err)
-	}
-	res, err := b.withCwd(ctx).cd(ctx, cdArgs{Dir: "/"})
-	if err != nil {
-		t.Fatalf("cd /: %v", err)
-	}
-	if res.Cwd != "/" {
-		t.Errorf("cd / reported cwd %q, want \"/\" (the node's root)", res.Cwd)
-	}
-	if _, err := b.withCwd(ctx).readFile(readFileArgs{Path: "notes.md"}); err != nil {
-		t.Errorf("after `cd /` a relative path must resolve at the node root: %v", err)
-	}
+	return rel
 }

@@ -226,6 +226,18 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		markerLine = "\n\n" + AdvisorThreadMarker(token)
 	}
 
+	// Gate-side recall for an EXTERNAL worker — the preload_memory twin (native
+	// agents get preload via their runner; an ACP subprocess has no runner, so
+	// the gate front-loads the recalled notes into the round-0 prompt). Riding
+	// `prompt` means the notes also reach the judge (its `question` is this
+	// prompt) and every revise round's content. Best-effort by construction.
+	if cfg.ExternalWorker && cfg.CommitMemory {
+		if rec := cfg.Memory.Recall(ctx, memoryScope(ctx, cfg, nodeID), cfg.Task); rec != "" {
+			prompt = rec + "\n\n" + prompt
+			log.Info("recalled memory injected into the worker prompt", "bytes", len(rec))
+		}
+	}
+
 	// Per-NODE workspace scope: a plan's nodes run concurrently in ONE chat, so
 	// each gets its own directory under the chat scope (<root>/<user>/<chat>/
 	// <node>/) — the default cwd its tools resolve relative paths against (they
@@ -240,8 +252,21 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 	}
 	// activity replays the worker's session from that node dir — the cwd its
-	// relative paths (and the judge's re-read of them) resolve against.
-	activity := func() workerActivity { return activityFromSessionAt(ctx.Session(), nodeDir) }
+	// relative paths (and the judge's re-read of them) resolve against — then
+	// folds in the clone's git state (augmentFromRepo): an external ACP worker
+	// commits outside the tool layer, so the session alone under-reports.
+	activity := func() workerActivity {
+		act := activityFromSessionAt(ctx.Session(), nodeDir)
+		augmentFromRepo(&act, cfg)
+		return act
+	}
+	// actFor additionally folds in what the ANSWER itself carries — an external
+	// reviewer's structured verdict staged as its review (augmentFromAnswer).
+	actFor := func(answer string) workerActivity {
+		act := activity()
+		augmentFromAnswer(&act, cfg, answer)
+		return act
+	}
 
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	// The judge runs in its own isolated runner (off the workflow event stream), so
@@ -360,8 +385,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// which carries the user's verbatim request as background: judged against
 		// that, every node in a "commit and open a PR" plan is forever incomplete,
 		// including the read-only explorers.
-		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, activity(), cfg.ReadOnly); attempt++ {
-			act := activity()
+		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly); attempt++ {
+			act := actFor(answer)
 			log.Warn("work not finished; continuing the worker with its tools",
 				"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
 			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly)+markerLine,
@@ -423,7 +448,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if strings.TrimSpace(answer) == "" {
 				break // still nothing to judge after recovery
 			}
-			act := activity()
+			act := actFor(answer)
 			runID := fmt.Sprintf("judge-r%d", round)
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
 			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, act, judgePartEmitter(sink, nodeID, runID))
@@ -478,7 +503,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			prompt = basePrompt + "\n\n--- User steering guidance (revise your approach accordingly) ---\n" + steered
 			continue // re-run the whole gate with the guidance (fresh run IDs)
 		}
-		act := activity()
+		act := actFor(answer)
 		if res.Passed {
 			commitMemoryOnPass(ctx, cfg, nodeID, answer, act.staged)
 		}
@@ -1015,15 +1040,6 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					s.recordWorkspace(p.FunctionResponse.Name, args, p.FunctionResponse.Response)
 				}
 			}
-			// CODE MODE: a tool called from inside a script emits no session event, so
-			// its calls are replayed here from run_code's compact record, through the
-			// very same recorders a direct call goes through — a write from a script
-			// is indistinguishable, to the gate, from a direct write_file.
-			if p.FunctionResponse != nil && p.FunctionResponse.Name == RunCodeToolName {
-				for _, c := range expandRunCode(p.FunctionResponse.Response) {
-					s.replay(c)
-				}
-			}
 		}
 	}
 	return s.act
@@ -1042,33 +1058,6 @@ type activityScanner struct {
 	// since the tool writes the same session state either way.
 	curCwd      string
 	writtenSeen map[string]bool // dedup for act.written
-}
-
-// replay folds one call a script made into the activity, exactly as if the model
-// had made it directly. It covers the call-side capture too (a search query, a
-// staged memory), which for a direct call is read from the FunctionCall part.
-func (s *activityScanner) replay(c innerCall) {
-	switch c.name {
-	case "web_search":
-		s.recordSearch(c.args)
-		recordSearchResults(s.act.seen, c.result)
-	case "web_fetch":
-		if u, ok := c.args["url"].(string); ok && strings.TrimSpace(u) != "" {
-			s.recordFetch(strings.TrimSpace(u), c.result)
-		}
-	case "stage_memory":
-		if cand, ok := stagedCandidate(&genai.FunctionCall{Name: c.name, Args: c.args}); ok {
-			s.act.staged = append(s.act.staged, cand)
-		}
-	case "stage_pr", "stage_review", "stage_comment", "unstage":
-		s.applyDelivery(&genai.FunctionCall{Name: c.name, Args: c.args})
-	case "cd":
-		s.recordCd(c.result)
-	default:
-		if isWorkspaceTool(c.name) {
-			s.recordWorkspace(c.name, c.args, c.result)
-		}
-	}
 }
 
 // recordPRNumber captures a github_* call's pull_number arg as the review/

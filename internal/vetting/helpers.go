@@ -126,6 +126,12 @@ type Config struct {
 	// like a nil Memory disables the memory-commit path.
 	Deliver DeliverFunc
 
+	// ExternalWorker marks an ACP-backed agent (internal/acp): the worker has
+	// none of quack's tools, so the gate supplements the session ledger with
+	// ground truth it gathers itself — the git disk probe (augmentFromRepo) and
+	// the answer-derived staged review (augmentFromAnswer).
+	ExternalWorker bool
+
 	// Setup is the plan's declared PRE-step (dag.Plan.Setup), stamped per-node
 	// by dag.buildGateNodes for a repo-touching node (implementer/reviewer)
 	// when the plan declared one. Non-nil means the harness already cloned
@@ -154,6 +160,17 @@ type StagedDelivery struct {
 	Body   string
 	Event  string // review verdict: approve | request_changes | comment
 	Slot   string // comment target, for Kind == "comment"
+	// Comments are the review's inline findings (Kind == "review"), parsed from
+	// an external reviewer's structured answer (augmentFromAnswer) — delivery
+	// posts them as line-anchored review comments.
+	Comments []ReviewComment
+}
+
+// ReviewComment is one inline, line-anchored review finding.
+type ReviewComment struct {
+	Path string
+	Line int
+	Body string
 }
 
 // DeliveryContext is what commitDelivery hands to Config.Deliver: the

@@ -15,8 +15,6 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
-
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // SafetyJudge decides whether a guarded tool call is plausibly in service of
@@ -177,33 +175,11 @@ func buildSafetyJudgePrompt(request, task, toolName string, args map[string]any,
 		sb.WriteString("Current task:\n" + task + "\n\n")
 	}
 	sb.WriteString("Proposed operation:\n")
-	if code, ok := scriptSource(toolName, args); ok {
-		// A code-mode script is judged as a PROGRAM, so it is shown as one. Pasting
-		// it through json.Marshal would hand the judge a single escaped line —
-		// \n, \" and all — which is exactly the thing it must be able to READ.
-		fmt.Fprintf(&sb, "  tool: %s — a SCRIPT. Judge the WHOLE program: every tool call it can make, in every branch and loop.\n", toolName)
-		fmt.Fprintf(&sb, "  script:\n```javascript\n%s\n```\n\n", code)
-	} else {
-		argsJSON, _ := json.Marshal(args)
-		fmt.Fprintf(&sb, "  tool: %s\n  args: %s\n\n", toolName, argsJSON)
-	}
+	argsJSON, _ := json.Marshal(args)
+	fmt.Fprintf(&sb, "  tool: %s\n  args: %s\n\n", toolName, argsJSON)
 	if activity != "" {
 		sb.WriteString("Recent activity this session:\n" + activity + "\n\n")
 	}
 	sb.WriteString("Is this operation plausibly in service of the task above? Call submit_safety_verdict now.")
 	return sb.String()
-}
-
-// scriptSource pulls the program out of a code-mode call's arguments. A run_code
-// call with no readable code (an empty or malformed arg) falls back to the generic
-// JSON rendering rather than showing the judge nothing.
-func scriptSource(toolName string, args map[string]any) (string, bool) {
-	if toolName != vetting.RunCodeToolName {
-		return "", false
-	}
-	code, _ := args["code"].(string)
-	if strings.TrimSpace(code) == "" {
-		return "", false
-	}
-	return code, true
 }

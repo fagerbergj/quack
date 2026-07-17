@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,20 +117,14 @@ func ownerRepoFromURL(rawURL string) (owner, repo string, ok bool) {
 // installation token. Kept minimal for the MVP; richer tools (create issue,
 // request review, labels, check-runs) are documented follow-ups.
 //
-// NOT here (deliberately): pullRequestTool and submitReviewTool. Opening a PR
-// or submitting a review makes work PUBLIC, so under the staged-delivery spine
-// (see internal/tools/stage_delivery.go, vetting.commitDelivery) no agent
-// calls them directly anymore — a worker STAGES that intent
-// (stage_pr/stage_review) and the trust gate posts it, exactly once, only on a
-// judge pass. createPullRequest/createReview (internal/github/app.go) are still
-// here, called ONLY by the harness's own delivery step (internal/github/webhook.go).
+// NOT here (deliberately): anything that opens a PR or submits a review —
+// that makes work PUBLIC, and since 0.6.0 the code agents are external ACP
+// subprocesses with no quack tools at all. Delivery is entirely gate-owned:
+// the gate stages from ground truth (vetting.augmentFromRepo /
+// augmentFromAnswer) and Deliver below posts it, exactly once.
 func (a *App) Tools() []tool.Tool {
 	return []tool.Tool{
 		a.commentTool(),
-		a.addReviewCommentTool(),
-		a.listReviewCommentsTool(),
-		a.deleteReviewCommentTool(),
-		a.listPRCommentsTool(),
 		a.replyToReviewCommentTool(),
 		a.reactToCommentTool(),
 	}
@@ -183,96 +178,13 @@ type reviewComment struct {
 // reviewEvents are the verdicts GitHub's reviews API accepts.
 var reviewEvents = map[string]bool{"COMMENT": true, "REQUEST_CHANGES": true, "APPROVE": true}
 
-// --- Review-draft CRUD tools ---
+// --- Review location validation ---
 //
-// A PR review is built up one inline comment at a time — each comment's inline
-// LOCATION (path + line) is validated against the PR diff the moment it's added,
-// so a bad line ref is caught with a clear, actionable error instead of sinking
-// the whole review with a 422 at submit. The accumulated comments live in a
-// process-local per-PR draft (App.drafts); github_submit_review posts them all
-// as ONE review and clears the draft. Because every drafted comment was already
-// location-validated, the final submit can't 422 on a bad line.
-
-type addReviewCommentArgs struct {
-	Owner      string `json:"owner"`
-	Repo       string `json:"repo"`
-	PullNumber int    `json:"pull_number"`
-	Path       string `json:"path"`
-	Line       int    `json:"line"`
-	Side       string `json:"side,omitempty"`
-	StartLine  int    `json:"start_line,omitempty"`
-	StartSide  string `json:"start_side,omitempty"`
-	Body       string `json:"body"`
-}
-
-type addReviewCommentResult struct {
-	Index      int `json:"index"`       // this comment's position in the draft
-	DraftCount int `json:"draft_count"` // total comments now in the draft
-}
-
-func (a *App) addReviewCommentTool() tool.Tool {
-	t, _ := functiontool.New[addReviewCommentArgs, addReviewCommentResult](
-		functiontool.Config{
-			Name: "github_add_review_comment",
-			Description: "Record ONE inline comment on a pull request, anchored to `path` and `line` in the diff. " +
-				"`path` is REPO-RELATIVE, exactly as the file appears in the PR diff (`app/game.ts`) — NOT the " +
-				"workspace/clone path you read it from (`games/app/game.ts`); a clone-dir prefix is stripped for you " +
-				"when it resolves to exactly one changed file. " +
-				"The line is validated against the PR diff immediately: if `path` isn't a changed file or `line` " +
-				"isn't a commentable line in its diff, the comment is REJECTED with the valid line range so you can " +
-				"fix it. Accepted comments accumulate in a draft (they are NOT posted yet) — call github_submit_review " +
-				"to post them all as one review. Optional `side` (LEFT/RIGHT, default RIGHT) and `start_line`+`start_side` " +
-				"for a multi-line range. Record each finding here the moment you spot it; this draft is your durable " +
-				"review memory. Authenticated as the app installation.",
-		},
-		func(ctx adkagent.Context, args addReviewCommentArgs) (addReviewCommentResult, error) {
-			return a.addReviewComment(ctx, args)
-		},
-	)
-	return t
-}
-
-// addReviewComment is the location-validating core of github_add_review_comment,
-// split out so it's testable without an ADK context (the adk context satisfies
-// context.Context, which is all the diff fetch needs).
-func (a *App) addReviewComment(ctx context.Context, args addReviewCommentArgs) (addReviewCommentResult, error) {
-	if args.Owner == "" || args.Repo == "" || args.PullNumber == 0 || args.Path == "" || args.Line == 0 || strings.TrimSpace(args.Body) == "" {
-		return addReviewCommentResult{}, fmt.Errorf("github_add_review_comment: owner, repo, pull_number, path, line and body are all required")
-	}
-	side := strings.ToUpper(strings.TrimSpace(args.Side))
-	if side == "" {
-		side = "RIGHT"
-	}
-	if side != "LEFT" && side != "RIGHT" {
-		return addReviewCommentResult{}, fmt.Errorf("github_add_review_comment: side must be LEFT or RIGHT; got %q", args.Side)
-	}
-	positions, err := a.commentablePositions(ctx, args.Owner, args.Repo, args.PullNumber)
-	if err != nil {
-		return addReviewCommentResult{}, err
-	}
-	path, err := resolvePath(positions, args.Path)
-	if err != nil {
-		return addReviewCommentResult{}, err
-	}
-	if err := validateLocation(positions, path, args.Line, side); err != nil {
-		return addReviewCommentResult{}, err
-	}
-	if args.StartLine != 0 {
-		if err := validateLocation(positions, path, args.StartLine, sideOr(args.StartSide, side)); err != nil {
-			return addReviewCommentResult{}, fmt.Errorf("start_line: %w", err)
-		}
-	}
-	c := reviewComment{Path: path, Line: args.Line, Body: args.Body}
-	if side != "RIGHT" {
-		c.Side = side
-	}
-	if args.StartLine != 0 {
-		c.StartLine = args.StartLine
-		c.StartSide = sideOr(args.StartSide, side)
-	}
-	idx := a.draftAdd(args.Owner, args.Repo, args.PullNumber, c)
-	return addReviewCommentResult{Index: idx, DraftCount: idx + 1}, nil
-}
+// A review's inline comments are anchored to (path, line) in the PR diff, and
+// one bad anchor 422s the whole submit. The gate parses an external reviewer's
+// findings (vetting.augmentFromAnswer), so validation happens at DELIVERY
+// (validComments): each finding is checked against the diff and dropped if
+// unanchorable — the summary body still carries its text.
 
 // sideOr returns the trimmed upper-cased s, or fallback when s is empty.
 func sideOr(s, fallback string) string {
@@ -379,92 +291,15 @@ func describeLines(lines map[int]bool) string {
 	return strings.Join(parts, ", ")
 }
 
-type draftPRArgs struct {
-	Owner      string `json:"owner"`
-	Repo       string `json:"repo"`
-	PullNumber int    `json:"pull_number"`
-}
-
-type draftedComment struct {
-	Index int `json:"index"`
-	reviewComment
-}
-
-type listReviewCommentsResult struct {
-	Comments []draftedComment `json:"comments"`
-}
-
-func (a *App) listReviewCommentsTool() tool.Tool {
-	t, _ := functiontool.New[draftPRArgs, listReviewCommentsResult](
-		functiontool.Config{
-			Name: "github_list_review_comments",
-			Description: "List the inline review comments you've recorded so far for a pull request but not yet " +
-				"submitted (the pending draft), each with its `index` for github_delete_review_comment. Use this to " +
-				"see everything you've captured before submitting. `owner`/`repo`/`pull_number` identify the PR.",
-		},
-		func(_ adkagent.Context, args draftPRArgs) (listReviewCommentsResult, error) {
-			return a.listReviewComments(args)
-		},
-	)
-	return t
-}
-
-func (a *App) listReviewComments(args draftPRArgs) (listReviewCommentsResult, error) {
-	if args.Owner == "" || args.Repo == "" || args.PullNumber == 0 {
-		return listReviewCommentsResult{}, fmt.Errorf("github_list_review_comments: owner, repo and pull_number are all required")
-	}
-	draft := a.draftList(args.Owner, args.Repo, args.PullNumber)
-	out := make([]draftedComment, len(draft))
-	for i, c := range draft {
-		out[i] = draftedComment{Index: i, reviewComment: c}
-	}
-	return listReviewCommentsResult{Comments: out}, nil
-}
-
-type deleteReviewCommentArgs struct {
-	Owner      string `json:"owner"`
-	Repo       string `json:"repo"`
-	PullNumber int    `json:"pull_number"`
-	Index      int    `json:"index"`
-}
-
-type deleteReviewCommentResult struct {
-	Deleted    bool `json:"deleted"`
-	DraftCount int  `json:"draft_count"`
-}
-
-func (a *App) deleteReviewCommentTool() tool.Tool {
-	t, _ := functiontool.New[deleteReviewCommentArgs, deleteReviewCommentResult](
-		functiontool.Config{
-			Name: "github_delete_review_comment",
-			Description: "Remove one inline comment from a pull request's pending review draft by its `index` (from " +
-				"github_list_review_comments). To edit a comment, delete it and add a corrected one. Note: after a " +
-				"delete the remaining comments' indices shift down — re-list to get current indices. " +
-				"`owner`/`repo`/`pull_number` identify the PR.",
-		},
-		func(_ adkagent.Context, args deleteReviewCommentArgs) (deleteReviewCommentResult, error) {
-			return a.deleteReviewComment(args)
-		},
-	)
-	return t
-}
-
-func (a *App) deleteReviewComment(args deleteReviewCommentArgs) (deleteReviewCommentResult, error) {
-	if args.Owner == "" || args.Repo == "" || args.PullNumber == 0 {
-		return deleteReviewCommentResult{}, fmt.Errorf("github_delete_review_comment: owner, repo and pull_number are all required")
-	}
-	if !a.draftDelete(args.Owner, args.Repo, args.PullNumber, args.Index) {
-		return deleteReviewCommentResult{}, fmt.Errorf("github_delete_review_comment: no draft comment at index %d", args.Index)
-	}
-	return deleteReviewCommentResult{Deleted: true, DraftCount: len(a.draftList(args.Owner, args.Repo, args.PullNumber))}, nil
-}
-
 type submitReviewArgs struct {
 	Owner      string `json:"owner"`
 	Repo       string `json:"repo"`
 	PullNumber int    `json:"pull_number"`
 	Body       string `json:"body,omitempty"`
 	Event      string `json:"event"`
+	// Comments are gate-supplied inline findings (an external reviewer's parsed
+	// answer — vetting.StagedDelivery.Comments), posted alongside the review.
+	Comments []reviewComment `json:"-"`
 }
 
 type submitReviewResult struct {
@@ -484,7 +319,7 @@ func (a *App) submitReview(ctx context.Context, args submitReviewArgs) (submitRe
 	if !reviewEvents[event] {
 		return submitReviewResult{}, fmt.Errorf("github_submit_review: event must be one of COMMENT, REQUEST_CHANGES, APPROVE; got %q", args.Event)
 	}
-	comments := a.draftList(args.Owner, args.Repo, args.PullNumber)
+	comments := args.Comments
 	body := strings.TrimSpace(args.Body)
 	if body == "" {
 		// Both the mid-tier and the coder models sometimes submit an empty body.
@@ -499,7 +334,6 @@ func (a *App) submitReview(ctx context.Context, args submitReviewArgs) (submitRe
 	if err != nil {
 		return submitReviewResult{}, err
 	}
-	a.draftTake(args.Owner, args.Repo, args.PullNumber) // clear only after a successful post
 	return submitReviewResult{URL: url, ReviewID: id, Comments: len(comments)}, nil
 }
 
@@ -624,25 +458,6 @@ func defaultReviewBody(event string, n int) string {
 
 // --- Reading & reacting to existing PR discussion ---
 
-func (a *App) listPRCommentsTool() tool.Tool {
-	t, _ := functiontool.New[draftPRArgs, prDiscussion](
-		functiontool.Config{
-			Name: "github_list_pr_comments",
-			Description: "Read a pull request's EXISTING discussion before you add your own review, so you don't " +
-				"repeat what's already been said: its inline review comments (path/line/body/user, with in_reply_to_id " +
-				"for threads), its top-level conversation comments, and its submitted reviews (body/state/user). " +
-				"`owner`/`repo`/`pull_number` identify the PR. Authenticated as the app installation.",
-		},
-		func(ctx adkagent.Context, args draftPRArgs) (prDiscussion, error) {
-			if args.Owner == "" || args.Repo == "" || args.PullNumber == 0 {
-				return prDiscussion{}, fmt.Errorf("github_list_pr_comments: owner, repo and pull_number are all required")
-			}
-			return a.listPRDiscussion(ctx, args.Owner, args.Repo, args.PullNumber)
-		},
-	)
-	return t
-}
-
 type replyArgs struct {
 	Owner      string `json:"owner"`
 	Repo       string `json:"repo"`
@@ -741,11 +556,11 @@ func (a *App) react(ctx context.Context, args reactArgs) (reactResult, error) {
 // step's own call (internal/github/webhook.go's commitDelivery, post-judge-
 // pass only); no longer exposed as a model tool (see App.Tools). A label
 // failure never fails the open (a retry would duplicate the PR).
-func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string) (string, int, error) {
+func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool) (string, int, error) {
 	if base == "" {
 		base = "main"
 	}
-	u, number, err := a.createPullRequest(ctx, owner, repo, title, head, base, body)
+	u, number, err := a.createPullRequest(ctx, owner, repo, title, head, base, body, draft)
 	if err != nil {
 		return "", 0, err
 	}
@@ -764,7 +579,10 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 // re-labeling). A failed existence check degrades to "open a new one" rather
 // than blocking delivery outright — GitHub itself still rejects a genuine
 // duplicate branch-to-PR mapping.
-func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string) (url string, number int, err error) {
+// draft applies only on a fresh open: an EXISTING open PR keeps its state (the
+// REST API can't flip a PR to draft; the gate's caveat banner still rides the
+// updated body).
+func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool) (url string, number int, err error) {
 	if num, _, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
 		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
 	} else if ok {
@@ -776,7 +594,7 @@ func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, h
 			"component", "github", "repo", owner+"/"+repo, "pr", num, "url", u)
 		return u, num, nil
 	}
-	return a.openPullRequest(ctx, owner, repo, title, head, base, body, labels)
+	return a.openPullRequest(ctx, owner, repo, title, head, base, body, labels, draft)
 }
 
 // Deliver is the vetting.DeliverFunc this extension provides (wired in
@@ -803,6 +621,13 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 	owner, repo, ok := ownerRepoFromURL(dc.CloneURL)
 	if !ok {
 		return fmt.Errorf("github: delivery: %q is not a github.com clone URL — nothing to deliver against", dc.CloneURL)
+	}
+	// An external (ACP) worker makes no github_* calls, so the ledger can't
+	// supply the PR number — but a GitHub-dispatched run's chat id IS the
+	// trigger coordinates (webhook dispatch: "github-<owner>-<repo>-<number>"),
+	// which is deterministic where the model's self-report never was.
+	if dc.IssueNumber == 0 {
+		dc.IssueNumber = prNumberFromChatID(dc.ChatID)
 	}
 	if dc.Branch != "" && dc.CloneDir != "" {
 		tok, terr := a.tokenForRepo(ctx, owner, repo)
@@ -841,6 +666,56 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 	return errors.Join(errs...)
 }
 
+// validComments filters gate-parsed inline findings (vetting.ReviewComment) to
+// the ones anchorable in the PR's diff, normalising a clone-relative path to
+// its repo-relative form (resolvePath). A diff-fetch failure drops ALL inline
+// comments rather than the review: the summary body always carries the
+// findings text.
+func (a *App) validComments(ctx context.Context, owner, repo string, number int, comments []vetting.ReviewComment) []reviewComment {
+	if len(comments) == 0 {
+		return nil
+	}
+	positions, err := a.commentablePositions(ctx, owner, repo, number)
+	if err != nil {
+		slog.Warn("github: delivery: PR diff unavailable; posting the review without inline comments",
+			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		return nil
+	}
+	out := make([]reviewComment, 0, len(comments))
+	for _, c := range comments {
+		path, rerr := resolvePath(positions, c.Path)
+		if rerr != nil {
+			slog.Warn("github: delivery: dropping an inline finding with an unresolvable path",
+				"component", "github", "path", c.Path, "err", rerr)
+			continue
+		}
+		if verr := validateLocation(positions, path, c.Line, "RIGHT"); verr != nil {
+			slog.Warn("github: delivery: dropping an inline finding with an uncommentable line",
+				"component", "github", "path", path, "line", c.Line, "err", verr)
+			continue
+		}
+		out = append(out, reviewComment{Path: path, Line: c.Line, Body: c.Body})
+	}
+	return out
+}
+
+// prNumberFromChatID recovers the triggering issue/PR number from a GitHub-
+// dispatched run's chat id ("github-<owner>-<repo>-<number>"). 0 for any other
+// chat (a UI-initiated run has no trigger to deliver a review against).
+var githubChatIDRe = regexp.MustCompile(`^github-.+-(\d+)$`)
+
+func prNumberFromChatID(chatID string) int {
+	m := githubChatIDRe.FindStringSubmatch(chatID)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // deliveryItemResult is what one staged item's delivery produced worth
 // recording — currently only a pull request's real number/url.
 type deliveryItemResult struct {
@@ -876,7 +751,9 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		if dc.Branch == "" {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged pull request %q has no branch to open it from", item.Title)
 		}
-		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil)
+		// A gate FAIL still delivers (a human decides), but as a DRAFT: the
+		// caveat banner explains, the draft state stops an accidental merge.
+		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil, !dc.GatePassed)
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: open pull request: %w", err)
 		}
@@ -891,7 +768,13 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
 		}
 		a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
-		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, item.Body), Event: event})
+		// Validate each gate-parsed inline finding against the PR diff BEFORE
+		// submit (the job the draft tools' per-add validation used to do): one
+		// bad anchor would 422 the WHOLE review. An invalid location is dropped,
+		// not fatal — the finding's text still reaches the reviewer's summary
+		// body, which carries the full findings list.
+		inline := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
+		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, item.Body), Event: event, Comments: inline})
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: submit review: %w", err)
 		}

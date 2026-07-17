@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"google.golang.org/genai"
@@ -34,5 +36,27 @@ func TestFirstStep(t *testing.T) {
 		if got := firstStep(tt.contents); got != tt.want {
 			t.Errorf("%s: firstStep = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// Recall is the gate-side preload twin for external workers: formatted block
+// on a hit, "" on empty/nil — and a nil store must be safe (memory disabled).
+func TestStoreRecall(t *testing.T) {
+	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"build with make dev, not npm run build","kind":"convention"}]}`}
+	s := newSQLiteStore(t, "task", consolidator)
+	sc := Scope{Role: RoleCoding}
+	if _, err := s.Commit(context.Background(), sc, "explorer", []Candidate{{Content: "build with make dev"}}, "report"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Recall(context.Background(), sc, "how do I build this repo")
+	if !strings.Contains(got, "<MEMORY>") || !strings.Contains(got, "make dev") {
+		t.Fatalf("recall block wrong: %q", got)
+	}
+	if got := s.Recall(context.Background(), Scope{Role: "other"}, "anything"); got != "" {
+		t.Fatalf("foreign-scope recall must be empty, got %q", got)
+	}
+	var nilStore *Store
+	if got := nilStore.Recall(context.Background(), sc, "q"); got != "" {
+		t.Fatal("nil store must recall nothing")
 	}
 }

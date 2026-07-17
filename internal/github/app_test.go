@@ -299,7 +299,7 @@ func TestCreatePullRequestAndAddLabels(t *testing.T) {
 	}
 	app.apiBase = srv.URL
 
-	url, number, err := app.createPullRequest(context.Background(), "acme", "widgets", "t", "head", "main", "b")
+	url, number, err := app.createPullRequest(context.Background(), "acme", "widgets", "t", "head", "main", "b", false)
 	if err != nil {
 		t.Fatalf("createPullRequest: %v", err)
 	}

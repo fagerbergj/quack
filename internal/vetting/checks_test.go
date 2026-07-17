@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -179,5 +180,26 @@ func TestChecksDirFindsTheNodesOwnRepo(t *testing.T) {
 	}
 	if !strings.HasSuffix(dir, "impl_node/mine") {
 		t.Errorf("checksDir = %q, want the node's own clone (…/impl_node/mine)", dir)
+	}
+}
+
+// A default-ON check_commands allowlist must be safe on a host WITHOUT the
+// toolchain: deriveChecks additionally gates each candidate on its binary
+// existing (toolchainPresent), so a missing `go` derives nothing instead of
+// failing every node with exit 127.
+func TestDeriveChecks_SkipsMissingToolchain(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	allow := []string{"go build", "go vet", "go test"}
+
+	if got := deriveChecks(dir, allow); len(got) != 3 {
+		t.Fatalf("with go on PATH, want 3 derived checks, got %v", got)
+	}
+
+	t.Setenv("PATH", t.TempDir()) // a PATH with no binaries at all
+	if got := deriveChecks(dir, allow); len(got) != 0 {
+		t.Fatalf("without the toolchain, want no derived checks, got %v", got)
 	}
 }

@@ -288,3 +288,96 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 		t.Errorf("minimizeComment subjectId = %q; want the prior review's node_id REVIEW1", minimizedID)
 	}
 }
+
+// An external (ACP) reviewer's staged review carries gate-parsed inline
+// comments and no ledger PR number — delivery posts the comments and recovers
+// the PR from the GitHub-dispatched chat id.
+func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
+	var reviewBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
+			// main.go line 42 commentable on the RIGHT side.
+			io.WriteString(w, `[{"filename":"main.go","patch":"@@ -42,1 +42,1 @@\n-old\n+new"}]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			reviewBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"id":9,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-9"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "github-acme-widgets-7", // the webhook dispatch session id — the PR number source
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Items: []vetting.StagedDelivery{{
+			Kind: "review", Event: "request_changes", Body: "two blockers",
+			Comments: []vetting.ReviewComment{{Path: "main.go", Line: 42, Body: "route shadowed"}},
+		}},
+	}
+	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Comments []struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+			Body string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal(reviewBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if len(posted.Comments) != 1 || posted.Comments[0].Path != "main.go" || posted.Comments[0].Line != 42 {
+		t.Fatalf("inline comments not posted: %s", reviewBody)
+	}
+}
+
+// A gate FAIL still delivers the PR (a human decides) but opens it as a DRAFT
+// so it cannot be merged accidentally.
+func TestDeliverFailedGateOpensDraftPR(t *testing.T) {
+	var prBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[]`) // no existing open PR
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			prBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/8","number":8}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed:   false,
+		GateFeedback: "tests fail",
+		ChatID:       "github-acme-widgets-3",
+		CloneURL:     "https://github.com/acme/widgets.git",
+		Branch:       "quack/fix",
+		Items:        []vetting.StagedDelivery{{Kind: "pull_request", Title: "Fix it", Body: "the fix"}},
+	}
+	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Draft bool   `json:"draft"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal(prBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if !posted.Draft {
+		t.Fatalf("gate-failed PR must open as a draft: %s", prBody)
+	}
+	if !strings.Contains(posted.Body, "did NOT pass") {
+		t.Fatalf("caveat banner missing from body: %s", posted.Body)
+	}
+}

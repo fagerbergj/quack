@@ -1,0 +1,79 @@
+// The answer-derived review probe: an EXTERNAL (ACP) reviewer has no
+// stage_review tool, so its deliverable — the posted review — must come out of
+// its ANSWER. The reviewer's preamble (agents/code-reviewer/prompt.md)
+// instructs a structured tail:
+//
+//	VERDICT: approve | request_changes | comment
+//	FINDINGS:
+//	- path/to/file.go:42: the finding text
+//	- other/file.ts:7: another finding
+//
+// augmentFromAnswer parses that into a staged review (with line-anchored
+// inline comments) exactly as if the worker had called stage_review — the
+// delivery spine (commitDelivery → github Deliver) stays gate-owned and
+// unchanged. The companion of the git disk probe (gitprobe.go).
+package vetting
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var (
+	verdictRe = regexp.MustCompile(`(?mi)^\s*VERDICT:\s*(approve|request_changes|comment)\s*$`)
+	findingRe = regexp.MustCompile(`(?m)^\s*[-*]\s+([^\s:]+):(\d+):\s*(.+)$`)
+)
+
+// parseAnswerReview extracts the structured verdict and inline findings from a
+// reviewer's answer. ok is false when no VERDICT line exists — the caller then
+// falls back to a plain comment-review of the whole answer.
+func parseAnswerReview(answer string) (event string, comments []ReviewComment, ok bool) {
+	m := verdictRe.FindStringSubmatch(answer)
+	if m == nil {
+		return "", nil, false
+	}
+	event = strings.ToLower(m[1])
+	for _, f := range findingRe.FindAllStringSubmatch(answer, -1) {
+		line, err := strconv.Atoi(f[2])
+		if err != nil || line <= 0 {
+			continue
+		}
+		comments = append(comments, ReviewComment{Path: f[1], Line: line, Body: strings.TrimSpace(f[3])})
+	}
+	return event, comments, true
+}
+
+// augmentFromAnswer stages an external reviewer's answer as its review. Fires
+// only for ACP-backed workers on a task that demands a posted review, and only
+// when nothing is staged yet (a worker-staged review always wins — there isn't
+// one on the ACP path, but the guard keeps this probe monotonic like the git
+// probe: it fills gaps, never replaces).
+//
+// A verdict-less answer still stages a plain comment-review: an honest wall of
+// findings without the structured tail must post as a comment rather than
+// deadlock the node in continuation rounds it can never satisfy.
+func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
+	if !cfg.ExternalWorker || strings.TrimSpace(answer) == "" {
+		return
+	}
+	if !demandsPostedReview(cfg.Task) {
+		return
+	}
+	if _, staged := act.stagedDelivery["review"]; staged {
+		return
+	}
+	event, comments, ok := parseAnswerReview(answer)
+	if !ok {
+		event = "comment"
+	}
+	if act.stagedDelivery == nil {
+		act.stagedDelivery = map[string]StagedDelivery{}
+	}
+	act.stagedDelivery["review"] = StagedDelivery{
+		Kind:     "review",
+		Event:    event,
+		Body:     answer,
+		Comments: comments,
+	}
+}

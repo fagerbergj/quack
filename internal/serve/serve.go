@@ -6,14 +6,17 @@ package serve
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux; only served when QUACK_PPROF_ADDR is set (see Run)
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -30,6 +33,7 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
@@ -767,6 +771,51 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, servers, nil, nil, nil, fmtErr(name, "model: %v", err)
 		}
 
+		// External ACP coding agent (internal/acp): the bundle still supplies
+		// identity (card) and guidance (prompt.md, delivered as a per-round
+		// preamble — the subprocess owns its own system prompt); everything else
+		// about the native path (tools, memory, skills, compaction, A2A serving)
+		// doesn't apply. It joins clientMap directly — the executor only needs
+		// an adkagent.Agent, and this one implements RunNode so the gate drives
+		// it like a local worker.
+		if ac.Acp != nil {
+			bundle, err := agent.LoadBundle(ac.Bundle)
+			if err != nil {
+				return nil, nil, servers, nil, nil, nil, fmtErr(name, "bundle: %v", err)
+			}
+			env := opencodeEnv(prov, ac, acpSkillPaths())
+			for _, k := range slices.Sorted(maps.Keys(ac.Acp.Env)) {
+				env = append(env, k+"="+ac.Acp.Env[k])
+			}
+			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
+				Command:  ac.Acp.Command,
+				Env:      env,
+				Home:     workspaceCaps.HomeDir,
+				Preamble: bundle.Prompt,
+				Jail:     jail,
+				UserID:   localUserID,
+			})
+			if err != nil {
+				return nil, nil, servers, nil, nil, nil, fmtErr(name, "acp: %v", err)
+			}
+			if cfg.Gates.Enabled() && ac.IsGated() {
+				// An ACP agent's memory participation is keyed by memory_role (it
+				// has no memory.md/tools): the gate injects recall into its prompt
+				// (vetting.memoryRecall) and mines its PASSED answer for durable
+				// facts (memory.Commit's answer-extraction — staging tool not needed).
+				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && ac.MemoryRole != "")
+				if err != nil {
+					return nil, nil, servers, nil, nil, nil, fmtErr(name, "rubric: %v", err)
+				}
+				gateCfgs[name] = agentGateCfg
+			}
+			clientMap[name] = ag
+			modelMap[name] = m
+			slog.Info("agent running via ACP subprocess", "component", "startup",
+				"agent", name, "command", strings.Join(ac.Acp.Command, " "), "model", ac.Model)
+			continue
+		}
+
 		// Memory tools (M6) are ADK-native and route through the runner's
 		// MemoryService (set in agent.Serve). preload_memory is ambient recall
 		// (added to every agent when memory is on); load_memory is deliberate recall
@@ -776,24 +825,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
-				WebSearch:              tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-				Fetch:                  tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-				Summarizer:             m,
-				Cache:                  urlCache,
-				Advisor:                advisorAgent,
-				Sessions:               sessions,
-				Workspace:              jail,
-				WorkspaceUserID:        localUserID,
-				WorkspaceCaps:          workspaceCaps,
-				GitCredentials:         gitCredentials,
-				GitTokenSource:         gitTokenSource,
-				GitPush:                cfg.Workspace.GitPush,
-				Guards:                 cfg.Workspace.Guards,
-				RunCodeGuardStandalone: cfg.Workspace.RunCodeGuardStandalone,
-				SafetyJudge:            safetyJudge,
-				NodeCancelled:          nodeCancelled,
-				NodeSteerGuidance:      nodeSteerGuidance,
-				ExtTools:               extToolsByName,
+				WebSearch:         tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
+				Fetch:             tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+				Summarizer:        m,
+				Cache:             urlCache,
+				Advisor:           advisorAgent,
+				Sessions:          sessions,
+				Workspace:         jail,
+				WorkspaceUserID:   localUserID,
+				WorkspaceCaps:     workspaceCaps,
+				GitCredentials:    gitCredentials,
+				GitTokenSource:    gitTokenSource,
+				Guards:            cfg.Workspace.Guards,
+				SafetyJudge:       safetyJudge,
+				NodeCancelled:     nodeCancelled,
+				NodeSteerGuidance: nodeSteerGuidance,
+				ExtTools:          extToolsByName,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "tools: %v", err)
@@ -852,54 +899,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
 		}
 		if cfg.Gates.Enabled() && ac.IsGated() {
-			agentGateCfg := gateCfg
-			// An agent participates in task memory iff it has a memory.md (loaded as
-			// memGuidance above). Such agents commit on a judge pass even when they
-			// staged nothing, so Commit's answer-extraction still runs.
-			agentGateCfg.CommitMemory = taskStore != nil && memGuidance != ""
-			// The role bucket this agent reads and writes (memory is shared, bucketed by
-			// subject — see internal/memory/scope.go).
-			agentGateCfg.MemoryRole = ac.MemoryRole
-			// A retrieval agent (web tools in its list) must actually retrieve —
-			// a zero-activity answer hard-fails the deterministic fold instead of
-			// sailing to the judge ungraded (see vetting.Config.RequireRetrieval).
-			for _, tn := range ac.Tools {
-				if tn == "web_search" || tn == "web_fetch" {
-					agentGateCfg.RequireRetrieval = true
-					break
-				}
-			}
-			// A read-only agent (no git_push in its tool list — a code-reviewer or
-			// code-explorer) can never deliver, so the gate must not demand a
-			// commit/push off a task polluted with a PR's "Add …/open a PR" wording.
-			agentGateCfg.ReadOnly = true
-			for _, tn := range ac.Tools {
-				if tn == "git_push" {
-					agentGateCfg.ReadOnly = false
-					break
-				}
-			}
-			if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
+			agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && memGuidance != "")
+			if err != nil {
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "rubric: %v", err)
-			} else if override != "" {
-				agentGateCfg.Rubric = override
-				slog.Info("using per-agent rubric from bundle", "component", "startup", "agent", name)
 			}
-			// Per-agent judge/revise round budget (0 ⇒ inherit the global default).
-			// The economics differ by agent: research converges in one round (extra
-			// rounds burn tokens re-fetching), whereas coding genuinely needs the
-			// judge+revise grind to iterate until tests pass.
-			if ac.JudgeRounds > 0 {
-				agentGateCfg.JudgeRounds = ac.JudgeRounds
-			}
-			// judge: false forces JudgeRounds to 0, so the gate skips the independent
-			// judge entirely (RunGatedRefine's round loop is round <= JudgeRounds). Used
-			// where the judge model cannot evaluate the output at all — a text judge
-			// scoring a media transcription it never saw is noise, not a check.
-			if ac.Judge != nil && !*ac.Judge {
-				agentGateCfg.JudgeRounds = 0
-			}
-			slog.Info("per-agent trust gate config", "component", "startup", "agent", name, "judge_rounds", agentGateCfg.JudgeRounds)
 			gateCfgs[name] = agentGateCfg
 		}
 
@@ -920,6 +923,131 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL, "tools", ac.Tools)
 	}
 	return clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, nil
+}
+
+// perAgentGateCfg specializes the base trust-gate config for one agent:
+// memory participation, retrieval/read-only derivation from its tool list, the
+// bundle rubric override, and the judge round budget.
+func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, memParticipant bool) (vetting.Config, error) {
+	c := base
+	// An agent participates in task memory iff it has a memory.md. Such agents
+	// commit on a judge pass even when they staged nothing, so Commit's
+	// answer-extraction still runs.
+	c.CommitMemory = memParticipant
+	// The role bucket this agent reads and writes (memory is shared, bucketed
+	// by subject — see internal/memory/scope.go).
+	c.MemoryRole = ac.MemoryRole
+	// A retrieval agent (web tools in its list) must actually retrieve — a
+	// zero-activity answer hard-fails the deterministic fold instead of sailing
+	// to the judge ungraded (see vetting.Config.RequireRetrieval).
+	for _, tn := range ac.Tools {
+		if tn == "web_search" || tn == "web_fetch" {
+			c.RequireRetrieval = true
+			break
+		}
+	}
+	// A read-only agent (no git_push in its tool list — a code-reviewer or
+	// code-explorer) can never deliver, so the gate must not demand a
+	// commit/push off a task polluted with a PR's "Add …/open a PR" wording.
+	c.ReadOnly = true
+	for _, tn := range ac.Tools {
+		if tn == "git_push" {
+			c.ReadOnly = false
+			break
+		}
+	}
+	// An external ACP agent has NO quack tools: it retrieves nothing (no web
+	// tools ⇒ RequireRetrieval stays false); whether it delivers code comes
+	// from its own config (acp.read_only — a reviewer/explorer never commits,
+	// an implementer does). ExternalWorker turns on the gate's ground-truth
+	// probes (the git disk probe + the answer-derived staged review).
+	if ac.Acp != nil {
+		c.ReadOnly = ac.Acp.ReadOnly
+		c.ExternalWorker = true
+	}
+	if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
+		return c, err
+	} else if override != "" {
+		c.Rubric = override
+		slog.Info("using per-agent rubric from bundle", "component", "startup", "agent", name)
+	}
+	// Per-agent judge/revise round budget (0 ⇒ inherit the global default).
+	// The economics differ by agent: research converges in one round (extra
+	// rounds burn tokens re-fetching), whereas coding genuinely needs the
+	// judge+revise grind to iterate until tests pass.
+	if ac.JudgeRounds > 0 {
+		c.JudgeRounds = ac.JudgeRounds
+	}
+	// judge: false forces JudgeRounds to 0, so the gate skips the independent
+	// judge entirely (RunGatedRefine's round loop is round <= JudgeRounds). Used
+	// where the judge model cannot evaluate the output at all — a text judge
+	// scoring a media transcription it never saw is noise, not a check.
+	if ac.Judge != nil && !*ac.Judge {
+		c.JudgeRounds = 0
+	}
+	slog.Info("per-agent trust gate config", "component", "startup", "agent", name, "judge_rounds", c.JudgeRounds)
+	return c, nil
+}
+
+// opencodeEnv generates OPENCODE_CONFIG_CONTENT for an ACP agent: its bound
+// provider/model as an opencode OpenAI-compatible provider, plus the headless
+// permission policy — everything allowed EXCEPT `git push` (delivery is
+// gate-owned: vetting.commitDelivery pushes and posts exactly once). Inert for
+// a non-opencode agent; an operator's acp.env entries are appended after this,
+// so an explicit override wins.
+func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
+	type m = map[string]any
+	apiKey := prov.APIKey
+	if apiKey == "" {
+		apiKey = "unused" // the openai-compatible SDK requires SOME key; local endpoints ignore it
+	}
+	modelCfg := m{}
+	if ac.ContextWindow > 0 {
+		modelCfg["limit"] = m{"context": ac.ContextWindow, "output": 32768}
+	}
+	cfg := m{
+		"provider": m{"quack": m{
+			"npm":     "@ai-sdk/openai-compatible",
+			"name":    "quack-bound provider",
+			"options": m{"baseURL": prov.Endpoint, "apiKey": apiKey},
+			"models":  m{ac.Model: modelCfg},
+		}},
+		"model": "quack/" + ac.Model,
+		"permission": m{
+			"bash": m{"git push": "deny", "git push *": "deny", "*": "allow"},
+		},
+	}
+	// quack's own skill library, discovered by opencode's skills.paths glob
+	// (**/SKILL.md — the same layout). The whole library, not the per-agent
+	// scoped subset: opencode loads skills agentically, and code agents seeing
+	// the full set is the acceptable ponytail trade for zero sync machinery.
+	if len(skillPaths) > 0 {
+		cfg["skills"] = m{"paths": skillPaths}
+	}
+	content, err := json.Marshal(cfg)
+	if err != nil {
+		return nil
+	}
+	return []string{"OPENCODE_CONFIG_CONTENT=" + string(content)}
+}
+
+// acpSkillPaths are the on-disk skill roots handed to an ACP agent's
+// skills.paths — the shipped skills/ dir and the vendored ponytail library,
+// absolute (the subprocess cwd is the node dir, not the server's). A root
+// missing on disk (embedded-only deploys) is simply skipped; opencode also
+// warns-and-continues on a missing path, so this can never fail a run.
+func acpSkillPaths() []string {
+	var out []string
+	for _, d := range []string{"skills", vendorSkillsDir} {
+		abs, err := filepath.Abs(d)
+		if err != nil {
+			continue
+		}
+		if st, err := os.Stat(abs); err == nil && st.IsDir() {
+			out = append(out, abs)
+		}
+	}
+	return out
 }
 
 // contentText flattens a content's text parts (the worker's prompt, where the gate

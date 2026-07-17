@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // samplePatch is a unified diff for auth.go: hunk starts at new-file line 40, so
@@ -41,129 +43,6 @@ func newReviewApp(t *testing.T, reviews http.HandlerFunc) *App {
 	app.installs["acme/widgets"] = 1
 	app.tokens[1] = cachedToken{token: "ghs_x", expires: time.Now().Add(time.Hour)}
 	return app
-}
-
-func TestAddReviewCommentValidatesLocation(t *testing.T) {
-	app := newReviewApp(t, nil)
-	ctx := context.Background()
-
-	// Valid: line 42 is an added line on the RIGHT side of auth.go.
-	res, err := app.addReviewComment(ctx, addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "auth.go", Line: 42, Body: "nil deref risk"})
-	if err != nil {
-		t.Fatalf("valid add: %v", err)
-	}
-	if res.DraftCount != 1 || res.Index != 0 {
-		t.Errorf("result = %+v; want index 0, draft_count 1", res)
-	}
-	if got := app.draftList("acme", "widgets", 7); len(got) != 1 || got[0].Line != 42 {
-		t.Errorf("draft = %+v; want one comment on line 42", got)
-	}
-
-	// Invalid line: 999 is not in any hunk → rejected, naming the valid range.
-	_, err = app.addReviewComment(ctx, addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "auth.go", Line: 999, Body: "x"})
-	if err == nil || !strings.Contains(err.Error(), "not commentable") || !strings.Contains(err.Error(), "40") {
-		t.Errorf("expected off-diff line rejection naming valid lines; got %v", err)
-	}
-
-	// Invalid path: not a changed file → rejected.
-	_, err = app.addReviewComment(ctx, addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "nope.go", Line: 1, Body: "x"})
-	if err == nil || !strings.Contains(err.Error(), "not a changed file") {
-		t.Errorf("expected changed-file rejection; got %v", err)
-	}
-
-	// Rejected comments were NOT added — draft still holds only the valid one.
-	if got := app.draftList("acme", "widgets", 7); len(got) != 1 {
-		t.Errorf("draft size = %d; want 1 (rejects not drafted)", len(got))
-	}
-}
-
-func TestListAndDeleteReviewComments(t *testing.T) {
-	app := newReviewApp(t, nil)
-	ctx := context.Background()
-	for _, ln := range []int{41, 42} {
-		if _, err := app.addReviewComment(ctx, addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "auth.go", Line: ln, Body: "note"}); err != nil {
-			t.Fatalf("add line %d: %v", ln, err)
-		}
-	}
-
-	list, err := app.listReviewComments(draftPRArgs{Owner: "acme", Repo: "widgets", PullNumber: 7})
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(list.Comments) != 2 || list.Comments[0].Index != 0 || list.Comments[1].Line != 42 {
-		t.Errorf("list = %+v; want two drafted comments indexed 0,1", list.Comments)
-	}
-
-	del, err := app.deleteReviewComment(deleteReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Index: 0})
-	if err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	if !del.Deleted || del.DraftCount != 1 {
-		t.Errorf("delete result = %+v; want deleted, draft_count 1", del)
-	}
-	if got := app.draftList("acme", "widgets", 7); len(got) != 1 || got[0].Line != 42 {
-		t.Errorf("after delete draft = %+v; want the line-42 comment", got)
-	}
-
-	// Deleting an out-of-range index errors.
-	if _, err := app.deleteReviewComment(deleteReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Index: 9}); err == nil {
-		t.Error("expected error deleting a missing index")
-	}
-}
-
-func TestSubmitReviewPostsOneReviewAndClearsDraft(t *testing.T) {
-	var gotBody map[string]any
-	app := newReviewApp(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s; want POST", r.Method)
-		}
-		if got := r.Header.Get("Authorization"); got != "token ghs_x" {
-			t.Errorf("Authorization = %q; want token ghs_x", got)
-		}
-		data, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(data, &gotBody)
-		_, _ = io.WriteString(w, `{"id":555,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-555"}`)
-	})
-	ctx := context.Background()
-
-	for _, ln := range []int{41, 42} {
-		if _, err := app.addReviewComment(ctx, addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "auth.go", Line: ln, Body: "note"}); err != nil {
-			t.Fatalf("add: %v", err)
-		}
-	}
-
-	res, err := app.submitReview(ctx, submitReviewArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Event: "request_changes", Body: "Please fix."})
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
-
-	if gotBody["event"] != "REQUEST_CHANGES" {
-		t.Errorf("event = %v; want REQUEST_CHANGES (normalised)", gotBody["event"])
-	}
-	// The delivery marker is appended's later collapse lookup — the
-	// human-authored summary must still lead the body untouched.
-	if body, _ := gotBody["body"].(string); !strings.HasPrefix(body, "Please fix.") || !strings.Contains(body, "<!-- quack:delivery:review -->") {
-		t.Errorf("body = %v; want it to start with the summary and carry the delivery marker", gotBody["body"])
-	}
-	comments, ok := gotBody["comments"].([]any)
-	if !ok || len(comments) != 2 {
-		t.Fatalf("comments in review = %v; want 2 in one review", gotBody["comments"])
-	}
-	c0 := comments[0].(map[string]any)
-	if c0["path"] != "auth.go" || c0["line"].(float64) != 41 || c0["body"] != "note" {
-		t.Errorf("comment[0] = %v", c0)
-	}
-	if _, present := c0["side"]; present { // RIGHT default omitted
-		t.Errorf("side should be omitted for default RIGHT; got %v", c0["side"])
-	}
-	if res.Comments != 2 || res.ReviewID != 555 {
-		t.Errorf("result = %+v; want 2 comments, review 555", res)
-	}
-
-	// Draft cleared after a successful submit.
-	if got := app.draftList("acme", "widgets", 7); len(got) != 0 {
-		t.Errorf("draft after submit = %+v; want empty", got)
-	}
 }
 
 func TestSubmitReviewValidatesEvent(t *testing.T) {
@@ -326,69 +205,6 @@ func newFilesApp(t *testing.T, filenames ...string) *App {
 	return app
 }
 
-// TestAddReviewCommentNormalisesWorkspacePath: the agent works inside a clone
-// directory in its workspace, so it names files by their WORKSPACE path
-// ("games/app/.../game.ts"); the PR diff addresses them repo-relative
-// ("app/.../game.ts"). A unique suffix match must be accepted and normalised.
-func TestAddReviewCommentNormalisesWorkspacePath(t *testing.T) {
-	const repoPath = "app/games/flappy-bird/lib/game.ts"
-	app := newFilesApp(t, repoPath)
-	ctx := context.Background()
-
-	for _, given := range []string{
-		"games/" + repoPath, // clone-dir prefix
-		"./" + repoPath,     // ./ prefix
-		"lib/game.ts",       // a trailing fragment of the repo path
-	} {
-		app.draftTake("acme", "widgets", 7) // clear
-		res, err := app.addReviewComment(ctx, addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: given, Line: 42, Body: "bird never falls"})
-		if err != nil {
-			t.Fatalf("path %q: %v", given, err)
-		}
-		if res.DraftCount != 1 {
-			t.Fatalf("path %q: draft_count = %d; want 1", given, res.DraftCount)
-		}
-		if got := app.draftList("acme", "widgets", 7); got[0].Path != repoPath {
-			t.Errorf("path %q: drafted path = %q; want normalised %q", given, got[0].Path, repoPath)
-		}
-	}
-}
-
-// TestAddReviewCommentAmbiguousPath: two changed files match the suffix → don't
-// guess; reject naming both candidates.
-func TestAddReviewCommentAmbiguousPath(t *testing.T) {
-	app := newFilesApp(t, "a/lib/game.ts", "b/lib/game.ts")
-	_, err := app.addReviewComment(context.Background(), addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "lib/game.ts", Line: 42, Body: "x"})
-	if err == nil {
-		t.Fatal("expected an ambiguity rejection")
-	}
-	for _, want := range []string{"a/lib/game.ts", "b/lib/game.ts"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %v does not name candidate %q", err, want)
-		}
-	}
-}
-
-// TestAddReviewCommentUnknownPathListsChangedFiles: an unresolvable path must
-// produce an error the model can ACT on — say the path is repo-relative and list
-// the PR's changed files.
-func TestAddReviewCommentUnknownPathListsChangedFiles(t *testing.T) {
-	app := newFilesApp(t, "app/one.ts", "app/two.ts")
-	_, err := app.addReviewComment(context.Background(), addReviewCommentArgs{Owner: "acme", Repo: "widgets", PullNumber: 7, Path: "src/other.ts", Line: 42, Body: "x"})
-	if err == nil {
-		t.Fatal("expected a rejection for an unknown path")
-	}
-	msg := err.Error()
-	if !strings.Contains(strings.ToLower(msg), "repo-relative") {
-		t.Errorf("error must tell the model paths are repo-relative; got %v", err)
-	}
-	for _, want := range []string{"app/one.ts", "app/two.ts"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error %v does not list changed file %q", err, want)
-		}
-	}
-}
-
 // TestReviewToolsRegistered guards that all four review tools plus the existing
 // two are wired into Tools().
 func TestReviewToolsRegistered(t *testing.T) {
@@ -398,11 +214,9 @@ func TestReviewToolsRegistered(t *testing.T) {
 		t.Fatalf("NewApp: %v", err)
 	}
 	want := map[string]bool{
-		"github_comment":            false,
-		"github_add_review_comment": false, "github_list_review_comments": false,
-		"github_delete_review_comment": false,
-		"github_list_pr_comments":      false, "github_reply_to_review_comment": false,
-		"github_react_to_comment": false,
+		"github_comment":                 false,
+		"github_reply_to_review_comment": false,
+		"github_react_to_comment":        false,
 	}
 	for _, tl := range app.Tools() {
 		want[tl.Name()] = true
@@ -428,6 +242,30 @@ func TestPullRequestAndSubmitReviewAreNotModelTools(t *testing.T) {
 	for _, tl := range app.Tools() {
 		if tl.Name() == "github_pull_request" || tl.Name() == "github_submit_review" {
 			t.Errorf("%q must not be a model-facing tool anymore", tl.Name())
+		}
+	}
+}
+
+// validComments is the delivery-time replacement for the draft tools' per-add
+// validation: gate-parsed inline findings are anchored against the PR diff, a
+// clone-relative path is normalised to its repo-relative form, and anything
+// unanchorable is DROPPED (the summary body still carries the finding) instead
+// of 422-ing the whole review.
+func TestValidCommentsNormalisesAndDrops(t *testing.T) {
+	app := newReviewApp(t, nil)
+	in := []vetting.ReviewComment{
+		{Path: "auth.go", Line: 42, Body: "exact path, commentable line"},
+		{Path: "widgets/auth.go", Line: 42, Body: "clone-relative path"},
+		{Path: "auth.go", Line: 999, Body: "uncommentable line"},
+		{Path: "nope.go", Line: 42, Body: "not a changed file"},
+	}
+	got := app.validComments(context.Background(), "acme", "widgets", 7, in)
+	if len(got) != 2 {
+		t.Fatalf("validComments kept %d, want 2: %+v", len(got), got)
+	}
+	for _, c := range got {
+		if c.Path != "auth.go" || c.Line != 42 {
+			t.Errorf("comment not normalised to auth.go:42: %+v", c)
 		}
 	}
 }

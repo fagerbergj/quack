@@ -124,6 +124,13 @@ const (
 	defaultWorkspaceMaxFileSizeMB  = 1024
 )
 
+// defaultCheckCommands is the check-prefix allowlist an UNSET
+// workspace.check_commands defaults to — the commands vetting.deriveChecks can
+// complete for the repos quack actually builds (go, npm, make), each further
+// gated on the binary existing on the host. Explicit `check_commands: []`
+// still means "checks disabled".
+var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"}
+
 // WorkspaceConfig is the agents' working disk: one configured root, with a
 // per-user jail under it (<root>/<user_id>/ — see internal/workspace.Jail)
 // that filesystem and git tools resolve every path through. Only root + the
@@ -154,20 +161,9 @@ type WorkspaceConfig struct {
 	// (default) ⇒ public repos only. Token MUST be an ${VAR} env reference in
 	// the raw YAML — see validateNoLiteralTokens.
 	GitCredentials []GitCredentialConfig `yaml:"git_credentials"`
-	// GitPush gates the git_push tool (default false) — the one outward-facing,
-	// non-undoable git operation in the set.
-	GitPush bool `yaml:"git_push"`
 	// Guards maps a tool name to its guard-ladder tier: none (default,
 	// unlisted) | judge | confirm | judge+confirm. See §4b of the design doc.
 	Guards map[string]string `yaml:"guards"`
-	// RunCodeGuardStandalone opts out of the scriptTier floor: run_code is then
-	// guarded at ONLY its own guards[run_code] tier, NOT raised to the union of
-	// its bound tools' tiers. Default false keeps the safe union (a script is at
-	// least as guarded as the most-guarded tool it can call). Set true only on a
-	// trusted single-tenant deployment where the container is the boundary and
-	// per-call judge gates inside a script would just thrash the model (e.g. a
-	// gemma judge swapping against a large coder on every run_code call).
-	RunCodeGuardStandalone bool `yaml:"run_code_guard_standalone"`
 	// Sandbox is the OS boundary run_command/gate-check CHILD PROCESSES run
 	// inside: "bwrap" (default — a bubblewrap mount/pid/user namespace: nothing
 	// outside the child's cwd and its isolated $HOME exists in its filesystem)
@@ -317,6 +313,22 @@ type AgentConfig struct {
 	Judge         *bool    `yaml:"judge"`          // run the independent judge? default true; set false when the judge model cannot evaluate this output (a text judge cannot see media)
 	MemoryRole    string   `yaml:"memory_role"`    // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no role bucket)
 	Skills        []string `yaml:"skills"`         // built-in skill names this agent may load_skill (empty ⇒ none); project skills discovered in its jailed repo stay additive regardless (internal/skillsource)
+	// Acp, when set, replaces the local llmagent worker with an EXTERNAL coding
+	// agent subprocess speaking the Agent Client Protocol (internal/acp) —
+	// opencode, claude-agent-acp, gemini-cli. provider/model still bind the
+	// model (injected into the subprocess via OPENCODE_CONFIG_CONTENT); tools
+	// is ignored (the external agent brings its own).
+	Acp *AcpAgentConfig `yaml:"acp"`
+}
+
+// AcpAgentConfig configures an external ACP agent subprocess.
+type AcpAgentConfig struct {
+	Command []string          `yaml:"command"` // argv, e.g. ["opencode", "acp"]
+	Env     map[string]string `yaml:"env"`     // extra subprocess environment (overrides generated defaults)
+	// ReadOnly marks an ACP agent that never commits/delivers code (a reviewer
+	// or explorer): the gate then skips the commit/push delivery demand exactly
+	// as it does for native read-only agents (vetting.Config.ReadOnly).
+	ReadOnly bool `yaml:"read_only"`
 }
 
 // IsGated reports whether the agent runs under the trust gate (default true).
@@ -687,6 +699,9 @@ func (c *Config) validate() error {
 		}
 		// Tool names are resolved (and unknown ones rejected) when the agent's
 		// tools are built at startup; see internal/tools.Build.
+		if a.Acp != nil && len(a.Acp.Command) == 0 {
+			return fmt.Errorf("config: agent %q has an acp block with an empty command", name)
+		}
 	}
 	if c.Gates.Enabled() {
 		g := &c.Gates
@@ -869,6 +884,13 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	}
 	if w.Sandbox == "" {
 		w.Sandbox = defaultWorkspaceSandbox
+	}
+	// Default the check allowlist ON when the section is absent: derived checks
+	// are additionally gated on the toolchain actually existing on the host
+	// (vetting.toolchainPresent), so this can't fail nodes on a host without
+	// go/npm. An EXPLICIT `check_commands: []` still disables checks.
+	if w.CheckCommands == nil {
+		w.CheckCommands = append([]string{}, defaultCheckCommands...)
 	}
 	if w.Sandbox != "bwrap" && w.Sandbox != "none" {
 		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap or none)", w.Sandbox)
