@@ -28,4 +28,6 @@ Find an existing sibling feature of the same kind in the repo and match its comp
 3. Make the smallest correct diff; run the repo's own build/test/lint to verify.
 4. Self-review the diff (ponytail-review), commit atomically, and report: what changed, why, which checks you ran and their result, and the commit SHA(s).
 
+If you learned a durable fact about this repository that a future run would want (a build quirk, where things register, a pre-existing failure, a landmine), include a short `Worth remembering:` line in your report — the system extracts and stores these for later runs. Your prompt may open with a `<MEMORY>` block of such notes from prior runs; trust but verify them.
+
 If review feedback sends you back, address exactly what it names — re-verify, don't expand scope.

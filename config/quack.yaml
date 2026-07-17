@@ -70,6 +70,7 @@ agents:
   code-implementer:
     bundle: agents/code-implementer   # card + prompt.md (ACP preamble: ponytail discipline, commit-only) + rubric.md
     provider: default
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
@@ -83,6 +84,7 @@ agents:
   code-reviewer:
     bundle: agents/code-reviewer      # card + prompt.md (ACP preamble: values + VERDICT/FINDINGS output contract) + rubric.md
     provider: default
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 1             # 1 round: a review is one-pass, and we're diagnosing the gate
@@ -96,6 +98,7 @@ agents:
   code-explorer:
     bundle: agents/code-explorer      # card + prompt.md (ACP preamble: read-only exploration, cite <repo>@<path>) + rubric.md
     provider: default
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap

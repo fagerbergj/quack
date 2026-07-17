@@ -799,7 +799,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "acp: %v", err)
 			}
 			if cfg.Gates.Enabled() && ac.IsGated() {
-				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, false)
+				// An ACP agent's memory participation is keyed by memory_role (it
+				// has no memory.md/tools): the gate injects recall into its prompt
+				// (vetting.memoryRecall) and mines its PASSED answer for durable
+				// facts (memory.Commit's answer-extraction — staging tool not needed).
+				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && ac.MemoryRole != "")
 				if err != nil {
 					return nil, nil, servers, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 				}

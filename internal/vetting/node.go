@@ -226,6 +226,18 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		markerLine = "\n\n" + AdvisorThreadMarker(token)
 	}
 
+	// Gate-side recall for an EXTERNAL worker — the preload_memory twin (native
+	// agents get preload via their runner; an ACP subprocess has no runner, so
+	// the gate front-loads the recalled notes into the round-0 prompt). Riding
+	// `prompt` means the notes also reach the judge (its `question` is this
+	// prompt) and every revise round's content. Best-effort by construction.
+	if cfg.ExternalWorker && cfg.CommitMemory {
+		if rec := cfg.Memory.Recall(ctx, memoryScope(ctx, cfg, nodeID), cfg.Task); rec != "" {
+			prompt = rec + "\n\n" + prompt
+			log.Info("recalled memory injected into the worker prompt", "bytes", len(rec))
+		}
+	}
+
 	// Per-NODE workspace scope: a plan's nodes run concurrently in ONE chat, so
 	// each gets its own directory under the chat scope (<root>/<user>/<chat>/
 	// <node>/) — the default cwd its tools resolve relative paths against (they

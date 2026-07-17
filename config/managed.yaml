@@ -59,6 +59,7 @@ agents:
   code-implementer:
     bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.md
     provider: default
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
@@ -70,6 +71,7 @@ agents:
   code-reviewer:
     bundle: agents/code-reviewer      # card + prompt.md (values + VERDICT/FINDINGS contract) + rubric.md
     provider: default
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
@@ -81,6 +83,7 @@ agents:
   code-explorer:
     bundle: agents/code-explorer      # card + prompt.md (read-only exploration) + rubric.md
     provider: default
+    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds is plenty

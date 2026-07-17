@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -156,4 +157,34 @@ func appendInstruction(r *model.LLMRequest, inst string) {
 		return
 	}
 	si.Parts = append(si.Parts, genai.NewPartFromText(inst))
+}
+
+// recallInstructions frames gate-side recall for an EXTERNAL (ACP) worker,
+// whose prompt quack assembles itself — the same role preloadInstructions
+// plays for a native agent's system instruction, worded for a coding agent.
+const recallInstructions = `The following notes were remembered from previous runs on this repository /
+task family. Use them instead of re-deriving what they already answer; they may
+be stale, so verify anything load-bearing against the code itself.
+<MEMORY>
+%s
+</MEMORY>`
+
+// Recall returns the formatted recall block for query under sc — the gate-side
+// twin of preload_memory for external workers (vetting injects it at the front
+// of the worker prompt). "" when the store is nil, nothing matches, or the
+// embedder is unavailable: recall is best-effort and bounded (Store.recall),
+// so it can never fail or hang a node.
+func (s *Store) Recall(ctx context.Context, sc Scope, query string) string {
+	if s == nil {
+		return ""
+	}
+	resp, err := s.recall(ctx, sc.Buckets(), query)
+	if err != nil || resp == nil {
+		return ""
+	}
+	text := formatMemories(resp.Memories)
+	if text == "" {
+		return ""
+	}
+	return fmt.Sprintf(recallInstructions, text)
 }
