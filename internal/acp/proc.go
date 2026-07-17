@@ -62,7 +62,7 @@ func (a *Agent) start(cwd string) (*procHandle, error) {
 		return nil, fmt.Errorf("acp: start %q: %w", strings.Join(a.opts.Command, " "), err)
 	}
 	h.cmd = cmd
-	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h}, stdin, stdout)
+	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, stdin, stdout)
 	return h, nil
 }
 
@@ -90,7 +90,10 @@ func (h *procHandle) stderrTail() string {
 
 // clientHandler implements the ACP client side. quack advertises no fs/terminal
 // capabilities, so those methods only fire on a misbehaving agent — they refuse.
-type clientHandler struct{ h *procHandle }
+type clientHandler struct {
+	h     *procHandle
+	judge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
+}
 
 var _ sdk.Client = (*clientHandler)(nil)
 
@@ -103,22 +106,35 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 	return nil
 }
 
-// RequestPermission REJECTS by default. The generated permission config
-// already allows everything a round legitimately needs (bash minus git push,
-// edits, fetches — see serve's opencodeEnv), so anything that still ASKS is by
-// construction the exceptional case: an external_directory escape (also denied
-// config-side), a .env read, opencode's doom_loop stuck-detector. Headless,
-// gate-supervised agents get "no" for all of these — a refused agent falls
-// back to in-cwd work or ends its turn, and the trust gate judges the result.
-// (A live explorer wandered sibling workspaces via the old allow-first policy.)
+// RequestPermission routes the ask to the safety judge (Options.
+// PermissionJudge) — the ACP twin of the native guard ladder's judge tier.
+// The generated permission config already allows everything a round
+// legitimately needs, so an ask is by construction the exceptional case
+// (a directory escape, a .env read, opencode's doom_loop detector); the
+// judge decides it with context. No judge configured ⇒ allow, matching the
+// single-tenant container-is-the-boundary posture.
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
 	title := ""
 	if p.ToolCall.Title != nil {
 		title = *p.ToolCall.Title
 	}
-	slog.Info("acp permission ask rejected", "component", "acp", "tool_call", string(p.ToolCall.ToolCallId), "title", title)
+	toolName := "tool"
+	if p.ToolCall.Kind != nil {
+		toolName = string(*p.ToolCall.Kind)
+	}
+	allow, reason := true, "no safety judge configured; container boundary applies"
+	if c.judge != nil {
+		input, _ := p.ToolCall.RawInput.(map[string]any)
+		allow, reason = c.judge(ctx, toolName, title, input)
+	}
+	slog.Info("acp permission ask judged", "component", "acp",
+		"tool_call", string(p.ToolCall.ToolCallId), "title", title, "allow", allow, "reason", reason)
+	want := sdk.PermissionOptionKindAllowOnce
+	if !allow {
+		want = sdk.PermissionOptionKindRejectOnce
+	}
 	for _, o := range p.Options {
-		if o.Kind == sdk.PermissionOptionKindRejectOnce {
+		if o.Kind == want {
 			return sdk.RequestPermissionResponse{Outcome: sdk.RequestPermissionOutcome{
 				Selected: &sdk.RequestPermissionOutcomeSelected{OptionId: o.OptionId},
 			}}, nil
