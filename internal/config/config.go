@@ -26,7 +26,7 @@ type Config struct {
 	Server       ServerConfig              `yaml:"server"`
 	Workspace    WorkspaceConfig           `yaml:"workspace"`  // agents' working disk (filesystem/git tools)
 	Extensions   ExtensionsConfig          `yaml:"extensions"` // bundled inbound+outbound integrations (e.g. GitHub App)
-	Otel         OtelConfig                `yaml:"otel"`       // OpenTelemetry tracing/metrics + the in-process ring buffer
+	Otel         OtelConfig                `yaml:"otel"`       // OpenTelemetry tracing/metrics (emission-only)
 }
 
 // OtelConfig configures OTel tracing/metrics — emission-only: quack keeps no

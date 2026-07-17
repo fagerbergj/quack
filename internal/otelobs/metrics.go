@@ -1,8 +1,8 @@
-// Package otelobs is Quack's OTel wiring: tracer/meter provider setup, a
-// bounded in-process ring buffer of run span trees (the zero-infra
-// observability source /api/v1/obs/* and `quack obs` read from), a slog↔trace
-// correlation bridge, and the metric instruments the trust gate / delivery /
-// memory pipeline records against.
+// Package otelobs is Quack's OTel wiring: tracer/meter provider setup
+// (emission-only — Tempo/Grafana own trace/metric viewing, quack keeps no
+// local store or read API of its own), a slog↔trace correlation bridge, and
+// the metric instruments the trust gate / delivery / memory pipeline records
+// against.
 package otelobs
 
 import (
