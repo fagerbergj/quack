@@ -102,4 +102,17 @@ func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
 	if res.Content != "hello\n" {
 		t.Errorf("Content = %q, want %q", res.Content, "hello\n")
 	}
+
+	// edit_file goes through the SAME resolve() as read_file — prove it
+	// independently rather than assuming the shared code path.
+	if _, err := fb.withCwd(ctx).editFile(editFileArgs{Path: "README.md", Old: "hello\n", New: "hello, edited\n"}); err != nil {
+		t.Fatalf("edit_file(\"README.md\") with no prefix: %v — want it to resolve directly into the setup clone", err)
+	}
+	res, err = fb.withCwd(ctx).readFile(readFileArgs{Path: "README.md"})
+	if err != nil {
+		t.Fatalf("read_file after edit: %v", err)
+	}
+	if res.Content != "hello, edited\n" {
+		t.Errorf("Content after edit = %q, want %q", res.Content, "hello, edited\n")
+	}
 }
