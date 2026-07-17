@@ -73,7 +73,7 @@ agents:
     memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
-    judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
+    judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
     # run_code = CODE MODE (internal/tools/run_code.go): the model writes a JS program and the
     # tools above are its API, so one turn can read five files, grep and write a patch without any
     # of that bulk entering a 65k context. Per-agent opt-in; every tool above stays callable the
@@ -103,7 +103,7 @@ agents:
     memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
-    judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty to close a gate gap
+    judge_rounds: 1             # 1 round: a review is one-pass, and we're diagnosing the gate
     # READ-ONLY: reviews code, never modifies it — no write_file/edit_file/git_commit/git_push/delete_path/run_command.
     # load_skill/list_skills are auto-registered on every agent (see internal/serve/serve.go), so they're not listed here.
     # load_memory/stage_memory + the bundle's memory.md turn on task memory (M6): recall project conventions/decisions,

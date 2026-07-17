@@ -62,10 +62,11 @@ func TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate(t *testing.T) {
 	})
 
 	dc := vetting.DeliveryContext{
-		ChatID:   "chat-1",
-		CloneURL: "https://github.com/acme/widgets.git",
-		Branch:   "feature", // CloneDir empty ⇒ no real push attempted
-		Items:    []vetting.StagedDelivery{{Kind: "pull_request", Title: "Add widget", Body: "does the thing"}},
+		GatePassed: true, // these test delivery mechanics, not the gate caveat
+		ChatID:     "chat-1",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "feature", // CloneDir empty ⇒ no real push attempted
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Add widget", Body: "does the thing"}},
 	}
 	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -122,10 +123,11 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 	fullSHA := runGitTest(t, clone, "rev-parse", "feature")
 
 	dc := vetting.DeliveryContext{
-		CloneURL: "https://github.com/acme/widgets.git",
-		CloneDir: clone,
-		Branch:   "feature",
-		Items:    []vetting.StagedDelivery{{Kind: "pull_request", Title: "Add widget", Body: "adds a widget"}},
+		GatePassed: true, // these test delivery mechanics, not the gate caveat
+		CloneURL:   "https://github.com/acme/widgets.git",
+		CloneDir:   clone,
+		Branch:     "feature",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Add widget", Body: "adds a widget"}},
 	}
 
 	t.Run("mismatched remote head fails closed", func(t *testing.T) {
@@ -222,6 +224,7 @@ func TestDeliverCommentIdempotentEdit(t *testing.T) {
 	})
 
 	dc := vetting.DeliveryContext{
+		GatePassed:  true, // these test delivery mechanics, not the gate caveat
 		ChatID:      "chat-comment",
 		CloneURL:    "https://github.com/acme/widgets.git",
 		IssueNumber: 7,
@@ -272,6 +275,7 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 	})
 
 	dc := vetting.DeliveryContext{
+		GatePassed:  true, // these test delivery mechanics, not the gate caveat
 		ChatID:      "chat-review",
 		CloneURL:    "https://github.com/acme/widgets.git",
 		IssueNumber: 7,

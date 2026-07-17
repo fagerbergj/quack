@@ -439,6 +439,16 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
+			// DEBUG: the per-criterion reasoning + feedback behind that score, so a
+			// failing gate is diagnosable from logs instead of only the UI.
+			if len(v.Criteria) > 0 && log.Enabled(context.Background(), slog.LevelDebug) {
+				parts := make([]string, 0, len(v.Criteria))
+				for name, cs := range v.Criteria {
+					parts = append(parts, fmt.Sprintf("%s=%.0f (%s)", name, cs.Score, strings.TrimSpace(cs.Reason)))
+				}
+				sort.Strings(parts)
+				log.Debug("judge verdict detail", "round", round, "criteria", strings.Join(parts, " | "), "feedback", strings.TrimSpace(v.Feedback))
+			}
 			if res.Passed || round > cfg.JudgeRounds {
 				break
 			}
@@ -468,11 +478,15 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			prompt = basePrompt + "\n\n--- User steering guidance (revise your approach accordingly) ---\n" + steered
 			continue // re-run the whole gate with the guidance (fresh run IDs)
 		}
+		act := activity()
 		if res.Passed {
-			act := activity()
 			commitMemoryOnPass(ctx, cfg, nodeID, answer, act.staged)
-			commitDeliveryOnPass(cfg, nodeID, act)
 		}
+		// Deliver even on a judge FAIL — graceful degradation: the work is done
+		// (committed + staged), so open the PR / post it, but with the gate's
+		// concerns attached as a caveat (see App.Deliver) so a human decides.
+		// Memory stays pass-only: never persist tradecraft the gate rejected.
+		commitDelivery(cfg, nodeID, act, res)
 		return answer, res, nil
 	}
 }
@@ -621,22 +635,23 @@ func commitMemoryOnPass(ctx adkagent.Context, cfg Config, author, answer string,
 	}()
 }
 
-// commitDeliveryOnPass posts the node's FINAL staged delivery set — sibling of
-// commitMemoryOnPass and gated exactly the same way (judge pass only). An item
-// staged then unstaged, or replaced by a later stage_* call, was never in the
-// set at pass time and so never reaches GitHub; this runs EXACTLY ONCE per
+// commitDelivery posts the node's FINAL staged delivery set. Unlike memory
+// (pass-only), delivery fires REGARDLESS of the judge verdict — graceful
+// degradation: the work is done, so the PR/review/comment is delivered either
+// way, but on a FAIL the gate's score+feedback ride along (dc.GatePassed /
+// dc.GateFeedback) so App.Deliver can attach a caveat and a human decides. An
+// item staged then unstaged never reaches GitHub; this runs EXACTLY ONCE per
 // node, right here, never mid-run.
 //
-// Unlike commitMemoryOnPass this BLOCKS (no goroutine): a delivery failure is
-// user-visible (the extension's dispatch falls back to an honest comment when
-// nothing was delivered — see internal/github/webhook.go), which needs
-// delivery to have actually been attempted before the node — and so the
-// run — completes, not raced against it in the background.
-func commitDeliveryOnPass(cfg Config, nodeID string, act workerActivity) {
+// It BLOCKS (no goroutine): a delivery failure is user-visible (the extension's
+// dispatch falls back to an honest comment when nothing was delivered — see
+// internal/github/webhook.go), which needs delivery to have actually been
+// attempted before the node — and so the run — completes.
+func commitDelivery(cfg Config, nodeID string, act workerActivity, res GateResult) {
 	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
 		return
 	}
-	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber}
+	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber, GatePassed: res.Passed, GateFeedback: res.Feedback}
 	if cfg.Setup != nil {
 		// Setup guaranteed this branch exists (or the run errored before any node
 		// ran) — deliver on it, never the worker's own git-tracking ledger, which
@@ -1071,7 +1086,7 @@ func (s *activityScanner) recordPRNumber(args map[string]any) {
 // set (see stagedDeliveryTarget) — the keyed-set half of the memory-candidate
 // append-log pattern: a later stage_* call for the SAME target replaces the
 // earlier one, and unstage removes it outright, so only what's staged at
-// judge-pass time (commitDeliveryOnPass) is ever posted.
+// judge-pass time (commitDelivery) is ever posted.
 func (s *activityScanner) applyDelivery(fc *genai.FunctionCall) {
 	target, item, unstage, ok := stagedDeliveryTarget(fc)
 	if !ok {
@@ -1169,7 +1184,7 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 			s.act.clonedDirs = append(s.act.clonedDirs, d)
 		}
 	case "git_checkout":
-		// The delivery step (delivery.go/commitDeliveryOnPass) needs to know
+		// The delivery step (delivery.go/commitDelivery) needs to know
 		// which branch to push — the worker names it by checking it out, but
 		// never pushes it itself.
 		if br, ok := resp["branch"].(string); ok && strings.TrimSpace(br) != "" {

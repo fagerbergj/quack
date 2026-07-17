@@ -78,7 +78,7 @@ func workspaceNodeID(plan Plan, node Node) string {
 // nonTerminalRepoChainNode reports whether node is a repo-touching node in a
 // plan.Setup chain that is NOT the chain's last node — its branch state isn't
 // final yet, so its delivery must never fire even if it stages one (see
-// buildGateNodes, vetting.commitDeliveryOnPass).
+// buildGateNodes, vetting.commitDelivery).
 func nonTerminalRepoChainNode(plan Plan, node Node) bool {
 	if plan.Setup == nil || (node.AgentName != implementerAgent && node.AgentName != reviewerAgent) {
 		return false

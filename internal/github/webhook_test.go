@@ -42,7 +42,7 @@ type fakeRunner struct {
 	// "delivery was attempted" when nothing recorded an authoritative outcome
 	// (see takeDeliveryResult).
 	judgePassed bool
-	// deliverOK/deliverErr simulate the trust gate's own commitDeliveryOnPass
+	// deliverOK/deliverErr simulate the trust gate's own commitDelivery
 	// having ALREADY run and recorded its outcome (recordDeliveryResult) — the
 	// authoritative signal dispatch prefers over judgePassed. deliverOK records
 	// a success; deliverErr (mutually exclusive) records a failure.

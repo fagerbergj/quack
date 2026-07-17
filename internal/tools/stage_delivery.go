@@ -14,7 +14,7 @@ import (
 // pull request, or submit a review themselves. Each call, like stage_memory,
 // is a SINK — it records nothing itself, only lands in the session — and the
 // trust gate (internal/vetting) harvests the FINAL staged set from there,
-// posting it exactly once, only on a judge pass (see commitDeliveryOnPass).
+// posting it exactly once (see commitDelivery) — regardless of the judge verdict, with a caveat attached on a fail.
 // An item staged then unstage'd, or replaced by a later stage_* call, never
 // reaches GitHub.
 
