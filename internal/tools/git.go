@@ -533,7 +533,14 @@ func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCrede
 		return "", err
 	}
 	auth := &gitAuth{cred: cred, askpass: link}
-	if _, _, err := runGit(ctx, dir, []string{"push", "--quiet", "origin", branch}, caps, auth); err != nil {
+	// --force: the work branch is quack's own attempt branch and a re-run
+	// SUPERSEDES the prior attempt — each run starts from a fresh setup clone,
+	// so a leftover remote branch (a delivery that pushed then failed later,
+	// a re-triggered label run) is never a fast-forward. Never main/master
+	// (refused above); plain --force because a fresh clone holds no
+	// remote-tracking ref for the branch, which is what --force-with-lease
+	// would need.
+	if _, _, err := runGit(ctx, dir, []string{"push", "--quiet", "--force", "origin", branch}, caps, auth); err != nil {
 		return "", err
 	}
 	out, _, err := runGit(ctx, dir, []string{"rev-parse", "--short", branch}, caps, nil)
