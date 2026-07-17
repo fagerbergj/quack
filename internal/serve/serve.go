@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux; only served when QUACK_PPROF_ADDR is set (see Run)
 	"os"
 	"slices"
 	"sort"
@@ -93,6 +94,18 @@ func Run(ctx context.Context, configPath string, port int) error {
 		return err
 	}
 	defer cleanup()
+
+	// Optional pprof endpoint for diagnosing hangs/leaks: OFF unless QUACK_PPROF_ADDR
+	// is set (bind it to a loopback-published port, never the public listener — it
+	// exposes internals). Serves http.DefaultServeMux, where net/http/pprof registered.
+	if pprofAddr := os.Getenv("QUACK_PPROF_ADDR"); pprofAddr != "" {
+		go func() {
+			slog.Warn("pprof debug endpoint enabled", "component", "serve", "addr", pprofAddr)
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil && err != http.ErrServerClosed {
+				slog.Error("pprof serve failed", "component", "serve", "err", err)
+			}
+		}()
+	}
 
 	srv := &http.Server{Addr: addr, Handler: handler}
 	serveErr := make(chan error, 1)
