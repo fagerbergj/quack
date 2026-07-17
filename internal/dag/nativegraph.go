@@ -184,6 +184,15 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 // to the paused nodes + their downstream (skipped siblings emit nothing this run
 // and must not be swept as failed).
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
+	// An empty resumeNodes is exactly the fresh-run signal (every caller agrees:
+	// a resume always names the node(s) it's re-entering) — setup must run
+	// exactly ONCE, before the graph's first node, never again on a resume of
+	// an already-provisioned plan.
+	if len(resumeNodes) == 0 {
+		if serr := e.runPlanSetup(ctx, userID, chatID, plan); serr != nil {
+			return false, fmt.Errorf("dag: plan setup: %w", serr)
+		}
+	}
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)

@@ -121,6 +121,22 @@ type Config struct {
 	// disables delivery entirely: the staged set is simply dropped, exactly
 	// like a nil Memory disables the memory-commit path.
 	Deliver DeliverFunc
+
+	// Setup is the plan's declared PRE-step (dag.Plan.Setup), stamped per-node
+	// by dag.buildGateNodes for a repo-touching node (implementer/reviewer)
+	// when the plan declared one. Non-nil means the harness already cloned
+	// Repo and checked out WorkBranch before this node ran — commitDeliveryOnPass
+	// delivers on THAT branch, never the worker's own git-tracking ledger
+	// (act.currentBranch), which a setup-provisioned worker is told not to touch.
+	Setup *SetupBranch
+}
+
+// SetupBranch mirrors the delivery-relevant fields of dag.Plan.Setup (a small
+// copy, not a dag import: internal/dag already imports internal/vetting, so
+// the reverse import would cycle).
+type SetupBranch struct {
+	Repo       string
+	WorkBranch string
 }
 
 // StagedDelivery is one item a worker staged for the gate to post on judge

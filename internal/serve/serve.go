@@ -367,7 +367,11 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 			return githubApp.Deliver(ctx, jail.Root(), dc)
 		}
 	}
-	clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, nodeSteerGuidance)
+	// setupFn is populated by buildAgents once the git credentials/caps it needs
+	// are resolved — the deterministic twin of `deliver` above, wired onto the
+	// executor once it exists (see executor.SetSetup below).
+	var setupFn dag.SetupFunc
+	clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, nodeSteerGuidance, &setupFn)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -446,6 +450,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
+	executor.SetSetup(setupFn)
 	executorRef.Store(executor) // arms the tools' cancel guard (see nodeCancelled above)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
@@ -498,7 +503,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 // - clientMap: agent name → A2A client (for the DAG executor)
 // - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string, setupOut *dag.SetupFunc) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, error) {
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
@@ -663,6 +668,16 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	gitCredentials := make([]tools.GitCredential, len(cfg.Workspace.GitCredentials))
 	for i, gc := range cfg.Workspace.GitCredentials {
 		gitCredentials[i] = tools.GitCredential{Host: gc.Host, Username: gc.Username, Token: gc.Token}
+	}
+	// The deterministic setup executor (dag.Plan.Setup — see internal/dag/setup.go):
+	// clone + checkout -b over the SAME jail/credentials/gitTokenSource path
+	// git_clone/PushBranch use, so its placement (workspace.SetupCloneDir) lands
+	// exactly where those tools' own paths resolve.
+	if setupOut != nil {
+		*setupOut = func(ctx context.Context, userID, chatID, dir string, setup dag.Setup) error {
+			_, err := tools.SetupClone(ctx, jail, userID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, workspaceCaps, gitCredentials, gitTokenSource)
+			return err
+		}
 	}
 
 	// Build the configured compaction fallback model once, shared across every

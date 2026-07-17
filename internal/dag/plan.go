@@ -37,9 +37,11 @@ type Plan struct {
 }
 
 // Setup is the plan's declared PRE-step: the working clone + branch the
-// harness provisions before any node runs. The orchestrator names the ref and
-// branch; it never calls git_clone/git_branch for the triggering repo itself.
+// harness provisions before any node runs. The orchestrator names the repo,
+// ref, and branch; it never calls git_clone/git_branch for the triggering
+// repo itself.
 type Setup struct {
+	Repo       string `json:"repo"`
 	BaseRef    string `json:"base_ref"`
 	WorkBranch string `json:"work_branch"`
 }

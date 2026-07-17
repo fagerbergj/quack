@@ -92,6 +92,14 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// advisor-thread marker; see internal/tools chatScopeFromContext). chatID
 		// here is the run's chat/session id (== the workflow session id).
 		cfg.ChatID = chatID
+		// Thread the plan's declared Setup to the gate/delivery (see
+		// vetting.Config.Setup) — ONLY for the nodes runPlanSetup actually
+		// provisioned (setupQualifyingNodes: implementer/reviewer), the same
+		// set commitDeliveryOnPass's workspace.SetupCloneDir(node.ID) resolves
+		// against.
+		if plan.Setup != nil && (node.AgentName == implementerAgent || node.AgentName == reviewerAgent) {
+			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
+		}
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID, recordGate)
 	}
 	return nodesByID, subAgents, nil
