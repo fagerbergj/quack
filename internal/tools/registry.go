@@ -105,8 +105,15 @@ var registry = map[string]constructor{
 	"summarize":    newSummarize,
 	"current_date": newCurrentDate,
 	"stage_memory": newStageMemory,
-	"ask_user":     func(Deps) (tool.Tool, error) { return NewAskUserTool() },
-	"ask_advisor":  func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
+	// Staged delivery (internal/tools/stage_delivery.go): workers stage commit/
+	// push/PR/review/comment intent; the trust gate posts it exactly once, only
+	// on a judge pass (internal/vetting commitDeliveryOnPass).
+	"stage_pr":      newStagePR,
+	"stage_review":  newStageReview,
+	"stage_comment": newStageComment,
+	"unstage":       newUnstage,
+	"ask_user":      func(Deps) (tool.Tool, error) { return NewAskUserTool() },
+	"ask_advisor":   func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
 	// Filesystem tools (internal/tools/fs.go), all bound to (userID, jail) —
 	// see fsBinding / newFSBinding.
 	"read_file":   newReadFile,

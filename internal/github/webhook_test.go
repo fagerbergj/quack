@@ -36,9 +36,18 @@ type fakeRunner struct {
 	answer       string
 	block        chan struct{}
 	calls        int32
-	noPlan       bool   // when true, emit no dag_plan event (simulates a narration-only turn)
-	emitTool     string // when set, emit a call + successful result for this tool (e.g. github_submit_review)
-	emitToolErr  string // when set with emitTool, the result carries this error instead (a FAILED delivery)
+	noPlan       bool // when true, emit no dag_plan event (simulates a narration-only turn)
+	// judgePassed simulates a node's trust gate clearing its judge round (a
+	// node_done event with JudgePassed) — dispatch's fallback proxy for
+	// "delivery was attempted" when nothing recorded an authoritative outcome
+	// (see takeDeliveryResult).
+	judgePassed bool
+	// deliverOK/deliverErr simulate the trust gate's own commitDeliveryOnPass
+	// having ALREADY run and recorded its outcome (recordDeliveryResult) — the
+	// authoritative signal dispatch prefers over judgePassed. deliverOK records
+	// a success; deliverErr (mutually exclusive) records a failure.
+	deliverOK  bool
+	deliverErr string
 }
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
@@ -50,13 +59,13 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		if !f.noPlan {
 			yield(stream.SSEEvent{Name: stream.EventDagPlan}, nil) // a real run executes a plan
 		}
-		if f.emitTool != "" {
-			yield(stream.SSEEvent{Name: stream.EventAgentToolCall, Data: stream.AgentToolCallData{Name: f.emitTool}}, nil)
-			result := map[string]any{"url": "https://github.com/acme/widgets/pull/7"}
-			if f.emitToolErr != "" {
-				result = map[string]any{"error": f.emitToolErr}
-			}
-			yield(stream.SSEEvent{Name: stream.EventAgentToolResult, Data: stream.AgentToolResultData{Name: f.emitTool, Result: result}}, nil)
+		if f.judgePassed {
+			yield(stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{JudgePassed: true}}, nil)
+		}
+		if f.deliverOK {
+			recordDeliveryResult(sessionID, nil)
+		} else if f.deliverErr != "" {
+			recordDeliveryResult(sessionID, fmt.Errorf("%s", f.deliverErr))
 		}
 		select {
 		case f.gotMessage <- message:
@@ -498,7 +507,7 @@ func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
 	gh := stubGitHub(t, posted)
 	defer gh.Close()
 
-	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "I reviewed it.", emitTool: "github_submit_review"}
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "I reviewed it.", judgePassed: true, deliverOK: true}
 	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
 
 	rec := httptest.NewRecorder()
@@ -530,7 +539,7 @@ func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 	defer gh.Close()
 
 	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "partial progress",
-		emitTool: "github_pull_request", emitToolErr: "github_pull_request: branch not pushed"}
+		judgePassed: true, deliverErr: "github_pull_request: branch not pushed"}
 	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
 
 	rec := httptest.NewRecorder()
@@ -755,7 +764,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
 		"github_add_review_comment",
-		"github_submit_review",
+		"stage_review",
 		"github_list_pr_comments",
 		"REVIEW-ONLY", // a review carries no delivery path
 	} {
@@ -766,7 +775,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	// A review must carry NO delivery language, or the vetting gate reads a phantom
 	// commit/push demand off the node task and loops the worker (re-cloning,
 	// re-reviewing) to no end. This is the regression that made a review take 30+ min.
-	for _, forbidden := range []string{"github_pull_request", "git_push", "commit your work"} {
+	for _, forbidden := range []string{"stage_pr", "git_push", "commit your work"} {
 		if strings.Contains(msg, forbidden) {
 			t.Errorf("PR review message must not mention delivery (%q):\n%s", forbidden, msg)
 		}
@@ -783,7 +792,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 
 	// A PR request that DOES ask to change code keeps the implement path.
 	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", reviewContext{})
-	if !strings.Contains(impl, "github_pull_request") {
+	if !strings.Contains(impl, "stage_pr") {
 		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
 	}
 
@@ -793,10 +802,10 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	imsg := ext.runMessage(issue, "add a feature", reviewContext{})
-	if strings.Contains(imsg, "github_submit_review") || strings.Contains(imsg, "pull_number=") {
+	if strings.Contains(imsg, "stage_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
-	if !strings.Contains(imsg, "github_pull_request") {
+	if !strings.Contains(imsg, "stage_pr") {
 		t.Errorf("issue run message should keep implement-path guidance:\n%s", imsg)
 	}
 }
@@ -820,7 +829,7 @@ func TestRunMessageChangeAwareFraming(t *testing.T) {
 			prevSHA:     "",
 			headSHA:     "",
 			wantAbsent:  []string{"previously reviewed", "Focus your review on what changed"},
-			wantContain: []string{"github_submit_review"},
+			wantContain: []string{"stage_review"},
 		},
 		{
 			name:    "prior review adds continuation framing with explicit head",
@@ -831,7 +840,7 @@ func TestRunMessageChangeAwareFraming(t *testing.T) {
 				"current head is `ccc333`",
 				"git_diff aaa111..ccc333",
 				"do NOT repeat findings you already made",
-				"github_submit_review", // implement/review guidance still present
+				"stage_review", // implement/review guidance still present
 			},
 		},
 		{
@@ -905,13 +914,13 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 			t.Errorf("conversational message missing %q\n---\n%s", want, msg)
 		}
 	}
-	for _, absent := range []string{"git_clone", "github_submit_review", "git_checkout"} {
+	for _, absent := range []string{"git_clone", "stage_review", "git_checkout"} {
 		if strings.Contains(msg, absent) {
 			t.Errorf("conversational message must not carry the review playbook (%q)\n---\n%s", absent, msg)
 		}
 	}
 	// A genuine review request still gets the full playbook.
-	if rev := ext.runMessage(pr, "please review this PR", reviewContext{meta: prMeta{HeadRef: "x"}}); !strings.Contains(rev, "github_submit_review") {
+	if rev := ext.runMessage(pr, "please review this PR", reviewContext{meta: prMeta{HeadRef: "x"}}); !strings.Contains(rev, "stage_review") {
 		t.Errorf("a review request must still carry the review tools:\n%s", rev)
 	}
 }
@@ -1131,7 +1140,7 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 			}
 			select {
 			case msg := <-runner.gotMessage:
-				for _, want := range []string{"Implement issue #7", "Closes #7", `labels=["quack-auto-review"]`, "Never merge"} {
+				for _, want := range []string{"Implement issue #7", "Closes #7", "stage_pr", "Never merge"} {
 					if !strings.Contains(msg, want) {
 						t.Errorf("implement message missing %q: %q", want, msg)
 					}
@@ -1162,8 +1171,8 @@ func TestImplementTaskIncludesDiscussion(t *testing.T) {
 		{User: "quack[bot]", Body: "## Plan\n1. add lru cache to fetcher"},
 		{User: "alice", Body: "looks good, approved"},
 	}
-	msg := implementTask(p, comments, "quack:review")
-	for _, want := range []string{"add lru cache to fetcher", "looks good, approved", "@quack[bot]", "Closes #7", `labels=["quack:review"]`} {
+	msg := implementTask(p, comments)
+	for _, want := range []string{"add lru cache to fetcher", "looks good, approved", "@quack[bot]", "Closes #7", "stage_pr"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("implementTask missing %q:\n%s", want, msg)
 		}

@@ -378,6 +378,53 @@ func TestRealConfigLoads(t *testing.T) {
 	}
 }
 
+// TestRealConfigWorkersHaveNoDirectGitHubMutation pins the staged-delivery
+// spine's core safety property (0.5.0): git_push and github_pull_request/
+// github_submit_review (the latter isn't even a registered tool anymore — see
+// internal/github/tools.go) must never appear in a worker's tools: list. A
+// worker commits locally and stages; only the trust gate, post judge-pass,
+// pushes and posts.
+func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
+	for _, kv := range [][2]string{
+		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"}, {"QUACK_MEDIA_MODEL", "md"}, {"QUACK_IMAGE_MODEL", "im"},
+		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
+	} {
+		t.Setenv(kv[0], kv[1])
+	}
+	c, err := Load("../../config/quack.yaml")
+	if err != nil {
+		t.Fatalf("shipped config/quack.yaml failed to load: %v", err)
+	}
+	forbidden := map[string]bool{"git_push": true, "github_pull_request": true, "github_submit_review": true}
+	for name, ac := range c.Agents {
+		for _, tl := range ac.Tools {
+			if forbidden[tl] {
+				t.Errorf("agent %q lists forbidden delivery tool %q — commit locally and stage_pr/stage_review instead", name, tl)
+			}
+		}
+	}
+	for _, name := range []string{"code-implementer", "code-reviewer"} {
+		ac, ok := c.Agents[name]
+		if !ok {
+			t.Fatalf("agent %q not found in shipped config", name)
+		}
+		want := map[string]bool{"stage_review": name == "code-reviewer", "stage_comment": true, "unstage": true}
+		if name == "code-implementer" {
+			want["stage_pr"] = true
+		}
+		have := map[string]bool{}
+		for _, tl := range ac.Tools {
+			have[tl] = true
+		}
+		for tl, must := range want {
+			if must && !have[tl] {
+				t.Errorf("agent %q must list %q to hand delivery off to the gate", name, tl)
+			}
+		}
+	}
+}
+
 // TestManagedConfigLoads guards config/managed.yaml drift: it must parse,
 // validate, and actually be the managed topology (the thing `quack server`
 // reads to decide whether to bring up the stores stack).

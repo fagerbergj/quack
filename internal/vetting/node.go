@@ -469,7 +469,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			continue // re-run the whole gate with the guidance (fresh run IDs)
 		}
 		if res.Passed {
-			commitMemoryOnPass(ctx, cfg, nodeID, answer, activity().staged)
+			act := activity()
+			commitMemoryOnPass(ctx, cfg, nodeID, answer, act.staged)
+			commitDeliveryOnPass(cfg, nodeID, act)
 		}
 		return answer, res, nil
 	}
@@ -551,6 +553,44 @@ func stagedCandidate(fc *genai.FunctionCall) (memory.Candidate, bool) {
 	return cand, true
 }
 
+// stagedDeliveryTarget parses one stage_pr/stage_review/stage_comment/unstage
+// call into its target key ("pr" | "review" | "comment:<slot>") and, for a
+// stage_* call, the item to upsert there. ok=false for a call this scanner
+// doesn't recognise or that carries no usable target (a malformed unstage).
+// unstage=true means DROP the target rather than upsert item.
+func stagedDeliveryTarget(fc *genai.FunctionCall) (target string, item StagedDelivery, unstage bool, ok bool) {
+	switch fc.Name {
+	case "stage_pr":
+		title, _ := fc.Args["title"].(string)
+		if strings.TrimSpace(title) == "" {
+			return "", StagedDelivery{}, false, false
+		}
+		body, _ := fc.Args["body"].(string)
+		return "pr", StagedDelivery{Kind: "pull_request", Title: strings.TrimSpace(title), Body: body}, false, true
+	case "stage_review":
+		event, _ := fc.Args["event"].(string)
+		event = strings.ToLower(strings.TrimSpace(event))
+		body, _ := fc.Args["body"].(string)
+		return "review", StagedDelivery{Kind: "review", Event: event, Body: body}, false, true
+	case "stage_comment":
+		slot, _ := fc.Args["slot"].(string)
+		slot = strings.TrimSpace(slot)
+		if slot == "" {
+			return "", StagedDelivery{}, false, false
+		}
+		body, _ := fc.Args["body"].(string)
+		return "comment:" + slot, StagedDelivery{Kind: "comment", Slot: slot, Body: body}, false, true
+	case "unstage":
+		t, _ := fc.Args["target"].(string)
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return "", StagedDelivery{}, false, false
+		}
+		return t, StagedDelivery{}, true, true
+	}
+	return "", StagedDelivery{}, false, false
+}
+
 // commitMemoryOnPass fires the agent's staged knowledge (plus consolidation from
 // the accepted answer) into shared memory — only on a gate pass, so nothing is
 // remembered from a failed answer. Fire-and-forget: memory is best-effort and
@@ -579,6 +619,39 @@ func commitMemoryOnPass(ctx adkagent.Context, cfg Config, author, answer string,
 				"count", n, "repo", sc.Repo, "role", sc.Role, "user", sc.User)
 		}
 	}()
+}
+
+// commitDeliveryOnPass posts the node's FINAL staged delivery set — sibling of
+// commitMemoryOnPass and gated exactly the same way (judge pass only). An item
+// staged then unstaged, or replaced by a later stage_* call, was never in the
+// set at pass time and so never reaches GitHub; this runs EXACTLY ONCE per
+// node, right here, never mid-run.
+//
+// Unlike commitMemoryOnPass this BLOCKS (no goroutine): a delivery failure is
+// user-visible (the extension's dispatch falls back to an honest comment when
+// nothing was delivered — see internal/github/webhook.go), which needs
+// delivery to have actually been attempted before the node — and so the
+// run — completes, not raced against it in the background.
+func commitDeliveryOnPass(cfg Config, nodeID string, act workerActivity) {
+	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
+		return
+	}
+	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), Branch: act.currentBranch, IssueNumber: act.prNumber}
+	if len(act.clonedRepos) > 0 {
+		dc.CloneURL = act.clonedRepos[0]
+	}
+	if cfg.Workspace != nil && len(act.clonedDirs) > 0 {
+		if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, act.clonedDirs[0]); err == nil {
+			dc.CloneDir = abs
+		}
+	}
+	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := cfg.Deliver(cctx, dc); err != nil {
+		slog.Error("delivery failed", "component", "vetting", "node", nodeID, "err", err, "items", len(dc.Items))
+		return
+	}
+	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
 
 // memoryScope is the node's memory entitlement: the repo it is working in (derived
@@ -874,6 +947,8 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					if cand, ok := stagedCandidate(p.FunctionCall); ok {
 						s.act.staged = append(s.act.staged, cand)
 					}
+				case "stage_pr", "stage_review", "stage_comment", "unstage":
+					s.applyDelivery(p.FunctionCall)
 				case "cd":
 					pendingCd[p.FunctionCall.ID] = true
 				default:
@@ -952,6 +1027,8 @@ func (s *activityScanner) replay(c innerCall) {
 		if cand, ok := stagedCandidate(&genai.FunctionCall{Name: c.name, Args: c.args}); ok {
 			s.act.staged = append(s.act.staged, cand)
 		}
+	case "stage_pr", "stage_review", "stage_comment", "unstage":
+		s.applyDelivery(&genai.FunctionCall{Name: c.name, Args: c.args})
 	case "cd":
 		s.recordCd(c.result)
 	default:
@@ -959,6 +1036,37 @@ func (s *activityScanner) replay(c innerCall) {
 			s.recordWorkspace(c.name, c.args, c.result)
 		}
 	}
+}
+
+// recordPRNumber captures a github_* call's pull_number arg as the review/
+// comment delivery target — first call wins (a review session targets one PR).
+func (s *activityScanner) recordPRNumber(args map[string]any) {
+	if s.act.prNumber != 0 {
+		return
+	}
+	if n, ok := args["pull_number"].(float64); ok && n > 0 {
+		s.act.prNumber = int(n)
+	}
+}
+
+// applyDelivery upserts or drops one target in the worker's staged-delivery
+// set (see stagedDeliveryTarget) — the keyed-set half of the memory-candidate
+// append-log pattern: a later stage_* call for the SAME target replaces the
+// earlier one, and unstage removes it outright, so only what's staged at
+// judge-pass time (commitDeliveryOnPass) is ever posted.
+func (s *activityScanner) applyDelivery(fc *genai.FunctionCall) {
+	target, item, unstage, ok := stagedDeliveryTarget(fc)
+	if !ok {
+		return
+	}
+	if unstage {
+		delete(s.act.stagedDelivery, target)
+		return
+	}
+	if s.act.stagedDelivery == nil {
+		s.act.stagedDelivery = map[string]StagedDelivery{}
+	}
+	s.act.stagedDelivery[target] = item
 }
 
 func (s *activityScanner) recordSearch(args map[string]any) {
@@ -1015,8 +1123,10 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 	// succeeds (internal/github).
 	case "github_add_review_comment":
 		s.act.reviewCommented = true
+		s.recordPRNumber(args)
 	case "github_submit_review":
 		s.act.reviewSubmitted = true
+		s.recordPRNumber(args)
 	// Execution (delivery.go): a node reviewing a code change cannot pass without
 	// having actually RUN something against it. Any successful run_command counts
 	// — the test suite, a build, or a throwaway probe. A non-zero exit_code still
@@ -1034,8 +1144,22 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 		if strings.TrimSpace(dir) == "" {
 			dir, _ = args["dir"].(string)
 		}
-		if d := normalizePath(dir); d != "" {
+		// Resolved against the cwd in effect at clone time (writtenRel), exactly
+		// like a write/edit path — so a later delivery step can jail.Resolve this
+		// straight to the clone's real location instead of a bare repo-name guess.
+		if d := normalizePath(writtenRel(s.nodeDir, s.curCwd, dir)); d != "" {
 			s.act.clonedDirs = append(s.act.clonedDirs, d)
+		}
+	case "git_checkout":
+		// The delivery step (delivery.go/commitDeliveryOnPass) needs to know
+		// which branch to push — the worker names it by checking it out, but
+		// never pushes it itself.
+		if br, ok := resp["branch"].(string); ok && strings.TrimSpace(br) != "" {
+			s.act.currentBranch = strings.TrimSpace(br)
+		}
+	case "git_branch":
+		if cur, ok := resp["current"].(string); ok && strings.TrimSpace(cur) != "" {
+			s.act.currentBranch = strings.TrimSpace(cur)
 		}
 	case "read_file", "write_file", "edit_file", "delete_path":
 		// Repo-exploration/coding answers cite the files they worked on

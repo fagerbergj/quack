@@ -10,12 +10,47 @@ import (
 	"strconv"
 	"strings"
 
+	"sync"
+
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/fagerbergj/quack/internal/tools"
+	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// deliveryResults records each run's LAST commitDeliveryOnPass outcome, keyed
+// by chat/session id (DeliveryContext.ChatID) — dispatch (webhook.go) reads
+// it after drive() returns to tell "delivered" from "the gate passed but the
+// push/post itself then failed", which the SSE stream alone can't (a judge
+// pass means commitDeliveryOnPass RAN, not that it succeeded — see drive's
+// doc comment). Process-local: one process serves one App instance, and a
+// result is read (and cleared) exactly once, by the dispatch that caused it.
+var deliveryResults sync.Map // chatID → error (nil = success)
+
+func recordDeliveryResult(chatID string, err error) {
+	if chatID == "" {
+		return
+	}
+	deliveryResults.Store(chatID, deliveryOutcome{err})
+}
+
+// takeDeliveryResult returns and clears the last delivery outcome for chatID.
+// ok is false when nothing was ever staged for this chat (dispatch then falls
+// back to its own judge-pass proxy).
+func takeDeliveryResult(chatID string) (err error, ok bool) {
+	v, ok := deliveryResults.LoadAndDelete(chatID)
+	if !ok {
+		return nil, false
+	}
+	return v.(deliveryOutcome).err, true
+}
+
+// deliveryOutcome wraps a possibly-nil error so sync.Map can distinguish "no
+// entry" (LoadAndDelete's own ok=false) from "entry present, err is nil".
+type deliveryOutcome struct{ err error }
 
 // gitHost is the only host this extension supplies credentials for.
 const gitHost = "github.com"
@@ -66,14 +101,20 @@ func ownerRepoFromURL(rawURL string) (owner, repo string, ok bool) {
 // Tools are the extension's outbound capabilities, authed via the App's
 // installation token. Kept minimal for the MVP; richer tools (create issue,
 // request review, labels, check-runs) are documented follow-ups.
+//
+// NOT here (deliberately): pullRequestTool and submitReviewTool. Opening a PR
+// or submitting a review makes work PUBLIC, so under the staged-delivery spine
+// (0.5.0 — see internal/tools/stage_delivery.go, vetting.commitDeliveryOnPass)
+// no agent calls them directly anymore — a worker STAGES that intent
+// (stage_pr/stage_review) and the trust gate posts it, exactly once, only on a
+// judge pass. createPullRequest/createReview (internal/github/app.go) are still
+// here, called ONLY by the harness's own delivery step (internal/github/webhook.go).
 func (a *App) Tools() []tool.Tool {
 	return []tool.Tool{
 		a.commentTool(),
-		a.pullRequestTool(),
 		a.addReviewCommentTool(),
 		a.listReviewCommentsTool(),
 		a.deleteReviewCommentTool(),
-		a.submitReviewTool(),
 		a.listPRCommentsTool(),
 		a.replyToReviewCommentTool(),
 		a.reactToCommentTool(),
@@ -110,20 +151,6 @@ func (a *App) commentTool() tool.Tool {
 		},
 	)
 	return t
-}
-
-type prArgs struct {
-	Owner  string   `json:"owner"`
-	Repo   string   `json:"repo"`
-	Title  string   `json:"title"`
-	Head   string   `json:"head"`
-	Base   string   `json:"base,omitempty"` // default "main"
-	Body   string   `json:"body,omitempty"`
-	Labels []string `json:"labels,omitempty"` // applied to the new PR (best effort)
-}
-
-type prResult struct {
-	URL string `json:"url"`
 }
 
 // reviewComment is one inline comment on a PR review. It doubles as both the
@@ -432,23 +459,9 @@ type submitReviewResult struct {
 	Comments int    `json:"comments"`
 }
 
-func (a *App) submitReviewTool() tool.Tool {
-	t, _ := functiontool.New[submitReviewArgs, submitReviewResult](
-		functiontool.Config{
-			Name: "github_submit_review",
-			Description: "Submit the pending review draft for a pull request as ONE GitHub review: all the inline " +
-				"comments you've recorded, plus your `body` summary and a verdict `event` — REQUEST_CHANGES (blocking " +
-				"findings), APPROVE (looks good), or COMMENT (neutral notes). Because every draft comment's location was " +
-				"already validated, this can't 422 on a bad line. Clears the draft afterward. `owner`/`repo`/`pull_number` " +
-				"identify the PR. Authenticated as the app installation.",
-		},
-		func(ctx adkagent.Context, args submitReviewArgs) (submitReviewResult, error) {
-			return a.submitReview(ctx, args)
-		},
-	)
-	return t
-}
-
+// submitReview is the review-draft submit itself, kept for the delivery step
+// (internal/github/webhook.go's commitDelivery, called only post-judge-pass) —
+// it is no longer exposed as a model tool (see App.Tools).
 func (a *App) submitReview(ctx context.Context, args submitReviewArgs) (submitReviewResult, error) {
 	if args.Owner == "" || args.Repo == "" || args.PullNumber == 0 {
 		return submitReviewResult{}, fmt.Errorf("github_submit_review: owner, repo and pull_number are all required")
@@ -609,37 +622,105 @@ func (a *App) react(ctx context.Context, args reactArgs) (reactResult, error) {
 	return reactResult{ReactionID: id}, nil
 }
 
-func (a *App) pullRequestTool() tool.Tool {
-	t, _ := functiontool.New[prArgs, prResult](
-		functiontool.Config{
-			Name: "github_pull_request",
-			Description: "Open a pull request. `head` is the branch you pushed (must already exist on the remote — " +
-				"push it with git_push first); `base` is the target branch (default `main`). `title`/`body` are the " +
-				"PR text; `labels` (optional) are applied to the new PR. Returns the PR URL. Authenticated as the " +
-				"app installation.",
-		},
-		func(ctx adkagent.Context, args prArgs) (prResult, error) {
-			if args.Owner == "" || args.Repo == "" || strings.TrimSpace(args.Title) == "" || args.Head == "" {
-				return prResult{}, fmt.Errorf("github_pull_request: owner, repo, title and head are all required")
-			}
-			base := args.Base
-			if base == "" {
-				base = "main"
-			}
-			u, number, err := a.createPullRequest(ctx, args.Owner, args.Repo, args.Title, args.Head, base, args.Body)
-			if err != nil {
-				return prResult{}, err
-			}
-			if len(args.Labels) > 0 {
-				// Best effort: the PR already exists, so a label failure must not fail
-				// the tool (a retry would open a duplicate PR).
-				if err := a.addLabels(ctx, args.Owner, args.Repo, number, args.Labels); err != nil {
-					slog.Warn("github_pull_request: labeling the new PR failed", "component", "github",
-						"repo", args.Owner+"/"+args.Repo, "pr", number, "err", err)
-				}
-			}
-			return prResult{URL: u}, nil
-		},
-	)
-	return t
+// openPullRequest opens a PR and best-effort applies labels — the delivery
+// step's own call (internal/github/webhook.go's commitDelivery, post-judge-
+// pass only); no longer exposed as a model tool (see App.Tools). A label
+// failure never fails the open (a retry would duplicate the PR).
+func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string) (string, error) {
+	if base == "" {
+		base = "main"
+	}
+	u, number, err := a.createPullRequest(ctx, owner, repo, title, head, base, body)
+	if err != nil {
+		return "", err
+	}
+	if len(labels) > 0 {
+		if err := a.addLabels(ctx, owner, repo, number, labels); err != nil {
+			slog.Warn("github: labeling the new PR failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+		}
+	}
+	return u, nil
+}
+
+// Deliver is the vetting.DeliverFunc this extension provides (wired in
+// internal/serve): the ONE place, this whole extension, that pushes a branch
+// or posts anything to a triggering repo — called by commitDeliveryOnPass
+// exactly once, only after a node's judge pass. It pushes dc.Branch
+// (transient, App-authed — see tools.PushBranch), then works the staged set in
+// order: opening a pull request first (so a staged review/comment on the SAME
+// run has something fresh to land on), then submitting the review, then
+// posting each comment. A later item's failure doesn't undo an earlier one's
+// success; every failure is collected and returned together so the caller's
+// one log line names all of them.
+//
+// jailRoot anchors the askpass symlink PushBranch needs (workspace.Jail.Root()).
+func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryContext) (err error) {
+	defer func() { recordDeliveryResult(dc.ChatID, err) }()
+	if len(dc.Items) == 0 {
+		return nil
+	}
+	owner, repo, ok := ownerRepoFromURL(dc.CloneURL)
+	if !ok {
+		return fmt.Errorf("github: delivery: %q is not a github.com clone URL — nothing to deliver against", dc.CloneURL)
+	}
+	if dc.Branch != "" && dc.CloneDir != "" {
+		tok, terr := a.tokenForRepo(ctx, owner, repo)
+		if terr != nil {
+			return fmt.Errorf("github: delivery: %w", terr)
+		}
+		cred := tools.GitCredential{Host: gitHost, Username: gitUsername, Token: tok}
+		if _, perr := tools.PushBranch(ctx, jailRoot, dc.CloneDir, dc.Branch, cred, workspace.DefaultCaps()); perr != nil {
+			return fmt.Errorf("github: delivery: push %q: %w", dc.Branch, perr)
+		}
+	}
+	var errs []error
+	for _, item := range dc.Items {
+		if ierr := a.deliverOne(ctx, owner, repo, dc, item); ierr != nil {
+			errs = append(errs, ierr)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// deliverOne posts one staged item, past Deliver's push. A review or comment
+// with no known PR (dc.IssueNumber == 0 — the worker never named one via
+// github_add_review_comment/github_submit_review) is a clear, actionable
+// error rather than a guess.
+func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.DeliveryContext, item vetting.StagedDelivery) error {
+	switch item.Kind {
+	case "pull_request":
+		if dc.Branch == "" {
+			return fmt.Errorf("github: delivery: staged pull request %q has no branch to open it from", item.Title)
+		}
+		u, err := a.openPullRequest(ctx, owner, repo, item.Title, dc.Branch, "", item.Body, nil)
+		if err != nil {
+			return fmt.Errorf("github: delivery: open pull request: %w", err)
+		}
+		slog.Info("github: delivered a pull request", "component", "github", "repo", owner+"/"+repo, "url", u)
+		return nil
+	case "review":
+		if dc.IssueNumber == 0 {
+			return fmt.Errorf("github: delivery: staged review has no pull request number to submit against")
+		}
+		event := strings.ToUpper(item.Event)
+		if !reviewEvents[event] {
+			return fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
+		}
+		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: item.Body, Event: event})
+		if err != nil {
+			return fmt.Errorf("github: delivery: submit review: %w", err)
+		}
+		slog.Info("github: delivered a review", "component", "github", "repo", owner+"/"+repo, "url", res.URL)
+		return nil
+	case "comment":
+		if dc.IssueNumber == 0 {
+			return fmt.Errorf("github: delivery: staged comment %q has no issue/PR number to post to", item.Slot)
+		}
+		if err := a.postIssueComment(ctx, owner, repo, dc.IssueNumber, item.Body); err != nil {
+			return fmt.Errorf("github: delivery: post comment %q: %w", item.Slot, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("github: delivery: unknown staged kind %q", item.Kind)
+	}
 }
