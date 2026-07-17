@@ -1244,6 +1244,9 @@ func TestDispatchCollapsesPriorPlanComment(t *testing.T) {
 			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated) // the label-triggered 👀 ack (#252); irrelevant here
+			fmt.Fprint(w, `{"id":1}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
 			fmt.Fprint(w, `[{"id":11,"node_id":"PLAN1","body":"## Old Plan\n\n<!-- quack:delivery:plan -->","user":{"login":"quack[bot]"}}]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -1445,5 +1448,60 @@ func TestHandleWebhookPlanLabelPostsPlanEvenWhenDelivered(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("plan-only run did not post its plan — the delivered-skip dropped it")
+	}
+}
+
+// TestHandleWebhookLabelPostsEyesReactionOnIssue pins #252: a label-triggered run
+// (quack:plan / quack:implement) posts an instant 👀 on the ISSUE — POST to
+// /issues/{number}/reactions, NOT the comment-reaction endpoint (a label event
+// carries no comment ID, so ackReaction can't be reused).
+func TestHandleWebhookLabelPostsEyesReactionOnIssue(t *testing.T) {
+	for _, tc := range []struct{ trigger, label string }{
+		{"issue_plan", "quack:plan"},
+		{"issue_implement", "quack:implement"},
+	} {
+		t.Run(tc.trigger, func(t *testing.T) {
+			reacted := make(chan string, 1) // "<path> <body>" of the reaction POST
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/installation"):
+					fmt.Fprint(w, `{"id":5}`)
+				case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+					fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+				case strings.HasSuffix(r.URL.Path, "/reactions"):
+					b, _ := io.ReadAll(r.Body)
+					w.WriteHeader(http.StatusCreated)
+					fmt.Fprint(w, `{"id":1}`)
+					select {
+					case reacted <- r.URL.Path + " " + string(b):
+					default:
+					}
+				default:
+					w.WriteHeader(http.StatusCreated)
+					fmt.Fprint(w, `{}`)
+				}
+			}))
+			defer srv.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "ok"}
+			ext := newTestExtensionWithTriggers(t, runner, srv.URL, []string{tc.trigger}, "")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", tc.label, "alice", false)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			select {
+			case got := <-reacted:
+				if !strings.Contains(got, "/repos/acme/widgets/issues/7/reactions") {
+					t.Errorf("reaction hit wrong endpoint: %q (want /issues/7/reactions)", got)
+				}
+				if !strings.Contains(got, `"content":"eyes"`) {
+					t.Errorf("reaction content not eyes: %q", got)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no 👀 reaction posted on the issue for a label-triggered run")
+			}
+		})
 	}
 }

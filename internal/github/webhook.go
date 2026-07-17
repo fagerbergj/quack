@@ -267,8 +267,10 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	switch {
 	case e.triggers["issue_plan"] && p.Label.Name == e.labels.Plan:
 		synthetic.planOnly = true
+		go e.ackLabelReaction(p) // instant 👀 on the issue — the label path's equivalent of ackReaction
 		go e.dispatch(synthetic, planTask(p))
 	case e.triggers["issue_implement"] && p.Label.Name == e.labels.Implement:
+		go e.ackLabelReaction(p)
 		go e.runImplement(p, synthetic)
 	default:
 		w.WriteHeader(http.StatusOK)
@@ -422,6 +424,21 @@ func (e *Extension) ackReaction(p issueCommentPayload) {
 	if _, err := e.app.reactToComment(ctx, owner, repo, "issues", p.Comment.ID, "eyes"); err != nil {
 		slog.Warn("github ack reaction failed", "component", "github",
 			"repo", owner+"/"+repo, "comment", p.Comment.ID, "err", err)
+	}
+}
+
+// ackLabelReaction posts a deterministic 👀 reaction on the ISSUE as an instant
+// acknowledgment that a label-triggered run (quack:plan/quack:implement) started
+// — the label path's equivalent of ackReaction. It can't reuse ackReaction: a
+// label event carries no comment ID, so it reacts to the issue itself. Best
+// effort: a failure is logged at WARN and never blocks dispatch.
+func (e *Extension) ackLabelReaction(p issuesPayload) {
+	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
+	defer cancel()
+	owner, repo := p.Repository.Owner.Login, p.Repository.Name
+	if _, err := e.app.reactToIssue(ctx, owner, repo, p.Issue.Number, "eyes"); err != nil {
+		slog.Warn("github label ack reaction failed", "component", "github",
+			"repo", owner+"/"+repo, "issue", p.Issue.Number, "err", err)
 	}
 }
 
