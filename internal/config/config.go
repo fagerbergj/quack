@@ -324,6 +324,18 @@ type AgentConfig struct {
 	Judge         *bool    `yaml:"judge"`          // run the independent judge? default true; set false when the judge model cannot evaluate this output (a text judge cannot see media)
 	MemoryRole    string   `yaml:"memory_role"`    // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no role bucket)
 	Skills        []string `yaml:"skills"`         // built-in skill names this agent may load_skill (empty ⇒ none); project skills discovered in its jailed repo stay additive regardless (internal/skillsource)
+	// Acp, when set, replaces the local llmagent worker with an EXTERNAL coding
+	// agent subprocess speaking the Agent Client Protocol (internal/acp) —
+	// opencode, claude-agent-acp, gemini-cli. provider/model still bind the
+	// model (injected into the subprocess via OPENCODE_CONFIG_CONTENT); tools
+	// is ignored (the external agent brings its own).
+	Acp *AcpAgentConfig `yaml:"acp"`
+}
+
+// AcpAgentConfig configures an external ACP agent subprocess.
+type AcpAgentConfig struct {
+	Command []string          `yaml:"command"` // argv, e.g. ["opencode", "acp"]
+	Env     map[string]string `yaml:"env"`     // extra subprocess environment (overrides generated defaults)
 }
 
 // IsGated reports whether the agent runs under the trust gate (default true).
@@ -694,6 +706,9 @@ func (c *Config) validate() error {
 		}
 		// Tool names are resolved (and unknown ones rejected) when the agent's
 		// tools are built at startup; see internal/tools.Build.
+		if a.Acp != nil && len(a.Acp.Command) == 0 {
+			return fmt.Errorf("config: agent %q has an acp block with an empty command", name)
+		}
 	}
 	if c.Gates.Enabled() {
 		g := &c.Gates

@@ -74,6 +74,15 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
+    # acp: replaces the native worker below with an EXTERNAL coding agent
+    # subprocess speaking the Agent Client Protocol (internal/acp; docs/acp-coder.md).
+    # provider/model above still bind the model (injected via OPENCODE_CONFIG_CONTENT:
+    # OpenAI-compatible endpoint, per-round headless permissions, git push denied —
+    # delivery stays gate-owned). `tools` below is then ignored: the external agent
+    # brings its own, and the gate reads its commits off the clone itself
+    # (internal/vetting augmentFromRepo). Uncomment to run the bakeoff:
+    # acp:
+    #   command: ["opencode", "acp"]
     # run_code = CODE MODE (internal/tools/run_code.go): the model writes a JS program and the
     # tools above are its API, so one turn can read five files, grep and write a patch without any
     # of that bulk entering a 65k context. Per-agent opt-in; every tool above stays callable the
