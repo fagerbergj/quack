@@ -1229,7 +1229,7 @@ func TestDispatchDoesNotResetSessionForMention(t *testing.T) {
 	}
 }
 
-// TestDispatchCollapsesPriorPlanComment pins T4.1's plan half: when a NEW plan
+// TestDispatchCollapsesPriorPlanComment pins plan half: when a NEW plan
 // is posted for an issue, any PRIOR quack plan comment (carrying the plan
 // delivery marker) is minimized via GraphQL before the new one lands, so the
 // thread shows the current plan, not a pile of dead attempts.

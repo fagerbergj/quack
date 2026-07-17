@@ -162,12 +162,12 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	repeats := newRepeatStates()
 	// Every tool is built ONCE and then viewed two ways:
 	//
-	//   out       — the MODEL's direct, one-call-per-turn tools: the full guard
-	//               ladder (guard.go), then the cancel guard (cancelguard.go).
-	//   scriptAPI — the SAME tool objects as a SCRIPT sees them (run_code.go):
-	//               cancel-guarded, but NOT ladder-guarded. The ladder sits on
-	//               run_code instead, so the human and the safety judge approve the
-	//               whole PROGRAM once, before a line of it runs — see scriptTier.
+	// out       — the MODEL's direct, one-call-per-turn tools: the full guard
+	// ladder (guard.go), then the cancel guard (cancelguard.go).
+	// scriptAPI — the SAME tool objects as a SCRIPT sees them (run_code.go):
+	// cancel-guarded, but NOT ladder-guarded. The ladder sits on
+	// run_code instead, so the human and the safety judge approve the
+	// whole PROGRAM once, before a line of it runs — see scriptTier.
 	//
 	// Neither view is unguarded, and neither is reachable without going through one
 	// of these two constructions: a new tool added to the registry gets both, or it
@@ -338,11 +338,11 @@ func steerWrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
 // boundary inside it to be answered on — the question would go nowhere and the
 // script would sail on with a meaningless result. Two shapes of it:
 //
-//   - ADK's long-running tools (get_user_choice), flagged IsLongRunning.
-//   - ask_user, which is an ordinary function tool that ends the turn by setting
-//     SkipSummarization; the trust GATE detects the call in the session and parks
-//     the node (vetting.AskToolName). An in-script call emits no session event, so
-//     the gate would never see the question at all.
+// - ADK's long-running tools (get_user_choice), flagged IsLongRunning.
+// - ask_user, which is an ordinary function tool that ends the turn by setting
+// SkipSummarization; the trust GATE detects the call in the session and parks
+// the node (vetting.AskToolName). An in-script call emits no session event, so
+// the gate would never see the question at all.
 //
 // A CONFIRM-tier tool used to be excluded too, for a suspension problem of its own:
 // a mid-script human pause would have had to resume by re-running the script from

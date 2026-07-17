@@ -356,7 +356,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	// The staged-delivery spine (0.5.0): the trust gate posts a node's staged
+	// The staged-delivery spine: the trust gate posts a node's staged
 	// delivery set exactly once, on judge pass — the ONE place, this whole
 	// extension, that pushes a branch or posts anything to a triggering repo.
 	// nil (no GitHub App configured) leaves gateCfg.Deliver nil, which is
@@ -496,8 +496,8 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 
 // buildAgents loads each configured agent bundle, builds its model and built-in
 // tools, exposes it over a co-located A2A server, and returns:
-//   - clientMap: agent name → A2A client (for the DAG executor)
-//   - servers: A2A server handles (to close on shutdown)
+// - clientMap: agent name → A2A client (for the DAG executor)
+// - servers: A2A server handles (to close on shutdown)
 func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, error) {
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
@@ -598,7 +598,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gateCfg.Workspace = jail
 		gateCfg.WorkspaceUserID = localUserID
 		gateCfg.WorkspaceCaps = workspaceCaps
-		// Staged delivery (0.5.0): nil-safe, like Memory above — an agent whose
+		// Staged delivery: nil-safe, like Memory above — an agent whose
 		// tools never include stage_pr/stage_review/stage_comment simply never
 		// stages anything, so this is inert for every non-GitHub agent.
 		gateCfg.Deliver = deliver
@@ -903,9 +903,9 @@ func fmtErr(agentName, format string, args ...any) error {
 // load_memory (ADK-native, added separately by the caller) was requested.
 // Two names are gated on runtime availability rather than erroring when their
 // dependency is off, so one config file describes every topology:
-//   - stage_memory needs a task-memory store (taskMemAvailable).
-//   - ask_advisor needs the advisor agent to consult (advisorAvailable) —
-//     built only when gates.judge is enabled (see build's advisorAgent).
+// - stage_memory needs a task-memory store (taskMemAvailable).
+// - ask_advisor needs the advisor agent to consult (advisorAvailable) —
+// built only when gates.judge is enabled (see build's advisorAgent).
 func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string, wantLoadMemory bool) {
 	names = make([]string, 0, len(configured))
 	for _, t := range configured {

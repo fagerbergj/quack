@@ -295,7 +295,7 @@ func (a *App) postIssueComment(ctx context.Context, owner, repo string, number i
 
 // editIssueComment overwrites an existing issue/PR comment's body in place —
 // the revise-before-post path for a staged comment carrying a delivery marker
-// already posted by an earlier run (T3.3).
+// already posted by an earlier run.
 func (a *App) editIssueComment(ctx context.Context, owner, repo string, id int64, bodyText string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -326,7 +326,7 @@ func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, b
 
 // findOpenPR looks up an OPEN pull request already open from head branch, via
 // GitHub's own state — not a session's memory of having opened one before —
-// so a re-run's revise lands on the SAME PR instead of a duplicate (T3.1).
+// so a re-run's revise lands on the SAME PR instead of a duplicate.
 // ok is false when none is open (not an error).
 func (a *App) findOpenPR(ctx context.Context, owner, repo, branch string) (number int, url string, ok bool, err error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
@@ -348,7 +348,7 @@ func (a *App) findOpenPR(ctx context.Context, owner, repo, branch string) (numbe
 }
 
 // updatePullRequest edits an existing PR's title/body — the revise-before-post
-// path when findOpenPR finds one already open (T3.1).
+// path when findOpenPR finds one already open.
 func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number int, title, bodyText string) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -367,7 +367,7 @@ func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number 
 
 // branchHeadSHA returns the SHA GitHub reports as branch's current head — the
 // ground truth a push must match. A `git push` that exits 0 but the ref never
-// actually updates on GitHub's side must not be read as delivered (T3.2).
+// actually updates on GitHub's side must not be read as delivered.
 func (a *App) branchHeadSHA(ctx context.Context, owner, repo, branch string) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -435,7 +435,7 @@ func (a *App) doGraphQL(ctx context.Context, authz, query string, variables map[
 
 // minimizeComment marks a minimizable GitHub node (an issue comment, a PR
 // review, a PR review comment — anything with a GraphQL node_id) OUTDATED, so
-// the thread shows current state instead of a pile of dead attempts (T4.1).
+// the thread shows current state instead of a pile of dead attempts.
 // Best-effort: callers log a failure and move on, they never fail delivery.
 func (a *App) minimizeComment(ctx context.Context, owner, repo, nodeID string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
@@ -664,7 +664,7 @@ type reviewCommentView struct {
 }
 
 // commentView is one top-level conversation comment (from issues/{n}/comments).
-// NodeID is its GraphQL id, needed only to minimizeComment it (T4.1); "" for
+// NodeID is its GraphQL id, needed only to minimizeComment it; "" for
 // call sites (like listPRDiscussion's) that don't fetch it.
 type commentView struct {
 	ID        int64  `json:"id"`
@@ -749,7 +749,7 @@ type ghUserRef struct {
 // prReview is one submitted PR review, in the order GitHub returns them
 // (chronological). commit_id is GitHub's own durable "reviewed as of" marker —
 // the state conversational follow-up reviews key off, so no local store is needed.
-// NodeID + Body are only needed to find/collapse quack's own prior reviews (T4.1).
+// NodeID + Body are only needed to find/collapse quack's own prior reviews.
 type prReview struct {
 	NodeID      string    `json:"node_id"`
 	CommitID    string    `json:"commit_id"`

@@ -19,7 +19,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// The staged-delivery spine (0.5.0): a worker STAGES a pull request
+// The staged-delivery spine: a worker STAGES a pull request
 // (stage_pr) instead of opening one — commitDeliveryOnPass posts the FINAL
 // staged set exactly once, and only when the gate's judge round passes.
 
