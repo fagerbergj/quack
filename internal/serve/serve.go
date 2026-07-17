@@ -689,8 +689,14 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	// git_clone/PushBranch use, so its placement (workspace.SetupCloneDir) lands
 	// exactly where those tools' own paths resolve.
 	if setupOut != nil {
-		*setupOut = func(ctx context.Context, userID, chatID, dir string, setup dag.Setup) error {
-			_, err := tools.SetupClone(ctx, jail, userID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, workspaceCaps, gitCredentials, gitTokenSource)
+		// Clone under localUserID — the SAME workspace scope every fs/git tool and
+		// commitDeliveryOnPass resolve under (localUserID, lines above) — NOT the
+		// run's userID. A GitHub run's userID is "github"; cloning setup under it
+		// left the clone in a different jail than the worker, so the worker saw an
+		// empty workspace, re-cloned into a subdir, and delivery then pushed from
+		// the wrong (non-repo) directory.
+		*setupOut = func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
+			_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, workspaceCaps, gitCredentials, gitTokenSource)
 			return err
 		}
 	}
