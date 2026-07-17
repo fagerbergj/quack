@@ -154,20 +154,27 @@ override this score; here, judge only the presence of links.
 The response is ONLY the answer — it begins directly with the answer (its title
 or first sentence) and ends with the answer (or its `Sources` section). It must
 contain no preamble, no process narration, no planning or self-talk, no
-meta-commentary about formatting/skills/rules, and no leftover reasoning. The
-reader sees the reply verbatim, so anything like "Let me…", "I see, I made a
-typo…", "Actually, wait…", "the skill says…", or trailing drafting notes is a
-defect — even when the buried content is excellent.
+meta-commentary about formatting/skills/rules, and no leftover reasoning. This
+includes mid-body deliberation: visible self-correction ("Actually, let me
+reconsider…"), an abandoned or superseded draft left in place, or the same
+conclusion — a code snippet, a list, a decision — written out more than once on
+the way to a final version. The reader sees the reply verbatim, so anything like
+"Let me…", "I see, I made a typo…", "Actually, wait…", "the skill says…", or
+trailing drafting notes is a defect — even when the buried content is excellent.
 
 **Evaluation steps.**
 1. Read the first sentence: direct answer, or preamble / process narration?
 2. Scan the body and tail for leaked planning, self-talk, or meta-commentary.
-3. Score down for each intrusion; the buried answer's quality does not excuse it.
+3. Check whether any snippet, list, or conclusion appears more than once in
+   different (superseded) forms — a sign of an abandoned draft left in place.
+4. Score down for each intrusion; the buried answer's quality does not excuse it.
 
 **Scoring bands.**
-- **7–10** — pure answer; no preamble, narration, or trailing reasoning.
+- **7–10** — pure answer; no preamble, narration, or trailing reasoning; only
+  the final version of any content appears.
 - **4–6** — a stray opener or a single meta sentence, otherwise clean.
-- **0–3** — noticeable preamble and/or leaked planning/reasoning in the output.
+- **0–3** — noticeable preamble, leaked planning/reasoning, or a
+  duplicated/superseded draft left in the output.
 
 ---
 

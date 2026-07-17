@@ -112,17 +112,18 @@ The response addresses exactly what the user asked, in full — not a related-bu
 
 ### `clean_output`
 
-The response is ONLY the answer — it begins directly and ends with it. No preamble ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about image quality or the agent's capabilities.
+The response is ONLY the answer — it begins directly and ends with it. No preamble ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about image quality or the agent's capabilities. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion written out more than once on the way to a final version.
 
 **Evaluation steps.**
 1. Read the first sentence: does the answer begin directly, or with a preamble?
 2. Scan the body and tail for leaked planning, self-talk, or meta-commentary.
-3. Score down for each intrusion.
+3. Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms — a sign of an abandoned draft left in place.
+4. Score down for each intrusion.
 
 **Scoring bands.**
-- **7–10** — pure answer; no preamble, narration, or trailing reasoning.
+- **7–10** — pure answer; no preamble, narration, or trailing reasoning; only the final version of any content appears.
 - **4–6** — a stray opener or a single meta sentence, otherwise clean.
-- **0–3** — noticeable preamble and/or leaked planning/reasoning in the output.
+- **0–3** — noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft left in the output.
 
 ---
 

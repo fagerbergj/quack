@@ -80,17 +80,18 @@ Every significant claim must carry an inline citation linking to its source URL.
 
 ### `clean_output`
 
-The response is ONLY the synthesized answer — it begins directly with the answer content (title or first sentence) and ends with the answer or its Sources block. No preamble, no process narration, no meta-commentary about skills or formatting rules.
+The response is ONLY the synthesized answer — it begins directly with the answer content (title or first sentence) and ends with the answer or its Sources block. No preamble, no process narration, no meta-commentary about skills or formatting rules. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion — a snippet, a list, a decision — written out more than once on the way to a final version.
 
 **Evaluation steps.**
 1. Read the first sentence: direct answer content, or a preamble ("Let me compile…", "Based on the research…")?
 2. Scan the body and tail for leaked planning, self-talk, or meta-commentary.
-3. Score down for each intrusion.
+3. Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms — a sign of an abandoned draft left in place.
+4. Score down for each intrusion.
 
 **Scoring bands.**
-- **7–10** — pure answer; no preamble or trailing narration.
+- **7–10** — pure answer; no preamble or trailing narration; only the final version of any content appears.
 - **4–6** — a single stray opener or one meta sentence, otherwise clean.
-- **0–3** — noticeable preamble and/or leaked planning in the output.
+- **0–3** — noticeable preamble, leaked planning in the output, or a duplicated/superseded draft left in place.
 
 ---
 

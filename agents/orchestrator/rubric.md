@@ -62,17 +62,18 @@ When the orchestrator answers directly (conversational queries), it does not inv
 
 ### `clean_output`
 
-The response begins directly with the answer — no preamble, no meta-commentary, no process narration. The orchestrator never exposes its routing logic to the user.
+The response begins directly with the answer — no preamble, no meta-commentary, no process narration. The orchestrator never exposes its routing logic to the user. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion — a snippet, a list, a decision — written out more than once on the way to a final version.
 
 **Evaluation steps.**
 1. Read the first sentence: direct content, or a preamble / "let me route this to…"?
 2. Scan for leaked routing logic, self-talk, or meta-commentary about skills or delegation.
-3. Score down for each intrusion.
+3. Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms — a sign of an abandoned draft left in place.
+4. Score down for each intrusion.
 
 **Scoring bands.**
-- **7–10** — pure answer; no preamble or routing narration.
+- **7–10** — pure answer; no preamble or routing narration; only the final version of any content appears.
 - **4–6** — a single stray opener or one routing comment, otherwise clean.
-- **0–3** — noticeable preamble, routing narration, or leaked process.
+- **0–3** — noticeable preamble, routing narration, leaked process, or a duplicated/superseded draft left in the output.
 
 ---
 
