@@ -139,3 +139,29 @@ func TestSetupCloneAndBranchIsIdempotent(t *testing.T) {
 		t.Errorf("re-provisioned clone missing at %q: %v", target, err)
 	}
 }
+
+// TestSetupCloneAndBranchConfiguresCommitterIdentity pins the git-identity gap:
+// a worker that shells out to `git commit` (rather than the git_commit tool)
+// needs a committer identity in the clone, or the commit fails exit 128
+// ("Author identity unknown"). Setup must configure it.
+func TestSetupCloneAndBranchConfiguresCommitterIdentity(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work")
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// A plain `git commit` (no -c identity flags) must succeed — proving the
+	// identity is configured in the clone.
+	if err := os.WriteFile(filepath.Join(target, "new.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runGit(context.Background(), target, []string{"add", "-A"}, b.caps, nil); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
+	if _, _, err := runGit(context.Background(), target, []string{"commit", "-m", "shelled-out commit"}, b.caps, nil); err != nil {
+		t.Fatalf("a plain git commit must succeed after setup (identity not configured?): %v", err)
+	}
+}
