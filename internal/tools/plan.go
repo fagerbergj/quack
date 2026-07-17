@@ -57,12 +57,14 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"Every plan MUST declare setup (the working clone + branch) and delivery (how the gated result " +
 				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate — you declare " +
 				"intent, you never run git, push, or open a PR yourself. Pass `setup: {repo, base_ref, work_branch}` " +
-				"naming the clone URL (the same one a git_clone would use), the base ref, and the branch the work " +
-				"happens on — the harness clones and checks it out for you before any node runs; a repo-touching " +
-				"node must NOT git_clone itself. And `delivery: {kind}` — exactly one of \"pull_request\" " +
+				"naming the clone URL, the base ref, and the branch the work happens on — the harness clones and " +
+				"checks it out before any node runs, at the ROOT of each repo-touching node's working directory; " +
+				"that node's task says the repo is already there and never instructs cloning it. A node examining " +
+				"a DIFFERENT repository (a comparison target) should be told to clone that repo into its own " +
+				"working directory itself. And `delivery: {kind}` — exactly one of \"pull_request\" " +
 				"(implement-and-deliver requests), \"review\" (PR/diff review requests), or \"comment\" (plan-only/" +
-				"research requests that post a summary back); the implementer authors the PR title+body itself " +
-				"via `stage_pr` — you never write PR prose. Omit both only for a plan with no GitHub repo involved. " +
+				"research requests that post a summary back); the harness authors and posts the PR/review from the " +
+				"node's own work — you never write PR prose. Omit both only for a plan with no GitHub repo involved. " +
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
 				"directly. If validation fails, fix the nodes and call again.",
 		},
