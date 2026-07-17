@@ -104,12 +104,16 @@ type RawNode struct {
 }
 
 // Build validates the submitted nodes into a Plan and stamps the turn context.
-// message is the verbatim user request, history the prior turns, attachments the
-// current media — all threaded to every node by the executor. ctx bounds the
+// setup and delivery are the orchestrator's declared pre/post steps (nil when
+// the request has no GitHub repo involved) — Build only validates delivery's
+// kind deterministically; whether setup/delivery are the RIGHT declaration for
+// this request type is the plan judge's job (judgeRouting). message is the
+// verbatim user request, history the prior turns, attachments the current
+// media — all threaded to every node by the executor. ctx bounds the
 // (optional) plan-judge call. Returns an error (no silent fallback) so the
 // orchestrator can fix and re-submit.
-func (p *Planner) Build(ctx context.Context, nodes []RawNode, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
-	plan, err := assemble(nodes, p.agents, p.checkCommands)
+func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
+	plan, err := assemble(nodes, p.agents, p.checkCommands, setup, delivery)
 	if err != nil {
 		return nil, err
 	}
@@ -156,8 +160,9 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 }
 
 // planSummary renders the plan for the plan judge: each node's id, agent,
-// dependencies, and full task text — enough for the judge to assess the
-// decomposition and terminal deliverable without re-running anything.
+// dependencies, and full task text, plus the declared setup/delivery — enough
+// for the judge to assess the decomposition, terminal deliverable, AND
+// whether setup/delivery match the request type, without re-running anything.
 func planSummary(p *Plan) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
@@ -167,6 +172,16 @@ func planSummary(p *Plan) string {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
 		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
+	}
+	if p.Setup != nil {
+		fmt.Fprintf(&sb, "\nsetup: base_ref=%q work_branch=%q", p.Setup.BaseRef, p.Setup.WorkBranch)
+	} else {
+		sb.WriteString("\nsetup: (none declared)")
+	}
+	if p.Delivery != nil {
+		fmt.Fprintf(&sb, "\ndelivery: kind=%q title=%q", p.Delivery.Kind, p.Delivery.Title)
+	} else {
+		sb.WriteString("\ndelivery: (none declared)")
 	}
 	return sb.String()
 }
@@ -231,17 +246,20 @@ func AttachmentDesc(parts []*genai.Part) string {
 }
 
 // assemble validates nodes against the agent roster, hardens the synthesizer's
-// dependencies, and checks acyclicity.
-func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string) (*Plan, error) {
+// dependencies, checks acyclicity, and validates the declared delivery kind.
+func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery) (*Plan, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
+	}
+	if err := validateDelivery(delivery); err != nil {
+		return nil, err
 	}
 	known := make(map[string]bool, len(agents))
 	for _, a := range agents {
 		known[a.Name] = true
 	}
 	ids := make(map[string]bool, len(nodes))
-	plan := &Plan{ID: uuid.NewString()}
+	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery}
 	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")
@@ -353,6 +371,26 @@ func validateChecks(checks, checkCommands []string) error {
 			return fmt.Errorf("check %q does not match any configured workspace.check_commands prefix (%s)",
 				c, strings.Join(checkCommands, ", "))
 		}
+	}
+	return nil
+}
+
+// deliveryKinds are the only values the harness knows how to execute post-gate
+// (see the plan tool's description) — a constrained vocabulary the orchestrator
+// picks from, not free text.
+var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
+
+// validateDelivery rejects a Delivery.Kind outside the constrained vocabulary
+// at plan time — same spirit as validateChecks: a targeted, fixable error
+// rather than the harness later choking on a kind it can't execute. Whether
+// this kind is the RIGHT one for the request type is the plan judge's job,
+// not this deterministic check.
+func validateDelivery(d *Delivery) error {
+	if d == nil {
+		return nil
+	}
+	if !deliveryKinds[d.Kind] {
+		return fmt.Errorf("delivery.kind %q must be one of pull_request, review, comment", d.Kind)
 	}
 	return nil
 }
