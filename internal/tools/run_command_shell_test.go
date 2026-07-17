@@ -112,28 +112,91 @@ func TestShellCannotWiden(t *testing.T) {
 	}
 }
 
-// TestNoSandboxRunsArgvLiterally: with `sandbox: none` there is no shell, so
-// metachars are literal argv content, never operators — no rejection. `echo
-// hi; rm -rf /` runs echo with the literal args "hi;" "rm" … and does NOT spawn
-// a second process (#277). (The real boundary is the OS sandbox, not this scan.)
-func TestNoSandboxRunsArgvLiterally(t *testing.T) {
+// TestRunCommandShellWithoutSandbox pins the #277 fix itself: with
+// `sandbox: none` run_command still hands its command line to a REAL shell
+// (workspace.RunShell just skips the bwrap wrapper — see childArgv), so
+// `&&`, globs, redirects and `$(…)` all behave exactly as they do under
+// sandbox: bwrap. Only the boundary differs (the server user's own filesystem
+// authority, not a namespace) — see TestRunCommandUnsandboxedHasHostAuthority.
+func TestRunCommandShellWithoutSandbox(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	b.caps.Sandbox = workspace.SandboxNone
+	root := ensureUserRoot(t, b)
+
+	// 1. `&&` chaining.
+	res, err := b.runCommand(runCommandArgs{Command: "echo one && echo two"})
+	if err != nil {
+		t.Fatalf("run_command(&&): %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "one") || !strings.Contains(res.Output, "two") {
+		t.Fatalf("&&: exit=%d output=%q", res.ExitCode, res.Output)
+	}
+
+	// 2. A glob the shell expands (not passed through as a literal "*.txt").
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err = b.runCommand(runCommandArgs{Command: "cat *.txt"})
+	if err != nil {
+		t.Fatalf("run_command(glob): %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "a.txt") || !strings.Contains(res.Output, "b.txt") {
+		t.Fatalf("glob: exit=%d output=%q, want both files' contents", res.ExitCode, res.Output)
+	}
+
+	// 3. A redirect lands in the child's cwd.
+	if res, err := b.runCommand(runCommandArgs{Command: "echo redirected > out.txt"}); err != nil || res.ExitCode != 0 {
+		t.Fatalf("run_command(redirect): err=%v exit=%d output=%q", err, res.ExitCode, res.Output)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "out.txt"))
+	if err != nil || strings.TrimSpace(string(got)) != "redirected" {
+		t.Fatalf("the redirect did not land in the cwd (%s): %q, err=%v", root, got, err)
+	}
+
+	// 4. Command substitution.
+	res, err = b.runCommand(runCommandArgs{Command: `echo $(echo nested)`})
+	if err != nil {
+		t.Fatalf("run_command($(…)): %v", err)
+	}
+	if res.ExitCode != 0 || !strings.Contains(res.Output, "nested") {
+		t.Fatalf("substitution: exit=%d output=%q", res.ExitCode, res.Output)
+	}
+
+	// 5. A non-zero exit surfaces the shell's own exit code, stderr included.
+	res, err = b.runCommand(runCommandArgs{Command: "ls --definitely-bogus-flag"})
+	if err != nil {
+		t.Fatalf("run_command(bad flag): %v", err)
+	}
+	if res.ExitCode == 0 {
+		t.Fatal("run_command(ls --bogus-flag): want a non-zero exit code")
+	}
+	if res.Output == "" {
+		t.Fatal("run_command(ls --bogus-flag): want ls's stderr surfaced in the output")
+	}
+}
+
+// TestRunCommandUnsandboxedHasHostAuthority: with no OS sandbox, run_command's
+// shell has the server user's own filesystem authority — nothing here confines
+// a command to `dir` the way bwrap's mount namespace does (contrast
+// TestShellCannotWiden). This is the documented, deliberate cost of
+// `sandbox: none` (see runCommandDescription and workspace.ResolveSandbox's
+// startup WARN), not a regression this change introduces.
+func TestRunCommandUnsandboxedHasHostAuthority(t *testing.T) {
 	b := newTestBinding(t, "u1")
 	b.caps.Sandbox = workspace.SandboxNone
 	ensureUserRoot(t, b)
 
-	res, err := b.runCommand(runCommandArgs{Command: "echo hi; rm -rf /tmp/nope"})
+	outside := filepath.Join(t.TempDir(), "reachable.txt")
+	res, err := b.runCommand(runCommandArgs{Command: "echo host-authority > " + outside})
 	if err != nil {
-		t.Fatalf("run_command(literal ;) with sandbox: none: %v", err)
+		t.Fatalf("run_command(write outside dir): %v", err)
 	}
-	if res.ExitCode != 0 || !strings.Contains(res.Output, "rm -rf") {
-		t.Errorf("want the ';' passed to echo as a literal arg: exit=%d out=%q", res.ExitCode, res.Output)
+	if res.ExitCode != 0 {
+		t.Fatalf("run_command(write outside dir): exit=%d output=%q", res.ExitCode, res.Output)
 	}
-	// …and native pipelines still work there.
-	res, err = b.runCommand(runCommandArgs{Command: "printf 'b\\na\\n' | sort | head -1"})
-	if err != nil {
-		t.Fatalf("run_command(pipeline, sandbox: none): %v", err)
-	}
-	if res.ExitCode != 0 || !strings.Contains(res.Output, "a") {
-		t.Fatalf("exit=%d output=%q — want the sorted head", res.ExitCode, res.Output)
+	if got, err := os.ReadFile(outside); err != nil || strings.TrimSpace(string(got)) != "host-authority" {
+		t.Fatalf("want the write to land outside dir (no OS boundary here): %q, err=%v", got, err)
 	}
 }

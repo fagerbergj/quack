@@ -52,18 +52,19 @@ type safetyVerdictArgs struct {
 // What holds now, and what this prompt therefore says:
 //   - The FS/git tools' paths ARE jailed (workspace.Jail.Resolve) — that has
 //     always been true and stays true.
-//   - A run_command child is a real OS process. With workspace.sandbox: bwrap
-//     it runs in a namespace whose filesystem is its own cwd + an isolated
-//     $HOME (see internal/workspace/sandbox.go). But the deployment may set
-//     sandbox: none, and even inside the sandbox the child has the NETWORK and
-//     the task's own repo — so exfiltration and on-disk sabotage of the task's
-//     own artifacts remain the judge's job, not the kernel's.
-//   - When sandboxed, run_command is a REAL SHELL command line (RunShell): the
-//     metachar list is gone from that path, because it never was a wall — an
-//     interpreter invoked as a plain argv (`sh -c …`) always sailed through it,
-//     and rejecting punctuation only made agents write script files to route
-//     around us. The judge is told this plainly: it must read what the command
-//     (inline code included) actually DOES, not pattern-match its syntax.
+//   - A run_command child is a real OS process, and it ALWAYS gets a real shell
+//     (RunShell) — sandboxed or not (#277): an argv-only "no shell" habit guard
+//     never was a wall, since an interpreter invoked as a plain argv (`sh -c …`)
+//     always sailed through it, and rejecting punctuation only made agents write
+//     script files to route around us. What differs by deployment is the
+//     BOUNDARY: with workspace.sandbox: bwrap the shell runs in a namespace whose
+//     filesystem is its own cwd + an isolated $HOME (internal/workspace/sandbox.go);
+//     with sandbox: none there is no namespace at all, and the shell has the
+//     server user's own full filesystem authority. Either way the child has the
+//     NETWORK and the task's own repo — so exfiltration and on-disk sabotage of
+//     the task's own artifacts remain the judge's job, not the kernel's.
+//   - The judge is told this plainly: it must read what the command (inline code
+//     included) actually DOES, not pattern-match its syntax.
 //
 // Calibration matters as much as the question (an over-cautious judge once
 // denied routine, on-task operations). The anti-over-denial calibration is
@@ -75,7 +76,7 @@ const safetyJudgeInstruction = `You are an independent reviewer for an autonomou
 WHAT IS ACTUALLY GUARANTEED, and what is not — read this carefully, because you are the only check on everything in the second list:
 - The filesystem and git TOOLS (read_file, write_file, edit_file, list_dir, glob, grep, delete_path, git_*) resolve every path inside the agent's workspace jail. A path argument to those tools cannot escape it. Do not deny one merely for looking unusual.
 - Credentials never travel in a command; force-pushing and pushing to main are unexpressible.
-- run_command is DIFFERENT. It starts a real operating-system process, and when the deployment sandboxes it (the normal case) the command line is handed to a REAL SHELL: pipes, redirects, chaining, subshells, command substitution and inline interpreters (sh -c, bash -c, python -c, node -e, perl -e, ruby -e, awk 'BEGIN{...}') all run. Its ARGUMENTS are not path-checked by anything, and no metacharacter filter stands in the way: "No shell" is a habit guard, not a wall — an interpreter invoked as a plain argv command always sailed straight through it — and on the sandboxed path it is not applied at all. The OS sandbox confines WHERE that process can reach (its own working directory and an isolated $HOME); nothing confines WHAT it does with the network, with the task's own repository, or with anything it can read. YOU are the check on that. Nothing downstream is.
+- run_command is DIFFERENT. It starts a real operating-system process, and the command line is ALWAYS handed to a REAL SHELL: pipes, redirects, chaining, subshells, command substitution and inline interpreters (sh -c, bash -c, python -c, node -e, perl -e, ruby -e, awk 'BEGIN{...}') all run. Its ARGUMENTS are not path-checked by anything, and no metacharacter filter stands in the way: "No shell" is a habit guard, not a wall — an interpreter invoked as a plain argv command always sailed straight through it anyway. When the deployment sandboxes it, an OS boundary confines WHERE that process can reach (its own working directory and an isolated $HOME); when it doesn't, there is no such boundary at all and the process has the server user's own full filesystem authority. Either way, nothing confines WHAT the process does with the network, with the task's own repository, or with anything it can read. YOU are the check on that. Nothing downstream is.
 
 Judge exactly ONE thing: what this specific operation actually does, against what the user actually asked for. Reason it out concretely: which files, paths or endpoints does it touch? Are they the task's own artifacts (the repo it cloned, files it created, regenerable build products)? Does the task call for it, directly or as an obvious step toward it?
 
