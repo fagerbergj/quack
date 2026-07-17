@@ -140,8 +140,10 @@ func TestSubmitReviewPostsOneReviewAndClearsDraft(t *testing.T) {
 	if gotBody["event"] != "REQUEST_CHANGES" {
 		t.Errorf("event = %v; want REQUEST_CHANGES (normalised)", gotBody["event"])
 	}
-	if gotBody["body"] != "Please fix." {
-		t.Errorf("body = %v", gotBody["body"])
+	// The delivery marker is appended for T4.1's later collapse lookup — the
+	// human-authored summary must still lead the body untouched.
+	if body, _ := gotBody["body"].(string); !strings.HasPrefix(body, "Please fix.") || !strings.Contains(body, "<!-- quack:delivery:review -->") {
+		t.Errorf("body = %v; want it to start with the summary and carry the delivery marker", gotBody["body"])
 	}
 	comments, ok := gotBody["comments"].([]any)
 	if !ok || len(comments) != 2 {

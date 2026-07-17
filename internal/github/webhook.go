@@ -57,6 +57,12 @@ type issueCommentPayload struct {
 	// task produces a plan comment and must not touch code. Not part of the
 	// GitHub payload.
 	planOnly bool
+	// isLabelTrigger marks a synthetic payload built from a label/pr_opened
+	// event (auto-review, quack:plan, quack:implement) — as opposed to a real
+	// @mention comment. dispatch resets the session for a label-triggered work
+	// request (T4 session hygiene); a conversational @mention never does. Not
+	// part of the GitHub payload.
+	isLabelTrigger bool
 }
 
 // issuesPayload is the subset of GitHub's issues webhook we use ("labeled",
@@ -222,6 +228,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 	synthetic.Repository.CloneURL = p.Repository.CloneURL
 	synthetic.Repository.DefaultBranch = p.Repository.DefaultBranch
 	synthetic.Installation.ID = p.Installation.ID
+	synthetic.isLabelTrigger = true // pr_opened/label auto-review, never a mention (T4)
 
 	slog.Info("github webhook received", "component", "github",
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
@@ -255,6 +262,7 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	synthetic.Repository.CloneURL = p.Repository.CloneURL
 	synthetic.Repository.DefaultBranch = p.Repository.DefaultBranch
 	synthetic.Installation.ID = p.Installation.ID
+	synthetic.isLabelTrigger = true // quack:plan/quack:implement, never a mention (T4)
 
 	switch {
 	case e.triggers["issue_plan"] && p.Label.Name == e.labels.Plan:
@@ -482,6 +490,18 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 	message := e.runMessage(p, task, rc)
 
+	// A LABEL-driven work request starts a FRESH session segment: unlike a
+	// conversational @mention (kept for continuity), a new attempt must not
+	// inherit thousands of events from prior ones (observed live: 7 attempts,
+	// 5,529 events, and the run concluded the work was "already done" instead
+	// of doing it) — T4 session hygiene.
+	if p.isLabelTrigger && isWorkRequest(task) {
+		if err := e.runner.ResetSession(ctx, runUserID, sessionID); err != nil {
+			slog.Warn("github: session reset failed; this attempt may inherit stale history",
+				"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+		}
+	}
+
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 
 	// Persist this dispatch as a turn on the session's chat, exactly like a
@@ -528,10 +548,15 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// this dispatch has always guarded against). judgePassed is only the
 	// fallback for the case nothing was ever staged.
 	delivered := judgePassed && isWorkRequest(task)
-	if derr, ok := takeDeliveryResult(sessionID); ok {
-		delivered = derr == nil
-		if derr != nil {
-			slog.Error("github: staged delivery failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", derr)
+	if d, ok := takeDeliveryDetail(sessionID); ok {
+		delivered = d.err == nil
+		if d.err != nil {
+			slog.Error("github: staged delivery failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", d.err)
+		} else {
+			// The VERIFIED outcome (real PR number/url, the confirmed pushed SHA) —
+			// what GitHub's own state says happened, not a model's claim (T3.4).
+			slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
+				"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
 		}
 	}
 	if delivered {
@@ -556,6 +581,13 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 			e.runTimeout, answer)
 	} else if answer == "" {
 		answer = "quack finished but produced no answer."
+	} else if p.planOnly {
+		// A genuine plan (not a timeout/empty placeholder): collapse any PRIOR
+		// plan comment on this issue before posting the new one, so the thread
+		// shows the CURRENT plan, not a pile of dead attempts (T4.1). The marker
+		// is what a later run's collapse finds.
+		e.app.collapsePriorComments(tailCtx, owner, repo, number, "plan")
+		answer += "\n\n" + deliveryMarker("plan")
 	}
 	if err := e.app.postIssueComment(tailCtx, owner, repo, number, answer); err != nil {
 		slog.Error("github comment post failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)

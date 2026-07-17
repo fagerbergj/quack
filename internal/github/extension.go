@@ -41,6 +41,11 @@ type Runner interface {
 	// LatestAnswer returns the final assistant text persisted for a session
 	// after a run drains.
 	LatestAnswer(ctx context.Context, userID, sessionID string) string
+	// ResetSession deletes sessionID's stored history so the next Run starts a
+	// fresh segment — dispatch calls this for a LABEL-driven work request
+	// (quack:implement/quack:review/quack:plan), never for a conversational
+	// @mention, which needs full history for continuity (T4 session hygiene).
+	ResetSession(ctx context.Context, userID, sessionID string) error
 }
 
 // Extension is the GitHub App extension: outbound tools + git auth + the inbound

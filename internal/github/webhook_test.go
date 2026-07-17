@@ -48,6 +48,13 @@ type fakeRunner struct {
 	// a success; deliverErr (mutually exclusive) records a failure.
 	deliverOK  bool
 	deliverErr string
+	// resets counts ResetSession calls — dispatch's T4 session-hygiene signal.
+	resets int32
+}
+
+func (f *fakeRunner) ResetSession(context.Context, string, string) error {
+	atomic.AddInt32(&f.resets, 1)
+	return nil
 }
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
@@ -103,6 +110,7 @@ func (f *planRunner) Run(_ context.Context, _, _, message string, _ []*genai.Par
 }
 
 func (f *planRunner) LatestAnswer(context.Context, string, string) string { return f.answer }
+func (f *planRunner) ResetSession(context.Context, string, string) error  { return nil }
 
 // stubGitHub serves the REST endpoints dispatch touches (installation resolve,
 // token mint, comment post) and signals postedComment when a comment lands.
@@ -1157,6 +1165,126 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 				t.Fatal("no session id recorded")
 			}
 		})
+	}
+}
+
+// TestDispatchResetsSessionForLabelWorkRequest pins T4 session hygiene: a
+// LABEL-driven work request (quack:implement) resets the session before
+// running, so a new attempt is not poisoned by a prior attempt's history —
+// unlike a conversational @mention, which keeps full history for continuity
+// (TestDispatchDoesNotResetSessionForMention, below).
+func TestDispatchResetsSessionForLabelWorkRequest(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_implement"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:implement", "alice", false)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-posted: // the "On it — implementing…" ack comment
+	case <-time.After(2 * time.Second):
+		t.Fatal("no ack comment posted")
+	}
+	select {
+	case <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("implement label did not dispatch a run")
+	}
+	select {
+	case <-posted: // the run's fallback summary comment
+	case <-time.After(2 * time.Second):
+		t.Fatal("no summary comment posted")
+	}
+	if got := atomic.LoadInt32(&runner.resets); got != 1 {
+		t.Errorf("ResetSession called %d times for a label-driven work request; want 1", got)
+	}
+}
+
+func TestDispatchDoesNotResetSessionForMention(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack implement a feature")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back")
+	}
+	if got := atomic.LoadInt32(&runner.resets); got != 0 {
+		t.Errorf("ResetSession called %d times for a conversational @mention; want 0 (needs continuity)", got)
+	}
+}
+
+// TestDispatchCollapsesPriorPlanComment pins T4.1's plan half: when a NEW plan
+// is posted for an issue, any PRIOR quack plan comment (carrying the plan
+// delivery marker) is minimized via GraphQL before the new one lands, so the
+// thread shows the current plan, not a pile of dead attempts.
+func TestDispatchCollapsesPriorPlanComment(t *testing.T) {
+	posted := make(chan string, 1)
+	var minimizedID string
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[{"id":11,"node_id":"PLAN1","body":"## Old Plan\n\n<!-- quack:delivery:plan -->","user":{"login":"quack[bot]"}}]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql"):
+			data, _ := io.ReadAll(r.Body)
+			var b struct {
+				Variables struct {
+					ID string `json:"id"`
+				} `json:"variables"`
+			}
+			_ = json.Unmarshal(data, &b)
+			minimizedID = b.Variables.ID
+			fmt.Fprint(w, `{"data":{"minimizeComment":{"minimizedComment":{"isMinimized":true}}}}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## New Plan\n1. do the thing"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_plan"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:plan", "alice", false)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "New Plan") || !strings.Contains(body, "quack:delivery:plan") {
+			t.Errorf("posted plan comment = %q; want the new plan carrying its delivery marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no plan comment posted")
+	}
+	if minimizedID != "PLAN1" {
+		t.Errorf("minimizeComment subjectId = %q; want the prior plan comment's node_id PLAN1", minimizedID)
 	}
 }
 
