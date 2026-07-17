@@ -58,6 +58,14 @@ type Options struct {
 	// StartTimeout bounds initialize + session/new (not the prompt itself,
 	// which runs under the node's own context). 0 ⇒ 60s.
 	StartTimeout time.Duration
+	// PermissionJudge answers the agent's session/request_permission asks —
+	// the ACP twin of the native guard ladder's judge tier. Everything a
+	// round legitimately needs is already allowed in the generated config,
+	// so an ask is the exceptional case (a directory escape, a .env read,
+	// opencode's doom_loop detector); the judge decides it with context.
+	// nil ⇒ allow (single-tenant deploys with the judge stage off trust the
+	// container boundary, matching workspace.sandbox: none).
+	PermissionJudge func(ctx context.Context, toolName, title string, input map[string]any) (allow bool, reason string)
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess. It

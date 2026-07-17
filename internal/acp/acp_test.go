@@ -184,3 +184,34 @@ func TestNew_Validation(t *testing.T) {
 		t.Fatal("empty command must be rejected")
 	}
 }
+
+// Permission asks route to the safety judge; no judge ⇒ allow (container
+// boundary posture). The chosen option kind follows the verdict.
+func TestRequestPermission_JudgeRouting(t *testing.T) {
+	opts := []sdk.PermissionOption{
+		{Kind: sdk.PermissionOptionKindAllowOnce, OptionId: "yes"},
+		{Kind: sdk.PermissionOptionKindRejectOnce, OptionId: "no"},
+	}
+	kind := sdk.ToolKindRead
+	title := "grep /workspace/sibling"
+	req := sdk.RequestPermissionRequest{Options: opts, ToolCall: sdk.ToolCallUpdate{ToolCallId: "t1", Kind: &kind, Title: &title}}
+
+	pick := func(judge func(context.Context, string, string, map[string]any) (bool, string)) string {
+		h := &clientHandler{judge: judge}
+		resp, err := h.RequestPermission(context.Background(), req)
+		if err != nil || resp.Outcome.Selected == nil {
+			t.Fatalf("resp=%+v err=%v", resp, err)
+		}
+		return string(resp.Outcome.Selected.OptionId)
+	}
+
+	if got := pick(nil); got != "yes" {
+		t.Fatalf("nil judge must allow, picked %q", got)
+	}
+	if got := pick(func(context.Context, string, string, map[string]any) (bool, string) { return false, "escape" }); got != "no" {
+		t.Fatalf("denying judge must reject, picked %q", got)
+	}
+	if got := pick(func(context.Context, string, string, map[string]any) (bool, string) { return true, "fine" }); got != "yes" {
+		t.Fatalf("allowing judge must allow, picked %q", got)
+	}
+}

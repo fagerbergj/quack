@@ -62,7 +62,7 @@ func (a *Agent) start(cwd string) (*procHandle, error) {
 		return nil, fmt.Errorf("acp: start %q: %w", strings.Join(a.opts.Command, " "), err)
 	}
 	h.cmd = cmd
-	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h}, stdin, stdout)
+	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, stdin, stdout)
 	return h, nil
 }
 
@@ -90,7 +90,10 @@ func (h *procHandle) stderrTail() string {
 
 // clientHandler implements the ACP client side. quack advertises no fs/terminal
 // capabilities, so those methods only fire on a misbehaving agent — they refuse.
-type clientHandler struct{ h *procHandle }
+type clientHandler struct {
+	h     *procHandle
+	judge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
+}
 
 var _ sdk.Client = (*clientHandler)(nil)
 
@@ -103,18 +106,38 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 	return nil
 }
 
-// RequestPermission auto-answers: headless policy is configured on the agent
-// side ("permission": "allow" with git push denied — see serve's
-// opencodeConfigEnv), so asks should be rare; anything that still asks gets the
-// first allow option, or is rejected when none exists.
+// RequestPermission routes the ask to the safety judge (Options.
+// PermissionJudge) — the ACP twin of the native guard ladder's judge tier.
+// The generated permission config already allows everything a round
+// legitimately needs, so an ask is by construction the exceptional case
+// (a directory escape, a .env read, opencode's doom_loop detector); the
+// judge decides it with context. No judge configured ⇒ allow, matching the
+// single-tenant container-is-the-boundary posture.
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
-	for _, kind := range []sdk.PermissionOptionKind{sdk.PermissionOptionKindAllowOnce, sdk.PermissionOptionKindAllowAlways} {
-		for _, o := range p.Options {
-			if o.Kind == kind {
-				return sdk.RequestPermissionResponse{Outcome: sdk.RequestPermissionOutcome{
-					Selected: &sdk.RequestPermissionOutcomeSelected{OptionId: o.OptionId},
-				}}, nil
-			}
+	title := ""
+	if p.ToolCall.Title != nil {
+		title = *p.ToolCall.Title
+	}
+	toolName := "tool"
+	if p.ToolCall.Kind != nil {
+		toolName = string(*p.ToolCall.Kind)
+	}
+	allow, reason := true, "no safety judge configured; container boundary applies"
+	if c.judge != nil {
+		input, _ := p.ToolCall.RawInput.(map[string]any)
+		allow, reason = c.judge(ctx, toolName, title, input)
+	}
+	slog.Info("acp permission ask judged", "component", "acp",
+		"tool_call", string(p.ToolCall.ToolCallId), "title", title, "allow", allow, "reason", reason)
+	want := sdk.PermissionOptionKindAllowOnce
+	if !allow {
+		want = sdk.PermissionOptionKindRejectOnce
+	}
+	for _, o := range p.Options {
+		if o.Kind == want {
+			return sdk.RequestPermissionResponse{Outcome: sdk.RequestPermissionOutcome{
+				Selected: &sdk.RequestPermissionOutcomeSelected{OptionId: o.OptionId},
+			}}, nil
 		}
 	}
 	return sdk.RequestPermissionResponse{Outcome: sdk.RequestPermissionOutcome{

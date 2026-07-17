@@ -787,13 +787,36 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			for _, k := range slices.Sorted(maps.Keys(ac.Acp.Env)) {
 				env = append(env, k+"="+ac.Acp.Env[k])
 			}
+			// The ACP permission judge: the same safety-judge tier the native
+			// guard ladder used, answering the subprocess's exceptional asks
+			// (directory escapes, .env reads, doom_loop). nil when the judge
+			// stage is off ⇒ the handler allows (container is the boundary).
+			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
+			if safetyJudge != nil {
+				sj := safetyJudge
+				agentName := name
+				permJudge = func(ctx context.Context, toolName, title string, input map[string]any) (bool, string) {
+					allow, reason, err := sj(ctx,
+						fmt.Sprintf("the external %s agent asks permission for: %s", agentName, title),
+						"", toolName, input, "")
+					if err != nil {
+						// Fail OPEN, loudly: the ask classes are hygiene, not
+						// hard walls (bash is allowed regardless), and a dead
+						// judge must not wedge every round.
+						slog.Warn("acp permission judge unavailable; allowing", "component", "acp", "agent", agentName, "err", err)
+						return true, "judge unavailable"
+					}
+					return allow, reason
+				}
+			}
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
-				Command:  ac.Acp.Command,
-				Env:      env,
-				Home:     workspaceCaps.HomeDir,
-				Preamble: bundle.Prompt,
-				Jail:     jail,
-				UserID:   localUserID,
+				Command:         ac.Acp.Command,
+				Env:             env,
+				Home:            workspaceCaps.HomeDir,
+				Preamble:        bundle.Prompt,
+				Jail:            jail,
+				UserID:          localUserID,
+				PermissionJudge: permJudge,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "acp: %v", err)
@@ -1013,6 +1036,10 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 			"models":  m{ac.Model: modelCfg},
 		}},
 		"model": "quack/" + ac.Model,
+		// Everything else keeps opencode's defaults — external_directory,
+		// .env reads and doom_loop stay "ask", and the ACP handler routes
+		// each ask to the SAFETY JUDGE (acp.Options.PermissionJudge), the
+		// same judge tier the native guard ladder used.
 		"permission": m{
 			"bash": m{"git push": "deny", "git push *": "deny", "*": "allow"},
 		},
