@@ -76,7 +76,11 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// the plan node directly, so it stays plan/executor-agnostic.
 		cfg.Checks = node.Checks
 		cfg.Workdir = node.Workdir
-		cfg.NodeID = node.ID
+		// The workspace-directory scope for this node's fs/git tools and
+		// deterministic checks — node.ID for almost every node, but the ONE
+		// shared clone (workspace.SharedRepoScope) for a repo-touching node
+		// sharing a plan.Setup chain (see workspaceNodeID).
+		cfg.NodeID = workspaceNodeID(plan, node)
 		// The node's task text drives the deterministic delivery check
 		// (vetting/delivery.go): a task that says commit/push/open-a-PR cannot pass
 		// unless the workspace ledger shows the worker actually did it.
@@ -99,6 +103,12 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// against.
 		if plan.Setup != nil && (node.AgentName == implementerAgent || node.AgentName == reviewerAgent) {
 			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
+			if nonTerminalRepoChainNode(plan, node) {
+				// Delivery fires exactly once, at the chain's terminal node — the
+				// only point the shared branch is complete. A mid-chain node that
+				// stages a PR anyway must never have it posted.
+				cfg.Deliver = nil
+			}
 		}
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID, recordGate)
 	}
@@ -135,7 +145,16 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// the workflow session for confirm decisions even when they execute
 			// inside the A2A server's runner (whose own context session holds no
 			// gate events — see vetting.AdvisorTask).
-			task := vetting.AdvisorTask{Task: node.Task, Rubric: node.Rubric, NodeID: node.ID, InvocationID: ctx.InvocationID()}
+			task := vetting.AdvisorTask{
+				Task: node.Task, Rubric: node.Rubric, NodeID: node.ID,
+				// WorkspaceNodeID, not NodeID, is what the fs/git tools resolve their
+				// directory scope from (internal/tools scopeFromContext) — NodeID
+				// itself stays the REAL node id for cancel/steer lookups (controls
+				// are registered under it below), which must never be redirected to
+				// the shared scope.
+				WorkspaceNodeID: workspaceNodeID(plan, node),
+				InvocationID:    ctx.InvocationID(),
+			}
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}

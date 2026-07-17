@@ -64,7 +64,11 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 	if !ok {
 		return "", ""
 	}
-	return at.SessionID, workspace.NodeDir(at.NodeID)
+	wsID := at.WorkspaceNodeID
+	if wsID == "" {
+		wsID = at.NodeID // default: a node's own dir (unset outside a shared-clone chain)
+	}
+	return at.SessionID, workspace.NodeDir(wsID)
 }
 
 // jailPath turns a path the MODEL wrote (node-relative, or "/"-prefixed) into the

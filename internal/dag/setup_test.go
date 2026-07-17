@@ -84,9 +84,9 @@ func TestRunPlanSetup_NoQualifyingNodeIsNoOp(t *testing.T) {
 	}
 }
 
-// --- (a) setup provisions each qualifying node's OWN dir, before anything else ---
+// --- (a) setup provisions ONE shared dir, before anything else ---
 
-func TestRunPlanSetup_ProvisionsEachQualifyingNodeAtItsOwnDir(t *testing.T) {
+func TestRunPlanSetup_ProvisionsOneSharedDir(t *testing.T) {
 	var mu sync.Mutex
 	var calls []struct{ userID, chatID, dir string }
 	ex := &Executor{setupFn: func(_ context.Context, userID, chatID, dir string, s Setup) error {
@@ -109,14 +109,37 @@ func TestRunPlanSetup_ProvisionsEachQualifyingNodeAtItsOwnDir(t *testing.T) {
 		t.Fatalf("runPlanSetup: %v", err)
 	}
 	if len(calls) != 1 {
-		t.Fatalf("setupFn called %d times, want exactly 1 (only the implementer node qualifies)", len(calls))
+		t.Fatalf("setupFn called %d times, want exactly 1 (one shared clone for the whole plan)", len(calls))
 	}
 	c := calls[0]
 	if c.userID != "u1" || c.chatID != "chat1" {
 		t.Errorf("setupFn identity = %+v, want userID=u1 chatID=chat1", c)
 	}
-	if want := workspace.SetupCloneDir("impl"); c.dir != want {
-		t.Errorf("setupFn dir = %q, want %q (mirrors that node's own git_clone placement)", c.dir, want)
+	if want := workspace.SetupCloneDir(workspace.SharedRepoScope); c.dir != want {
+		t.Errorf("setupFn dir = %q, want %q (the one shared clone dir)", c.dir, want)
+	}
+}
+
+// A chain of TWO qualifying nodes still gets exactly ONE clone — the whole
+// point of the shared-branch design (#310).
+func TestRunPlanSetup_ChainOfTwoStillProvisionsOnlyOnce(t *testing.T) {
+	var calls int32Counter
+	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error {
+		calls.inc()
+		return nil
+	}}
+	plan := Plan{
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{
+			{ID: "impl1", AgentName: implementerAgent},
+			{ID: "impl2", AgentName: implementerAgent, DependsOn: []string{"impl1"}},
+		},
+	}
+	if err := ex.runPlanSetup(context.Background(), "u1", "chat1", plan); err != nil {
+		t.Fatalf("runPlanSetup: %v", err)
+	}
+	if got := calls.get(); got != 1 {
+		t.Fatalf("setupFn called %d times, want exactly 1 for a 2-node chain", got)
 	}
 }
 

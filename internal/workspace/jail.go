@@ -138,6 +138,14 @@ func SetupCloneDir(nodeID string) string {
 	return NodeDir(nodeID)
 }
 
+// SharedRepoScope is the reserved "node" identifier a plan's repo-touching
+// nodes (code-implementer/code-reviewer) resolve into when they share ONE
+// declared Setup clone+branch across a depends_on chain, instead of each
+// getting its own dir under SetupCloneDir(node.ID) — see dag's
+// runPlanSetup/validateRepoChain. Fixed and quack-authored, never a planner-
+// chosen node ID, so it can't collide with one.
+const SharedRepoScope = "quack-shared-repo"
+
 // EnsureDir resolves rel under the (userID, chatID) scope and creates it,
 // returning the real path. Used to materialise a node's working directory at
 // node entry, so the worker's very first `list_dir .` sees an (empty) dir

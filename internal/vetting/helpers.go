@@ -89,7 +89,11 @@ type Config struct {
 	// security boundary every check must prefix-match, whether the planner wrote
 	// it (dag.validateChecks) or the gate derived it. Empty ⇒ checks disabled.
 	CheckCommands []string
-	// NodeID identifies the node in the gate's check logs.
+	// NodeID is the workspace-directory scope this node's checks/clone
+	// resolution use (workspace.NodeDir(NodeID), workspace.SetupCloneDir(NodeID))
+	// and its label in the gate's check logs — node.ID for almost every node,
+	// but the ONE shared clone dir for a repo-touching node sharing a
+	// plan.Setup chain (dag.buildGateNodes stamps it via dag.workspaceNodeID).
 	NodeID string
 	// Task is the node's task text, stamped per-node by dag.buildGateNodes. Read
 	// by the deterministic delivery check (delivery.go): a task that demands the

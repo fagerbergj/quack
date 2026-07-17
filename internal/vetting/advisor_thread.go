@@ -78,11 +78,19 @@ func ParseAdvisorThread(text string) (token string, ok bool) {
 type AdvisorTask struct {
 	Task   string
 	Rubric string
-	// NodeID is the plan node this thread belongs to — the SAME identity channel
-	// the chat scope travels on, reused (not duplicated) so the workspace tools
-	// can default a node's working directory to its own dir under the chat scope
-	// (internal/tools scopeFromContext → workspace.NodeDir).
+	// NodeID is the plan node's REAL identity — the key node-level bookkeeping
+	// (cancel/steer controls, HITL interrupt IDs) is registered under, read
+	// back by internal/tools' cancel/steer guards (cancelguard.go,
+	// steerguard.go). Never redirect this to a shared workspace scope: doing
+	// so would let cancelling one chain node accidentally match another.
 	NodeID string
+	// WorkspaceNodeID is the workspace-relative "node" a call's fs/git tools
+	// default their directory scope to (internal/tools scopeFromContext →
+	// workspace.NodeDir) — node.ID for almost every node, but shared across a
+	// plan.Setup chain's repo-touching nodes (see dag.workspaceNodeID). Empty
+	// falls back to NodeID (every caller but dag's chain-aware one leaves it
+	// unset).
+	WorkspaceNodeID string
 	// Workflow session coordinates + invocation, for guard-ladder scans.
 	AppName      string
 	UserID       string
