@@ -344,6 +344,9 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	if _, err := topoLayers(*plan); err != nil {
 		return nil, err
 	}
+	if err := validateRepoChain(*plan); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 

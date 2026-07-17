@@ -23,10 +23,9 @@ func (e *Executor) SetSetup(fn SetupFunc) { e.setupFn = fn }
 
 // setupQualifyingNodes returns the plan's nodes whose agent can actually use a
 // provisioned clone — the delivery-capable agents (implementer, reviewer).
-// Setup is a single-clone pre-step (multi-node shared-clone fan-out is
-// deferred — see the design doc's non-goals), so every qualifying node gets
-// its OWN clone+branch at its own node dir, exactly mirroring that node's own
-// git_clone placement.
+// runPlanSetup provisions ONE shared clone+branch for the whole set (see
+// workspace.SharedRepoScope) — validateRepoChain (planner.go's assemble)
+// guarantees these nodes form a single depends_on chain, so sharing is safe.
 func setupQualifyingNodes(plan Plan) []Node {
 	var out []Node
 	for _, n := range plan.Nodes {
@@ -38,18 +37,19 @@ func setupQualifyingNodes(plan Plan) []Node {
 }
 
 // runPlanSetup executes the plan's declared PRE-step exactly once, before any
-// node runs: clone Setup.Repo at Setup.BaseRef into each repo-touching node's
-// own workspace, then checkout -b Setup.WorkBranch. ANY failure — an
-// incomplete declaration, a missing setup executor, or the clone/checkout
-// itself — aborts the run (a failed run, never a silent no-delivery). A plan
-// with no qualifying node is a no-op (nothing will read the clone); a plan
-// with plan.Setup == nil is untouched — today's worker-clones behavior.
+// node runs: clone Setup.Repo at Setup.BaseRef, then checkout -b
+// Setup.WorkBranch, into ONE shared workspace location (workspace.
+// SetupCloneDir(workspace.SharedRepoScope)) every qualifying node resolves
+// into — see dag.workspaceNodeID. ANY failure — an incomplete declaration, a
+// missing setup executor, or the clone/checkout itself — aborts the run (a
+// failed run, never a silent no-delivery). A plan with no qualifying node is
+// a no-op (nothing will read the clone); a plan with plan.Setup == nil is
+// untouched — today's worker-clones behavior.
 func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan Plan) error {
 	if plan.Setup == nil {
 		return nil
 	}
-	nodes := setupQualifyingNodes(plan)
-	if len(nodes) == 0 {
+	if len(setupQualifyingNodes(plan)) == 0 {
 		return nil
 	}
 	s := *plan.Setup
@@ -60,11 +60,9 @@ func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan
 	if e.setupFn == nil {
 		return fmt.Errorf("dag: plan declares setup but no setup executor is configured")
 	}
-	for _, n := range nodes {
-		dir := workspace.SetupCloneDir(n.ID)
-		if err := e.setupFn(ctx, userID, chatID, dir, s); err != nil {
-			return fmt.Errorf("dag: setup: node %q: %w", n.ID, err)
-		}
+	dir := workspace.SetupCloneDir(workspace.SharedRepoScope)
+	if err := e.setupFn(ctx, userID, chatID, dir, s); err != nil {
+		return fmt.Errorf("dag: setup: %w", err)
 	}
 	return nil
 }

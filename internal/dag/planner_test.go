@@ -453,6 +453,55 @@ func TestBuildAcceptsEachValidDeliveryKind(t *testing.T) {
 	}
 }
 
+// #310: a plan that declares Setup (one shared clone+branch) but whose
+// repo-touching nodes could run CONCURRENTLY (no depends_on between them)
+// must be rejected at build — they'd corrupt the one shared working tree.
+func TestBuildRejectsConcurrentRepoTouchingNodesWithSetup(t *testing.T) {
+	p := testPlanner()
+	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
+		{ID: "impl2", Agent: "code-implementer", Task: "part two"},
+	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two independent things", nil)
+	if err == nil {
+		t.Fatal("Build: expected an error — two repo-touching nodes with setup declared but no depends_on chain")
+	}
+	if !strings.Contains(err.Error(), "impl1") || !strings.Contains(err.Error(), "impl2") {
+		t.Errorf("Build error = %q, want it to name both offending nodes", err)
+	}
+}
+
+// A depends_on CHAIN of repo-touching nodes is exactly what setup's
+// shared-branch design supports — Build must accept it.
+func TestBuildAllowsChainedRepoTouchingNodesWithSetup(t *testing.T) {
+	p := testPlanner()
+	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
+		{ID: "impl2", Agent: "code-implementer", Task: "part two", DependsOn: []string{"impl1"}},
+	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two sequential things", nil)
+	if err != nil {
+		t.Fatalf("Build: a depends_on chain of repo-touching nodes must be accepted: %v", err)
+	}
+	if len(plan.Nodes) != 2 {
+		t.Errorf("nodes = %d, want exactly 2 (no synthesizer needed — one terminal already)", len(plan.Nodes))
+	}
+}
+
+// Without a declared Setup, repo-touching nodes each get their OWN
+// independent clone (unchanged pre-#310 behavior) — concurrent ones share
+// nothing, so the chain requirement does not apply.
+func TestBuildAllowsConcurrentRepoTouchingNodesWithoutSetup(t *testing.T) {
+	p := testPlanner()
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
+		{ID: "impl2", Agent: "code-implementer", Task: "part two"},
+	}, nil, nil, nil, "do two independent things", nil)
+	if err != nil {
+		t.Fatalf("Build: concurrent repo-touching nodes without setup must be accepted: %v", err)
+	}
+}
+
 // The plan judge must see the declared setup/delivery (or their absence) so
 // it can validate them against the request type — planSummary is the only
 // channel it has into the plan.

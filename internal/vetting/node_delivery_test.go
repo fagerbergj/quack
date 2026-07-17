@@ -123,8 +123,13 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 
 	done := make(chan DeliveryContext, 1)
 	cfg := Config{
-		Deliver:         func(_ context.Context, dc DeliveryContext) error { done <- dc; return nil },
-		Setup:           &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
+		Deliver: func(_ context.Context, dc DeliveryContext) error { done <- dc; return nil },
+		Setup:   &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
+		// The workspace-directory scope commitDeliveryOnPass resolves
+		// SetupCloneDir against — dag.buildGateNodes stamps this (node.ID
+		// normally); the caller below passes the SAME "impl" as the nodeID
+		// argument, matching production wiring for a single, unshared node.
+		NodeID:          "impl",
 		Workspace:       j,
 		WorkspaceUserID: "u1",
 		ChatID:          "chat1",

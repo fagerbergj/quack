@@ -644,7 +644,11 @@ func commitDeliveryOnPass(cfg Config, nodeID string, act workerActivity) {
 		dc.Branch = cfg.Setup.WorkBranch
 		dc.CloneURL = cfg.Setup.Repo
 		if cfg.Workspace != nil {
-			if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(nodeID)); err == nil {
+			// cfg.NodeID, not the nodeID argument: it's the workspace-directory
+			// scope (dag.buildGateNodes stamps it — node.ID normally, or the ONE
+			// shared clone dir for a chained repo-touching node — see
+			// dag.workspaceNodeID), which is where setup actually cloned to.
+			if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID)); err == nil {
 				dc.CloneDir = abs
 			}
 		}

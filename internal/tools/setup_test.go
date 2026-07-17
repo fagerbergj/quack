@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // setupCloneAndBranch is dag.Plan's declared Setup PRE-step, past URL
@@ -66,5 +68,51 @@ func TestSetupCloneRejectsNonHTTPS(t *testing.T) {
 	b := newTestGitBinding(t)
 	if _, err := SetupClone(context.Background(), b.jail, b.userID, "", "repo", "file:///tmp/repo", "main", "quack/work", b.caps, nil, nil); err == nil {
 		t.Error("expected SetupClone to reject a non-https repo URL")
+	}
+}
+
+// A worker addressing a setup-provisioned clone with a PLAIN relative path
+// (no "repo/" prefix, no absolute path) must resolve — the whole point of
+// workspace.SetupCloneDir landing the clone AT the node's own root rather
+// than a subdirectory of it. Before this, a worker had to either guess the
+// "repo/" prefix or `cd` first; observed in production, it did neither and
+// fell back to shelling out via run_command with an absolute path (`pwd`),
+// escaping read_file/edit_file's windowing and loop guard.
+func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJail: %v", err)
+	}
+	gb := gitBinding{userID: "u1", chatID: "c1", jail: j, caps: workspace.DefaultCaps()}
+	dir := workspace.SetupCloneDir("impl")
+	if _, err := setupCloneAndBranch(context.Background(), gb, dir, "file://"+bare, "main", "quack/work"); err != nil {
+		t.Fatalf("setupCloneAndBranch: %v", err)
+	}
+
+	ctx := newGatedCtx(t, "plan-1", "impl", "c1")
+
+	fb := fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
+	res, err := fb.withCwd(ctx).readFile(readFileArgs{Path: "README.md"})
+	if err != nil {
+		t.Fatalf("read_file(\"README.md\") with no prefix: %v — want it to resolve directly into the setup clone", err)
+	}
+	if res.Content != "hello\n" {
+		t.Errorf("Content = %q, want %q", res.Content, "hello\n")
+	}
+
+	// edit_file goes through the SAME resolve() as read_file — prove it
+	// independently rather than assuming the shared code path.
+	if _, err := fb.withCwd(ctx).editFile(editFileArgs{Path: "README.md", Old: "hello\n", New: "hello, edited\n"}); err != nil {
+		t.Fatalf("edit_file(\"README.md\") with no prefix: %v — want it to resolve directly into the setup clone", err)
+	}
+	res, err = fb.withCwd(ctx).readFile(readFileArgs{Path: "README.md"})
+	if err != nil {
+		t.Fatalf("read_file after edit: %v", err)
+	}
+	if res.Content != "hello, edited\n" {
+		t.Errorf("Content after edit = %q, want %q", res.Content, "hello, edited\n")
 	}
 }
