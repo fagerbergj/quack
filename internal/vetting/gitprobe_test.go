@@ -78,7 +78,10 @@ func TestAugmentFromRepo_ReadsCommitsOffDisk(t *testing.T) {
 	if !ok {
 		t.Fatal("a PR-demanding task with commits must synthesize a staged PR")
 	}
-	if pr.Title != "add x package" || pr.Branch != "quack/work" {
+	// Kind must be the delivery discriminator github's deliverOne switches on
+	// ("pull_request"), NOT the staging-slot key — a live delivery failed on
+	// kind "pr" while the judge had already passed the node.
+	if pr.Kind != "pull_request" || pr.Title != "add x package" || pr.Branch != "quack/work" {
 		t.Fatalf("staged PR: %+v", pr)
 	}
 }

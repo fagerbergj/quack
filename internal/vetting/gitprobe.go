@@ -71,8 +71,11 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 		if _, staged := act.stagedDelivery["pr"]; !staged {
 			title := gitLine(dir, caps, "log", "-1", "--format=%s")
 			body := strings.Join(gitLines(dir, caps, "log", "--reverse", "--format=- %s", base+".."+head), "\n")
+			// Map KEY "pr" (the staging slot hasStagedPR checks); Kind is the
+			// DELIVERY discriminator deliverOne switches on — "pull_request",
+			// never the slot name (a live delivery failed on kind "pr").
 			act.stagedDelivery["pr"] = StagedDelivery{
-				Kind:   "pr",
+				Kind:   "pull_request",
 				Branch: act.currentBranch,
 				Title:  title,
 				// ponytail: commit subjects as the body — synthesize a proper PR
