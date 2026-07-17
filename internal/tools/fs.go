@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -326,17 +327,20 @@ func newEditFile(d Deps) (tool.Tool, error) {
 		functiontool.Config{
 			Name: "edit_file",
 			Description: "Edit a text file by exact string replacement. `old` must match the file's content " +
-				"EXACTLY, including whitespace and indentation — read the file first if unsure. Errors loudly " +
-				"(rather than silently doing the wrong thing) if `old` is not found, or if it matches more than " +
-				"once and `replace_all` isn't set: make `old` more specific to target one occurrence, or pass " +
-				"`replace_all: true` to replace every occurrence.",
+				"EXACTLY, including whitespace and indentation — read the file first if unsure (leading/trailing " +
+				"whitespace on `old` is tolerated as a fallback; interior whitespace is not). Errors loudly " +
+				"(rather than silently doing the wrong thing) if `old` is not found — the error reports the " +
+				"nearest matching line to help you correct it — or if it matches more than once and " +
+				"`replace_all` isn't set (the error lists every match's line number): make `old` more specific " +
+				"to target one occurrence, or pass `replace_all: true` to replace every occurrence.",
 		},
 		func(ctx agent.Context, a editFileArgs) (editFileResult, error) { return b.withCwd(ctx).editFile(a) },
 	)
 }
 
-// editFile is edit_file's logic: exact substring match/replace with loud
-// no-match and ambiguous-match errors (see the tool description).
+// editFile is edit_file's logic: exact substring match/replace with an
+// outer-whitespace-tolerant retry, a near-miss hint on no match, and
+// occurrence line numbers on an ambiguous match (see the tool description).
 func (b fsBinding) editFile(a editFileArgs) (editFileResult, error) {
 	if a.Old == "" {
 		return editFileResult{}, fmt.Errorf("edit_file: old must not be empty")
@@ -354,19 +358,30 @@ func (b fsBinding) editFile(a editFileArgs) (editFileResult, error) {
 		return editFileResult{}, fmt.Errorf("edit_file: %w", err)
 	}
 	content := string(data)
-	count := strings.Count(content, a.Old)
+
+	old, newText := a.Old, a.New
+	count := strings.Count(content, old)
 	if count == 0 {
-		return editFileResult{}, fmt.Errorf("edit_file: no match for the given text in %q", a.Path)
+		// A model's remembered `old` often carries stray leading/trailing
+		// whitespace; tolerate that ONE way (mirrors OpenHands) — never
+		// interior/per-line normalization, and only when it disambiguates.
+		if trimmed := strings.TrimSpace(a.Old); trimmed != a.Old && trimmed != "" && strings.Count(content, trimmed) == 1 {
+			old, newText = trimmed, strings.TrimSpace(a.New)
+			count = 1
+		}
+	}
+	if count == 0 {
+		return editFileResult{}, fmt.Errorf("edit_file: %s", nearestLineHint(content, a.Path, a.Old))
 	}
 	if count > 1 && !a.ReplaceAll {
 		return editFileResult{}, fmt.Errorf(
-			"edit_file: %d matches for the given text in %q; make `old` more specific, or pass replace_all: true",
-			count, a.Path)
+			"edit_file: %d matches for the given text in %q (lines %s); make `old` more specific, or pass replace_all: true",
+			count, a.Path, formatLineList(matchLineNumbers(content, old)))
 	}
 	replacements := 1
-	newContent := strings.Replace(content, a.Old, a.New, 1)
+	newContent := strings.Replace(content, old, newText, 1)
 	if a.ReplaceAll {
-		newContent = strings.ReplaceAll(content, a.Old, a.New)
+		newContent = strings.ReplaceAll(content, old, newText)
 		replacements = count
 	}
 	if err := os.WriteFile(real, []byte(newContent), info.Mode()); err != nil {
@@ -375,6 +390,91 @@ func (b fsBinding) editFile(a editFileArgs) (editFileResult, error) {
 	slog.Info("workspace mutation", "component", "tools", "tool", "edit_file",
 		"user", b.userID, "path", a.Path, "replacements", replacements)
 	return editFileResult{Replacements: replacements}, nil
+}
+
+// matchLineNumbers returns the 1-based line number where each (non-overlapping,
+// left-to-right — same scan order as strings.Count/Replace) occurrence of old
+// starts in content.
+func matchLineNumbers(content, old string) []int {
+	var lines []int
+	for start := 0; ; {
+		idx := strings.Index(content[start:], old)
+		if idx < 0 {
+			return lines
+		}
+		abs := start + idx
+		lines = append(lines, strings.Count(content[:abs], "\n")+1)
+		start = abs + len(old)
+	}
+}
+
+// formatLineList renders line numbers for a multi-match error, capped so a
+// file with hundreds of hits doesn't flood the error with digits.
+func formatLineList(lines []int) string {
+	const capN = 10
+	shown, more := lines, 0
+	if len(lines) > capN {
+		shown, more = lines[:capN], len(lines)-capN
+	}
+	parts := make([]string, len(shown))
+	for i, n := range shown {
+		parts[i] = strconv.Itoa(n)
+	}
+	s := strings.Join(parts, ", ")
+	if more > 0 {
+		s += fmt.Sprintf(", and %d more", more)
+	}
+	return s
+}
+
+// nearestLineHint builds edit_file's no-match error (Goose's "did you mean"
+// recipe): anchored on old's first non-blank trimmed line, it scans content
+// for the closest line — exact trimmed equality preferred, substring
+// containment either direction otherwise — and returns that line with a
+// handful of surrounding context, numbered. With no anchor or no near-miss it
+// falls back to a short, bounded pointer to grep: never a file dump.
+func nearestLineHint(content, path, old string) string {
+	lines := strings.Split(content, "\n")
+	noHint := fmt.Sprintf("no match for the given text in %q (%d lines); grep for a unique nearby string to "+
+		"locate it, then edit.", path, len(lines))
+
+	var anchor string
+	for _, ln := range strings.Split(old, "\n") {
+		if t := strings.TrimSpace(ln); t != "" {
+			anchor = t
+			break
+		}
+	}
+	if anchor == "" {
+		return noHint
+	}
+
+	best := -1
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			continue
+		}
+		if t == anchor {
+			best = i
+			break // exact trimmed equality wins outright
+		}
+		if best < 0 && (strings.Contains(t, anchor) || strings.Contains(anchor, t)) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return noHint
+	}
+
+	const ctx = 3
+	start, end := max(0, best-ctx), min(len(lines)-1, best+ctx)
+	var b strings.Builder
+	fmt.Fprintf(&b, "no match for the given text in %q. Did you mean (around line %d):\n", path, best+1)
+	for i := start; i <= end; i++ {
+		fmt.Fprintf(&b, "%6d\t%s\n", i+1, lines[i])
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // ---------------------------------------------------------------------------
