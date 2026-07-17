@@ -844,8 +844,13 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 	fmt.Fprintf(&b, "You are handling a request from GitHub user @%s, who mentioned you on %s/%s %s #%d.\n\n",
 		p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
 	fmt.Fprintf(&b, "Their request:\n%s\n\n", task)
-	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q); clone it from %s using git_clone (authentication is handled for you). ",
-		owner, repo, base, p.Repository.CloneURL)
+	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q, clone URL %s). Declare it in your plan's `setup` "+
+		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) — the harness "+
+		"clones it and checks out that branch for you, in each repo-touching node's own workspace, BEFORE any "+
+		"node runs. That node's task must say the repo is ALREADY cloned there on that branch: it must NOT call "+
+		"git_clone itself, and only commits locally — delivery pushes the branch and opens the PR after the trust "+
+		"gate passes. ",
+		owner, repo, base, p.Repository.CloneURL, base)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d).\n\n", p.Issue.Number, p.Issue.Number)
 		if t := strings.TrimSpace(rc.meta.Title); t != "" {
@@ -862,9 +867,9 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		}
 		b.WriteString("\n")
 		if rc.meta.HeadRef != "" {
-			// git_clone gives a shallow BASE branch, where `git diff base...HEAD` is
-			// EMPTY. The reviewer MUST check out the head branch to see the changes.
-			fmt.Fprintf(&b, "The PR's changes are on branch `%s` (head commit `%s`), based on `%s`. A git_clone gives only the base branch, so `git diff %s...HEAD` is EMPTY until you check out the head: run git_checkout `%s` FIRST (fetch/unshallow if needed), then `git_diff %s...%s` is exactly this PR's diff. Do this before reviewing — the base branch alone shows no changes. ",
+			// Your clone only holds the BASE branch (shallow), where
+			// `git diff base...HEAD` is EMPTY. Check out the head branch to see the changes.
+			fmt.Fprintf(&b, "The PR's changes are on branch `%s` (head commit `%s`), based on `%s`. Your clone only has the base branch, so `git diff %s...HEAD` is EMPTY until you check out the head: run git_checkout `%s` FIRST (fetch/unshallow if needed), then `git_diff %s...%s` is exactly this PR's diff. Do this before reviewing — the base branch alone shows no changes. ",
 				rc.meta.HeadRef, headSHA, diffBase, diffBase, rc.meta.HeadRef, diffBase, rc.meta.HeadRef)
 		}
 		if rc.prevReviewSHA != "" {
@@ -875,7 +880,7 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		if reviewOnly {
 			lead = "Review it: read its changes"
 		}
-		fmt.Fprintf(&b, "%s (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish by calling stage_review with a summary body and an event verdict (approve / request_changes / comment) — you do not submit the review yourself; it is posted for you once your work passes review. Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the summary body. ",
+		fmt.Fprintf(&b, "%s (git_diff) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish by calling stage_review with a summary body and an event verdict (approve / request_changes / comment) — you do not submit the review yourself; it is posted for you once your work passes review. Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the summary body. ",
 			lead, owner, repo, p.Issue.Number)
 	}
 	if reviewOnly {
@@ -894,7 +899,7 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 			owner, repo, p.Issue.Number)
 		return b.String()
 	}
-	b.WriteString("If the task needs code changes, create a branch, commit your work locally, then call stage_pr with a title and body — you do not push or open the pull request yourself ")
+	b.WriteString("If the task needs code changes, commit your work locally on the branch already checked out for you, then call stage_pr with a title and body — you do not push or open the pull request yourself ")
 	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); it is opened for you once your work passes review. ", owner, repo, base)
 	fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
 		owner, repo, p.Issue.Number)

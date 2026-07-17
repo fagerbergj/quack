@@ -17,6 +17,8 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // The staged-delivery spine: a worker STAGES a pull request
@@ -95,6 +97,54 @@ func TestCommitDeliveryOnPassCarriesCloneCoordinates(t *testing.T) {
 		}
 		if dc.CloneURL != "https://github.com/fagerbergj/games" || dc.Branch != "add-flappy-bird" {
 			t.Fatalf("DeliveryContext = %+v, want the ledger's clone URL and branch", dc)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired")
+	}
+}
+
+// A setup-provisioned node (cfg.Setup set) must deliver on the plan's declared
+// work_branch — never the worker's own git-tracking ledger, which a
+// setup-provisioned worker is told not to touch (internal/github/webhook.go).
+// This is the regression #308 fixes: before, a setup-provisioned worker never
+// called git_checkout/git_clone itself, so act.currentBranch/clonedDirs stayed
+// empty and delivery failed with "no branch to open it from".
+func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The clone setup would have made, at the SAME path workspace.SetupCloneDir
+	// computes — so CloneDir resolves to a real, existing directory.
+	cloneDir, err := j.EnsureDir("u1", "chat1", workspace.SetupCloneDir("impl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan DeliveryContext, 1)
+	cfg := Config{
+		Deliver:         func(_ context.Context, dc DeliveryContext) error { done <- dc; return nil },
+		Setup:           &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
+		Workspace:       j,
+		WorkspaceUserID: "u1",
+		ChatID:          "chat1",
+	}
+	// The worker never cloned or checked out anything itself (setup-provisioned
+	// runs are told not to) — the ledger fields commitDeliveryOnPass would
+	// otherwise fall back to are empty on purpose.
+	commitDeliveryOnPass(cfg, "impl", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "Add flappy bird"}},
+	})
+	select {
+	case dc := <-done:
+		if dc.Branch != "quack/work" {
+			t.Errorf("Branch = %q, want the plan's declared work_branch", dc.Branch)
+		}
+		if dc.CloneURL != "https://github.com/fagerbergj/games" {
+			t.Errorf("CloneURL = %q, want the plan's declared repo", dc.CloneURL)
+		}
+		if dc.CloneDir != cloneDir {
+			t.Errorf("CloneDir = %q, want %q (workspace.SetupCloneDir's resolved path)", dc.CloneDir, cloneDir)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Deliver never fired")

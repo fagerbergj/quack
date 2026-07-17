@@ -30,6 +30,7 @@ type Executor struct {
 	mediaAgents map[string]bool                       // agents accepting image/audio parts
 	controls    *runControls                          // live per-node cancel/steer handles (M5b)
 	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
+	setupFn     SetupFunc                             // plan.Setup executor (see SetSetup); nil = a declared Setup hard-errors
 
 	// gateResults holds each node's trust-gate outcome in memory, keyed
 	// "<chatID>\x00<nodeID>". The gated node also writes it to session state, but

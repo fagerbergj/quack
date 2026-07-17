@@ -17,7 +17,7 @@ type planArgs struct {
 	Nodes []dag.RawNode `json:"nodes"`
 	// Setup is the plan's PRE-step, executed before any node runs — see the
 	// tool description. Omit only for a plan with no GitHub repo involved.
-	Setup *dag.Setup `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {base_ref, work_branch}"`
+	Setup *dag.Setup `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {repo, base_ref, work_branch}"`
 	// Delivery is the plan's POST-step, executed once after the trust gate
 	// passes — see the tool description.
 	Delivery *dag.Delivery `json:"delivery,omitempty" jsonschema:"how the gated result reaches GitHub, run after the trust gate: {kind: pull_request|review|comment}"`
@@ -56,8 +56,10 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				checksDesc + " " +
 				"Every plan MUST declare setup (the working clone + branch) and delivery (how the gated result " +
 				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate — you declare " +
-				"intent, you never run git, push, or open a PR yourself. Pass `setup: {base_ref, work_branch}` " +
-				"naming the branch the work happens on, and `delivery: {kind}` — exactly one of \"pull_request\" " +
+				"intent, you never run git, push, or open a PR yourself. Pass `setup: {repo, base_ref, work_branch}` " +
+				"naming the clone URL (the same one a git_clone would use), the base ref, and the branch the work " +
+				"happens on — the harness clones and checks it out for you before any node runs; a repo-touching " +
+				"node must NOT git_clone itself. And `delivery: {kind}` — exactly one of \"pull_request\" " +
 				"(implement-and-deliver requests), \"review\" (PR/diff review requests), or \"comment\" (plan-only/" +
 				"research requests that post a summary back); the implementer authors the PR title+body itself " +
 				"via `stage_pr` — you never write PR prose. Omit both only for a plan with no GitHub repo involved. " +
@@ -123,7 +125,7 @@ func summarizePlan(p *dag.Plan) string {
 		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
 	}
 	if p.Setup != nil {
-		fmt.Fprintf(&sb, "\nsetup: base_ref=%q work_branch=%q", p.Setup.BaseRef, p.Setup.WorkBranch)
+		fmt.Fprintf(&sb, "\nsetup: repo=%q base_ref=%q work_branch=%q", p.Setup.Repo, p.Setup.BaseRef, p.Setup.WorkBranch)
 	}
 	if p.Delivery != nil {
 		fmt.Fprintf(&sb, "\ndelivery: kind=%q", p.Delivery.Kind)

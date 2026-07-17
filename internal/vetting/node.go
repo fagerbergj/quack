@@ -636,13 +636,27 @@ func commitDeliveryOnPass(cfg Config, nodeID string, act workerActivity) {
 	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
 		return
 	}
-	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), Branch: act.currentBranch, IssueNumber: act.prNumber}
-	if len(act.clonedRepos) > 0 {
-		dc.CloneURL = act.clonedRepos[0]
-	}
-	if cfg.Workspace != nil && len(act.clonedDirs) > 0 {
-		if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, act.clonedDirs[0]); err == nil {
-			dc.CloneDir = abs
+	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber}
+	if cfg.Setup != nil {
+		// Setup guaranteed this branch exists (or the run errored before any node
+		// ran) — deliver on it, never the worker's own git-tracking ledger, which
+		// a setup-provisioned worker is told not to touch (internal/github/webhook.go).
+		dc.Branch = cfg.Setup.WorkBranch
+		dc.CloneURL = cfg.Setup.Repo
+		if cfg.Workspace != nil {
+			if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(nodeID)); err == nil {
+				dc.CloneDir = abs
+			}
+		}
+	} else {
+		dc.Branch = act.currentBranch
+		if len(act.clonedRepos) > 0 {
+			dc.CloneURL = act.clonedRepos[0]
+		}
+		if cfg.Workspace != nil && len(act.clonedDirs) > 0 {
+			if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, act.clonedDirs[0]); err == nil {
+				dc.CloneDir = abs
+			}
 		}
 	}
 	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

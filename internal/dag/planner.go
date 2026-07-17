@@ -174,7 +174,7 @@ func planSummary(p *Plan) string {
 		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
 	}
 	if p.Setup != nil {
-		fmt.Fprintf(&sb, "\nsetup: base_ref=%q work_branch=%q", p.Setup.BaseRef, p.Setup.WorkBranch)
+		fmt.Fprintf(&sb, "\nsetup: repo=%q base_ref=%q work_branch=%q", p.Setup.Repo, p.Setup.BaseRef, p.Setup.WorkBranch)
 	} else {
 		sb.WriteString("\nsetup: (none declared)")
 	}
