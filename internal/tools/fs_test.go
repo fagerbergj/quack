@@ -226,6 +226,78 @@ func TestEditFileReplaceAll(t *testing.T) {
 	}
 }
 
+func TestEditFileNoMatchReportsNearMiss(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	writeUserFile(t, b, "f.go",
+		"package main\n\nfunc handleIssues() {\n\tswitch action {\n\tcase \"open\":\n\t\treturn nil\n\t}\n}\n")
+	_, err := b.editFile(editFileArgs{
+		Path: "f.go",
+		Old:  "switch action {\n\tcase \"closed\":\n\t\treturn nil\n\t}",
+		New:  "x",
+	})
+	if err == nil {
+		t.Fatal("expected a no-match error")
+	}
+	if !strings.Contains(err.Error(), "line 4") {
+		t.Errorf("error = %q, want it to name line 4 (the near-miss)", err.Error())
+	}
+	if !strings.Contains(err.Error(), `switch action {`) {
+		t.Errorf("error = %q, want it to quote the near-miss line", err.Error())
+	}
+}
+
+func TestEditFileNoMatchNoNearMissStaysBounded(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	writeUserFile(t, b, "f.go", "package main\n\nfunc f() {}\n")
+	_, err := b.editFile(editFileArgs{Path: "f.go", Old: "totally unrelated text", New: "x"})
+	if err == nil {
+		t.Fatal("expected a no-match error")
+	}
+	if strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("error = %q, want the bounded fallback (no near-miss exists)", err.Error())
+	}
+	if !strings.Contains(err.Error(), "grep") {
+		t.Errorf("error = %q, want it to point at grep", err.Error())
+	}
+}
+
+func TestEditFileOuterWhitespaceRetry(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	writeUserFile(t, b, "f.go", "func f() {\n    return 1\n}\n")
+	res, err := b.editFile(editFileArgs{
+		Path: "f.go",
+		Old:  "  return 1  \n", // wrong indentation + stray outer whitespace
+		New:  "  return 2  \n",
+	})
+	if err != nil {
+		t.Fatalf("edit_file: %v", err)
+	}
+	if res.Replacements != 1 {
+		t.Errorf("Replacements = %d, want 1", res.Replacements)
+	}
+	real, _ := b.jail.Resolve(b.userID, "", "f.go")
+	got, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "func f() {\n    return 2\n}\n"
+	if string(got) != want {
+		t.Errorf("file content = %q, want %q", got, want)
+	}
+}
+
+func TestEditFileMultiMatchListsLineNumbers(t *testing.T) {
+	b := newTestBinding(t, "u1")
+	writeUserFile(t, b, "f.go", "foo\nbar\nfoo\nbaz\nfoo\n")
+	_, err := b.editFile(editFileArgs{Path: "f.go", Old: "foo", New: "qux"})
+	if err == nil {
+		t.Fatal("expected a multi-match error without replace_all")
+	}
+	if !strings.Contains(err.Error(), "(lines 1, 3, 5)") {
+		t.Errorf("error = %q, want it to list lines 1, 3, 5", err.Error())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // list_dir
 // ---------------------------------------------------------------------------
