@@ -356,7 +356,18 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
-	clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, nodeCancelled, nodeSteerGuidance)
+	// The staged-delivery spine (0.5.0): the trust gate posts a node's staged
+	// delivery set exactly once, on judge pass — the ONE place, this whole
+	// extension, that pushes a branch or posts anything to a triggering repo.
+	// nil (no GitHub App configured) leaves gateCfg.Deliver nil, which is
+	// safe — commitDeliveryOnPass simply drops whatever a worker staged.
+	var deliver vetting.DeliverFunc
+	if githubApp != nil {
+		deliver = func(ctx context.Context, dc vetting.DeliveryContext) error {
+			return githubApp.Deliver(ctx, jail.Root(), dc)
+		}
+	}
+	clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, nodeSteerGuidance)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -487,7 +498,7 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 // tools, exposes it over a co-located A2A server, and returns:
 //   - clientMap: agent name → A2A client (for the DAG executor)
 //   - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, nodeSteerGuidance func(chatID, nodeID string) string) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, error) {
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
@@ -587,6 +598,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gateCfg.Workspace = jail
 		gateCfg.WorkspaceUserID = localUserID
 		gateCfg.WorkspaceCaps = workspaceCaps
+		// Staged delivery (0.5.0): nil-safe, like Memory above — an agent whose
+		// tools never include stage_pr/stage_review/stage_comment simply never
+		// stages anything, so this is inert for every non-GitHub agent.
+		gateCfg.Deliver = deliver
 		// The allowlist every check must prefix-match — the security boundary for
 		// BOTH planner-set checks (validated at plan time) and the checks the gate
 		// derives from the repo (vetting.deriveChecks). Empty ⇒ checks disabled.

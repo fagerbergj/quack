@@ -79,13 +79,20 @@ agents:
     # of that bulk entering a 65k context. Per-agent opt-in; every tool above stays callable the
     # normal way. In-script calls go through the SAME guarded tool objects, and the trust gate's
     # ledger expands them, so nothing is unwatched. See docs/code-mode.md.
+    # NO git_push, NO github_pull_request (the latter isn't even a tool anymore — see
+    # internal/github/tools.go): commit LOCALLY, then stage_pr/stage_review/stage_comment
+    # to hand delivery off — the trust gate pushes and opens the PR, exactly once, only on
+    # a judge pass (internal/vetting commitDeliveryOnPass). unstage drops a staged item
+    # you've decided against.
     tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
-            git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
-            run_command, ask_advisor, ask_user, load_memory, stage_memory, run_code]
+            git_worktree_create, git_worktree_remove, git_pull, git_rebase,
+            run_command, ask_advisor, ask_user, load_memory, stage_memory, stage_pr, stage_comment, unstage, run_code]
     # develop-feature/fix-bug: the disciplined build/fix playbooks its prompt.md points to;
-    # ponytail/ponytail-review (vendored): its coding discipline + self-review ladder (see prompt.md).
-    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-coding-plan, format-markdown]
+    # ponytail/ponytail-review (vendored): its coding discipline + self-review ladder (see prompt.md);
+    # commit-authoring/pr-authoring: how to write the local commit and the PR it stages (see prompt.md).
+    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-coding-plan, format-markdown,
+             commit-authoring, pr-authoring]
     # load_memory/stage_memory + the bundle's memory.md turn on shared memory: the implementer
     # RECALLS what the explorer/reviewer already learned about this repo (build/test/lint commands,
     # where things are registered, the reference feature, pre-existing failures) instead of
@@ -104,8 +111,12 @@ agents:
     # web_fetch (no web_search): verify a specific external claim (API contract, library doc, known-vuln pattern) —
     # "verify don't trust" past the repo. It flips on the gate's RequireRetrieval, but read_file already satisfies that,
     # so a normal review that reads the changed files is fine; web_fetch does not force every review to fetch.
+    # stage_review/stage_comment hand review delivery off to the gate (github_submit_review
+    # is no longer a model tool at all — see internal/github/tools.go); unstage drops a
+    # staged item you've decided against. No stage_pr: a read-only reviewer never opens one.
     tools: [read_file, list_dir, glob, grep, web_fetch,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
+            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory,
+            stage_review, stage_comment, unstage]
     # review-code: the review process its prompt.md follows; present-coding-plan: structure/depth
     # for a GitHub-facing review body (see prompt.md and internal/github/webhook.go).
     skills: [review-code, present-coding-plan, format-markdown, ponytail, ponytail-review]
@@ -130,7 +141,9 @@ agents:
     skills: [research-git-repos, format-markdown, ponytail]
   synthesizer:
     bundle: agents/synthesizer
-    skills: [format-markdown, present-coding-plan]
+    # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic
+    # commits a chain of code-implementer nodes made), write it like a PR, not a report.
+    skills: [format-markdown, present-coding-plan, pr-authoring]
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # same model as web-researcher

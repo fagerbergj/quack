@@ -290,13 +290,17 @@ func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload)
 			"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 	}
 	cancel()
-	e.dispatch(synthetic, implementTask(p, comments, e.labels.Review))
+	e.dispatch(synthetic, implementTask(p, comments))
 }
 
 // implementTask synthesizes the implementation request for an implement-labeled
-// issue: the issue itself plus its discussion (which carries the approved plan),
-// and delivery instructions that chain the new PR into the review label flow.
-func implementTask(p issuesPayload, comments []commentView, reviewLabel string) string {
+// issue: the issue itself plus its discussion (which carries the approved plan).
+//
+// ponytail: this used to also chain the new PR into the review-label flow
+// (labels=[…] on open) — dropped because StagedDelivery carries no labels
+// (the worker never opens the PR itself anymore). Restore once plan.Delivery
+// does, or have the delivery step apply the review label itself post-open.
+func implementTask(p issuesPayload, comments []commentView) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
 	if body := strings.TrimSpace(p.Issue.Body); body != "" {
@@ -313,10 +317,9 @@ func implementTask(p issuesPayload, comments []commentView, reviewLabel string) 
 			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
 		}
 	}
-	fmt.Fprintf(&b, "\nA maintainer approved this for implementation. Implement it per the plan and discussion, then open a pull request whose body includes `Closes #%d`", p.Issue.Number)
-	if reviewLabel != "" {
-		fmt.Fprintf(&b, " and pass labels=[%q] to github_pull_request so the PR is queued for review", reviewLabel)
-	}
+	fmt.Fprintf(&b, "\nA maintainer approved this for implementation. Implement it per the plan and discussion, commit your work locally, "+
+		"then call stage_pr with a title and a body that includes `Closes #%d` — you do not push or open the pull request yourself; "+
+		"the pull request is opened for you once your work passes review", p.Issue.Number)
 	b.WriteString(". Never merge anything — merging is a human decision.")
 	return b.String()
 }
@@ -499,22 +502,38 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// the review. So if a work request ran no plan, nudge once to actually run it.
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly — never nudged.
-	planRan, delivered := e.drive(ctx, sessionID, message, owner, repo, number, turnID, pub)
+	planRan, judgePassed := e.drive(ctx, sessionID, message, owner, repo, number, turnID, pub)
 	if !planRan && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
-		_, d2 := e.drive(ctx, sessionID, runNudge, owner, repo, number, turnID, pub)
-		delivered = delivered || d2
+		_, jp2 := e.drive(ctx, sessionID, runNudge, owner, repo, number, turnID, pub)
+		judgePassed = judgePassed || jp2
 	}
 	if pub != nil {
 		pub.Publish(stream.Done())
 		e.hub.Close(sessionID)
 		_ = e.store.Touch(ctx, sessionID)
 	}
-	// The review (github_submit_review) or PR (github_pull_request) IS the
-	// deliverable and is already on the PR — posting the run's text summary too
-	// would duplicate it. Only fall back to a summary comment when nothing was
-	// delivered (a conversational answer, or a run that produced only text).
+	// A judge-passed work request (review/implement) already had its staged
+	// review/PR posted by the trust gate itself (commitDeliveryOnPass, BLOCKING —
+	// it has completed by the time node_done fires) — posting the run's text
+	// summary too would duplicate it. Only fall back to a summary comment when
+	// nothing was delivered: a conversational answer, a gate that never passed,
+	// or a run that produced only text.
+	//
+	// takeDeliveryResult is the AUTHORITATIVE signal when present — it is the
+	// delivery call's OWN outcome, not a proxy — and overrides judgePassed: a
+	// gate that passed but whose push/post then failed (network error, a
+	// rejected branch) must NOT be read as delivered (the #286/#287 failure
+	// this dispatch has always guarded against). judgePassed is only the
+	// fallback for the case nothing was ever staged.
+	delivered := judgePassed && isWorkRequest(task)
+	if derr, ok := takeDeliveryResult(sessionID); ok {
+		delivered = derr == nil
+		if derr != nil {
+			slog.Error("github: staged delivery failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", derr)
+		}
+	}
 	if delivered {
 		slog.Info("github: work delivered on the PR; skipping the duplicate summary comment",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
@@ -568,16 +587,22 @@ func (e *Extension) persistGithubLink(ctx context.Context, sessionID, owner, rep
 // firm instruction to actually do the work rather than narrate intent.
 const runNudge = "You answered without running anything. Do NOT reply in prose: use the plan and execute tools NOW to actually clone the repo, read the change, and carry out the review (or the requested change). Nothing has run yet and the user is waiting."
 
-// drive runs one orchestrator turn to completion and reports whether it EXECUTED
-// a plan (a dag_plan event) and whether it DELIVERED to GitHub — submitted a
-// review or opened a PR. A run with no plan produced only a direct-text answer
-// (the work never happened); a run that delivered has already posted its output,
-// so dispatch skips the redundant summary comment.
+// drive runs one orchestrator turn to completion and reports whether it
+// EXECUTED a plan (a dag_plan event) and whether ANY node's trust gate PASSED
+// its judge round. A run with no plan produced only a direct-text answer (the
+// work never happened). judgePassed is dispatch's proxy for "the staged
+// delivery set was posted": commitDeliveryOnPass runs synchronously inside the
+// gate, strictly before node_done fires (see internal/vetting/node.go), so by
+// the time node_done reports a pass here, delivery has already been attempted
+// — a failed delivery is still logged loudly (slog.Error) even though this
+// proxy can't distinguish it from "nothing was staged" (a conversational node
+// gated the same way). dispatch only trusts this proxy for a task that
+// DEMANDED delivery in the first place (isWorkRequest) — see its caller.
 //
 // pub is nil when the extension has no store (test harnesses that don't need
 // persistence) — every persistence step below is then a no-op, matching drive's
 // old behavior exactly.
-func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, delivered bool) {
+func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool) {
 	var planID string
 	for ev, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
 		if err != nil {
@@ -593,16 +618,9 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 					runlog.SaveDagPlan(e.store, sessionID, turnID, d)
 				}
 			}
-		case stream.EventAgentToolResult:
-			// Delivered = the tool SUCCEEDED, not merely that it was called: a
-			// failed github_pull_request (e.g. killed at the run deadline before
-			// the branch was pushed) previously flipped this on the CALL alone and
-			// suppressed the failure comment — a silent death with a "delivered"
-			// log line and nothing on GitHub (#286).
-			if d, ok := ev.Data.(stream.AgentToolResultData); ok && (d.Name == "github_submit_review" || d.Name == "github_pull_request") {
-				if m, ok := d.Result.(map[string]any); !ok || m["error"] == nil {
-					delivered = true
-				}
+		case stream.EventNodeDone:
+			if d, ok := ev.Data.(stream.NodeDoneData); ok && d.JudgePassed {
+				judgePassed = true
 			}
 		}
 		if pub != nil {
@@ -612,7 +630,7 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 			pub.Publish(ev)
 		}
 	}
-	return planRan, delivered
+	return planRan, judgePassed
 }
 
 // reviewContext is everything the orchestrator needs to PLAN a PR review without
@@ -826,15 +844,15 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		if reviewOnly {
 			lead = "Review it: read its changes"
 		}
-		fmt.Fprintf(&b, "%s (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then deliver your review with the review tools — record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish with github_submit_review (pull_number=%d) carrying a summary body and an event verdict (APPROVE / REQUEST_CHANGES / COMMENT). Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the summary body. ",
-			lead, owner, repo, p.Issue.Number, p.Issue.Number)
+		fmt.Fprintf(&b, "%s (git_diff after cloning) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish by calling stage_review with a summary body and an event verdict (approve / request_changes / comment) — you do not submit the review yourself; it is posted for you once your work passes review. Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the summary body. ",
+			lead, owner, repo, p.Issue.Number)
 	}
 	if reviewOnly {
 		// No commit/push/PR words: a review posts findings, it does not deliver code.
-		b.WriteString("This is a REVIEW-ONLY task: do NOT create a branch, commit, push, or open a pull request — deliver your findings with the review tools. ")
+		b.WriteString("This is a REVIEW-ONLY task: do NOT create a branch, commit, or push — deliver your findings with the review tools (github_add_review_comment, stage_review). ")
 		fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
 			owner, repo, p.Issue.Number)
-		b.WriteString("Answer concisely and reference the review you posted.")
+		b.WriteString("Answer concisely and reference the review you staged.")
 		return b.String()
 	}
 	if p.planOnly {
@@ -845,10 +863,10 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 			owner, repo, p.Issue.Number)
 		return b.String()
 	}
-	b.WriteString("If the task needs code changes, create a branch, commit your work, push it with git_push, then open a pull request with github_pull_request ")
-	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q). ", owner, repo, base)
+	b.WriteString("If the task needs code changes, create a branch, commit your work locally, then call stage_pr with a title and body — you do not push or open the pull request yourself ")
+	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); it is opened for you once your work passes review. ", owner, repo, base)
 	fmt.Fprintf(&b, "You may post progress with github_comment (owner=%s, repo=%s, issue_number=%d); your final answer is posted back automatically. ",
 		owner, repo, p.Issue.Number)
-	b.WriteString("Answer concisely and reference any branch, PR, or review you created.")
+	b.WriteString("Answer concisely and reference any branch, PR, or review you staged.")
 	return b.String()
 }

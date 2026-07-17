@@ -112,6 +112,16 @@ func demandedDelivery(task string) deliveryDemand {
 // such a node in revise rounds it can never satisfy. It is recorded
 // (act.prOpened) and named in the feedback, and the ledger shows the judge
 // whether it happened.
+// hasStagedPR reports whether the worker has a live stage_pr call (handed the
+// PR intent off to the gate — see StagedDelivery/commitDeliveryOnPass). A
+// worker that CAN still push/open a PR directly (act.pushed/act.prOpened,
+// legacy toolset) satisfies delivery either way — staging is the new path,
+// not a replacement requirement.
+func hasStagedPR(act workerActivity) bool {
+	_, ok := act.stagedDelivery["pr"]
+	return ok
+}
+
 func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 	d := demandedDelivery(task)
 	if !d.commit && !d.push {
@@ -121,15 +131,15 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 	if d.commit && !act.committed {
 		missing = append(missing, "no successful `git_commit`")
 	}
-	if d.push && !act.pushed {
-		missing = append(missing, "no successful `git_push`")
+	if d.push && !act.pushed && !hasStagedPR(act) {
+		missing = append(missing, "no successful `git_push` and no `stage_pr` call")
 	}
 	if len(missing) == 0 {
-		return criterionScore{Score: 1, Reason: "deterministic: the work was committed and pushed"}, true
+		return criterionScore{Score: 1, Reason: "deterministic: the work was committed and pushed (or staged for delivery)"}, true
 	}
-	want := "commit and push your work"
+	want := "commit your work, then call `stage_pr(title, body)` to hand off delivery — the gate pushes it after your answer passes"
 	if d.pr {
-		want = "commit your work on the branch the task names, push it, and open the pull request with `github_pull_request`"
+		want = "commit your work on the branch the task names, then call `stage_pr(title, body)` — the gate pushes the branch and opens the pull request after your answer passes (or push it and open the pull request with `github_pull_request` yourself, if you have that tool)"
 	}
 	return criterionScore{Score: 0, Reason: fmt.Sprintf(
 		"deterministic: your task requires the work be delivered (%s), but the workspace ledger contains %s. "+
@@ -163,12 +173,20 @@ var postedReviewRe = regexp.MustCompile(
 // The submit is the whole requirement: github_add_review_comment only accumulates
 // a process-local DRAFT (see internal/github) — nothing is on the PR until
 // github_submit_review succeeds.
+// hasStagedReview reports whether the worker has a live stage_review call
+// (handed the submit intent off to the gate). A worker that can still submit
+// directly (act.reviewSubmitted, legacy toolset) satisfies review either way.
+func hasStagedReview(act workerActivity) bool {
+	_, ok := act.stagedDelivery["review"]
+	return ok
+}
+
 func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
 	if !demandsPostedReview(task) {
 		return criterionScore{}, false
 	}
-	if act.reviewSubmitted {
-		return criterionScore{Score: 1, Reason: "deterministic: the review was submitted on the pull request"}, true
+	if act.reviewSubmitted || hasStagedReview(act) {
+		return criterionScore{Score: 1, Reason: "deterministic: the review was submitted (or staged for delivery) on the pull request"}, true
 	}
 	drafted := "the ledger shows no successful `github_add_review_comment` either"
 	if act.reviewCommented {
@@ -176,9 +194,10 @@ func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
 	}
 	return criterionScore{Score: 0, Reason: fmt.Sprintf(
 		"deterministic: your task requires posting a review on the pull request, but the workspace ledger contains "+
-			"no successful `github_submit_review` (%s). Describing your findings in your answer is NOT posting them: "+
-			"record each finding with `github_add_review_comment`, then call `github_submit_review` with your summary "+
-			"and verdict, then report what you actually posted.", drafted)}, true
+			"no successful `github_submit_review` and no `stage_review` call (%s). Describing your findings in your "+
+			"answer is NOT posting them: record each finding with `github_add_review_comment`, then call "+
+			"`stage_review(event, body)` with your summary and verdict — the gate submits it after your answer passes "+
+			"(or call `github_submit_review` yourself, if you have that tool) — then report what you actually did.", drafted)}, true
 }
 
 // workIncomplete reports whether the worker's turn left the WORK unfinished — the

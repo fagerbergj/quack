@@ -396,10 +396,10 @@ func TestReviewToolsRegistered(t *testing.T) {
 		t.Fatalf("NewApp: %v", err)
 	}
 	want := map[string]bool{
-		"github_comment": false, "github_pull_request": false,
+		"github_comment":            false,
 		"github_add_review_comment": false, "github_list_review_comments": false,
-		"github_delete_review_comment": false, "github_submit_review": false,
-		"github_list_pr_comments": false, "github_reply_to_review_comment": false,
+		"github_delete_review_comment": false,
+		"github_list_pr_comments":      false, "github_reply_to_review_comment": false,
 		"github_react_to_comment": false,
 	}
 	for _, tl := range app.Tools() {
@@ -408,6 +408,24 @@ func TestReviewToolsRegistered(t *testing.T) {
 	for name, found := range want {
 		if !found {
 			t.Errorf("tool %q not registered in Tools()", name)
+		}
+	}
+}
+
+// TestPullRequestAndSubmitReviewAreNotModelTools pins the staged-delivery
+// spine's core safety property: opening a PR and submitting a review make work
+// PUBLIC, so no agent tool call can do either anymore — only the harness's own
+// delivery step (internal/github/webhook.go), via createPullRequest/
+// createReview, does that, and only after a judge pass.
+func TestPullRequestAndSubmitReviewAreNotModelTools(t *testing.T) {
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	for _, tl := range app.Tools() {
+		if tl.Name() == "github_pull_request" || tl.Name() == "github_submit_review" {
+			t.Errorf("%q must not be a model-facing tool anymore", tl.Name())
 		}
 	}
 }
