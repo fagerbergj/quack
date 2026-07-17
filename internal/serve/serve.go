@@ -218,8 +218,10 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// GitHub extension (off unless extensions.github is configured). Built here,
 	// BEFORE the agents, so its App can serve as the dynamic git-credential
-	// source and its Tools() join every agent's tool set. The webhook Runner is
-	// bound after the orchestrator exists (below).
+	// source and its Tools() are AVAILABLE for buildAgents to resolve by name
+	// into whichever agent's config tools: list actually asks for one (see
+	// extToolsByName in buildAgents) — never force-injected onto every agent.
+	// The webhook Runner is bound after the orchestrator exists (below).
 	var githubApp *github.App
 	var extTools []tool.Tool
 	var gitTokenSource tools.GitTokenSource
@@ -725,6 +727,15 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	gateCfgs := make(map[string]vetting.Config, len(cfg.Agents)) // agent name → per-agent gate cfg (gated agents only)
 	var servers []*agent.A2AServer
 
+	// Extension tools (e.g. github_add_review_comment), keyed by name — made
+	// AVAILABLE to tools.Build's normal name resolution, never force-injected.
+	// An agent gets one only if its own config tools: list names it (see the
+	// loop below); empty when no extension is configured.
+	extToolsByName := make(map[string]tool.Tool, len(extTools))
+	for _, t := range extTools {
+		extToolsByName[t.Name()] = t
+	}
+
 	for _, name := range names {
 		ac := cfg.Agents[name]
 
@@ -763,14 +774,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				SafetyJudge:            safetyJudge,
 				NodeCancelled:          nodeCancelled,
 				NodeSteerGuidance:      nodeSteerGuidance,
+				ExtTools:               extToolsByName,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "tools: %v", err)
 			}
 		}
-		// Extension outbound tools (e.g. github_comment / github_pull_request)
-		// join every agent's tool set, alongside the builtins and skill toolset.
-		builtins = append(builtins, extTools...)
 
 		bundle, err := agent.LoadBundle(ac.Bundle)
 		if err != nil {

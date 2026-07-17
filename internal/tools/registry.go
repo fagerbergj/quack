@@ -94,6 +94,13 @@ type Deps struct {
 	// guidance as that call's result instead of running the real tool (see
 	// steerguard.go). nil ⇒ no guard.
 	NodeSteerGuidance func(chatID, nodeID string) string
+	// ExtTools are extension-supplied tools (e.g. the GitHub App's
+	// github_add_review_comment — internal/github.App.Tools()), keyed by name.
+	// An agent gets one ONLY if its config tools: list names it — same
+	// resolution path as every builtin, so an extension makes a tool AVAILABLE,
+	// never force-injects it (see registry lookup in Build). Empty/nil when no
+	// extension is configured.
+	ExtTools map[string]tool.Tool
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -148,8 +155,11 @@ var registry = map[string]constructor{
 	"cd": newCd,
 }
 
-// Build resolves tool names to ADK tools, injecting d. Unknown names are an
-// error (the extension seam for future tool kinds).
+// Build resolves tool names to ADK tools, injecting d. A name resolves against
+// the static registry above first, then d.ExtTools (an extension's tools,
+// keyed by name — e.g. github_add_review_comment) — the SAME resolution path,
+// so an extension only reaches an agent that lists its tool by name; nothing
+// is force-injected. A name in neither is an error.
 func Build(names []string, d Deps) ([]tool.Tool, error) {
 	if d.Client == nil {
 		d.Client = &http.Client{Timeout: 30 * time.Second}
@@ -189,13 +199,16 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 			wantCodeMode = true
 			continue
 		}
-		ctor, ok := registry[name]
-		if !ok {
+		var t tool.Tool
+		var err error
+		if ctor, ok := registry[name]; ok {
+			if t, err = ctor(d); err != nil {
+				return nil, fmt.Errorf("tools: build %q: %w", name, err)
+			}
+		} else if et, ok := d.ExtTools[name]; ok {
+			t = et
+		} else {
 			return nil, fmt.Errorf("tools: unknown builtin tool %q", name)
-		}
-		t, err := ctor(d)
-		if err != nil {
-			return nil, fmt.Errorf("tools: build %q: %w", name, err)
 		}
 		t = scrub(t)
 		tier, guarded := parseGuardTier(d.Guards[name])
