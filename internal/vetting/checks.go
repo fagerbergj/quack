@@ -24,9 +24,12 @@ const maxCheckOutputChars = 2_000
 // checksPassCriterion is the GATE side of §4 (deterministic gates): it runs the
 // node's checks — cfg.Checks when the planner set them (an explicit override,
 // already plan-time validated argv-safe), else the checks DERIVED from the repo
-// on disk (deriveChecks) — via the SAME jailed runner run_command uses
-// (workspace.RunPipeline; pipes are native, everything else a shell would
-// interpret stays unexpressible), stopping at the first failure.
+// on disk (deriveChecks) — via workspace.RunPipeline, argv-only and never a
+// shell (pipes are native; everything else a shell would interpret stays
+// unexpressible). This is deliberately NOT run_command's runner: `checks` is an
+// operator allowlist (MatchesCheckPrefix), and a prefix allowlist means nothing
+// if the suffix can open a shell — run_command hands its line to a real shell
+// instead (RunShell, #277). Stops at the first failure.
 //
 // Why derive: the planner authors the DAG BEFORE anything has looked at the
 // repo, so any checks it writes are guesses (`go build` for a JavaScript repo).

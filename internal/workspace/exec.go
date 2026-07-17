@@ -9,21 +9,6 @@ import (
 	"strings"
 )
 
-// shellMetachars are the characters that signal shell-interpretation intent
-// (backgrounding, command chaining, redirects, substitution, subshells). They
-// are NOT a rejection gate: run_command and checks run shell-less (SplitArgv /
-// RunPipeline), so with no shell these are literal argv content, never
-// operators — a quoted grep pattern with parens is one argument (#277). The
-// remaining use is cd-fold eligibility (run_command's `cd X &&` idiom): a
-// target carrying a metachar isn't a plain directory, so don't fold it.
-const shellMetachars = "&;$<>`()"
-
-// ContainsShellMetachar reports whether s contains a shell metacharacter. See
-// the shellMetachars doc comment for its one remaining use (cd-fold eligibility).
-func ContainsShellMetachar(s string) bool {
-	return strings.ContainsAny(s, shellMetachars)
-}
-
 // MatchesCheckPrefix reports whether check IS one of prefixes, or extends one
 // with a space-separated continuation (e.g. "go test ./..." extends "go test";
 // "go testing" does not). The check_commands allowlist is the security boundary
@@ -45,9 +30,10 @@ func MatchesCheckPrefix(check string, prefixes []string) bool {
 // no variable expansion, no command substitution, since those are exactly the
 // shell semantics argv-only execution exists to avoid — just enough to carry
 // a quoted argument (a commit message, a grep pattern with spaces) through a
-// single command string. The ONLY place a run_command/`checks` string is ever
-// turned into an argv array (internal/tools/run_command.go,
-// internal/vetting/checks.go).
+// single command string. Used by the trust gate's `checks` (an operator
+// allowlist that must stay argv-only — internal/vetting/checks.go); run_command
+// hands its command line to a real shell instead (RunShell) and never reaches
+// this parser (#277).
 func SplitArgv(s string) ([]string, error) {
 	var argv []string
 	var cur strings.Builder
@@ -104,65 +90,6 @@ func SplitArgv(s string) ([]string, error) {
 		return nil, fmt.Errorf("workspace: empty command")
 	}
 	return argv, nil
-}
-
-// StripStderrMerge removes every standalone, unquoted `2>&1` token from s.
-// The token is a shell habit worker LLMs carry into run_command that is a
-// pure no-op here — RunArgv already merges stderr into stdout, and
-// RunPipeline appends every stage's stderr to the output — yet its `>` and
-// `&` would trip the metachar wall and burn a revise round. Tokens are split
-// on unquoted whitespace with the same quote/escape rules as SplitArgv, so a
-// quoted "2>&1" (a literal argument) is untouched; each token's ORIGINAL text
-// (quotes and escapes intact) is what gets rejoined, so the result feeds
-// SplitPipeline/SplitArgv unchanged apart from the dropped tokens (and
-// collapsed inter-token whitespace). Called ONLY on run_command's
-// LLM-authored command string (internal/tools/run_command.go) — the gate's
-// operator-configured checks (internal/vetting/checks.go) and the planner's
-// plan-time validation are deliberately not normalized.
-func StripStderrMerge(s string) string {
-	var fields []string
-	var cur strings.Builder
-	var quote rune
-	esc := false
-	flush := func() {
-		if cur.Len() > 0 {
-			fields = append(fields, cur.String())
-			cur.Reset()
-		}
-	}
-	for _, r := range s {
-		switch {
-		case esc:
-			cur.WriteRune(r)
-			esc = false
-		case quote != 0:
-			if r == quote {
-				quote = 0
-			} else if quote == '"' && r == '\\' {
-				esc = true
-			}
-			cur.WriteRune(r)
-		case r == '\\':
-			esc = true
-			cur.WriteRune(r)
-		case r == '\'' || r == '"':
-			quote = r
-			cur.WriteRune(r)
-		case r == ' ' || r == '\t' || r == '\n':
-			flush()
-		default:
-			cur.WriteRune(r)
-		}
-	}
-	flush()
-	kept := fields[:0]
-	for _, f := range fields {
-		if f == "2>&1" { // a quoted token retains its quote chars, so it can never equal this
-			continue
-		}
-		kept = append(kept, f)
-	}
-	return strings.Join(kept, " ")
 }
 
 // SplitPipeline splits s into pipeline stages on UNQUOTED `|` characters —
@@ -358,19 +285,25 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 }
 
 // RunShell runs command as a REAL shell command line — `/bin/sh -c "<command>"`
-// — inside whatever boundary caps.Sandbox names. Pipes, redirects, globs,
-// `$(…)`, `&&`, quoting: all of it just works, because sh is doing it.
+// — unconditionally, whatever caps.Sandbox is set to (run_command's only
+// runner; see internal/tools/run_command.go). Pipes, redirects, globs, `$(…)`,
+// `&&`, quoting: all of it just works, because sh is doing it. sh is just
+// another argv, so childArgv (sandbox.go) decides the boundary exactly as it
+// does for any other child:
 //
-// Callers MUST only reach here with caps.Sandbox == SandboxBwrap (run_command
-// checks; see internal/tools/run_command.go): the shell is safe *because* the
-// namespace is real. sh is the child, so the sandbox's binds are its binds — a
-// shell cannot widen them: outside its own cwd and its isolated $HOME nothing
-// is writable, and outside the read-only system view nothing EXISTS. `> /etc/passwd`
-// from in there fails like any other write to a read-only mount.
+//   - caps.Sandbox == SandboxBwrap: sh runs INSIDE the bwrap namespace, and is
+//     safe *because* the namespace is real — a shell cannot widen it: outside
+//     its own cwd and its isolated $HOME nothing is writable, and outside the
+//     read-only system view nothing EXISTS. `> /etc/passwd` from in there fails
+//     like any other write to a read-only mount.
+//   - anything else (SandboxNone): sh runs directly, with the server user's own
+//     filesystem authority — exactly the authority a child already had on the
+//     argv-only path this replaces, so offering it a shell adds no new reach,
+//     only working `&&`/globs/redirects/`$(…)` (#277).
 //
-// sh is just another argv here, so RunArgv supplies everything else unchanged:
-// the resolved binary, the scrubbed env, cwd=dir, the timeout, the output cap,
-// and the "a non-zero exit is a result, not an error" contract.
+// RunArgv supplies everything else unchanged: the resolved binary, the
+// scrubbed env, cwd=dir, the timeout, the output cap, and the "a non-zero exit
+// is a result, not an error" contract.
 func RunShell(ctx context.Context, dir, command string, caps Caps) (ExecResult, error) {
 	if strings.TrimSpace(command) == "" {
 		return ExecResult{}, fmt.Errorf("workspace: empty command")

@@ -7,33 +7,6 @@ import (
 	"time"
 )
 
-func TestContainsShellMetachar(t *testing.T) {
-	cases := []struct {
-		s    string
-		want bool
-	}{
-		{"go test ./...", false},
-		{"echo hi", false},
-		// Pipes are NOT metachars anymore: SplitPipeline/RunPipeline implement
-		// them natively (chained argv processes, no shell).
-		{"echo hi | grep x", false},
-		{"grep -r pattern . | head -50", false},
-		// Everything else stays unexpressible.
-		{"echo hi; rm -rf /", true},
-		{"echo $HOME", true},
-		{"echo `whoami`", true},
-		{"cmd < in", true},
-		{"cmd > out", true},
-		{"echo hi && echo bye", true},
-		{"(echo hi)", true},
-	}
-	for _, c := range cases {
-		if got := ContainsShellMetachar(c.s); got != c.want {
-			t.Errorf("ContainsShellMetachar(%q) = %v, want %v", c.s, got, c.want)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // SplitPipeline
 // ---------------------------------------------------------------------------
@@ -98,30 +71,6 @@ func TestSplitPipelineEmptyStageErrors(t *testing.T) {
 	for _, s := range []string{"| head", "grep x |", "a || b", "grep x | | head"} {
 		if _, err := SplitPipeline(s); err == nil {
 			t.Errorf("SplitPipeline(%q): want empty-stage error", s)
-		}
-	}
-}
-
-func TestStripStderrMerge(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"npm test 2>&1 | tail -40", "npm test | tail -40"},
-		{"npx vitest run --reporter=verbose 2>&1 | tail -40", "npx vitest run --reporter=verbose | tail -40"},
-		{"npm test 2>&1", "npm test"},
-		{"2>&1 npm test", "npm test"},
-		{"npm test", "npm test"},
-		// Quoted `2>&1` is a literal argument — untouched (quote chars intact).
-		{`echo "2>&1"`, `echo "2>&1"`},
-		{"echo '2>&1'", "echo '2>&1'"},
-		{"grep '2>&1 in text' file", "grep '2>&1 in text' file"},
-		// Not a standalone token — left alone (the metachar wall handles it).
-		{"npm test 2>&1|tail", "npm test 2>&1|tail"},
-	}
-	for _, c := range cases {
-		if got := StripStderrMerge(c.in); got != c.want {
-			t.Errorf("StripStderrMerge(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

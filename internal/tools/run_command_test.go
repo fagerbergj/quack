@@ -2,12 +2,9 @@ package tools
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // ensureUserRoot creates the binding's user root on disk — run_command
@@ -40,11 +37,10 @@ func TestRunCommandBasic(t *testing.T) {
 	}
 }
 
-func TestRunCommandAcceptsQuotedMetachars(t *testing.T) {
+func TestRunCommandQuotedParensWork(t *testing.T) {
 	// Regression (#276/#277): a quoted grep pattern with parens (a Go receiver)
-	// is literal argv, not shell operators. The old metachar gate rejected it
-	// and looped the worker; it must now run. With no shell, metachars are never
-	// interpreted — an unquoted `;` is a literal arg, NOT a command separator.
+	// tripped the old argv-only metachar gate and looped the worker. It must
+	// run cleanly through the real shell run_command now always uses.
 	b := newTestBinding(t, "u1")
 	ensureUserRoot(t, b)
 	res, err := b.runCommand(runCommandArgs{Command: `printf 'func (e *Extension) X()\n' | grep -Fn 'func (e *Extension)'`})
@@ -53,14 +49,6 @@ func TestRunCommandAcceptsQuotedMetachars(t *testing.T) {
 	}
 	if res.ExitCode != 0 || !strings.Contains(res.Output, "Extension") {
 		t.Errorf("quoted grep: exit=%d out=%q, want match", res.ExitCode, res.Output)
-	}
-	// `;` must NOT spawn a second process — echo prints it literally, exit 0.
-	res, err = b.runCommand(runCommandArgs{Command: "echo hi; rm -rf /tmp/nope"})
-	if err != nil {
-		t.Fatalf("runCommand(literal ;): %v", err)
-	}
-	if res.ExitCode != 0 || !strings.Contains(res.Output, "rm -rf") {
-		t.Errorf("literal ;: exit=%d out=%q, want the ';' passed to echo as a literal arg", res.ExitCode, res.Output)
 	}
 }
 
@@ -76,21 +64,6 @@ func TestRunCommandAcceptsNativePipes(t *testing.T) {
 	}
 	if !strings.Contains(res.Output, "a") || strings.Contains(res.Output, "c") {
 		t.Errorf("Output = %q, want the sorted head only", res.Output)
-	}
-}
-
-func TestRunCommandPipefailSurfacesStageFailure(t *testing.T) {
-	b := newTestBinding(t, "u1")
-	ensureUserRoot(t, b)
-	res, err := b.runCommand(runCommandArgs{Dir: "", Command: "false | cat"})
-	if err != nil {
-		t.Fatalf("runCommand: %v", err)
-	}
-	if res.ExitCode == 0 {
-		t.Error("ExitCode = 0, want non-zero (pipefail)")
-	}
-	if !strings.Contains(res.Output, "stage 1 of 2") {
-		t.Errorf("Output = %q, want the failing stage named", res.Output)
 	}
 }
 
@@ -155,86 +128,18 @@ func TestRunCommandRejectsEmpty(t *testing.T) {
 	}
 }
 
-// TestRunCommandCDPrefixNormalization covers the live-observed LLM habit of
-// re-stating the dir argument as a `cd X &&` prefix: the prefix folds into
-// dir resolution instead of tripping the metachar wall.
-func TestRunCommandCDPrefixNormalization(t *testing.T) {
-	b := newTestBinding(t, "u1")
-	root := ensureUserRoot(t, b)
-	for _, sub := range []string{"repo", "a/b"} {
-		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cases := []struct {
-		name          string
-		dir           string
-		command       string
-		wantCwdSuffix string
-	}{
-		{"dir restated by cd — no doubling", "repo", "cd repo && pwd", "/repo"},
-		{"empty dir — cd supplies it", "", "cd repo && pwd", "/repo"},
-		{"nested cd target", "", "cd a/b && pwd", "/a/b"},
-		{"cd composes under dir", "a", "cd b && pwd", "/a/b"},
-		// The exact live failure shape: both idioms in one command.
-		{"cd prefix plus 2>&1", "repo", "cd repo && pwd 2>&1", "/repo"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			res, err := b.runCommand(runCommandArgs{Dir: c.dir, Command: c.command})
-			if err != nil {
-				t.Fatalf("runCommand(dir=%q, %q): %v", c.dir, c.command, err)
-			}
-			cwd := strings.TrimSpace(res.Output)
-			if !strings.HasSuffix(cwd, c.wantCwdSuffix) {
-				t.Errorf("cwd = %q, want suffix %q", cwd, c.wantCwdSuffix)
-			}
-			if strings.HasSuffix(cwd, "/repo/repo") {
-				t.Errorf("cwd = %q: dir doubled", cwd)
-			}
-		})
-	}
-}
+// `cd` inside a command is now the shell's own — no fold/normalization step
+// exists to test; a `cd X && …` composes (or fails) exactly as it would in a
+// real terminal, dir doubling included. See run_command_shell_test.go for the
+// shell-semantics coverage (redirects, `$(…)`, `&&`, globs) this replaces.
 
-func TestRunCommandCDPrefixJailStillApplies(t *testing.T) {
+func TestRunCommandStderrMergeIsARealRedirect(t *testing.T) {
+	// `2>&1` is now a genuine shell redirect (not a stripped idiom): it still
+	// merges stderr into the piped stream, and a quoted "2>&1" still prints
+	// literally — the observable behavior is unchanged even though the
+	// mechanism (a real shell) is not the argv-only one that used to require it.
 	b := newTestBinding(t, "u1")
 	ensureUserRoot(t, b)
-	if _, err := b.runCommand(runCommandArgs{Dir: "", Command: "cd .. && pwd"}); err == nil {
-		t.Fatal("runCommand(cd .. && pwd): want jail rejection")
-	} else if !strings.Contains(err.Error(), "escapes your workspace") {
-		t.Errorf("err = %v, want an escape rejection", err)
-	}
-}
-
-// Only a single leading `cd X &&` is folded into the dir — a later `&&` or a
-// non-leading `cd` is left as literal argv (no shell interprets it).
-func TestRunCommandCDPrefixOnlyStripsThePrefix(t *testing.T) {
-	b := newTestBinding(t, "u1")
-	ensureUserRoot(t, b)
-	// Leading `cd . &&` folds; the SECOND `&&` survives as a literal arg to echo.
-	res, err := b.runCommand(runCommandArgs{Command: "cd . && echo a && echo b"})
-	if err != nil {
-		t.Fatalf("runCommand(leading cd fold): %v", err)
-	}
-	if res.ExitCode != 0 || !strings.Contains(res.Output, "&& echo b") {
-		t.Errorf("only the leading cd should fold: exit=%d out=%q", res.ExitCode, res.Output)
-	}
-	// A non-leading `cd` is not folded — echo prints it literally, cd never runs.
-	res, err = b.runCommand(runCommandArgs{Command: "echo hi && cd repo"})
-	if err != nil {
-		t.Fatalf("runCommand(non-leading cd): %v", err)
-	}
-	if res.ExitCode != 0 || !strings.Contains(res.Output, "cd repo") {
-		t.Errorf("non-leading cd should be literal: exit=%d out=%q", res.ExitCode, res.Output)
-	}
-}
-
-func TestRunCommandStderrMergeTokenDropped(t *testing.T) {
-	b := newTestBinding(t, "u1")
-	ensureUserRoot(t, b)
-	// `2>&1` is a no-op for us (RunArgv merges stderr; RunPipeline appends
-	// each stage's stderr to the output) — it must be dropped, not rejected,
-	// and the pipeline must run.
 	res, err := b.runCommand(runCommandArgs{Dir: "", Command: "printf 'a\\nb\\nc\\n' 2>&1 | head -1"})
 	if err != nil {
 		t.Fatalf("runCommand: %v", err)
@@ -245,7 +150,7 @@ func TestRunCommandStderrMergeTokenDropped(t *testing.T) {
 	if !strings.Contains(res.Output, "a") || strings.Contains(res.Output, "c") {
 		t.Errorf("Output = %q, want head of the piped output", res.Output)
 	}
-	// Single-stage: stderr really is merged into the output without 2>&1.
+	// Single-stage: stderr really is merged into the output.
 	res, err = b.runCommand(runCommandArgs{Dir: "", Command: "ls --definitely-bogus-flag 2>&1"})
 	if err != nil {
 		t.Fatalf("runCommand: %v", err)
@@ -256,30 +161,12 @@ func TestRunCommandStderrMergeTokenDropped(t *testing.T) {
 	if res.Output == "" {
 		t.Error("Output empty, want ls's stderr merged in")
 	}
-}
-
-func TestRunCommandQuotedStderrMergeUntouched(t *testing.T) {
-	// A quoted "2>&1" is a literal argument, not the idiom — it is NOT stripped,
-	// and (no shell) not rejected: echo prints it verbatim.
-	b := newTestBinding(t, "u1")
-	ensureUserRoot(t, b)
-	res, err := b.runCommand(runCommandArgs{Command: `echo "2>&1"`})
+	// A quoted "2>&1" is a literal argument — echo prints it verbatim.
+	res, err = b.runCommand(runCommandArgs{Command: `echo "2>&1"`})
 	if err != nil {
 		t.Fatalf(`runCommand(echo "2>&1"): %v`, err)
 	}
 	if res.ExitCode != 0 || !strings.Contains(res.Output, "2>&1") {
 		t.Errorf("quoted 2>&1 should print literally: exit=%d out=%q", res.ExitCode, res.Output)
-	}
-}
-
-// sanity: ContainsShellMetachar is no longer a rejection gate — it survives
-// only as cd-fold eligibility (see internal/workspace/exec.go). This confirms
-// the function's contract that run_command's fold check relies on.
-func TestRunCommandUsesWorkspaceValidation(t *testing.T) {
-	if workspace.ContainsShellMetachar("a|b") {
-		t.Fatal("sanity: pipes must not be metachars (they run natively)")
-	}
-	if !workspace.ContainsShellMetachar("a;b") {
-		t.Fatal("sanity: ContainsShellMetachar broken")
 	}
 }

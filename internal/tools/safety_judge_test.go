@@ -90,9 +90,9 @@ func TestSafetyJudgeInstructionCalibration(t *testing.T) {
 		"run_command is DIFFERENT",
 		"real operating-system process",
 		`"No shell" is a habit guard, not a wall`,
-		// Sandboxed run_command is a REAL SHELL now (workspace.RunShell): a judge
-		// told punctuation is filtered stands down on the shell it is the only
-		// check on.
+		// run_command is ALWAYS a REAL SHELL now (workspace.RunShell, sandboxed or
+		// not — #277): a judge told punctuation is filtered stands down on the
+		// shell it is the only check on.
 		"REAL SHELL",
 		"no metacharacter filter stands in the way",
 		// The deny grounds that the (false) wall claims used to suppress.
