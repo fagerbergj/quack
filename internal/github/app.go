@@ -932,3 +932,21 @@ func (a *App) reactToComment(ctx context.Context, owner, repo, commentPath strin
 	}
 	return out.ID, nil
 }
+
+// reactToIssue posts an emoji reaction on the ISSUE itself, returning the
+// reaction id. A label event carries no comment ID, so reactToComment can't be
+// reused: this targets /repos/{owner}/{repo}/issues/{number}/reactions.
+func (a *App) reactToIssue(ctx context.Context, owner, repo string, number int, content string) (int64, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/reactions", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodPost, path, "token "+tok, map[string]string{"content": content}, &out); err != nil {
+		return 0, err
+	}
+	return out.ID, nil
+}
