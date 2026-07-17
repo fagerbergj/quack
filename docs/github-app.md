@@ -15,7 +15,10 @@ unit that owns one auth context and contributes in both directions:
   [Review tools](#review-tools)). The
   existing git tools (`git_clone` / `git_push` / …) also authenticate through
   this extension's installation token instead of a static PAT while it is
-  active.
+  active. An extension only makes its tools **available**, the same way a
+  builtin is — an agent gets one only if its own config `agents.<name>.tools:`
+  names it (see `config/quack.yaml`'s `code-reviewer` entry); nothing is
+  force-injected onto every agent.
 - **Inbound** — a signature-verified webhook route (`/api/v1/github/webhook`)
   that dispatches runs on triggering events.
 

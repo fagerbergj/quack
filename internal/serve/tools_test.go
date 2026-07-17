@@ -55,6 +55,14 @@ func TestResolveToolNames(t *testing.T) {
 			configured: []string{"web_search", "web_fetch", "summarize", "current_date", "ask_user"},
 			wantNames:  []string{"web_search", "web_fetch", "summarize", "current_date", "ask_user"},
 		},
+		{
+			// Extension tool names (internal/github.App.Tools()) are not special-cased
+			// here — they resolve later, in tools.Build, against Deps.ExtTools. An
+			// agent gets one only by listing it, same as any builtin.
+			name:       "extension tool names pass through unchanged",
+			configured: []string{"read_file", "github_add_review_comment"},
+			wantNames:  []string{"read_file", "github_add_review_comment"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -114,9 +114,15 @@ agents:
     # stage_review/stage_comment hand review delivery off to the gate (github_submit_review
     # is no longer a model tool at all — see internal/github/tools.go); unstage drops a
     # staged item you've decided against. No stage_pr: a read-only reviewer never opens one.
+    # github_add_review_comment/github_list_review_comments/github_delete_review_comment build
+    # and edit the inline-comment DRAFT (never posts — stage_review still gates the actual
+    # submit); github_list_pr_comments reads existing discussion so it doesn't repeat what's
+    # already been said. Extension tools are opt-in per agent (internal/tools.Deps.ExtTools) —
+    # NOT github_comment, which posts immediately with no gate in front of it.
     tools: [read_file, list_dir, glob, grep, web_fetch,
             cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory,
-            stage_review, stage_comment, unstage]
+            stage_review, stage_comment, unstage,
+            github_add_review_comment, github_list_review_comments, github_delete_review_comment, github_list_pr_comments]
     # review-code: the review process its prompt.md follows; present-coding-plan: structure/depth
     # for a GitHub-facing review body (see prompt.md and internal/github/webhook.go).
     skills: [review-code, present-coding-plan, format-markdown, ponytail, ponytail-review]
