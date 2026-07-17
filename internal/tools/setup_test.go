@@ -116,3 +116,26 @@ func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
 		t.Errorf("Content after edit = %q, want %q", res.Content, "hello, edited\n")
 	}
 }
+
+// TestSetupCloneAndBranchIsIdempotent pins the persistent-workspace bug: a
+// re-labeled issue (or retried run) leaves a stale clone at the target, and a
+// naive `git clone` fails exit 128 ("destination already exists"). Setup must
+// clear the target and re-provision cleanly.
+func TestSetupCloneAndBranchIsIdempotent(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	if _, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work"); err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+	// Second provisioning at the SAME dir must succeed (clears the stale clone),
+	// not fail because the directory already exists.
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work")
+	if err != nil {
+		t.Fatalf("second setup at an existing target must succeed, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "README.md")); err != nil {
+		t.Errorf("re-provisioned clone missing at %q: %v", target, err)
+	}
+}

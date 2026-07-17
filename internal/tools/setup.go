@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -37,12 +38,19 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if err := validateRef(workBranch, "setup"); err != nil {
 		return "", err
 	}
-	if _, err := b.cloneRepo(repoURL, dir, nil, baseRef); err != nil {
-		return "", fmt.Errorf("setup: clone: %w", err)
-	}
 	target, err := b.resolve(dir)
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve clone dir: %w", err)
+	}
+	// Idempotent provisioning: the workspace volume persists across runs, so a
+	// re-labeled issue or a retried run can leave a stale clone here — git clone
+	// would then fail exit 128 ("destination path already exists and is not an
+	// empty directory"). Clear the target first so setup always starts clean.
+	if err := os.RemoveAll(target); err != nil {
+		return "", fmt.Errorf("setup: clear stale clone dir: %w", err)
+	}
+	if _, err := b.cloneRepo(repoURL, dir, nil, baseRef); err != nil {
+		return "", fmt.Errorf("setup: clone: %w", err)
 	}
 	if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-b", workBranch}, b.caps, nil); err != nil {
 		return "", fmt.Errorf("setup: checkout -b %q: %w", workBranch, err)
