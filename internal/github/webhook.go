@@ -532,52 +532,56 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		pub.Publish(stream.ResponseCreated(turnID))
 	}
 
+	// Wrap the run context with a cancel so the UI's stop button can cancel
+	// this run via the same activeCancels registry used for UI-initiated runs.
+	// Registered synchronously (before the goroutine gets to run) so the cancel
+	// endpoint can never miss the run.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	e.activeCancels.Store(sessionID, &activeRun{responseID: turnID, cancel: cancelRun})
+	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
+	// stays INLINE — wrapping it in another goroutine would let this function's
+	// `defer cancel()` (run ctx) and `defer lock.Unlock()` (session lock) fire the
+	// moment it spawned, before the run finished. Deregister LAST (deferred
+	// cancel+Delete, then hub.Close) so a viewer sees the stream close only after
+	// the run is already off activeCancels (cancelling it then 404s).
+	defer e.hub.Close(sessionID)
+	defer func() {
+		cancelRun()
+		e.activeCancels.Delete(sessionID)
+	}()
+
 	// A WORK request (review/implement) always runs as a plan. A mid-tier
 	// orchestrator model sometimes answers in prose without calling plan — "Let me
 	// start by cloning the repo…" — and that preamble would be posted as if it were
 	// the review. So if a work request ran no plan, nudge once to actually run it.
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly — never nudged.
-	planRan, judgePassed := e.drive(ctx, sessionID, message, owner, repo, number, turnID, pub)
+	planRan, judgePassed := e.drive(runCtx, sessionID, message, owner, repo, number, turnID, pub)
 	if !planRan && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
-		_, jp2 := e.drive(ctx, sessionID, runNudge, owner, repo, number, turnID, pub)
+		_, jp2 := e.drive(runCtx, sessionID, runNudge, owner, repo, number, turnID, pub)
 		judgePassed = judgePassed || jp2
 	}
 	if pub != nil {
 		pub.Publish(stream.Done())
-		e.hub.Close(sessionID)
-		_ = e.store.Touch(ctx, sessionID)
+		_ = e.store.Touch(runCtx, sessionID)
 	}
-	// A judge-passed work request (review/implement) already had its staged
-	// review/PR posted by the trust gate itself (commitDelivery, BLOCKING —
-	// it has completed by the time node_done fires) — posting the run's text
-	// summary too would duplicate it. Only fall back to a summary comment when
-	// nothing was delivered: a conversational answer, a gate that never passed,
-	// or a run that produced only text.
-	//
-	// takeDeliveryResult is the AUTHORITATIVE signal when present — it is the
-	// delivery call's OWN outcome, not a proxy — and overrides judgePassed: a
-	// gate that passed but whose push/post then failed (network error, a
-	// rejected branch) must NOT be read as delivered (the #286/#287 failure
-	// this dispatch has always guarded against). judgePassed is only the
-	// fallback for the case nothing was ever staged.
-	//
-	// A plan-only run NEVER delivers a PR/review — its deliverable IS the plan
-	// comment — so it must never be read as "delivered" no matter how work-verby
-	// the issue text is (isWorkRequest keys off the task, and "implement X"
-	// issues make it true). Before delivery was gate-committed the worker posted
-	// the plan itself via github_comment, masking this; once that tool was
-	// removed the skip dropped the plan silently.
+
+	// A judge-passed work request already had its staged review/PR posted by the
+	// trust gate itself (commitDelivery) — posting the run's text summary too would
+	// duplicate it. Only fall back to a summary comment when nothing was delivered.
+	// takeDeliveryDetail is AUTHORITATIVE when present (the delivery call's own
+	// outcome, not a proxy): a gate that passed but whose push then failed must NOT
+	// read as delivered. A plan-only run NEVER delivers a PR/review — its
+	// deliverable is the plan comment — so it must never read as delivered no
+	// matter how work-verby the task text is.
 	delivered := judgePassed && isWorkRequest(task) && !p.planOnly
 	if d, ok := takeDeliveryDetail(sessionID); ok {
 		delivered = d.err == nil
 		if d.err != nil {
 			slog.Error("github: staged delivery failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", d.err)
 		} else {
-			// The VERIFIED outcome (real PR number/url, the confirmed pushed SHA) —
-			// what GitHub's own state says happened, not a model's claim.
 			slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
 				"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
 		}
@@ -587,12 +591,13 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		return
 	}
+
 	// The tail must OUTLIVE the run: after a deadline kill, ctx is dead and both
 	// LatestAnswer and the comment post would fail with it — the run then dies
 	// with zero external signal (#286: a 2h-deadline kill posted nothing). Use a
 	// fresh bounded context, and say what actually happened.
-	tailCtx := ctx
-	timedOut := ctx.Err() != nil
+	tailCtx := runCtx
+	timedOut := runCtx.Err() != nil
 	if timedOut {
 		var tailCancel context.CancelFunc
 		tailCtx, tailCancel = context.WithTimeout(context.Background(), time.Minute)

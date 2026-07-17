@@ -69,12 +69,26 @@ type Extension struct {
 	runLocks sync.Map
 	// runTimeout bounds one webhook-driven run (extensions.github.run_timeout_minutes).
 	runTimeout time.Duration
+	// activeCancels holds the cancel handle for each in-flight GitHub run,
+	// keyed by session ID (github-<owner>-<repo>-<number>). This enables the UI's
+	// stop button to cancel webhook-dispatched runs via the same mechanism as
+	// UI-initiated runs.
+	activeCancels sync.Map // sessionID → *activeRun
 }
 
 // sessionLock returns the per-session mutex, creating it on first use.
 func (e *Extension) sessionLock(sessionID string) *sync.Mutex {
 	m, _ := e.runLocks.LoadOrStore(sessionID, &sync.Mutex{})
 	return m.(*sync.Mutex)
+}
+
+// activeRun is the live handle to a GitHub run's in-flight execution: its
+// response id (the turn id, surfaced in the stream's opening response_created
+// event) and the cancel func invoked by the UI's stop button (via the REST
+// UpdateResponseStatus handler).
+type activeRun struct {
+	responseID string
+	cancel     context.CancelFunc
 }
 
 // NewExtension wraps an already-built App (serve constructs the App early so it
