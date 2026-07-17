@@ -278,60 +278,6 @@ func newChatDeleteCmd() *cobra.Command {
 	return c
 }
 
-// newObsCmd: `quack obs` — durable-event-log-derived observability (NOT
-// OTel spans/metrics: those are emission-only, viewed via Tempo/Grafana or
-// any other OTLP-consuming tool, not this CLI). `runs` lists every chat with
-// a derived status/phase (explains a stuck-looking "running" chat); `tail`
-// follows a chat's live stream; `summary` renders a per-run digest (plan,
-// per-node rounds/judge scores, delivery_result) from the same stream.
-func newObsCmd() *cobra.Command {
-	c := &cobra.Command{Use: "obs", Short: "Observability derived from the durable event log (not OTel — see otel.otlp_endpoint)"}
-	c.AddCommand(newObsRunsCmd(), newObsTailCmd(), newObsSummaryCmd())
-	return c
-}
-
-func newObsRunsCmd() *cobra.Command {
-	var asJSON bool
-	c := &cobra.Command{
-		Use:   "runs",
-		Short: "List chats with a derived run status/phase (explains a stuck-looking 'running' chat)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunObsRuns(cmd.Context(), cmd.OutOrStdout(), t, asJSON)
-			})
-		},
-	}
-	asJSONFlag(c, &asJSON)
-	return c
-}
-
-func newObsTailCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "tail <chat>",
-		Short: "Follow a chat's live event stream (line-oriented; the 'is it stuck' answer)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunObsTail(cmd.Context(), cmd.OutOrStdout(), t, args[0])
-			})
-		},
-	}
-}
-
-func newObsSummaryCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "summary <chat>",
-		Short: "Per-run digest: plan, per-node rounds/judge scores, delivery results",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
-				return cli.RunObsSummary(cmd.Context(), cmd.OutOrStdout(), t, args[0])
-			})
-		},
-	}
-}
-
 // asJSONFlag registers a standard --json flag bound to dst.
 func asJSONFlag(c *cobra.Command, dst *bool) {
 	c.Flags().BoolVar(dst, "json", false, "output raw JSON")

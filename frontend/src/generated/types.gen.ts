@@ -199,35 +199,6 @@ export type DagNodeState = {
     judge_passed?: boolean;
 };
 
-/**
- * A run's DERIVED state, extending ChatStatus with `stale`: node state persisted as running/queued but no live subscriber (stream.Hub) is attached in this process — a dead run FailStaleDagNodes hasn't (yet, or can't, mid-process) reconciled, the "is it actually stuck" class this endpoint exists to answer without SSH.
- *
- */
-export type ObsRunStatus = 'running' | 'needs_input' | 'failed' | 'idle' | 'stale';
-
-export type ObsRunSummary = {
-    chat_id: string;
-    title?: string;
-    status: ObsRunStatus;
-    /**
-     * Human-readable explanation of the current status — the running node's agent, or (for `stale`) the last-known node state that no live process is carrying forward.
-     *
-     */
-    phase?: string;
-    /**
-     * The latest turn's created_at; absent for a chat with no turns yet.
-     */
-    started_at?: string;
-    updated_at: string;
-    node_total: number;
-    node_done: number;
-    node_failed: number;
-};
-
-export type ObsRunList = {
-    data: Array<ObsRunSummary>;
-};
-
 export type ChatId = string;
 
 export type NodeId = string;
@@ -452,19 +423,3 @@ export type UpdateResponseStatusResponses = {
 };
 
 export type UpdateResponseStatusResponse = UpdateResponseStatusResponses[keyof UpdateResponseStatusResponses];
-
-export type ListObsRunsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/v1/obs/runs';
-};
-
-export type ListObsRunsResponses = {
-    /**
-     * The runs
-     */
-    200: ObsRunList;
-};
-
-export type ListObsRunsResponse = ListObsRunsResponses[keyof ListObsRunsResponses];
