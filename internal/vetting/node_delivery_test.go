@@ -123,8 +123,11 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 
 	done := make(chan DeliveryContext, 1)
 	cfg := Config{
-		Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) { done <- dc; return nil, nil },
-		Setup:   &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
+		Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+			done <- dc
+			return nil, nil
+		},
+		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
 		// The workspace-directory scope commitDelivery resolves
 		// SetupCloneDir against — dag.buildGateNodes stamps this (node.ID
 		// normally); the caller below passes the SAME "impl" as the nodeID
@@ -302,7 +305,10 @@ func TestGate_DeliversWithCaveatOnJudgeFail(t *testing.T) {
 // the extension can attach a caveat (GatePassed=false, GateFeedback set).
 func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
-	cfg := Config{Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) { done <- dc; return nil, nil }}
+	cfg := Config{Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}}
 	commitDelivery(context.Background(), nil, cfg, "n4", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "x"}},
 		clonedRepos:    []string{"https://github.com/fagerbergj/games"},

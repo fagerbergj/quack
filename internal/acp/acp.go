@@ -28,9 +28,9 @@ import (
 	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
+	"go.opentelemetry.io/otel/attribute"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/session"
-	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
