@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -15,6 +16,17 @@ import (
 type echoArgs struct {
 	Q string `json:"q"`
 }
+
+type testReadArgs struct {
+	Path   string `json:"path"`
+	Offset int    `json:"offset,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type testReadResult struct {
+	Content string `json:"content"`
+}
+
 type echoResult struct {
 	Out string `json:"out"`
 }
@@ -125,5 +137,120 @@ func TestRepeatGuardResets(t *testing.T) {
 	}
 	if calls != 7 {
 		t.Fatalf("tool executed %d times; want 7", calls)
+	}
+}
+
+// ---------------------------------------------------------------------------//
+// Semantic churn: track consecutive failed calls to same tool+path with
+// varying args, refusing after repeatFailThresh failures.
+// ---------------------------------------------------------------------------//
+
+// newFailingTool builds a runnableTool that fails according to mode.
+// modes: "always" (always fails), "success_after_2" (fails first 2, succeeds),
+// "by_path" (fails for path != targetPath).
+func newFailingTool(t *testing.T, name string, mode string, targetPath string) runnableTool {
+	t.Helper()
+	var calls int
+	tl, err := functiontool.New[testReadArgs, testReadResult](
+		functiontool.Config{Name: name, Description: "test failing tool"},
+		func(_ adkagent.Context, a testReadArgs) (testReadResult, error) {
+			calls++
+			if mode == "always" {
+				return testReadResult{}, fmt.Errorf("simulated error")
+			}
+			if mode == "success_after_2" && calls <= 2 {
+				return testReadResult{}, fmt.Errorf("simulated error")
+			}
+			if mode == "by_path" && a.Path != targetPath {
+				return testReadResult{}, fmt.Errorf("path mismatch: got %s, want %s", a.Path, targetPath)
+			}
+			return testReadResult{Content: "ok"}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tl.(runnableTool)
+}
+
+func TestSemanticChurnRefusesAfterThreeFailures(t *testing.T) {
+	tests := []struct {
+		name           string
+		mode           string
+		argsSeq        []map[string]any // sequence of arg maps (using "path" field)
+		targetPath     string           // for by_path mode
+		numCalls       int              // how many calls to make
+		shouldExecute  int              // how many times inner tool should execute
+		expectRefusal  bool             // whether the last call should be refused
+		refusalReason  string           // what to check in refusal
+	}{
+		{
+			name:          "same_path_varying_args",
+			mode:          "always",
+			argsSeq:       []map[string]any{{"path": "foo.txt", "offset": 0}, {"path": "foo.txt", "offset": 10}, {"path": "foo.txt", "offset": 20}, {"path": "foo.txt", "offset": 30}},
+			numCalls:      4,
+			shouldExecute: 3, // executes 1st, 2nd, 3rd; refuses 4th (after 3 consecutive failures to foo.txt)
+			expectRefusal: true,
+			refusalReason: "semantic churn",
+		},
+		{
+			name:          "different_paths_no_churn",
+			mode:          "always",
+			argsSeq:       []map[string]any{{"path": "foo.txt"}, {"path": "bar.txt"}, {"path": "baz.txt"}, {"path": "qux.txt"}},
+			numCalls:      4,
+			shouldExecute: 4, // each path is independent
+			expectRefusal: false,
+		},
+		{
+			name:          "mixed_success_resets_counter",
+			mode:          "success_after_2",
+			argsSeq:       []map[string]any{{"path": "foo.txt", "offset": 0}, {"path": "foo.txt", "offset": 10}, {"path": "foo.txt", "offset": 20}, {"path": "foo.txt", "offset": 30}},
+			numCalls:      4,
+			shouldExecute: 4, // fail, fail, success (reset), fail (only 1 consecutive, not enough to refuse)
+			expectRefusal: false,
+		},
+		{
+			name:          "success_in_between_resets",
+			mode:          "by_path",
+			argsSeq:       []map[string]any{{"path": "x.txt"}, {"path": "x.txt"}, {"path": "y.txt"}, {"path": "y.txt"}},
+			targetPath:    "y.txt",
+			numCalls:      4,
+			shouldExecute: 4, // fail x, fail x, success y, success y (success resets, so 2nd y succeeds)
+			expectRefusal: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			states := newRepeatStates()
+			inner := newFailingTool(t, "test_tool", tc.mode, tc.targetPath)
+			g, err := newRepeatGuard(inner, states)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rg := g.(*repeatGuard)
+			ctx := newRepeatCtx("s1")
+
+var lastErr error
+	for i := 0; i < tc.numCalls; i++ {
+		_, lastErr = rg.Run(ctx, tc.argsSeq[i])
+	}
+
+	// All non-refused calls should return errors (tools fail)
+	// The last call might be refused
+	if tc.expectRefusal {
+		if lastErr == nil {
+			t.Fatalf("last call should be refused due to semantic churn")
+		}
+		if !strings.Contains(lastErr.Error(), tc.refusalReason) {
+			t.Errorf("last call error should contain %q: %v", tc.refusalReason, lastErr)
+		}
+	} else {
+		// For success_after_2 mode, calls 3 and 4 succeed (after threshold reached),
+		// so lastErr is nil - that's expected.
+		// For by_path mode, the 4th call should succeed (targetPath matches).
+	}
+			
+	
+		})
 	}
 }

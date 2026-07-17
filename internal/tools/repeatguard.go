@@ -43,6 +43,11 @@ const repeatThreshold = 3
 type repeatStates struct {
 	mu   sync.Mutex
 	last map[string]*repeatState
+
+	// failedPaths tracks consecutive failed calls per (tool, path) combo.
+	// Key is "tool:path" or just "tool" if no path is present. Value tracks
+	// how many consecutive failures occurred for this combo. Reset on ANY success.
+	failedPaths map[string]int
 }
 
 type repeatState struct {
@@ -50,8 +55,13 @@ type repeatState struct {
 	count       int
 }
 
+const repeatFailThresh = 3
+
 func newRepeatStates() *repeatStates {
-	return &repeatStates{last: map[string]*repeatState{}}
+	return &repeatStates{
+		last:        map[string]*repeatState{},
+		failedPaths: map[string]int{},
+	}
 }
 
 // observe records a call and returns how many times this exact fingerprint has
@@ -66,6 +76,60 @@ func (s *repeatStates) observe(sessionID, fingerprint string) int {
 	}
 	st.count++
 	return st.count
+}
+
+// resetFailedPaths clears all failure counters. Called on any tool success to
+// break the chain of consecutive failures (one success resets all semantic churn).
+func (s *repeatStates) resetFailedPaths() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.failedPaths {
+		delete(s.failedPaths, k)
+	}
+}
+
+// recordFailure records a failed call for the given key and returns the updated count.
+func (s *repeatStates) recordFailure(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failedPaths[key]++
+}
+
+// getFailureCount returns the current failure count for the given key without
+// incrementing it.
+func (s *repeatStates) getFailureCount(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failedPaths[key]
+}
+
+// extractPath pulls the file path from tool args. Best-effort: tools like
+// read_file, write_file, edit_file, delete_path, glob, grep, list_dir all use
+// a "path" field; tools without one return empty (track by tool name only).
+func extractPath(args any) string {
+	if args == nil {
+		return ""
+	}
+	m, ok := args.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if p, ok := m["path"]; ok {
+		if s, ok := p.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// getFailureKey computes the key for tracking failures. Returns "tool:path" or
+// just "tool" if no path is present.
+func getFailureKey(toolName string, args any) string {
+	key := toolName
+	if p := extractPath(args); p != "" {
+		key = toolName + ":" + p
+	}
+	return key
 }
 
 // newRepeatGuard wraps inner. Same runnableTool requirement (and reason) as
@@ -100,7 +164,9 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 
 // Run executes the call unless it is the repeatThreshold-th (or later)
 // consecutive identical call in this session, in which case it returns a
-// steering error the model can act on.
+// steering error the model can act on. It also tracks semantic churn: consecutive
+// failed calls to the same (tool, path) combo are counted, and after repeatFailThresh
+// failures, subsequent calls are refused with steering guidance.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
@@ -108,7 +174,25 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	}
 	n := g.states.observe(ctx.SessionID(), g.Name()+":"+string(argsJSON))
 	if n < repeatThreshold {
-		return g.inner.Run(ctx, args)
+		// Check for semantic churn before executing: if this tool+path has already
+		// failed repeatFailThresh times, refuse this call too.
+		key := getFailureKey(g.Name(), args)
+		if count := g.states.getFailureCount(key); count >= repeatFailThresh {
+			slog.Warn("tool call refused: semantic churn detected", "component", "tools",
+				"tool", g.Name(), "key", key, "failures", count, "session", ctx.SessionID())
+			return nil, fmt.Errorf(
+				"REFUSED (semantic churn): %d consecutive failures on %s for path %q. "+
+					"Stop guessing — review the file window and plan before retrying.",
+				count, g.Name(), extractPath(args))
+		}
+
+		result, err := g.inner.Run(ctx, args)
+		if err != nil {
+			g.states.recordFailure(key)
+		} else {
+			g.states.resetFailedPaths()
+		}
+		return result, err
 	}
 	slog.Warn("tool call refused: identical call repeated", "component", "tools",
 		"tool", g.Name(), "consecutive", n, "session", ctx.SessionID())
