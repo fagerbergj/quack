@@ -128,13 +128,14 @@ func NodeDir(nodeID string) string {
 }
 
 // SetupCloneDir is the workspace-relative directory a plan's declared Setup
-// PRE-step clones a repo into, inside a node's own directory — the
-// harness-executed twin of that node's own git_clone default placement, at a
-// FIXED name ("repo") rather than one derived from the repo URL: both the
-// clone and the node task that reads it are authored by quack itself, never a
-// model choosing a name (see dag.Plan.Setup / internal/tools.SetupClone).
+// PRE-step clones a repo into — the node's OWN root (NodeDir), not a
+// subdirectory of it: the repo IS the node's invisible-root workspace, so
+// read_file/edit_file resolve a plain relative path ("internal/foo.go") with
+// no "repo/" prefix and no absolute path (a "repo" leaf here once forced a
+// worker to `pwd` its way to an absolute path and shell out instead). See
+// dag.Plan.Setup / internal/tools.SetupClone.
 func SetupCloneDir(nodeID string) string {
-	return filepath.Join(NodeDir(nodeID), "repo")
+	return NodeDir(nodeID)
 }
 
 // EnsureDir resolves rel under the (userID, chatID) scope and creates it,

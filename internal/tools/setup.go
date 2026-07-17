@@ -15,8 +15,9 @@ import (
 // (validateCloneURL) — a plan's Setup.Repo is orchestrator-declared, not
 // operator-trusted, exactly like a worker's git_clone url. dir is
 // workspace-relative (jail.Resolve-ready — see workspace.SetupCloneDir, which
-// mirrors where that node's own git_clone would land). Returns the resolved
-// absolute clone dir.
+// lands the clone AT the node's own root, unlike a worker's own git_clone,
+// which typically lands one level under it). Returns the resolved absolute
+// clone dir.
 func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource) (string, error) {
 	if _, err := validateCloneURL(repoURL); err != nil {
 		return "", err
