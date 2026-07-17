@@ -15,6 +15,12 @@ import (
 
 type planArgs struct {
 	Nodes []dag.RawNode `json:"nodes"`
+	// Setup is the plan's PRE-step, executed before any node runs — see the
+	// tool description. Omit only for a plan with no GitHub repo involved.
+	Setup *dag.Setup `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {base_ref, work_branch}"`
+	// Delivery is the plan's POST-step, executed once after the trust gate
+	// passes — see the tool description.
+	Delivery *dag.Delivery `json:"delivery,omitempty" jsonschema:"how the gated result reaches GitHub, run after the trust gate: {kind: pull_request|review|comment, title, body}"`
 }
 
 type planResult struct {
@@ -48,11 +54,18 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained — the " +
 				"agent sees only this text), depends_on: [ids it needs output from]}. Optionally a `rubric`. " +
 				checksDesc + " " +
+				"Every plan MUST declare setup (the working clone + branch) and delivery (how the gated result " +
+				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate — you declare " +
+				"intent, you never run git, push, or open a PR yourself. Pass `setup: {base_ref, work_branch}` " +
+				"naming the branch the work happens on, and `delivery: {kind, title, body}` where `kind` is " +
+				"exactly one of \"pull_request\" (implement-and-deliver requests), \"review\" (PR/diff review " +
+				"requests), or \"comment\" (plan-only/research requests that post a summary back). Omit both " +
+				"only for a plan with no GitHub repo involved at all. " +
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
 				"directly. If validation fails, fix the nodes and call again.",
 		},
 		func(tc agent.Context, a planArgs) (planResult, error) {
-			p, err := planner.Build(tc, a.Nodes, history, message, attachments)
+			p, err := planner.Build(tc, a.Nodes, a.Setup, a.Delivery, history, message, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
@@ -108,6 +121,12 @@ func summarizePlan(p *dag.Plan) string {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
 		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
+	}
+	if p.Setup != nil {
+		fmt.Fprintf(&sb, "\nsetup: base_ref=%q work_branch=%q", p.Setup.BaseRef, p.Setup.WorkBranch)
+	}
+	if p.Delivery != nil {
+		fmt.Fprintf(&sb, "\ndelivery: kind=%q title=%q", p.Delivery.Kind, p.Delivery.Title)
 	}
 	return sb.String()
 }

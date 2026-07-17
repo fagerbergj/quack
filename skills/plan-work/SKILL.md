@@ -25,14 +25,14 @@ Match the request to a known shape first; fall back to the general rules below.
 | Review a PR / diff / branch / proposed change (read-only, no edits) | Small/cohesive: ONE `code-reviewer` node. Large/multi-area: one `code-explorer` per slice of the diff → ONE terminal `code-reviewer` that validates the pooled findings and posts. See Reviewing a PR |
 | Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
 | Learn how ANOTHER project (a third-party OSS repo) implements something — "how does OpenHands do X?", "how does goose expose tools?" | ONE `code-explorer` node per project — it CLONES THEIR REPO and reads the real source. NOT `web-researcher`: articles and docs describe code, only the code is the code. Use `web-researcher` only for facts that exist nowhere but the web (a blog post's rationale, a spec, pricing) |
-| Add/implement a feature AND commit / push / open a PR | ONE `code-implementer` node whose task runs the WHOLE deliverable — clone, study conventions, implement + tests, run checks, commit, push a branch, open the PR (see Implement-and-deliver) |
-| Research several projects, THEN design, THEN implement and open a PR (a multi-phase request) | ONE DAG spanning ALL the phases: one `code-explorer` per project → (optionally ONE `synthesizer`) → ONE `code-implementer` (terminal). See Multi-phase requests |
+| Add/implement a feature AND deliver it | a chain of `code-implementer` nodes, one per independent goal-scoped portion (ONE node for a single coherent change) — each clones/commits locally; the plan itself declares `setup` + `delivery` (see Implement-and-deliver, Decomposing implementation, Declare setup + delivery) |
+| Research several projects, THEN design, THEN implement and deliver (a multi-phase request) | ONE DAG spanning ALL the phases: one `code-explorer` per project → (optionally ONE `synthesizer`) → a `code-implementer` chain (terminal). See Multi-phase requests |
 
 **Multi-phase requests.** A request whose phases are spelled out ("research A, B and
 C by reading their source; synthesize a design; then implement it and open a PR") is
 **one plan, not one plan per phase**. Plan the whole job in a single DAG: the research
-nodes are FEEDER steps and the terminal node is the one that produces the deliverable
-(the `code-implementer` that commits, pushes, and opens the PR).
+nodes are FEEDER steps and the terminal node(s) are the `code-implementer` chain that
+commits the work — the plan's declared `delivery` is what opens the PR, after review.
 
 Do NOT plan only the first phase and stop. There is no "come back and plan the rest
 later" — the plan you author is the whole job. A plan of research nodes for a request
@@ -55,10 +55,10 @@ send BOTH: a `web-researcher` for what is written about it, and a `code-explorer
 for the repository that genuinely exists (an explorer once burned its whole run
 searching public repos for a server-side implementation that was never in them).
 
-Route by what the node must DO, not by topic: any node that must change code,
-commit, or push is `code-implementer` work — never `web-researcher`, which
-cannot commit and whose vetting expects web citations. A coding request may
-still take an upstream `web-researcher` node when live web facts are genuinely
+Route by what the node must DO, not by topic: any node that must change code or
+commit is `code-implementer` work — never `web-researcher`, which cannot
+commit and whose vetting expects web citations. A coding request may still
+take an upstream `web-researcher` node when live web facts are genuinely
 needed first.
 
 A node that must **understand a codebase** (explore/analyze a repo's structure,
@@ -120,17 +120,20 @@ that context is already in the run message; fold it into the reviewer's own work
 ## Implement-and-deliver requests
 
 When the request is to **create / add / implement / write / fix / build** code AND
-**commit / push / open a PR / submit** it, the DELIVERABLE is the committed-and-pushed
-code and the opened PR — NOT an analysis of how one would do it. Two rules:
+**commit / push / open a PR / submit** it, the DELIVERABLE is the committed code,
+carried to GitHub by the plan's declared `delivery` — NOT an analysis of how one
+would do it. `code-implementer` nodes clone, implement, and commit LOCALLY; they
+never push or open a PR themselves — that is a deterministic, gated, run-level step
+the harness runs AFTER the trust gate (see Declare setup + delivery). Two rules:
 
-- The **terminal** node MUST be a `code-implementer` node, and its `task` MUST cover
-  the full end-to-end deliverable: clone the repo, study its conventions, implement
-  the change with test coverage, make it pass the repo's checks, commit, push a
-  branch, and open the PR. Do NOT guess `checks` for it — the gate derives them
-  from the repo (see Code checks).
+- The **terminal node(s)** MUST be `code-implementer` node(s), and each `task` MUST
+  cover its portion end-to-end: clone (or reuse the shared clone from an upstream
+  node — see Decomposing implementation), study conventions, implement the change
+  with test coverage, make it pass the repo's checks, and commit locally. Do NOT
+  guess `checks` — the gate derives them from the repo (see Code checks).
 - A "understand the repo / its conventions" step is at most an UPSTREAM feeder node —
   NEVER the terminal node and NEVER a substitute for the implementation. For a
-  single-repo coding task, prefer folding "understand the repo" INTO the
+  single, focused change, prefer folding "understand the repo" INTO the
   code-implementer's own task: it has `git_clone` + `read_file` + `grep` and is told
   to explore before writing, so a separate analyze node is usually redundant.
 
@@ -138,16 +141,66 @@ Worked example — input: *"Add a Flappy Bird game to repo R and open it as a PR
 must fit the repo's conventions, pass its checks, and include tests for the game
 logic."*
 
-- CORRECT — ONE `code-implementer` node: task = "Clone R, study its structure and
-  conventions, implement a Flappy Bird game that fits them with tests for the game
-  logic, run the repo's typecheck/lint/tests until green, commit, push a branch, and
-  open a pull request." — no `checks`/`workdir`: the gate derives the repo's own
-  build/lint/test commands once the node has cloned it.
+- CORRECT — ONE `code-implementer` node (this is a single coherent goal, not several
+  independent ones): task = "Clone R, study its structure and conventions, implement
+  a Flappy Bird game that fits them with tests for the game logic, run the repo's
+  typecheck/lint/tests until green, and commit." — no `checks`/`workdir`: the gate
+  derives the repo's own build/lint/test commands once the node has cloned it. The
+  plan declares `setup: {base_ref: "main", work_branch: "feat/flappy-bird"}` and
+  `delivery: {kind: "pull_request", title: ..., body: ...}` — the harness pushes and
+  opens the PR after the node's commit passes review.
 - WRONG — a lone `web-researcher` node that "analyzes the repo and reports the file
   tree, technologies, and build/lint/test commands." It fails because the deliverable
-  was the code and the PR, not a report; `web-researcher` cannot clone-edit-commit-push,
-  and the run "completes" having done none of the actual work. (The plan tool rejects a
-  plan like this: an implement-and-deliver request with no `code-implementer` node.)
+  was the code, not a report; `web-researcher` cannot clone-edit-commit, and the run
+  "completes" having done none of the actual work. (The plan tool rejects a plan like
+  this: an implement-and-deliver request with no `code-implementer` node.)
+- WRONG — the implementer's task says "...and push a branch and open the pull
+  request." Pushing and opening the PR are never a node's job; that instruction is
+  dead weight the node can't act on (its tools don't include a push/PR call) and
+  duplicates what `delivery` already declares.
+
+## Decomposing implementation into independent, goal-scoped nodes
+
+**The axis is logical independence with ONE clear, articulable goal per node — not
+a target commit count, and not a line-count budget.** A `code-implementer` node is
+one reviewable, testable PORTION of the feature; the implementer decides internally
+how many atomic commits that portion needs (see the `commit-authoring` skill it
+loads — that's its concern, not yours).
+
+| Situation | Decomposition |
+| --- | --- |
+| One coherent change (a bugfix, a single endpoint, a focused feature) | ONE `code-implementer` node |
+| Several genuinely independent capabilities (e.g. "add auth AND add a dashboard") | one node per capability, chained by `depends_on` only where one needs another's code |
+| A layered feature where a later piece needs an earlier piece's code (e.g. "add the API, then the UI that calls it") | a CHAIN: node 2 `depends_on: [node 1]` — it sees node 1's commit through the shared clone, because the code IS the shared state |
+| A portion you can't state as ONE sentence goal ("implement the backend, add the frontend, wire up auth, and write docs") | split further — that is at least two portions, maybe more |
+| A portion that's unusually large or tangled even though its goal sounds singular | treat the size/complexity as a SIGNAL to look again — if it can't be reviewed and tested as one coherent unit, it's probably more than one goal; split it. Size (e.g. "touches five subsystems") is a proxy for this, not a hard limit — a big-but-simple mechanical change can still be one node |
+
+Never plan ONE monolithic `code-implementer` node for a feature with several
+independent goals — it blows its own context (compaction thrash, loops that never
+finish) and produces one unreviewable mega-diff. Chain nodes with `depends_on`
+instead: each stays small enough to hold its single goal, review its own diff, and
+run its own checks; node N's task can reference what node N-1 built (its commit is
+now in the shared clone) without repeating it.
+
+## Declare setup + delivery
+
+Any plan whose deliverable touches a GitHub repo (implement, review, or a repo-scoped
+plan/research request) declares BOTH `setup` and `delivery` alongside `nodes` in the
+`plan` tool call — see the tool's description for the exact shape. These are
+DECLARATIONS: the harness executes them, deterministically and App-authed, AFTER the
+trust gate passes. No node ever calls git push, opens a PR, or submits a review
+itself.
+
+| Request type | `setup` | `delivery.kind` |
+| --- | --- | --- |
+| Implement-and-deliver | `{base_ref, work_branch}` — name the branch the implementer(s) commit onto | `"pull_request"` |
+| Review a PR / diff | `{base_ref, work_branch}` set to the PR's head | `"review"` |
+| Plan-only / research request scoped to a repo | usually omitted (nothing is committed) | `"comment"` |
+| No GitHub repo involved at all (general chat/research) | omit | omit |
+
+Set `delivery.title`/`delivery.body` to the PR title/body, the review summary, or the
+comment text as appropriate — see the `pr-authoring` skill for writing a good PR
+title/body before you fill these in.
 
 ### Write the implement node's task as research → plan → implement
 
@@ -290,6 +343,7 @@ instruction. If a factual question is also asked, chain: media node → `web-res
 ## Submitting
 
 Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional
-`rubric`; optional `checks` + `workdir` on a code node — see Code checks). The
-tool validates and returns a `plan_id` and a summary — review it, then pass
-`plan_id` to `execute`. If validation fails, fix the nodes and call again.
+`rubric`; optional `checks` + `workdir` on a code node — see Code checks), plus
+`setup`/`delivery` when the plan touches a GitHub repo (see Declare setup +
+delivery). The tool validates and returns a `plan_id` and a summary — review it,
+then pass `plan_id` to `execute`. If validation fails, fix the nodes and call again.

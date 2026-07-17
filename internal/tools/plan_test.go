@@ -21,6 +21,30 @@ func TestNewPlanToolMetadata(t *testing.T) {
 	if !strings.Contains(tl.Description(), "DAG") {
 		t.Errorf("Description() = %q, want mention of DAG", tl.Description())
 	}
+	// Every plan must declare setup + delivery, and the model must never run
+	// git/push/PR itself — see github-delivery-architecture.
+	for _, want := range []string{"setup", "delivery", "you never run git, push, or open a PR yourself"} {
+		if !strings.Contains(tl.Description(), want) {
+			t.Errorf("Description() = %q, want it to mention %q", tl.Description(), want)
+		}
+	}
+}
+
+// summarizePlan is the summary the model sees back after calling plan — it
+// must surface the declared setup/delivery so the model can catch its own
+// mistake before calling execute.
+func TestSummarizePlanIncludesSetupAndDelivery(t *testing.T) {
+	plan := &dag.Plan{
+		Nodes:    []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
+		Setup:    &dag.Setup{BaseRef: "main", WorkBranch: "feat/widget"},
+		Delivery: &dag.Delivery{Kind: "pull_request", Title: "Add widget"},
+	}
+	got := summarizePlan(plan)
+	for _, want := range []string{"feat/widget", "pull_request", "Add widget"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summarizePlan = %q, want it to contain %q", got, want)
+		}
+	}
 }
 
 // TestPlanEdges verifies the wire edge list is derived from each node's

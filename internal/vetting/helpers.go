@@ -1,7 +1,9 @@
 package vetting
 
 import (
+	"context"
 	"iter"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -113,7 +115,64 @@ type Config struct {
 	Workspace       *workspace.Jail
 	WorkspaceUserID string
 	WorkspaceCaps   workspace.Caps
+
+	// Deliver posts a node's judge-passed staged delivery set (M0.5's
+	// staged-delivery spine — see StagedDelivery, commitDeliveryOnPass). nil
+	// disables delivery entirely: the staged set is simply dropped, exactly
+	// like a nil Memory disables the memory-commit path.
+	Deliver DeliverFunc
 }
+
+// StagedDelivery is one item a worker staged for the gate to post on judge
+// pass — a pull request, a review, or a comment. Branch is filled in by the
+// gate from the ledger (the branch the worker last checked out/created), not
+// by the worker: the worker never names a remote or a push target itself.
+type StagedDelivery struct {
+	Kind   string // pull_request | review | comment
+	Branch string
+	Title  string
+	Body   string
+	Event  string // review verdict: approve | request_changes | comment
+	Slot   string // comment target, for Kind == "comment"
+}
+
+// DeliveryContext is what commitDeliveryOnPass hands to Config.Deliver: the
+// worker's FINAL staged set plus the on-disk/remote coordinates of the clone
+// it committed to — everything an extension needs to push and post without
+// re-deriving them from the session itself.
+type DeliveryContext struct {
+	NodeID string
+	// ChatID is the run's chat/session id (cfg.ChatID) — an extension can key
+	// its OWN delivery-outcome bookkeeping by it, since a boolean derived from
+	// the SSE stream alone (e.g. "the judge passed") can't distinguish
+	// "delivered" from "the gate passed but the post itself then failed".
+	ChatID string
+	Items  []StagedDelivery
+	// CloneURL is the git_clone URL the worker cloned from ("" if none —
+	// nothing to deliver against).
+	CloneURL string
+	// CloneDir is the ABSOLUTE, jail-resolved filesystem path of that clone
+	// ("" if unresolvable — e.g. no Workspace configured).
+	CloneDir string
+	// Branch is the branch checked out/created in CloneDir when the worker
+	// finished (from the ledger's last successful git_checkout/git_branch),
+	// best-effort.
+	Branch string
+	// IssueNumber is the pull request a staged review/comment targets (from
+	// the ledger's github_add_review_comment/github_submit_review calls). 0
+	// when unavailable — a review/comment item then can't be delivered (logged,
+	// not fatal to the rest of the set); a staged pull_request item never needs
+	// it (it opens a NEW one).
+	IssueNumber int
+}
+
+// DeliverFunc posts a node's FINAL staged delivery set to the outside world —
+// exactly once, only when commitDeliveryOnPass calls it (judge pass). Errors
+// are logged by the caller, never fail the node: delivery is best-effort like
+// the memory-commit path, but unlike it, its failure is user-visible (the
+// extension's own dispatch path posts a failure comment — see
+// internal/github/webhook.go).
+type DeliverFunc func(ctx context.Context, dc DeliveryContext) error
 
 // PromptEventNeeded reports whether worker prompts must be delivered as
 // session events for this agent (Config.DeliverPromptEvent): true unless the
@@ -190,6 +249,29 @@ type workerActivity struct {
 	// reading. Read by the deterministic behaviour check (delivery.go): a code
 	// review produced purely by reading has verified nothing.
 	ranCommand bool
+
+	// stagedDelivery is the worker's CURRENT staged-delivery set (M0.5): a
+	// keyed, MUTABLE map ("pr" / "review" / "comment:<slot>" → the latest
+	// stage_pr/stage_review/stage_comment call for that target), so a later
+	// call REPLACES an earlier one and unstage DROPS one — never an append
+	// log. commitDeliveryOnPass posts exactly this map's contents at the
+	// moment the gate passes; anything unstaged or superseded before then
+	// never reaches GitHub.
+	stagedDelivery map[string]StagedDelivery
+	// currentBranch is the branch the worker last successfully checked out or
+	// created (git_checkout/git_branch), read by commitDeliveryOnPass to know
+	// what to push — the worker names it, but never pushes it itself.
+	currentBranch string
+	// prNumber is the pull request a review/comment target, read from the
+	// first SUCCESSFUL github_add_review_comment or github_submit_review call
+	// (whichever the worker made — reviewing an EXISTING PR always names its
+	// number). 0 when the worker made neither call this session (an implement
+	// task, or a review that found nothing to comment on).
+	//
+	// ponytail: once plan.Setup carries the triggering PR/issue number
+	// explicitly, prefer that over this ledger inference — it is unavailable
+	// for a clean-approval review that called neither tool.
+	prNumber int
 }
 
 // wsOp is one workspace operation the worker actually performed — a completed
@@ -253,6 +335,25 @@ func recordSearchResults(seen map[string]string, resp map[string]any) {
 		snippet, _ := m["snippet"].(string)
 		seen[u] = strings.TrimSpace(trimToSample(snippet))
 	}
+}
+
+// sortedStagedDelivery renders a worker's staged-delivery set as a slice in a
+// STABLE order (sorted by target key) — commitDeliveryOnPass's input, so
+// delivery order never depends on map iteration.
+func sortedStagedDelivery(staged map[string]StagedDelivery) []StagedDelivery {
+	if len(staged) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(staged))
+	for k := range staged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]StagedDelivery, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, staged[k])
+	}
+	return out
 }
 
 // trimToSample truncates s to fetchSampleBytes at a valid UTF-8 boundary.

@@ -29,7 +29,7 @@ func TestSynthesizerHardeningDoesNotCreateACycle(t *testing.T) {
 			DependsOn: []string{"synthesize-design"}},
 	}
 
-	plan, err := assemble(raw, agents, nil)
+	plan, err := assemble(raw, agents, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("assemble rejected a valid research → synthesize → implement plan: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestSynthesizerHardeningStillFillsMissingPredecessors(t *testing.T) {
 		{ID: "r2", Agent: "web-researcher", Task: "b"},
 		{ID: "sum", Agent: "synthesizer", Task: "combine", DependsOn: []string{"r1"}}, // r2 omitted
 	}
-	plan, err := assemble(raw, agents, nil)
+	plan, err := assemble(raw, agents, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}

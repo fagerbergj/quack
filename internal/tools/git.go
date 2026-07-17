@@ -1075,6 +1075,32 @@ func gitRemoteURL(dir string, caps workspace.Caps) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// PushBranch pushes branch from the local clone at dir to "origin", credential
+// injected via the SAME askpass mechanism the git tools use (never a URL, never
+// written to disk) — the delivery step's own transient, App-authed push
+// (internal/github), run OUTSIDE any agent's tool call and after judge pass, so
+// it never races or duplicates a worker's own git activity. Mirrors git_push's
+// safety rules: never force-pushes, rejects a protected branch outright.
+// jailRoot anchors the askpass symlink (workspace.Jail.Root()).
+func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCredential, caps workspace.Caps) (sha string, err error) {
+	if protectedBranches[branch] {
+		return "", fmt.Errorf("git: pushing to %q is rejected — a human merges", branch)
+	}
+	link, err := ensureAskpassLink(jailRoot)
+	if err != nil {
+		return "", err
+	}
+	auth := &gitAuth{cred: cred, askpass: link}
+	if _, _, err := runGit(ctx, dir, []string{"push", "--quiet", "origin", branch}, caps, auth); err != nil {
+		return "", err
+	}
+	out, _, err := runGit(ctx, dir, []string{"rev-parse", "--short", branch}, caps, nil)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // ---------------------------------------------------------------------------
 // git_worktree_create / git_worktree_remove
 // ---------------------------------------------------------------------------
