@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // MatchesCheckPrefix reports whether check IS one of prefixes, or extends one
@@ -221,8 +223,29 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	// so the scrub (no inherited secrets, a fixed PATH, the isolated HOME) holds
 	// identically in both modes.
 	cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
+	// Own process group + kill the WHOLE group on cancel, and a WaitDelay backstop.
+	// A real shell (RunShell) can leave a backgrounded grandchild that inherits our
+	// stdout pipe; exec's default cancel kills only the direct child, so the
+	// grandchild keeps the pipe open, the output-copy goroutine never sees EOF, and
+	// cmd.Wait() blocks forever — even past the context timeout. Setpgid + a
+	// group-kill Cancel reaps the whole tree on timeout; WaitDelay force-closes the
+	// pipe (letting Wait return) if the process exits with a lingering writer, e.g.
+	// a bare `cmd &`. (a live plan run wedged here — v0.5.2, the run_command shell.)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // negative pid = the process group
+	}
+	cmd.WaitDelay = childWaitDelay
 	return cmd, nil
 }
+
+// childWaitDelay bounds how long Wait() will block on pipe I/O after the child
+// has exited or been cancelled — a lingering grandchild holding stdout can't
+// hang the call past this. A package var so a test can shorten it.
+var childWaitDelay = 10 * time.Second
 
 // RunArgv executes argv[0] with argv[1:] as a subprocess: exec.Command argv
 // arrays ONLY, never a shell. cwd is pinned to dir (callers resolve it through
@@ -272,6 +295,14 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 	if cctx.Err() == context.DeadlineExceeded {
 		return ExecResult{ExitCode: exitCode, Output: out, TimedOut: true},
 			fmt.Errorf("workspace: run %v: timed out after %s", argv, timeout)
+	}
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		// The command returned but left a background process holding our stdout
+		// pipe; WaitDelay force-closed it and let us stop waiting rather than hang.
+		// Surface the captured output plus a note (not an error) — the command
+		// DID run, it just spawned something that outlives it.
+		return ExecResult{ExitCode: exitCode, Output: out +
+			"\n[run_command: the command left a background process still running; output above may be incomplete]"}, nil
 	}
 	if runErr != nil {
 		var exitErr *exec.ExitError
