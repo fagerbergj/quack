@@ -26,6 +26,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack ./cmd/quack
 
+# 2b) The external ACP coding agent (internal/acp, docs/acp-coder.md): one
+# self-contained binary, extracted in its own stage so the runtime layer gets
+# the binary without the tarball. PINNED — the ACP surface is integration-
+# tested per release (internal/acp/live_test.go), so bump deliberately.
+FROM debian:bookworm-slim AS opencode
+ADD https://github.com/sst/opencode/releases/download/v1.16.2/opencode-linux-x64.tar.gz /tmp/opencode.tar.gz
+RUN tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode
+
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
 # binary, which dynamically links against libcurl/libssl/libpcre2/zlib — those
 # don't exist in distroless/static (no libc at all) and hand-copying git's
@@ -59,6 +67,11 @@ COPY --from=backend /quack /quack
 # per-user caches (GOPATH/GOCACHE) default under $HOME, which quack points at
 # the writable workspace volume — nothing writes outside it.
 COPY --from=backend /usr/local/go /usr/local/go
+# The ACP coding agent (agents.<name>.acp: ["opencode", "acp"] — resolved via
+# the server's PATH). Its per-round state/caches land under the subprocess
+# $HOME quack sets (the jail home on the workspace volume), and its first round
+# fetches the @ai-sdk provider package over the network into that cache.
+COPY --from=opencode /usr/local/bin/opencode /usr/local/bin/opencode
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
