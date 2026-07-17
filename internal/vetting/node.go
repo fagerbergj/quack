@@ -240,8 +240,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 	}
 	// activity replays the worker's session from that node dir — the cwd its
-	// relative paths (and the judge's re-read of them) resolve against.
-	activity := func() workerActivity { return activityFromSessionAt(ctx.Session(), nodeDir) }
+	// relative paths (and the judge's re-read of them) resolve against — then
+	// folds in the clone's git state (augmentFromRepo): an external ACP worker
+	// commits outside the tool layer, so the session alone under-reports.
+	activity := func() workerActivity {
+		act := activityFromSessionAt(ctx.Session(), nodeDir)
+		augmentFromRepo(&act, cfg)
+		return act
+	}
 
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	// The judge runs in its own isolated runner (off the workflow event stream), so
