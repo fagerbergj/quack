@@ -379,7 +379,7 @@ func TestRealConfigLoads(t *testing.T) {
 }
 
 // TestRealConfigWorkersHaveNoDirectGitHubMutation pins the staged-delivery
-// spine's core safety property (0.5.0): git_push and github_pull_request/
+// spine's core safety property: git_push and github_pull_request/
 // github_submit_review (the latter isn't even a registered tool anymore — see
 // internal/github/tools.go) must never appear in a worker's tools: list. A
 // worker commits locally and stages; only the trust gate, post judge-pass,

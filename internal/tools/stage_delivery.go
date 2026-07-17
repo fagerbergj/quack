@@ -9,8 +9,8 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 )
 
-// The staged-delivery tools (spine of the 0.5.0 GitHub-delivery milestone):
-// workers commit locally and STAGE delivery intent; they never push, open a
+// The staged-delivery tools: workers commit locally and STAGE delivery intent;
+// they never push, open a
 // pull request, or submit a review themselves. Each call, like stage_memory,
 // is a SINK — it records nothing itself, only lands in the session — and the
 // trust gate (internal/vetting) harvests the FINAL staged set from there,

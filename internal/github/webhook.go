@@ -490,11 +490,10 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 	message := e.runMessage(p, task, rc)
 
-	// A LABEL-driven work request starts a FRESH session segment: unlike a
-	// conversational @mention (kept for continuity), a new attempt must not
-	// inherit thousands of events from prior ones (observed live: 7 attempts,
-	// 5,529 events, and the run concluded the work was "already done" instead
-	// of doing it) — T4 session hygiene.
+	// A LABEL-driven work request starts a FRESH session: unlike a conversational
+	// @mention (kept for continuity), a new attempt must not inherit a prior
+	// attempt's events, which can make the run conclude the work is "already
+	// done" instead of doing it.
 	if p.isLabelTrigger && isWorkRequest(task) {
 		if err := e.runner.ResetSession(ctx, runUserID, sessionID); err != nil {
 			slog.Warn("github: session reset failed; this attempt may inherit stale history",
@@ -554,7 +553,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 			slog.Error("github: staged delivery failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", d.err)
 		} else {
 			// The VERIFIED outcome (real PR number/url, the confirmed pushed SHA) —
-			// what GitHub's own state says happened, not a model's claim (T3.4).
+			// what GitHub's own state says happened, not a model's claim.
 			slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
 				"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
 		}
@@ -584,7 +583,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	} else if p.planOnly {
 		// A genuine plan (not a timeout/empty placeholder): collapse any PRIOR
 		// plan comment on this issue before posting the new one, so the thread
-		// shows the CURRENT plan, not a pile of dead attempts (T4.1). The marker
+		// shows the CURRENT plan, not a pile of dead attempts. The marker
 		// is what a later run's collapse finds.
 		e.app.collapsePriorComments(tailCtx, owner, repo, number, "plan")
 		answer += "\n\n" + deliveryMarker("plan")

@@ -35,7 +35,7 @@ func newDeliveryApp(t *testing.T, handler http.HandlerFunc) *App {
 	return app
 }
 
-// TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate pins T3.1: a staged
+// TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate pins a staged
 // pull_request delivered against a branch that already has an OPEN PR must
 // UPDATE that PR, never open a second one.
 func TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate(t *testing.T) {
@@ -102,7 +102,7 @@ func runGitTest(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// TestDeliverVerifiesPushAgainstGitHub pins T3.2: a `git push` that exits 0
+// TestDeliverVerifiesPushAgainstGitHub pins a `git push` that exits 0
 // is not proof the branch landed — Deliver must confirm the branch's head
 // against GitHub's OWN state before opening/updating anything, and fail
 // closed (no PR, no summary claiming success) when it doesn't match.
@@ -193,7 +193,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 	})
 }
 
-// TestDeliverCommentIdempotentEdit pins T3.3: re-delivering a staged comment
+// TestDeliverCommentIdempotentEdit pins re-delivering a staged comment
 // for the SAME slot must EDIT the prior quack-authored comment carrying its
 // marker, not pile up a duplicate.
 func TestDeliverCommentIdempotentEdit(t *testing.T) {
@@ -241,7 +241,7 @@ func TestDeliverCommentIdempotentEdit(t *testing.T) {
 	}
 }
 
-// TestDeliverCollapsesPriorReview pins T4.1's review half: before submitting a
+// TestDeliverCollapsesPriorReview pins review half: before submitting a
 // new review, Deliver minimizes (GraphQL minimizeComment) any prior
 // quack-authored review carrying the review marker.
 func TestDeliverCollapsesPriorReview(t *testing.T) {

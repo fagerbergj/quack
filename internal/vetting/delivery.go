@@ -204,19 +204,19 @@ func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
 // gate's continuation condition (RunGatedRefine). Three mechanical signals, no LLM
 // judgment:
 //
-//   - an EMPTY answer: a reasoning model that spends its whole output budget on
-//     thinking returns no content. ADK ends the run there, and "the model emitted
-//     no text" is indistinguishable from "the model is done" — except that it
-//     almost always means the opposite (mid-task, out of road).
-//   - an UNDELIVERED implement-and-deliver task: the task demanded a commit/push
-//     and the ledger holds none, so whatever the worker wrote is a description of
-//     work it never shipped.
-//   - an UNPOSTED review task: the task demanded a review be posted on a PR and
-//     the ledger holds no submit, so the "review" exists only as prose in the
-//     answer — the reviewer's exact analogue of the undelivered commit.
-//   - an UNVERIFIED review task: the task was to review a code change and the
-//     ledger holds no successful run_command, so the reviewer never executed the
-//     thing it is passing judgment on (behaviourCriterion).
+// - an EMPTY answer: a reasoning model that spends its whole output budget on
+// thinking returns no content. ADK ends the run there, and "the model emitted
+// no text" is indistinguishable from "the model is done" — except that it
+// almost always means the opposite (mid-task, out of road).
+// - an UNDELIVERED implement-and-deliver task: the task demanded a commit/push
+// and the ledger holds none, so whatever the worker wrote is a description of
+// work it never shipped.
+// - an UNPOSTED review task: the task demanded a review be posted on a PR and
+// the ledger holds no submit, so the "review" exists only as prose in the
+// answer — the reviewer's exact analogue of the undelivered commit.
+// - an UNVERIFIED review task: the task was to review a code change and the
+// ledger holds no successful run_command, so the reviewer never executed the
+// thing it is passing judgment on (behaviourCriterion).
 //
 // Everything else (research, analysis, synthesis; a delivered coding task) is
 // complete as far as the gate is concerned — the judge takes it from here.

@@ -36,7 +36,7 @@ func recordDeliveryResult(chatID string, err error) {
 
 // recordDelivery is recordDeliveryResult plus the verified GitHub state a
 // successful delivery produced (real PR number/url, the pushed SHA) — so a
-// caller reads what GitHub actually has, not what the worker claimed (T3.4).
+// caller reads what GitHub actually has, not what the worker claimed.
 func recordDelivery(chatID string, o deliveryOutcome) {
 	if chatID == "" {
 		return
@@ -45,7 +45,7 @@ func recordDelivery(chatID string, o deliveryOutcome) {
 }
 
 // takeDeliveryDetail returns and clears the last delivery outcome for chatID
-// — its error, plus (on success) the verified PR/SHA info (T3.4). ok is false
+// — its error, plus (on success) the verified PR/SHA info. ok is false
 // when nothing was ever staged for this chat (dispatch then falls back to its
 // own judge-pass proxy).
 func takeDeliveryDetail(chatID string) (deliveryOutcome, bool) {
@@ -118,8 +118,8 @@ func ownerRepoFromURL(rawURL string) (owner, repo string, ok bool) {
 //
 // NOT here (deliberately): pullRequestTool and submitReviewTool. Opening a PR
 // or submitting a review makes work PUBLIC, so under the staged-delivery spine
-// (0.5.0 — see internal/tools/stage_delivery.go, vetting.commitDeliveryOnPass)
-// no agent calls them directly anymore — a worker STAGES that intent
+// (see internal/tools/stage_delivery.go, vetting.commitDeliveryOnPass) no agent
+// calls them directly anymore — a worker STAGES that intent
 // (stage_pr/stage_review) and the trust gate posts it, exactly once, only on a
 // judge pass. createPullRequest/createReview (internal/github/app.go) are still
 // here, called ONLY by the harness's own delivery step (internal/github/webhook.go).
@@ -492,7 +492,7 @@ func (a *App) submitReview(ctx context.Context, args submitReviewArgs) (submitRe
 		// the verdict and the inline count so the PR always shows one.
 		body = defaultReviewBody(event, len(comments))
 	}
-	// The marker makes a later run's collapse (T4.1) able to find this review
+	// The marker makes a later run's collapse able to find this review
 	// again; it never fails silently into a defaultReviewBody-free blank post.
 	body += "\n\n" + deliveryMarker("review")
 	url, id, err := a.createReview(ctx, args.Owner, args.Repo, args.PullNumber, event, body, comments)
@@ -505,8 +505,8 @@ func (a *App) submitReview(ctx context.Context, args submitReviewArgs) (submitRe
 
 // deliveryMarker is the hidden HTML-comment marker embedded in a quack-
 // authored comment/review, so a later run can find its own prior post — to
-// edit it in place (comment idempotency, T3.3) or collapse it as superseded
-// (T4.1) — without touching a human's discussion. family is "plan", "review",
+// edit it in place (comment idempotency) or collapse it as superseded
+// — without touching a human's discussion. family is "plan", "review",
 // or "comment:<slot>" (mirrors the staged-delivery target keys in node.go).
 func deliveryMarker(family string) string {
 	return "<!-- quack:delivery:" + family + " -->"
@@ -515,7 +515,7 @@ func deliveryMarker(family string) string {
 // collapsePriorReviews minimizes every existing quack-authored PR review
 // (GraphQL minimizeComment, classifier OUTDATED) before a new one is
 // submitted for the same PR, so the thread shows the CURRENT review, not a
-// pile of dead attempts (T4.1). Best-effort: a failure is logged, never fails
+// pile of dead attempts. Best-effort: a failure is logged, never fails
 // the new review's delivery.
 func (a *App) collapsePriorReviews(ctx context.Context, owner, repo string, number int) {
 	reviews, err := a.listReviews(ctx, owner, repo, number)
@@ -540,7 +540,7 @@ func (a *App) collapsePriorReviews(ctx context.Context, owner, repo string, numb
 }
 
 // collapsePriorComments minimizes every existing quack-authored issue comment
-// carrying marker family (T4.1) — same idea as collapsePriorReviews, for
+// carrying marker family — same idea as collapsePriorReviews, for
 // comments rather than PR reviews (e.g. a superseded plan comment). Best-effort.
 func (a *App) collapsePriorComments(ctx context.Context, owner, repo string, number int, family string) {
 	comments, err := a.listIssueComments(ctx, owner, repo, number)
@@ -565,7 +565,7 @@ func (a *App) collapsePriorComments(ctx context.Context, owner, repo string, num
 }
 
 // findQuackComment returns the ID of an existing quack-authored issue comment
-// carrying marker, if any — the revise-before-post lookup for T3.3. ok is
+// carrying marker, if any — the revise-before-post lookup. ok is
 // false when none is found; err explains a lookup failure (the caller then
 // falls back to posting fresh rather than risk never posting at all).
 func (a *App) findQuackComment(ctx context.Context, owner, repo string, number int, marker string) (id int64, ok bool, err error) {
@@ -587,7 +587,7 @@ func (a *App) findQuackComment(ctx context.Context, owner, repo string, number i
 
 // deliverStagedComment posts (or, if a prior quack comment for this SAME slot
 // already exists, edits) a staged comment — the marker makes a revise-before-
-// post re-run idempotent instead of piling up duplicates (T3.3).
+// post re-run idempotent instead of piling up duplicates.
 func (a *App) deliverStagedComment(ctx context.Context, owner, repo string, number int, slot, bodyText string) error {
 	marker := deliveryMarker("comment:" + slot)
 	withMarker := strings.TrimSpace(bodyText) + "\n\n" + marker
@@ -757,7 +757,7 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 	return u, number, nil
 }
 
-// openOrUpdatePullRequest is the idempotent PR delivery (T3.1): it opens a NEW
+// openOrUpdatePullRequest is the idempotent PR delivery: it opens a NEW
 // pull request for head only when GitHub has no OPEN one already; otherwise it
 // UPDATES the existing PR's title/body — "revise on re-run" instead of a
 // second PR. Labels are applied only on the first open (an update never risks
@@ -816,7 +816,7 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 		}
 		// A `git push` that exits 0 is not proof the branch landed (a dropped
 		// connection mid-push, a revoked installation) — confirm against GitHub's
-		// OWN state before claiming anything downstream (T3.2). localSHA is a
+		// OWN state before claiming anything downstream. localSHA is a
 		// short hash; GitHub's ref API returns the full one.
 		remoteSHA, verr := a.branchHeadSHA(ctx, owner, repo, dc.Branch)
 		if verr != nil {
@@ -842,7 +842,7 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 }
 
 // deliveryItemResult is what one staged item's delivery produced worth
-// recording — currently only a pull request's real number/url (T3.4).
+// recording — currently only a pull request's real number/url.
 type deliveryItemResult struct {
 	prNumber int
 	prURL    string
@@ -872,7 +872,7 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		if !reviewEvents[event] {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
 		}
-		a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts (T4.1)
+		a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
 		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: item.Body, Event: event})
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: submit review: %w", err)
