@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -114,7 +115,7 @@ func TestChecksPassCriterionDerivesWhenPlannerSetNone(t *testing.T) {
 		Workspace: j, WorkspaceUserID: "u1", ChatID: "c1", WorkspaceCaps: workspace.DefaultCaps(),
 		NodeID: "impl",
 	}
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply — the repo declares a `build` target")
 	}
@@ -137,7 +138,7 @@ func TestChecksPassCriterionNoRepoSkipsRatherThanFails(t *testing.T) {
 		DeriveChecks: true, CheckCommands: []string{"go build"},
 		Workspace: j, WorkspaceUserID: "u1", ChatID: "c1", WorkspaceCaps: workspace.DefaultCaps(),
 	}
-	if _, ok := checksPassCriterion(cfg); ok {
+	if _, ok := checksPassCriterion(context.Background(), cfg); ok {
 		t.Error("checks_pass must not apply when there's no repo to derive checks from")
 	}
 }
@@ -222,7 +223,7 @@ func TestChecksDirAmbiguousReposSkips(t *testing.T) {
 	if _, ok, err := checksDir(cfg); ok || err != nil {
 		t.Errorf("checksDir applied (%v, %v) with two repos in scope; want skip", ok, err)
 	}
-	if _, ok := checksPassCriterion(cfg); ok {
+	if _, ok := checksPassCriterion(context.Background(), cfg); ok {
 		t.Error("checks_pass must not apply when the repo is ambiguous")
 	}
 }

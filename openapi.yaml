@@ -111,6 +111,15 @@ paths:
         `node_failed` ({"node_id","error"}), and `node_cancelled` ({"node_id"})
         track node lifecycle.
 
+        `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
+        reports one staged item's ACTUAL outward-boundary outcome (push +
+        PR/review/comment), as the delivering extension observed it — never the
+        worker's self-report. `outcome` is one of `delivered`, `draft` (a
+        gate-failed PR opens as a draft), `failed`, or `none` (a judge-passed
+        work-request that recorded no delivery attempt at all — the phantom-
+        success class this event exists to make visible). Emitted for both
+        success and failure, durably, independent of the judge verdict.
+
         Lifecycle: `response_created` ({"response_id"}) is the very first event
         of the stream, naming the turn so a client can cancel this run via
         `PUT /chats/{chat_id}/responses/{response_id}/status`; `chat_title`
@@ -140,6 +149,7 @@ paths:
         - node_cancelled
         - node_needs_input
         - node_steered
+        - delivery_result
         - chat_title
         - done
         - error
@@ -200,6 +210,7 @@ paths:
         - node_cancelled
         - node_needs_input
         - node_steered
+        - delivery_result
         - chat_title
         - done
         - error
@@ -679,3 +690,57 @@ components:
           format: double
         judge_passed:
           type: boolean
+
+    # -------------------------------------------------------------------------
+    # Observability — derived from the durable event log + node state; see
+    # internal/server/rest's obs.go for the derivation.
+    # -------------------------------------------------------------------------
+
+    ObsRunStatus:
+      type: string
+      description: >
+        A run's DERIVED state, extending ChatStatus with `stale`: node state
+        persisted as running/queued but no live subscriber (stream.Hub) is
+        attached in this process — a dead run FailStaleDagNodes hasn't (yet, or
+        can't, mid-process) reconciled, the "is it actually stuck" class this
+        endpoint exists to answer without SSH.
+      enum: [running, needs_input, failed, idle, stale]
+
+    ObsRunSummary:
+      type: object
+      required: [chat_id, status, updated_at, node_total, node_done, node_failed]
+      properties:
+        chat_id:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: "#/components/schemas/ObsRunStatus"
+        phase:
+          type: string
+          description: >
+            Human-readable explanation of the current status — the running
+            node's agent, or (for `stale`) the last-known node state that no
+            live process is carrying forward.
+        started_at:
+          type: string
+          format: date-time
+          description: The latest turn's created_at; absent for a chat with no turns yet.
+        updated_at:
+          type: string
+          format: date-time
+        node_total:
+          type: integer
+        node_done:
+          type: integer
+        node_failed:
+          type: integer
+
+    ObsRunList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObsRunSummary"

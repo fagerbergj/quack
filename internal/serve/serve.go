@@ -43,6 +43,7 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/server"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
@@ -189,6 +190,28 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	if port != 0 {
 		addr = fmt.Sprintf(":%d", port)
 	}
+
+	// OTel tracing/metrics (internal/otelobs), emission-only — Tempo/Grafana (the
+	// home-server monitoring stack) own trace/metric viewing, not quack itself.
+	// Set up FIRST — before any agent/session wiring — so every span from here
+	// on (including ADK's own internal instrumentation, once a provider is
+	// installed globally) is captured. Disabled (otel.enabled: false) yields a
+	// no-op Providers; every otelobs call site stays safe to call unconditionally.
+	_, otelShutdown, err := otelobs.Init(ctx, cfg.Otel)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
+	}
+	cleanups = append(cleanups, func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(sctx); err != nil {
+			slog.Warn("otel shutdown failed", "component", "otelobs", "err", err)
+		}
+	})
+	// Re-point the process's default slog handler through the trace-correlation
+	// bridge: existing output is unchanged for any call site whose ctx carries
+	// no span; a spanned ctx gains trace_id/span_id attrs for free.
+	slog.SetDefault(slog.New(otelobs.WrapHandler(slog.Default().Handler())))
 
 	// Workspace (filesystem/git tools' isolation boundary): one jail per server
 	// process, rooted at workspace.root (config.Load already defaulted it to
@@ -382,7 +405,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// safe — commitDelivery simply drops whatever a worker staged.
 	var deliver vetting.DeliverFunc
 	if githubApp != nil {
-		deliver = func(ctx context.Context, dc vetting.DeliveryContext) error {
+		deliver = func(ctx context.Context, dc vetting.DeliveryContext) ([]vetting.DeliveryItemOutcome, error) {
 			return githubApp.Deliver(ctx, jail.Root(), dc)
 		}
 	}
@@ -796,6 +819,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				sj := safetyJudge
 				agentName := name
 				permJudge = func(ctx context.Context, toolName, title string, input map[string]any) (bool, string) {
+					// Every KNOWN ask class is answered deterministically in the
+					// generated opencode config (see opencodeEnv) — an ask reaching
+					// here is a NOVEL one, expected to stay near zero; see quack.acp.permission_ask.
+					otelobs.RecordPermissionAsk(agentName)
 					allow, reason, err := sj(ctx,
 						fmt.Sprintf("the external %s agent asks permission for: %s", agentName, title),
 						"", toolName, input, "")

@@ -9,8 +9,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -112,15 +114,19 @@ type RawNode struct {
 // media — all threaded to every node by the executor. ctx bounds the
 // (optional) plan-judge call. Returns an error (no silent fallback) so the
 // orchestrator can fix and re-submit.
-func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part) (*Plan, error) {
-	plan, err := assemble(nodes, p.agents, p.checkCommands, setup, delivery)
+func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part) (plan *Plan, err error) {
+	ctx, span := otelobs.Start(ctx, "plan")
+	defer func() { otelobs.End(span, err) }()
+
+	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.judgeRouting(ctx, plan, message); err != nil {
+	span.SetAttributes(attribute.String("plan_id", plan.ID), attribute.Int("node_count", len(plan.Nodes)))
+	if err = p.judgeRouting(ctx, plan, message); err != nil {
 		return nil, err
 	}
-	if err := p.checkReviewFanout(plan, message); err != nil {
+	if err = p.checkReviewFanout(plan, message); err != nil {
 		return nil, err
 	}
 	plan.History = history
@@ -147,11 +153,16 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	if p.judge == nil {
 		return nil
 	}
+	ctx, span := otelobs.Start(ctx, "plan.judge")
+	defer span.End()
+
 	accept, reason, err := p.judge(ctx, message, planSummary(plan))
 	if err != nil {
+		span.RecordError(err)
 		slog.Warn("plan judge unavailable, allowing plan", "component", "planner", "error", err)
 		return nil
 	}
+	span.SetAttributes(attribute.Bool("accept", accept))
 	if accept {
 		return nil
 	}

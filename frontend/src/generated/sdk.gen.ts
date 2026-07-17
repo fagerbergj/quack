@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, ListObsRunsData, ListObsRunsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -82,6 +82,15 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
  * `node_failed` ({"node_id","error"}), and `node_cancelled` ({"node_id"})
  * track node lifecycle.
+ *
+ * `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
+ * reports one staged item's ACTUAL outward-boundary outcome (push +
+ * PR/review/comment), as the delivering extension observed it — never the
+ * worker's self-report. `outcome` is one of `delivered`, `draft` (a
+ * gate-failed PR opens as a draft), `failed`, or `none` (a judge-passed
+ * work-request that recorded no delivery attempt at all — the phantom-
+ * success class this event exists to make visible). Emitted for both
+ * success and failure, durably, independent of the judge verdict.
  *
  * Lifecycle: `response_created` ({"response_id"}) is the very first event
  * of the stream, naming the turn so a client can cancel this run via
@@ -170,3 +179,16 @@ export const updateResponseStatus = <ThrowOnError extends boolean = false>(optio
         ...options.headers
     }
 });
+
+/**
+ * List recent chats with derived run status/phase/timings
+ *
+ * Every chat, most-recently-updated first, with a status DERIVED from the
+ * durable event log + node state — not just the raw persisted "running"
+ * flag, which a dead process can leave stuck. `status: stale` explains
+ * that class explicitly: node state says running/queued but no live
+ * subscriber (stream.Hub) is attached to it in this process, which
+ * `status: running` alone can't distinguish from "is it actually stuck".
+ *
+ */
+export const listObsRuns = <ThrowOnError extends boolean = false>(options?: Options<ListObsRunsData, ThrowOnError>): RequestResult<ListObsRunsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListObsRunsResponses, unknown, ThrowOnError>({ url: '/api/v1/obs/runs', ...options });

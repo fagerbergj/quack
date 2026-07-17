@@ -69,6 +69,24 @@ const (
 	EventNodeFailed     = "node_failed"
 	EventNodeCancelled  = "node_cancelled"
 	EventNodeSteered    = "node_steered"
+
+	// EventDeliveryResult reports one staged item's outward-boundary outcome
+	// (push + PR/review/comment) — durable, independent of the judge verdict,
+	// so a phantom "the gate passed" success is distinguishable from an actual
+	// delivery failure. See DeliveryResultData.
+	EventDeliveryResult = "delivery_result"
+)
+
+// Delivery outcome values (DeliveryResultData.Outcome).
+const (
+	DeliveryOutcomeDelivered = "delivered"
+	// DeliveryOutcomeDraft mirrors the documented gate-fail behaviour: a
+	// successful delivery riding a failed verdict opens as a draft.
+	DeliveryOutcomeDraft  = "draft"
+	DeliveryOutcomeFailed = "failed"
+	// DeliveryOutcomeNone is the phantom-success class: a judge-passed
+	// work-request that recorded no delivery attempt at all.
+	DeliveryOutcomeNone = "none"
 )
 
 // SSEEvent is one server-sent event: a name plus a JSON-serializable payload.
@@ -273,6 +291,30 @@ type NodeSteeredData struct {
 // NodeSteered builds a node_steered event.
 func NodeSteered(nodeID, guidance string) SSEEvent {
 	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
+}
+
+// DeliveryResultData is the `delivery_result` event payload: one staged
+// item's ACTUAL outward-boundary outcome, as the delivering extension
+// observed it (a real PR/review URL, or a real per-item error) — never the
+// worker's self-report. Emitted for BOTH success and failure so a phantom
+// "delivered" (judge passed, nothing actually posted) is visible in the
+// durable event log, not just inferred from a missing log line.
+type DeliveryResultData struct {
+	NodeID  string `json:"node_id"`
+	Outcome string `json:"outcome"` // delivered | draft | failed | none
+	Kind    string `json:"kind,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Error   string `json:"error,omitempty"`
+	// TraceID cross-references this event into the OTel trace (Tempo/Grafana)
+	// covering the same delivery — "" when otel is disabled or no span was active.
+	TraceID string `json:"trace_id,omitempty"`
+}
+
+// DeliveryResult builds a delivery_result event.
+func DeliveryResult(nodeID, outcome, kind, url, errMsg, traceID string) SSEEvent {
+	return SSEEvent{Name: EventDeliveryResult, Data: DeliveryResultData{
+		NodeID: nodeID, Outcome: outcome, Kind: kind, URL: url, Error: errMsg, TraceID: traceID,
+	}}
 }
 
 // ChatTitleData is the `chat_title` event payload.

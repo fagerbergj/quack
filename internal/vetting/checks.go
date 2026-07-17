@@ -45,7 +45,7 @@ const maxCheckOutputChars = 2_000
 // All checks passing scores 1. ok=false means the criterion does not apply at all
 // (no checks and nothing to derive them from) — the node is then untouched by it,
 // exactly as a research or synthesis node is.
-func checksPassCriterion(cfg Config) (criterionScore, bool) {
+func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
 	if len(cfg.Checks) == 0 && !cfg.DeriveChecks {
 		return criterionScore{}, false
 	}
@@ -86,7 +86,7 @@ func checksPassCriterion(cfg Config) (criterionScore, bool) {
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}
-		res, err := workspace.RunPipeline(context.Background(), dir, stages, caps)
+		res, err := workspace.RunPipeline(ctx, dir, stages, caps)
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}

@@ -134,6 +134,33 @@ func (e NodeStatus) Valid() bool {
 	}
 }
 
+// Defines values for ObsRunStatus.
+const (
+	Failed     ObsRunStatus = "failed"
+	Idle       ObsRunStatus = "idle"
+	NeedsInput ObsRunStatus = "needs_input"
+	Running    ObsRunStatus = "running"
+	Stale      ObsRunStatus = "stale"
+)
+
+// Valid indicates whether the value is a known member of the ObsRunStatus enum.
+func (e ObsRunStatus) Valid() bool {
+	switch e {
+	case Failed:
+		return true
+	case Idle:
+		return true
+	case NeedsInput:
+		return true
+	case Running:
+		return true
+	case Stale:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OutputTextPartType.
 const (
 	OutputText OutputTextPartType = "output_text"
@@ -361,6 +388,33 @@ type NodeStatusUpdateBody struct {
 	//   failed      → queued (retry)
 	//   cancelled   → queued (retry)
 	Status NodeStatus `json:"status"`
+}
+
+// ObsRunList defines model for ObsRunList.
+type ObsRunList struct {
+	Data []ObsRunSummary `json:"data"`
+}
+
+// ObsRunStatus A run's DERIVED state, extending ChatStatus with `stale`: node state persisted as running/queued but no live subscriber (stream.Hub) is attached in this process — a dead run FailStaleDagNodes hasn't (yet, or can't, mid-process) reconciled, the "is it actually stuck" class this endpoint exists to answer without SSH.
+type ObsRunStatus string
+
+// ObsRunSummary defines model for ObsRunSummary.
+type ObsRunSummary struct {
+	ChatId     string `json:"chat_id"`
+	NodeDone   int    `json:"node_done"`
+	NodeFailed int    `json:"node_failed"`
+	NodeTotal  int    `json:"node_total"`
+
+	// Phase Human-readable explanation of the current status — the running node's agent, or (for `stale`) the last-known node state that no live process is carrying forward.
+	Phase *string `json:"phase,omitempty"`
+
+	// StartedAt The latest turn's created_at; absent for a chat with no turns yet.
+	StartedAt *time.Time `json:"started_at,omitempty"`
+
+	// Status A run's DERIVED state, extending ChatStatus with `stale`: node state persisted as running/queued but no live subscriber (stream.Hub) is attached in this process — a dead run FailStaleDagNodes hasn't (yet, or can't, mid-process) reconciled, the "is it actually stuck" class this endpoint exists to answer without SSH.
+	Status    ObsRunStatus `json:"status"`
+	Title     *string      `json:"title,omitempty"`
+	UpdatedAt time.Time    `json:"updated_at"`
 }
 
 // OutputItem defines model for OutputItem.
@@ -709,6 +763,9 @@ type ServerInterface interface {
 	// Subscribe to a chat's live response stream
 	// (GET /api/v1/chats/{chat_id}/stream)
 	SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// List recent chats with derived run status/phase/timings
+	// (GET /api/v1/obs/runs)
+	ListObsRuns(w http.ResponseWriter, r *http.Request)
 	// Liveness check
 	// (GET /health)
 	HealthCheck(w http.ResponseWriter, r *http.Request)
@@ -769,6 +826,12 @@ func (_ Unimplemented) UpdateResponseStatus(w http.ResponseWriter, r *http.Reque
 // Subscribe to a chat's live response stream
 // (GET /api/v1/chats/{chat_id}/stream)
 func (_ Unimplemented) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List recent chats with derived run status/phase/timings
+// (GET /api/v1/obs/runs)
+func (_ Unimplemented) ListObsRuns(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1024,6 +1087,20 @@ func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ListObsRuns operation middleware
+func (siw *ServerInterfaceWrapper) ListObsRuns(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListObsRuns(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // HealthCheck operation middleware
 func (siw *ServerInterfaceWrapper) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
@@ -1177,6 +1254,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.SubscribeChatStream)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/obs/runs", wrapper.ListObsRuns)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/health", wrapper.HealthCheck)

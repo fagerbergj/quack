@@ -48,7 +48,7 @@ func probeRepo(t *testing.T, commitOnBranch bool) Config {
 		WorkspaceCaps:   workspace.DefaultCaps(),
 		Setup:           &SetupBranch{Repo: "https://example.com/r.git", WorkBranch: "quack/work"},
 		Task:            "Implement the feature, commit, and open a pull request",
-		Deliver:         func(ctx context.Context, dc DeliveryContext) error { return nil },
+		Deliver:         func(ctx context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) { return nil, nil },
 	}
 }
 

@@ -609,18 +609,23 @@ func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, h
 // one log line names all of them.
 //
 // jailRoot anchors the askpass symlink PushBranch needs (workspace.Jail.Root()).
-func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryContext) (err error) {
+//
+// The returned []vetting.DeliveryItemOutcome is commitDelivery's per-item
+// `delivery_result` stream event source — this extension's OWN record of what
+// actually landed (a real PR/review url, or a real per-item error), never the
+// worker's self-report.
+func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryContext) (outcomes []vetting.DeliveryItemOutcome, err error) {
 	var detail deliveryOutcome
 	defer func() {
 		detail.err = err
 		recordDelivery(dc.ChatID, detail)
 	}()
 	if len(dc.Items) == 0 {
-		return nil
+		return nil, nil
 	}
 	owner, repo, ok := ownerRepoFromURL(dc.CloneURL)
 	if !ok {
-		return fmt.Errorf("github: delivery: %q is not a github.com clone URL — nothing to deliver against", dc.CloneURL)
+		return nil, fmt.Errorf("github: delivery: %q is not a github.com clone URL — nothing to deliver against", dc.CloneURL)
 	}
 	// An external (ACP) worker makes no github_* calls, so the ledger can't
 	// supply the PR number — but a GitHub-dispatched run's chat id IS the
@@ -632,12 +637,14 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 	if dc.Branch != "" && dc.CloneDir != "" {
 		tok, terr := a.tokenForRepo(ctx, owner, repo)
 		if terr != nil {
-			return fmt.Errorf("github: delivery: %w", terr)
+			err = fmt.Errorf("github: delivery: %w", terr)
+			return itemOutcomesForPushFailure(dc, err), err
 		}
 		cred := tools.GitCredential{Host: gitHost, Username: gitUsername, Token: tok}
 		localSHA, perr := tools.PushBranch(ctx, jailRoot, dc.CloneDir, dc.Branch, cred, workspace.DefaultCaps())
 		if perr != nil {
-			return fmt.Errorf("github: delivery: push %q: %w", dc.Branch, perr)
+			err = fmt.Errorf("github: delivery: push %q: %w", dc.Branch, perr)
+			return itemOutcomesForPushFailure(dc, err), err
 		}
 		// A `git push` that exits 0 is not proof the branch landed (a dropped
 		// connection mid-push, a revoked installation) — confirm against GitHub's
@@ -645,25 +652,42 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 		// short hash; GitHub's ref API returns the full one.
 		remoteSHA, verr := a.branchHeadSHA(ctx, owner, repo, dc.Branch)
 		if verr != nil {
-			return fmt.Errorf("github: delivery: push %q: verify against GitHub: %w", dc.Branch, verr)
+			err = fmt.Errorf("github: delivery: push %q: verify against GitHub: %w", dc.Branch, verr)
+			return itemOutcomesForPushFailure(dc, err), err
 		}
 		if !strings.HasPrefix(remoteSHA, localSHA) {
-			return fmt.Errorf("github: delivery: push %q: local head %s not reflected on GitHub (remote head %s) — not delivering", dc.Branch, localSHA, remoteSHA)
+			err = fmt.Errorf("github: delivery: push %q: local head %s not reflected on GitHub (remote head %s) — not delivering", dc.Branch, localSHA, remoteSHA)
+			return itemOutcomesForPushFailure(dc, err), err
 		}
 		detail.pushedSHA = remoteSHA
 	}
 	var errs []error
-	for _, item := range dc.Items {
+	outcomes = make([]vetting.DeliveryItemOutcome, len(dc.Items))
+	for i, item := range dc.Items {
 		res, ierr := a.deliverOne(ctx, owner, repo, dc, item)
+		outcomes[i] = vetting.DeliveryItemOutcome{Kind: item.Kind, URL: res.url}
 		if ierr != nil {
 			errs = append(errs, ierr)
+			outcomes[i].Error = ierr.Error()
 			continue
 		}
 		if res.prNumber != 0 {
 			detail.prNumber, detail.prURL = res.prNumber, res.prURL
 		}
 	}
-	return errors.Join(errs...)
+	err = errors.Join(errs...)
+	return outcomes, err
+}
+
+// itemOutcomesForPushFailure reports every staged item as failed with the
+// same push error — the push is a precondition every item shares, so a
+// failure there means NOTHING in dc.Items was attempted.
+func itemOutcomesForPushFailure(dc vetting.DeliveryContext, err error) []vetting.DeliveryItemOutcome {
+	out := make([]vetting.DeliveryItemOutcome, len(dc.Items))
+	for i, item := range dc.Items {
+		out[i] = vetting.DeliveryItemOutcome{Kind: item.Kind, Error: err.Error()}
+	}
+	return out
 }
 
 // validComments filters gate-parsed inline findings (vetting.ReviewComment) to
@@ -717,10 +741,12 @@ func prNumberFromChatID(chatID string) int {
 }
 
 // deliveryItemResult is what one staged item's delivery produced worth
-// recording — currently only a pull request's real number/url.
+// recording: a pull request's real number/url, or a review/comment's url
+// when the API returned one.
 type deliveryItemResult struct {
 	prNumber int
 	prURL    string
+	url      string
 }
 
 // deliverOne posts one staged item, past Deliver's push. A review or comment
@@ -758,7 +784,7 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: open pull request: %w", err)
 		}
 		slog.Info("github: delivered a pull request", "component", "github", "repo", owner+"/"+repo, "pr", num, "url", u)
-		return deliveryItemResult{prNumber: num, prURL: u}, nil
+		return deliveryItemResult{prNumber: num, prURL: u, url: u}, nil
 	case "review":
 		if dc.IssueNumber == 0 {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review has no pull request number to submit against")
@@ -779,7 +805,7 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: submit review: %w", err)
 		}
 		slog.Info("github: delivered a review", "component", "github", "repo", owner+"/"+repo, "url", res.URL)
-		return deliveryItemResult{}, nil
+		return deliveryItemResult{url: res.URL}, nil
 	case "comment":
 		if dc.IssueNumber == 0 {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged comment %q has no issue/PR number to post to", item.Slot)

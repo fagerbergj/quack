@@ -26,6 +26,38 @@ type Config struct {
 	Server       ServerConfig              `yaml:"server"`
 	Workspace    WorkspaceConfig           `yaml:"workspace"`  // agents' working disk (filesystem/git tools)
 	Extensions   ExtensionsConfig          `yaml:"extensions"` // bundled inbound+outbound integrations (e.g. GitHub App)
+	Otel         OtelConfig                `yaml:"otel"`       // OpenTelemetry tracing/metrics + the in-process ring buffer
+}
+
+// OtelConfig configures OTel tracing/metrics — emission-only: quack keeps no
+// local trace/metric store of its own (Tempo/Grafana, the home-server
+// monitoring stack, own trace/metric viewing). Enabled defaults to true
+// (spans/metrics are always recorded against the SDK's providers); set false
+// for a minimal-overhead deployment that wants neither. OTLPEndpoint is what
+// actually ships them anywhere — unset, providers are built but nothing is
+// exported.
+type OtelConfig struct {
+	Enabled      *bool   `yaml:"enabled"`       // default true
+	OTLPEndpoint string  `yaml:"otlp_endpoint"` // OTLP/http endpoint; empty = providers built, nothing exported
+	Sample       float64 `yaml:"sample"`        // trace sample ratio in (0,1]; default 1.0
+}
+
+// otelDefaultSample is OtelConfig.Sample's default when unset (zero value).
+const otelDefaultSample = 1.0
+
+// IsEnabled reports whether OTel tracing/metrics should be wired up. nil
+// (section absent or enabled unset) defaults to true.
+func (o OtelConfig) IsEnabled() bool { return o.Enabled == nil || *o.Enabled }
+
+// applyDefaults fills in unset OtelConfig fields and validates the ones set.
+func (o *OtelConfig) applyDefaults() error {
+	if o.Sample == 0 {
+		o.Sample = otelDefaultSample
+	}
+	if o.Sample < 0 || o.Sample > 1 {
+		return fmt.Errorf("config: otel.sample must be in (0,1]")
+	}
+	return nil
 }
 
 // ExtensionsConfig holds the optional bundled integrations. Each is off unless
@@ -785,6 +817,9 @@ func (c *Config) validate() error {
 		return err
 	}
 	if err := c.Extensions.GitHub.applyDefaults(); err != nil {
+		return err
+	}
+	if err := c.Otel.applyDefaults(); err != nil {
 		return err
 	}
 	return nil
