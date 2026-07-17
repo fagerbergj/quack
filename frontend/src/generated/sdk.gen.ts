@@ -83,6 +83,15 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * `node_failed` ({"node_id","error"}), and `node_cancelled` ({"node_id"})
  * track node lifecycle.
  *
+ * `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
+ * reports one staged item's ACTUAL outward-boundary outcome (push +
+ * PR/review/comment), as the delivering extension observed it — never the
+ * worker's self-report. `outcome` is one of `delivered`, `draft` (a
+ * gate-failed PR opens as a draft), `failed`, or `none` (a judge-passed
+ * work-request that recorded no delivery attempt at all — the phantom-
+ * success class this event exists to make visible). Emitted for both
+ * success and failure, durably, independent of the judge verdict.
+ *
  * Lifecycle: `response_created` ({"response_id"}) is the very first event
  * of the stream, naming the turn so a client can cancel this run via
  * `PUT /chats/{chat_id}/responses/{response_id}/status`; `chat_title`

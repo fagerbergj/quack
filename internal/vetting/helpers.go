@@ -95,6 +95,10 @@ type Config struct {
 	// but the ONE shared clone dir for a repo-touching node sharing a
 	// plan.Setup chain (dag.buildGateNodes stamps it via dag.workspaceNodeID).
 	NodeID string
+	// Agent is the plan node's agent name (n.AgentName), stamped per-node by
+	// dag.buildGateNodes — carried only for observability (span/metric
+	// attribute), never branched on inside the gate itself.
+	Agent string
 	// Task is the node's task text, stamped per-node by dag.buildGateNodes. Read
 	// by the deterministic delivery check (delivery.go): a task that demands the
 	// work be committed/pushed/opened as a PR cannot pass without the ledger
@@ -216,7 +220,23 @@ type DeliveryContext struct {
 // the memory-commit path, but unlike it, its failure is user-visible (the
 // extension's own dispatch path posts a failure comment — see
 // internal/github/webhook.go).
-type DeliverFunc func(ctx context.Context, dc DeliveryContext) error
+//
+// The returned []DeliveryItemOutcome is what commitDelivery turns into
+// per-item `delivery_result` stream events — the extension's own record of
+// what each staged item actually produced (a real PR/review URL, or a
+// per-item error), not a self-report. May be shorter than dc.Items (e.g. the
+// branch push itself failed before any item was attempted) or empty (a
+// pre-Items failure) — commitDelivery falls back to one event per dc.Item
+// with the aggregate error when the extension reports nothing at all.
+type DeliverFunc func(ctx context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error)
+
+// DeliveryItemOutcome is one staged item's ACTUAL delivery result, as the
+// extension observed it — never the worker's self-report.
+type DeliveryItemOutcome struct {
+	Kind  string // pull_request | review | comment (mirrors StagedDelivery.Kind)
+	URL   string // best-effort; "" when the extension has nothing to report
+	Error string // "" on success
+}
 
 // PromptEventNeeded reports whether worker prompts must be delivered as
 // session events for this agent (Config.DeliverPromptEvent): true unless the

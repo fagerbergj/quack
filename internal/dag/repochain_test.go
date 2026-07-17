@@ -154,9 +154,9 @@ func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliver
 		return vetting.Config{
 			Threshold: 0.6, JudgeRounds: 1,
 			Workspace: jail, WorkspaceUserID: "u1", WorkspaceCaps: workspace.DefaultCaps(),
-			Deliver: func(_ context.Context, dc vetting.DeliveryContext) error {
+			Deliver: func(_ context.Context, dc vetting.DeliveryContext) ([]vetting.DeliveryItemOutcome, error) {
 				deliverCh <- dc
-				return nil
+				return nil, nil
 			},
 		}
 	}

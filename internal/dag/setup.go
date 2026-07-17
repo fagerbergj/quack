@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -45,13 +48,17 @@ func setupQualifyingNodes(plan Plan) []Node {
 // failed run, never a silent no-delivery). A plan with no qualifying node is
 // a no-op (nothing will read the clone); a plan with plan.Setup == nil is
 // untouched — today's worker-clones behavior.
-func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan Plan) error {
+func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan Plan) (err error) {
 	if plan.Setup == nil {
 		return nil
 	}
 	if len(setupQualifyingNodes(plan)) == 0 {
 		return nil
 	}
+	ctx, span := otelobs.Start(ctx, "setup.clone",
+		attribute.String(otelobs.ChatIDKey, chatID), attribute.String("repo", plan.Setup.Repo))
+	defer func() { otelobs.End(span, err) }()
+
 	s := *plan.Setup
 	if s.Repo == "" || s.BaseRef == "" || s.WorkBranch == "" {
 		return fmt.Errorf("dag: setup: repo, base_ref, and work_branch must all be set (got repo=%q base_ref=%q work_branch=%q)",
@@ -61,7 +68,7 @@ func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan
 		return fmt.Errorf("dag: plan declares setup but no setup executor is configured")
 	}
 	dir := workspace.SetupCloneDir(workspace.SharedRepoScope)
-	if err := e.setupFn(ctx, userID, chatID, dir, s); err != nil {
+	if err = e.setupFn(ctx, userID, chatID, dir, s); err != nil {
 		return fmt.Errorf("dag: setup: %w", err)
 	}
 	return nil

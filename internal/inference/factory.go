@@ -15,11 +15,14 @@ import (
 
 // NewModel constructs an ADK model for the given provider and model name.
 // M0 implements only kind "openai" (any OpenAI-compatible endpoint, via the
-// vendored openaimodel adapter; the endpoint picks the actual server).
+// vendored openaimodel adapter; the endpoint picks the actual server). Wrapped
+// in tracedModel (traced.go) so quack.model.call.duration is recorded for
+// every model built anywhere in the system — the one factory, the one place
+// to hook it.
 func NewModel(p config.ProviderConfig, modelName string) (model.LLM, error) {
 	switch p.Kind {
 	case "openai":
-		return openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), nil
+		return &tracedModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), name: modelName}, nil
 	default:
 		return nil, fmt.Errorf("inference: unsupported provider kind %q", p.Kind)
 	}

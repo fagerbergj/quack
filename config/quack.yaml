@@ -214,6 +214,16 @@ server:
   # tools below (kind: exa for keyless, kind: direct for fetch).
   # topology: managed
 
+# OTel tracing/metrics — emission-only (Tempo/Grafana, the home-server
+# monitoring stack, own trace/metric viewing; quack keeps no local store of
+# its own). enabled defaults to true; otlp_endpoint is what actually ships
+# spans/metrics anywhere — unset, providers are built but nothing exports.
+otel:
+  enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true
+  otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ providers built, nothing exported
+  # otlp_endpoint: http://otel-collector:4318  # the deployed home-server collector
+  sample: 1.0                                # trace sample ratio in (0,1]
+
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ — "local" today, the OIDC
 # subject later). Not bound to any agent's tools: list yet — see

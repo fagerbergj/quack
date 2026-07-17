@@ -68,7 +68,7 @@ func TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate(t *testing.T) {
 		Branch:     "feature", // CloneDir empty ⇒ no real push attempted
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Add widget", Body: "does the thing"}},
 	}
-	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if created {
@@ -148,7 +148,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			}
 		})
-		err := app.Deliver(context.Background(), t.TempDir(), dc)
+		_, err := app.Deliver(context.Background(), t.TempDir(), dc)
 		if err == nil {
 			t.Fatal("expected an error when the pushed branch isn't reflected on GitHub")
 		}
@@ -182,7 +182,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			}
 		})
-		if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 		if !prOpened {
@@ -230,7 +230,7 @@ func TestDeliverCommentIdempotentEdit(t *testing.T) {
 		IssueNumber: 7,
 		Items:       []vetting.StagedDelivery{{Kind: "comment", Slot: "status", Body: "progress: 80%"}},
 	}
-	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if posted {
@@ -281,7 +281,7 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 		IssueNumber: 7,
 		Items:       []vetting.StagedDelivery{{Kind: "review", Event: "comment", Body: "new findings"}},
 	}
-	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if minimizedID != "REVIEW1" {
@@ -320,7 +320,7 @@ func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 			Comments: []vetting.ReviewComment{{Path: "main.go", Line: 42, Body: "route shadowed"}},
 		}},
 	}
-	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -364,7 +364,7 @@ func TestDeliverFailedGateOpensDraftPR(t *testing.T) {
 		Branch:       "quack/fix",
 		Items:        []vetting.StagedDelivery{{Kind: "pull_request", Title: "Fix it", Body: "the fix"}},
 	}
-	if err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {

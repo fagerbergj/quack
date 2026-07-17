@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,7 @@ func testChecksConfig(t *testing.T, checks []string, workdir string) Config {
 
 func TestChecksPassCriterionAllPass(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"true", "true"}, "")
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply")
 	}
@@ -41,7 +42,7 @@ func TestChecksPassCriterionAllPass(t *testing.T) {
 
 func TestChecksPassCriterionOneFails(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"true", "false"}, "")
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply")
 	}
@@ -55,7 +56,7 @@ func TestChecksPassCriterionOneFails(t *testing.T) {
 
 func TestChecksPassCriterionNoWorkspaceFailsClosed(t *testing.T) {
 	cfg := Config{Checks: []string{"true"}} // Workspace deliberately nil
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply (explicit Checks, fail closed)")
 	}
@@ -69,7 +70,7 @@ func TestChecksPassCriterionOutputInReason(t *testing.T) {
 	// that doesn't exist reliably prints a recognizable error and exits
 	// non-zero, without needing a shell (RunArgv never invokes one).
 	cfg := testChecksConfig(t, []string{"ls /quack-checks-test-does-not-exist-xyz"}, "")
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply")
 	}
@@ -84,7 +85,7 @@ func TestChecksPassCriterionOutputInReason(t *testing.T) {
 func TestFoldDeterministicFoldsChecksPass(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"false"}, "")
 	v := verdict{Criteria: map[string]criterionScore{"answers_question": {Score: 1}}}
-	got := foldDeterministic(v, "some answer", workerActivity{}, cfg)
+	got := foldDeterministic(context.Background(), v, "some answer", workerActivity{}, cfg)
 	c, ok := got.Criteria["checks_pass"]
 	if !ok {
 		t.Fatal("checks_pass criterion missing")
@@ -100,7 +101,7 @@ func TestFoldDeterministicFoldsChecksPass(t *testing.T) {
 func TestFoldDeterministicNodeWithoutChecksUntouched(t *testing.T) {
 	cfg := Config{} // no Checks configured
 	v := verdict{Criteria: map[string]criterionScore{"answers_question": {Score: 1}}}
-	got := foldDeterministic(v, "some answer", workerActivity{}, cfg)
+	got := foldDeterministic(context.Background(), v, "some answer", workerActivity{}, cfg)
 	if _, ok := got.Criteria["checks_pass"]; ok {
 		t.Fatal("checks_pass should not appear for a node with no Checks configured")
 	}
@@ -109,7 +110,7 @@ func TestFoldDeterministicNodeWithoutChecksUntouched(t *testing.T) {
 func TestFoldDeterministicPassingChecksDoNotFail(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"true"}, "")
 	v := verdict{Criteria: map[string]criterionScore{"answers_question": {Score: 0.9}}}
-	got := foldDeterministic(v, "some answer", workerActivity{}, cfg)
+	got := foldDeterministic(context.Background(), v, "some answer", workerActivity{}, cfg)
 	c, ok := got.Criteria["checks_pass"]
 	if !ok {
 		t.Fatal("checks_pass criterion missing")

@@ -81,6 +81,8 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// shared clone (workspace.SharedRepoScope) for a repo-touching node
 		// sharing a plan.Setup chain (see workspaceNodeID).
 		cfg.NodeID = workspaceNodeID(plan, node)
+		// Carried only for observability (span/metric attribute) — see vetting.Config.Agent.
+		cfg.Agent = node.AgentName
 		// The node's task text drives the deterministic delivery check
 		// (vetting/delivery.go): a task that says commit/push/open-a-PR cannot pass
 		// unless the workspace ledger shows the worker actually did it.

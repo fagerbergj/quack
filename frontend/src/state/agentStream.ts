@@ -73,6 +73,19 @@ export interface DagPlanPayload {
   started_at_ms?: number // server start time, for a reconnect-stable total timer
 }
 
+// DeliveryResultPayload is one staged item's ACTUAL outward-boundary outcome
+// (push + PR/review/comment), as the delivering extension observed it — never
+// the worker's self-report. "none" is the phantom-success class: a
+// judge-passed work-request that recorded no delivery attempt at all.
+export interface DeliveryResultPayload {
+  nodeId: string
+  outcome: 'delivered' | 'draft' | 'failed' | 'none'
+  kind?: string
+  url?: string
+  error?: string
+  traceId?: string
+}
+
 export interface AgentStreamHandlers {
   // Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
   onAgentStart?: (d: AgentStartPayload) => void
@@ -98,6 +111,10 @@ export interface AgentStreamHandlers {
   // The node was stopped by the user (PUT node status {"status":"cancelled"}) —
   // rendered neutrally ("stopped"), distinct from a real gate failure.
   onNodeCancelled?: (nodeId: string) => void
+  // One staged item's actual delivery outcome — not yet rendered in the UI;
+  // wired so the event is parsed rather than silently dropped (see M13/OTel
+  // observability: this is the phantom-success visibility signal).
+  onDeliveryResult?: (d: DeliveryResultPayload) => void
   onNodeSteered?: (nodeId: string, guidance: string) => void
   // A node paused to ask the user a question (mid-node HITL). The next message
   // sent on the chat is delivered to the node as the answer.
@@ -109,6 +126,7 @@ export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_steered', 'node_needs_input',
+  'delivery_result',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
 
@@ -276,6 +294,20 @@ export function dispatchAgentEvent(
         handlers.onNodeNeedsInput?.(p.node_id,
           typeof p.interrupt_id === 'string' ? p.interrupt_id : '',
           typeof p.message === 'string' ? p.message : '')
+      }
+      return true
+    }
+    case 'delivery_result': {
+      const p = parsed as { node_id?: string; outcome?: string; kind?: string; url?: string; error?: string; trace_id?: string }
+      if (typeof p.node_id === 'string' && typeof p.outcome === 'string') {
+        handlers.onDeliveryResult?.({
+          nodeId: p.node_id,
+          outcome: p.outcome as DeliveryResultPayload['outcome'],
+          kind: typeof p.kind === 'string' ? p.kind : undefined,
+          url: typeof p.url === 'string' ? p.url : undefined,
+          error: typeof p.error === 'string' ? p.error : undefined,
+          traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
+        })
       }
       return true
     }

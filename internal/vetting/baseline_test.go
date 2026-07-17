@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,7 +71,7 @@ func TestChecksPassPreExistingFailureDoesNotGate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "new.txt"), []byte("worker"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply")
 	}
@@ -89,7 +90,7 @@ func TestChecksPassRegressionStillGates(t *testing.T) {
 	}
 	git(t, repo, "commit", "-qam", "worker breaks it")
 
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply")
 	}
@@ -103,7 +104,7 @@ func TestChecksPassRegressionStillGates(t *testing.T) {
 
 func TestChecksPassPassingCheckNeedsNoBaseline(t *testing.T) {
 	cfg, _ := clonedRepoConfig(t, []string{"ls marker"}, map[string]string{"marker": "here"})
-	got, ok := checksPassCriterion(cfg)
+	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
 		t.Fatal("checks_pass should apply")
 	}
@@ -125,7 +126,7 @@ func TestChecksPassBaselineLeavesWorkerTreeIntact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, ok := checksPassCriterion(cfg); !ok {
+	if _, ok := checksPassCriterion(context.Background(), cfg); !ok {
 		t.Fatal("checks_pass should apply")
 	}
 

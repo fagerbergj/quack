@@ -28,10 +28,12 @@ import (
 	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
+	"go.opentelemetry.io/otel/attribute"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -168,8 +170,14 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 // round drives one subprocess round: spawn, handshake, prompt, stream updates
 // through the translator into emit, and emit the final answer spec last.
 // Separated from runPrompt so it is drivable with a plain context in tests.
-func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(eventSpec) bool) error {
+func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(eventSpec) bool) (err error) {
+	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
+	defer func() { otelobs.End(roundSpan, err) }()
+
+	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String("agent", a.name))
+	_ = spawnCtx
 	h, err := a.start(cwd)
+	otelobs.End(spawnSpan, err)
 	if err != nil {
 		return err
 	}
@@ -177,18 +185,24 @@ func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(event
 
 	ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
 	defer cancelInit()
-	if _, err := h.conn.Initialize(ictx, sdk.InitializeRequest{
+	handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String("agent", a.name))
+	_ = handshakeCtx
+	if _, err = h.conn.Initialize(ictx, sdk.InitializeRequest{
 		ProtocolVersion: sdk.ProtocolVersionNumber,
 		// No fs/terminal capabilities: the agent works directly on disk in
 		// cwd; the jail scope + subprocess env are the boundary.
 		ClientCapabilities: sdk.ClientCapabilities{},
 	}); err != nil {
+		otelobs.End(handshakeSpan, err)
 		return fmt.Errorf("acp: initialize: %w%s", err, h.stderrTail())
 	}
 	sess, err := h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: []sdk.McpServer{}})
 	if err != nil {
+		otelobs.End(handshakeSpan, err)
 		return fmt.Errorf("acp: session/new: %w%s", err, h.stderrTail())
 	}
+	handshakeSpan.SetAttributes(attribute.String("session_id", string(sess.SessionId)))
+	otelobs.End(handshakeSpan, nil)
 	a.log.Info("acp round started", "cwd", cwd, "session", sess.SessionId)
 
 	type promptDone struct {
@@ -196,9 +210,13 @@ func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(event
 		err  error
 	}
 	done := make(chan promptDone, 1)
+	_, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String("agent", a.name), attribute.String("session_id", string(sess.SessionId)))
+	defer promptSpan.End() // safety net for the relay-stopped/cancel exits below; the done-branch sets the real status first
 	go func() {
 		// The RPC runs on its own context: on node cancel we want a graceful
 		// session/cancel first, then the process kill — not an instant RPC abort.
+		// Deliberately NOT ctx (would inherit its cancellation) — the span is
+		// still opened above, against ctx, so it nests correctly regardless.
 		resp, perr := h.conn.Prompt(context.Background(), sdk.PromptRequest{
 			SessionId: sess.SessionId,
 			Prompt:    []sdk.ContentBlock{sdk.TextBlock(outbound)},
@@ -234,15 +252,20 @@ func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(event
 				break
 			}
 			if d.err != nil {
+				otelobs.End(promptSpan, d.err)
 				return fmt.Errorf("acp: prompt: %w%s", d.err, h.stderrTail())
 			}
 			if d.resp.StopReason == sdk.StopReasonRefusal {
-				return errors.New("acp: agent refused the prompt")
+				refusalErr := errors.New("acp: agent refused the prompt")
+				otelobs.End(promptSpan, refusalErr)
+				return refusalErr
 			}
 			// max_tokens / max_turn_requests: keep whatever answer streamed —
 			// the gate's continuation/judge loop deals with incompleteness.
 			final := finalSpec(tr)
 			a.log.Info("acp round done", "stop", string(d.resp.StopReason), "answer_len", len(final.parts[0].Text))
+			promptSpan.SetAttributes(attribute.String("stop_reason", string(d.resp.StopReason)))
+			otelobs.End(promptSpan, nil)
 			emit(final)
 			return nil
 		case <-ctx.Done():

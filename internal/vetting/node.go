@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
@@ -17,6 +19,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/memory"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -212,8 +215,30 @@ func replyString(reply any) string {
 	return fmt.Sprintf("%v", reply)
 }
 
-func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (string, GateResult, error) {
+func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	log := slog.With("component", "vetting", "node", nodeID)
+
+	// nodeCtx is the otel-decorated PLAIN context.Context this node's span tree
+	// nests under; it is never fed back into ADK calls (ctx, the adkagent.Context
+	// param, stays untouched for those) — it exists purely so child spans opened
+	// below (worker round, gate stage, judge round, delivery) parent correctly
+	// under "quack.node" instead of becoming siblings of it.
+	nodeCtx, span := otelobs.Start(ctx, "node",
+		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
+		attribute.String("node_id", nodeID),
+		attribute.String("agent", cfg.Agent),
+		attribute.String("model", modelName(workerModel)),
+	)
+	otelobs.NodeStarted()
+	defer func() {
+		span.SetAttributes(
+			attribute.Bool("verdict_passed", res.Passed),
+			attribute.Float64("verdict_score", res.Score),
+			attribute.Int("gate_rounds", res.Rounds),
+		)
+		otelobs.End(span, err)
+		otelobs.NodeFinished()
+	}()
 
 	// Continuation and revise rounds build a FRESH prompt from cfg.Task, dropping
 	// the advisor-thread marker the draft prompt carried. That marker is the ONLY
@@ -232,7 +257,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// `prompt` means the notes also reach the judge (its `question` is this
 	// prompt) and every revise round's content. Best-effort by construction.
 	if cfg.ExternalWorker && cfg.CommitMemory {
-		if rec := cfg.Memory.Recall(ctx, memoryScope(ctx, cfg, nodeID), cfg.Task); rec != "" {
+		_, recallSpan := otelobs.Start(nodeCtx, "memory.recall",
+			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
+		rec := cfg.Memory.Recall(ctx, memoryScope(ctx, cfg, nodeID), cfg.Task)
+		recallSpan.SetAttributes(attribute.Bool("hit", rec != ""))
+		recallSpan.End()
+		otelobs.RecordMemoryRecall(rec != "")
+		if rec != "" {
 			prompt = rec + "\n\n" + prompt
 			log.Info("recalled memory injected into the worker prompt", "bytes", len(rec))
 		}
@@ -321,9 +352,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 					turns[n-1].answer = replyString(reply)
 				}
 				log.Info("node resumed with user answer", "round", scan.pauses)
-				answer, err = runWorkerNode(ctx, workerNode,
+				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode,
 					workerInput(withUserAnswer(prompt, turns), attachments),
-					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), promptEmit)
+					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), "hitl", promptEmit)
 				if err != nil {
 					log.Error("post-answer worker run failed", "err", err)
 					return "", GateResult{}, err
@@ -339,9 +370,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 						turns[n-1].answer = replyString(reply)
 					}
 					log.Info("node resumed with confirm decision", "round", cscan.pauses)
-					answer, err = runWorkerNode(ctx, workerNode,
+					answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode,
 						workerInput(withConfirmDecision(prompt, turns), attachments),
-						fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), promptEmit)
+						fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), "confirm", promptEmit)
 					if err != nil {
 						log.Error("post-decision worker run failed", "err", err)
 						return "", GateResult{}, err
@@ -350,7 +381,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 		}
 		if !resumed {
-			answer, err = runWorkerNode(ctx, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, promptEmit)
+			answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, "draft", promptEmit)
 			if err != nil {
 				// Log at our boundary before returning: ADK's scheduler can swallow a
 				// node error into a silent empty completion, so this ERROR line (with the
@@ -385,22 +416,32 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// which carries the user's verbatim request as background: judged against
 		// that, every node in a "commit and open a PR" plan is forever incomplete,
 		// including the read-only explorers.
-		for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly); attempt++ {
-			act := actFor(answer)
-			log.Warn("work not finished; continuing the worker with its tools",
-				"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
-			answer, err = runWorkerNode(ctx, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly)+markerLine,
-				fmt.Sprintf("worker-cont%d%s", attempt, sfx), promptEmit)
-			if err != nil {
-				log.Error("worker continuation failed", "attempt", attempt, "err", err)
-				return "", GateResult{}, err
+		if workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly) {
+			_, contSpan := otelobs.Start(nodeCtx, "gate.continuation",
+				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
+			contAttempts := 0
+			for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly); attempt++ {
+				contAttempts = attempt
+				act := actFor(answer)
+				log.Warn("work not finished; continuing the worker with its tools",
+					"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
+				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly)+markerLine,
+					fmt.Sprintf("worker-cont%d%s", attempt, sfx), "continuation", promptEmit)
+				if err != nil {
+					log.Error("worker continuation failed", "attempt", attempt, "err", err)
+					contSpan.End()
+					return "", GateResult{}, err
+				}
+				// A continuation is where the worker finally proposes its guarded delivery
+				// step (git_commit/git_push) — park the node for the human exactly as the
+				// draft and revise paths do.
+				if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
+					contSpan.End()
+					return "", GateResult{}, ierr // ErrNodeInterrupted → park
+				}
 			}
-			// A continuation is where the worker finally proposes its guarded delivery
-			// step (git_commit/git_push) — park the node for the human exactly as the
-			// draft and revise paths do.
-			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
-				return "", GateResult{}, ierr // ErrNodeInterrupted → park
-			}
+			contSpan.SetAttributes(attribute.Int("attempts", contAttempts))
+			contSpan.End()
 		}
 
 		// Last resort for a genuinely stuck worker (nothing, on every turn): a
@@ -450,6 +491,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			act := actFor(answer)
 			runID := fmt.Sprintf("judge-r%d", round)
+			judgeCtx, judgeSpan := otelobs.Start(nodeCtx, "gate.judge",
+				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
+				attribute.String("run_id", runID), attribute.String("agent", cfg.Agent), attribute.Int("round", round))
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
 			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, act, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
@@ -457,13 +501,17 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// UNVETTED — that must be loud in the logs, not buried.
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
 				emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
+				otelobs.End(judgeSpan, jerr)
 				return answer, res, nil
 			}
-			v = foldDeterministic(v, answer, act, cfg)
+			v = foldDeterministic(judgeCtx, v, answer, act, cfg)
 			feedback := composeFeedback(v, cfg.Threshold)
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
+			judgeSpan.SetAttributes(attribute.Float64("score", res.Score), attribute.Bool("passed", res.Passed))
+			judgeSpan.End()
+			otelobs.RecordJudgeVerdict(cfg.Agent, res.Score, res.Passed)
 			// DEBUG: the per-criterion reasoning + feedback behind that score, so a
 			// failing gate is diagnosable from logs instead of only the UI.
 			if len(v.Criteria) > 0 && log.Enabled(context.Background(), slog.LevelDebug) {
@@ -478,7 +526,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				break
 			}
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
-			revised, rerr := runWorkerNode(ctx, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), promptEmit)
+			revised, rerr := runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), "revise", promptEmit)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
@@ -505,13 +553,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 		act := actFor(answer)
 		if res.Passed {
-			commitMemoryOnPass(ctx, cfg, nodeID, answer, act.staged)
+			commitMemoryOnPass(ctx, nodeCtx, cfg, nodeID, answer, act.staged)
 		}
 		// Deliver even on a judge FAIL — graceful degradation: the work is done
 		// (committed + staged), so open the PR / post it, but with the gate's
 		// concerns attached as a caveat (see App.Deliver) so a human decides.
 		// Memory stays pass-only: never persist tradecraft the gate rejected.
-		commitDelivery(cfg, nodeID, act, res)
+		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
 		return answer, res, nil
 	}
 }
@@ -640,15 +688,23 @@ func stagedDeliveryTarget(fc *genai.FunctionCall) (target string, item StagedDel
 // the agent's role family, or the user — never the agent's own name. The gate is the
 // right place to resolve that scope: it runs workflow-side, so it holds the real user
 // id and the jail coordinates the node's repo was cloned into.
-func commitMemoryOnPass(ctx adkagent.Context, cfg Config, author, answer string, staged []memory.Candidate) {
+func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Config, author, answer string, staged []memory.Candidate) {
 	if cfg.Memory == nil || !cfg.CommitMemory || strings.TrimSpace(answer) == "" {
 		return
 	}
 	sc := memoryScope(ctx, cfg, author)
+	// The commit is fire-and-forget (best-effort, never blocks the node), so its
+	// span cannot be a normal CHILD of the node span — the node (and its span)
+	// may finish well before this goroutine does. Link it to the node span
+	// instead: a separate trace, cross-referenced, which is OTel's documented
+	// shape for async work triggered by a request that doesn't wait for it.
+	parentSC := oteltrace.SpanContextFromContext(spanCtx)
 	go func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
+		cctx, commitSpan := otelobs.StartLinked(cctx, "memory.commit", parentSC, attribute.String("agent", author))
 		n, err := cfg.Memory.Commit(cctx, sc, author, staged, answer)
+		otelobs.End(commitSpan, err)
 		if err != nil {
 			slog.Warn("memory commit failed", "component", "vetting", "node", author, "err", err, "staged", len(staged))
 			return
@@ -672,10 +728,21 @@ func commitMemoryOnPass(ctx adkagent.Context, cfg Config, author, answer string,
 // dispatch falls back to an honest comment when nothing was delivered — see
 // internal/github/webhook.go), which needs delivery to have actually been
 // attempted before the node — and so the run — completes.
-func commitDelivery(cfg Config, nodeID string, act workerActivity, res GateResult) {
+func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
 	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
+		recordDeliveryOutcomeMetric(cfg, res, false, false)
+		// The phantom-success class this event exists to surface: a delivery-
+		// capable node's judge-passed work-request that staged nothing at all.
+		if !cfg.ReadOnly && res.Passed {
+			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeNone, "", "", "", otelobs.TraceIDOf(ctx)))
+		}
 		return
 	}
+	spanCtx, span := otelobs.Start(ctx, "delivery",
+		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
+	defer span.End()
+	traceID := otelobs.TraceIDOf(spanCtx)
+
 	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber, GatePassed: res.Passed, GateFeedback: res.Feedback}
 	if cfg.Setup != nil {
 		// Setup guaranteed this branch exists (or the run errored before any node
@@ -703,13 +770,85 @@ func commitDelivery(cfg Config, nodeID string, act workerActivity, res GateResul
 			}
 		}
 	}
-	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	kinds := make([]string, len(dc.Items))
+	for i, item := range dc.Items {
+		kinds[i] = item.Kind
+	}
+	span.SetAttributes(attribute.StringSlice("staged_kinds", kinds))
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	if err := cfg.Deliver(cctx, dc); err != nil {
+	itemOutcomes, err := cfg.Deliver(cctx, dc)
+	span.SetAttributes(attribute.Bool("delivered", err == nil))
+	otelobs.End(span, err)
+
+	// The extension's own record (itemOutcomes) is authoritative — a real
+	// PR/review URL or a real per-item error, never the worker's self-report.
+	// Fall back to one synthetic outcome per staged item (the aggregate error)
+	// only when the extension reported nothing at all (e.g. it failed before
+	// reaching any item, such as the branch push).
+	if len(itemOutcomes) == 0 {
+		itemOutcomes = make([]DeliveryItemOutcome, len(dc.Items))
+		for i, item := range dc.Items {
+			itemOutcomes[i] = DeliveryItemOutcome{Kind: item.Kind}
+			if err != nil {
+				itemOutcomes[i].Error = err.Error()
+			}
+		}
+	}
+	anyDelivered := false
+	for _, io := range itemOutcomes {
+		outcome := stream.DeliveryOutcomeDelivered
+		switch {
+		case io.Error != "":
+			outcome = stream.DeliveryOutcomeFailed
+		case !res.Passed:
+			outcome = stream.DeliveryOutcomeDraft
+		default:
+			anyDelivered = true
+		}
+		emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, outcome, io.Kind, io.URL, io.Error, traceID))
+	}
+	recordDeliveryOutcomeMetric(cfg, res, true, anyDelivered || (err == nil && res.Passed))
+
+	if err != nil {
 		slog.Error("delivery failed", "component", "vetting", "node", nodeID, "err", err, "items", len(dc.Items))
 		return
 	}
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
+}
+
+// emitDeliveryResult sends a delivery_result SSE event, if a sink is present
+// — SSE-only, like emitJudge (never written to the session). ev already
+// carries NodeID (set by stream.DeliveryResult); nodeID is accepted for
+// signature symmetry with emitJudge.
+func emitDeliveryResult(sink func(stream.SSEEvent), nodeID string, ev stream.SSEEvent) {
+	if sink != nil {
+		sink(ev)
+	}
+}
+
+// recordDeliveryOutcomeMetric records quack.delivery.outcome — the plan's
+// alertable phantom-success guard. Scoped to delivery-capable agents
+// (!cfg.ReadOnly): a reviewer/explorer never delivers, so it has no signal to
+// contribute either way. "none" is the phantom-success class: a judge-passed
+// work-request that recorded no delivery attempt at all. "draft" mirrors the
+// documented gate-fail behaviour (AGENTS.md: "a gate-failed PR opens as a
+// draft") — a successful delivery riding a failed verdict.
+func recordDeliveryOutcomeMetric(cfg Config, res GateResult, attempted, delivered bool) {
+	if cfg.ReadOnly {
+		return
+	}
+	switch {
+	case attempted && delivered && res.Passed:
+		otelobs.RecordDeliveryOutcome(otelobs.DeliveryDelivered)
+	case attempted && delivered:
+		otelobs.RecordDeliveryOutcome(otelobs.DeliveryDraft)
+	case attempted:
+		otelobs.RecordDeliveryOutcome(otelobs.DeliveryFailed)
+	case res.Passed:
+		otelobs.RecordDeliveryOutcome(otelobs.DeliveryNone)
+	}
 }
 
 // memoryScope is the node's memory entitlement: the repo it is working in (derived
@@ -800,6 +939,47 @@ func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, ru
 	return stripped, nil
 }
 
+// modelName extracts a model identifier for span/metric attributes; "" for a
+// nil model.LLM (e.g. an ACP agent whose worker isn't backed by a local model.LLM).
+func modelName(m model.LLM) string {
+	if m == nil {
+		return ""
+	}
+	return m.Name()
+}
+
+// runWorkerNodeTraced wraps runWorkerNode with a "quack.worker.round" span
+// (parented under spanCtx, the node's span-carrying context — NOT ctx, which
+// stays the plain ADK context runWorkerNode itself needs) and the
+// round-duration metric. The single seam every worker round — draft,
+// HITL/guard resume, continuation, revise — passes through.
+func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Config, workerModel model.LLM, workerNode workflow.Node, input any, runID, stage string, emit func(*session.Event) error) (string, error) {
+	t0 := time.Now()
+	_, span := otelobs.Start(spanCtx, "worker.round",
+		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
+		attribute.String("node_id", cfg.NodeID),
+		attribute.String("run_id", runID),
+		attribute.String("agent", cfg.Agent),
+		attribute.String("model", modelName(workerModel)),
+		attribute.String("stage", stage),
+	)
+	out, err := runWorkerNode(ctx, workerNode, input, runID, emit)
+	otelobs.End(span, err)
+	otelobs.RecordRoundDuration(cfg.Agent, modelName(workerModel), stage, time.Since(t0))
+	return out, err
+}
+
+// checksPassCriterionTraced wraps checksPassCriterion with a "quack.gate.checks"
+// span — the deterministic-checks gate stage.
+func checksPassCriterionTraced(ctx context.Context, cfg Config) (criterionScore, bool) {
+	spanCtx, span := otelobs.Start(ctx, "gate.checks",
+		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", cfg.NodeID))
+	defer span.End()
+	c, ok := checksPassCriterion(spanCtx, cfg)
+	span.SetAttributes(attribute.Bool("applicable", ok), attribute.Float64("score", c.Score))
+	return c, ok
+}
+
 // emitJudge sends a judge-stage SSE event scoped to nodeID, if a sink is present.
 func emitJudge(sink func(stream.SSEEvent), nodeID string, ev stream.SSEEvent) {
 	if sink != nil {
@@ -833,7 +1013,7 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 // foldDeterministic folds the code-owned criteria (citation backing, answer
 // length, retrieval grounding) into the judge's verdict and re-aggregates
 // (weakest-link). Mirrors the deterministic fold in gate.run's judge stage.
-func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config) verdict {
+func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
 	}
@@ -859,7 +1039,7 @@ func foldDeterministic(v verdict, answer string, act workerActivity, cfg Config)
 	// §4: deterministic gate checks — the planner's `checks` when it set them,
 	// else the ones derived from the repo on disk (checks.go). Untouched for a
 	// node that has neither (research, synthesis).
-	if c, ok := checksPassCriterion(cfg); ok {
+	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
 		v.Criteria["checks_pass"] = c
 	}
 	// Delivery: a node whose task says commit/push/PR cannot pass unless the

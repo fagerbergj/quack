@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -167,7 +168,7 @@ func TestDeliveryCriterionAppliesToADirectedDeliveryTask(t *testing.T) {
 // (wrongly) loves the answer cannot pass the node anyway (weakest-link).
 func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 	v := verdict{Score: 0.7, Criteria: map[string]criterionScore{"task_completeness": {Score: 0.7}}}
-	got := foldDeterministic(v, strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask})
+	got := foldDeterministic(context.Background(), v, strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask})
 	if c, ok := got.Criteria["delivery_complete"]; !ok || c.Score != 0 {
 		t.Fatalf("delivery_complete = %+v (present=%v), want a hard 0", c, ok)
 	}
@@ -423,7 +424,7 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 // judge thought of the prose.
 func TestFoldDeterministicHardFailsUnpostedReview(t *testing.T) {
 	v := verdict{Score: 0.9, Criteria: map[string]criterionScore{"review_quality": {Score: 0.9}}}
-	got := foldDeterministic(v, "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask})
+	got := foldDeterministic(context.Background(), v, "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask})
 	if c := got.Criteria["review_posted"]; c.Score != 0 {
 		t.Fatalf("review_posted = %+v, want Score 0", c)
 	}

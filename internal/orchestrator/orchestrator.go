@@ -14,6 +14,9 @@ import (
 	"strings"
 	"sync"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
@@ -27,6 +30,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/memory"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 )
@@ -200,6 +204,20 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // media-capable node (the orchestrator model itself stays text/vision-only).
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		var span oteltrace.Span
+		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
+		defer span.End()
+		otelobs.RunStarted()
+		defer otelobs.RunFinished()
+		origYield := yield
+		yield = func(ev stream.SSEEvent, err error) bool {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			}
+			return origYield(ev, err)
+		}
+
 		// Server-wide concurrency gate: a burst of runs queues here instead of all
 		// hitting the model at once (max_active_nodes only bounds within a plan).
 		release := o.acquireRun(ctx)
