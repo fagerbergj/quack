@@ -103,18 +103,25 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 	return nil
 }
 
-// RequestPermission auto-answers: headless policy is configured on the agent
-// side ("permission": "allow" with git push denied — see serve's
-// opencodeConfigEnv), so asks should be rare; anything that still asks gets the
-// first allow option, or is rejected when none exists.
+// RequestPermission REJECTS by default. The generated permission config
+// already allows everything a round legitimately needs (bash minus git push,
+// edits, fetches — see serve's opencodeEnv), so anything that still ASKS is by
+// construction the exceptional case: an external_directory escape (also denied
+// config-side), a .env read, opencode's doom_loop stuck-detector. Headless,
+// gate-supervised agents get "no" for all of these — a refused agent falls
+// back to in-cwd work or ends its turn, and the trust gate judges the result.
+// (A live explorer wandered sibling workspaces via the old allow-first policy.)
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
-	for _, kind := range []sdk.PermissionOptionKind{sdk.PermissionOptionKindAllowOnce, sdk.PermissionOptionKindAllowAlways} {
-		for _, o := range p.Options {
-			if o.Kind == kind {
-				return sdk.RequestPermissionResponse{Outcome: sdk.RequestPermissionOutcome{
-					Selected: &sdk.RequestPermissionOutcomeSelected{OptionId: o.OptionId},
-				}}, nil
-			}
+	title := ""
+	if p.ToolCall.Title != nil {
+		title = *p.ToolCall.Title
+	}
+	slog.Info("acp permission ask rejected", "component", "acp", "tool_call", string(p.ToolCall.ToolCallId), "title", title)
+	for _, o := range p.Options {
+		if o.Kind == sdk.PermissionOptionKindRejectOnce {
+			return sdk.RequestPermissionResponse{Outcome: sdk.RequestPermissionOutcome{
+				Selected: &sdk.RequestPermissionOutcomeSelected{OptionId: o.OptionId},
+			}}, nil
 		}
 	}
 	return sdk.RequestPermissionResponse{Outcome: sdk.RequestPermissionOutcome{

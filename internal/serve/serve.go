@@ -1015,6 +1015,12 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		"model": "quack/" + ac.Model,
 		"permission": m{
 			"bash": m{"git push": "deny", "git push *": "deny", "*": "allow"},
+			// The node's cwd IS the boundary: no reading sibling nodes'
+			// workspaces or the container's mounts (/config, /run/secrets).
+			// Deep-merged over opencode's defaults, so its skill-dir
+			// allowances (skills.paths) survive; a live explorer wandered
+			// /workspace/* through the old auto-allow handler.
+			"external_directory": m{"*": "deny"},
 		},
 	}
 	// quack's own skill library, discovered by opencode's skills.paths glob
