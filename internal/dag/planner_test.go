@@ -403,7 +403,7 @@ func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
 func TestBuildStampsSetupAndDeliveryOntoPlan(t *testing.T) {
 	p := testPlanner()
 	setup := &Setup{BaseRef: "main", WorkBranch: "feat/widget"}
-	delivery := &Delivery{Kind: "pull_request", Title: "Add widget", Body: "Implements the widget."}
+	delivery := &Delivery{Kind: "pull_request"}
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "add the widget"},
 	}, setup, delivery, nil, "add a widget and open a PR", nil)
@@ -460,10 +460,10 @@ func TestPlanSummaryIncludesSetupAndDelivery(t *testing.T) {
 	plan := &Plan{
 		Nodes:    []Node{{ID: "impl", AgentName: "code-implementer"}},
 		Setup:    &Setup{BaseRef: "main", WorkBranch: "feat/x"},
-		Delivery: &Delivery{Kind: "pull_request", Title: "Add x"},
+		Delivery: &Delivery{Kind: "pull_request"},
 	}
 	got := planSummary(plan)
-	for _, want := range []string{"feat/x", "pull_request", "Add x"} {
+	for _, want := range []string{"feat/x", "pull_request"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("planSummary = %q, want it to contain %q", got, want)
 		}

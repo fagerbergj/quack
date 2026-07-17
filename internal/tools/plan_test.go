@@ -37,10 +37,10 @@ func TestSummarizePlanIncludesSetupAndDelivery(t *testing.T) {
 	plan := &dag.Plan{
 		Nodes:    []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
 		Setup:    &dag.Setup{BaseRef: "main", WorkBranch: "feat/widget"},
-		Delivery: &dag.Delivery{Kind: "pull_request", Title: "Add widget"},
+		Delivery: &dag.Delivery{Kind: "pull_request"},
 	}
 	got := summarizePlan(plan)
-	for _, want := range []string{"feat/widget", "pull_request", "Add widget"} {
+	for _, want := range []string{"feat/widget", "pull_request"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summarizePlan = %q, want it to contain %q", got, want)
 		}

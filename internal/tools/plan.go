@@ -20,7 +20,7 @@ type planArgs struct {
 	Setup *dag.Setup `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {base_ref, work_branch}"`
 	// Delivery is the plan's POST-step, executed once after the trust gate
 	// passes — see the tool description.
-	Delivery *dag.Delivery `json:"delivery,omitempty" jsonschema:"how the gated result reaches GitHub, run after the trust gate: {kind: pull_request|review|comment, title, body}"`
+	Delivery *dag.Delivery `json:"delivery,omitempty" jsonschema:"how the gated result reaches GitHub, run after the trust gate: {kind: pull_request|review|comment}"`
 }
 
 type planResult struct {
@@ -57,10 +57,10 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"Every plan MUST declare setup (the working clone + branch) and delivery (how the gated result " +
 				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate — you declare " +
 				"intent, you never run git, push, or open a PR yourself. Pass `setup: {base_ref, work_branch}` " +
-				"naming the branch the work happens on, and `delivery: {kind, title, body}` where `kind` is " +
-				"exactly one of \"pull_request\" (implement-and-deliver requests), \"review\" (PR/diff review " +
-				"requests), or \"comment\" (plan-only/research requests that post a summary back). Omit both " +
-				"only for a plan with no GitHub repo involved at all. " +
+				"naming the branch the work happens on, and `delivery: {kind}` — exactly one of \"pull_request\" " +
+				"(implement-and-deliver requests), \"review\" (PR/diff review requests), or \"comment\" (plan-only/" +
+				"research requests that post a summary back); the implementer authors the PR title+body itself " +
+				"via `stage_pr` — you never write PR prose. Omit both only for a plan with no GitHub repo involved. " +
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
 				"directly. If validation fails, fix the nodes and call again.",
 		},
@@ -126,7 +126,7 @@ func summarizePlan(p *dag.Plan) string {
 		fmt.Fprintf(&sb, "\nsetup: base_ref=%q work_branch=%q", p.Setup.BaseRef, p.Setup.WorkBranch)
 	}
 	if p.Delivery != nil {
-		fmt.Fprintf(&sb, "\ndelivery: kind=%q title=%q", p.Delivery.Kind, p.Delivery.Title)
+		fmt.Fprintf(&sb, "\ndelivery: kind=%q", p.Delivery.Kind)
 	}
 	return sb.String()
 }
