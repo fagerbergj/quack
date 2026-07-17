@@ -109,7 +109,6 @@ func NewApp(issuer, pemKey string) (*App, error) {
 		tokens:    map[int64]cachedToken{},
 		installs:  map[string]int64{},
 		noInstall: map[string]struct{}{},
-		drafts:    map[string][]reviewComment{},
 		diffs:     map[string]cachedDiff{},
 	}, nil
 }
@@ -307,7 +306,7 @@ func (a *App) editIssueComment(ctx context.Context, owner, repo string, id int64
 
 // createPullRequest opens a PR (head → base) using the repo's installation
 // token and returns the new PR's html_url and number.
-func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, base, bodyText string) (string, int, error) {
+func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, base, bodyText string, draft bool) (string, int, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
 		return "", 0, err
@@ -317,7 +316,10 @@ func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, b
 		Number  int    `json:"number"`
 	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls", owner, repo)
-	reqBody := map[string]string{"title": title, "head": head, "base": base, "body": bodyText}
+	reqBody := map[string]any{"title": title, "head": head, "base": base, "body": bodyText}
+	if draft {
+		reqBody["draft"] = true
+	}
 	if err := a.doJSON(ctx, http.MethodPost, path, "token "+tok, reqBody, &out); err != nil {
 		return "", 0, err
 	}
@@ -541,49 +543,6 @@ func (a *App) commentablePositions(ctx context.Context, owner, repo string, numb
 	a.diffs[key] = cachedDiff{files: positions, fetched: time.Now()}
 	a.reviewMu.Unlock()
 	return positions, nil
-}
-
-// draftAdd appends a validated comment to a PR's draft and returns its index.
-func (a *App) draftAdd(owner, repo string, number int, c reviewComment) int {
-	key := draftKey(owner, repo, number)
-	a.reviewMu.Lock()
-	defer a.reviewMu.Unlock()
-	a.drafts[key] = append(a.drafts[key], c)
-	return len(a.drafts[key]) - 1
-}
-
-// draftList returns a copy of a PR's current draft comments.
-func (a *App) draftList(owner, repo string, number int) []reviewComment {
-	key := draftKey(owner, repo, number)
-	a.reviewMu.Lock()
-	defer a.reviewMu.Unlock()
-	out := make([]reviewComment, len(a.drafts[key]))
-	copy(out, a.drafts[key])
-	return out
-}
-
-// draftDelete removes the comment at index from a PR's draft. ok is false if the
-// index is out of range. Remaining comments shift down (their indices change).
-func (a *App) draftDelete(owner, repo string, number, index int) bool {
-	key := draftKey(owner, repo, number)
-	a.reviewMu.Lock()
-	defer a.reviewMu.Unlock()
-	d := a.drafts[key]
-	if index < 0 || index >= len(d) {
-		return false
-	}
-	a.drafts[key] = append(d[:index], d[index+1:]...)
-	return true
-}
-
-// draftTake returns a PR's draft comments and clears the draft — used at submit.
-func (a *App) draftTake(owner, repo string, number int) []reviewComment {
-	key := draftKey(owner, repo, number)
-	a.reviewMu.Lock()
-	defer a.reviewMu.Unlock()
-	d := a.drafts[key]
-	delete(a.drafts, key)
-	return d
 }
 
 // parsePatch turns one file's unified-diff patch (from the pulls/files API) into

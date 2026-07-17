@@ -3,8 +3,29 @@
 Replace quack's native coding inner loop with external coding agents spoken to over
 ACP (Agent Client Protocol — JSON-RPC 2.0, newline-delimited, over stdio). quack
 stays the orchestrator: DAG planning, trust gate, judge, delivery, and streaming are
-unchanged. The worker inside a coder node becomes a subprocess (`opencode acp` first;
-`claude-agent-acp` / `gemini --acp` are config swaps later).
+unchanged. ALL THREE code agents — implementer, reviewer, explorer — run as ACP
+subprocesses (`opencode acp` first; `claude-agent-acp` / `gemini --acp` are config
+swaps later), and the native coding toolset is DELETED (0.6.0).
+
+## The boundary
+
+Inside the subprocess: file I/O and command execution in the node's jail dir, LOCAL
+git (commit/branch/diff), its own reasoning + quack's skill library (injected via
+opencode `skills.paths`). Outside, quack-owned: the DAG, the trust gate (checks via
+workspace.RunPipeline — never agent tools), the judge, and ALL outward effects —
+push, PR, review, comments — in exactly one place (`commitDelivery`), fed by ground
+truth the gate gathers itself:
+
+- **git disk probe** (`vetting.augmentFromRepo`) — commits/changed files/branch read
+  off the clone; synthesizes the staged PR an implementer has no stage_pr tool for.
+- **answer review probe** (`vetting.augmentFromAnswer`) — parses the reviewer's
+  structured `VERDICT:`/`FINDINGS:` tail into a staged review with line-anchored
+  inline comments; a GitHub-dispatched run's PR number is recovered from its chat id.
+
+Delivery policy: fires regardless of the judge verdict (graceful degradation), with
+the caveat banner on a fail — and a gate-FAILED pull request opens as a **draft**,
+so it cannot be merged accidentally. The subprocess physically cannot deliver: no
+credentials, `git push` denied in its permission config, no GitHub tools.
 
 ## Why
 
@@ -135,11 +156,17 @@ nodes — the frontend needs zero changes.
    `session/prompt` on the same sessionId containing the self-contained revision
    prompt, and a fresh adapter (simulating process death) still succeeds.
 
-## Rollout
+## Rollout (as shipped in 0.6.0)
 
-1. Adapter + fake-agent tests (no opencode dependency in CI).
-2. `agents/coder-acp/` config bound to opencode + llama-swap qwen3-coder on
-   jason-server; bakeoff vs native coder and goose on a #252-style task
-   (wall-time, tokens, judge pass).
-3. If ACP wins: flip the default coder binding; native coder bundle deleted in a
-   follow-up.
+1. Adapter + fake-agent tests (no opencode dependency in CI); live-verified against
+   opencode + llama-swap qwen3-coder-next (`internal/acp/live_test.go`).
+2. Bakeoff skipped by decision (2026-07-17): implementer, reviewer, and explorer all
+   flipped to ACP in the shipped config; the native coding toolset (write-side
+   fs/git tools, run_command, run_code/code mode, cd, stage_* and GitHub draft
+   tools, their guard defaults) deleted. The judge's read tools, the researcher's
+   web tools, and the workspace exec layer (checks, probes, setup clone, delivery
+   push) remain.
+3. Known losses, accepted: per-agent skill scoping (ACP agents see the full skill
+   library), semantic task memory for code agents (opencode brings its own context
+   mechanisms), fine-grained per-tool guard tiers for coder actions (the jail cwd +
+   push denial + gate are the wall).

@@ -26,7 +26,7 @@ func TestLive_OpencodeRound(t *testing.T) {
 		t.Fatal("live test: QUACK_LLM_ENDPOINT and QUACK_CODER_MODEL must be set")
 	}
 	type m = map[string]any
-	content, err := json.Marshal(m{
+	cfg := m{
 		"provider": m{"quack": m{
 			"npm":     "@ai-sdk/openai-compatible",
 			"name":    "quack live test",
@@ -37,7 +37,13 @@ func TestLive_OpencodeRound(t *testing.T) {
 		"permission": m{
 			"bash": m{"git push": "deny", "git push *": "deny", "*": "allow"},
 		},
-	})
+	}
+	// The same skills injection production uses (serve.acpSkillPaths): quack's
+	// shipped skill library, discovered by opencode's skills.paths glob.
+	if skills, err := filepath.Abs("../../skills"); err == nil {
+		cfg["skills"] = m{"paths": []string{skills}}
+	}
+	content, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

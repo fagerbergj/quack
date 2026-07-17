@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/toolconfirmation"
 
-	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -71,7 +71,7 @@ func runTool(t *testing.T, tools map[string]tool.Tool, name string, args map[str
 	if !ok {
 		t.Fatalf("tool %q is not runnable", name)
 	}
-	ctx := scriptGatedCtx{newGatedCtx(t, "plan-1", leakNodeID, leakChatID)}
+	ctx := confirmlessCtx{newGatedCtx(t, "plan-1", leakNodeID, leakChatID)}
 	return rt.Run(ctx, args)
 }
 
@@ -95,35 +95,6 @@ func TestReadFileErrorNamesTheModelPathNotTheHostPath(t *testing.T) {
 	}
 }
 
-// A write outside the jail: the rejection must not name where the jail is either.
-func TestWriteOutsideTheJailLeaksNothing(t *testing.T) {
-	tools, root := buildToolsForLeakTest(t, "write_file")
-
-	_, err := runTool(t, tools, "write_file", map[string]any{
-		"path": "../../../../etc/passwd", "content": "nope",
-	})
-	if err == nil {
-		t.Fatal("write outside the jail was allowed")
-	}
-	msg := err.Error()
-	assertNoHostPath(t, msg, root)
-	if !strings.Contains(msg, "workspace") {
-		t.Errorf("escape rejection is not actionable:\n  %s", msg)
-	}
-}
-
-// The git tools resolve through their own binding, and git's stderr names the
-// resolved dir — same leak, different door.
-func TestGitErrorLeaksNoHostPath(t *testing.T) {
-	tools, root := buildToolsForLeakTest(t, "git_status")
-
-	_, err := runTool(t, tools, "git_status", map[string]any{"dir": "not-a-repo"})
-	if err == nil {
-		t.Fatal("git_status on a missing dir returned no error")
-	}
-	assertNoHostPath(t, err.Error(), root)
-}
-
 // THE STRUCTURAL GUARANTEE. The leak is not any tool's bug — it comes from os/git
 // handing back the resolved path, which every tool faithfully wraps with %w. So the
 // scrub is applied at Build's ONE wrap point, and every tool Build produces carries
@@ -138,8 +109,6 @@ func TestEveryBuiltToolIsPathScrubbed(t *testing.T) {
 			names = append(names, name)
 		}
 	}
-	names = append(names, vetting.RunCodeToolName)
-
 	built, _ := buildToolsForLeakTest(t, names...)
 	if len(built) < len(names) {
 		t.Fatalf("Build produced %d tools for %d names", len(built), len(names))
@@ -180,40 +149,8 @@ func mustJail(t *testing.T) *workspace.Jail {
 	return j
 }
 
-// The SAME missing read, from inside a script: both the recorded call and the
-// script's own error must be scrubbed, and the script error must be readable —
-// not a Go stack trace with `native` frames in it (the live one was).
-func TestScriptToolErrorNamesTheModelPathNotTheHostPath(t *testing.T) {
-	tools, root := buildToolsForLeakTest(t, "read_file", vetting.RunCodeToolName)
+// confirmlessCtx serves a nil ToolConfirmation (no pending confirm), which the
+// functiontool runner consults on every call — the mock alone panics on it.
+type confirmlessCtx struct{ *gatedCtx }
 
-	raw, err := runTool(t, tools, vetting.RunCodeToolName, map[string]any{
-		"code": `return read_file({ path: "internal/tools/registry.go" });`,
-	})
-	if err != nil {
-		t.Fatalf("run_code returned a Go error: %v", err)
-	}
-	out := decodeScriptResult(t, raw)
-
-	if out.Error == "" {
-		t.Fatal("the script's failing read produced no error")
-	}
-	assertNoHostPath(t, out.Error, root)
-	if !strings.Contains(out.Error, "internal/tools/registry.go") {
-		t.Errorf("script error does not name the path the model asked for:\n  %s", out.Error)
-	}
-	if !strings.Contains(out.Error, "no such file") {
-		t.Errorf("script error is not actionable:\n  %s", out.Error)
-	}
-	if strings.Contains(out.Error, "native") {
-		t.Errorf("script error buries the message under a Go stack trace:\n  %s", out.Error)
-	}
-
-	if len(out.Calls) != 1 {
-		t.Fatalf("expected the failed call to be recorded; got %d calls", len(out.Calls))
-	}
-	recorded, _ := out.Calls[0].Result["error"].(string)
-	if recorded == "" {
-		t.Fatal("the failed call was recorded without its error")
-	}
-	assertNoHostPath(t, recorded, root)
-}
+func (confirmlessCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }

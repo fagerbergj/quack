@@ -404,23 +404,24 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"code-implementer", "code-reviewer"} {
+	// The code agents are external ACP subprocesses (0.6.0): no quack tools at
+	// all, and the reviewer/explorer are read_only — delivery is entirely
+	// gate-owned (disk probe + answer probe).
+	for _, name := range []string{"code-implementer", "code-reviewer", "code-explorer"} {
 		ac, ok := c.Agents[name]
 		if !ok {
 			t.Fatalf("agent %q not found in shipped config", name)
 		}
-		want := map[string]bool{"stage_review": name == "code-reviewer", "stage_comment": true, "unstage": true}
-		if name == "code-implementer" {
-			want["stage_pr"] = true
+		if ac.Acp == nil || len(ac.Acp.Command) == 0 {
+			t.Errorf("agent %q must be ACP-backed in the shipped config", name)
+			continue
 		}
-		have := map[string]bool{}
-		for _, tl := range ac.Tools {
-			have[tl] = true
+		if len(ac.Tools) != 0 {
+			t.Errorf("agent %q is ACP-backed but still lists quack tools %v", name, ac.Tools)
 		}
-		for tl, must := range want {
-			if must && !have[tl] {
-				t.Errorf("agent %q must list %q to hand delivery off to the gate", name, tl)
-			}
+		wantRO := name != "code-implementer"
+		if ac.Acp.ReadOnly != wantRO {
+			t.Errorf("agent %q read_only = %v, want %v", name, ac.Acp.ReadOnly, wantRO)
 		}
 	}
 }
@@ -579,12 +580,11 @@ workspace:
 
 // TestGitCredentialsParsesAndDefaultsUsername proves git_credentials round-trips
 // (the ${VAR} value interpolates, an omitted username defaults to
-// x-access-token) and git_push/guards parse.
+// x-access-token) and guards parse.
 func TestGitCredentialsParsesAndDefaultsUsername(t *testing.T) {
 	t.Setenv("QUACK_GITHUB_TOKEN", "ghp_secret123")
 	c, err := Load(writeTemp(t, baseConfig+`
 workspace:
-  git_push: true
   git_credentials:
     - host: github.com
       token: ${QUACK_GITHUB_TOKEN}
@@ -592,14 +592,10 @@ workspace:
       username: custom-user
       token: ${QUACK_GITHUB_TOKEN}
   guards:
-    delete_path: judge
-    git_push: judge+confirm
+    web_fetch: judge
 `))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !c.Workspace.GitPush {
-		t.Error("GitPush = false, want true")
 	}
 	if len(c.Workspace.GitCredentials) != 2 {
 		t.Fatalf("GitCredentials = %v, want 2 entries", c.Workspace.GitCredentials)
@@ -615,11 +611,8 @@ workspace:
 	if second.Username != "custom-user" {
 		t.Errorf("Username = %q, want custom-user (explicit, not defaulted)", second.Username)
 	}
-	if c.Workspace.Guards["delete_path"] != "judge" {
-		t.Errorf("Guards[delete_path] = %q, want judge", c.Workspace.Guards["delete_path"])
-	}
-	if c.Workspace.Guards["git_push"] != "judge+confirm" {
-		t.Errorf("Guards[git_push] = %q, want judge+confirm", c.Workspace.Guards["git_push"])
+	if c.Workspace.Guards["web_fetch"] != "judge" {
+		t.Errorf("Guards[web_fetch] = %q, want judge", c.Workspace.Guards["web_fetch"])
 	}
 }
 

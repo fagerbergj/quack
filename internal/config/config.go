@@ -161,20 +161,9 @@ type WorkspaceConfig struct {
 	// (default) ⇒ public repos only. Token MUST be an ${VAR} env reference in
 	// the raw YAML — see validateNoLiteralTokens.
 	GitCredentials []GitCredentialConfig `yaml:"git_credentials"`
-	// GitPush gates the git_push tool (default false) — the one outward-facing,
-	// non-undoable git operation in the set.
-	GitPush bool `yaml:"git_push"`
 	// Guards maps a tool name to its guard-ladder tier: none (default,
 	// unlisted) | judge | confirm | judge+confirm. See §4b of the design doc.
 	Guards map[string]string `yaml:"guards"`
-	// RunCodeGuardStandalone opts out of the scriptTier floor: run_code is then
-	// guarded at ONLY its own guards[run_code] tier, NOT raised to the union of
-	// its bound tools' tiers. Default false keeps the safe union (a script is at
-	// least as guarded as the most-guarded tool it can call). Set true only on a
-	// trusted single-tenant deployment where the container is the boundary and
-	// per-call judge gates inside a script would just thrash the model (e.g. a
-	// gemma judge swapping against a large coder on every run_code call).
-	RunCodeGuardStandalone bool `yaml:"run_code_guard_standalone"`
 	// Sandbox is the OS boundary run_command/gate-check CHILD PROCESSES run
 	// inside: "bwrap" (default — a bubblewrap mount/pid/user namespace: nothing
 	// outside the child's cwd and its isolated $HOME exists in its filesystem)
@@ -336,6 +325,10 @@ type AgentConfig struct {
 type AcpAgentConfig struct {
 	Command []string          `yaml:"command"` // argv, e.g. ["opencode", "acp"]
 	Env     map[string]string `yaml:"env"`     // extra subprocess environment (overrides generated defaults)
+	// ReadOnly marks an ACP agent that never commits/delivers code (a reviewer
+	// or explorer): the gate then skips the commit/push delivery demand exactly
+	// as it does for native read-only agents (vetting.Config.ReadOnly).
+	ReadOnly bool `yaml:"read_only"`
 }
 
 // IsGated reports whether the agent runs under the trust gate (default true).

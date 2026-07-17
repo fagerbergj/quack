@@ -8,9 +8,7 @@
 package vetting
 
 import (
-	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 )
 
@@ -66,100 +64,6 @@ var wsOpSpecs = map[string]wsOpSpec{
 func isWorkspaceTool(name string) bool {
 	_, ok := wsOpSpecs[name]
 	return ok
-}
-
-// RunCodeToolName is code mode's one tool (internal/tools/run_code.go): the
-// model writes a program, the program calls tools as ordinary functions, and ONE
-// result comes back.
-//
-// It is declared HERE, in vetting, and imported by tools — never the other way
-// round (tools already depends on vetting; the reverse would be a cycle) — and
-// it is the ledger's business as much as the registry's. A tool called from
-// inside a script emits NO session event, so this scanner would be blind to it:
-// a script that wrote files and committed them would look, to the trust gate,
-// like a node claiming work it never did. run_code's response therefore carries
-// a `calls` record of every in-script call, and activityFromSessionAt EXPANDS it
-// through the very same recording path a direct call takes (see
-// activityScanner.apply in node.go). After that expansion a file written from
-// inside a script is indistinguishable, to the gate, from one written by a
-// direct write_file call — which is exactly the property that keeps code mode
-// from punching a hole in the trust gate.
-const RunCodeToolName = "run_code"
-
-// The keys of one entry in run_code's `calls` record. Written by
-// internal/tools/run_code.go (runCodeCall), read by expandRunCode.
-const (
-	runCodeCallName   = "name"
-	runCodeCallArgs   = "args"
-	runCodeCallResult = "result"
-)
-
-// innerCall is one tool call a script made, recovered from a run_code response.
-type innerCall struct {
-	name   string
-	args   map[string]any
-	result map[string]any
-}
-
-// expandRunCode recovers the in-script calls from a run_code FunctionResponse,
-// in the order the script made them. Tolerant of both shapes the record arrives
-// in: the live in-memory result ([]any of maps) and the same thing round-tripped
-// through the event store's JSON. A response with no record (a malformed or
-// pre-feature event) expands to nothing — the ledger simply records no
-// operations, which is the safe direction: unevidenced claims fail.
-func expandRunCode(resp map[string]any) []innerCall {
-	raw, ok := resp[runCodeCallsKey]
-	if !ok || raw == nil {
-		return nil
-	}
-	rv := reflect.ValueOf(raw)
-	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
-		return nil
-	}
-	out := make([]innerCall, 0, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		entry, ok := asStringMap(rv.Index(i).Interface())
-		if !ok {
-			continue
-		}
-		name, _ := entry[runCodeCallName].(string)
-		if name == "" {
-			continue
-		}
-		args, _ := asStringMap(entry[runCodeCallArgs])
-		result, _ := asStringMap(entry[runCodeCallResult])
-		if args == nil {
-			args = map[string]any{}
-		}
-		if result == nil {
-			result = map[string]any{}
-		}
-		out = append(out, innerCall{name: name, args: args, result: result})
-	}
-	return out
-}
-
-// runCodeCallsKey is the field of run_code's result that carries the record.
-const runCodeCallsKey = "calls"
-
-// asStringMap coerces one record entry to a generic object, whether it arrived
-// as a map or as a struct the event store has yet to marshal.
-func asStringMap(v any) (map[string]any, bool) {
-	if v == nil {
-		return nil, false
-	}
-	if m, ok := v.(map[string]any); ok {
-		return m, true
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, false
-	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, false
-	}
-	return m, true
 }
 
 // recordWsOp builds the ledger entry for one completed call/response pair.

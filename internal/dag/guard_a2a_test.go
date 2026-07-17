@@ -24,6 +24,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
+	adkagent "google.golang.org/adk/v2/agent"
 )
 
 // guardA2AStub drives the worker + judge for the confirm-over-A2A tests:
@@ -128,11 +130,32 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 	writeJailFile(t, jail, "u1", "victim.txt")
 	writeJailFile(t, jail, "u1", "other.txt")
 
+	// delete_path (the fixture's original guarded tool) is deleted with the
+	// native coding toolset — the guard LADDER is not. A test-local ExtTool
+	// with the same observable side effect (removing a jailed file) exercises
+	// the identical confirm-over-A2A path: Build guards ExtTools by name
+	// exactly as it guarded builtins.
+	wipe, err := functiontool.New[wipeArgs, wipeResult](
+		functiontool.Config{Name: "delete_path", Description: "remove one jailed file"},
+		func(ctx adkagent.Context, a wipeArgs) (wipeResult, error) {
+			real, rerr := jail.Resolve("u1", runGraphChatID, filepath.Join(runGraphNodeID, a.Path))
+			if rerr != nil {
+				return wipeResult{}, rerr
+			}
+			if rerr := os.Remove(real); rerr != nil {
+				return wipeResult{}, rerr
+			}
+			return wipeResult{Deleted: true}, nil
+		})
+	if err != nil {
+		t.Fatalf("wipe tool: %v", err)
+	}
 	builtins, err := tools.Build([]string{"delete_path"}, tools.Deps{
 		Workspace:       jail,
 		WorkspaceUserID: "u1",
 		Sessions:        sessions,
 		Guards:          map[string]string{"delete_path": "confirm"},
+		ExtTools:        map[string]tool.Tool{"delete_path": wipe},
 	})
 	if err != nil {
 		t.Fatalf("tools.Build: %v", err)
@@ -344,11 +367,32 @@ func TestGuardConfirm_OverA2A_RaisedDuringRevision(t *testing.T) {
 	}
 	writeJailFile(t, jail, "u1", "victim.txt")
 
+	// delete_path (the fixture's original guarded tool) is deleted with the
+	// native coding toolset — the guard LADDER is not. A test-local ExtTool
+	// with the same observable side effect (removing a jailed file) exercises
+	// the identical confirm-over-A2A path: Build guards ExtTools by name
+	// exactly as it guarded builtins.
+	wipe, err := functiontool.New[wipeArgs, wipeResult](
+		functiontool.Config{Name: "delete_path", Description: "remove one jailed file"},
+		func(ctx adkagent.Context, a wipeArgs) (wipeResult, error) {
+			real, rerr := jail.Resolve("u1", runGraphChatID, filepath.Join(runGraphNodeID, a.Path))
+			if rerr != nil {
+				return wipeResult{}, rerr
+			}
+			if rerr := os.Remove(real); rerr != nil {
+				return wipeResult{}, rerr
+			}
+			return wipeResult{Deleted: true}, nil
+		})
+	if err != nil {
+		t.Fatalf("wipe tool: %v", err)
+	}
 	builtins, err := tools.Build([]string{"delete_path"}, tools.Deps{
 		Workspace:       jail,
 		WorkspaceUserID: "u1",
 		Sessions:        sessions,
 		Guards:          map[string]string{"delete_path": "confirm"},
+		ExtTools:        map[string]tool.Tool{"delete_path": wipe},
 	})
 	if err != nil {
 		t.Fatalf("tools.Build: %v", err)
@@ -436,4 +480,13 @@ func TestGuardConfirm_OverA2A_DifferentArgsReProposes(t *testing.T) {
 	if !jailFileExists(t, h.jail, "u1", "other.txt") || !jailFileExists(t, h.jail, "u1", "victim.txt") {
 		t.Error("run2: a file was deleted without approval for those args")
 	}
+}
+
+type wipeArgs struct {
+	Path      string `json:"path"`
+	Recursive bool   `json:"recursive,omitempty"`
+}
+
+type wipeResult struct {
+	Deleted bool `json:"deleted"`
 }

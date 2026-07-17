@@ -57,50 +57,36 @@ agents:
     tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
     # no skills scoped: see config/quack.yaml's web-researcher comment
   code-implementer:
-    bundle: agents/code-implementer
+    bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.md
     provider: default
-    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
-    # run_code = CODE MODE (internal/tools/run_code.go): the model writes a JS program and the tools
-    # above are its API — one turn reads five files, greps and writes a patch, and none of that bulk
-    # enters its context. In-script calls run through the same guarded tools and the trust gate's
-    # ledger expands them. See docs/code-mode.md.
-    tools: [read_file, write_file, edit_file, list_dir, glob, grep, delete_path,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,
-            git_worktree_create, git_worktree_remove, git_push, git_pull, git_rebase,
-            run_command, ask_advisor, load_memory, stage_memory, run_code]
-    skills: [develop-feature, fix-bug, ponytail, ponytail-review, present-coding-plan, format-markdown]
-    # load_memory/stage_memory + memory.md turn on shared memory: the implementer recalls what the
-    # explorer/reviewer learned about THIS repo (buckets are by subject, not agent — internal/memory/scope.go).
+    # External ACP coder (docs/acp-coder.md): opencode drives the model above via
+    # OPENCODE_CONFIG_CONTENT; git push is denied in the subprocess (delivery is
+    # gate-owned) and the gate reads commits off the clone (augmentFromRepo).
+    acp:
+      command: ["opencode", "acp"]
   code-reviewer:
-    bundle: agents/code-reviewer      # reviewer identity + review-code skill; rubric scores whether the REVIEW is good
+    bundle: agents/code-reviewer      # card + prompt.md (values + VERDICT/FINDINGS contract) + rubric.md
     provider: default
-    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
-    # READ-ONLY: no write/edit/commit/push/delete/run_command. load_skill/list_skills are auto-registered.
-    # load_memory/stage_memory + memory.md turn on task memory (M6): recall/stage durable project conventions & decisions.
-    # web_fetch (no web_search): verify a specific external claim; RequireRetrieval is already met by read_file.
-    tools: [read_file, list_dir, glob, grep, web_fetch,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory]
-    skills: [review-code, present-coding-plan, format-markdown, ponytail, ponytail-review]
+    # External ACP reviewer, read_only: runs the change with its own tools, never
+    # commits; the gate parses its VERDICT/FINDINGS tail into the posted review.
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
   code-explorer:
-    bundle: agents/code-explorer      # read-only explorer; rubric grades EXPLORATION quality (code-grounding/accuracy/usefulness), not web citations
+    bundle: agents/code-explorer      # card + prompt.md (read-only exploration) + rubric.md
     provider: default
-    memory_role: coding   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds is plenty
-    # READ-ONLY: no write/edit/commit/push/delete/run_command. No web tools — its sources are the files it reads
-    # (<repo>@<path>), so RequireRetrieval does NOT fire and it's judged by its bundle's exploration rubric.
-    # load_memory/stage_memory + memory.md turn on task memory (M6): recall/stage durable repo layout & conventions.
-    # run_code = CODE MODE: exploration is the read-many-files-and-summarize shape code mode is for.
-    tools: [read_file, list_dir, glob, grep,
-            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user, load_memory, stage_memory, run_command, run_code]
-    skills: [research-git-repos, format-markdown, ponytail]
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan]
@@ -138,9 +124,9 @@ server:
 # unset ⇒ the default allowlist applies (go/npm/make — see internal/config
 # defaultCheckCommands); each derived check is gated on its binary existing on
 # the host, so a machine without the toolchain derives nothing. git_credentials
-# empty ⇒ public repos only (keyless path); git_push off; guards use the
-# shipped defaults (delete_path/git_rebase: judge, git_push/run_command:
-# judge+confirm).
+# empty ⇒ public repos only (keyless path). No guard-ladder entries by default:
+# the code agents run as external ACP subprocesses (no quack write tools left to
+# guard); workspace.guards still accepts entries for any remaining tool.
 #
 # sandbox: bwrap is the DEFAULT and it matters most in exactly this preset —
 # `quack server` here runs on the operator's own machine, as their own user, so
@@ -150,13 +136,6 @@ server:
 workspace:
   root: ${QUACK_WORKSPACE_ROOT}
   sandbox: bwrap
-  git_push: false
-  guards:
-    delete_path: judge
-    git_rebase: judge
-    git_push: judge+confirm
-    run_command: judge+confirm
-    run_code: judge+confirm   # the whole SCRIPT is judged + approved once, before a line of it runs
 
 # GitHub App extension: webhook receiver + App-authed git creds + the App-mention
 # trigger. Uncomment and set the env vars to enable it on this deployment. Uses the

@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # the binary without the tarball. PINNED — the ACP surface is integration-
 # tested per release (internal/acp/live_test.go), so bump deliberately.
 FROM debian:bookworm-slim AS opencode
-ADD https://github.com/sst/opencode/releases/download/v1.16.2/opencode-linux-x64.tar.gz /tmp/opencode.tar.gz
+ADD https://github.com/sst/opencode/releases/download/v1.18.3/opencode-linux-x64.tar.gz /tmp/opencode.tar.gz
 RUN tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode
 
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux; only served when QUACK_PPROF_ADDR is set (see Run)
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -782,7 +783,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "bundle: %v", err)
 			}
-			env := opencodeEnv(prov, ac)
+			env := opencodeEnv(prov, ac, acpSkillPaths())
 			for _, k := range slices.Sorted(maps.Keys(ac.Acp.Env)) {
 				env = append(env, k+"="+ac.Acp.Env[k])
 			}
@@ -820,24 +821,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		var builtins []tool.Tool
 		if len(toolNames) > 0 {
 			builtins, err = tools.Build(toolNames, tools.Deps{
-				WebSearch:              tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-				Fetch:                  tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-				Summarizer:             m,
-				Cache:                  urlCache,
-				Advisor:                advisorAgent,
-				Sessions:               sessions,
-				Workspace:              jail,
-				WorkspaceUserID:        localUserID,
-				WorkspaceCaps:          workspaceCaps,
-				GitCredentials:         gitCredentials,
-				GitTokenSource:         gitTokenSource,
-				GitPush:                cfg.Workspace.GitPush,
-				Guards:                 cfg.Workspace.Guards,
-				RunCodeGuardStandalone: cfg.Workspace.RunCodeGuardStandalone,
-				SafetyJudge:            safetyJudge,
-				NodeCancelled:          nodeCancelled,
-				NodeSteerGuidance:      nodeSteerGuidance,
-				ExtTools:               extToolsByName,
+				WebSearch:         tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
+				Fetch:             tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+				Summarizer:        m,
+				Cache:             urlCache,
+				Advisor:           advisorAgent,
+				Sessions:          sessions,
+				Workspace:         jail,
+				WorkspaceUserID:   localUserID,
+				WorkspaceCaps:     workspaceCaps,
+				GitCredentials:    gitCredentials,
+				GitTokenSource:    gitTokenSource,
+				Guards:            cfg.Workspace.Guards,
+				SafetyJudge:       safetyJudge,
+				NodeCancelled:     nodeCancelled,
+				NodeSteerGuidance: nodeSteerGuidance,
+				ExtTools:          extToolsByName,
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "tools: %v", err)
@@ -953,12 +952,14 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 			break
 		}
 	}
-	// An external ACP coder has NO quack tools: it retrieves nothing (no web
-	// tools ⇒ RequireRetrieval stays false) but it DOES commit and deliver —
-	// with its own git, surfaced to the gate by the disk probe + staged-PR
-	// handoff (vetting.augmentFromRepo).
+	// An external ACP agent has NO quack tools: it retrieves nothing (no web
+	// tools ⇒ RequireRetrieval stays false); whether it delivers code comes
+	// from its own config (acp.read_only — a reviewer/explorer never commits,
+	// an implementer does). ExternalWorker turns on the gate's ground-truth
+	// probes (the git disk probe + the answer-derived staged review).
 	if ac.Acp != nil {
-		c.ReadOnly = false
+		c.ReadOnly = ac.Acp.ReadOnly
+		c.ExternalWorker = true
 	}
 	if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
 		return c, err
@@ -990,7 +991,7 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 // gate-owned: vetting.commitDelivery pushes and posts exactly once). Inert for
 // a non-opencode agent; an operator's acp.env entries are appended after this,
 // so an explicit override wins.
-func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig) []string {
+func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey
 	if apiKey == "" {
@@ -1000,7 +1001,7 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig) []string {
 	if ac.ContextWindow > 0 {
 		modelCfg["limit"] = m{"context": ac.ContextWindow, "output": 32768}
 	}
-	content, err := json.Marshal(m{
+	cfg := m{
 		"provider": m{"quack": m{
 			"npm":     "@ai-sdk/openai-compatible",
 			"name":    "quack-bound provider",
@@ -1011,11 +1012,38 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig) []string {
 		"permission": m{
 			"bash": m{"git push": "deny", "git push *": "deny", "*": "allow"},
 		},
-	})
+	}
+	// quack's own skill library, discovered by opencode's skills.paths glob
+	// (**/SKILL.md — the same layout). The whole library, not the per-agent
+	// scoped subset: opencode loads skills agentically, and code agents seeing
+	// the full set is the acceptable ponytail trade for zero sync machinery.
+	if len(skillPaths) > 0 {
+		cfg["skills"] = m{"paths": skillPaths}
+	}
+	content, err := json.Marshal(cfg)
 	if err != nil {
 		return nil
 	}
 	return []string{"OPENCODE_CONFIG_CONTENT=" + string(content)}
+}
+
+// acpSkillPaths are the on-disk skill roots handed to an ACP agent's
+// skills.paths — the shipped skills/ dir and the vendored ponytail library,
+// absolute (the subprocess cwd is the node dir, not the server's). A root
+// missing on disk (embedded-only deploys) is simply skipped; opencode also
+// warns-and-continues on a missing path, so this can never fail a run.
+func acpSkillPaths() []string {
+	var out []string
+	for _, d := range []string{"skills", vendorSkillsDir} {
+		abs, err := filepath.Abs(d)
+		if err != nil {
+			continue
+		}
+		if st, err := os.Stat(abs); err == nil && st.IsDir() {
+			out = append(out, abs)
+		}
+	}
+	return out
 }
 
 // contentText flattens a content's text parts (the worker's prompt, where the gate
