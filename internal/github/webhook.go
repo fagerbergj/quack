@@ -876,12 +876,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q, clone URL %s). Declare it in your plan's `setup` "+
 		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) — the harness "+
 		"clones it and checks out that branch for you, BEFORE any node runs, AT THE ROOT of each repo-touching "+
-		"node's own workspace: the repo IS that node's workspace, not a subdirectory inside it. That node's task "+
-		"MUST tell the worker the repo is ALREADY cloned and checked out right there: use PLAIN relative paths "+
-		"with NO prefix and NO absolute path (read_file internal/foo.go — never ./repo/internal/foo.go, never "+
-		"/workspace/…), use read_file/edit_file for all file I/O (never shell `cat`/`sed`/`grep` via run_command — "+
-		"that bypasses their windowing and loop guard), do NOT call git_clone, and commit locally — delivery "+
-		"pushes the branch and opens the PR after the trust gate passes. ",
+		"node's own working directory: the repo IS that node's working directory, not a subdirectory inside it. "+
+		"That node's task MUST say the repo is ALREADY cloned and checked out right there — never instruct the "+
+		"worker to clone THIS repository (no \"Clone <url>\" wording; the worker starts inside it) — and must "+
+		"refer to files by plain repo-relative path (internal/foo.go, never ./repo/… or /workspace/…). A node "+
+		"whose job is to examine a DIFFERENT repository (a comparison target, a dependency) SHOULD be told to "+
+		"clone that other repo into its own working directory itself — that is allowed and expected. Repo-changing "+
+		"work is committed locally; delivery pushes the branch and opens the PR after the trust gate passes — no "+
+		"node ever pushes or opens a PR itself. ",
 		owner, repo, base, p.Repository.CloneURL, base)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d).\n\n", p.Issue.Number, p.Issue.Number)

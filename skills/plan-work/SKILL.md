@@ -134,8 +134,8 @@ the harness runs AFTER the trust gate (see Declare setup + delivery). Two rules:
 - A "understand the repo / its conventions" step is at most an UPSTREAM feeder node —
   NEVER the terminal node and NEVER a substitute for the implementation. For a
   single, focused change, prefer folding "understand the repo" INTO the
-  code-implementer's own task: it has `git_clone` + `read_file` + `grep` and is told
-  to explore before writing, so a separate analyze node is usually redundant.
+  code-implementer's own task: it explores the pre-provisioned clone with its own
+  tools before writing, so a separate analyze node is usually redundant.
 
 Worked example — input: *"Add a Flappy Bird game to repo R and open it as a PR; it
 must fit the repo's conventions, pass its checks, and include tests for the game
@@ -220,8 +220,8 @@ them consistent, don't re-teach its workflow):
 3. **Implement + test + verify** against the node's `checks` until green.
 
 Keep this as task *wording*, not extra nodes. The default is still ONE
-`code-implementer` node doing the research inline — it has the live repo in its
-own session (`git_clone` + `read_file` + `grep`), so a separate feeder node is
+`code-implementer` node doing the research inline — it has the live repo at its
+working-directory root, so a separate feeder node is
 redundant for a focused change in a conventional repo. Escalate to a standalone
 `code-explorer` feeder → implementer only when understanding the codebase is
 substantial work in its own right (see `references/breaking-down-large-work.md`,
@@ -238,19 +238,19 @@ Which means: **every explicit instruction the user gave about HOW the work must 
 survive into the task you write, or it will not happen.** These are not decoration — the user
 said them for a reason, and they are the first thing a paraphrase loses:
 
-- **method** — "use code mode / `run_code`", "write ONE script, don't read one file at a time",
-  "clone and read the SOURCE, not blog posts", "batch your reads"
+- **method** — "write ONE script, don't read one file at a time", "clone and read the
+  SOURCE, not blog posts", "batch your reads"
 - **prohibitions** — "don't touch the generated files", "no new dependencies", "don't refactor
   while you're in there"
 - **sources** — "read their actual implementation", "use the repo's own docs", a specific URL,
   a specific branch or commit
 - **shape of the answer** — "cite every file", "keep the summary short", "one PR, not three"
 
-Live failure (2026-07-14): the user's request said, in capitals, *"You have run_code (code
-mode). USE IT: write ONE script that reads the four files"*. The orchestrator wrote the node's
-task as *"CLONE the repo, then READ these four files"* — dropping the instruction entirely. The
-node read them one at a time with `read_file`, exactly as its task said, and the feature the
-user had asked for went unused. The node did nothing wrong. The plan did.
+Live failure (2026-07-14): the user's request said, in capitals, *"write ONE script that
+reads the four files"*. The orchestrator wrote the node's task as *"CLONE the repo, then READ
+these four files"* — dropping the instruction entirely. The node read them one at a time,
+exactly as its task said, and the method the user had asked for went unused. The node did
+nothing wrong. The plan did.
 
 When in doubt, quote the user's constraint into the task verbatim. It costs you one line.
 
