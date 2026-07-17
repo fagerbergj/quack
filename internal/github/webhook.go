@@ -576,7 +576,12 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// read as delivered. A plan-only run NEVER delivers a PR/review — its
 	// deliverable is the plan comment — so it must never read as delivered no
 	// matter how work-verby the task text is.
-	delivered := judgePassed && isWorkRequest(task) && !p.planOnly
+	// No delivery record means NOTHING was delivered: since the native
+	// delivery tools were deleted (0.6.0), the gate's commitDelivery is the
+	// only path to GitHub, and it always records its outcome. (The old
+	// judge-passed default dates from workers that pushed via their own tools
+	// recordlessly — kept, it masked a staged-nothing run as delivered.)
+	delivered := false
 	if d, ok := takeDeliveryDetail(sessionID); ok {
 		delivered = d.err == nil
 		if d.err != nil {

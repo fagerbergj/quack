@@ -60,11 +60,14 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 		"git_commit(disk probe) → head=%q, files_changed=%d (commits found in the clone itself; the worker commits with its own git)",
 		short(head), len(changed))})
 
-	// Delivery handoff for a worker with no stage_pr tool: the task demands the
-	// work be pushed/PR'd, the commits exist — stage the PR from them so the
-	// gate delivers exactly once. A worker-staged PR (native path) always wins.
-	d := demandedDelivery(cfg.Task)
-	if cfg.Deliver != nil && (d.pr || d.push) {
+	// Delivery handoff for a worker with no stage_pr tool: this node is the
+	// plan's TERMINAL delivery node (cfg.Deliver non-nil — mid-chain nodes get
+	// nil), it is setup-provisioned, and the commits exist — stage the PR from
+	// them so the gate delivers exactly once. Deliberately STRUCTURAL, not
+	// task-wording-based: a live run whose task text (post-ACP instruction
+	// style) never said "open a PR" staged nothing, delivered nothing, and the
+	// run reported success anyway.
+	if cfg.Deliver != nil {
 		if act.stagedDelivery == nil {
 			act.stagedDelivery = map[string]StagedDelivery{}
 		}
