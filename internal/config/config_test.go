@@ -481,8 +481,8 @@ func TestWorkspaceDefaults(t *testing.T) {
 	if w.TimeoutSeconds != 60 {
 		t.Errorf("TimeoutSeconds = %d, want 60", w.TimeoutSeconds)
 	}
-	if len(w.CheckCommands) != 0 {
-		t.Errorf("CheckCommands = %v, want empty (checks unavailable by default)", w.CheckCommands)
+	if len(w.CheckCommands) == 0 {
+		t.Errorf("CheckCommands = %v, want the default allowlist (checks ON by default; derived checks are toolchain-gated)", w.CheckCommands)
 	}
 	// The child-process sandbox is ON by default: a deployment that says nothing
 	// must get the OS boundary, not the pre-sandbox behaviour where a child (any
@@ -927,5 +927,26 @@ agents:
 `))
 	if err == nil {
 		t.Fatal("Load: want error (empty model) when neither QUACK_CODER_MODEL nor QUACK_RESEARCHER_MODEL is set")
+	}
+}
+
+// An UNSET check_commands defaults to the shipped allowlist (derived checks
+// are further gated on the toolchain existing — vetting.toolchainPresent);
+// an EXPLICIT empty list still means "checks disabled".
+func TestWorkspaceDefaults_CheckCommands(t *testing.T) {
+	unset := WorkspaceConfig{}
+	if err := unset.applyDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if len(unset.CheckCommands) == 0 {
+		t.Fatal("unset check_commands must default to the shipped allowlist")
+	}
+
+	disabled := WorkspaceConfig{CheckCommands: []string{}}
+	if err := disabled.applyDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if len(disabled.CheckCommands) != 0 {
+		t.Fatalf("explicit [] must stay disabled, got %v", disabled.CheckCommands)
 	}
 }

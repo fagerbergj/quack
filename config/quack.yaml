@@ -315,13 +315,13 @@ workspace:
   #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
   # check_commands: allowed command PREFIXES the planner may complete into a
   # code-implementer node's `checks` (§4) — the trust gate runs these against
-  # the node's own workdir after each draft. Empty = checks unavailable (the
-  # planner is told to omit `checks` entirely).
-  # check_commands: ["go build", "go test", "go vet", "npx tsc", "npm test"]
-  check_commands: []            # command PREFIXES plan nodes may use as deterministic gate checks.
-                                # Empty (default) = checks unavailable. Enable ONLY when the server's
-                                # runtime actually has the toolchain — the shipped Docker image does NOT
-                                # (git only); a check whose binary is missing fails the node closed.
+  # the node's own workdir after each draft, and DERIVES a repo's own build/
+  # vet/test commands from them when the planner set none. Defaults ON (this
+  # list); each derived check is additionally gated on its binary existing on
+  # the host, so a runtime without go/npm (the shipped Docker image has git
+  # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
+  # disables checks entirely.
+  check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
 
   # Deployment-level per-host HTTPS git credentials — ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos

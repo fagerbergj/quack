@@ -134,10 +134,10 @@ server:
   addr: ":8080"
   topology: managed       # quack server brings up the stores + tears them down
 
-# Workspace defaults on (root ./workspace, default caps). check_commands empty
-# ⇒ orchestrator-set checks unavailable — this keyless/no-container preset
-# doesn't assume a go/node toolchain is even present; set it explicitly (e.g.
-# ["go build", "go test"]) once you know what's on the host. git_credentials
+# Workspace defaults on (root ./workspace, default caps). check_commands is
+# unset ⇒ the default allowlist applies (go/npm/make — see internal/config
+# defaultCheckCommands); each derived check is gated on its binary existing on
+# the host, so a machine without the toolchain derives nothing. git_credentials
 # empty ⇒ public repos only (keyless path); git_push off; guards use the
 # shipped defaults (delete_path/git_rebase: judge, git_push/run_command:
 # judge+confirm).

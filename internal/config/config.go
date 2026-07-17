@@ -124,6 +124,13 @@ const (
 	defaultWorkspaceMaxFileSizeMB  = 1024
 )
 
+// defaultCheckCommands is the check-prefix allowlist an UNSET
+// workspace.check_commands defaults to — the commands vetting.deriveChecks can
+// complete for the repos quack actually builds (go, npm, make), each further
+// gated on the binary existing on the host. Explicit `check_commands: []`
+// still means "checks disabled".
+var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"}
+
 // WorkspaceConfig is the agents' working disk: one configured root, with a
 // per-user jail under it (<root>/<user_id>/ — see internal/workspace.Jail)
 // that filesystem and git tools resolve every path through. Only root + the
@@ -869,6 +876,13 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	}
 	if w.Sandbox == "" {
 		w.Sandbox = defaultWorkspaceSandbox
+	}
+	// Default the check allowlist ON when the section is absent: derived checks
+	// are additionally gated on the toolchain actually existing on the host
+	// (vetting.toolchainPresent), so this can't fail nodes on a host without
+	// go/npm. An EXPLICIT `check_commands: []` still disables checks.
+	if w.CheckCommands == nil {
+		w.CheckCommands = append([]string{}, defaultCheckCommands...)
 	}
 	if w.Sandbox != "bwrap" && w.Sandbox != "none" {
 		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap or none)", w.Sandbox)

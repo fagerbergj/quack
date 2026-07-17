@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -249,11 +250,25 @@ func deriveChecks(dir string, allow []string) []string {
 	}
 	var out []string
 	for _, c := range cands {
-		if workspace.MatchesCheckPrefix(c, allow) {
+		if workspace.MatchesCheckPrefix(c, allow) && toolchainPresent(c) {
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// toolchainPresent reports whether a derived check's binary exists on the
+// server (the ambient PATH — the same lookup RunArgv resolves argv[0] with).
+// This is what makes a default-ON check_commands allowlist safe: a host
+// without go/npm derives no go/npm checks instead of failing every node with
+// exit 127s.
+func toolchainPresent(check string) bool {
+	f := strings.Fields(check)
+	if len(f) == 0 {
+		return false
+	}
+	_, err := exec.LookPath(f[0])
+	return err == nil
 }
 
 // packageScripts returns the set of script names declared in dir/package.json.
