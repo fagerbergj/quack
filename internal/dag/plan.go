@@ -46,12 +46,11 @@ type Setup struct {
 
 // Delivery is the plan's declared POST-step: how the gated result reaches
 // GitHub, run AFTER the trust gate passes — once, at the run level, never by
-// a node mid-run. Kind is a constrained vocabulary: "pull_request", "review",
-// or "comment" (see validateDelivery).
+// a node mid-run. The orchestrator declares only the KIND ("pull_request",
+// "review", or "comment"; see validateDelivery) — the implementer authors
+// the PR title+body itself via stage_pr.
 type Delivery struct {
-	Kind  string `json:"kind"`
-	Title string `json:"title"`
-	Body  string `json:"body"`
+	Kind string `json:"kind"`
 }
 
 // Node is one task in the plan: the agent to run, what to do, an acceptance

@@ -179,7 +179,7 @@ func planSummary(p *Plan) string {
 		sb.WriteString("\nsetup: (none declared)")
 	}
 	if p.Delivery != nil {
-		fmt.Fprintf(&sb, "\ndelivery: kind=%q title=%q", p.Delivery.Kind, p.Delivery.Title)
+		fmt.Fprintf(&sb, "\ndelivery: kind=%q", p.Delivery.Kind)
 	} else {
 		sb.WriteString("\ndelivery: (none declared)")
 	}
