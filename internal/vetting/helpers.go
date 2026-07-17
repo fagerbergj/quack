@@ -121,7 +121,7 @@ type Config struct {
 	WorkspaceCaps   workspace.Caps
 
 	// Deliver posts a node's judge-passed staged delivery set (M0.5's
-	// staged-delivery spine — see StagedDelivery, commitDeliveryOnPass). nil
+	// staged-delivery spine — see StagedDelivery, commitDelivery). nil
 	// disables delivery entirely: the staged set is simply dropped, exactly
 	// like a nil Memory disables the memory-commit path.
 	Deliver DeliverFunc
@@ -129,7 +129,7 @@ type Config struct {
 	// Setup is the plan's declared PRE-step (dag.Plan.Setup), stamped per-node
 	// by dag.buildGateNodes for a repo-touching node (implementer/reviewer)
 	// when the plan declared one. Non-nil means the harness already cloned
-	// Repo and checked out WorkBranch before this node ran — commitDeliveryOnPass
+	// Repo and checked out WorkBranch before this node ran — commitDelivery
 	// delivers on THAT branch, never the worker's own git-tracking ledger
 	// (act.currentBranch), which a setup-provisioned worker is told not to touch.
 	Setup *SetupBranch
@@ -156,7 +156,7 @@ type StagedDelivery struct {
 	Slot   string // comment target, for Kind == "comment"
 }
 
-// DeliveryContext is what commitDeliveryOnPass hands to Config.Deliver: the
+// DeliveryContext is what commitDelivery hands to Config.Deliver: the
 // worker's FINAL staged set plus the on-disk/remote coordinates of the clone
 // it committed to — everything an extension needs to push and post without
 // re-deriving them from the session itself.
@@ -184,10 +184,17 @@ type DeliveryContext struct {
 	// not fatal to the rest of the set); a staged pull_request item never needs
 	// it (it opens a NEW one).
 	IssueNumber int
+	// GatePassed is the node's final judge verdict. Delivery fires regardless
+	// (graceful degradation), but a false here tells App.Deliver to attach a
+	// caveat to the delivered PR/comment so a human reviews the gate's concerns.
+	GatePassed bool
+	// GateFeedback is the judge's actionable feedback (the lowest-criteria
+	// notes), surfaced in the caveat when GatePassed is false. "" when it passed.
+	GateFeedback string
 }
 
 // DeliverFunc posts a node's FINAL staged delivery set to the outside world —
-// exactly once, only when commitDeliveryOnPass calls it (judge pass). Errors
+// exactly once, when commitDelivery calls it (regardless of verdict — a caveat is attached on a fail). Errors
 // are logged by the caller, never fail the node: delivery is best-effort like
 // the memory-commit path, but unlike it, its failure is user-visible (the
 // extension's own dispatch path posts a failure comment — see
@@ -274,12 +281,12 @@ type workerActivity struct {
 	// keyed, MUTABLE map ("pr" / "review" / "comment:<slot>" → the latest
 	// stage_pr/stage_review/stage_comment call for that target), so a later
 	// call REPLACES an earlier one and unstage DROPS one — never an append
-	// log. commitDeliveryOnPass posts exactly this map's contents at the
+	// log. commitDelivery posts exactly this map's contents at the
 	// moment the gate passes; anything unstaged or superseded before then
 	// never reaches GitHub.
 	stagedDelivery map[string]StagedDelivery
 	// currentBranch is the branch the worker last successfully checked out or
-	// created (git_checkout/git_branch), read by commitDeliveryOnPass to know
+	// created (git_checkout/git_branch), read by commitDelivery to know
 	// what to push — the worker names it, but never pushes it itself.
 	currentBranch string
 	// prNumber is the pull request a review/comment target, read from the
@@ -358,7 +365,7 @@ func recordSearchResults(seen map[string]string, resp map[string]any) {
 }
 
 // sortedStagedDelivery renders a worker's staged-delivery set as a slice in a
-// STABLE order (sorted by target key) — commitDeliveryOnPass's input, so
+// STABLE order (sorted by target key) — commitDelivery's input, so
 // delivery order never depends on map iteration.
 func sortedStagedDelivery(staged map[string]StagedDelivery) []StagedDelivery {
 	if len(staged) == 0 {

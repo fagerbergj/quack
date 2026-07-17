@@ -21,11 +21,11 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// deliveryResults records each run's LAST commitDeliveryOnPass outcome, keyed
+// deliveryResults records each run's LAST commitDelivery outcome, keyed
 // by chat/session id (DeliveryContext.ChatID) — dispatch (webhook.go) reads
 // it after drive() returns to tell "delivered" from "the gate passed but the
 // push/post itself then failed", which the SSE stream alone can't (a judge
-// pass means commitDeliveryOnPass RAN, not that it succeeded — see drive's
+// pass means commitDelivery RAN, not that it succeeded — see drive's
 // doc comment). Process-local: one process serves one App instance, and a
 // result is read (and cleared) exactly once, by the dispatch that caused it.
 var deliveryResults sync.Map // chatID → deliveryOutcome
@@ -118,7 +118,7 @@ func ownerRepoFromURL(rawURL string) (owner, repo string, ok bool) {
 //
 // NOT here (deliberately): pullRequestTool and submitReviewTool. Opening a PR
 // or submitting a review makes work PUBLIC, so under the staged-delivery spine
-// (see internal/tools/stage_delivery.go, vetting.commitDeliveryOnPass) no agent
+// (see internal/tools/stage_delivery.go, vetting.commitDelivery) no agent
 // calls them directly anymore — a worker STAGES that intent
 // (stage_pr/stage_review) and the trust gate posts it, exactly once, only on a
 // judge pass. createPullRequest/createReview (internal/github/app.go) are still
@@ -781,7 +781,7 @@ func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, h
 
 // Deliver is the vetting.DeliverFunc this extension provides (wired in
 // internal/serve): the ONE place, this whole extension, that pushes a branch
-// or posts anything to a triggering repo — called by commitDeliveryOnPass
+// or posts anything to a triggering repo — called by commitDelivery
 // exactly once, only after a node's judge pass. It pushes dc.Branch
 // (transient, App-authed — see tools.PushBranch), then works the staged set in
 // order: opening a pull request first (so a staged review/comment on the SAME
@@ -852,13 +852,31 @@ type deliveryItemResult struct {
 // with no known PR (dc.IssueNumber == 0 — the worker never named one via
 // github_add_review_comment/github_submit_review) is a clear, actionable
 // error rather than a guess.
+// gateCaveat prepends a visible warning banner (with the judge's feedback) to a
+// delivered body when the trust gate did NOT pass — graceful degradation: the
+// work ships anyway, but a human is told the gate's concerns before merging.
+// A passing gate returns the body unchanged.
+func gateCaveat(dc vetting.DeliveryContext, body string) string {
+	if dc.GatePassed {
+		return body
+	}
+	fb := strings.TrimSpace(dc.GateFeedback)
+	if fb == "" {
+		fb = "(no specific feedback was recorded — inspect the diff and tests carefully)"
+	}
+	banner := "> [!WARNING]\n" +
+		"> **quack's trust gate did NOT pass this change.** It is delivered anyway so a human can decide — review the concerns below before merging.\n" +
+		">\n> " + strings.ReplaceAll(fb, "\n", "\n> ") + "\n\n---\n\n"
+	return banner + body
+}
+
 func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.DeliveryContext, item vetting.StagedDelivery) (deliveryItemResult, error) {
 	switch item.Kind {
 	case "pull_request":
 		if dc.Branch == "" {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged pull request %q has no branch to open it from", item.Title)
 		}
-		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", item.Body, nil)
+		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil)
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: open pull request: %w", err)
 		}
@@ -873,7 +891,7 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
 		}
 		a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
-		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: item.Body, Event: event})
+		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, item.Body), Event: event})
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: submit review: %w", err)
 		}

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // testKeyPEM generates a throwaway RSA key and returns its PKCS1 PEM plus the
@@ -338,5 +340,25 @@ func TestAddLabelsAPIErrorPropagates(t *testing.T) {
 
 	if err := app.addLabels(context.Background(), "acme", "widgets", 42, []string{"quack:review"}); err == nil {
 		t.Fatal("addLabels: expected error on 422 response, got nil")
+	}
+}
+
+// TestGateCaveat pins the graceful-fallback banner: a failing gate prepends a
+// visible warning (with feedback) to the delivered body; a passing gate leaves
+// it untouched.
+func TestGateCaveat(t *testing.T) {
+	body := "## What\nadds a thing"
+	if got := gateCaveat(vetting.DeliveryContext{GatePassed: true}, body); got != body {
+		t.Errorf("passing gate must not alter the body; got %q", got)
+	}
+	got := gateCaveat(vetting.DeliveryContext{GatePassed: false, GateFeedback: "no test for the nil case"}, body)
+	if !strings.Contains(got, "[!WARNING]") || !strings.Contains(got, "did NOT pass") {
+		t.Errorf("failing gate must prepend a warning banner; got %q", got)
+	}
+	if !strings.Contains(got, "no test for the nil case") {
+		t.Errorf("banner must carry the judge feedback; got %q", got)
+	}
+	if !strings.HasSuffix(got, body) {
+		t.Errorf("banner must precede the original body; got %q", got)
 	}
 }

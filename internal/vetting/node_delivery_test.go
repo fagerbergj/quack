@@ -22,7 +22,7 @@ import (
 )
 
 // The staged-delivery spine: a worker STAGES a pull request
-// (stage_pr) instead of opening one — commitDeliveryOnPass posts the FINAL
+// (stage_pr) instead of opening one — commitDelivery posts the FINAL
 // staged set exactly once, and only when the gate's judge round passes.
 
 func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
@@ -45,17 +45,17 @@ func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
 }
 
 // A comment staged then unstaged before the gate ever reads the set must never
-// be handed to Deliver — commitDeliveryOnPass only ever sees the FINAL map.
+// be handed to Deliver — commitDelivery only ever sees the FINAL map.
 func TestStagedThenUnstagedItemNeverReachesDeliver(t *testing.T) {
 	act := activityFromSession(newTestSession(t,
 		fnCall("1", "stage_comment", map[string]any{"slot": "progress", "body": "halfway"}),
 		fnCall("2", "unstage", map[string]any{"target": "comment:progress"}),
 	))
 	var called int32
-	commitDeliveryOnPass(Config{Deliver: func(context.Context, DeliveryContext) error {
+	commitDelivery(Config{Deliver: func(context.Context, DeliveryContext) error {
 		atomic.AddInt32(&called, 1)
 		return nil
-	}}, "n1", act)
+	}}, "n1", act, GateResult{Passed: true})
 	if got := atomic.LoadInt32(&called); got != 0 {
 		t.Fatalf("Deliver called %d times, want 0 — every staged item was unstaged", got)
 	}
@@ -63,15 +63,15 @@ func TestStagedThenUnstagedItemNeverReachesDeliver(t *testing.T) {
 
 func TestCommitDeliveryOnPassNilSafe(t *testing.T) {
 	// nil Deliver: no-op, no panic.
-	commitDeliveryOnPass(Config{}, "n1", workerActivity{
+	commitDelivery(Config{}, "n1", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "x"}},
-	})
+	}, GateResult{Passed: true})
 	// Deliver set but nothing staged: no-op.
 	var called int32
-	commitDeliveryOnPass(Config{Deliver: func(context.Context, DeliveryContext) error {
+	commitDelivery(Config{Deliver: func(context.Context, DeliveryContext) error {
 		atomic.AddInt32(&called, 1)
 		return nil
-	}}, "n2", workerActivity{})
+	}}, "n2", workerActivity{}, GateResult{Passed: true})
 	time.Sleep(50 * time.Millisecond)
 	if got := atomic.LoadInt32(&called); got != 0 {
 		t.Fatalf("Deliver called %d times, want 0 — nothing was staged", got)
@@ -84,12 +84,12 @@ func TestCommitDeliveryOnPassCarriesCloneCoordinates(t *testing.T) {
 		done <- dc
 		return nil
 	}}
-	commitDeliveryOnPass(cfg, "n3", workerActivity{
+	commitDelivery(cfg, "n3", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "Add flappy bird"}},
 		clonedRepos:    []string{"https://github.com/fagerbergj/games"},
 		clonedDirs:     []string{"games"},
 		currentBranch:  "add-flappy-bird",
-	})
+	}, GateResult{Passed: true})
 	select {
 	case dc := <-done:
 		if len(dc.Items) != 1 || dc.Items[0].Title != "Add flappy bird" {
@@ -125,7 +125,7 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 	cfg := Config{
 		Deliver: func(_ context.Context, dc DeliveryContext) error { done <- dc; return nil },
 		Setup:   &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
-		// The workspace-directory scope commitDeliveryOnPass resolves
+		// The workspace-directory scope commitDelivery resolves
 		// SetupCloneDir against — dag.buildGateNodes stamps this (node.ID
 		// normally); the caller below passes the SAME "impl" as the nodeID
 		// argument, matching production wiring for a single, unshared node.
@@ -135,11 +135,11 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 		ChatID:          "chat1",
 	}
 	// The worker never cloned or checked out anything itself (setup-provisioned
-	// runs are told not to) — the ledger fields commitDeliveryOnPass would
+	// runs are told not to) — the ledger fields commitDelivery would
 	// otherwise fall back to are empty on purpose.
-	commitDeliveryOnPass(cfg, "impl", workerActivity{
+	commitDelivery(cfg, "impl", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "Add flappy bird"}},
-	})
+	}, GateResult{Passed: true})
 	select {
 	case dc := <-done:
 		if dc.Branch != "quack/work" {
@@ -181,7 +181,7 @@ func stagePRTestTool(t *testing.T) tool.Tool {
 
 // deliveryStub drives a worker through commit → stage_pr → done, then lets the
 // judge score whatever judgeScore says — so a test can force a pass or a
-// permanent fail and observe whether commitDeliveryOnPass fires.
+// permanent fail and observe whether commitDelivery fires.
 type deliveryStub struct {
 	judgeScore float64
 }
@@ -271,19 +271,53 @@ func TestGate_DeliversStagedPROnceOnJudgePass(t *testing.T) {
 	}
 }
 
-// A gate that never clears the judge threshold must deliver NOTHING — the
-// staged PR was staged, never posted.
-func TestGate_NeverDeliversOnJudgeFail(t *testing.T) {
-	var calls int32
-	deliver := func(context.Context, DeliveryContext) error {
-		atomic.AddInt32(&calls, 1)
+// A gate that never clears the judge threshold still DELIVERS — graceful
+// degradation: the work is done, so it ships with GatePassed=false so the
+// extension attaches a caveat (App.Deliver's gateCaveat), rather than the work
+// being silently dropped.
+func TestGate_DeliversWithCaveatOnJudgeFail(t *testing.T) {
+	got := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) error {
+		select {
+		case got <- dc:
+		default:
+		}
 		return nil
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.99, Rubric: "score 0-10", Task: deliveryGateTask, Deliver: deliver}
 	runDeliveryGate(t, &deliveryStub{judgeScore: 0.5}, cfg)
 
-	time.Sleep(200 * time.Millisecond) // let any errant goroutine fire
-	if got := atomic.LoadInt32(&calls); got != 0 {
-		t.Fatalf("Deliver called %d times, want 0 — the judge never passed", got)
+	select {
+	case dc := <-got:
+		if dc.GatePassed {
+			t.Error("GatePassed = true, want false — the judge never cleared the threshold")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired on a judge fail — delivery must be graceful (with caveat), not dropped")
+	}
+}
+
+// TestCommitDeliveryFiresOnFailWithCaveat pins graceful degradation: delivery
+// happens even on a judge FAIL, and the DeliveryContext carries the verdict so
+// the extension can attach a caveat (GatePassed=false, GateFeedback set).
+func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	cfg := Config{Deliver: func(_ context.Context, dc DeliveryContext) error { done <- dc; return nil }}
+	commitDelivery(cfg, "n4", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "x"}},
+		clonedRepos:    []string{"https://github.com/fagerbergj/games"},
+		clonedDirs:     []string{"games"},
+		currentBranch:  "b",
+	}, GateResult{Passed: false, Feedback: "tests are missing for the error path"})
+	select {
+	case dc := <-done:
+		if dc.GatePassed {
+			t.Error("GatePassed = true, want false — the judge failed")
+		}
+		if dc.GateFeedback != "tests are missing for the error path" {
+			t.Errorf("GateFeedback = %q, want the judge's feedback carried through", dc.GateFeedback)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired on a judge fail — delivery must be graceful, not gated")
 	}
 }

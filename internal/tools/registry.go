@@ -114,7 +114,7 @@ var registry = map[string]constructor{
 	"stage_memory": newStageMemory,
 	// Staged delivery (internal/tools/stage_delivery.go): workers stage commit/
 	// push/PR/review/comment intent; the trust gate posts it exactly once, only
-	// on a judge pass (internal/vetting commitDeliveryOnPass).
+	// exactly once via internal/vetting commitDelivery (regardless of verdict; caveat on fail).
 	"stage_pr":      newStagePR,
 	"stage_review":  newStageReview,
 	"stage_comment": newStageComment,

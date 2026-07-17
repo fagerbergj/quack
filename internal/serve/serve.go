@@ -375,7 +375,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// delivery set exactly once, on judge pass — the ONE place, this whole
 	// extension, that pushes a branch or posts anything to a triggering repo.
 	// nil (no GitHub App configured) leaves gateCfg.Deliver nil, which is
-	// safe — commitDeliveryOnPass simply drops whatever a worker staged.
+	// safe — commitDelivery simply drops whatever a worker staged.
 	var deliver vetting.DeliverFunc
 	if githubApp != nil {
 		deliver = func(ctx context.Context, dc vetting.DeliveryContext) error {
@@ -690,7 +690,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	// exactly where those tools' own paths resolve.
 	if setupOut != nil {
 		// Clone under localUserID — the SAME workspace scope every fs/git tool and
-		// commitDeliveryOnPass resolve under (localUserID, lines above) — NOT the
+		// commitDelivery resolve under (localUserID, lines above) — NOT the
 		// run's userID. A GitHub run's userID is "github"; cloning setup under it
 		// left the clone in a different jail than the worker, so the worker saw an
 		// empty workspace, re-cloned into a subdir, and delivery then pushed from

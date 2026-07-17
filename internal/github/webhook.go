@@ -551,7 +551,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		_ = e.store.Touch(ctx, sessionID)
 	}
 	// A judge-passed work request (review/implement) already had its staged
-	// review/PR posted by the trust gate itself (commitDeliveryOnPass, BLOCKING —
+	// review/PR posted by the trust gate itself (commitDelivery, BLOCKING —
 	// it has completed by the time node_done fires) — posting the run's text
 	// summary too would duplicate it. Only fall back to a summary comment when
 	// nothing was delivered: a conversational answer, a gate that never passed,
@@ -646,7 +646,7 @@ const runNudge = "You answered without running anything. Do NOT reply in prose: 
 // EXECUTED a plan (a dag_plan event) and whether ANY node's trust gate PASSED
 // its judge round. A run with no plan produced only a direct-text answer (the
 // work never happened). judgePassed is dispatch's proxy for "the staged
-// delivery set was posted": commitDeliveryOnPass runs synchronously inside the
+// delivery set was posted": commitDelivery runs synchronously inside the
 // gate, strictly before node_done fires (see internal/vetting/node.go), so by
 // the time node_done reports a pass here, delivery has already been attempted
 // — a failed delivery is still logged loudly (slog.Error) even though this

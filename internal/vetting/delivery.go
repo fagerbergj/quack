@@ -113,7 +113,7 @@ func demandedDelivery(task string) deliveryDemand {
 // (act.prOpened) and named in the feedback, and the ledger shows the judge
 // whether it happened.
 // hasStagedPR reports whether the worker has a live stage_pr call (handed the
-// PR intent off to the gate — see StagedDelivery/commitDeliveryOnPass). A
+// PR intent off to the gate — see StagedDelivery/commitDelivery). A
 // worker that CAN still push/open a PR directly (act.pushed/act.prOpened,
 // legacy toolset) satisfies delivery either way — staging is the new path,
 // not a replacement requirement.

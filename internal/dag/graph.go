@@ -99,7 +99,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// Thread the plan's declared Setup to the gate/delivery (see
 		// vetting.Config.Setup) — ONLY for the nodes runPlanSetup actually
 		// provisioned (setupQualifyingNodes: implementer/reviewer), the same
-		// set commitDeliveryOnPass's workspace.SetupCloneDir(node.ID) resolves
+		// set commitDelivery's workspace.SetupCloneDir(node.ID) resolves
 		// against.
 		if plan.Setup != nil && (node.AgentName == implementerAgent || node.AgentName == reviewerAgent) {
 			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
