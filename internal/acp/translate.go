@@ -22,7 +22,7 @@ type eventSpec struct {
 // consume them unchanged:
 //
 //	agent_thought_chunk        → Partial thought-text event   (agent_thinking)
-//	agent_message_chunk        → Partial text event           (agent_token), accumulated as the answer
+//	agent_message_chunk        → Partial text event           (agent_token), accumulated as the answer since the last tool call
 //	tool_call                  → Partial FunctionCall event   (live agent_tool_call)
 //	tool_call_update terminal  → durable FunctionCall+FunctionResponse pair (ledger + agent_tool_result)
 //	usage_update               → retained, stamped on the final answer event
@@ -62,6 +62,9 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 			return []eventSpec{{partial: true, parts: []*genai.Part{{Text: txt}}}}
 		}
 	case u.ToolCall != nil:
+		// A tool call means everything narrated so far was pre-action
+		// throat-clearing, not the answer — keep only the text emitted since.
+		t.answer.Reset()
 		c := u.ToolCall
 		id := string(c.ToolCallId)
 		p := pendingTool{kind: c.Kind, title: c.Title, rawInput: c.RawInput, content: c.Content, loc: c.Locations}
@@ -107,8 +110,9 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 	return nil
 }
 
-// finalSpec is the round's durable answer event: the accumulated agent message
-// text (what RunNode[string] returns via the node Output).
+// finalSpec is the round's durable answer event: the agent message text
+// accumulated since the last tool call (what RunNode[string] returns via the
+// node Output) — earlier narration was reset away at each ToolCall dispatch.
 func finalSpec(t *translator) eventSpec {
 	return eventSpec{parts: []*genai.Part{{Text: t.answer.String()}}, usage: t.usage}
 }
