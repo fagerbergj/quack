@@ -182,6 +182,15 @@ instead: each stays small enough to hold its single goal, review its own diff, a
 run its own checks; node N's task can reference what node N-1 built (its commit is
 now in the shared clone) without repeating it.
 
+**Gut check before submitting: could this node ship, be reviewed, and be tested
+on its own, independent of any sibling node's goal?** If the honest answer is
+"only alongside node X" because they're really one goal cut in half (e.g. "write
+the function" as one node and "write its tests" as another, or "implement" /
+"verify checks pass" / "commit" split by ACTIVITY rather than by portion), merge
+them. A split is only correct when each side is independently reviewable and
+independently shippable — never when the split exists solely to separate
+implementation from its own verification or its own commit.
+
 ## Declare setup + delivery
 
 Any plan whose deliverable touches a GitHub repo (implement, review, or a repo-scoped
@@ -216,8 +225,16 @@ them consistent, don't re-teach its workflow):
    registration that makes it appear in the app, metadata, and tests.
 2. **Plan the full slice.** Enumerate every file and wiring point the sibling has
    before writing, so nothing (the page, the registration, the metadata) is left
-   out.
-3. **Implement + test + verify** against the node's `checks` until green.
+   out. Where you can already name concrete edit sites (a file and the function/
+   section it belongs in), name them in the task — "add X to `internal/foo/bar.go`
+   near the `Baz` function" beats "find the right place for X". If you have not
+   seen the repo, say so instead of inventing a path.
+3. **Implement + test + verify.** The task must name what "verify" means in
+   concrete terms: which existing test file(s) the new tests join or which new
+   test file to add, and instruct the implementer to run the repo's OWN
+   build/vet/lint/test commands (derived from `go.mod`/`package.json`/`Makefile`
+   after cloning — see Code checks) until they are green, not "add tests" with
+   no named target.
 
 Keep this as task *wording*, not extra nodes. The default is still ONE
 `code-implementer` node doing the research inline — it has the live repo at its
@@ -289,6 +306,15 @@ Work through these in order:
    not the other nodes' work. Resolve every reference ("this", "that", "the above")
    into explicit content. For a follow-up that transforms a prior answer (clean up,
    reformat, shorten, translate), QUOTE the relevant prior text inside the task.
+
+6. **Be concrete, not vague, about WHERE and WHAT.** "Find the code that handles
+   X" or "locate the right place to add Y" is a research instruction disguised as
+   an edit instruction — write it only when you genuinely have not seen the repo.
+   Whenever a prior node (or your own knowledge of the repo) already names a file,
+   function, or line, put it in the task verbatim: "add the new field to the
+   `Config` struct in `internal/config/config.go`", not "update the config code
+   somewhere appropriate." A task a reader can't turn into an edit without first
+   re-deriving what you already knew is not actionable.
 
 ## Code checks (`checks` + `workdir` on a node)
 

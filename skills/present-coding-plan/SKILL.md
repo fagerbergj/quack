@@ -30,16 +30,40 @@ diagram is often the fastest way to say the thing correctly.
 5. **API / interface spec** — endpoint or function signatures, request/response
    shapes, new config fields. This is the "output contract" from AGENTS.md's
    spec-driven-development section — reuse it, don't re-derive it.
-6. **File-by-file change list** — table: file, what changes, why.
-7. **Acceptance / test cases** — table or list: at least 2-3 concrete
-   input → expected-output cases.
-8. **Deep detail** — anything long (full rationale, alternatives considered,
+6. **File-by-file change list** — table: file (with line number or anchor
+   when you know it, e.g. `internal/foo/bar.go:42`), the actual change (what
+   the code will say or do, not "update the handling of X"), why. If you
+   genuinely have not seen the line yet, name the file and say so ("exact
+   line TBD — see Honesty ledger below") rather than writing a vague
+   location as if it were precise. "Find the right place to add X" is a
+   research task, not a change list entry — it belongs in the Honesty ledger
+   or an upstream exploration step, never presented here as a planned edit.
+7. **Verification** — table or list: for EACH change, the specific test
+   file(s) that will be added to or created (named paths, e.g.
+   `internal/foo/bar_test.go`) and the EXACT runnable command(s) that prove
+   it, derived from the repo's own tooling (`go test ./internal/foo/...`,
+   `npm test -- Foo.test.tsx`, a `make` target that already exists) — not the
+   generic `go test ./...`/`npm test` unless the whole suite is genuinely the
+   right scope. Include at least 2-3 concrete input → expected-output
+   acceptance cases alongside the commands. "Add tests" or "verify it works"
+   with no named file and no runnable command is not acceptable content for
+   this section.
+8. **Honesty ledger** — a section titled "What I could not verify /
+   assumptions", listing anything the plan asserts without having confirmed
+   it firsthand this session: a file/line you're inferring rather than having
+   read, a command you believe exists but didn't run, a convention assumed
+   from a sibling feature rather than the target code itself. Every plan has
+   at least one entry — a plan claiming total certainty about a codebase it
+   just started exploring is itself a red flag. Never skip this section.
+9. **Deep detail** — anything long (full rationale, alternatives considered,
    a big diff excerpt) goes in a `<details>` fold, never cut.
 
 Skip any section that genuinely doesn't apply (e.g. no ERD for a pure UI
-tweak) — an empty section is worse than no section. Never lose content to fit
-this shape: if it doesn't fit a section above, fold it under `<details>`
-rather than dropping it.
+tweak) — an empty section is worse than no section. The Verification and
+Honesty ledger sections are the exception: every plan that changes code
+carries both, even if the ledger is short. Never lose content to fit this
+shape: if it doesn't fit a section above, fold it under `<details>` rather
+than dropping it.
 
 ## Mermaid: GitHub renders these natively, no image needed
 
@@ -93,8 +117,8 @@ before/after comparisons:
 
 | File | Change | Why |
 | --- | --- | --- |
-| `internal/dag/planner.go` | add `MaxDepth` field | bound recursive fan-out |
-| `agents/code-reviewer/prompt.md` | one-line pointer | wire the new skill |
+| `internal/dag/planner.go:118` | add `MaxDepth int` field to `Plan`, default 6, checked in `Build` before recursing | bound recursive fan-out |
+| `agents/code-reviewer/prompt.md` | one-line pointer to the new skill | wire the new skill |
 
 **`<details>` for deep detail** — collapsed by default, one blank line after
 `<summary>` (required for the body to render as markdown):
