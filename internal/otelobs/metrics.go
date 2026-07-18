@@ -35,6 +35,7 @@ type metrics struct {
 	modelCallDur     metric.Float64Histogram // attrs: model
 	permAsk          metric.Int64Counter     // attrs: agent
 	memRecall        metric.Int64Counter     // attrs: hit
+	checksSkipped    metric.Int64Counter     // attrs: reason — deterministic checks did NOT run at all (see RecordChecksSkipped)
 }
 
 // initMetrics builds every instrument from meter and installs it as the
@@ -82,6 +83,10 @@ func initMetrics(meter metric.Meter) error {
 	}
 	if m2.memRecall, err = meter.Int64Counter("quack.memory.recall",
 		metric.WithDescription("memory recall attempts, by hit/miss")); err != nil {
+		return err
+	}
+	if m2.checksSkipped, err = meter.Int64Counter("quack.gate.checks.skipped",
+		metric.WithDescription("nodes where the deterministic checks criterion did NOT run at all (no backstop), by reason — query this to find nodes that gated on judge score alone")); err != nil {
 		return err
 	}
 	m = m2
@@ -260,6 +265,21 @@ func RecordMemoryRecall(hit bool) {
 		return
 	}
 	m.memRecall.Add(context.Background(), 1, metric.WithAttributes(attrBool("hit", hit)))
+}
+
+// RecordChecksSkipped records one node whose deterministic checks criterion
+// did NOT run at all — the gate then relied on judge score alone, with no
+// build/vet/test backstop behind it. reason is a short machine-readable code
+// (see checksPassCriterion's skip sites in internal/vetting/checks.go), e.g.
+// "no_repo", "no_checks_derived", "not_configured", "no_workspace". This is
+// the queryable signal for quack's phantom-success history (a fabricated
+// exploration once scored 0.9; a phantom delivery shipped) — "checks passed"
+// and "checks did not run" must never look the same in Tempo/Grafana.
+func RecordChecksSkipped(reason string) {
+	if m == nil {
+		return
+	}
+	m.checksSkipped.Add(context.Background(), 1, metric.WithAttributes(attribute.String("reason", reason)))
 }
 
 func attrAgent(v string) attribute.KeyValue          { return attribute.String("agent", v) }
