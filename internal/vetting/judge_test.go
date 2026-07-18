@@ -117,6 +117,55 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 	}
 }
 
+// recordingJudge captures the full text of every judge prompt it receives
+// (into *prompt) and always submits a fixed-score verdict — a stand-in for
+// asserting what the ASSEMBLED judge prompt looked like, not what the judge
+// decided.
+type recordingJudge struct{ prompt *string }
+
+func (recordingJudge) Name() string { return "recording-judge" }
+
+func (r recordingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		*r.prompt = stubAllText(req)
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil)
+	}
+}
+
+// TestRunJudgeAgent_OverBudgetAnswerFitsBudget proves issue #291's budgeting
+// fix: an answer big enough that the assembled judge prompt would blow past
+// the judge model's configured context window gets clamped BEFORE the call
+// (fitJudgeAnswer), so the judge still sees a within-budget prompt and
+// produces a verdict instead of the call 400ing against the model's slot.
+func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
+	var seenPrompt string
+	factory := NewJudgeFactory(recordingJudge{prompt: &seenPrompt}, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	// Far larger than any real judge slot (~125k tokens raw) — the same shape as
+	// the #291 incident's 34K-token judge call against a 32K/64K model slot.
+	hugeAnswer := strings.Repeat("the worker wrote a very long answer. ", 15_000)
+	cfg := Config{Rubric: "score 0-10", JudgeContextWindow: 8_000} // small window forces a real clamp
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, hugeAnswer, workerActivity{}, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.8 {
+		t.Errorf("verdict score = %v, want 0.8 (the judge call should have completed)", v.Score)
+	}
+
+	budget := judgeCharBudget(cfg)
+	// stubAllText joins content parts with a trailing "\n" per part (test helper
+	// artifact, not part of the actual request) — trim it before comparing.
+	seenPrompt = strings.TrimRight(seenPrompt, "\n")
+	if len(seenPrompt) > budget {
+		t.Errorf("judge saw a %d-char prompt, exceeds the %d-char budget derived from JudgeContextWindow — the oversized answer was not clamped", len(seenPrompt), budget)
+	}
+	if len(seenPrompt) >= len(hugeAnswer) {
+		t.Errorf("judge prompt (%d chars) is not smaller than the raw answer (%d chars) — expected compaction", len(seenPrompt), len(hugeAnswer))
+	}
+}
+
 // fakeToolset is a minimal tool.Toolset exposing a single scripted skill tool,
 // standing in for the real skilltoolset so the skill-loading path is hermetic.
 type fakeToolset struct{ tools []tool.Tool }

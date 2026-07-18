@@ -320,6 +320,7 @@ type JudgeConfig struct {
 	MaxRounds     int     `yaml:"max_rounds"`     // judge/revise rounds
 	Threshold     float64 `yaml:"threshold"`      // pass score in (0,1] (default 0.7)
 	MaxIterations int     `yaml:"max_iterations"` // cap on the agentic judge's model turns per round (default 6)
+	ContextWindow int     `yaml:"context_window"` // judge model's context window in tokens; budgets the assembled judge prompt (0 ⇒ vetting falls back to a conservative default)
 }
 
 // JudgeEnabled reports whether the model-judge stage runs.

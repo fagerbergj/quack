@@ -24,8 +24,12 @@ type Config struct {
 	JudgeRounds         int     // expensive model-judge/revise rounds
 	Threshold           float64 // judge pass score in (0,1]
 	JudgeMaxIterations  int     // cap on the agentic judge's model turns per round (0 ⇒ default)
-	Constitution        string  // global principles; prefixed in the judge prompt
-	Rubric              string  // scoring guide; global default or per-agent override
+	// JudgeContextWindow is the judge model's context window in tokens
+	// (config gates.judge.context_window), used to budget the assembled
+	// judge prompt before the call: 0 ⇒ falls back to defaultJudgeContextWindow.
+	JudgeContextWindow int
+	Constitution       string // global principles; prefixed in the judge prompt
+	Rubric             string // scoring guide; global default or per-agent override
 
 	// RequireRetrieval marks an agent whose job is retrieval (its tool list
 	// includes web_search/web_fetch). For such an agent an answer produced with

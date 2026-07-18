@@ -292,16 +292,99 @@ func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, 
 	return sb.String()
 }
 
-// runJudgeAgent runs one agentic judge round in its own isolated runner +
+// judgeCharsPerToken is a coarse token estimate for budgeting the assembled
+// judge prompt — bytes/4, the same convention internal/agent's compaction
+// estimator uses before it has a provider-measured count to calibrate against.
+const judgeCharsPerToken = 4
+
+// judgeOutputReserveTokens is left out of the budget for the judge's own
+// reply (its reasoning turn + the submit_verdict call).
+const judgeOutputReserveTokens = 2_000
+
+// defaultJudgeContextWindow is the fallback budget when Config.JudgeContextWindow
+// is unset (0 — an unconfigured deployment): the window an unbudgeted judge call
+// 400'd against before this fix (#291). Prefer setting gates.judge.context_window
+// to the judge model's ACTUAL served slot; this is only a safety floor.
+const defaultJudgeContextWindow = 32_768
+
+// minJudgeAnswerChars is the floor buildJudgePrompt's clamp leaves of the
+// answer even when the fixed prompt sections (rubric, task, question) alone
+// blow the budget — an unusable 0-char answer would waste the judge call
+// entirely instead of scoring something.
+const minJudgeAnswerChars = 2_000
+
+// judgeCharBudget derives the assembled judge-prompt byte budget from the
+// judge model's context window (Config.JudgeContextWindow, falling back to
+// defaultJudgeContextWindow), reserving judgeOutputReserveTokens for the reply.
+func judgeCharBudget(cfg Config) int {
+	window := cfg.JudgeContextWindow
+	if window <= 0 {
+		window = defaultJudgeContextWindow
+	}
+	tokens := window - judgeOutputReserveTokens
+	if tokens <= 0 {
+		tokens = window
+	}
+	return tokens * judgeCharsPerToken
+}
+
+// fitJudgeAnswer clamps answer (boundExcerpt: head+tail) so the assembled
+// judge prompt fits judgeCharBudget(cfg) — the node's own output is the one
+// unbounded part of buildJudgePrompt (rubric/task/question/changedFiles are
+// already capped), so it's what gets trimmed. shrinkFactor < 1.0 clamps
+// harder than the budget alone requires, for a retry after a call still fails
+// (the byte/4 estimate can undercount a dense answer).
+func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles string, act workerActivity, shrinkFactor float64) string {
+	budget := judgeCharBudget(cfg)
+	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)
+	over := len(full) - budget
+	if over <= 0 && shrinkFactor >= 1.0 {
+		return answer
+	}
+	fixed := len(full) - len(answer) // everything the judge prompt carries besides the answer
+	target := budget - fixed
+	if shrinkFactor < 1.0 {
+		target = int(float64(len(answer)) * shrinkFactor)
+	}
+	if target < minJudgeAnswerChars {
+		target = minJudgeAnswerChars
+	}
+	if target >= len(answer) {
+		return answer
+	}
+	return boundExcerpt(answer, target)
+}
+
+// runJudgeAgent budgets the judge prompt to the judge model's context window
+// (fitJudgeAnswer) and runs one round (runJudgeRound). A call that still
+// errors — a 400 the byte/4 estimate didn't predict, a transient fault — gets
+// ONE retry with the answer clamped harder before runJudgeAgent gives up; the
+// caller (node.go) treats a returned error as a failed-closed gate, never a
+// pass, so a judge that can't be reached never ships an answer unvetted.
+func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
+	changedFiles := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
+	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, act, 1.0)
+	v, err := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, act, emit)
+	if err == nil || ctx.Err() != nil {
+		return v, err
+	}
+	retryAnswer := fitJudgeAnswer(cfg, question, fitted, changedFiles, act, 0.5)
+	if retryAnswer == fitted {
+		return verdict{}, err // nothing left to shrink; the retry would repeat the same call
+	}
+	return runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, act, emit)
+}
+
+// runJudgeRound runs one agentic judge round in its own isolated runner +
 // in-memory session, so the judge's tool calls never touch the worker's session.
 // emit receives display copies of the judge's thinking and tool activity (the
 // caller authors them so the worker's revision context can filter them out); it
 // returns false when the consumer has disconnected, which aborts the round.
 //
 // The verdict is captured structurally via submit_verdict (sink). If the judge
-// ends without calling it, runJudgeAgent falls back to parsing any text it
+// ends without calling it, runJudgeRound falls back to parsing any text it
 // emitted, and failing that returns an error so the gate degrades gracefully.
-func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
+func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
 	var sink verdict
 	judgeAgent, err := factory(&sink)
 	if err != nil {
@@ -325,7 +408,6 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	changedFiles := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
 	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)}}
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {
