@@ -205,10 +205,8 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
-		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
-		defer span.End()
-		otelobs.RunStarted()
-		defer otelobs.RunFinished()
+		ctx, span = otelobs.StartRun(ctx, attribute.String(otelobs.ChatIDKey, sessionID))
+		defer otelobs.EndRun(span, nil)
 		origYield := yield
 		yield = func(ev stream.SSEEvent, err error) bool {
 			if err != nil {

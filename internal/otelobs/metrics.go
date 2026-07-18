@@ -12,6 +12,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // metrics holds every instrument Quack records against. A package-level
@@ -24,15 +25,16 @@ import (
 var m *metrics
 
 type metrics struct {
-	runsActive   metric.Int64UpDownCounter
-	nodesActive  metric.Int64UpDownCounter
-	roundDur     metric.Float64Histogram // attrs: agent, model, stage
-	judgeScore   metric.Float64Histogram // attrs: agent
-	judgeVerdict metric.Int64Counter     // attrs: agent, passed
-	delivery     metric.Int64Counter     // attrs: outcome (delivered|draft|failed|none)
-	modelCallDur metric.Float64Histogram // attrs: model
-	permAsk      metric.Int64Counter     // attrs: agent
-	memRecall    metric.Int64Counter     // attrs: hit
+	runsActive       metric.Int64UpDownCounter
+	nodesActive      metric.Int64UpDownCounter
+	roundDur         metric.Float64Histogram // attrs: agent, model, stage (worker rounds: draft/continuation/revise/hitl/confirm)
+	judgeScore       metric.Float64Histogram // attrs: agent
+	judgeVerdict     metric.Int64Counter     // attrs: agent, passed
+	judgeUnavailable metric.Int64Counter     // attrs: agent — judge round errored before a verdict; see RecordJudgeUnavailable
+	delivery         metric.Int64Counter     // attrs: outcome (delivered|draft|failed|none)
+	modelCallDur     metric.Float64Histogram // attrs: model
+	permAsk          metric.Int64Counter     // attrs: agent
+	memRecall        metric.Int64Counter     // attrs: hit
 }
 
 // initMetrics builds every instrument from meter and installs it as the
@@ -51,15 +53,19 @@ func initMetrics(meter metric.Meter) error {
 		return err
 	}
 	if m2.roundDur, err = meter.Float64Histogram("quack.worker.round.duration",
-		metric.WithDescription("worker/judge round duration"), metric.WithUnit("s")); err != nil {
+		metric.WithDescription("worker round wall time (draft/continuation/revise/hitl/confirm) — derived from the round's own span window, see StartTimedSpan"), metric.WithUnit("s")); err != nil {
 		return err
 	}
 	if m2.judgeScore, err = meter.Float64Histogram("quack.judge.score",
-		metric.WithDescription("independent judge weakest-link score (0-1)")); err != nil {
+		metric.WithDescription("independent judge weakest-link score (0-1); recorded on every agent's shared judge-round path (RunGatedRefine), not just one agent")); err != nil {
 		return err
 	}
 	if m2.judgeVerdict, err = meter.Int64Counter("quack.judge.verdict",
 		metric.WithDescription("judge verdicts by pass/fail")); err != nil {
+		return err
+	}
+	if m2.judgeUnavailable, err = meter.Int64Counter("quack.judge.unavailable",
+		metric.WithDescription("judge rounds that errored before producing a verdict (no score/verdict recorded for that round) — a gap here on one agent's series explains missing/sparse quack.judge.score|verdict for it")); err != nil {
 		return err
 	}
 	if m2.delivery, err = meter.Int64Counter("quack.delivery.outcome",
@@ -82,7 +88,19 @@ func initMetrics(meter metric.Meter) error {
 	return nil
 }
 
-// RunStarted/RunFinished track quack.runs.active.
+// RunStarted/RunFinished track quack.runs.active. Call in a matched pair on
+// every exit path (error, cancel, panic-unwind) — StartRun/EndRun below do
+// this FOR you, tied to the "run" span's own lifecycle, and are the preferred
+// call site; these two remain exported for the rare caller that needs the
+// gauge without a span.
+//
+// Neither this pair nor StartRun/EndRun can survive a hard process kill
+// (container restart) mid-run: the process that incremented the gauge never
+// runs its decrement, and the counter is orphaned high until the NEXT
+// process starts fresh at 0. That is inherent to an up/down counter across a
+// restart, not a code bug — treat quack.runs.active/quack.nodes.active as
+// advisory around a deploy; the durable event log and Tempo traces are the
+// source of truth for what was actually in flight.
 func RunStarted() {
 	if m != nil {
 		m.runsActive.Add(context.Background(), 1)
@@ -94,7 +112,25 @@ func RunFinished() {
 	}
 }
 
-// NodeStarted/NodeFinished track quack.nodes.active.
+// StartRun opens the "run" span and marks quack.runs.active +1 as ONE call —
+// pair with EndRun (typically via defer immediately after) so the gauge can
+// never be bumped without a matching span, or vice versa.
+func StartRun(ctx context.Context, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
+	ctx, span := Start(ctx, "run", attrs...)
+	RunStarted()
+	return ctx, span
+}
+
+// EndRun ends span (recording err) and marks quack.runs.active -1 — the
+// single code path both the span and the gauge end through, so they can't
+// drift apart on any of RunGatedRefine/Orchestrator.Run's exit paths.
+func EndRun(span oteltrace.Span, err error) {
+	End(span, err)
+	RunFinished()
+}
+
+// NodeStarted/NodeFinished track quack.nodes.active. See RunStarted's doc for
+// the restart caveat and why StartNode/EndNode are the preferred call site.
 func NodeStarted() {
 	if m != nil {
 		m.nodesActive.Add(context.Background(), 1)
@@ -104,6 +140,47 @@ func NodeFinished() {
 	if m != nil {
 		m.nodesActive.Add(context.Background(), -1)
 	}
+}
+
+// StartNode opens the "node" span and marks quack.nodes.active +1 as ONE
+// call. Pair with EndNode.
+func StartNode(ctx context.Context, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
+	ctx, span := Start(ctx, "node", attrs...)
+	NodeStarted()
+	return ctx, span
+}
+
+// EndNode ends span (recording err) and marks quack.nodes.active -1.
+func EndNode(span oteltrace.Span, err error) {
+	End(span, err)
+	NodeFinished()
+}
+
+// TimedSpan pairs a span with the wall-clock instant it was started, so a
+// duration recorded at End is drawn from the EXACT same window the span
+// itself covers — a separately-tracked t0 in the caller can drift from the
+// span (e.g. code inserted between the two, or the span's own attribute
+// setup taking measurable time on a slow path); this makes that impossible
+// by construction.
+type TimedSpan struct {
+	Span  oteltrace.Span
+	start time.Time
+}
+
+// StartTimedSpan opens a span, capturing its start instant for the returned
+// TimedSpan.End to measure against.
+func StartTimedSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, *TimedSpan) {
+	ctx, span := Start(ctx, name, attrs...)
+	return ctx, &TimedSpan{Span: span, start: time.Now()}
+}
+
+// End ends the span (recording err) and returns the wall-clock duration
+// since StartTimedSpan — the value a caller should feed straight into a
+// duration metric so it can never disagree with the span's own window.
+func (ts *TimedSpan) End(err error) time.Duration {
+	d := time.Since(ts.start)
+	End(ts.Span, err)
+	return d
 }
 
 // RecordRoundDuration records one worker/judge/revise round's wall time.
@@ -123,6 +200,20 @@ func RecordJudgeVerdict(agent string, score float64, passed bool) {
 	ctx := context.Background()
 	m.judgeScore.Record(ctx, score, metric.WithAttributes(attrAgent(agent)))
 	m.judgeVerdict.Add(ctx, 1, metric.WithAttributes(attrAgent(agent), attrBool("passed", passed)))
+}
+
+// RecordJudgeUnavailable records a judge round that errored before it could
+// produce a verdict (runJudgeAgent returned an error) — the ONE judge outcome
+// RecordJudgeVerdict cannot cover, since there is no score to record. Called
+// on the same shared per-agent judge path as RecordJudgeVerdict (node.go's
+// judge loop) so an agent whose judge calls disproportionately error still
+// gets a per-agent series instead of silently vanishing from judge.score/
+// judge.verdict.
+func RecordJudgeUnavailable(agent string) {
+	if m == nil {
+		return
+	}
+	m.judgeUnavailable.Add(context.Background(), 1, metric.WithAttributes(attrAgent(agent)))
 }
 
 // DeliveryOutcome names the outcome recorded by RecordDeliveryOutcome.
