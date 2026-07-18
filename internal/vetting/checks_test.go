@@ -248,3 +248,39 @@ func TestDeriveChecks_SkipsMissingToolchain(t *testing.T) {
 		t.Fatalf("without the toolchain, want no derived checks, got %v", got)
 	}
 }
+
+// A repo with more than one toolchain present (e.g. package.json + go.mod, as
+// quack's own repo root has) must derive checks from ALL of them, not just the
+// first match — see #349.
+func TestDeriveChecks_UnionsMultipleToolchains(t *testing.T) {
+	dir := t.TempDir()
+	pkg := `{"scripts": {"build": "tsc", "test": "vitest"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	allow := []string{"npm run", "go build", "go vet", "go test"}
+
+	got := deriveChecks(dir, allow)
+	want := []string{"npm run build", "npm run test", "go build ./...", "go vet ./...", "go test ./..."}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("want checks from both npm and go in order %v, got %v", want, got)
+	}
+}
+
+// A single-ecosystem repo is unaffected: still just its own toolchain's checks.
+func TestDeriveChecks_SingleEcosystemUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	allow := []string{"go build", "go vet", "go test"}
+
+	got := deriveChecks(dir, allow)
+	want := []string{"go build ./...", "go vet ./...", "go test ./..."}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("want only go checks %v, got %v", want, got)
+	}
+}
