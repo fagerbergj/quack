@@ -76,6 +76,75 @@ func TestValidateAndRepairMermaid_UnquotedParenLabelStripped(t *testing.T) {
 	}
 }
 
+// BLOCKING regression: a ```mermaid-looking fence quoted INSIDE an unrelated
+// fence's body (a ```go block whose content merely mentions "```mermaid",
+// e.g. in a comment demonstrating markdown) must be left byte-for-byte
+// untouched — not treated as a real mermaid opener, not stripped, not
+// mangled. Reachable in practice: delivered PR/review/comment bodies
+// routinely quote code or examples.
+func TestValidateAndRepairMermaid_NestedFenceLeftUntouched(t *testing.T) {
+	md := "Example:\n\n```go\n" +
+		"// Here's how you'd write a bad diagram:\n" +
+		"// ```mermaid\n" +
+		"// A[Start --> B[[Finish\n" +
+		"// ```\n" +
+		"fmt.Println(\"done\")\n" +
+		"```\n\nEnd."
+	out, changed := validateAndRepairMermaid(md)
+	if changed || out != md {
+		t.Fatalf("nested ```mermaid quoted inside a ```go block must be untouched:\ngot changed=%v out=%q\nwant unchanged", changed, out)
+	}
+}
+
+// The same regression, but proving a REAL top-level bad mermaid block right
+// next to the nested false-positive is still caught and stripped — the fix
+// must not overcorrect into ignoring every ```mermaid fence.
+func TestValidateAndRepairMermaid_NestedFenceUntouchedRealBlockStillStripped(t *testing.T) {
+	md := "```go\n// ```mermaid\n// not a real diagram\n// ```\nfmt.Println(1)\n```\n\n" +
+		"```mermaid\nA[Start] --> B[Finish]\n```"
+	out, changed := validateAndRepairMermaid(md)
+	if !changed {
+		t.Fatal("want changed=true — the real top-level bad diagram must still be stripped")
+	}
+	if !strings.Contains(out, "// ```mermaid") {
+		t.Fatalf("out = %q, want the nested false-positive inside the go block preserved verbatim", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if line == "```mermaid" {
+			t.Fatalf("out = %q, want the real invalid top-level mermaid fence stripped (no top-level ```mermaid opener left)", out)
+		}
+	}
+}
+
+// GitHub renders ```Mermaid / ```MERMAID the same as ```mermaid — the fence
+// match must be case-insensitive so a bad diagram can't ship unvalidated
+// just by differently-cased fence info.
+func TestValidateAndRepairMermaid_CaseInsensitiveFence(t *testing.T) {
+	md := "```MERMAID\nA[Start] --> B[Finish]\n```"
+	out, changed := validateAndRepairMermaid(md)
+	if !changed {
+		t.Fatal("want changed=true — an invalid diagram in a ```MERMAID fence must still be validated and stripped")
+	}
+	if strings.Contains(out, "MERMAID") && strings.Contains(out, "```MERMAID") {
+		t.Fatalf("out = %q, want the invalid diagram stripped regardless of fence case", out)
+	}
+}
+
+// mermaidValid must degrade to "invalid" rather than panic through — a young
+// third-party parser on the single-shot, no-retry delivery path.
+func TestMermaidValid_RecoversFromPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("mermaidValid must recover internally, panicked instead: %v", r)
+		}
+	}()
+	// Not expected to panic in practice — this just proves the call is safe
+	// to make on arbitrary/adversarial input without a defer at the call site.
+	if mermaidValid(strings.Repeat("A", 1<<20)) {
+		t.Fatal("garbage input must not validate as a diagram")
+	}
+}
+
 func TestMermaidValid(t *testing.T) {
 	cases := []struct {
 		name string
