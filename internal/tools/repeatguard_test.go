@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -35,6 +36,103 @@ func newNamedRepeatTestTool(t *testing.T, name string, calls *int) runnableTool 
 		t.Fatal(err)
 	}
 	return tl.(runnableTool)
+}
+
+type pathArgs struct {
+	Path string `json:"path"`
+	Note string `json:"note,omitempty"` // varies call-to-call without changing Path
+}
+type pathResult struct {
+	Out string `json:"out"`
+}
+
+// newFailingPathTool returns a `path`-taking tool whose calls fail (return an
+// error) when fail reports true for that call's args, so tests can simulate
+// an agent varying its arguments while retrying against the same resource.
+func newFailingPathTool(t *testing.T, calls *int, fail func(pathArgs) bool) runnableTool {
+	t.Helper()
+	tl, err := functiontool.New[pathArgs, pathResult](
+		functiontool.Config{Name: "read_thing", Description: "read a thing"},
+		func(_ adkagent.Context, a pathArgs) (pathResult, error) {
+			*calls++
+			if fail(a) {
+				return pathResult{}, fmt.Errorf("not found: %s", a.Path)
+			}
+			return pathResult{Out: a.Path}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tl.(runnableTool)
+}
+
+// Semantic churn: consecutive calls against the same path, each with a
+// different `note` (never byte-identical args, so the exact-match guard never
+// trips), all fail — once pathFailThreshold (3) of them have run and failed,
+// the next attempt is refused before the tool even runs.
+func TestRepeatGuardCatchesSemanticChurn(t *testing.T) {
+	calls := 0
+	g, err := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), newRepeatStates())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := g.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+
+	notes := []string{"try 1", "try two", "3rd attempt", "one more try"}
+	for i, note := range notes {
+		_, runErr := rg.Run(ctx, map[string]any{"path": "src/main.go", "note": note})
+		if i < pathFailThreshold {
+			if runErr == nil {
+				t.Fatalf("call %d: want the underlying tool error, got nil", i+1)
+			}
+			if strings.Contains(runErr.Error(), "REFUSED") {
+				t.Fatalf("call %d: refused too early: %v", i+1, runErr)
+			}
+			continue
+		}
+		if runErr == nil || !strings.Contains(runErr.Error(), "REFUSED") {
+			t.Fatalf("call %d after %d consecutive failures: want REFUSED, got %v", i+1, pathFailThreshold, runErr)
+		}
+	}
+	if calls != pathFailThreshold {
+		t.Fatalf("tool executed %d times; want %d (last call refused before running)", calls, pathFailThreshold)
+	}
+}
+
+// Genuinely different calls — different resources, or a call that succeeds —
+// are never caught: failures against different paths don't share a streak,
+// and a success resets the streak for its own path.
+func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
+	calls := 0
+	states := newRepeatStates()
+
+	// Two different paths, each failing twice: neither reaches the threshold.
+	g1, _ := newRepeatGuard(newFailingPathTool(t, &calls, func(pathArgs) bool { return true }), states)
+	rg1 := g1.(*repeatGuard)
+	ctx := newRepeatCtx("s1")
+	for i, note := range []string{"a", "b"} {
+		if _, err := rg1.Run(ctx, map[string]any{"path": "one.go", "note": note}); err == nil || strings.Contains(err.Error(), "REFUSED") {
+			t.Fatalf("one.go call %d: want plain tool failure, got %v", i+1, err)
+		}
+	}
+	for i, note := range []string{"a", "b"} {
+		if _, err := rg1.Run(ctx, map[string]any{"path": "two.go", "note": note}); err == nil || strings.Contains(err.Error(), "REFUSED") {
+			t.Fatalf("two.go call %d: want plain tool failure, got %v", i+1, err)
+		}
+	}
+
+	// A path whose 3rd call succeeds resets the streak: two more failures
+	// afterward must not be refused (only 2 consecutive since the reset).
+	n := 0
+	g2, _ := newRepeatGuard(newFailingPathTool(t, &n, func(a pathArgs) bool { return a.Note != "fixed" }), states)
+	rg2 := g2.(*repeatGuard)
+	seq := []string{"x", "y", "fixed", "z", "w"}
+	for i, note := range seq {
+		if _, err := rg2.Run(ctx, map[string]any{"path": "three.go", "note": note}); err != nil && strings.Contains(err.Error(), "REFUSED") {
+			t.Fatalf("three.go call %d (%s): unexpected refusal: %v", i+1, note, err)
+		}
+	}
 }
 
 // repeatCtx mirrors cd_test.go's fakeCtx surface (functiontool.Run touches
