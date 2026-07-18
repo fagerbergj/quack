@@ -178,6 +178,12 @@ func (e *Extension) handleIssueComment(w http.ResponseWriter, body []byte) {
 		w.WriteHeader(http.StatusOK) // not a mention we act on: no-op ack
 		return
 	}
+	if !e.isInvokerAllowed(p.Comment.User.Login) {
+		slog.Warn("github webhook: invoker not in allowed_users; ignoring", "component", "github",
+			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number, "user", p.Comment.User.Login)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	slog.Info("github webhook received", "component", "github",
 		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
@@ -201,6 +207,13 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 	// A bot sender can never authorize a merge.
 	if p.Action == "labeled" && e.triggers["merge"] && p.Label.Name == e.labels.Merge &&
 		!strings.HasSuffix(p.Sender.Login, "[bot]") {
+		if !e.isInvokerAllowed(p.Sender.Login) {
+			slog.Warn("github webhook: invoker not in allowed_users; ignoring", "component", "github",
+				"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
+				"label", p.Label.Name, "user", p.Sender.Login)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		slog.Info("github webhook received", "component", "github",
 			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
 			"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
@@ -251,6 +264,13 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	// pull_request event; a bot sender must never chain label workflows).
 	if p.Action != "labeled" || p.Issue.PullRequest != nil ||
 		strings.HasSuffix(p.Sender.Login, "[bot]") {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if !e.isInvokerAllowed(p.Sender.Login) {
+		slog.Warn("github webhook: invoker not in allowed_users; ignoring", "component", "github",
+			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "issue", p.Issue.Number,
+			"label", p.Label.Name, "user", p.Sender.Login)
 		w.WriteHeader(http.StatusOK)
 		return
 	}

@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -89,6 +90,15 @@ type GitHubExtensionConfig struct {
 	// applied).
 	Triggers        []string `yaml:"triggers"`
 	AutoReviewLabel string   `yaml:"auto_review_label"` // deprecated alias for labels.review
+
+	// AllowedUsers is the allowlist of GitHub logins permitted to INVOKE quack
+	// (a mention comment, or a workflow label applied by a human) — matched
+	// case-insensitively. Empty (default) is DENY-ALL, a secure default:
+	// applyDefaults logs a startup WARN so an operator who forgot to seed it
+	// notices before assuming quack "just doesn't run" is a bug. Does NOT gate
+	// the synthetic pr_opened/label auto-review (no human invoker) — see
+	// internal/github/webhook.go's isInvokerAllowed callers.
+	AllowedUsers []string `yaml:"allowed_users"`
 
 	// Labels names the labels that drive the label-based workflow. Each label
 	// only acts when its trigger is enabled (see Triggers).
@@ -879,6 +889,10 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	if g.Labels.Merge == "" {
 		g.Labels.Merge = defaultMergeLabel
+	}
+	if len(g.AllowedUsers) == 0 {
+		slog.Warn("config: extensions.github.allowed_users is empty; DENYING every human-invoked trigger " +
+			"(mention comments, quack:plan/implement/merge labels) until it is set — auto-review is unaffected")
 	}
 	return nil
 }

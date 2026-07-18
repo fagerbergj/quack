@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"iter"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,10 +58,15 @@ type Extension struct {
 	mention  string
 	triggers map[string]bool // configured trigger set: mention, pr_opened, label, issue_plan
 	labels   config.GitHubLabels
-	runner   Runner
-	store    *store.Store     // nil in tests that don't need URL persistence
-	hub      *stream.Hub      // shared with the REST handler, nil when store is nil
-	eventLog *runlog.EventLog // nil when store is nil (no durable persistence to do)
+	// allowedUsers is the invoker allowlist (github.allowed_users), lower-cased
+	// for case-insensitive matching. Empty = deny every human-invoked trigger
+	// (config.applyDefaults already warned at startup). Never consulted for the
+	// synthetic pr_opened/label auto-review — see isInvokerAllowed's callers.
+	allowedUsers map[string]bool
+	runner       Runner
+	store        *store.Store     // nil in tests that don't need URL persistence
+	hub          *stream.Hub      // shared with the REST handler, nil when store is nil
+	eventLog     *runlog.EventLog // nil when store is nil (no durable persistence to do)
 	// runLocks serialises dispatches per PR session: a follow-up (or a rapid
 	// re-label) that arrives while a run on the same PR is in flight WAITS instead
 	// of running concurrently on the same session — concurrent runs on one session
@@ -134,18 +140,33 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 	if cfg.RunTimeoutMinutes > 0 {
 		runTimeout = time.Duration(cfg.RunTimeoutMinutes) * time.Minute
 	}
-	return &Extension{
-		app:        app,
-		secret:     []byte(cfg.WebhookSecret),
-		mention:    cfg.Mention,
-		triggers:   triggers,
-		labels:     labels,
-		runner:     runner,
-		store:      st,
-		hub:        hub,
-		eventLog:   eventLog,
-		runTimeout: runTimeout,
+	allowedUsers := make(map[string]bool, len(cfg.AllowedUsers))
+	for _, u := range cfg.AllowedUsers {
+		allowedUsers[strings.ToLower(u)] = true
 	}
+	return &Extension{
+		app:          app,
+		secret:       []byte(cfg.WebhookSecret),
+		mention:      cfg.Mention,
+		triggers:     triggers,
+		labels:       labels,
+		allowedUsers: allowedUsers,
+		runner:       runner,
+		store:        st,
+		hub:          hub,
+		eventLog:     eventLog,
+		runTimeout:   runTimeout,
+	}
+}
+
+// isInvokerAllowed reports whether login is in the configured allowlist
+// (case-insensitive). An empty allowlist denies everyone — the secure default;
+// config.applyDefaults already warned about it at startup. Only human-invoked
+// triggers (a mention comment, a workflow label applied by a person) call this;
+// the synthetic pr_opened/label auto-review has no human invoker and must
+// never be gated by it.
+func (e *Extension) isInvokerAllowed(login string) bool {
+	return e.allowedUsers[strings.ToLower(login)]
 }
 
 // App exposes the underlying auth so the caller can wire it as the git-credential

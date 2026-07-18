@@ -335,6 +335,11 @@ workspace:
 #     # private_key_path: /run/secrets/quack-app.pem  # alternative: a mounted .pem
 #     webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
 #     mention: "@quack"
+#     # allowed_users: GitHub logins permitted to invoke quack via a mention
+#     # comment or a human-applied workflow label (case-insensitive). Empty
+#     # (default) DENIES every human-invoked trigger — auto-review is
+#     # unaffected. Seed it with your own login(s) or quack won't respond.
+#     allowed_users: [fagerbergj]
 #     # triggers: which webhook events fire a run. Default [mention]. Others:
 #     # pr_opened (auto-review on PR open), label (review a PR when labels.review
 #     # is applied), issue_plan (plan an issue when labels.plan is applied),
