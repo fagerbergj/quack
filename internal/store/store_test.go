@@ -321,6 +321,66 @@ func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 	}
 }
 
+// TestDeleteChat_ReapsSession pins #352 bug 2: deleting a chat must not
+// strand its turns, DAG plan/node state, durable event log, or ADK session —
+// all of it lives in tables/services keyed off the chat id, and the "chats"
+// row was the only thing DeleteChat used to touch. Also covers a
+// GitHub-dispatched chat (id prefix github-), whose ADK session was written
+// under user "github" rather than "local" — the reap must find it there.
+func TestDeleteChat_ReapsSession(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "quack.db")
+	st, err := New("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	const chatID = "github-acme-widget-app-9"
+	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/9"); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+	if err := st.SaveTurn(ctx, chatID, "t1"); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	if err := st.SaveDagPlan(ctx, chatID, "p1", "t1", `{"nodes":[]}`); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: "done"}); err != nil {
+		t.Fatalf("UpsertDagNode: %v", err)
+	}
+	if err := st.InsertChatEvent(ctx, ChatEvent{ChatID: chatID, Seq: 1, Event: "{}"}); err != nil {
+		t.Fatalf("InsertChatEvent: %v", err)
+	}
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "github", SessionID: chatID})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, session.NewEvent(ctx, "test")); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	if err := st.DeleteChat(ctx, chatID); err != nil {
+		t.Fatalf("DeleteChat: %v", err)
+	}
+
+	if got, err := st.GetChat(ctx, chatID); err != nil || got != nil {
+		t.Errorf("GetChat after delete = %+v err=%v, want nil,nil", got, err)
+	}
+	var turnCount, planCount, nodeCount, eventCount int64
+	st.db.Model(&ChatTurn{}).Where("chat_id = ?", chatID).Count(&turnCount)
+	st.db.Model(&DagPlan{}).Where("chat_id = ?", chatID).Count(&planCount)
+	st.db.Model(&DagNode{}).Where("plan_id = ?", "p1").Count(&nodeCount)
+	st.db.Model(&ChatEvent{}).Where("chat_id = ?", chatID).Count(&eventCount)
+	if turnCount != 0 || planCount != 0 || nodeCount != 0 || eventCount != 0 {
+		t.Errorf("orphaned rows after delete: turns=%d plans=%d nodes=%d events=%d, want all 0",
+			turnCount, planCount, nodeCount, eventCount)
+	}
+
+	if resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: chatAppName, UserID: "github", SessionID: chatID}); err == nil && resp != nil && resp.Session != nil {
+		t.Errorf("ADK session still present after DeleteChat, want reaped: %+v", resp.Session)
+	}
+}
+
 // TestGroupSessionEvents_OrchestratorOwnReplyKept guards the regression: the
 // orchestrator's own conversational (no-DAG) reply carries NodeInfo (it's
 // AgentNode-wrapped too) but must still be captured — only gate-internal
