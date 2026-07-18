@@ -10,128 +10,60 @@ package vetting
 import (
 	"regexp"
 	"strings"
+
+	mermaid "github.com/sammcj/mermaid-check"
 )
 
-// ponytail: a hand-rolled subset checker, not `mmdc` (mermaid-cli, a node.js
-// dependency with no toolchain guarantee on a deployment) and not a vendored
-// grammar (no maintained pure-Go mermaid parser exists). It catches the
-// mechanical failure classes the issue names — missing diagram header,
-// unbalanced brackets/quotes, a bare `->` where mermaid needs `-->`, a stray
-// ``` fence nested inside the block — by construction, NOT full mermaid
-// grammar. A diagram can pass this check and still be semantically invalid in
-// a way only mmdc or the real renderer would catch; the ceiling is "catches
-// the common mechanical slips", not "guarantees rendering".
-var (
-	mermaidFenceRe = regexp.MustCompile("(?s)```mermaid[ \\t]*\\r?\\n(.*?)```")
+// mermaidFenceRe locates ```mermaid fenced blocks for splicing purposes only
+// — it knows nothing about mermaid syntax itself (any fenced-code-block
+// pattern would do). Parsing and validating what's INSIDE the fence is
+// entirely github.com/sammcj/mermaid-check's job: a real AST parser +
+// validator covering 20+ diagram types. Note the import path: the same
+// upstream author's github.com/sammcj/go-mermaid (the name this issue's
+// original ask named) is the SAME project pre-rename — its last release
+// under that path (v0.0.2) barely parses a flowchart (zero statements for
+// ordinary valid input, confirmed by hand), so this uses the module's
+// current, functional identity, mermaid-check (v0.0.3+), which is what the
+// real parsing and validation logic actually lives at.
+var mermaidFenceRe = regexp.MustCompile("(?s)```mermaid[ \\t]*\\r?\\n(.*?)```")
 
-	mermaidHeaderRe = regexp.MustCompile(`(?im)^\s*(graph\s|flowchart\s|sequenceDiagram\b|classDiagram\b|stateDiagram(-v2)?\b|erDiagram\b|journey\b|gantt\b|pie\b|gitGraph\b|mindmap\b|timeline\b|quadrantChart\b|requirementDiagram\b|C4Context\b|sankey-beta\b)`)
-
-	// A flowchart-shaped body (has `-->`-style edges) with no recognized header
-	// — the single most common omission — gets `flowchart TD` prepended rather
-	// than being stripped outright.
-	edgeRe = regexp.MustCompile(`-{1,2}[.>=-]*>`)
-
-	// A lone `->` (single dash) is not a valid mermaid arrow anywhere in the
-	// flowchart/graph grammar (which wants `-->`, `-.->`, `==>`, `--o`, `--x`);
-	// repair it to `-->` when the header identifies a flowchart/graph.
-	singleDashArrowRe = regexp.MustCompile(`([^-.=])->([^>])`)
-
-	// A bracket label containing an unquoted paren, quote, or another bracket
-	// breaks mermaid's node-label grammar unless the whole label is wrapped in
-	// double quotes: A[Login (OAuth)] must read A["Login (OAuth)"].
-	unquotedSpecialLabelRe = regexp.MustCompile(`\[([^"\]\[]*[()][^\]\[]*)\]`)
-)
-
-// validateAndRepairMermaid scans md for ```mermaid fenced blocks and returns
-// the markdown with each block either left untouched (already valid),
-// mechanically repaired, or — when repair doesn't produce something that
-// passes the structural check — replaced by a plain-text fallback (the raw
-// source in a plain code fence, with a note) so a broken diagram never ships.
-// changed reports whether anything in md was modified.
+// validateAndRepairMermaid scans md for ```mermaid fenced blocks and replaces
+// any block that fails to parse, or fails strict validation, with a
+// plain-text fallback (the raw source in a plain code fence, with a note) —
+// never auto-repaired: mermaid-check's errors come from a real parser, not a
+// guess, so there's nothing to mechanically patch with confidence. Either the
+// diagram is valid or it ships as text instead of a broken rendering.
+// changed reports whether md was modified.
+//
+// Strip, not fail-the-gate: delivery must never block on a diagram, and the
+// gate has no reliable way to make a model fix mermaid syntax on a revise
+// round (see the package doc above) — a stripped diagram degrades to
+// readable text instead of sinking a round the model can't win.
 func validateAndRepairMermaid(md string) (out string, changed bool) {
 	if !strings.Contains(md, "```mermaid") {
 		return md, false
 	}
 	out = mermaidFenceRe.ReplaceAllStringFunc(md, func(block string) string {
 		body := mermaidFenceRe.FindStringSubmatch(block)[1]
-		fixed := repairMermaid(body)
-		if mermaidStructurallyValid(fixed) {
-			if fixed != body {
-				changed = true
-			}
-			return "```mermaid\n" + strings.TrimRight(fixed, "\n") + "\n```"
+		if mermaidValid(body) {
+			return block
 		}
 		changed = true
-		return "_[diagram omitted: invalid mermaid syntax could not be repaired]_\n\n```text\n" + strings.TrimRight(body, "\n") + "\n```"
+		return "_[diagram omitted: invalid mermaid syntax]_\n\n```text\n" + strings.TrimRight(body, "\n") + "\n```"
 	})
 	return out, changed
 }
 
-// repairMermaid applies the mechanical fixes named in #371, in order:
-// prepend a missing header, fix bare `->` arrows, quote bracket labels that
-// contain unescaped parens. Each fix is independently idempotent.
-func repairMermaid(body string) string {
-	trimmed := strings.TrimSpace(body)
-	if trimmed == "" {
-		return body
-	}
-	fixed := body
-	// Strip a stray nested ``` fence some models leave inside the block.
-	fixed = strings.ReplaceAll(fixed, "```", "")
-
-	if !mermaidHeaderRe.MatchString(fixed) && edgeRe.MatchString(fixed) {
-		fixed = "flowchart TD\n" + strings.TrimLeft(fixed, "\n")
-	}
-
-	if mermaidHeaderRe.MatchString(fixed) {
-		header := mermaidHeaderRe.FindString(fixed)
-		if strings.HasPrefix(strings.TrimSpace(header), "graph") || strings.HasPrefix(strings.TrimSpace(header), "flowchart") {
-			fixed = singleDashArrowRe.ReplaceAllString(fixed, "$1-->$2")
-		}
-	}
-
-	fixed = unquotedSpecialLabelRe.ReplaceAllStringFunc(fixed, func(m string) string {
-		inner := m[1 : len(m)-1]
-		if strings.Contains(inner, `"`) {
-			return m // already has a quote in play — don't double-wrap
-		}
-		return `["` + inner + `"]`
-	})
-
-	return fixed
-}
-
-// mermaidStructurallyValid is the deterministic acceptance check: a
-// recognized diagram-type header, and balanced [], (), {} across the whole
-// block (mermaid's node/label/subgraph delimiters). Not a grammar — a subset
-// check for the failure modes repairMermaid targets (see the ponytail note
-// above for the named ceiling).
-func mermaidStructurallyValid(body string) bool {
-	trimmed := strings.TrimSpace(body)
-	if trimmed == "" {
+// mermaidValid reports whether body parses AND passes STRICT validation.
+// Strict, because one of the issue's named failure modes — an unquoted
+// label containing parentheses — surfaces as a validator warning
+// (NoParenthesesInLabels), not a parse error, and a diagram that renders
+// wrong on GitHub is exactly what this exists to catch regardless of the
+// severity mermaid-check assigns it.
+func mermaidValid(body string) bool {
+	diagram, err := mermaid.Parse(body)
+	if err != nil {
 		return false
 	}
-	if !mermaidHeaderRe.MatchString(trimmed) {
-		return false
-	}
-	if strings.Contains(trimmed, "```") {
-		return false
-	}
-	return balanced(trimmed, '[', ']') && balanced(trimmed, '(', ')') && balanced(trimmed, '{', '}')
-}
-
-func balanced(s string, open, close rune) bool {
-	depth := 0
-	for _, r := range s {
-		switch r {
-		case open:
-			depth++
-		case close:
-			depth--
-		}
-		if depth < 0 {
-			return false
-		}
-	}
-	return depth == 0
+	return len(mermaid.Validate(diagram, true)) == 0
 }
