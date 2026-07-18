@@ -1040,6 +1040,19 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 		v.Criteria["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session — " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
+	// A read-only EXTERNAL agent (code-explorer/code-reviewer) that cloned a
+	// repo but performed ZERO reads/greps on it did no real exploration — a
+	// clone puts every file on disk, which is enough for grounded_in_retrieval
+	// above, but not evidence anything was actually opened and read. Without
+	// this, a fabricated "survey" of a clone the worker never looked at sails
+	// through on the clone alone (#289). Scoped to ExternalWorker+ReadOnly
+	// nodes that actually cloned something, so a legitimately read-nothing
+	// node (synthesis, a code-implementer working in a pre-provisioned setup
+	// clone it never re-clones) is untouched.
+	if cfg.ExternalWorker && cfg.ReadOnly && len(act.clonedRepos) > 0 && len(act.paths) == 0 && act.greps == 0 {
+		v.Criteria["exploration_grounded"] = criterionScore{Score: 0, Reason: "deterministic: repo cloned but zero read_file/grep calls — " +
+			"the answer's findings are not grounded in anything actually read; explore the clone (read_file/grep) before reporting"}
+	}
 	if det, details, hasCites := citationScore(answer, act); hasCites {
 		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), det)}
 	}
@@ -1196,6 +1209,11 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					s.applyDelivery(p.FunctionCall)
 				case "cd":
 					pendingCd[p.FunctionCall.ID] = true
+				case "search":
+					// ACP grep/glob calls (ToolKindSearch) — counted regardless of
+					// success/failure, like recordSearch's web queries: a call that
+					// found nothing is still evidence the worker looked.
+					s.act.greps++
 				default:
 					if isWorkspaceTool(p.FunctionCall.Name) {
 						pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
