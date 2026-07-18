@@ -8,6 +8,10 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/workspace"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func testChecksConfig(t *testing.T, checks []string, workdir string) Config {
@@ -79,6 +83,46 @@ func TestChecksPassCriterionOutputInReason(t *testing.T) {
 	}
 	if !strings.Contains(got.Reason, "quack-checks-test-does-not-exist-xyz") {
 		t.Errorf("Reason = %q, want the command's output tail", got.Reason)
+	}
+}
+
+// TestChecksPassCriterionSkipReason_RecordsOnSpan guards the telemetry fix
+// for quack's phantom-success history (a fabricated exploration once scored
+// 0.9; a phantom delivery shipped): when checks_pass does not apply at all,
+// "why" must land as a queryable span attribute, not just a slog.Info line
+// invisible in Tempo. An empty Config (no Checks, DeriveChecks off) is the
+// simplest of the four skip paths — see skipChecks in checks.go.
+func TestChecksPassCriterionSkipReason_RecordsOnSpan(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+
+	_, ok := checksPassCriterionTraced(context.Background(), Config{})
+	if ok {
+		t.Fatal("checks_pass should not apply with nothing configured")
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("got %d exported spans, want 1", len(spans))
+	}
+	var gotReason string
+	var gotApplicable bool
+	for _, a := range spans[0].Attributes {
+		switch string(a.Key) {
+		case "skip_reason":
+			gotReason = a.Value.AsString()
+		case "applicable":
+			gotApplicable = a.Value.AsBool()
+		}
+	}
+	if gotApplicable {
+		t.Error("applicable = true, want false — the criterion did not run")
+	}
+	if gotReason != skipReasonNotConfigured {
+		t.Errorf("skip_reason = %q, want %q", gotReason, skipReasonNotConfigured)
 	}
 }
 

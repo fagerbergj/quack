@@ -11,8 +11,34 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/workspace"
+
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
+
+// Skip reasons for checksPassCriterion's ok=false returns — see skipChecks.
+const (
+	skipReasonNotConfigured   = "not_configured"    // no cfg.Checks and DeriveChecks is off
+	skipReasonNoWorkspace     = "no_workspace"      // no workspace wired up and nothing to derive from
+	skipReasonNoRepo          = "no_repo"           // no single repo found to derive checks from
+	skipReasonNoChecksDerived = "no_checks_derived" // a repo was found but nothing recognisable to check
+)
+
+// skipChecks records that the deterministic checks criterion did NOT apply —
+// the case that matters for quack's phantom-success history (a fabricated
+// exploration once scored 0.9 with nothing behind it; a phantom delivery
+// shipped). ctx is checksPassCriterion's own ctx, which callers (see
+// checksPassCriterionTraced) already pass in span-carrying, so the reason
+// lands as an attribute on the gate.checks span AND a counter, both
+// queryable in Tempo/Grafana — "checks passed" and "checks never ran" can no
+// longer look identical.
+func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
+	oteltrace.SpanFromContext(ctx).SetAttributes(attribute.String("skip_reason", reason))
+	otelobs.RecordChecksSkipped(reason)
+	return criterionScore{}, false
+}
 
 // maxCheckOutputChars bounds ONE failing check's output as folded into the
 // checks_pass Reason, which becomes revise-prompt feedback — unbounded build
@@ -47,11 +73,11 @@ const maxCheckOutputChars = 2_000
 // exactly as a research or synthesis node is.
 func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
 	if len(cfg.Checks) == 0 && !cfg.DeriveChecks {
-		return criterionScore{}, false
+		return skipChecks(ctx, skipReasonNotConfigured)
 	}
 	if cfg.Workspace == nil {
 		if len(cfg.Checks) == 0 {
-			return criterionScore{}, false // nothing to derive from — not a failure
+			return skipChecks(ctx, skipReasonNoWorkspace) // nothing to derive from — not a failure
 		}
 		// A node with Checks set but no workspace wired up is a config/wiring
 		// bug (internal/serve's buildAgents didn't stamp Workspace onto the
@@ -68,14 +94,14 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 		// repo to derive checks from. Skip the criterion rather than guess — a
 		// node must never fail because the planner left a field out.
 		slog.Info("no single repo found to derive checks from; skipping checks", "component", "vetting", "node", cfg.NodeID)
-		return criterionScore{}, false
+		return skipChecks(ctx, skipReasonNoRepo)
 	}
 	checks := cfg.Checks
 	if len(checks) == 0 {
 		checks = deriveChecks(dir, cfg.CheckCommands)
 		if len(checks) == 0 {
 			slog.Info("no checks derived from the repo; skipping checks", "component", "vetting", "node", cfg.NodeID, "dir", dir)
-			return criterionScore{}, false
+			return skipChecks(ctx, skipReasonNoChecksDerived)
 		}
 		slog.Info("derived checks from the repo", "component", "vetting", "node", cfg.NodeID, "dir", dir, "checks", checks)
 	}
