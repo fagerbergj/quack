@@ -223,21 +223,19 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// param, stays untouched for those) — it exists purely so child spans opened
 	// below (worker round, gate stage, judge round, delivery) parent correctly
 	// under "quack.node" instead of becoming siblings of it.
-	nodeCtx, span := otelobs.Start(ctx, "node",
+	nodeCtx, span := otelobs.StartNode(ctx,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", nodeID),
 		attribute.String("agent", cfg.Agent),
 		attribute.String("model", modelName(workerModel)),
 	)
-	otelobs.NodeStarted()
 	defer func() {
 		span.SetAttributes(
 			attribute.Bool("verdict_passed", res.Passed),
 			attribute.Float64("verdict_score", res.Score),
 			attribute.Int("gate_rounds", res.Rounds),
 		)
-		otelobs.End(span, err)
-		otelobs.NodeFinished()
+		otelobs.EndNode(span, err)
 	}()
 
 	// Continuation and revise rounds build a FRESH prompt from cfg.Task, dropping
@@ -502,6 +500,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
 				emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
 				otelobs.End(judgeSpan, jerr)
+				// No score exists to record here — RecordJudgeVerdict below never
+				// runs for this round, which would otherwise leave this agent's
+				// judge.score/judge.verdict series silently thin whenever its judge
+				// calls error disproportionately (bigger prompts, flakier tool use).
+				otelobs.RecordJudgeUnavailable(cfg.Agent)
 				return answer, res, nil
 			}
 			v = foldDeterministic(judgeCtx, v, answer, act, cfg)
@@ -953,9 +956,13 @@ func modelName(m model.LLM) string {
 // stays the plain ADK context runWorkerNode itself needs) and the
 // round-duration metric. The single seam every worker round — draft,
 // HITL/guard resume, continuation, revise — passes through.
+//
+// The duration recorded is TimedSpan's own window (span start → span end),
+// not a separately-tracked timer: the two can never disagree (see #354,
+// where a hand-rolled t0 sitting next to — but not derived from — the span
+// drifted from what Tempo showed for the same round).
 func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Config, workerModel model.LLM, workerNode workflow.Node, input any, runID, stage string, emit func(*session.Event) error) (string, error) {
-	t0 := time.Now()
-	_, span := otelobs.Start(spanCtx, "worker.round",
+	_, ts := otelobs.StartTimedSpan(spanCtx, "worker.round",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", cfg.NodeID),
 		attribute.String("run_id", runID),
@@ -964,8 +971,8 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String("stage", stage),
 	)
 	out, err := runWorkerNode(ctx, workerNode, input, runID, emit)
-	otelobs.End(span, err)
-	otelobs.RecordRoundDuration(cfg.Agent, modelName(workerModel), stage, time.Since(t0))
+	d := ts.End(err)
+	otelobs.RecordRoundDuration(cfg.Agent, modelName(workerModel), stage, d)
 	return out, err
 }
 
