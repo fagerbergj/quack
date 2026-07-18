@@ -21,7 +21,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Install OpenWiki
         run: npm install --global openwiki
@@ -41,7 +41,6 @@ jobs:
             openwiki
             AGENTS.md
             CLAUDE.md
-            .github/workflows/openwiki-update.yml
           branch: openwiki/update
           commit-message: "docs: update OpenWiki"
           title: "docs: update OpenWiki"
