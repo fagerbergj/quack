@@ -206,7 +206,10 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			}
 
 			// Surface reasoning_content as a Thought part so the UI can render thinking.
-			if rc := choice.Delta.JSON.ExtraFields["reasoning_content"]; rc.Valid() {
+			// openai-go marks untyped ExtraFields as status "invalid" (no typed extras
+			// decoder is registered for this struct), so Valid() is always false here —
+			// gate on the raw bytes instead, the way an omitted/null field already does.
+			if rc := choice.Delta.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
 				if raw := rc.Raw(); raw != "" && raw != "null" {
 					var text string
 					if jsonErr := json.Unmarshal([]byte(raw), &text); jsonErr == nil && text != "" {
@@ -606,17 +609,32 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 	}
 
 	// Surface reasoning_content as a Thought part (reasoning precedes the answer).
-	if rc := choice.Message.JSON.ExtraFields["reasoning_content"]; rc.Valid() {
+	// openai-go marks untyped ExtraFields as status "invalid" (no typed extras
+	// decoder is registered for this struct), so Valid() is always false here —
+	// gate on the raw bytes instead, the way an omitted/null field already does.
+	var reasoningText string
+	if rc := choice.Message.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
 		if raw := rc.Raw(); raw != "" && raw != "null" {
 			var text string
 			if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
+				reasoningText = text
 				content.Parts = append(content.Parts, &genai.Part{Text: text, Thought: true})
 			}
 		}
 	}
 
-	if choice.Message.Content != "" {
+	if strings.TrimSpace(choice.Message.Content) != "" {
 		content.Parts = append(content.Parts, &genai.Part{Text: choice.Message.Content})
+	} else if reasoningText != "" && len(choice.Message.ToolCalls) == 0 {
+		// Content-side of #22684 (non-streaming path): the synthesized answer
+		// sometimes lands entirely inside reasoning_content, leaving content
+		// empty. Promote the reasoning to the answer instead of dropping it — a
+		// reasoning-only turn is terminal anyway, and the judge/revise gate still
+		// evaluates its quality. Skip when tool calls arrived; those already make
+		// the turn non-terminal.
+		slog.Warn("promoted reasoning to answer (empty content, reasoning_content held the answer)",
+			"component", "inference", "model", resp.Model, "chars", len(reasoningText))
+		content.Parts = append(content.Parts, &genai.Part{Text: reasoningText})
 	}
 
 	for _, toolCall := range choice.Message.ToolCalls {

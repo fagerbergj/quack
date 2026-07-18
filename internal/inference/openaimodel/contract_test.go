@@ -63,20 +63,22 @@ func TestStreaming_TranslatesContentReasoningTools(t *testing.T) {
 	m := NewOpenAIModel("m", srv.URL, "k")
 
 	content, finish, usage := collect(t, m)
-	var text, toolName string
+	var text, toolName, thought string
 	for _, p := range content.Parts {
 		switch {
+		case p.Thought && p.Text != "":
+			thought += p.Text
 		case p.Text != "" && !p.Thought:
 			text += p.Text
 		case p.FunctionCall != nil:
 			toolName = p.FunctionCall.Name
 		}
 	}
-	// (reasoning_content → Thought is verified in production/UI, not here — it's
-	// extracted via the openai-go client's ExtraFields, which a hand-rolled SSE
-	// fake can't reproduce faithfully across client versions.)
 	if text != "Hello world" {
 		t.Errorf("answer text = %q, want %q", text, "Hello world")
+	}
+	if thought != "let me think" {
+		t.Errorf("thought = %q, want %q", thought, "let me think")
 	}
 	if toolName != "web_search" {
 		t.Errorf("tool call = %q, want web_search", toolName)
@@ -91,9 +93,9 @@ func TestStreaming_TranslatesContentReasoningTools(t *testing.T) {
 
 // TestStreaming_EmptyTurnReasoningOnly reproduces the reasoning-model failure
 // mode that bit us live: the model streams only reasoning_content and hits the
-// length limit — the answer (non-thought text) comes back empty. The adapter must
-// still return a terminal response with finish=length (so the empty-turn WARN can
-// fire and the gate's empty-answer recovery can kick in) rather than hang or drop.
+// length limit, so content (the non-thought text) comes back empty. Per #295,
+// the adapter promotes the reasoning to the answer rather than dropping it —
+// and still returns a terminal response with finish=length.
 func TestStreaming_EmptyTurnReasoningOnly(t *testing.T) {
 	srv := sseServer(t,
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"thinking and thinking"}}]}`,
@@ -109,8 +111,8 @@ func TestStreaming_EmptyTurnReasoningOnly(t *testing.T) {
 			answer += p.Text
 		}
 	}
-	if strings.TrimSpace(answer) != "" {
-		t.Errorf("expected empty answer (reasoning-only turn), got %q", answer)
+	if answer != "thinking and thinking" {
+		t.Errorf("answer = %q, want reasoning promoted to answer", answer)
 	}
 	if finish != genai.FinishReasonMaxTokens {
 		t.Errorf("finish = %v, want MaxTokens (length)", finish)
@@ -141,5 +143,75 @@ func TestReasoningToolCalls(t *testing.T) {
 	// no false positives on plain thinking
 	if c, _ := reasoningToolCalls("just thinking, no tools"); len(c) != 0 {
 		t.Errorf("plain thinking yielded %d calls", len(c))
+	}
+}
+
+// jsonServer serves a single non-streaming OpenAI-compatible /chat/completions
+// response body (a raw ChatCompletion JSON object).
+func jsonServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+}
+
+// TestGenerate_PromotesReasoningWhenContentEmpty covers issue #295: the
+// non-streaming path (used for actual worker rounds — RunConfig.StreamingMode
+// defaults to "none") dropped a synthesized answer that landed entirely in
+// reasoning_content, leaving content empty. The answer must be recovered.
+func TestGenerate_PromotesReasoningWhenContentEmpty(t *testing.T) {
+	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"Sources read and synthesized: the answer is 42."}}]}`)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k")
+
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	if final == nil {
+		t.Fatal("no response")
+	}
+	var answer string
+	for _, p := range final.Content.Parts {
+		if !p.Thought && p.FunctionCall == nil {
+			answer += p.Text
+		}
+	}
+	if answer != "Sources read and synthesized: the answer is 42." {
+		t.Errorf("answer = %q, want reasoning text promoted", answer)
+	}
+}
+
+// TestGenerate_ContentTakesPriorityOverReasoning guards the fallback: a
+// genuinely non-empty content field must never be overwritten by reasoning.
+func TestGenerate_ContentTakesPriorityOverReasoning(t *testing.T) {
+	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the real answer","reasoning_content":"unrelated thinking"}}]}`)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k")
+
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	if final == nil {
+		t.Fatal("no response")
+	}
+	var answer string
+	for _, p := range final.Content.Parts {
+		if !p.Thought && p.FunctionCall == nil {
+			answer += p.Text
+		}
+	}
+	if answer != "the real answer" {
+		t.Errorf("answer = %q, want %q", answer, "the real answer")
 	}
 }
