@@ -2,6 +2,9 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -14,6 +17,90 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 )
+
+// TestSessionUser: the ADK session identity derives from the chat id shape —
+// github-<owner>-<repo>-<number> (store.SetChatGitHub) resolves to the
+// webhook's runUserID ("github", internal/github.extension.go), any other id
+// to the first-party local user.
+func TestSessionUser(t *testing.T) {
+	cases := map[string]string{
+		"github-acme-widget-app-7": githubSessionUser,
+		"abc123":                   userID,
+		"github":                   userID, // no trailing "-": not the dispatched shape
+	}
+	for chatID, want := range cases {
+		if got := sessionUser(chatID); got != want {
+			t.Errorf("sessionUser(%q) = %q, want %q", chatID, got, want)
+		}
+	}
+}
+
+// TestGetChat_GithubSessionUser pins the bug in #352: a GitHub-dispatched
+// chat's turns are written to its ADK session under user "github" (the
+// webhook's runUserID), not "local". GetChat must resolve turns under the
+// SAME user the webhook wrote them under, or the chat renders with no
+// content even though the run completed and the events exist.
+func TestGetChat_GithubSessionUser(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	const chatID = "github-acme-widget-app-7"
+	if err := h.store.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/7"); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+	if err := h.store.SaveTurn(ctx, chatID, "t1"); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+
+	resp, err := h.store.Sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: githubSessionUser, SessionID: chatID})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	userEv := session.NewEvent(ctx, "test")
+	userEv.Author = "user"
+	userEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review this PR"}}}
+	if err := h.store.Sessions.AppendEvent(ctx, resp.Session, userEv); err != nil {
+		t.Fatalf("AppendEvent user: %v", err)
+	}
+	asstEv := session.NewEvent(ctx, "test")
+	asstEv.Author = "orchestrator"
+	asstEv.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "Looks good."}}}
+	if err := h.store.Sessions.AppendEvent(ctx, resp.Session, asstEv); err != nil {
+		t.Fatalf("AppendEvent asst: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil)
+	rec := httptest.NewRecorder()
+	h.GetChat(rec, req, chatID)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var detail schema.ChatDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(detail.Turns) != 1 {
+		t.Fatalf("turns = %d, want 1 (content must resolve under the github session user, not local)", len(detail.Turns))
+	}
+	if len(detail.Turns[0].Output) == 0 {
+		t.Fatal("turn output is empty, want the assistant's message item")
+	}
+	msg, err := detail.Turns[0].Output[0].AsMessageOutputItem()
+	if err != nil {
+		t.Fatalf("AsMessageOutputItem: %v", err)
+	}
+	if len(msg.Content) == 0 {
+		t.Fatal("message content is empty")
+	}
+	part, err := msg.Content[0].AsOutputTextPart()
+	if err != nil {
+		t.Fatalf("AsOutputTextPart: %v", err)
+	}
+	if part.Text != "Looks good." {
+		t.Errorf("answer text = %q, want %q", part.Text, "Looks good.")
+	}
+}
 
 // TestChatStatusIdle: a fresh chat with no turns, no session activity, and no
 // live run is idle.

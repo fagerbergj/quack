@@ -371,9 +371,62 @@ func (s *Store) GetChat(ctx context.Context, id string) (*Chat, error) {
 	return &c, nil
 }
 
-// DeleteChat removes a chat row. (The ADK session events are left to ADK.)
+// chatAppName mirrors orchestrator.AppName as a literal — store is a
+// dependency of the orchestrator package, so it can't import it back.
+const chatAppName = "quack"
+
+// chatSessionUser mirrors internal/server/rest.sessionUser and
+// internal/github.runUserID: a GitHub-dispatched chat's ADK session was
+// written under user "github", not "local" — deleting it needs the same
+// user the run wrote it under. Duplicated rather than shared because each
+// copy is a one-line prefix check on the chat id.
+func chatSessionUser(chatID string) string {
+	const githubUser = "github"
+	if strings.HasPrefix(chatID, "github-") {
+		return githubUser
+	}
+	return "local"
+}
+
+// DeleteChat removes a chat and everything #352 found it otherwise strands:
+// the chats row is the only REST-visible record, but its turns, DAG
+// plan/node state, durable SSE event log, and ADK session (turns/events)
+// live in their own tables/service and outlive it. Runs in one transaction —
+// a partial cascade would leave the same orphans this fixes, just fewer of
+// them. The ADK session delete is a best-effort append AFTER the transaction
+// commits: it lives in a separate service (possibly a separate database) that
+// can't join the local transaction, and a chat already gone from every local
+// table is not worth failing the whole delete over a session-service hiccup.
 func (s *Store) DeleteChat(ctx context.Context, id string) error {
-	return s.db.WithContext(ctx).Delete(&Chat{}, "id = ?", id).Error
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var planIDs []string
+		if err := tx.Model(&DagPlan{}).Where("chat_id = ?", id).Pluck("id", &planIDs).Error; err != nil {
+			return err
+		}
+		if len(planIDs) > 0 {
+			if err := tx.Where("plan_id IN ?", planIDs).Delete(&DagNode{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("chat_id = ?", id).Delete(&DagPlan{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("chat_id = ?", id).Delete(&ChatTurn{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("chat_id = ?", id).Delete(&ChatEvent{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&Chat{}, "id = ?", id).Error
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.Sessions.Delete(ctx, &session.DeleteRequest{AppName: chatAppName, UserID: chatSessionUser(id), SessionID: id}); err != nil {
+		slog.Warn("chat deleted but its ADK session could not be reaped",
+			"component", "store", "chat", id, "err", err)
+	}
+	return nil
 }
 
 // Touch bumps a chat's updated_at to now.
