@@ -22,6 +22,23 @@ func TestTranslate_ThoughtAndMessageChunks(t *testing.T) {
 	}
 }
 
+// Narration before a tool call ("I'll investigate...") must not survive into
+// the delivered answer — only the contiguous block after the last tool call
+// does (#358).
+func TestTranslate_AnswerResetsOnToolCall(t *testing.T) {
+	tr := newTranslator("/work")
+
+	tr.translate(sdk.UpdateAgentMessageText("I'll investigate the config now."))
+	tr.translate(sdk.StartToolCall("t1", "Read config.go", sdk.WithStartKind(sdk.ToolKindRead)))
+	tr.translate(sdk.UpdateToolCall("t1", sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted)))
+	tr.translate(sdk.UpdateAgentMessageText("Here is the final plan."))
+
+	final := finalSpec(tr)
+	if final.parts[0].Text != "Here is the final plan." {
+		t.Fatalf("pre-tool-call narration leaked into the answer: got %q", final.parts[0].Text)
+	}
+}
+
 // The durable call/response pair lands only at the TERMINAL update, in quack's
 // tool vocabulary, ordered call-then-response so the ledger's pairing scan
 // works within the single event.
