@@ -120,11 +120,15 @@ func buildSkepticPrompt(criterion string, c criterionScore, question *genai.Cont
 }
 
 // runSkepticRound runs one isolated skeptic agent (its own in-memory session,
-// like runJudgeRound) and returns its refute/survive call. Any run error, or a
-// skeptic that ends without calling submit_skeptic_verdict, is treated as
-// REFUTED — the gate fails closed on adversarial verification exactly as it
-// does on a primary judge error (see RunGatedRefine's judge-error path).
-func runSkepticRound(ctx context.Context, factory SkepticFactory, criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) skepticVerdict {
+// like runJudgeRound) and returns its refute/survive call. Any run error, a
+// skeptic that never calls submit_skeptic_verdict within maxIters turns
+// (mirrors runJudgeRound's own safety cap — see #377 review: a stuck skeptic
+// must not hang the node's gate forever, especially since this loop runs
+// skeptics SEQUENTIALLY), or one that just ends without calling it, is
+// treated as REFUTED — the gate fails closed on adversarial verification
+// exactly as it does on a primary judge error (see RunGatedRefine's
+// judge-error path).
+func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) skepticVerdict {
 	var sink skepticVerdict
 	skepticAgent, err := factory(&sink)
 	if err != nil {
@@ -137,9 +141,16 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, criterion stri
 	if err != nil {
 		return skepticVerdict{Refuted: true, Reason: fmt.Sprintf("skeptic runner failed, defaulting to refuted: %v", err)}
 	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: buildSkepticPrompt(criterion, c, question, answer, act)}}}
-	var submitted bool
-	for ev, rerr := range sr.Run(ctx, "skeptic", "verdict", content, adkagent.RunConfig{}) {
+	var (
+		submitted bool
+		turns     int
+	)
+	for ev, rerr := range sr.Run(runCtx, "skeptic", "verdict", content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return skepticVerdict{Refuted: true, Reason: fmt.Sprintf("skeptic run failed, defaulting to refuted: %v", rerr)}
 		}
@@ -157,6 +168,16 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, criterion stri
 					return skepticVerdict{Refuted: true, Reason: "consumer disconnected mid-round, defaulting to refuted"}
 				}
 			}
+		}
+		if ev.TurnComplete {
+			turns++
+		}
+		// Safety cap: a skeptic that never calls submit_skeptic_verdict can't
+		// loop forever (and this loop runs sequentially, so one stuck skeptic
+		// would otherwise stall every remaining criterion/round behind it).
+		if turns > maxIters {
+			cancel()
+			break
 		}
 	}
 	if !submitted {
@@ -177,6 +198,11 @@ func adversarialVerify(ctx context.Context, cfg Config, question *genai.Content,
 	if cfg.Skeptic == nil || cfg.SkepticRounds <= 0 || len(v.Criteria) == 0 {
 		return v
 	}
+	// Same fallback runJudgeRound uses for its own turn cap (defaultJudgeMaxIterations).
+	maxIters := cfg.JudgeMaxIterations
+	if maxIters <= 0 {
+		maxIters = defaultJudgeMaxIterations
+	}
 	for name, c := range v.Criteria {
 		if !loadBearing(c, cfg.Threshold) {
 			continue
@@ -184,7 +210,7 @@ func adversarialVerify(ctx context.Context, cfg Config, question *genai.Content,
 		refuted := 0
 		var reasons []string
 		for i := 0; i < cfg.SkepticRounds; i++ {
-			sv := runSkepticRound(ctx, cfg.Skeptic, name, c, question, answer, act, emit)
+			sv := runSkepticRound(ctx, cfg.Skeptic, maxIters, name, c, question, answer, act, emit)
 			if sv.Refuted {
 				refuted++
 				if strings.TrimSpace(sv.Reason) != "" {

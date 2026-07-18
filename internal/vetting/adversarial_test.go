@@ -123,3 +123,52 @@ func TestAdversarialVerify_TieFavoursThePrimaryJudge(t *testing.T) {
 		t.Fatalf("a 1-1 split must not kill the finding, got score %v", got.Criteria["grounded"].Score)
 	}
 }
+
+// patternSkepticModel yields a scripted refuted/survives verdict per call, in
+// order (repeating the last entry if called more times than scripted) — lets
+// a test pin an exact N-of-M split rather than only the unanimous cases.
+type patternSkepticModel struct {
+	calls   int
+	pattern []bool // true = refuted
+}
+
+func (*patternSkepticModel) Name() string { return "pattern-skeptic" }
+
+func (m *patternSkepticModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		i := m.calls
+		if i >= len(m.pattern) {
+			i = len(m.pattern) - 1
+		}
+		refuted := m.pattern[i]
+		m.calls++
+		yield(stubCall(submitSkepticVerdictTool, map[string]any{"refuted": refuted, "reason": "scripted"}), nil)
+	}
+}
+
+// TestAdversarialVerify_TwoOfThreeMajority pins the exact majority rule the
+// earlier always-refute (3/3) test could not: 2 refutes out of 3 is a STRICT
+// majority and kills the finding, but 1 out of 3 is not and leaves it alone —
+// distinguishing "majority" from "unanimity" (a buggy unanimous-refute rule
+// would also pass the 3/3 test but fail these).
+func TestAdversarialVerify_TwoOfThreeMajority(t *testing.T) {
+	q, a := testQuestionAnswer()
+
+	t.Run("2 of 3 refute kills it", func(t *testing.T) {
+		cfg := Config{Threshold: 0.7, SkepticRounds: 3, Skeptic: NewSkepticFactory(&patternSkepticModel{pattern: []bool{true, true, false}}, nil)}
+		v := verdict{Criteria: map[string]criterionScore{"grounded": {Score: 0.9, Reason: "cited"}}}
+		got := adversarialVerify(context.Background(), cfg, q, a, workerActivity{}, v, nil)
+		if got.Criteria["grounded"].Score != 0 {
+			t.Fatalf("2/3 refuted must kill the finding, got score %v", got.Criteria["grounded"].Score)
+		}
+	})
+
+	t.Run("1 of 3 refute survives", func(t *testing.T) {
+		cfg := Config{Threshold: 0.7, SkepticRounds: 3, Skeptic: NewSkepticFactory(&patternSkepticModel{pattern: []bool{true, false, false}}, nil)}
+		v := verdict{Criteria: map[string]criterionScore{"grounded": {Score: 0.9, Reason: "cited"}}}
+		got := adversarialVerify(context.Background(), cfg, q, a, workerActivity{}, v, nil)
+		if got.Criteria["grounded"].Score != 0.9 {
+			t.Fatalf("1/3 refuted must not be a majority, got score %v (want unchanged 0.9)", got.Criteria["grounded"].Score)
+		}
+	})
+}
