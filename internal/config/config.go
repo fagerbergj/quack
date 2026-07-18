@@ -331,6 +331,12 @@ type JudgeConfig struct {
 	Threshold     float64 `yaml:"threshold"`      // pass score in (0,1] (default 0.7)
 	MaxIterations int     `yaml:"max_iterations"` // cap on the agentic judge's model turns per round (default 6)
 	ContextWindow int     `yaml:"context_window"` // judge model's context window in tokens; budgets the assembled judge prompt (0 ⇒ vetting falls back to a conservative default)
+	// Skeptics is N — how many independent adversarial skeptics (#370) each
+	// load-bearing PASSING judge criterion faces before the gate trusts it; a
+	// STRICT MAJORITY refuting kills the finding. 0 (default) disables the
+	// stage: it costs N extra model calls per qualifying criterion, so it's
+	// opt-in rather than always-on.
+	Skeptics int `yaml:"skeptics"`
 }
 
 // JudgeEnabled reports whether the model-judge stage runs.
@@ -776,6 +782,9 @@ func (c *Config) validate() error {
 			}
 			if g.Judge.MaxIterations < 1 {
 				return fmt.Errorf("config: gates.judge.max_iterations must be >= 1")
+			}
+			if g.Judge.Skeptics < 0 {
+				return fmt.Errorf("config: gates.judge.skeptics must be >= 0")
 			}
 		}
 	}

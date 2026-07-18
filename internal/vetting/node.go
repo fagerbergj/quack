@@ -507,6 +507,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				otelobs.RecordJudgeUnavailable(cfg.Agent)
 				return answer, res, nil
 			}
+			// Adversarial verify (#370): before folding in the deterministic
+			// criteria, give load-bearing PASSING judge criteria a chance to be
+			// refuted by independent skeptics sharing the SAME repo access — a
+			// no-op when cfg.Skeptic is unset (the default).
+			v = adversarialVerify(judgeCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
 			v = foldDeterministic(judgeCtx, v, answer, act, cfg)
 			feedback := composeFeedback(v, cfg.Threshold)
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}

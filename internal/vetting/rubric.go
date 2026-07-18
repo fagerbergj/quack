@@ -30,6 +30,7 @@ func FromConfig(c config.GatesConfig) (Config, error) {
 		JudgeContextWindow:  c.Judge.ContextWindow,
 		Constitution:        constitution,
 		Rubric:              rubric,
+		SkepticRounds:       c.Judge.Skeptics,
 	}, nil
 }
 

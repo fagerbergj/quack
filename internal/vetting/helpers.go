@@ -147,6 +147,16 @@ type Config struct {
 	// delivers on THAT branch, never the worker's own git-tracking ledger
 	// (act.currentBranch), which a setup-provisioned worker is told not to touch.
 	Setup *SetupBranch
+
+	// Skeptic, when set, backs the adversarial verify stage (#370): after the
+	// primary judge scores a round, SkepticRounds independent skeptics each
+	// try to REFUTE its load-bearing PASSING criteria (adversarial.go). nil
+	// disables the stage entirely, exactly like a nil judge disables judging.
+	Skeptic SkepticFactory
+	// SkepticRounds is N — how many independent skeptics adversarialVerify
+	// spawns per load-bearing finding; a finding is killed only when a STRICT
+	// MAJORITY refute it. <= 0 disables the stage.
+	SkepticRounds int
 }
 
 // SetupBranch mirrors the delivery-relevant fields of dag.Plan.Setup (a small
