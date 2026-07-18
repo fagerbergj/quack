@@ -187,16 +187,22 @@ func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(event
 	defer cancelInit()
 	handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String("agent", a.name))
 	_ = handshakeCtx
-	if _, err = h.conn.Initialize(ictx, sdk.InitializeRequest{
+	initResp, err := h.conn.Initialize(ictx, sdk.InitializeRequest{
 		ProtocolVersion: sdk.ProtocolVersionNumber,
 		// No fs/terminal capabilities: the agent works directly on disk in
 		// cwd; the jail scope + subprocess env are the boundary.
 		ClientCapabilities: sdk.ClientCapabilities{},
-	}); err != nil {
+	})
+	if err != nil {
 		otelobs.End(handshakeSpan, err)
 		return fmt.Errorf("acp: initialize: %w%s", err, h.stderrTail())
 	}
-	sess, err := h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: []sdk.McpServer{}})
+	// The memory MCP surface (#344) rides the SAME advisor-thread token this
+	// round's outbound prompt carries (see resolveCwd) — scope is resolved
+	// server-side from that token, never from a tool argument.
+	advisorToken, _ := vetting.ParseAdvisorThread(outbound)
+	mcpServers := memoryMCPServers(advisorToken, initResp.AgentCapabilities)
+	sess, err := h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
 	if err != nil {
 		otelobs.End(handshakeSpan, err)
 		return fmt.Errorf("acp: session/new: %w%s", err, h.stderrTail())

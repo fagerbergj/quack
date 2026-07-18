@@ -3,6 +3,8 @@ package vetting
 import (
 	"regexp"
 	"sync"
+
+	"github.com/fagerbergj/quack/internal/memory"
 )
 
 // Advisor-thread identity: how a worker's ask_advisor tool knows WHICH node's
@@ -96,6 +98,43 @@ type AdvisorTask struct {
 	UserID       string
 	SessionID    string
 	InvocationID string
+
+	// Memory + MemoryScope + Staged (#344) are what the ACP memory MCP surface
+	// (internal/acp) resolves load_memory/stage_memory against for THIS node —
+	// the same registry and token an ACP round already uses to find its cwd
+	// (internal/acp resolveCwd), so per-node scope comes from the gate's own
+	// registration, never from a tool argument. Memory nil disables the memory
+	// MCP server for the round entirely (the node isn't a memory participant).
+	Memory      *memory.Store
+	MemoryScope memory.Scope
+	// Staged is the round's stage_memory landing buffer. The gate drains it
+	// (MemStage.Drain) into the worker's activity right before commitMemoryOnPass,
+	// so an MCP-staged candidate commits through the exact same pass-gated path
+	// as a native agent's stage_memory tool call.
+	Staged *MemStage
+}
+
+// MemStage is a per-node, mutex-guarded staging buffer stage_memory (over the
+// ACP memory MCP surface) appends candidates to across every round of a node.
+type MemStage struct {
+	mu    sync.Mutex
+	items []memory.Candidate
+}
+
+// Add appends one staged candidate.
+func (s *MemStage) Add(c memory.Candidate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items = append(s.items, c)
+}
+
+// Drain returns everything staged so far and clears the buffer.
+func (s *MemStage) Drain() []memory.Candidate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.items
+	s.items = nil
+	return out
 }
 
 // advisorThreads is the process-local token → AdvisorTask registry. Written

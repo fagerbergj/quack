@@ -160,6 +160,15 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}
+			// A memory-participating external worker gets the ACP memory MCP surface
+			// (internal/acp): load_memory/stage_memory, scoped by this SAME token —
+			// never a tool argument (#344). Native agents already have ADK-native
+			// load_memory/stage_memory tools, so this rides only cfg.ExternalWorker.
+			if cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil {
+				task.Memory = cfg.Memory
+				task.MemoryScope = vetting.MemoryScope(ctx, cfg, node.ID)
+				task.Staged = &vetting.MemStage{}
+			}
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
 			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
