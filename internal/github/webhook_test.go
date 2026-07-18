@@ -198,6 +198,7 @@ func newTestExtensionWithTriggers(t *testing.T, runner Runner, apiBase string, t
 		Mention:         "@quack",
 		Triggers:        triggers,
 		AutoReviewLabel: label,
+		AllowedUsers:    []string{"alice"}, // every fixture's human invoker; see TestHandleWebhookInvokerAllowlist for the gate itself
 	}, runner, nil, nil)
 }
 
@@ -421,6 +422,7 @@ func TestHandleWebhookPersistsTurnAndEventsForUI(t *testing.T) {
 	ext := NewExtension(app, config.GitHubExtensionConfig{
 		WebhookSecret: testSecret,
 		Mention:       "@quack",
+		AllowedUsers:  []string{"alice"},
 	}, runner, st, nil)
 
 	rec := httptest.NewRecorder()
@@ -1005,6 +1007,176 @@ func TestHandleWebhookBotCommentIgnored(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("a bot-authored mention must not dispatch a run")
+	}
+}
+
+// TestHandleWebhookInvokerAllowlist pins issue #357: a mention only dispatches
+// when its commenter is in github.allowed_users (case-insensitive), and an
+// empty allowlist is a secure DENY-ALL default rather than allow-all.
+func TestHandleWebhookInvokerAllowlist(t *testing.T) {
+	tests := []struct {
+		name         string
+		allowedUsers []string
+		invoker      string
+		wantRun      bool
+	}{
+		{"allowed invoker dispatches", []string{"alice"}, "alice", true},
+		{"allowed invoker matches case-insensitively", []string{"Alice"}, "alice", true},
+		{"disallowed invoker does not dispatch", []string{"alice"}, "mallory", false},
+		{"empty allowlist denies everyone", nil, "alice", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 1)
+			gh := stubGitHub(t, posted)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done"}
+			keyPEM, _ := testKeyPEM(t)
+			app, err := NewApp("1", keyPEM)
+			if err != nil {
+				t.Fatalf("NewApp: %v", err)
+			}
+			app.apiBase = gh.URL
+			ext := NewExtension(app, config.GitHubExtensionConfig{
+				WebhookSecret: testSecret,
+				Mention:       "@quack",
+				AllowedUsers:  tt.allowedUsers,
+			}, runner, nil, nil)
+
+			body := []byte(fmt.Sprintf(`{
+				"action":"created",
+				"comment":{"id":999,"body":"@quack add a feature","user":{"login":%q}},
+				"issue":{"number":7},
+				"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+				"installation":{"id":5}
+			}`, tt.invoker))
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("issue_comment", body))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			if tt.wantRun {
+				select {
+				case <-runner.gotMessage:
+				case <-time.After(2 * time.Second):
+					t.Fatal("allowed invoker did not dispatch a run")
+				}
+			} else {
+				time.Sleep(50 * time.Millisecond)
+				if atomic.LoadInt32(&runner.calls) != 0 {
+					t.Errorf("%s: must not dispatch a run", tt.name)
+				}
+			}
+		})
+	}
+}
+
+// TestHandleWebhookIssueLabelRespectsAllowlist pins the issues-labeled
+// (quack:plan/quack:implement) enforcement point: a sender outside
+// allowed_users never dispatches, even though the label itself required repo
+// write access.
+func TestHandleWebhookIssueLabelRespectsAllowlist(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "the plan"}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret,
+		Mention:       "@quack",
+		Triggers:      []string{"issue_plan"},
+		AllowedUsers:  []string{"alice"},
+	}, runner, nil, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:plan", "mallory", false)))
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if atomic.LoadInt32(&runner.calls) != 0 {
+		t.Error("issue-labeled sender not in allowed_users must not dispatch")
+	}
+}
+
+// TestHandleWebhookMergeLabelRespectsAllowlist pins the merge-label
+// enforcement point: a sender outside allowed_users can never authorize a
+// merge, even with an APPROVED review already on the PR.
+func TestHandleWebhookMergeLabelRespectsAllowlist(t *testing.T) {
+	approved := `[{"state":"APPROVED","user":{"login":"quack[bot]"}}]`
+	posted := make(chan string, 2)
+	merged := make(chan struct{}, 1)
+	gh := mergeStub(t, approved, posted, merged)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1)}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret,
+		Mention:       "@quack",
+		Triggers:      []string{"merge"},
+		AllowedUsers:  []string{"alice"},
+	}, runner, nil, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("pull_request", mergeLabelBody("mallory")))
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-merged:
+		t.Error("merge-label sender not in allowed_users must not authorize a merge")
+	default:
+	}
+}
+
+// TestHandleWebhookAutoReviewIgnoresAllowlist pins that the synthetic
+// pr_opened auto-review has no human invoker and fires regardless of
+// allowed_users (including empty/deny-all) — the allowlist gates
+// human-invoked triggers only.
+func TestHandleWebhookAutoReviewIgnoresAllowlist(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret,
+		Mention:       "@quack",
+		Triggers:      []string{"pr_opened"},
+		// AllowedUsers intentionally left unset (deny-all for human triggers) —
+		// must not block the synthetic auto-review.
+	}, runner, nil, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("pull_request", pullRequestBody("opened", "")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pr_opened auto-review must fire regardless of allowed_users")
 	}
 }
 
