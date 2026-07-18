@@ -773,6 +773,15 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			}
 		}
 	}
+	// Deterministic mermaid validation (#371): every diagram in a body headed
+	// to GitHub gets repaired or stripped before it ships — never gated on the
+	// judge/revise loop, since a mechanical slip is fixed mechanically.
+	for i := range dc.Items {
+		if body, changed := validateAndRepairMermaid(dc.Items[i].Body); changed {
+			dc.Items[i].Body = body
+		}
+	}
+
 	kinds := make([]string, len(dc.Items))
 	for i, item := range dc.Items {
 		kinds[i] = item.Kind
