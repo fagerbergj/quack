@@ -8,10 +8,12 @@
 //     the orchestrator — subagents are omitted because ADK injects them
 //     automatically via agentTransferInstructionTemplate)
 //  3. Behaviour — how it should behave (the agent's prompt.md)
-//  4. Environment — contextual facts injected at startup (current date)
+//  4. Writing — the shared prose ruleset (writing.md), applied to every agent
+//  5. Environment — contextual facts injected at startup (current date)
 package promptbuilder
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 	"time"
@@ -19,6 +21,13 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
+
+// writing is the shared prose ruleset injected as the Writing layer of every
+// assembled prompt. Adapted from github.com/Anbeeld/WRITING.md (compact
+// variant): concrete over generic, plain words, watch for LLM regularity.
+//
+//go:embed writing.md
+var writing string
 
 // Agent assembles the 4-layer system prompt for a specialist agent.
 // name and description come from agent-card.json; tools from the registered
@@ -69,6 +78,11 @@ func layered(identity, capsHeader, capsBody, behaviour string) string {
 	if b := strings.TrimSpace(behaviour); b != "" {
 		sb.WriteString("\n")
 		sb.WriteString(b)
+		sb.WriteString("\n")
+	}
+	if w := strings.TrimSpace(writing); w != "" {
+		sb.WriteString("\n")
+		sb.WriteString(w)
 		sb.WriteString("\n")
 	}
 	fmt.Fprintf(&sb, "\n## Environment\n\nToday is %s.\n", today())
