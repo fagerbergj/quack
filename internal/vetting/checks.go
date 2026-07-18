@@ -224,23 +224,25 @@ var makeTargetRe = regexp.MustCompile(`(?m)^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 // deriveChecks reads dir — the repo the node worked in — and returns the repo's
 // OWN check commands, filtered by the configured workspace.check_commands
 // allowlist (the security boundary stays exactly where it was; an empty allowlist
-// means checks are disabled, so this returns nothing). First match wins:
-// package.json (its declared scripts) → go.mod → Makefile (its declared targets)
-// → none. Returning none is normal, not a failure: an unrecognised repo simply
-// gets no deterministic gate.
+// means checks are disabled, so this returns nothing). UNION of every toolchain
+// present: package.json (its declared scripts) + go.mod + Makefile (its declared
+// targets), npm → go → make order — a repo with more than one stack gates on all
+// of them, not just the first found. Returning none is normal, not a failure: an
+// unrecognised repo simply gets no deterministic gate.
 func deriveChecks(dir string, allow []string) []string {
 	var cands []string
-	switch {
-	case fileExists(dir, "package.json"):
+	if fileExists(dir, "package.json") {
 		scripts := packageScripts(dir)
 		for _, s := range npmCheckScripts {
 			if scripts[s] {
 				cands = append(cands, "npm run "+s)
 			}
 		}
-	case fileExists(dir, "go.mod"):
-		cands = []string{"go build ./...", "go vet ./...", "go test ./..."}
-	case fileExists(dir, "Makefile"):
+	}
+	if fileExists(dir, "go.mod") {
+		cands = append(cands, "go build ./...", "go vet ./...", "go test ./...")
+	}
+	if fileExists(dir, "Makefile") {
 		targets := makeTargets(dir)
 		for _, t := range makeCheckTargets {
 			if targets[t] {
