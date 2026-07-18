@@ -308,6 +308,13 @@ type workerActivity struct {
 	reviewCommented bool
 	reviewSubmitted bool
 
+	// greps counts grep/glob-style search calls (ACP ToolKindSearch, mapped to
+	// the tool name "search" — see internal/acp/translate.go) — an ACP agent's
+	// directory-search activity, which the workspace ledger otherwise has no
+	// slot for (it isn't a read_file/write_file/... op). Read by the
+	// exploration_grounded check (node.go) alongside act.paths.
+	greps int
+
 	// ranCommand marks at least one SUCCESSFUL run_command — the worker EXECUTED
 	// something (a test run, a build, a throwaway probe it wrote) rather than only
 	// reading. Read by the deterministic behaviour check (delivery.go): a code

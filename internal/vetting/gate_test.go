@@ -373,3 +373,69 @@ func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 		t.Fatal("grounded_in_retrieval penalty applied despite recorded retrieval")
 	}
 }
+
+// TestFoldDeterministic_ExplorationGroundedCatchesFabrication: the #289 live
+// failure — a code-explorer node clones a repo, performs ZERO read_file/grep
+// calls, and still emits a confident, substantive "survey" of it. The clone
+// alone satisfies grounded_in_retrieval, so exploration_grounded is the
+// backstop that must sink the score to 0 (weakest-link) regardless of how
+// good the judge's other criteria look.
+func TestFoldDeterministic_ExplorationGroundedCatchesFabrication(t *testing.T) {
+	act := workerActivity{clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}}
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+	cfg := Config{ExternalWorker: true, ReadOnly: true}
+	got := foldDeterministic(context.Background(), v, "internal/engine/ is a 319k-line monolith spanning...", act, cfg)
+	if got.Score != 0 {
+		t.Fatalf("score = %v, want 0 (weakest-link on exploration_grounded)", got.Score)
+	}
+	c, ok := got.Criteria["exploration_grounded"]
+	if !ok || c.Score != 0 {
+		t.Fatalf("exploration_grounded criterion missing or nonzero: %+v", got.Criteria)
+	}
+}
+
+// TestFoldDeterministic_ExplorationGroundedPassesWithReads: a code-explorer
+// that actually read (or grepped) the clone is not penalized — acceptance
+// case from #289.
+func TestFoldDeterministic_ExplorationGroundedPassesWithReads(t *testing.T) {
+	cfg := Config{ExternalWorker: true, ReadOnly: true}
+	for name, act := range map[string]workerActivity{
+		"reads": {clonedRepos: []string{"https://github.com/org/repo"}, paths: map[string]bool{"repo/main.go": true}},
+		"greps": {clonedRepos: []string{"https://github.com/org/repo"}, greps: 3},
+	} {
+		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+		got := foldDeterministic(context.Background(), v, "main.go is the entrypoint; it wires up the router.", act, cfg)
+		if _, present := got.Criteria["exploration_grounded"]; present {
+			t.Errorf("%s: exploration_grounded penalty applied despite real exploration activity", name)
+		}
+	}
+}
+
+// TestFoldDeterministic_ExplorationGroundedScopedToExternalReadOnly: the
+// check must not fire outside its scope — a node with no clone at all
+// (legitimately read-nothing) and a non-ReadOnly / non-ExternalWorker agent
+// (e.g. a native synthesizer with a bare clone in its activity, which cannot
+// happen in practice but must still be inert) are both untouched.
+func TestFoldDeterministic_ExplorationGroundedScopedToExternalReadOnly(t *testing.T) {
+	cloned := workerActivity{clonedRepos: []string{"https://github.com/org/repo"}}
+	cases := map[string]Config{
+		"not external":  {ReadOnly: true},
+		"not read-only": {ExternalWorker: true},
+		"neither":       {},
+	}
+	for name, cfg := range cases {
+		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+		got := foldDeterministic(context.Background(), v, "some findings", cloned, cfg)
+		if _, present := got.Criteria["exploration_grounded"]; present {
+			t.Errorf("%s: exploration_grounded fired out of scope", name)
+		}
+	}
+	// No clone at all: an ExternalWorker+ReadOnly node that never cloned
+	// anything (e.g. it worked in a pre-provisioned setup clone) has nothing
+	// to be ungrounded about.
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+	got := foldDeterministic(context.Background(), v, "some findings", workerActivity{}, Config{ExternalWorker: true, ReadOnly: true})
+	if _, present := got.Criteria["exploration_grounded"]; present {
+		t.Error("exploration_grounded fired with no clone at all")
+	}
+}
