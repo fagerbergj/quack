@@ -27,6 +27,7 @@ func FromConfig(c config.GatesConfig) (Config, error) {
 		JudgeRounds:         c.Judge.MaxRounds,
 		Threshold:           c.Judge.Threshold,
 		JudgeMaxIterations:  c.Judge.MaxIterations,
+		JudgeContextWindow:  c.Judge.ContextWindow,
 		Constitution:        constitution,
 		Rubric:              rubric,
 	}, nil

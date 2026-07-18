@@ -192,6 +192,7 @@ gates:
                             # minor gaps"); the verdict score is the lowest criterion
                             # (weakest-link gating, no averaging, no caps).
     max_iterations: 6       # safety cap on the judge's model turns per round
+    context_window: 65536   # gemma's served slot (llm-swap --parallel 1 ⇒ full 64K/call); budgets the assembled judge prompt so it fits before the call instead of 400ing (#291)
 
 # DAG execution policy.
 dag:

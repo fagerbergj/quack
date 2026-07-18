@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
 	"testing"
@@ -378,4 +379,86 @@ func newTestGatedNode(name string, worker adkagent.Agent, workerModel model.LLM,
 		return answer, err
 	}
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
+}
+
+// newTestGatedNodeCapture is newTestGatedNode plus a *GateResult out-param, for
+// tests that need to inspect the gate's verdict (not just the answer text).
+func newTestGatedNodeCapture(name string, worker adkagent.Agent, workerModel model.LLM, judge JudgeFactory, cfg Config, res *GateResult) (workflow.Node, error) {
+	workerNode, err := NewWorkerNode(worker)
+	if err != nil {
+		return nil, err
+	}
+	fn := func(ctx adkagent.Context, task string, emit func(*session.Event) error) (string, error) {
+		if strings.TrimSpace(task) == "" {
+			task = contentPlainText(ctx.UserContent())
+		}
+		answer, r, err := RunGatedRefine(ctx, name, workerNode, workerModel, judge, cfg, task, nil, nil, emit)
+		*res = r
+		return answer, err
+	}
+	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
+}
+
+// erroringJudge always fails the underlying model call (standing in for a judge
+// request that 400s against the model's context window) — never a scored
+// verdict, never a tool call.
+type erroringJudge struct{}
+
+func (erroringJudge) Name() string { return "erroring-judge" }
+
+func (erroringJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(nil, errors.New("simulated 400: request exceeds the available context size"))
+	}
+}
+
+// TestGatedWorkerNode_JudgeErrorFailsClosed proves issue #291's critical
+// correctness fix: when every judge call errors (the model call itself fails,
+// not a low score), the gate must fail CLOSED — Passed=false — never surface
+// the answer as vetted. Before the fix, an errored judge round could leave the
+// gate's verdict looking like an unscored pass instead of an explicit fail.
+func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10"}
+	var res GateResult
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(erroringJudge{}, nil, nil), cfg, &res)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	if res.Passed {
+		t.Errorf("GateResult.Passed = true after every judge call errored — a judge failure must fail closed, never pass")
+	}
+	if res.Score != 0 {
+		t.Errorf("GateResult.Score = %v, want 0 (no verdict was ever produced)", res.Score)
+	}
 }
