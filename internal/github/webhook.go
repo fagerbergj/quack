@@ -873,7 +873,8 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		fmt.Fprintf(&b, "GitHub user @%s asked a follow-up on %s/%s pull request #%d (pull_number=%d).\n\n",
 			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)
 		fmt.Fprintf(&b, "Their message:\n%s\n\n", task)
-		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from THIS thread's prior conversation — including any review you already posted, which is in your context. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.")
+		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from THIS thread's prior conversation — including any review you already posted, which is in your context. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.\n\n")
+		b.WriteString("If — and only if — their message explicitly corrects a SPECIFIC finding you posted as a FALSE POSITIVE (wrong, not a real issue), call correct_review_finding BEFORE replying: owner=" + owner + ", repo=" + repo + ", pr_number=" + fmt.Sprint(p.Issue.Number) + ", the finding you got wrong, and their reason — so the next review of similar code doesn't repeat it. Do not call it for anything else (general questions, disagreement without a concrete reason, or findings that still stand).")
 		return b.String()
 	}
 

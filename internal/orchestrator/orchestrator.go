@@ -55,6 +55,12 @@ type Orchestrator struct {
 	executor  *dag.Executor
 	skillTS   tool.Toolset  // optional; nil = no skill tools
 	userMem   *memory.Store // optional user-memory store (M6); nil = user memory off
+	// taskMem is the SAME store the trust gate reads/writes coding (and research)
+	// tradecraft (internal/vetting's cfg.Memory) — nil = task memory off. The
+	// orchestrator's ONLY write into it is correct_review_finding (#249): a
+	// conversational GitHub-PR correction, narrowly scoped and attributable,
+	// never an always-on path for arbitrary content.
+	taskMem *memory.Store
 	// runSem is a server-wide cap on concurrent runs. max_active_nodes bounds nodes
 	// WITHIN one plan; nothing bounded the number of plans, so a burst of webhooks or
 	// REST calls fanned out unbounded onto one model. nil = no limit.
@@ -181,8 +187,10 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 // New builds the orchestrator. sysPrompt is assembled from agents/orchestrator/
 // via promptbuilder.Orchestrator at startup. skillTS may be nil. userMem, when
 // non-nil, enables personal memory: ambient recall (preload_memory) + an explicit
-// commit_memory tool, both scoped to the user_memory collection.
-func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset, userMem *memory.Store) *Orchestrator {
+// commit_memory tool, both scoped to the user_memory collection. taskMem, when
+// non-nil, enables the correct_review_finding tool (#249): the orchestrator's
+// only write path into the shared coding memory bucket.
+func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset, userMem, taskMem *memory.Store) *Orchestrator {
 	return &Orchestrator{
 		sessions:  sessions,
 		model:     m,
@@ -190,6 +198,7 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 		planner:   planner,
 		executor:  executor,
 		skillTS:   skillTS,
+		taskMem:   taskMem,
 		userMem:   userMem,
 	}
 }
@@ -283,6 +292,20 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			// The orchestrator reads exactly one bucket: this user's. (Legacy = the raw
 			// user id, the pre-bucket key user memories were written under.)
 			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
+		}
+
+		// Task memory (#249): the orchestrator's narrow, attributable write path
+		// into the shared coding bucket — a conversational correction that a
+		// review finding was a false positive. No recall here (the orchestrator
+		// doesn't review code); only the coding agents' gate-side recall reads
+		// what this writes.
+		if o.taskMem != nil {
+			correctTool, err := tools.NewCorrectReviewFindingTool(o.taskMem)
+			if err != nil {
+				yield(stream.Errorf("orchestrator: correct_review_finding tool: "+err.Error()), nil)
+				return
+			}
+			toolList = append(toolList, correctTool)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{

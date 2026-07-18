@@ -495,7 +495,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	executor.SetSetup(setupFn)
 	executorRef.Store(executor) // arms the tools' cancel guard (see nodeCancelled above)
-	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore)
+	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
 
 	spa, err := fs.Sub(webDist, "web/dist")
