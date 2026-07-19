@@ -1,5 +1,15 @@
 import { useState } from 'react'
 import type { ChatSummary } from '../api'
+import { isGithubChat } from '../pages/GitHubSessions'
+
+export type OriginFilter = 'all' | 'github' | 'direct'
+
+// filterChatsByOrigin narrows by the same origin signal GitHubSessions.tsx
+// uses (isGithubChat) — no separate signal to keep in sync.
+export function filterChatsByOrigin(chats: ChatSummary[], filter: OriginFilter): ChatSummary[] {
+  if (filter === 'all') return chats
+  return chats.filter(c => (filter === 'github' ? isGithubChat(c) : !isGithubChat(c)))
+}
 
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -23,10 +33,18 @@ export interface ChatListProps {
   onCloseMobile: () => void
 }
 
+const ORIGIN_FILTERS: { value: OriginFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'direct', label: 'Direct' },
+  { value: 'github', label: 'GitHub' },
+]
+
 export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile }: ChatListProps) {
   const [query, setQuery] = useState('')
+  const [originFilter, setOriginFilter] = useState<OriginFilter>('all')
   const q = query.trim().toLowerCase()
-  const filtered = q ? chats.filter(c => (c.title ?? '').toLowerCase().includes(q)) : chats
+  const byOrigin = filterChatsByOrigin(chats, originFilter)
+  const filtered = q ? byOrigin.filter(c => (c.title ?? '').toLowerCase().includes(q)) : byOrigin
 
   return (
     <div className={`
@@ -63,6 +81,22 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
         />
       </div>
+      <div className="px-2 py-1.5 border-b border-gray-200 dark:border-gray-700 flex gap-1" role="group" aria-label="Filter by origin">
+        {ORIGIN_FILTERS.map(f => (
+          <button
+            key={f.value}
+            onClick={() => setOriginFilter(f.value)}
+            aria-pressed={originFilter === f.value}
+            className={`flex-1 text-[11px] px-2 py-1 rounded-md transition-colors ${
+              originFilter === f.value
+                ? 'bg-blue-600 text-white font-medium'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
       <div className="flex-1 overflow-y-auto overscroll-contain">
         {chats.length === 0 && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No conversations yet</div>
@@ -76,8 +110,19 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
             onClick={() => onSelect(s.id)}
             className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
           >
-            <span title={s.title || 'New chat'} className={`text-sm truncate pr-6 ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-              {s.title || 'New chat'}
+            <span title={s.title || 'New chat'} className="flex items-center gap-1.5 pr-6">
+              {isGithubChat(s) && (
+                <span
+                  title={s.github_repo ? `GitHub · ${s.github_repo}` : 'GitHub-originated chat'}
+                  aria-label="GitHub-originated chat"
+                  className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                >
+                  GH
+                </span>
+              )}
+              <span className={`text-sm truncate ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
+                {s.title || 'New chat'}
+              </span>
             </span>
             <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
             <button

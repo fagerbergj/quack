@@ -12,12 +12,39 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
+// isGithubChat mirrors frontend/src/pages/GitHubSessions.tsx's isGithubChat:
+// GithubUrl is the authoritative signal (set by the webhook at dispatch
+// time), the "github-" id prefix a fallback for chats persisted before that
+// field existed.
+func isGithubChat(c schema.ChatSummary) bool {
+	return c.GithubUrl != nil || strings.HasPrefix(c.Id, "github-")
+}
+
+// originFilterKeep reports whether c passes the --filter value ("all",
+// "github", "direct"); an unrecognised value keeps everything (validated by
+// the caller before this is ever reached).
+func originFilterKeep(c schema.ChatSummary, filter string) bool {
+	switch filter {
+	case "github":
+		return isGithubChat(c)
+	case "direct":
+		return !isGithubChat(c)
+	default:
+		return true
+	}
+}
+
 // RunChatList is `quack chat list`: a table of chats (id, title, status,
-// updated), or raw JSON with --json. STATUS is one of the four ChatStatus
-// values (running/needs_input/failed/idle) so the row is grep-able
-// (`grep needs_input`); the pending question itself is `chat show`/--json's
-// job — this table stays narrow. Empty list points at the next step.
-func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool) error {
+// origin, updated), or raw JSON with --json. STATUS is one of the four
+// ChatStatus values (running/needs_input/failed/idle) so the row is
+// grep-able (`grep needs_input`); the pending question itself is `chat
+// show`/--json's job — this table stays narrow. filter narrows to
+// "github"/"direct" origin chats ("all" or "" keeps everything). Empty list
+// points at the next step.
+func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool, filter string) error {
+	if filter != "" && filter != "all" && filter != "github" && filter != "direct" {
+		return fmt.Errorf("--filter must be one of all, github, direct (got %q)", filter)
+	}
 	c, err := NewClient(server)
 	if err != nil {
 		return err
@@ -26,17 +53,33 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool)
 	if err != nil {
 		return err
 	}
+	hadAny := len(chats) > 0
+	kept := chats[:0:0]
+	for _, ch := range chats {
+		if originFilterKeep(ch, filter) {
+			kept = append(kept, ch)
+		}
+	}
+	chats = kept
 	if asJSON {
 		return writeJSON(out, chats)
 	}
 	if len(chats) == 0 {
+		if hadAny {
+			fmt.Fprintf(out, "No %s chats.\n", filter)
+			return nil
+		}
 		fmt.Fprintln(out, "No chats yet — start one with `quack chat new`.")
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTITLE\tSTATUS\tUPDATED")
+	fmt.Fprintln(tw, "ID\tTITLE\tSTATUS\tORIGIN\tUPDATED")
 	for _, ch := range chats {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", ch.Id, chatTitle(ch.Title), ch.Status, ch.UpdatedAt.Local().Format("2006-01-02 15:04"))
+		origin := "direct"
+		if isGithubChat(ch) {
+			origin = "github"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", ch.Id, chatTitle(ch.Title), ch.Status, origin, ch.UpdatedAt.Local().Format("2006-01-02 15:04"))
 	}
 	return tw.Flush()
 }
