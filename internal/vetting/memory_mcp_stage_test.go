@@ -131,9 +131,15 @@ func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 
 	t.Run("fail: nothing committed", func(t *testing.T) {
 		token := "plan1/fail-node"
+		secret, err := NewMemSecret()
+		if err != nil {
+			t.Fatalf("NewMemSecret: %v", err)
+		}
 		stage := &MemStage{}
-		RegisterAdvisorThread(token, AdvisorTask{NodeID: "fail-node", Memory: store, MemoryScope: scope, Staged: stage})
+		RegisterAdvisorThread(token, AdvisorTask{NodeID: "fail-node", MemSecret: secret})
 		defer UnregisterAdvisorThread(token)
+		RegisterMemSession(secret, MemSession{Memory: store, Scope: scope, Staged: stage})
+		defer UnregisterMemSession(secret)
 		stage.Add(memory.Candidate{Content: "a fact staged on a failing round", Metadata: map[string]string{"bucket": "repo"}})
 
 		res := runStagedMemoryNode(t, "fail-node", token, cfg, 0.1)
@@ -151,9 +157,15 @@ func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 
 	t.Run("pass: staged candidate committed", func(t *testing.T) {
 		token := "plan1/pass-node"
+		secret, err := NewMemSecret()
+		if err != nil {
+			t.Fatalf("NewMemSecret: %v", err)
+		}
 		stage := &MemStage{}
-		RegisterAdvisorThread(token, AdvisorTask{NodeID: "pass-node", Memory: store, MemoryScope: scope, Staged: stage})
+		RegisterAdvisorThread(token, AdvisorTask{NodeID: "pass-node", MemSecret: secret})
 		defer UnregisterAdvisorThread(token)
+		RegisterMemSession(secret, MemSession{Memory: store, Scope: scope, Staged: stage})
+		defer UnregisterMemSession(secret) // idempotent: RunGatedRefine already unregistered on drain
 		stage.Add(memory.Candidate{Content: "always run go test before committing", Metadata: map[string]string{"bucket": "repo"}})
 
 		res := runStagedMemoryNode(t, "pass-node", token, cfg, 0.95)

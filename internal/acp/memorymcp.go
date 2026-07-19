@@ -22,10 +22,13 @@ import (
 // (Store.Recall, front-loaded into the round-0 prompt) and answer-mined commit.
 //
 // Scoping is entirely server-side: session/new hands the round ONE url whose path
-// IS the node's advisor-thread token (the same token/registry an ACP round already
-// uses to resolve its cwd — see resolveCwd), and every tool call resolves the
-// node's Store/Scope/staging buffer from THAT token. Nothing about scope ever
-// rides a tool argument.
+// IS an unguessable per-node secret (vetting.NewMemSecret, minted fresh by
+// dag.newGatedNode — NOT the advisor-thread token: that token is derivable
+// (planID+nodeID) and a worker's own prompt discloses its running siblings' node
+// IDs, so it could let one node reach another's memory bucket). Every tool call
+// resolves the node's Store/Scope/staging buffer from that secret via
+// vetting.LookupMemSession — a registry SEPARATE from the advisor-thread one.
+// Nothing about scope ever rides a tool argument.
 
 // loadMemoryInput is the load_memory tool's input.
 type loadMemoryInput struct {
@@ -40,8 +43,9 @@ type stageMemoryInput struct {
 
 // memoryMCP is the process-local loopback HTTP MCP server, started lazily on
 // first use and kept alive for the process lifetime — one server for every
-// node/round, not one per round: the URL path (the advisor-thread token) is
-// what scopes each session, so the server itself carries no per-node state.
+// node/round, not one per round: the URL path (the node's secret) is what
+// scopes each session, so the server itself carries no per-node state. Bound
+// to 127.0.0.1 only — never reachable off-host.
 var memoryMCP struct {
 	once sync.Once
 	url  string // "" if the server never started (best-effort: a round just runs without it)
@@ -62,25 +66,27 @@ func memoryMCPURL() string {
 	return memoryMCP.url
 }
 
-// memoryMCPHandler builds a fresh *mcp.Server per incoming session, deriving its
-// tools' scope from the URL path token — resolved via the SAME registry
-// vetting.RegisterAdvisorThread populates for ask_advisor/the guard ladder. An
-// unknown or unregistered token (agent run outside a gated node, or the node
-// already finished) gets a server with no tools rather than an error, so a
-// stray call degrades gracefully instead of wedging the round.
+// memoryMCPHandler builds a fresh *mcp.Server per incoming session, deriving
+// its tools' scope from the URL path's SECRET — resolved via
+// vetting.LookupMemSession, a registry keyed by an unguessable per-node value,
+// never by the advisor-thread token (see the package doc above). An unknown or
+// unregistered secret (agent run outside a gated node, wrong/stale/guessed
+// value, or the node already finished and drained its buffer) gets a server
+// with NO tools registered — a load_memory/stage_memory call against it fails
+// loudly with an explicit MCP "tool not found" error, not a silent no-op.
 func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		token := strings.Trim(r.URL.Path, "/")
+		secret := strings.Trim(r.URL.Path, "/")
 		srv := mcp.NewServer(&mcp.Implementation{Name: "quack-memory", Version: "0.1.0"}, nil)
-		task, ok := vetting.LookupAdvisorThread(token)
-		if !ok || task.Memory == nil {
+		sess, ok := vetting.LookupMemSession(secret)
+		if !ok || sess.Memory == nil {
 			return srv
 		}
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:        "load_memory",
 			Description: "Recall relevant notes from shared memory about this repository/task family.",
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, args loadMemoryInput) (*mcp.CallToolResult, any, error) {
-			text := task.Memory.Recall(ctx, task.MemoryScope, args.Query)
+			text := sess.Memory.Recall(ctx, sess.Scope, args.Query)
 			if text == "" {
 				text = "(no relevant memory found)"
 			}
@@ -90,10 +96,10 @@ func memoryMCPHandler() http.Handler {
 			Name:        "stage_memory",
 			Description: "Stage a durable fact learned this run for shared memory. It is written only if this node's work is accepted.",
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, args stageMemoryInput) (*mcp.CallToolResult, any, error) {
-			if task.Staged == nil || strings.TrimSpace(args.Content) == "" {
+			if sess.Staged == nil || strings.TrimSpace(args.Content) == "" {
 				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "memory staging unavailable for this node"}}}, nil, nil
 			}
-			task.Staged.Add(memory.Candidate{Content: args.Content, Metadata: map[string]string{"bucket": args.Kind}})
+			sess.Staged.Add(memory.Candidate{Content: args.Content, Metadata: map[string]string{"bucket": args.Kind}})
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
 		})
 		return srv
@@ -101,13 +107,13 @@ func memoryMCPHandler() http.Handler {
 }
 
 // memoryMCPServers returns the ACP mcpServers list to hand session/new — empty
-// when there's no advisor-thread token (the agent ran outside a gated node), the
-// agent didn't advertise http MCP support, or the loopback server failed to
-// start. caps is the agent's negotiated capabilities from Initialize.
-func memoryMCPServers(token string, caps sdk.AgentCapabilities) []sdk.McpServer {
+// when there's no secret (the node isn't a memory participant), the agent
+// didn't advertise http MCP support, or the loopback server failed to start.
+// caps is the agent's negotiated capabilities from Initialize.
+func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer {
 	// NewSessionRequest.McpServers is a required field on the wire (an omitted/
 	// null array 400s) — always return a non-nil slice, even when empty.
-	if token == "" || !caps.McpCapabilities.Http {
+	if secret == "" || !caps.McpCapabilities.Http {
 		return []sdk.McpServer{}
 	}
 	base := memoryMCPURL()
@@ -116,6 +122,6 @@ func memoryMCPServers(token string, caps sdk.AgentCapabilities) []sdk.McpServer 
 	}
 	return []sdk.McpServer{{Http: &sdk.McpServerHttpInline{
 		Name: "quack-memory",
-		Url:  base + "/" + token,
+		Url:  base + "/" + secret,
 	}}}
 }

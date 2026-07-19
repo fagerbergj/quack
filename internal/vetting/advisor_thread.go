@@ -1,6 +1,8 @@
 package vetting
 
 import (
+	crand "crypto/rand"
+	"encoding/hex"
 	"regexp"
 	"sync"
 
@@ -99,14 +101,25 @@ type AdvisorTask struct {
 	SessionID    string
 	InvocationID string
 
-	// Memory + MemoryScope + Staged (#344) are what the ACP memory MCP surface
-	// (internal/acp) resolves load_memory/stage_memory against for THIS node —
-	// the same registry and token an ACP round already uses to find its cwd
-	// (internal/acp resolveCwd), so per-node scope comes from the gate's own
-	// registration, never from a tool argument. Memory nil disables the memory
-	// MCP server for the round entirely (the node isn't a memory participant).
-	Memory      *memory.Store
-	MemoryScope memory.Scope
+	// MemSecret (#344) is this node's credential for the ACP memory MCP surface
+	// (internal/acp) — an unguessable value MINTED FRESH per node (NewMemSecret),
+	// never derived from plan/node IDs. The advisor-thread token above is a poor
+	// substitute: it's pure planID+nodeID concatenation, and a worker's own prompt
+	// discloses its running siblings' node IDs (executor.go siblingIDs) — an
+	// untrusted external subprocess could reconstruct another node's token and
+	// reach its memory bucket. MemSecret is looked up in a SEPARATE registry
+	// (memSessions, keyed by the secret itself, not the token) precisely so the
+	// two can never be confused. Empty when the node isn't a memory participant.
+	MemSecret string
+}
+
+// MemSession is what the ACP memory MCP surface resolves for ONE node's
+// load_memory/stage_memory calls — registered under MemSecret (never the
+// advisor-thread token; see AdvisorTask.MemSecret) so a guessed/derived token
+// buys an attacker nothing here.
+type MemSession struct {
+	Memory *memory.Store
+	Scope  memory.Scope
 	// Staged is the round's stage_memory landing buffer. The gate drains it
 	// (MemStage.Drain) into the worker's activity right before commitMemoryOnPass,
 	// so an MCP-staged candidate commits through the exact same pass-gated path
@@ -135,6 +148,58 @@ func (s *MemStage) Drain() []memory.Candidate {
 	out := s.items
 	s.items = nil
 	return out
+}
+
+// NewMemSecret mints a fresh, unguessable per-node credential for the memory
+// MCP surface — 256 bits from crypto/rand, hex-encoded. Deliberately
+// independent of AdvisorThreadToken: that token is derivable (planID+nodeID)
+// and disclosed to sibling nodes via the prompt, so it cannot double as a
+// bearer credential handed to an untrusted external subprocess.
+func NewMemSecret() (string, error) {
+	var b [32]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// memSessions is the process-local secret → MemSession registry — SEPARATE
+// from advisorThreads (keyed by the guessable advisor-thread token) precisely
+// so the memory MCP surface can never be reached via a derived/guessed token.
+var memSessions sync.Map
+
+// RegisterMemSession publishes a node's memory session under its secret. A
+// no-op for an empty secret (nothing to register, nothing reachable).
+func RegisterMemSession(secret string, s MemSession) {
+	if secret == "" {
+		return
+	}
+	memSessions.Store(secret, s)
+}
+
+// LookupMemSession returns the registered session for secret, if any.
+func LookupMemSession(secret string) (MemSession, bool) {
+	if secret == "" {
+		return MemSession{}, false
+	}
+	v, ok := memSessions.Load(secret)
+	if !ok {
+		return MemSession{}, false
+	}
+	s, ok := v.(MemSession)
+	return s, ok
+}
+
+// UnregisterMemSession removes a secret's entry — called the moment the gate
+// has drained its staging buffer (node.go) so a straggler MCP call arriving
+// after the node's own commit decision fails outright instead of writing into
+// a buffer nobody will ever drain again. A no-op for an empty/already-removed
+// secret.
+func UnregisterMemSession(secret string) {
+	if secret == "" {
+		return
+	}
+	memSessions.Delete(secret)
 }
 
 // advisorThreads is the process-local token → AdvisorTask registry. Written

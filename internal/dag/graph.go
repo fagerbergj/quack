@@ -3,6 +3,7 @@ package dag
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
@@ -161,13 +162,30 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}
 			// A memory-participating external worker gets the ACP memory MCP surface
-			// (internal/acp): load_memory/stage_memory, scoped by this SAME token —
-			// never a tool argument (#344). Native agents already have ADK-native
+			// (internal/acp): load_memory/stage_memory (#344). The credential is a
+			// FRESH random secret, never the advisor-thread token above — that token
+			// is derivable (planID+nodeID) and this node's own prompt discloses its
+			// running siblings' node IDs, so it must never double as a bearer
+			// credential handed to an untrusted external subprocess (see
+			// vetting.AdvisorTask.MemSecret). Native agents already have ADK-native
 			// load_memory/stage_memory tools, so this rides only cfg.ExternalWorker.
 			if cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil {
-				task.Memory = cfg.Memory
-				task.MemoryScope = vetting.MemoryScope(ctx, cfg, node.ID)
-				task.Staged = &vetting.MemStage{}
+				if secret, serr := vetting.NewMemSecret(); serr != nil {
+					slog.Warn("acp memory MCP secret unavailable; node runs without load_memory/stage_memory",
+						"component", "dag", "node", node.ID, "err", serr)
+				} else {
+					task.MemSecret = secret
+					vetting.RegisterMemSession(secret, vetting.MemSession{
+						Memory: cfg.Memory,
+						Scope:  vetting.MemoryScope(ctx, cfg, node.ID),
+						Staged: &vetting.MemStage{},
+					})
+					// Backstop: RunGatedRefine unregisters as soon as it drains the
+					// staging buffer, but several of its early-return paths (empty
+					// answer, cancelled, judge error) skip that point entirely — this
+					// defer guarantees the session never outlives the node regardless.
+					defer vetting.UnregisterMemSession(secret)
+				}
 			}
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)

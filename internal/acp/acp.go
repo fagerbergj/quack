@@ -119,21 +119,28 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 	return a.runPrompt(ctx, inputText(nodeInput))
 }
 
-// resolveCwd derives the node's working directory from the advisor-thread
-// marker in the prompt — the ONE channel that carries (chat, workspace-node)
-// scope to a worker (the same one internal/tools uses). The setup clone lands
-// AT the node root (workspace.SetupCloneDir == NodeDir), so this dir IS the
-// repo for a setup-provisioned node.
-func (a *Agent) resolveCwd(prompt string) (string, error) {
+// resolveNode derives the node's working directory AND its memory-MCP
+// credential from the advisor-thread marker in the prompt — the ONE channel
+// that carries (chat, workspace-node) scope to a worker (the same one
+// internal/tools uses). The setup clone lands AT the node root
+// (workspace.SetupCloneDir == NodeDir), so this dir IS the repo for a
+// setup-provisioned node.
+//
+// memSecret rides this SAME lookup (AdvisorTask.MemSecret) but is looked up
+// in the SEPARATE memSessions registry when actually used (memoryMCPServers)
+// — the advisor-thread token itself must never double as the memory MCP
+// bearer credential; see vetting.AdvisorTask.MemSecret.
+func (a *Agent) resolveNode(prompt string) (cwd, memSecret string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
-	return a.opts.Jail.EnsureDir(a.opts.UserID, at.SessionID, workspace.NodeDir(at.WorkspaceNodeID))
+	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.SessionID, workspace.NodeDir(at.WorkspaceNodeID))
+	return cwd, at.MemSecret, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, translate the update
@@ -144,7 +151,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, err := a.resolveCwd(prompt)
+		cwd, memSecret, err := a.resolveNode(prompt)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -154,7 +161,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			outbound = a.opts.Preamble + "\n\n" + outbound
 		}
 		stopped := false
-		err = a.round(ctx, cwd, outbound, func(spec eventSpec) bool {
+		err = a.round(ctx, cwd, memSecret, outbound, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
 				stopped = true
 				return false
@@ -170,7 +177,9 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 // round drives one subprocess round: spawn, handshake, prompt, stream updates
 // through the translator into emit, and emit the final answer spec last.
 // Separated from runPrompt so it is drivable with a plain context in tests.
-func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(eventSpec) bool) (err error) {
+// memSecret is this node's memory-MCP credential ("" disables the surface for
+// the round); it never rides outbound — see resolveNode.
+func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
@@ -197,11 +206,12 @@ func (a *Agent) round(ctx context.Context, cwd, outbound string, emit func(event
 		otelobs.End(handshakeSpan, err)
 		return fmt.Errorf("acp: initialize: %w%s", err, h.stderrTail())
 	}
-	// The memory MCP surface (#344) rides the SAME advisor-thread token this
-	// round's outbound prompt carries (see resolveCwd) — scope is resolved
-	// server-side from that token, never from a tool argument.
-	advisorToken, _ := vetting.ParseAdvisorThread(outbound)
-	mcpServers := memoryMCPServers(advisorToken, initResp.AgentCapabilities)
+	// The memory MCP surface (#344) is keyed by memSecret — an unguessable
+	// per-node credential resolved in-process (resolveNode), NEVER placed in
+	// outbound: an untrusted external subprocess can already see its running
+	// siblings' node IDs in its own prompt, and the advisor-thread token those
+	// IDs would let it reconstruct must never double as a bearer credential.
+	mcpServers := memoryMCPServers(memSecret, initResp.AgentCapabilities)
 	sess, err := h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
 	if err != nil {
 		otelobs.End(handshakeSpan, err)

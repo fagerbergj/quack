@@ -559,10 +559,20 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		act := actFor(answer)
 		// Fold in whatever the ACP memory MCP surface's stage_memory landed across
 		// every round of this node (#344) — the same pass-gated commit path a
-		// native agent's stage_memory tool call rides via session replay.
+		// native agent's stage_memory tool call rides via session replay. Looked
+		// up via the node's MemSecret (a SEPARATE, unguessable registry key from
+		// advisorToken — see AdvisorTask.MemSecret), and unregistered the moment
+		// it's drained: a straggler stage_memory call arriving after this point
+		// finds no session and fails outright, rather than writing into a buffer
+		// nobody will ever read again.
 		if advisorToken != "" {
-			if t, ok := LookupAdvisorThread(advisorToken); ok && t.Staged != nil {
-				act.staged = append(act.staged, t.Staged.Drain()...)
+			if t, ok := LookupAdvisorThread(advisorToken); ok && t.MemSecret != "" {
+				if ms, ok := LookupMemSession(t.MemSecret); ok {
+					if ms.Staged != nil {
+						act.staged = append(act.staged, ms.Staged.Drain()...)
+					}
+					UnregisterMemSession(t.MemSecret)
+				}
 			}
 		}
 		if res.Passed {

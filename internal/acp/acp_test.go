@@ -115,7 +115,7 @@ func testAgent(t *testing.T, mode string) *Agent {
 func TestRound_FullPromptRound(t *testing.T) {
 	a := testAgent(t, "happy")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "add the feature", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", "add the feature", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -150,7 +150,7 @@ func TestRound_CancelGraceful(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "loop forever", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", "loop forever", func(eventSpec) bool { return true })
 	if err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("want context cancellation, got %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "loop forever", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", "loop forever", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error from a cancelled round")
 	}
