@@ -1,10 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
-import { Expandable } from './Expandable'
+import { CopyButton } from './CopyButton'
 import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
 import type { NodeState, NodeStatus } from '../state/chatStore'
-import { agentLabel, type AgentRun } from './messageParts'
+import { agentLabel, type Activity, type AgentRun } from './messageParts'
+import { previewLine } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
@@ -161,59 +162,165 @@ function RunModel({ run }: { run: AgentRun }) {
   )
 }
 
+// ContentPopup shows one block of prose (a judge verdict, a node's vetted
+// answer) full-size, as an extension of the main chat rather than a bespoke
+// modal — the same structure NodePopup uses (#384/#406): a light overlay, a
+// close ✕ on its own row (never overlapping the content — the maintainer just
+// fixed exactly that overlap on NodePopup), Escape-to-close, click-outside-to-
+// close, and the content in a chat-style bubble via AssistantText so it reads
+// as formatted markdown.
+function ContentPopup({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-6 pt-2 space-y-2"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex justify-end -mb-1">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{title}</span>
+            <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
+          </div>
+          <AssistantText text={text} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// CollapsedPreview is the one-line "label + truncated preview" affordance —
+// the same compact-collapse ethos as ThinkBlock/ToolBlock (#385/#399) — but
+// clicking it opens the full content in a ContentPopup instead of expanding
+// inline: a judge verdict or a node's vetted answer reads better full-size
+// (it's often the thing the reader most wants to inspect) than height-locked
+// inside the node card.
+function CollapsedPreview({ label, text, popupTitle }: { label: string; text: string; popupTitle: string }) {
+  const [open, setOpen] = useState(false)
+  if (!text) return null
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="w-full flex items-center gap-1.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-left"
+      >
+        <span className="italic shrink-0">{label}</span>
+        <span className="truncate text-gray-300 dark:text-gray-600">{previewLine(text)}</span>
+      </button>
+      {open && <ContentPopup title={popupTitle} text={text} onClose={() => setOpen(false)} />}
+    </>
+  )
+}
+
 // ── per-run stage cards ──────────────────────────────────────────────────────
 
-// WorkerCard renders the worker stage (draft + finalize): its activity —
-// including any ask_advisor consults, which show up as ordinary tool calls. The
-// node's vetted answer is rendered separately at the foot of the node (NodeAnswer),
-// so it sits below the judge rather than inside the worker card. Like every other
-// stage card it carries its own labeled header — without one, its activity rows
-// visually attach to whatever labeled card rendered above it.
+// WorkerCard renders the worker stage's activity as ONE continuous feed —
+// including any ask_advisor consults, which show up as ordinary tool calls.
+// `runs` is one or more consecutive same-stage worker runs (see groupWorkerRuns):
+// a mechanical continuation round (e.g. a deterministic-check retry, #399
+// follow-up) hands the worker another tool-bearing turn as a NEW run, but that's
+// not a meaningful stage boundary the way a judge-triggered revise is — so
+// their activity is concatenated into this one card rather than opening a
+// second boxed block. The node's vetted answer is rendered separately at the
+// foot of the node (NodeAnswer), so it sits below the judge rather than inside
+// the worker card. Like every other stage card it carries its own labeled
+// header — without one, its activity rows visually attach to whatever labeled
+// card rendered above it.
 // Memoized so an event on one run (a new run object, per messageParts' mapRun)
-// only re-renders that run's own card — sibling runs keep the same `run`
+// only re-renders that run's own group — sibling groups keep the same `runs`
 // reference and bail out of the shallow prop compare, instead of every card in
 // the node re-rendering on every tool-call/thinking event (#379).
-const WorkerCard = memo(function WorkerCard({ run, running }: { run: AgentRun; running: boolean }) {
-  const empty = run.activity.length === 0
+const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[]; running: boolean }) {
+  const activity: Activity[] = runs.length === 1 ? runs[0].activity : runs.flatMap(r => r.activity)
+  const empty = activity.length === 0
   if (empty) {
     return running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
   }
+  const model = [...runs].reverse().find(r => r.model)?.model
+  const startedAt = runs.find(r => r.startedAt != null)?.startedAt
+  const durationMs = running ? undefined : runs.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
+  const timerRun: AgentRun = { ...runs[runs.length - 1], startedAt, durationMs, model, done: !running }
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
           {running ? <Spinner /> : (
             <span className="text-xs text-gray-400 dark:text-gray-500">
-              {`${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
+              {`${activity.length} step${activity.length === 1 ? '' : 's'}`}
             </span>
           )}
-          <RunModel run={run} />
-          <RunTimer run={run} />
+          <RunModel run={timerRun} />
+          <RunTimer run={timerRun} />
         </summary>
         <div className="px-4 pb-3">
-          <ActivityList activity={run.activity} agent={run.agent} />
+          <ActivityList activity={activity} agent={runs[runs.length - 1].agent} />
         </div>
       </details>
     </div>
   )
 })
 
-// NodeAnswer renders a node's vetted output as a collapsible at the foot of the
-// node. Shown for every node so each specialist's answer is inspectable — not just
-// the final one (whose answer also appears in the main message bubble).
+// groupWorkerRuns folds consecutive 'worker'-stage runs into one render group
+// so a mechanical continuation round (e.g. a deterministic-check retry) merges
+// into its predecessor's activity feed instead of opening a new boxed block —
+// judge and revise runs stay their own group (they mark a meaningful stage).
+type RunGroup = { stage: AgentRun['stage']; runs: AgentRun[]; activeIdx: number }
+
+function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
+  const groups: RunGroup[] = []
+  runs.forEach((run, i) => {
+    const prev = groups[groups.length - 1]
+    if (run.stage === 'worker' && prev?.stage === 'worker') {
+      prev.runs.push(run)
+      if (i === activeIdx) prev.activeIdx = prev.runs.length - 1
+    } else {
+      groups.push({ stage: run.stage, runs: [run], activeIdx: i === activeIdx ? 0 : -1 })
+    }
+  })
+  return groups
+}
+
+// NodeAnswer renders a node's vetted output as a one-line preview at the foot
+// of the node — the same collapse-to-one-line ethos as ThinkBlock/ToolBlock
+// (#385/#399), extended to the answer (0.9.0 feedback): a truncated preview by
+// default, the full answer in a popup on click (maintainer call: the answer
+// reads better full-size than height-locked inline). Shown for every node so
+// each specialist's answer is inspectable — not just the final one (whose
+// answer also appears in the main message bubble).
 function NodeAnswer({ answer }: { answer: string }) {
+  const [open, setOpen] = useState(false)
   if (!answer) return null
   return (
-    <details className="not-prose border-t border-gray-100 dark:border-gray-700">
-      <summary className="cursor-pointer select-none px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-        answer
-      </summary>
-      <div className="px-4 pb-3">
-        <Expandable maxHeight={360}>
-          <AssistantText text={answer} />
-        </Expandable>
-      </div>
-    </details>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
+      >
+        <span className="shrink-0">answer</span>
+        <span className="truncate text-gray-300 dark:text-gray-600">{previewLine(answer, 100)}</span>
+      </button>
+      {open && <ContentPopup title="Answer" text={answer} onClose={() => setOpen(false)} />}
+    </>
   )
 }
 
@@ -249,10 +356,11 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <div className="px-4 pb-3"><ActivityList activity={run.activity} agent={run.agent} /></div>
         )}
       </details>
-      {/* Fail reason always visible (not hidden behind the collapsed card). */}
+      {/* Verdict collapses to one line, like ThinkBlock — full reasoning opens
+          in a popup, rendered as markdown (0.9.0 feedback). */}
       {run.done && run.feedback && run.feedback !== 'None' && (
-        <div className="px-4 pt-0 pb-2 text-[11px] text-gray-500 dark:text-gray-400 italic">
-          <Expandable maxHeight={120}>{run.feedback}</Expandable>
+        <div className="px-4 pt-0 pb-2">
+          <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Judge verdict · round ${run.round}`} />
         </div>
       )}
     </div>
@@ -458,13 +566,15 @@ export function DagNode({
         <RetryControl nodeId={node.id} onRetry={onRetry} />
       )}
 
-      {/* Per-run stage cards */}
-      {runs.map((run, i) => {
-        const runRunning = i === activeIdx
-        switch (run.stage) {
-          case 'judge':   return <JudgeCard key={run.runId} run={run} running={runRunning} />
-          case 'revise':  return <RevisionCard key={run.runId} run={run} running={runRunning} />
-          default:        return <WorkerCard key={run.runId} run={run} running={runRunning} />
+      {/* Per-run stage cards — consecutive worker runs (e.g. a deterministic-
+          check retry continuation) merge into one activity feed rather than a
+          new boxed block; a judge-triggered revise keeps its own labeled card. */}
+      {groupWorkerRuns(runs, activeIdx).map(group => {
+        const groupRunning = group.activeIdx >= 0
+        switch (group.stage) {
+          case 'judge':   return <JudgeCard key={group.runs[0].runId} run={group.runs[0]} running={groupRunning} />
+          case 'revise':  return <RevisionCard key={group.runs[0].runId} run={group.runs[0]} running={groupRunning} />
+          default:        return <WorkerCard key={group.runs[0].runId} runs={group.runs} running={groupRunning} />
         }
       })}
 
