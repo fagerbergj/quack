@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { ActivityList, AssistantText } from './AgentParts'
+import { within, userEvent, expect } from 'storybook/test'
+import { ActivityList, AssistantText, BubbleHeader } from './AgentParts'
 import type { Activity } from './messageParts'
 
 const meta: Meta<typeof ActivityList> = {
@@ -123,6 +124,25 @@ export const CopyButtonOnToolCall: Story = {
   },
 }
 
+// #435 — the copy button sits in a sibling row over the summary's corner,
+// not nested inside the `<summary>` (invalid HTML, breaks keyboard use):
+// clicking it copies without toggling the collapsed tool block open.
+export const CopyButtonDoesNotToggleSummary: Story = {
+  args: {
+    activity: [
+      { kind: 'tool', tool: { callId: 'c1', name: 'run_command', done: true, args: { command: 'go test ./...' }, result: { exit_code: 0, output: 'ok' } } },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const summary = canvasElement.querySelector('summary')!
+    expect(summary.querySelector('button')).toBeNull()
+    const details = canvasElement.querySelector('details')!
+    await userEvent.click(canvas.getByLabelText('Copy tool call JSON'))
+    expect(details.open).toBe(false)
+  },
+}
+
 // With more than 3 items, older ones fold behind a "⋯ N earlier" toggle.
 export const Windowed: Story = {
   args: {
@@ -179,6 +199,27 @@ const preambleActivity: Activity[] = [
   { kind: 'thinking', text: 'The user wants the timeout value — I should read the config rather than guess.' },
   { kind: 'tool', tool: { callId: 'c1', name: 'read_file', args: { path: 'config.yaml' }, result: { content: 'timeout: 30s' }, done: true } },
 ]
+
+// #416 — the top-level orchestrator card's BubbleHeader carries a StatusDot to
+// the left of the name while the turn is live, matching DagNode's header
+// (dot-then-name); a completed turn passes no `status` and shows no dot.
+export const OrchestratorCardRunning: Story = {
+  render: () => (
+    <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+      <BubbleHeader agent="orchestrator" status="running" />
+      <ActivityList activity={preambleActivity} />
+    </div>
+  ),
+}
+
+export const OrchestratorCardDone: Story = {
+  render: () => (
+    <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+      <BubbleHeader agent="orchestrator" status="done" model="gpt-oss-120b" tokens={412} />
+      <AssistantText text="Dublin's warmest months are May through September." />
+    </div>
+  ),
+}
 
 export const PreambleVsAnswer: Story = {
   render: () => (

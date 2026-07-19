@@ -12,6 +12,7 @@ import { summarizeArgs, previewLine, toolFailed, copyPayload } from './toolForma
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
 import { CopyButton } from './CopyButton'
+import { StatusDot, type DotStatus } from './StatusDot'
 
 // Answer text is Markdown that may embed a little raw HTML — notably the
 // collapsible `<details><summary>Sources</summary>…</details>` block the
@@ -88,10 +89,14 @@ export function AssistantText({ text }: { text: string }) {
 // BubbleHeader is the compact author line atop an assistant bubble: who produced
 // it, what model, and how many tokens it cost. Shared by the answer bubble (a DAG
 // turn's terminal node, or the orchestrator's own plain reply) — real usage only,
-// no estimate: model/tokens are simply omitted when not (yet) known.
-export function BubbleHeader({ agent, model, tokens }: { agent: string; model?: string; tokens?: number }) {
+// no estimate: model/tokens are simply omitted when not (yet) known. `status`
+// is optional (#416): the live orchestrator card passes it to show a StatusDot
+// to the left of the name, matching DagNode's header — omitted for completed
+// turns and DAG-terminal-node attribution, which have no live status to show.
+export function BubbleHeader({ agent, model, tokens, status }: { agent: string; model?: string; tokens?: number; status?: DotStatus }) {
   return (
     <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-400 dark:text-gray-500">
+      {status && <StatusDot status={status} />}
       <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
       {model && (
         <span className="font-mono truncate max-w-[160px]" title={model}>{model}</span>
@@ -193,23 +198,30 @@ function AcpBadge() {
 // thin left rail on expand instead of a bordered card, and a check/cross
 // status icon (done vs failed) rather than the "working" dots once settled.
 // `agent` (the run's agent bundle name) drives the ACP badge — see isAcpAgent.
+// The copy button sits in a sibling header row layered over the summary's
+// right edge (#435), not nested inside the `<summary>` itself: a `<summary>`
+// is already the disclosure's own interactive control, and a button nested
+// inside it is invalid HTML that breaks keyboard use (Enter/Space on the
+// summary vs. the nested button conflict).
 export function ToolBlock({ tool, agent }: { tool: ToolCall; agent?: string }) {
   const argSummary = summarizeArgs(tool.args)
   return (
-    <details className="group my-0.5 not-prose">
-      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px]">
-        <ToolStatusIcon tool={tool} />
-        <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{tool.name}</code>
-        {isAcpAgent(agent) && <AcpBadge />}
-        {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
-        <span className="ml-auto shrink-0">
-          <CopyButton text={copyPayload(tool.args, tool.result, tool.done)} label="Copy tool call JSON" />
-        </span>
-      </summary>
-      <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
-        <ToolCallView tool={tool} />
-      </div>
-    </details>
+    <div className="relative my-0.5 not-prose">
+      <details className="group">
+        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 pr-6 text-[11px]">
+          <ToolStatusIcon tool={tool} />
+          <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{tool.name}</code>
+          {isAcpAgent(agent) && <AcpBadge />}
+          {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
+        </summary>
+        <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
+          <ToolCallView tool={tool} />
+        </div>
+      </details>
+      <span className="absolute right-0 top-0.5 shrink-0">
+        <CopyButton text={copyPayload(tool.args, tool.result, tool.done)} label="Copy tool call JSON" />
+      </span>
+    </div>
   )
 }
 

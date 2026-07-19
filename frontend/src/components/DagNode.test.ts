@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { createElement } from 'react'
+// @vitest-environment jsdom
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DagNode } from './DagNode'
 import type { DagNodeDef } from '../state/agentStream'
@@ -83,5 +85,54 @@ describe('DagNode — deterministic-retry continuation merges into one feed', ()
     ], 'the answer')
     expect(withRevise).toContain('Revised')
     expect(withRevise).toContain('1 step')
+  })
+})
+
+// #426 — the judge verdict's popup CopyButton writes the full verdict text to
+// the clipboard. Needs a real DOM (click-through), unlike the static-markup
+// tests above.
+describe('DagNode — judge verdict popup copy button (#426)', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  it('copies the full verdict text, not something else', () => {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    const verdict = 'Mostly solid, but the rainfall claim needs a source.'
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(DagNode, {
+        node,
+        state: { status: 'done', startedAt: 0, finishedAt: 1000 },
+        runs: [
+          { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity },
+          { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: true, score: 0.5, passed: false, feedback: verdict, activity: [] },
+        ],
+        answer: 'answer text',
+        isFinal: false,
+      }))
+    })
+
+    const previewButton = Array.from(host.querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Mostly solid'))!
+    act(() => { previewButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+
+    const copyButton = Array.from(host.querySelectorAll('button'))
+      .find(b => b.getAttribute('aria-label')?.startsWith('Copy judge verdict'))!
+    act(() => { copyButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+
+    expect(writeText).toHaveBeenCalledWith(verdict)
   })
 })
