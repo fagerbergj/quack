@@ -9,22 +9,6 @@ import { previewLine } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
-// StatusBadge pairs the shared StatusDot with the status word — same visual
-// language as the chat list, spelled out (a node card has room a sidebar row
-// doesn't) rather than a colored pill.
-function StatusBadge({ status }: { status: NodeStatus }) {
-  const labels: Record<NodeStatus, string> = {
-    queued: 'queued', running: 'running…', done: 'done', failed: 'failed',
-    needs_input: 'waiting for you', paused: 'paused', cancelled: 'stopped',
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-gray-500 dark:text-gray-400">
-      <StatusDot status={status} />
-      {labels[status]}
-    </span>
-  )
-}
-
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/resume/cancel
 // (no popup round-trip), with "queue a message…" / "edit prompt" / "answer
 // question…" opening the popup only when they need its input/editor. Hidden
@@ -129,14 +113,10 @@ function QueuedBadge({ count }: { count: number }) {
   )
 }
 
+// In-progress indicator: a single pulsating blue dot, matching the running
+// StatusDot — one "live" visual language everywhere, no bouncing-dots spinner.
 function Spinner() {
-  return (
-    <span className="flex items-center gap-0.5">
-      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.3s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.15s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" />
-    </span>
-  )
+  return <span className="flex-shrink-0 inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" aria-label="in progress" />
 }
 
 // RunTimer shows a per-run elapsed timer: live while the run is open, frozen on
@@ -476,10 +456,10 @@ export function DagNode({
     }`}>
       {/* Node header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+        <StatusDot status={state.status} />
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
           {agentLabel(node.agent)}
         </span>
-        <StatusBadge status={state.status} />
         <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
           <span
