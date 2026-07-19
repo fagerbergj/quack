@@ -202,14 +202,45 @@ verdict (request changes / approve) with non-blocking items marked as such.
    severity rather than scattering them.
 2. Check it states an explicit verdict, and that the verdict is consistent with
    its findings (blocking issues ⇒ request changes; none ⇒ approve, nits okay).
+3. A clean change (no `blocking:` findings) must get an explicit `approve` —
+   not a bare `comment` used as a way to avoid committing to a verdict.
 
 **Scoring bands.**
 - **7–10** — clear summary, severity-grouped findings, explicit and consistent
-  verdict.
+  verdict (including an explicit approve on a clean change).
 - **4–6** — mostly structured but missing the summary or a clear verdict, or
   the verdict slightly mismatches the findings.
-- **0–3** — an unstructured wall of comments with no verdict, or a verdict that
-  contradicts the findings (approves over an unresolved blocking issue).
+- **0–3** — an unstructured wall of comments with no verdict, a verdict that
+  contradicts the findings (approves over an unresolved blocking issue), or a
+  clean review left at `comment` instead of `approve`.
+
+---
+
+### `signal_over_noise`
+
+The review reads as findings for a human deciding whether to merge, not a
+transcript of the reviewer's own process — and it never turns an
+environment-specific failure into a code-quality concern.
+
+**Evaluation steps.**
+1. Check the visible body (outside any collapsed `<details>` block) for
+   process narration — a "What I ran"/"What I checked" list of commands
+   (`git diff`, `go test`, `gofmt`, `go vet`, install steps) presented as
+   review content rather than tucked away for debugging.
+2. Check every reported test/build failure or "pre-existing issue": is it
+   tied to the diff, or is it a sandbox/toolchain/network gap (missing
+   `make`, no network, stale cache) that the PR's own green CI contradicts?
+   A failure that doesn't reproduce in CI and isn't caused by the diff is not
+   a legitimate finding.
+
+**Scoring bands.**
+- **7–10** — the body is findings and verdict only (process notes, if any,
+  are in a collapsed block), and no environmental-only failure is reported
+  as a concern.
+- **4–6** — a process-narration section precedes the findings, or one
+  reported failure is questionable but not clearly environmental.
+- **0–3** — the review leads with "what I ran" as its substance, or reports a
+  sandbox/environment failure as a code concern on a PR whose CI is green.
 
 ---
 
