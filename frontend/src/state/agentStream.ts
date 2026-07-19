@@ -316,19 +316,31 @@ export function dispatchAgentEvent(
 }
 
 // readAgentStream parses a fetched SSE ReadableStream (used by the chat send
-// flow, which posts a request body and reads the response stream).
+// flow, which posts a request body and reads the response stream). Returns
+// whether a `done` event was actually seen before the body ended — the POST
+// body carries no Last-Event-ID, so the caller's only signal that the stream
+// ended cleanly (vs. a dropped connection worth reconnecting over) is this.
+// A read error (anything but an intentional abort) is treated the same as the
+// body simply closing: report done=false and let the caller reconnect.
 export async function readAgentStream(
   body: ReadableStream<Uint8Array>,
   handlers: AgentStreamHandlers,
-): Promise<void> {
+): Promise<{ done: boolean }> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
   let currentEvent = 'message'
+  let sawDone = false
   while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
+    let chunk: ReadableStreamReadResult<Uint8Array>
+    try {
+      chunk = await reader.read()
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') throw err
+      break
+    }
+    if (chunk.done) break
+    buf += decoder.decode(chunk.value, { stream: true })
     const lines = buf.split('\n')
     buf = lines.pop()!
     for (const line of lines) {
@@ -341,9 +353,11 @@ export async function readAgentStream(
       if (!raw) continue
       let parsed: unknown
       try { parsed = JSON.parse(raw) } catch { continue }
+      if (currentEvent === 'done') sawDone = true
       dispatchAgentEvent(currentEvent, parsed, handlers)
     }
   }
+  return { done: sawDone }
 }
 
 // attachAgentEventSource wires an EventSource (used by the job live log) to

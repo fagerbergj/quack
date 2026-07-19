@@ -9,8 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/schema"
 )
@@ -247,5 +250,87 @@ func TestSendMessageWithFiles(t *testing.T) {
 	}
 	if len(gotData) != 3 {
 		t.Errorf("file bytes = %d, want 3", len(gotData))
+	}
+}
+
+// TestSubscribeSSEReconnectsWithLastEventID: issue #383 — a dropped
+// subscribe stream (the body closes mid-run, no `done` seen) is retried
+// automatically, resuming past the last event actually delivered via
+// Last-Event-ID, without losing or duplicating any event.
+func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	orig := sseReconnectDelay
+	sseReconnectDelay = func(int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { sseReconnectDelay = orig })
+
+	var attempts int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1/stream", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		if n == 1 {
+			if got := r.Header.Get("Last-Event-ID"); got != "" {
+				t.Errorf("first request: Last-Event-ID = %q, want none", got)
+			}
+			io.WriteString(w, "id: 1\nevent: node_start\ndata: {\"node_id\":\"n1\"}\n\n")
+			io.WriteString(w, "id: 2\nevent: agent_token\ndata: {\"text\":\"partial\"}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return // connection drops mid-run — no `done` event
+		}
+		if got := r.Header.Get("Last-Event-ID"); got != "2" {
+			t.Errorf("reconnect: Last-Event-ID = %q, want 2 (the last event actually delivered)", got)
+		}
+		io.WriteString(w, "id: 3\nevent: agent_token\ndata: {\"text\":\" more\"}\n\n")
+		io.WriteString(w, "id: 4\nevent: done\ndata: {}\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	var names []string
+	err := c.subscribeSSE(context.Background(), "c1", func(ev SSEEvent) error {
+		names = append(names, ev.Name)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("subscribeSSE: %v", err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 2 {
+		t.Fatalf("attempts = %d, want 2 (one drop, one successful reconnect)", got)
+	}
+	want := []string{"node_start", "agent_token", "agent_token", "done"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("events = %v, want %v (no event lost or duplicated across the reconnect)", names, want)
+	}
+}
+
+// TestSubscribeSSEGivesUpAfterRepeatedDrops: a permanently dead server
+// doesn't retry forever — it surfaces an error after the bounded attempt cap.
+func TestSubscribeSSEGivesUpAfterRepeatedDrops(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	orig := sseReconnectDelay
+	sseReconnectDelay = func(int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { sseReconnectDelay = orig })
+
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// Every attempt drops immediately — no events, no `done`.
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	err := c.subscribeSSE(context.Background(), "c1", func(SSEEvent) error { return nil })
+	if err == nil {
+		t.Fatal("subscribeSSE: want an error after repeated drops, got nil")
+	}
+	if got := atomic.LoadInt32(&attempts); got != maxSSEReconnectAttempts+1 {
+		t.Fatalf("attempts = %d, want %d (bounded, not retried forever)", got, maxSSEReconnectAttempts+1)
 	}
 }

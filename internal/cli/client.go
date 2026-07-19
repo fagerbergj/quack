@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/schema"
 )
@@ -240,6 +241,30 @@ func RunAPI(ctx context.Context, out io.Writer, server, method, path string, bod
 type SSEEvent struct {
 	Name string
 	Data json.RawMessage
+	// ID is the SSE `id:` field, if any — the durable-log seq a reconnecting
+	// subscriber resumes past via Last-Event-ID (set by subscribeSSE events
+	// only; the POST send path doesn't carry ids).
+	ID string
+}
+
+// Reconnect tuning for subscribeSSE's dropped-connection retry: capped
+// exponential backoff so a dead server/proxy isn't hammered, bounded so a
+// permanently unreachable server eventually surfaces as an error instead of
+// retrying forever.
+const (
+	maxSSEReconnectAttempts = 6
+	sseReconnectBaseDelay   = time.Second
+	sseReconnectMaxDelay    = 15 * time.Second
+)
+
+// sseReconnectDelay is a var (not a plain func) so tests can shrink it —
+// production behavior is the capped exponential backoff below.
+var sseReconnectDelay = func(attempt int) time.Duration {
+	d := sseReconnectBaseDelay << attempt
+	if d <= 0 || d > sseReconnectMaxDelay { // overflow or past the cap
+		return sseReconnectMaxDelay
+	}
+	return d
 }
 
 // Stream posts content to a chat and returns a channel of SSE events for the TUI
@@ -289,14 +314,56 @@ func (c *Client) streamChan(ctx context.Context, run func(onEvent func(SSEEvent)
 }
 
 // subscribeSSE GETs the chat's stream endpoint and dispatches each SSE event to
-// onEvent until the stream ends.
+// onEvent until the stream ends normally (a `done` event was seen) or ctx is
+// cancelled. A connection dropped mid-run — no `done` seen, whether the body
+// just closed or the request itself failed — is retried with capped
+// exponential backoff, resuming past the last event actually delivered via
+// Last-Event-ID (the server's durable event log, M8), so `chat show -f`
+// recovers from a transient break without the caller doing anything.
 func (c *Client) subscribeSSE(ctx context.Context, chatID string, onEvent func(SSEEvent) error) error {
+	var lastID string
+	var lastErr error
+	for attempt := 0; attempt <= maxSSEReconnectAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(sseReconnectDelay(attempt - 1)):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		sawDone := false
+		err := c.subscribeSSEOnce(ctx, chatID, lastID, func(ev SSEEvent) error {
+			if ev.ID != "" {
+				lastID = ev.ID
+			}
+			if ev.Name == "done" {
+				sawDone = true
+			}
+			return onEvent(ev)
+		})
+		if sawDone || ctx.Err() != nil {
+			return err
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("subscribe: lost connection to the server after %d attempts", maxSSEReconnectAttempts+1)
+}
+
+// subscribeSSEOnce is a single GET of the chat's stream endpoint, resuming
+// past lastID via Last-Event-ID when reconnecting.
+func (c *Client) subscribeSSEOnce(ctx context.Context, chatID, lastID string, onEvent func(SSEEvent) error) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.BaseURL+"/api/v1/chats/"+chatID+"/stream", nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	if lastID != "" {
+		req.Header.Set("Last-Event-ID", lastID)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return c.reachErr(err)
@@ -412,19 +479,20 @@ func (c *Client) reachErr(err error) error {
 }
 
 // parseSSE reads an SSE body and dispatches each event to onEvent. Framing:
-// `event:`/`data:` lines, events separated by a blank line; multiple data lines
-// join with newlines (per the SSE spec); `:` comment lines are ignored.
+// `event:`/`id:`/`data:` lines, events separated by a blank line; multiple
+// data lines join with newlines (per the SSE spec); `:` comment lines are
+// ignored.
 func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // a tool_result event can be large
-	var name string
+	var name, id string
 	var data strings.Builder
 	flush := func() error {
 		if name == "" && data.Len() == 0 {
 			return nil
 		}
-		ev := SSEEvent{Name: name, Data: json.RawMessage(data.String())}
-		name, data = "", strings.Builder{}
+		ev := SSEEvent{Name: name, Data: json.RawMessage(data.String()), ID: id}
+		name, id, data = "", "", strings.Builder{}
 		return onEvent(ev)
 	}
 	for sc.Scan() {
@@ -436,6 +504,8 @@ func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 			}
 		case strings.HasPrefix(line, "event:"):
 			name = strings.TrimSpace(line[len("event:"):])
+		case strings.HasPrefix(line, "id:"):
+			id = strings.TrimSpace(line[len("id:"):])
 		case strings.HasPrefix(line, "data:"):
 			if data.Len() > 0 {
 				data.WriteByte('\n')
