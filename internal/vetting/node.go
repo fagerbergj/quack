@@ -245,8 +245,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// re-clones into the bare user root instead of resuming the draft's clone.
 	// Re-attach it to every tool-bearing round.
 	markerLine := ""
+	advisorToken := ""
 	if token, ok := ParseAdvisorThread(prompt); ok {
 		markerLine = "\n\n" + AdvisorThreadMarker(token)
+		advisorToken = token
 	}
 
 	// Gate-side recall for an EXTERNAL worker — the preload_memory twin (native
@@ -257,7 +259,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	if cfg.ExternalWorker && cfg.CommitMemory {
 		_, recallSpan := otelobs.Start(nodeCtx, "memory.recall",
 			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
-		rec := cfg.Memory.Recall(ctx, memoryScope(ctx, cfg, nodeID), cfg.Task)
+		rec := cfg.Memory.Recall(ctx, MemoryScope(ctx, cfg, nodeID), cfg.Task)
 		recallSpan.SetAttributes(attribute.Bool("hit", rec != ""))
 		recallSpan.End()
 		otelobs.RecordMemoryRecall(rec != "")
@@ -560,6 +562,24 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			continue // re-run the whole gate with the guidance (fresh run IDs)
 		}
 		act := actFor(answer)
+		// Fold in whatever the ACP memory MCP surface's stage_memory landed across
+		// every round of this node (#344) — the same pass-gated commit path a
+		// native agent's stage_memory tool call rides via session replay. Looked
+		// up via the node's MemSecret (a SEPARATE, unguessable registry key from
+		// advisorToken — see AdvisorTask.MemSecret), and unregistered the moment
+		// it's drained: a straggler stage_memory call arriving after this point
+		// finds no session and fails outright, rather than writing into a buffer
+		// nobody will ever read again.
+		if advisorToken != "" {
+			if t, ok := LookupAdvisorThread(advisorToken); ok && t.MemSecret != "" {
+				if ms, ok := LookupMemSession(t.MemSecret); ok {
+					if ms.Staged != nil {
+						act.staged = append(act.staged, ms.Staged.Drain()...)
+					}
+					UnregisterMemSession(t.MemSecret)
+				}
+			}
+		}
 		if res.Passed {
 			commitMemoryOnPass(ctx, nodeCtx, cfg, nodeID, answer, act.staged)
 		}
@@ -700,7 +720,7 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	if cfg.Memory == nil || !cfg.CommitMemory || strings.TrimSpace(answer) == "" {
 		return
 	}
-	sc := memoryScope(ctx, cfg, author)
+	sc := MemoryScope(ctx, cfg, author)
 	// The commit is fire-and-forget (best-effort, never blocks the node), so its
 	// span cannot be a normal CHILD of the node span — the node (and its span)
 	// may finish well before this goroutine does. Link it to the node span
@@ -868,11 +888,13 @@ func recordDeliveryOutcomeMetric(cfg Config, res GateResult, attempted, delivere
 	}
 }
 
-// memoryScope is the node's memory entitlement: the repo it is working in (derived
+// MemoryScope is the node's memory entitlement: the repo it is working in (derived
 // from the chat's jail — "" when there is no repo or more than one, in which case the
 // write falls back to the role bucket rather than guessing), its agent's role family,
-// the real user, and its agent name as the legacy read key.
-func memoryScope(ctx adkagent.Context, cfg Config, author string) memory.Scope {
+// the real user, and its agent name as the legacy read key. Exported so the ACP
+// memory MCP surface (internal/acp) resolves the SAME scope for load_memory that
+// the gate itself recalls with (#344).
+func MemoryScope(ctx adkagent.Context, cfg Config, author string) memory.Scope {
 	sc := memory.Scope{Role: cfg.MemoryRole, Legacy: author}
 	if s := ctx.Session(); s != nil {
 		sc.User = s.UserID()
