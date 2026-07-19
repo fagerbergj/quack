@@ -1010,6 +1010,42 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 	}
 }
 
+// A PR follow-up must get the thread injected (not depend on session continuity
+// alone), with the triggering comment excluded — #456 extended to PRs.
+func TestPRFollowupInjectsDiscussion(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most?"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	pr.Comment.ID = 555
+	rc := reviewContext{discussion: prDiscussion{
+		Reviews: []reviewView{{User: "quack-jason[bot]", State: "COMMENTED", Body: "Two blockers in the auth path."}},
+		Comments: []commentView{
+			{ID: 300, User: "hegu-1", Body: "Agree, the second one is the real issue."},
+			{ID: 555, User: "fagerbergj", Body: "which finding matters most?"}, // the trigger; must be excluded
+		},
+	}}
+	msg := ext.runMessage(pr, "which finding matters most?", rc, nil)
+	for _, want := range []string{
+		"conversation so far on this pull request",
+		"Two blockers in the auth path", // quack's own prior review
+		"hegu-1", "the real issue",      // another participant
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("PR follow-up missing injected discussion %q:\n%s", want, msg)
+		}
+	}
+	if strings.Count(msg, "which finding matters most?") != 1 {
+		t.Errorf("triggering comment should appear once (as the message), not duplicated in the thread:\n%s", msg)
+	}
+	for _, absent := range []string{"git_clone", "stage_review"} {
+		if strings.Contains(msg, absent) {
+			t.Errorf("PR follow-up must not carry the review playbook (%q):\n%s", absent, msg)
+		}
+	}
+}
+
 func TestVerifySignature(t *testing.T) {
 	secret := []byte(testSecret)
 	body := []byte(`{"hello":"world"}`)

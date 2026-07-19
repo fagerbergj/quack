@@ -562,10 +562,21 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	defer lock.Unlock()
 
 	var rc reviewContext
-	// Only a work request (review/implement) needs the plan-time PR context; a
-	// conversational follow-up answers from the session and skips the API calls.
-	if p.Issue.PullRequest != nil && isWorkRequest(task) {
-		rc = e.gatherReviewContext(ctx, owner, repo, number)
+	// A work request (review/implement) needs the full plan-time PR context. A
+	// conversational PR follow-up needs only the discussion — so it answers from
+	// the thread, not the durable session alone, which gets trimmed and never
+	// held comments others posted after quack's review (#456, extended to PRs).
+	if p.Issue.PullRequest != nil {
+		if isWorkRequest(task) {
+			rc = e.gatherReviewContext(ctx, owner, repo, number)
+		} else if !p.isLabelTrigger {
+			if d, derr := e.app.listPRDiscussion(ctx, owner, repo, number); derr != nil {
+				slog.Warn("github: listPRDiscussion failed; answering the follow-up from the session alone",
+					"component", "github", "repo", owner+"/"+repo, "pr", number, "err", derr)
+			} else {
+				rc.discussion = d
+			}
+		}
 	}
 	// A real @mention on an ISSUE (not a label-driven synthetic, not a PR whose
 	// thread rides the session) is otherwise blind to the discussion — it would
@@ -933,6 +944,24 @@ func discussionSummary(d prDiscussion) string {
 	return b.String()
 }
 
+// excludeComment returns d with one comment id dropped from its general
+// conversation — the triggering follow-up comment, which is quoted separately
+// and must not be repeated in the thread dump. Reviews/inline comments are left
+// untouched (a follow-up is never one of those).
+func excludeComment(d prDiscussion, id int64) prDiscussion {
+	if id == 0 || len(d.Comments) == 0 {
+		return d
+	}
+	out := d
+	out.Comments = make([]commentView, 0, len(d.Comments))
+	for _, c := range d.Comments {
+		if c.ID != id {
+			out.Comments = append(out.Comments, c)
+		}
+	}
+	return out
+}
+
 // truncate shortens s to at most n runes, marking any cut with an ellipsis.
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
@@ -971,7 +1000,12 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		fmt.Fprintf(&b, "GitHub user @%s asked a follow-up on %s/%s pull request #%d (pull_number=%d).\n\n",
 			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)
 		fmt.Fprintf(&b, "Their message:\n%s\n\n", task)
-		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from THIS thread's prior conversation — including any review you already posted, which is in your context. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.\n\n")
+		// Inject the PR thread so the answer doesn't depend on session continuity
+		// alone (#456). The triggering comment is dropped — it's quoted above.
+		if ds := discussionSummary(excludeComment(rc.discussion, p.Comment.ID)); ds != "" {
+			fmt.Fprintf(&b, "The conversation so far on this pull request (your own prior reviews/answers included):\n%s\n", ds)
+		}
+		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from the conversation above and any review you already posted. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.\n\n")
 		b.WriteString("If — and only if — their message explicitly corrects a SPECIFIC finding you posted on THIS pull request as a FALSE POSITIVE (wrong, not a real issue), call correct_review_finding BEFORE replying, with the finding you got wrong and their reason — so the next review of similar code doesn't repeat it. Do not call it for anything else (general questions, disagreement without a concrete reason, or findings that still stand).")
 		return b.String()
 	}
