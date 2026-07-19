@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -80,8 +80,14 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
  * output item has been added; `node_queued` ({"node_id"}), `node_start`
  * ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
- * `node_failed` ({"node_id","error"}), and `node_cancelled` ({"node_id"})
- * track node lifecycle.
+ * `node_failed` ({"node_id","error"}), `node_cancelled` ({"node_id"}), and
+ * `node_paused` ({"node_id"}) track node lifecycle. `node_steered`
+ * ({"node_id","guidance"}) fires when a node's queued message(s) are
+ * delivered at its next turn boundary and it re-runs with them folded
+ * in. A node's pending queue itself (add/edit/remove) is tracked
+ * client-side from the POST/PATCH/DELETE `.../queue` responses, not a
+ * separate SSE event — those calls are synchronous and already tell the
+ * caller what changed.
  *
  * `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
  * reports one staged item's ACTUAL outward-boundary outcome (push +
@@ -131,30 +137,91 @@ export const getResponse = <ThrowOnError extends boolean = false>(options: Optio
 export const subscribeChatStream = <ThrowOnError extends boolean = false>(options: Options<SubscribeChatStreamData, ThrowOnError, SubscribeChatStreamResponse>): Promise<ServerSentEventsResult<SubscribeChatStreamResponses>> => (options.client ?? client).sse.get<SubscribeChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
 
 /**
- * Transition a DAG node's status (cancel, retry, or steer)
+ * Transition a DAG node's status (cancel, pause/resume, or retry)
  *
- * A single resource-oriented endpoint replacing the old cancel/steer/retry
- * RPC verbs — the request body names the TARGET status:
+ * A single resource-oriented endpoint — the request body names the
+ * TARGET status:
  *
  * - `{"status":"cancelled"}` — cancel the node (legal from `queued`,
- * `running`, or `needs_input`). No-op (200, unchanged state) if the node
- * isn't currently live.
- * - `{"status":"running","guidance":"..."}` — steer: interrupt a RUNNING
- * node and re-run it against its SAME session (prior tool calls/results
- * retained) with the supplied guidance. Only legal from `running`;
- * `guidance` is required (400 without it).
- * - `{"status":"queued","guidance":"..."}` — retry: re-run a finished node
- * (and every node downstream of it) reusing the stored outputs of all
- * other nodes. Only legal from `done`, `failed`, or `cancelled`.
- * `guidance` is optional and folded into the node's task.
+ * `running`, `paused`, or `needs_input`). Kills the in-flight
+ * model/tool call via context; no resume. No-op (200, unchanged
+ * state) if the node isn't currently live.
+ * - `{"status":"paused"}` — suspend a RUNNING node at its next safe
+ * point, keeping its accumulated work. Only legal from `running`.
+ * - `{"status":"running"}` — resume a `paused` node: a fresh re-run
+ * (like retry) that reuses the rest of the plan's stored outputs.
+ * Only legal from `paused`.
+ * - `{"status":"queued","guidance":"..."}` — retry: re-run a finished
+ * node (and every node downstream of it) reusing the stored outputs
+ * of all other nodes. Only legal from `done`, `failed`, or
+ * `cancelled`. `guidance` is optional and folded into the node's task.
+ *
+ * To steer a running node with a message, POST to
+ * `.../nodes/{node_id}/queue` instead — it is delivered at the node's
+ * next turn boundary, never mid-turn (replaces the old interrupt-based
+ * steer).
  *
  * An illegal transition (e.g. `done` → `running`) returns 409 naming the
- * allowed target statuses. The re-run (steer/retry) streams over the
+ * allowed target statuses. The re-run (resume/retry) streams over the
  * chat's existing SSE connection — this endpoint does not open a new one.
  *
  */
 export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: Options<UpdateNodeStatusData, ThrowOnError>): RequestResult<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError> => (options.client ?? client).put<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError>({
     url: '/api/v1/chats/{chat_id}/nodes/{node_id}/status',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Edit a not-yet-started node's prompt
+ *
+ * Replaces a pending node's task text before it starts running. Legal
+ * only while the node has no live/persisted "started" state (still
+ * `queued`, and not yet dispatched — e.g. a downstream node waiting on
+ * its dependencies in an already-streaming turn). Once a node has
+ * started, its prompt is immutable — 409.
+ *
+ */
+export const editNodeTask = <ThrowOnError extends boolean = false>(options: Options<EditNodeTaskData, ThrowOnError>): RequestResult<EditNodeTaskResponses, EditNodeTaskErrors, ThrowOnError> => (options.client ?? client).patch<EditNodeTaskResponses, EditNodeTaskErrors, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Queue a message for a running node, delivered at its next turn boundary
+ *
+ * Appends to the node's message queue — the replacement for the old
+ * interrupt-based steer. The node drains its queue (in order) at its
+ * next turn boundary; never mid-turn. Only legal while the node is
+ * `running` (404 if no live control).
+ *
+ */
+export const queueNodeMessage = <ThrowOnError extends boolean = false>(options: Options<QueueNodeMessageData, ThrowOnError>): RequestResult<QueueNodeMessageResponses, QueueNodeMessageErrors, ThrowOnError> => (options.client ?? client).post<QueueNodeMessageResponses, QueueNodeMessageErrors, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Remove a queued message that has not yet been delivered
+ */
+export const removeQueuedMessage = <ThrowOnError extends boolean = false>(options: Options<RemoveQueuedMessageData, ThrowOnError>): RequestResult<RemoveQueuedMessageResponses, RemoveQueuedMessageErrors, ThrowOnError> => (options.client ?? client).delete<RemoveQueuedMessageResponses, RemoveQueuedMessageErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}', ...options });
+
+/**
+ * Edit a queued message that has not yet been delivered
+ */
+export const editQueuedMessage = <ThrowOnError extends boolean = false>(options: Options<EditQueuedMessageData, ThrowOnError>): RequestResult<EditQueuedMessageResponses, EditQueuedMessageErrors, ThrowOnError> => (options.client ?? client).patch<EditQueuedMessageResponses, EditQueuedMessageErrors, ThrowOnError>({
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',

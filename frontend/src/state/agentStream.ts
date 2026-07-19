@@ -111,6 +111,9 @@ export interface AgentStreamHandlers {
   // The node was stopped by the user (PUT node status {"status":"cancelled"}) —
   // rendered neutrally ("stopped"), distinct from a real gate failure.
   onNodeCancelled?: (nodeId: string) => void
+  // The node was suspended by the user (PUT node status {"status":"paused"}) —
+  // keeps its accumulated work; resumable via {"status":"running"}.
+  onNodePaused?: (nodeId: string) => void
   // One staged item's actual delivery outcome — not yet rendered in the UI;
   // wired so the event is parsed rather than silently dropped (see M13/OTel
   // observability: this is the phantom-success visibility signal).
@@ -125,7 +128,7 @@ export interface AgentStreamHandlers {
 export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
-  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_steered', 'node_needs_input',
+  'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_paused', 'node_steered', 'node_needs_input',
   'delivery_result',
 ] as const
 export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
@@ -280,6 +283,9 @@ export function dispatchAgentEvent(
     }
     case 'node_cancelled':
       if (hasStringField(parsed, 'node_id')) handlers.onNodeCancelled?.(parsed.node_id)
+      return true
+    case 'node_paused':
+      if (hasStringField(parsed, 'node_id')) handlers.onNodePaused?.(parsed.node_id)
       return true
     case 'node_steered': {
       const p = parsed as { node_id?: string; guidance?: string }

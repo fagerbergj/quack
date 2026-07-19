@@ -60,24 +60,38 @@ type GateResult struct {
 // emitting an empty output that cascades into empty dependents.
 var ErrNodeEmpty = errors.New("vetting: node produced no answer")
 
-// NodeControl lets a caller cancel or steer a running gate between its stages.
-// nil = no control. Cooperative: checked at gate-stage boundaries (before each
-// judge round), not mid-model-call: mid-call per-node cancel isn't possible on
-// ADK v2 without breaking event streaming (the nodes of one plan share a runner
-// and its event stream; cancelling that context would take out the siblings).
+// ErrNodePaused is returned by RunGatedRefine when the user paused the node
+// (NodeControl.Paused). The node body catches it and keeps the accumulated
+// answer, same as a cancel, but the DAG marks the node "paused" (resumable)
+// instead of "cancelled" — see dag.Executor.PauseNode's ponytail note on why
+// this is a graceful stop-and-resume-fresh rather than a literal frozen
+// checkpoint.
+var ErrNodePaused = errors.New("vetting: node paused")
+
+// NodeControl lets a caller cancel, pause, or queue a message for a running
+// gate between its stages. nil = no control. Cooperative: checked at
+// gate-stage boundaries (before each judge round), not mid-model-call:
+// mid-call per-node cancel isn't possible on ADK v2 without breaking event
+// streaming (the nodes of one plan share a runner and its event stream;
+// cancelling that context would take out the siblings).
 //
-// That makes this check the BACKSTOP, not the whole story: it is what actually
-// ends the node and keeps its partial answer (continue-but-warn), but a worker
-// deep in a tool loop can be minutes from the next stage boundary. The TOOL layer
-// closes that window — a cancelled node's next tool call is refused outright
-// (tools.Deps.NodeCancelled / cancelguard.go), so the worker gives up its turn
-// and arrives here promptly. Steer has no such shortcut: it still lands only at
-// the next stage boundary.
+// That makes this check the BACKSTOP, not the whole story for Cancelled: it is
+// what actually ends the node and keeps its partial answer (continue-but-warn),
+// but a worker deep in a tool loop can be minutes from the next stage boundary.
+// The TOOL layer closes that window — a cancelled node's next tool call is
+// refused outright (tools.Deps.NodeCancelled / cancelguard.go), so the worker
+// gives up its turn and arrives here promptly. Paused and a queued message have
+// no such shortcut by design — a queued message must NEVER interrupt mid-turn
+// (that was the old steer's mistake); it only ever lands at a stage boundary.
 type NodeControl interface {
 	// Cancelled reports whether this node should stop (keep its current answer).
 	Cancelled() bool
-	// TakeSteer returns and clears any pending steer guidance ("" if none).
-	TakeSteer() string
+	// Paused reports whether this node should suspend (keep its current answer,
+	// resumable — see ErrNodePaused).
+	Paused() bool
+	// TakeQueued drains every not-yet-delivered queued message, joined into one
+	// guidance block ("" if the queue had nothing pending).
+	TakeQueued() string
 }
 
 // AskToolName is the mid-node HITL tool a worker calls to ask the user a
@@ -300,6 +314,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	}
 
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
+	paused := func() bool { return ctrl != nil && ctrl.Paused() }
 	// The judge runs in its own isolated runner (off the workflow event stream), so
 	// its activity can't ride that stream. Forward it to the client as a stage:judge
 	// run via the SSE sink injected on ctx (executor.Execute) — SSE-only, never
@@ -315,22 +330,27 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		promptEmit = nil
 	}
 
-	// Per-node steer/cancel (M5b), cooperative at gate-stage boundaries: ADK v2
-	// can't cancel a single model call mid-flight without breaking event streaming,
-	// so cancel/steer land between stages. basePrompt is the un-guided task; a steer
-	// re-runs the whole gate with the guidance appended.
+	// Per-node cancel/pause/queue (M5b, reworked for #265), cooperative at
+	// gate-stage boundaries: ADK v2 can't cancel a single model call mid-flight
+	// without breaking event streaming, so cancel/pause/a queued message all
+	// land between stages. basePrompt is the un-guided task; a delivered queued
+	// message re-runs the whole gate with it appended.
 	basePrompt := prompt
-	steerAttempt := 0
+	queueAttempt := 0
 	for {
 		if cancelled() {
 			return "", GateResult{}, nil // cancelled before drafting → empty (continue-but-warn)
 		}
-		// A steered re-run needs fresh RunNode run IDs: WithRunID replays a completed
-		// run (the durable-skip property), so reusing "worker-r0" would replay the
-		// pre-steer draft instead of re-invoking the worker with the guidance.
+		if paused() {
+			return "", GateResult{}, ErrNodePaused // paused before drafting → keep whatever this node has (nothing yet)
+		}
+		// A re-run after a delivered queued message needs fresh RunNode run IDs:
+		// WithRunID replays a completed run (the durable-skip property), so
+		// reusing "worker-r0" would replay the pre-queue draft instead of
+		// re-invoking the worker with the message folded in.
 		sfx := ""
-		if steerAttempt > 0 {
-			sfx = fmt.Sprintf("-s%d", steerAttempt)
+		if queueAttempt > 0 {
+			sfx = fmt.Sprintf("-s%d", queueAttempt)
 		}
 		question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
@@ -462,27 +482,50 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 		}
 
+		// Turn-boundary control check, even when no judge round runs at all
+		// (cfg.JudgeRounds == 0 or judge == nil skips the loop below entirely) —
+		// a paused/cancelled/queued node must be honored here too, not just
+		// inside the judge loop.
+		if ctrl != nil {
+			if ctrl.Cancelled() {
+				return answer, GateResult{}, nil
+			}
+			if ctrl.Paused() {
+				return answer, GateResult{}, ErrNodePaused
+			}
+			if q := ctrl.TakeQueued(); strings.TrimSpace(q) != "" {
+				log.Info("node has a queued message; re-running with it", "node", nodeID)
+				queueAttempt++
+				prompt = basePrompt + "\n\n--- Queued user message (address this before continuing) ---\n" + q
+				continue
+			}
+		}
+
 		// Judge/revise loop: judge the current answer, fold in the deterministic
 		// citation/length criteria, and on a fail revise via a fresh worker call whose
 		// prompt inlines the feedback + prior answer (buildRevisionContent is
 		// self-contained, so the stateless worker needs no session continuity).
 		var res GateResult
-		steered := ""
+		queuedText := ""
 		// JudgeRounds counts REVISION attempts: round r judges, and on a fail (with
 		// budget left) revises, so N rounds = N revisions / N+1 judgments. The
 		// cfg.JudgeRounds > 0 guard keeps 0 meaning "no judge at all" — judge:false
 		// sets 0 but the global judge factory is non-nil, so only this bound skips it.
 		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
-			// Cooperative cancel/steer, checked before each judge round AND before the
-			// empty-answer guard below — so an empty node (a reasoning model that
-			// produced nothing) can still be cancelled or steered into a fresh attempt.
-			// Cancel stops refining (keep the current answer); a steer re-runs the gate.
+			// Cooperative cancel/pause/queue, checked before each judge round AND
+			// before the empty-answer guard below — so an empty node (a reasoning
+			// model that produced nothing) can still be cancelled, paused, or
+			// re-run with a queued message. Cancel/pause stop refining (keep the
+			// current answer); a delivered queued message re-runs the gate.
 			if ctrl != nil {
 				if ctrl.Cancelled() {
 					return answer, res, nil
 				}
-				if g := ctrl.TakeSteer(); strings.TrimSpace(g) != "" {
-					steered = g
+				if ctrl.Paused() {
+					return answer, res, ErrNodePaused
+				}
+				if q := ctrl.TakeQueued(); strings.TrimSpace(q) != "" {
+					queuedText = q
 					break
 				}
 			}
@@ -555,11 +598,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				answer = revised
 			}
 		}
-		if steered != "" {
-			log.Info("node steered; re-running with guidance", "node", nodeID)
-			steerAttempt++
-			prompt = basePrompt + "\n\n--- User steering guidance (revise your approach accordingly) ---\n" + steered
-			continue // re-run the whole gate with the guidance (fresh run IDs)
+		if queuedText != "" {
+			log.Info("node has a queued message; re-running with it", "node", nodeID)
+			queueAttempt++
+			prompt = basePrompt + "\n\n--- Queued user message (address this before continuing) ---\n" + queuedText
+			continue // re-run the whole gate with the message folded in (fresh run IDs)
 		}
 		act := actFor(answer)
 		// Fold in whatever the ACP memory MCP surface's stage_memory landed across

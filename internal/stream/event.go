@@ -68,6 +68,7 @@ const (
 	EventNodeNeedsInput = "node_needs_input"
 	EventNodeFailed     = "node_failed"
 	EventNodeCancelled  = "node_cancelled"
+	EventNodePaused     = "node_paused"
 	EventNodeSteered    = "node_steered"
 
 	// EventDeliveryResult reports one staged item's outward-boundary outcome
@@ -280,9 +281,10 @@ func NodeCancelled(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID}}
 }
 
-// NodeSteeredData is the `node_steered` event payload: the user interrupted the
-// node and it is about to re-run with this guidance (its prior session — tool
-// calls and results — is retained). A fresh node_start … node_done follows.
+// NodeSteeredData is the `node_steered` event payload: the node's queued
+// message(s) were delivered at its next turn boundary and it is about to
+// re-run with them folded in (its prior session — tool calls and results —
+// is retained). A fresh node_start … node_done follows.
 type NodeSteeredData struct {
 	NodeID   string `json:"node_id"`
 	Guidance string `json:"guidance"`
@@ -291,6 +293,18 @@ type NodeSteeredData struct {
 // NodeSteered builds a node_steered event.
 func NodeSteered(nodeID, guidance string) SSEEvent {
 	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
+}
+
+// NodePausedData is the `node_paused` event payload: the node was suspended
+// by the user (via PUT node status {"status":"paused"}), keeping its
+// accumulated work. Resumable via {"status":"running"}.
+type NodePausedData struct {
+	NodeID string `json:"node_id"`
+}
+
+// NodePaused builds a node_paused event.
+func NodePaused(nodeID string) SSEEvent {
+	return SSEEvent{Name: EventNodePaused, Data: NodePausedData{NodeID: nodeID}}
 }
 
 // DeliveryResultData is the `delivery_result` event payload: one staged

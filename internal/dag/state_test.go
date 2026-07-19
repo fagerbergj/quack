@@ -13,11 +13,13 @@ func TestCanTransition(t *testing.T) {
 		{"queued to running", StatusQueued, StatusRunning, true},
 		{"queued to cancelled", StatusQueued, StatusCancelled, true},
 		{"queued to failed (stale on restart)", StatusQueued, StatusFailed, true},
-		{"running to running (steer)", StatusRunning, StatusRunning, true},
+		{"running to paused", StatusRunning, StatusPaused, true},
 		{"running to needs_input", StatusRunning, StatusNeedsInput, true},
 		{"running to done", StatusRunning, StatusDone, true},
 		{"running to failed", StatusRunning, StatusFailed, true},
 		{"running to cancelled", StatusRunning, StatusCancelled, true},
+		{"paused to running (resume)", StatusPaused, StatusRunning, true},
+		{"paused to cancelled", StatusPaused, StatusCancelled, true},
 		{"needs_input to running (resumed)", StatusNeedsInput, StatusRunning, true},
 		{"needs_input to cancelled", StatusNeedsInput, StatusCancelled, true},
 		{"done to queued (retry)", StatusDone, StatusQueued, true},
@@ -26,6 +28,7 @@ func TestCanTransition(t *testing.T) {
 		{"empty from defaults to queued", "", StatusRunning, true},
 
 		// illegal edges
+		{"running to running (no more self-loop steer)", StatusRunning, StatusRunning, false},
 		{"done to running", StatusDone, StatusRunning, false},
 		{"cancelled to needs_input", StatusCancelled, StatusNeedsInput, false},
 		{"failed to running", StatusFailed, StatusRunning, false},
@@ -38,6 +41,7 @@ func TestCanTransition(t *testing.T) {
 		{"needs_input to failed", StatusNeedsInput, StatusFailed, false},
 		{"cancelled to running", StatusCancelled, StatusRunning, false},
 		{"cancelled to done", StatusCancelled, StatusDone, false},
+		{"paused to done", StatusPaused, StatusDone, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -55,7 +59,8 @@ func TestAllowedTargets(t *testing.T) {
 		want []NodeStatus
 	}{
 		{"queued", StatusQueued, []NodeStatus{StatusCancelled, StatusFailed, StatusQueued, StatusRunning}},
-		{"running", StatusRunning, []NodeStatus{StatusCancelled, StatusDone, StatusFailed, StatusNeedsInput, StatusRunning}},
+		{"running", StatusRunning, []NodeStatus{StatusCancelled, StatusDone, StatusFailed, StatusNeedsInput, StatusPaused}},
+		{"paused", StatusPaused, []NodeStatus{StatusCancelled, StatusRunning}},
 		{"needs_input", StatusNeedsInput, []NodeStatus{StatusCancelled, StatusRunning}},
 		{"done", StatusDone, []NodeStatus{StatusQueued}},
 		{"failed", StatusFailed, []NodeStatus{StatusQueued}},

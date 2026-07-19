@@ -176,6 +176,52 @@ export const Failed: Story = {
   },
 }
 
+// ---- #265: pause / cancel / queued-message states ---------------------------
+
+export const Cancelled: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'cancelled', startedAt: 0, finishedAt: 8_000 },
+    runs: [workerDone(researchActivity.slice(0, 1))],
+    answer: '',
+    isFinal: false,
+  },
+}
+
+export const Paused: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{ status: 'paused', startedAt: Date.now() - 20_000 }}
+      runs={[workerDone(researchActivity)]}
+      answer="Best months to visit Dublin so far: **May–September** (draft, paused before the judge round)."
+      isFinal={false}
+      onResume={() => {}}
+      onCancel={() => {}}
+    />
+  ),
+}
+
+// A running node with a queued (not-yet-delivered) message showing the ✉
+// badge — the message itself is edited/removed in the popup (#384).
+export const RunningWithQueuedMessage: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{
+        status: 'running', startedAt: Date.now() - 9_000,
+        queue: [{ id: 'q1', text: 'Also check winter rainfall.', delivered: false, created_at: new Date().toISOString() }],
+      }}
+      runs={[{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity }]}
+      answer=""
+      isFinal={false}
+      onCancel={() => {}}
+      onPause={() => {}}
+      onQueueMessage={() => {}}
+    />
+  ),
+}
+
 // Demonstrates Feature 1 (height-lock) in context: a long answer is capped with a
 // Show more toggle, and a many-round node stays scannable because each round is a
 // collapsed card. Open the Work card to see the edit_file diff render (Feature 2).

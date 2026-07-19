@@ -12,6 +12,7 @@ const (
 	StatusQueued     NodeStatus = "queued"
 	StatusRunning    NodeStatus = "running"
 	StatusNeedsInput NodeStatus = "needs_input"
+	StatusPaused     NodeStatus = "paused"
 	StatusDone       NodeStatus = "done"
 	StatusFailed     NodeStatus = "failed"
 	StatusCancelled  NodeStatus = "cancelled"
@@ -22,12 +23,15 @@ const (
 // CanTransition — an edge missing here is a bug (logged), not a silent write.
 //
 //	queued      → running (node dispatched), cancelled (user cancel), failed (stale-on-restart)
-//	running     → running (steer: re-run in place with guidance), needs_input (HITL pause),
-//	              done, failed, cancelled
+//	running     → paused (user pause), needs_input (HITL pause), done, failed, cancelled
+//	paused      → running (resume: a fresh re-run, like retry), cancelled
 //	needs_input → running (resumed with the user's answer), cancelled
 //	done        → queued (retry)
 //	failed      → queued (retry)
 //	cancelled   → queued (retry)
+//
+// A running node no longer self-loops on "running" — steering it is now
+// queueing a message (POST .../queue), which doesn't change its status.
 var transitions = map[NodeStatus]map[NodeStatus]bool{
 	StatusQueued: {
 		StatusQueued:    true, // idempotent re-queue (initial persist, retry fan-out)
@@ -36,11 +40,15 @@ var transitions = map[NodeStatus]map[NodeStatus]bool{
 		StatusFailed:    true,
 	},
 	StatusRunning: {
-		StatusRunning:    true,
+		StatusPaused:     true,
 		StatusNeedsInput: true,
 		StatusDone:       true,
 		StatusFailed:     true,
 		StatusCancelled:  true,
+	},
+	StatusPaused: {
+		StatusRunning:   true,
+		StatusCancelled: true,
 	},
 	StatusNeedsInput: {
 		StatusRunning:   true,

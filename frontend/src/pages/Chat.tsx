@@ -158,12 +158,32 @@ export default function Chat() {
     if (activeChatId) store.stop(activeChatId)
   }, [activeChatId, store])
 
-  const handleStopNode = useCallback((nodeId: string) => {
+  const handleCancelNode = useCallback((nodeId: string) => {
     if (activeChatId) store.cancelNode(activeChatId, nodeId)
   }, [activeChatId, store])
 
-  const handleSteerNode = useCallback((nodeId: string, guidance: string) => {
-    if (activeChatId) store.steerNode(activeChatId, nodeId, guidance)
+  const handlePauseNode = useCallback((nodeId: string) => {
+    if (activeChatId) store.pauseNode(activeChatId, nodeId)
+  }, [activeChatId, store])
+
+  const handleResumeNode = useCallback((nodeId: string) => {
+    if (activeChatId) store.resumeNode(activeChatId, nodeId)
+  }, [activeChatId, store])
+
+  const handleQueueNodeMessage = useCallback((nodeId: string, text: string) => {
+    if (activeChatId) void store.queueNodeMessage(activeChatId, nodeId, text)
+  }, [activeChatId, store])
+
+  const handleEditQueuedMessage = useCallback((nodeId: string, messageId: string, text: string) => {
+    if (activeChatId) void store.editQueuedMessage(activeChatId, nodeId, messageId, text)
+  }, [activeChatId, store])
+
+  const handleRemoveQueuedMessage = useCallback((nodeId: string, messageId: string) => {
+    if (activeChatId) void store.removeQueuedMessage(activeChatId, nodeId, messageId)
+  }, [activeChatId, store])
+
+  const handleEditNodeTask = useCallback((nodeId: string, task: string) => {
+    if (activeChatId) void store.editNodeTask(activeChatId, nodeId, task)
   }, [activeChatId, store])
 
   const handleRetryNode = useCallback((nodeId: string, guidance?: string) => {
@@ -399,7 +419,16 @@ export default function Chat() {
                         ) : (
                           <div className="space-y-3">
                             {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                            <DagView dag={liveDag} onStopNode={handleStopNode} onSteerNode={handleSteerNode} />
+                            <DagView
+                              dag={liveDag}
+                              onCancelNode={handleCancelNode}
+                              onPauseNode={handlePauseNode}
+                              onResumeNode={handleResumeNode}
+                              onQueueNodeMessage={handleQueueNodeMessage}
+                              onEditQueuedMessage={handleEditQueuedMessage}
+                              onRemoveQueuedMessage={handleRemoveQueuedMessage}
+                              onEditNodeTask={handleEditNodeTask}
+                            />
                           </div>
                         )}
                       </div>

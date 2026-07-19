@@ -1,6 +1,7 @@
 import { memo, useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import { Expandable } from './Expandable'
+import { NodePopup } from './NodePopup'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import { agentLabel, type AgentRun } from './messageParts'
 import { type DagNodeDef } from '../state/agentStream'
@@ -11,17 +12,32 @@ function StatusBadge({ status }: { status: NodeStatus }) {
     queued:  'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
     running: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400',
     needs_input: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
+    paused:  'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400',
     done:    'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
     failed:  'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400',
     cancelled: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
   }
   const labels: Record<NodeStatus, string> = {
     queued: 'queued', running: 'running…', done: 'done', failed: 'failed',
-    needs_input: 'waiting for you', cancelled: 'stopped',
+    needs_input: 'waiting for you', paused: 'paused', cancelled: 'stopped',
   }
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${styles[status]}`}>
       {labels[status]}
+    </span>
+  )
+}
+
+// QueuedBadge indicates one or more not-yet-delivered queued messages —
+// visible at a glance on the card, edited/removed in the popup.
+function QueuedBadge({ count }: { count: number }) {
+  if (count === 0) return null
+  return (
+    <span
+      className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+      title={`${count} queued message${count === 1 ? '' : 's'} — delivered at the node's next turn boundary`}
+    >
+      ✉ {count}
     </span>
   )
 }
@@ -179,61 +195,6 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
   )
 })
 
-// NodeControls is the live per-node control row (stop / steer), shown only while
-// a node is running or queued and only on a live run (callbacks present). Steering
-// reveals an inline input; the guidance interrupts the node and re-runs it with
-// its prior work intact.
-function NodeControls({ nodeId, onStop, onSteer }: {
-  nodeId: string
-  onStop?: (nodeId: string) => void
-  onSteer?: (nodeId: string, guidance: string) => void
-}) {
-  const [steering, setSteering] = useState(false)
-  const [text, setText] = useState('')
-  if (!onStop && !onSteer) return null
-  const send = () => {
-    const g = text.trim()
-    if (!g) return
-    onSteer?.(nodeId, g)
-    setText('')
-    setSteering(false)
-  }
-  if (steering) {
-    return (
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-amber-50/50 dark:bg-amber-900/10">
-        <input
-          autoFocus
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { e.preventDefault(); send() }
-            if (e.key === 'Escape') { setSteering(false); setText('') }
-          }}
-          placeholder="Steer this node — new guidance (keeps its work)…"
-          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-400"
-        />
-        <button onClick={send} className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline">send</button>
-        <button onClick={() => { setSteering(false); setText('') }} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
-      </div>
-    )
-  }
-  return (
-    <div className="flex items-center gap-3 px-4 py-1.5 border-b border-gray-100 dark:border-gray-700">
-      {onSteer && (
-        <button onClick={() => setSteering(true)} title="Interrupt and re-run this node with new guidance (keeps its work)"
-          className="text-[10px] font-medium text-amber-600 dark:text-amber-400 hover:underline">
-          ↻ steer
-        </button>
-      )}
-      {onStop && (
-        <button onClick={() => onStop(nodeId)} title="Stop this node (the rest of the run continues)"
-          className="text-[10px] font-medium text-red-500 dark:text-red-400 hover:underline">
-          ✕ stop
-        </button>
-      )}
-    </div>
-  )
-}
 
 // RetryControl re-runs a FINISHED node (failed or done) and everything downstream
 // of it. Plain retry reuses the node's task; "retry with guidance" reveals an inline
@@ -290,18 +251,28 @@ interface Props {
   runs: AgentRun[]
   answer: string
   isFinal: boolean
-  onStop?: (nodeId: string) => void
-  onSteer?: (nodeId: string, guidance: string) => void
+  onCancel?: (nodeId: string) => void
+  onPause?: (nodeId: string) => void
+  onResume?: (nodeId: string) => void
+  onQueueMessage?: (nodeId: string, text: string) => void
+  onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
+  onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
+  onEditTask?: (nodeId: string, task: string) => void
   onRetry?: (nodeId: string, guidance?: string) => void
 }
 
-export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, onRetry }: Props) {
+export function DagNode({
+  node, state, runs, answer, isFinal,
+  onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
+  onRetry,
+}: Props) {
   const running = state.status === 'running'
-  const controllable = running || state.status === 'queued'
   // Retry (→ queued) is legal from done, failed, or cancelled — see dag.CanTransition.
   const finished = state.status === 'done' || state.status === 'failed' || state.status === 'cancelled'
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
+  const [popupOpen, setPopupOpen] = useState(false)
+  const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
 
   return (
     <div className={`rounded-xl border shadow-sm overflow-hidden ${
@@ -315,10 +286,11 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
           {agentLabel(node.agent)}
         </span>
         <StatusBadge status={state.status} />
+        <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
           <span
             className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
-            title={`Steered:\n${state.steers.join('\n')}`}
+            title={`Queued message(s) delivered:\n${state.steers.join('\n')}`}
           >
             ↻ steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
           </span>
@@ -358,14 +330,30 @@ export function DagNode({ node, state, runs, answer, isFinal, onStop, onSteer, o
         </div>
       </div>
 
-      {/* Task description */}
-      <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+      {/* Node summary — click to open the popup (#384): the full prompt as
+          markdown, plus (on a live turn) cancel/pause/resume and the message
+          queue. Optimized for clean presentation, not information density —
+          the full prompt is always recoverable from the trace. */}
+      <button
+        onClick={() => setPopupOpen(true)}
+        className="w-full text-left px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 truncate"
+        title="View prompt and controls"
+      >
         {node.task}
-      </div>
-
-      {/* Live per-node controls (stop / steer) — only while running/queued */}
-      {controllable && (onStop || onSteer) && (
-        <NodeControls nodeId={node.id} onStop={onStop} onSteer={onSteer} />
+      </button>
+      {popupOpen && (
+        <NodePopup
+          node={node}
+          state={state}
+          onClose={() => setPopupOpen(false)}
+          onCancel={onCancel}
+          onPause={onPause}
+          onResume={onResume}
+          onQueueMessage={onQueueMessage}
+          onEditQueuedMessage={onEditQueuedMessage}
+          onRemoveQueuedMessage={onRemoveQueuedMessage}
+          onEditTask={onEditTask}
+        />
       )}
 
       {/* Retry a finished node (failed or done) + its downstream, on a live turn */}

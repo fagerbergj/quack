@@ -8,11 +8,11 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem, NodeStatus } from '../generated'
+import type { Turn, DagOutputItem, NodeStatus, QueuedMessage } from '../generated'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged — the generated enum is now the one source of truth for node states.
-export type { NodeStatus }
+export type { NodeStatus, QueuedMessage }
 
 export interface NodeState {
   status: NodeStatus
@@ -34,7 +34,12 @@ export interface NodeState {
   judgeRounds?: number
   judgeFinalScore?: number
   judgePassed?: boolean
-  steers?: string[]   // guidance applied via mid-node steering, in order
+  steers?: string[]   // guidance folded in when a queued message was delivered, in order
+  // Local, optimistic tracking of the node's message queue (add/edit/remove
+  // responses tell the caller what changed; there's no separate SSE sync
+  // event — see openapi.yaml's sendMessage description). Cleared on
+  // node_steered (the queue was drained and delivered).
+  queue?: QueuedMessage[]
 }
 
 export interface DagTurnState {
@@ -247,25 +252,132 @@ export class ChatStore {
     }).catch(() => {})
   }
 
-  // steerNode interrupts one running node and re-runs it with new guidance against
-  // its same session (prior tool calls/results retained). The re-run streams over
-  // the SAME open connection — no abort, no re-plan.
-  steerNode(chatId: string, nodeId: string, guidance: string): void {
-    const g = guidance.trim()
-    if (!g) return
+  // pauseNode suspends one running node at its next turn boundary, keeping its
+  // accumulated work (resumable). Not optimistic, same reasoning as cancelNode.
+  pauseNode(chatId: string, nodeId: string): void {
     fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'running', guidance: g }),
+      body: JSON.stringify({ status: 'paused' }),
     }).then(async res => {
-      // A dropped steer returns 409 (no live control — the node is between runs,
-      // e.g. restarting from an earlier steer). Surface it on the node rather
-      // than silently doing nothing ("steer doesn't work"); the note is
-      // overwritten by the node's next state update.
       if (res.ok) return
       const body = (await res.json().catch(() => ({}))) as { error?: string }
-      this.markNodeError(chatId, nodeId, body.error || `steer rejected (HTTP ${res.status})`)
+      this.markNodeError(chatId, nodeId, body.error || `pause rejected (HTTP ${res.status})`)
     }).catch(() => {})
+  }
+
+  // resumeNode resumes a paused node: a fresh re-run (like retry), reusing the
+  // rest of the plan's stored outputs. Mirrors retryNode's optimistic local
+  // reset + resubscribe.
+  resumeNode(chatId: string, nodeId: string): void {
+    const s = this.states.get(chatId)
+    if (!s?.live?.dag || s.live.streaming) return
+    const dag = s.live.dag
+    const affected = retrySet(dag.edges, nodeId)
+    const nodeStates = { ...dag.nodeStates }
+    const nodeAnswer = { ...dag.nodeAnswer }
+    const nodeRuns = { ...dag.nodeRuns }
+    for (const id of affected) {
+      nodeStates[id] = { status: 'queued' }
+      nodeAnswer[id] = ''
+      nodeRuns[id] = []
+    }
+    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    const generation = this.bumpGeneration(chatId)
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'running' }),
+    })
+      .then(res => {
+        if (!res.ok) throw new Error(`resume failed: HTTP ${res.status}`)
+        this.subscribeToStream(chatId, generation)
+      })
+      .catch((err: unknown) => {
+        const cur = this.states.get(chatId)
+        if (!cur?.live) return
+        const msg = (err as Error)?.message || 'resume failed'
+        this.write(chatId, { ...cur, error: msg, live: { ...cur.live, streaming: false } })
+      })
+  }
+
+  // queueNodeMessage appends a message to a running node's queue — delivered
+  // at its next turn boundary, never mid-turn (replaces the old interrupt-based
+  // steer). 404s (surfaced as a node error note) if the node isn't running.
+  async queueNodeMessage(chatId: string, nodeId: string, text: string): Promise<void> {
+    const message = text.trim()
+    if (!message) return
+    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    }).catch(() => undefined)
+    if (!res) return
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      this.markNodeError(chatId, nodeId, body.error || `queue rejected (HTTP ${res.status})`)
+      return
+    }
+    const created = (await res.json()) as QueuedMessage
+    this.updateNodeQueue(chatId, nodeId, q => [...q, created])
+  }
+
+  // editQueuedMessage rewrites a not-yet-delivered queued message.
+  async editQueuedMessage(chatId: string, nodeId: string, messageId: string, text: string): Promise<void> {
+    const message = text.trim()
+    if (!message) return
+    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/queue/${messageId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    }).catch(() => undefined)
+    if (res?.ok) {
+      this.updateNodeQueue(chatId, nodeId, q => q.map(m => m.id === messageId ? { ...m, text: message } : m))
+    }
+  }
+
+  // removeQueuedMessage drops a not-yet-delivered queued message.
+  async removeQueuedMessage(chatId: string, nodeId: string, messageId: string): Promise<void> {
+    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/queue/${messageId}`, { method: 'DELETE' }).catch(() => undefined)
+    if (res?.ok) {
+      this.updateNodeQueue(chatId, nodeId, q => q.filter(m => m.id !== messageId))
+    }
+  }
+
+  private updateNodeQueue(chatId: string, nodeId: string, fn: (q: QueuedMessage[]) => QueuedMessage[]): void {
+    const s = this.get(chatId)
+    const dag = s.live?.dag
+    if (!s.live || !dag?.nodeStates[nodeId]) return
+    const prev = dag.nodeStates[nodeId].queue ?? []
+    const nodeStates = { ...dag.nodeStates, [nodeId]: { ...dag.nodeStates[nodeId], queue: fn(prev) } }
+    this.write(chatId, { ...s, live: { ...s.live, dag: { ...dag, nodeStates } } })
+  }
+
+  // editNodeTask replaces a not-yet-started node's task text (only legal before
+  // the node has started — 409 once it has, e.g. a downstream node waiting on
+  // its dependencies). Updates the local plan def optimistically on success.
+  async editNodeTask(chatId: string, nodeId: string, task: string): Promise<boolean> {
+    const trimmed = task.trim()
+    if (!trimmed) return false
+    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: trimmed }),
+    }).catch(() => undefined)
+    if (!res?.ok) {
+      if (res) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        this.markNodeError(chatId, nodeId, body.error || `edit rejected (HTTP ${res.status})`)
+      }
+      return false
+    }
+    const s = this.get(chatId)
+    const dag = s.live?.dag
+    if (s.live && dag) {
+      const nodes = dag.nodes.map(n => n.id === nodeId ? { ...n, task: trimmed } : n)
+      this.write(chatId, { ...s, live: { ...s.live, dag: { ...dag, nodes } } })
+    }
+    return true
   }
 
   // markNodeError annotates a live DAG node with a transient error note (used
@@ -670,6 +782,13 @@ export class ChatStore {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'cancelled', finishedAt: Date.now(), error: undefined })
         },
+        onNodePaused: nodeId => {
+          // The node was suspended by the user — keeps its accumulated work,
+          // resumable (unlike cancel). Not a terminal/finished state for the
+          // allDone check below.
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeState(nodeId, { status: 'paused', error: undefined })
+        },
         onNodeNeedsInput: (nodeId, _interruptId, message) => {
           // Mid-node HITL: the node paused to ask the user. Freeze its open runs
           // and mark it waiting; the answer goes out as a normal chat message
@@ -684,7 +803,7 @@ export class ChatStore {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           const s = this.states.get(chatId)
           const prevSteers = s?.live?.dag?.nodeStates[nodeId]?.steers ?? []
-          updateNodeState(nodeId, { status: 'queued', error: undefined, steers: [...prevSteers, guidance] })
+          updateNodeState(nodeId, { status: 'queued', error: undefined, steers: [...prevSteers, guidance], queue: [] })
         },
       }
   }

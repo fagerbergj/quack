@@ -81,12 +81,83 @@ func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
 }
 
-// SteerNode interrupts one running node and re-runs it with new guidance against
-// its same session (prior tool calls/results retained). No-op if no such node is
-// active. The re-run streams over the chat's existing SSE connection.
-func (c *Client) SteerNode(ctx context.Context, chatID, nodeID, guidance string) error {
+// PauseNode suspends one running node at its next turn boundary, keeping its
+// accumulated work (resumable). No-op if no such node is active.
+//
+// ponytail note: pause is a real, working feature (not a stub), but resume is
+// a FRESH re-run (like retry), not a literal frozen-thread checkpoint — ADK
+// v2's static workflow graph needs the node to return to unblock its
+// dependents, so there is no way to freeze it mid-tool-call the way an
+// ask_user HITL pause does. See dag.Executor.PauseNode's own note.
+func (c *Client) PauseNode(ctx context.Context, chatID, nodeID string) error {
 	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
-		schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning, Guidance: &guidance})
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused})
+}
+
+// ResumeNode resumes a paused node: a fresh re-run (like retry), reusing the
+// rest of the plan's stored outputs. Only legal from `paused`.
+func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
+	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+}
+
+// QueueNodeMessage appends a message to a running node's queue, delivered at
+// its next turn boundary (never mid-turn) — replaces the old interrupt-based
+// SteerNode. Returns the created queued message (its id, for later editing or
+// removal). 404 if the node isn't currently running.
+func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text string) (schema.QueuedMessage, error) {
+	var out schema.QueuedMessage
+	b, _ := json.Marshal(schema.QueueMessageBody{Message: text})
+	status, respBody, err := c.Request(ctx, http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/queue", bytes.NewReader(b))
+	if err != nil {
+		return out, err
+	}
+	if status == http.StatusNotFound {
+		return out, ErrNotFound
+	}
+	if status >= 400 {
+		return out, fmt.Errorf("POST .../queue: %s", errBody(bytes.NewReader(respBody)))
+	}
+	return out, json.Unmarshal(respBody, &out)
+}
+
+// EditQueuedMessage rewrites a not-yet-delivered queued message. Errors
+// (surfaced as a 409) if it was already delivered.
+func (c *Client) EditQueuedMessage(ctx context.Context, chatID, nodeID, messageID, text string) error {
+	b, _ := json.Marshal(schema.QueueMessageBody{Message: text})
+	return c.sendBody(ctx, http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/queue/"+messageID, b)
+}
+
+// RemoveQueuedMessage drops a not-yet-delivered queued message. Errors
+// (surfaced as a 409) if it was already delivered.
+func (c *Client) RemoveQueuedMessage(ctx context.Context, chatID, nodeID, messageID string) error {
+	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/queue/"+messageID)
+}
+
+// EditNodeTask replaces a not-yet-started node's task text. Errors (surfaced
+// as a 409) once the node has started — its prompt is then immutable.
+func (c *Client) EditNodeTask(ctx context.Context, chatID, nodeID, task string) error {
+	b, _ := json.Marshal(schema.EditNodeTaskBody{Task: task})
+	return c.sendBody(ctx, http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID, b)
+}
+
+// sendBody issues a request with a JSON body and discards the response;
+// 404 → ErrNotFound, mirroring send.
+func (c *Client) sendBody(ctx context.Context, method, path string, body []byte) error {
+	status, respBody, err := c.Request(ctx, method, path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if status >= 400 {
+		if msg := errBody(bytes.NewReader(respBody)); msg != "" {
+			return fmt.Errorf("%s %s: %s", method, path, msg)
+		}
+		return fmt.Errorf("%s %s: HTTP %d", method, path, status)
+	}
+	return nil
 }
 
 // RetryNode re-queues a finished node (done, failed, or cancelled) — it and

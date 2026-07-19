@@ -19,6 +19,7 @@ func drive(evs []*session.Event, agentByID map[string]string, score gateScore) [
 		map[string]string{},
 		func(string) gateScore { return score },
 		func(string) bool { return false },
+		func(string) bool { return false },
 		func(string, int) string { return "" },
 	)
 	for _, ev := range evs {
@@ -180,6 +181,7 @@ func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 		func(e stream.SSEEvent, _ error) bool { got = append(got, e); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
+		func(string) bool { return false },
 		func(string) bool { return false },
 		func(node string, gen int) string { return fmt.Sprintf("guidance-%s-%d", node, gen) },
 	)

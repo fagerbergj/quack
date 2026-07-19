@@ -31,6 +31,7 @@ func TestNodeDoneReportsDurationAndGateResult(t *testing.T) {
 		map[string]string{node: "goose registers tools via ExtensionManager…"},
 		func(id string) gateScore { return gateScore{score: 1.0, passed: true, rounds: 1} },
 		func(string) bool { return false },
+		func(string) bool { return false },
 		func(string, int) string { return "" },
 	)
 

@@ -437,32 +437,55 @@ func TestRunChatStop(t *testing.T) {
 	}
 }
 
-// TestRunNodeSteer PUTs {"status":"running","guidance":...} to the node status
-// endpoint (updateNodeStatus's steer transition) and confirms on stdout.
-func TestRunNodeSteer(t *testing.T) {
+// TestRunNodePause PUTs {"status":"paused"} to the node status endpoint and
+// confirms on stdout.
+func TestRunNodePause(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var gotBody schema.NodeStatusUpdateBody
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/nodes/n2/status" {
 			_ = json.NewDecoder(r.Body).Decode(&gotBody)
-			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusRunning})
+			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusPaused})
 			return
 		}
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	if err := RunNodeSteer(context.Background(), &out, srv.URL, "c1", "n2", "focus on cost"); err != nil {
+	if err := RunNodePause(context.Background(), &out, srv.URL, "c1", "n2"); err != nil {
 		t.Fatal(err)
 	}
-	if gotBody.Status != schema.NodeStatusRunning {
-		t.Errorf("steer sent status %q, want %q", gotBody.Status, schema.NodeStatusRunning)
+	if gotBody.Status != schema.NodeStatusPaused {
+		t.Errorf("pause sent status %q, want %q", gotBody.Status, schema.NodeStatusPaused)
 	}
-	if gotBody.Guidance == nil || *gotBody.Guidance != "focus on cost" {
-		t.Errorf("steer sent guidance %v, want focus on cost", gotBody.Guidance)
+	if !strings.Contains(out.String(), "Paused node n2") {
+		t.Errorf("pause output %q lacks confirmation", out.String())
 	}
-	if !strings.Contains(out.String(), "Steered node n2") {
-		t.Errorf("steer output %q lacks confirmation", out.String())
+}
+
+// TestRunNodeQueue POSTs {"message":...} to the node queue endpoint and
+// confirms on stdout with the created message id.
+func TestRunNodeQueue(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var gotBody schema.QueueMessageBody
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/chats/c1/nodes/n2/queue" {
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
+			_ = json.NewEncoder(w).Encode(schema.QueuedMessage{Id: "q1", Text: gotBody.Message})
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunNodeQueue(context.Background(), &out, srv.URL, "c1", "n2", "focus on cost"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.Message != "focus on cost" {
+		t.Errorf("queue sent message %q, want %q", gotBody.Message, "focus on cost")
+	}
+	if !strings.Contains(out.String(), "Queued message q1") {
+		t.Errorf("queue output %q lacks confirmation", out.String())
 	}
 }
 
@@ -508,7 +531,7 @@ func TestPutStatusSurfaces409Reason(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	err := RunNodeSteer(context.Background(), io.Discard, srv.URL, "c1", "n2", "g")
+	err := RunNodePause(context.Background(), io.Discard, srv.URL, "c1", "n2")
 	if err == nil {
 		t.Fatal("expected an error on 409")
 	}

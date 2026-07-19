@@ -126,12 +126,34 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
+			// Register a per-node control so CancelNode/PauseNode/QueueNodeMessage
+			// can reach THIS node while it runs (cooperative, at gate-stage
+			// boundaries), and atomically pick up any pending prompt edit for this
+			// not-yet-started node (SetNodeTaskOverride) in the SAME critical
+			// section as the registration — see runControls.registerAndTakeOverride.
+			// Keep ctrl a nil interface when controls are off — a typed-nil would
+			// panic in the gate's ctrl.Cancelled() check. effectiveNode carries the
+			// overridden task text (or node.Task unchanged) everywhere a node body
+			// would otherwise read node.Task: prompt construction, the advisor
+			// task, and cfg.Task (the deterministic delivery check).
+			var ctrl vetting.NodeControl
+			effectiveNode := node
+			if controls != nil {
+				nc, override, ok := controls.registerAndTakeOverride(chatID, node.ID)
+				defer controls.unregister(chatID, node.ID)
+				ctrl = nc
+				if ok {
+					effectiveNode.Task = override
+				}
+			}
+			cfg.Task = effectiveNode.Task
+
 			upstream := upstreamFromInput(in, node.DependsOn)
 			// Continue-but-warn: a dependency whose vetting failed flags itself in
 			// session state; buildTask prefixes a ⚠ warning so this node treats that
 			// input skeptically.
 			gateFailed := readGateFailed(ctx, node.DependsOn)
-			prompt := buildTask(plan, node, upstream, gateFailed)
+			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
 			// Advisor-thread identity: stamp a per-node marker line into the worker's
 			// prompt — the ONE channel that reaches the ask_advisor tool even across
 			// the A2A hop (the tool executes in the A2A server's runner, where the
@@ -149,12 +171,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// inside the A2A server's runner (whose own context session holds no
 			// gate events — see vetting.AdvisorTask).
 			task := vetting.AdvisorTask{
-				Task: node.Task, Rubric: node.Rubric, NodeID: node.ID,
+				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,
 				// WorkspaceNodeID, not NodeID, is what the fs/git tools resolve their
 				// directory scope from (internal/tools scopeFromContext) — NodeID
-				// itself stays the REAL node id for cancel/steer lookups (controls
-				// are registered under it below), which must never be redirected to
-				// the shared scope.
+				// itself stays the REAL node id for cancel/pause/queue lookups
+				// (controls are registered under it above), which must never be
+				// redirected to the shared scope.
 				WorkspaceNodeID: workspaceNodeID(plan, node),
 				InvocationID:    ctx.InvocationID(),
 			}
@@ -196,17 +218,6 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if !mediaAgents[node.AgentName] {
 				atts = nil
 			}
-			// Register a per-node control so CancelNode/SteerNode can reach THIS
-			// node while it runs (cooperative, at gate-stage boundaries). Keep it a
-			// nil interface when controls are off — a typed-nil would panic in the
-			// gate's ctrl.Cancelled() check.
-			var ctrl vetting.NodeControl
-			if controls != nil {
-				nc := controls.register(chatID, node.ID)
-				defer controls.unregister(chatID, node.ID)
-				ctrl = nc
-			}
-
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				// Empty → the node FAILS. The DAG continues (dependents see the gap via
@@ -214,6 +225,16 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				// human can retry the failed node afterward.
 				markGateFailed(ctx, node.ID)
 				return "", nil
+			}
+			if errors.Is(err, vetting.ErrNodePaused) {
+				// Paused → same graph-completion constraint as cancel/empty (the
+				// static workflow graph needs this node to return to unblock its
+				// dependents — see dag.Executor.PauseNode's ponytail note): the DAG
+				// continues on the partial answer (continue-but-warn), and the
+				// stream layer (executor.go's userPaused check) renders it as
+				// node_paused, resumable, instead of node_done/node_cancelled.
+				markGateFailed(ctx, node.ID)
+				return answer, nil
 			}
 			if err == nil {
 				// Record the gate outcome IN PROCESS first: node_done is assembled

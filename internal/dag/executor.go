@@ -101,8 +101,10 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
 			return e.controls.wasCancelled(cancelKey, nodeID)
+		}, func(nodeID string) bool {
+			return e.controls.wasPaused(cancelKey, nodeID)
 		}, func(nodeID string, gen int) string {
-			return e.controls.steerGuidance(cancelKey, nodeID, gen)
+			return e.NodeQueueGuidance(cancelKey, nodeID, gen)
 		}),
 	}
 }
@@ -124,13 +126,13 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 // Finish flushes the last run and emits node_done for every plan node
 // that hasn't already emitted one live. Call after the runner loop ends.
 // Paused reports whether any node paused for user input during this run.
-func (s *DagStream) Paused() bool { return len(s.ds.paused) > 0 }
+func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 
 func (s *DagStream) Finish() {
 	s.ds.flush()
 	// A paused run is incomplete by design: don't fabricate a terminal output
 	// from the last finished node — the real terminal runs after the resume.
-	if len(s.ds.paused) == 0 {
+	if len(s.ds.needsInput) == 0 {
 		ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
 	}
 	for _, n := range s.plan.Nodes {
@@ -143,10 +145,16 @@ func (s *DagStream) Finish() {
 		// A node paused for user input is WAITING, not failed — node_needs_input
 		// already surfaced it. Nodes that never started while a pause is open are
 		// blocked behind it (join/synth downstream of the asker): also waiting.
-		if s.ds.paused[n.ID] {
+		if s.ds.needsInput[n.ID] {
 			continue
 		}
-		if len(s.ds.paused) > 0 && !s.ds.started[n.ID] {
+		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
+			continue
+		}
+		// A user-paused node keeps its accumulated work and is resumable — surfaced
+		// distinctly from cancel (not "stopped").
+		if s.ds.userPaused != nil && s.ds.userPaused(n.ID) {
+			s.yield(stream.NodePaused(n.ID), nil)
 			continue
 		}
 		// A user-cancelled node reads "Stopped by you"; a node that produced NO answer
@@ -244,19 +252,20 @@ func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, no
 // (agent_start/agent_complete + activity) from NodeInfo.Path and emits node_done
 // per node with the judge score fetched from session state.
 type dagStream struct {
-	agentByID map[string]string
-	yield     func(stream.SSEEvent, error) bool
-	outputs   map[string]string        // nodeID → captured output (== caller's nodeOutputs)
-	scoreOf   func(string) gateScore   // reads a node's judge result
-	startedAt map[string]time.Time     // node → when node_start was emitted (for node_done's duration)
-	cancelled func(string) bool        // nodeID → user-cancelled this run (→ "stopped", not "failed")
-	steerOf   func(string, int) string // nodeID + steer generation (the -sN run suffix) → delivered guidance
+	agentByID  map[string]string
+	yield      func(stream.SSEEvent, error) bool
+	outputs    map[string]string        // nodeID → captured output (== caller's nodeOutputs)
+	scoreOf    func(string) gateScore   // reads a node's judge result
+	startedAt  map[string]time.Time     // node → when node_start was emitted (for node_done's duration)
+	cancelled  func(string) bool        // nodeID → user-cancelled this run (→ "stopped", not "failed")
+	userPaused func(string) bool        // nodeID → user-paused this run (→ "paused", not "done"/"failed")
+	steerOf    func(string, int) string // nodeID + queue-drain generation (the -sN run suffix) → delivered guidance
 
 	started     map[string]bool   // node_start emitted
 	doneEmitted map[string]bool   // node_done emitted
-	paused      map[string]bool   // node paused for user input this run (node_needs_input emitted)
+	needsInput  map[string]bool   // node paused for user input this run (node_needs_input emitted)
 	curRun      map[string]string // nodeID → active worker runID
-	steerSeen   map[string]int    // nodeID → highest -sN steer generation announced (node_steered emitted)
+	steerSeen   map[string]int    // nodeID → highest -sN generation announced (node_steered emitted)
 	usage       map[string]*runUsage
 	last        string // last non-empty output (terminal fallback)
 	stopped     bool
@@ -267,10 +276,10 @@ type runUsage struct {
 	model, finish                        string
 }
 
-func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, steerOf func(string, int) string) *dagStream {
+func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
-		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, steerOf: steerOf,
-		started: map[string]bool{}, doneEmitted: map[string]bool{}, paused: map[string]bool{}, startedAt: map[string]time.Time{},
+		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
+		started: map[string]bool{}, doneEmitted: map[string]bool{}, needsInput: map[string]bool{}, startedAt: map[string]time.Time{},
 		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{},
 	}
 }
@@ -312,7 +321,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	// adk_request_input FunctionResponse.
 	if ev.RequestedInput != nil {
 		s.closeRun(node) // end any open worker run cleanly
-		s.paused[node] = true
+		s.needsInput[node] = true
 		return s.emit(stream.NodeNeedsInput(node, ev.RequestedInput.InterruptID, ev.RequestedInput.Message))
 	}
 
@@ -329,6 +338,10 @@ func (s *dagStream) handle(ev *session.Event) bool {
 				s.last = out
 			}
 			switch {
+			case s.userPaused != nil && s.userPaused(node):
+				if !s.emit(stream.NodePaused(node)) {
+					return false
+				}
 			case s.cancelled != nil && s.cancelled(node):
 				if !s.emit(stream.NodeCancelled(node)) {
 					return false

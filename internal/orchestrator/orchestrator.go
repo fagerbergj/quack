@@ -97,11 +97,35 @@ func (o *Orchestrator) CancelNode(chatID, nodeID string) bool {
 	return o.executor.CancelNode(chatID, nodeID)
 }
 
-// SteerNode re-runs a single running node with new guidance. Returns false if no
-// such live node. chatID is the session id used while executing. Cooperative:
-// takes effect at the node's next gate-stage boundary.
-func (o *Orchestrator) SteerNode(chatID, nodeID, guidance string) bool {
-	return o.executor.SteerNode(chatID, nodeID, guidance)
+// PauseNode suspends a single running node at its next gate-stage boundary,
+// keeping its accumulated work (resumable). Returns false if no such live node.
+func (o *Orchestrator) PauseNode(chatID, nodeID string) bool {
+	return o.executor.PauseNode(chatID, nodeID)
+}
+
+// QueueNodeMessage appends a message to a running node's queue, delivered at
+// its next turn boundary (never mid-turn — replaces the old interrupt-based
+// steer). Returns false if no such live node.
+func (o *Orchestrator) QueueNodeMessage(chatID, nodeID, text string) (dag.QueuedMessage, bool) {
+	return o.executor.QueueNodeMessage(chatID, nodeID, text)
+}
+
+// EditQueuedMessage rewrites a not-yet-delivered queued message. Returns false
+// if no such node/message, or it was already delivered.
+func (o *Orchestrator) EditQueuedMessage(chatID, nodeID, messageID, text string) bool {
+	return o.executor.EditQueuedMessage(chatID, nodeID, messageID, text)
+}
+
+// RemoveQueuedMessage drops a not-yet-delivered queued message. Returns false
+// if no such node/message, or it was already delivered.
+func (o *Orchestrator) RemoveQueuedMessage(chatID, nodeID, messageID string) bool {
+	return o.executor.RemoveQueuedMessage(chatID, nodeID, messageID)
+}
+
+// SetNodeTaskOverride edits a not-yet-started node's task text. Returns false
+// if the node has already started.
+func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
+	return o.executor.SetNodeTaskOverride(chatID, nodeID, task)
 }
 
 // RetryNode re-runs a FINISHED node (failed or done) and its descendants for a

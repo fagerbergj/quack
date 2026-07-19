@@ -182,9 +182,9 @@ func TestPrintPromptNeedsInput(t *testing.T) {
 	}
 }
 
-// TestSteerNode PUTs {"status":"running","guidance":...} to the node status
-// endpoint and accepts the 200 the server returns.
-func TestSteerNode(t *testing.T) {
+// TestPauseNode PUTs {"status":"paused"} to the node status endpoint and
+// accepts the 200 the server returns.
+func TestPauseNode(t *testing.T) {
 	var gotBody schema.NodeStatusUpdateBody
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/status", func(w http.ResponseWriter, r *http.Request) {
@@ -193,20 +193,89 @@ func TestSteerNode(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusRunning})
+		_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusPaused})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-	if err := c.SteerNode(context.Background(), "c1", "n2", "focus on cost"); err != nil {
-		t.Fatalf("SteerNode: %v", err)
+	if err := c.PauseNode(context.Background(), "c1", "n2"); err != nil {
+		t.Fatalf("PauseNode: %v", err)
+	}
+	if gotBody.Status != schema.NodeStatusPaused {
+		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusPaused)
+	}
+}
+
+// TestResumeNode PUTs {"status":"running"} (no guidance) to the node status
+// endpoint.
+func TestResumeNode(t *testing.T) {
+	var gotBody schema.NodeStatusUpdateBody
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/status", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusQueued})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if err := c.ResumeNode(context.Background(), "c1", "n2"); err != nil {
+		t.Fatalf("ResumeNode: %v", err)
 	}
 	if gotBody.Status != schema.NodeStatusRunning {
 		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusRunning)
 	}
-	if gotBody.Guidance == nil || *gotBody.Guidance != "focus on cost" {
-		t.Errorf("server got guidance %v, want %q", gotBody.Guidance, "focus on cost")
+	if gotBody.Guidance != nil {
+		t.Errorf("server got guidance %v, want nil (resume carries no guidance)", gotBody.Guidance)
+	}
+}
+
+// TestQueueNodeMessage POSTs {"message":...} to the node queue endpoint and
+// decodes the created QueuedMessage.
+func TestQueueNodeMessage(t *testing.T) {
+	var gotBody schema.QueueMessageBody
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1/nodes/n2/queue", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(schema.QueuedMessage{Id: "q1", Text: gotBody.Message, Delivered: false, CreatedAt: time.Now()})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	m, err := c.QueueNodeMessage(context.Background(), "c1", "n2", "focus on cost")
+	if err != nil {
+		t.Fatalf("QueueNodeMessage: %v", err)
+	}
+	if m.Id != "q1" || m.Text != "focus on cost" {
+		t.Errorf("got %+v, want id=q1 text=%q", m, "focus on cost")
+	}
+}
+
+// TestEditNodeTask PATCHes the node with {"task":...}; a 409 (already
+// started) is surfaced as an error.
+func TestEditNodeTask(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1/nodes/n2", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %s, want PATCH", r.Method)
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"the node has already started; its prompt is immutable"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	err := c.EditNodeTask(context.Background(), "c1", "n2", "revised task")
+	if err == nil || !strings.Contains(err.Error(), "already started") {
+		t.Errorf("EditNodeTask error = %v, want it to mention the node already started", err)
 	}
 }
 

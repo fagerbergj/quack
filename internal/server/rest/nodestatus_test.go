@@ -174,7 +174,54 @@ func TestUpdateNodeStatus_CancelledToNeedsInput409(t *testing.T) {
 	}
 }
 
-func TestUpdateNodeStatus_SteerWithoutGuidance400(t *testing.T) {
+// TestUpdateNodeStatus_PauseUndeliverable409: pause, like cancel, is NOT
+// optimistic — the node's persisted row says "running", but with no live
+// control registered the pause lands nowhere.
+func TestUpdateNodeStatus_PauseUndeliverable409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("seed running node: %v", err)
+	}
+
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (nothing live to pause); body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not pausable") {
+		t.Errorf("409 body should explain nothing was paused; body=%s", rec.Body.String())
+	}
+}
+
+// TestUpdateNodeStatus_ResumePausedNode: paused → running (resume) is legal
+// and kicks off a re-run the same way retry does (optimistic "queued").
+func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
+		t.Fatalf("seed paused node: %v", err)
+	}
+
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got schema.DagNodeState
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Status != schema.NodeStatusQueued {
+		t.Errorf("Status = %q, want %q (optimistic resume re-run)", got.Status, schema.NodeStatusQueued)
+	}
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestUpdateNodeStatus_RunningSelfLoopIllegal: the old steer-via-status
+// (running → running) no longer exists — steering is queueing a message
+// (POST .../queue), which doesn't transition the node's status at all.
+func TestUpdateNodeStatus_RunningSelfLoopIllegal(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
@@ -183,18 +230,23 @@ func TestUpdateNodeStatus_SteerWithoutGuidance400(t *testing.T) {
 	}
 
 	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (running -> running is no longer legal); body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-// TestUpdateNodeStatus_SteerUndeliverable409: steer is NOT optimistic — the
-// node's persisted row says "running", but with no live control registered
-// (node between runs, e.g. mid-restart from an earlier steer) the signal has
-// nowhere to land, and pretending otherwise reads as "steer doesn't work"
-// (live e2e 2026-07-05: only one of several steers ever landed, silently).
-// Delivery success is exercised at the dag layer (control tests) and live e2e.
-func TestUpdateNodeStatus_SteerUndeliverable409(t *testing.T) {
+func putQueueMessage(t *testing.T, h *Handler, chatID, nodeID string, body schema.QueueMessageBody) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/queue", strings.NewReader(string(b)))
+	rec := httptest.NewRecorder()
+	h.QueueNodeMessage(rec, req, chatID, nodeID)
+	return rec
+}
+
+// TestQueueNodeMessage_NoLiveNode404: a message aimed at a node with no live
+// control (not currently running) has nowhere to land.
+func TestQueueNodeMessage_NoLiveNode404(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
@@ -202,13 +254,35 @@ func TestUpdateNodeStatus_SteerUndeliverable409(t *testing.T) {
 		t.Fatalf("seed running node: %v", err)
 	}
 
-	guidance := "focus on cost"
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning, Guidance: &guidance})
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (no live control to deliver to); body=%s", rec.Code, rec.Body.String())
+	rec := putQueueMessage(t, h, chatID, nodeID, schema.QueueMessageBody{Message: "focus on cost"})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (no live control to deliver to); body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "not steerable") {
-		t.Errorf("409 body should explain the steer was dropped; body=%s", rec.Body.String())
+}
+
+func TestQueueNodeMessage_EmptyMessage400(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+
+	rec := putQueueMessage(t, h, chatID, nodeID, schema.QueueMessageBody{Message: "  "})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestEditNodeTask_NotStartedOK_StartedConflict: a not-yet-started node's task
+// can be edited; once "started" (its control is live) it's immutable.
+func TestEditNodeTask_NotStartedOK_StartedConflict(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, nodeID := "c1", "n1"
+
+	body, _ := json.Marshal(schema.EditNodeTaskBody{Task: "revised task"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID, strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	h.EditNodeTask(rec, req, chatID, nodeID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (node hasn't started); body=%s", rec.Code, rec.Body.String())
 	}
 }
 
