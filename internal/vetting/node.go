@@ -1137,7 +1137,7 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 		v.Criteria["exploration_grounded"] = criterionScore{Score: 0, Reason: "deterministic: repo cloned but zero read_file/grep calls — " +
 			"the answer's findings are not grounded in anything actually read; explore the clone (read_file/grep) before reporting"}
 	}
-	if det, details, hasCites := citationScore(answer, act); hasCites {
+	if det, details, hasCites := citationScore(answer, act, resolveCiteCloneRoots(cfg, act)); hasCites {
 		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), det)}
 	}
 	// §4: deterministic gate checks — the planner's `checks` when it set them,
@@ -1154,6 +1154,31 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)
+}
+
+// resolveCiteCloneRoots resolves every ABSOLUTE clone-dir root citationScore
+// should disk-verify local code citations under: the harness-provisioned
+// setup clone (cfg.Setup, resolved exactly as commitDelivery resolves it)
+// plus every repo the worker itself git_clone'd this session (act.clonedDirs).
+// An entry that can't be resolved (no cfg.Workspace wired, a jail-escape, a
+// dir that was never created) is silently dropped — citationScore just has
+// one fewer root to check, never an error.
+func resolveCiteCloneRoots(cfg Config, act workerActivity) []string {
+	if cfg.Workspace == nil {
+		return nil
+	}
+	var roots []string
+	if cfg.Setup != nil {
+		if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID)); err == nil {
+			roots = append(roots, abs)
+		}
+	}
+	for _, dir := range act.clonedDirs {
+		if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, dir); err == nil {
+			roots = append(roots, abs)
+		}
+	}
+	return roots
 }
 
 // composeFeedback merges the judge's own narrative Feedback with the Reasons

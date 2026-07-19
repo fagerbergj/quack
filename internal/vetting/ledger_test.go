@@ -344,7 +344,7 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	}
 	// citationScore gives a citation of the cloned repo full backing.
 	answer := "The repo's entrypoint is documented in [the repository](" + repoURL + ")."
-	score, details, ok := citationScore(answer, act)
+	score, details, ok := citationScore(answer, act, nil)
 	if !ok {
 		t.Fatal("citationScore abstained despite recorded retrieval")
 	}

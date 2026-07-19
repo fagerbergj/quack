@@ -1,15 +1,19 @@
 package vetting
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -500,9 +504,25 @@ var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(?:-\d+)?))?`)
 
 // citationScore deterministically grades how well each cited link target in
-// the answer is backed by what the worker actually retrieved this session — no
-// model involved, so it can't "reason wrong" about a string match the way a
-// small judge model does. Each cited web URL is scored in layers:
+// the answer is backed — no model involved, so it can't "reason wrong" about a
+// string match the way a small judge model does. Two kinds of target are
+// graded differently:
+//
+//   - A web URL (http/https) is graded against what the worker's OWN session
+//     retrieved or cloned this run — see the layer table below. A URL can't be
+//     re-fetched at gate time, so this stays ledger-based.
+//   - A LOCAL code citation — a scheme-less Markdown link, or the
+//     code-explorer's inline "<repo>@path[:lines]" format — is verified
+//     against the clone(s) actually on disk (cloneRoots), NOT the worker's
+//     ledger. The ledger is empty for a harness-provisioned setup clone
+//     (cfg.Setup, never a tracked git_clone), for an external ACP agent (its
+//     own bash/read tools aren't tracked), and for a synthesizer re-citing an
+//     upstream path — a ledger check on any of those scores a REAL file 0.00
+//     (#437). Disk verification: the path resolves, CONTAINED, under a clone
+//     root, the file exists, and — when a line range is cited — the file has
+//     at least the range's end line → 1.00, else 0.00.
+//
+// Web URL layers:
 //
 //	exact URL fetched   → 1.00   (the worker read this exact page)
 //	at/under a cloned repo → 1.00 (the whole repo is on local disk — every
@@ -513,22 +533,19 @@ var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(
 //	same host searched  → 0.25   (the host showed up in search results)
 //	neither             → 0.00   (the worker never encountered this URL or host)
 //
-// A cited LOCAL path (a link target with no scheme) is fully backed (1.00) when
-// the ledger saw it (read/write/edit/delete) or it lies under a git_clone'd
-// dir, else unbacked (0.00) — a path the worker never touched is as fabricated
-// as a URL it never encountered. Non-web schemes (mailto:) and pure in-document
-// anchors are skipped: not citations we can grade.
-//
-// URLs are normalized (lowercased scheme+host, fragment dropped, trailing slash
-// trimmed) before matching so cosmetic differences don't cost points. The
-// returned score is the mean across distinct cited targets; details carries the
-// per-target breakdown for logging/feedback. ok is false when the answer cites
-// nothing gradeable (caller decides how to treat an uncited answer).
-func citationScore(answer string, act workerActivity) (score float64, details []citationDetail, ok bool) {
-	// No retrieval or workspace-path activity recorded (a non-web agent like the
-	// synthesizer, which re-cites URLs from its upstream inputs) → we can't grade
-	// backing, so don't override; leave the model's cites_sources judgment in place.
-	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(act.paths) == 0 {
+// Non-web schemes (mailto:) and pure in-document anchors are skipped: not
+// citations we can grade. URLs are normalized (lowercased scheme+host,
+// fragment dropped, trailing slash trimmed) before matching so cosmetic
+// differences don't cost points. cloneRoots are the ABSOLUTE clone-dir roots to
+// disk-verify local citations under (see resolveCiteCloneRoots in node.go) —
+// nil/empty when the node has no clone. The returned score is the mean across
+// distinct cited targets; details carries the per-target breakdown for
+// logging/feedback. ok is false only when the answer cites nothing gradeable
+// AND the node has neither retrieval activity nor a clone root to verify
+// against — a node WITH a clone root disk-verifies even off a completely empty
+// ledger (the #437 fix).
+func citationScore(answer string, act workerActivity, cloneRoots []string) (score float64, details []citationDetail, ok bool) {
+	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(cloneRoots) == 0 {
 		return 0, nil, false
 	}
 	fetchedURL, fetchedHost := normalizedSets(slices.Collect(maps.Keys(act.fetched)))
@@ -573,15 +590,14 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		case u.Scheme != "":
 			continue // mailto:, ftp:, … — not a gradeable citation
 		default:
-			// Local path. u.Path drops a fragment ([x](file.md#L4)) and query.
+			// Local code citation. u.Path drops a fragment ([x](file.md#L4))
+			// and query. Disk-verified, not ledger-checked — see the doc comment.
 			np := normalizePath(u.Path)
 			if np == "" {
 				continue // pure in-document anchor like (#section)
 			}
 			key = np
-			if act.paths[np] || underClonedDir(np, act.clonedDirs) {
-				s = 1.00
-			}
+			s = diskCiteScore(cloneRoots, []string{np}, "")
 		}
 		if _, dup := dedup[key]; dup {
 			continue
@@ -591,7 +607,7 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		sum += s
 	}
 	for _, m := range codeCiteRe.FindAllStringSubmatch(answer, -1) {
-		repo, path := m[1], normalizePath(m[2])
+		repo, path, lineRange := m[1], normalizePath(m[2]), m[3]
 		if path == "" {
 			continue
 		}
@@ -600,13 +616,10 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 			continue
 		}
 		dedup[key] = struct{}{}
-		// A code citation is repo-relative, but the ledger may hold it either
-		// bare (repo-relative) or clone-dir-prefixed (repo/path) — try both.
-		prefixed := repo + "/" + path
-		var s float64
-		if act.paths[path] || act.paths[prefixed] || underClonedDir(path, act.clonedDirs) || underClonedDir(prefixed, act.clonedDirs) {
-			s = 1.00
-		}
+		// A code citation is repo-relative, but the clone root may correspond
+		// to it either bare (repo-relative) or clone-dir-prefixed (repo/path)
+		// — try both.
+		s := diskCiteScore(cloneRoots, []string{path, repo + "/" + path}, lineRange)
 		details = append(details, citationDetail{url: m[0], score: s})
 		sum += s
 	}
@@ -614,6 +627,95 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		return 0, nil, false
 	}
 	return sum / float64(len(details)), details, true
+}
+
+// maxCiteLineScanBytes bounds how much of a cited file citationScore reads to
+// confirm a cited line range exists — a citation check must never slurp an
+// entire file to confirm that ten cited lines are in range.
+const maxCiteLineScanBytes = 512 * 1024
+
+// diskCiteScore verifies a code citation against the clone(s) actually on
+// disk: 1.0 when ANY candidate path resolves, path-contained, under one of
+// cloneRoots, the file exists there, and — when lineRange is set — the file
+// has at least its end line; else 0.0. candidates lets the caller offer both a
+// bare repo-relative form and a clone-dir-prefixed form without needing to
+// know which one the clone root actually corresponds to; diskCiteScore also
+// tries each candidate with a matched clone root's own base name stripped
+// (a cited "games-repo/app/x.ts" against a clone root that IS ".../games-repo"),
+// since a citation and act.clonedDirs disagree on whether the clone dir's own
+// name is part of the cited path.
+func diskCiteScore(cloneRoots []string, candidates []string, lineRange string) float64 {
+	endLine := 0
+	if lineRange != "" {
+		end := lineRange
+		if _, after, found := strings.Cut(lineRange, "-"); found {
+			end = after
+		}
+		n, err := strconv.Atoi(end)
+		if err != nil {
+			return 0
+		}
+		endLine = n
+	}
+	for _, root := range cloneRoots {
+		base := filepath.Base(root)
+		for _, cand := range candidates {
+			tries := []string{cand}
+			if stripped, ok := strings.CutPrefix(cand, base+"/"); ok {
+				tries = append(tries, stripped)
+			}
+			for _, t := range tries {
+				abs, ok := resolveUnderRoot(root, t)
+				if !ok {
+					continue
+				}
+				info, err := os.Stat(abs)
+				if err != nil || info.IsDir() {
+					continue
+				}
+				if endLine == 0 || fileHasLine(abs, endLine) {
+					return 1.0
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// resolveUnderRoot joins rel under root and rejects anything that would
+// escape it (a "../" traversal, an absolute rel) — the containment check a
+// disk-verified citation needs before it ever touches os.Stat with a
+// model-supplied path.
+func resolveUnderRoot(root, rel string) (string, bool) {
+	if root == "" || rel == "" || filepath.IsAbs(rel) {
+		return "", false
+	}
+	root = filepath.Clean(root)
+	joined := filepath.Join(root, rel)
+	if joined != root && !strings.HasPrefix(joined, root+string(filepath.Separator)) {
+		return "", false
+	}
+	return joined, true
+}
+
+// fileHasLine reports whether path has at least n lines, scanning at most
+// maxCiteLineScanBytes — enough to confirm a cited line range without reading
+// an entire large file.
+func fileHasLine(path string, n int) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(io.LimitReader(f, maxCiteLineScanBytes))
+	count := 0
+	for sc.Scan() {
+		count++
+		if count >= n {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizedCloneURLs normalizes clone URLs for prefix matching: normalizeURL
@@ -654,18 +756,6 @@ func normalizePath(p string) string {
 		p = p[2:]
 	}
 	return strings.TrimRight(p, "/")
-}
-
-// underClonedDir reports whether a normalized local path is one of, or lies
-// under, a git_clone'd dir (segment-aware, like underClonedRepo). Every file
-// in a cloned repo is retrieved material by construction.
-func underClonedDir(np string, cloneDirs []string) bool {
-	for _, d := range cloneDirs {
-		if np == d || strings.HasPrefix(np, d+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 // citationDetail is one cited link target's (URL or local path) deterministic
