@@ -103,4 +103,27 @@ describe('run-model reducers', () => {
     runs = appendRunThinking(runs, 'nope', 'x')
     expect(runs).toBe(before)
   })
+
+  // #379: appendRunToolCall/fillRunToolResult/appendRunThinking used to spread
+  // `run.activity` on every single event — O(run length) work per event, O(N²)
+  // over a run of N events. They now mutate the array in place, so the same
+  // array instance is reused across every append/fill rather than a fresh copy
+  // being allocated each time. Pin that directly: the activity array reference
+  // never changes across N events, which is only possible if events are O(1)
+  // amortized (a per-event copy would produce a new array reference each time).
+  it('appends/fills activity in place — no per-event copy of prior entries', () => {
+    let runs: AgentRun[] = startRun([], { runId: 'r1', agent: 'w', stage: 'worker' })
+    const activityRef = run(runs, 'r1').activity
+    const N = 500
+    for (let i = 0; i < N; i++) {
+      runs = appendRunToolCall(runs, 'r1', `c${i}`, 'tool', { i })
+      runs = fillRunToolResult(runs, 'r1', `c${i}`, 'tool', { ok: true })
+      runs = appendRunThinking(runs, 'r1', `.`)
+    }
+    const finalRun = run(runs, 'r1')
+    expect(finalRun.activity).toBe(activityRef) // same array throughout — never re-copied
+    // Each thinking append is preceded by a tool call, so nothing coalesces:
+    // N tool-call entries + N separate thinking entries.
+    expect(finalRun.activity).toHaveLength(N * 2)
+  })
 })

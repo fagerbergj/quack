@@ -44,6 +44,19 @@ export const Windowed: Story = {
   },
 }
 
+// #379: a run with many tool-call events — the case the streaming-update
+// perf fix targets. ActivityList itself already windows to the most recent
+// RECENT items, so this stays cheap to render regardless of count; it's here
+// to make that windowing (and the underlying store fix) visible/verifiable.
+const manyActivity: Activity[] = Array.from({ length: 60 }, (_, i) => ({
+  kind: 'tool' as const,
+  tool: { callId: `c${i}`, name: 'web_search', args: { query: `dublin weather query ${i}` }, result: { results: [] }, done: true },
+}))
+
+export const ManyToolCalls: Story = {
+  args: { activity: manyActivity },
+}
+
 const CODE_ANSWER = `Here's a debounce helper:
 
 \`\`\`ts

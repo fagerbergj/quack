@@ -144,6 +144,28 @@ export const Truncated: Story = {
   },
 }
 
+// #379: a node whose worker run streamed 80 tool-call events — the
+// performance case the streaming-update fix targets (see messageParts.ts /
+// AgentParts.test.ts). Renders via the same WorkerCard + ActivityList path
+// as a live run; ActivityList windows to its most recent items so this stays
+// cheap however many events arrive.
+const manyToolActivity: Activity[] = Array.from({ length: 80 }, (_, i) => ({
+  kind: 'tool' as const,
+  tool: { callId: `c${i}`, name: 'web_search', args: { query: `query ${i}` }, result: { results: [] }, done: true },
+}))
+
+export const ManyToolCallsStreaming: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{ status: 'running', startedAt: Date.now() - 45_000 }}
+      runs={[{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: manyToolActivity }]}
+      answer=""
+      isFinal={false}
+    />
+  ),
+}
+
 export const Failed: Story = {
   args: {
     node: wrNode,
