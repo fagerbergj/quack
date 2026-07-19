@@ -49,6 +49,11 @@ type fakeRunner struct {
 	// a success; deliverErr (mutually exclusive) records a failure.
 	deliverOK  bool
 	deliverErr string
+	// deliverReview simulates a run that DELIVERED A REVIEW specifically
+	// (deliveryOutcome.reviewDelivered) — dispatch's ONLY trigger to advance
+	// the review baseline (#459's incremental-review fix). Independent of
+	// deliverOK: a plan/PR delivery must NOT set this.
+	deliverReview bool
 	// resets counts ResetSession calls — dispatch's T4 session-hygiene signal.
 	resets int32
 }
@@ -70,7 +75,9 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		if f.judgePassed {
 			yield(stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{JudgePassed: true}}, nil)
 		}
-		if f.deliverOK {
+		if f.deliverReview {
+			recordDelivery(sessionID, deliveryOutcome{reviewDelivered: true})
+		} else if f.deliverOK {
 			recordDeliveryResult(sessionID, nil)
 		} else if f.deliverErr != "" {
 			recordDeliveryResult(sessionID, fmt.Errorf("%s", f.deliverErr))
@@ -1172,6 +1179,120 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 	}
 	if strings.Contains(secondMsg, "the original comment") {
 		t.Errorf("resume dispatch re-injected the UNCHANGED comment — should carry only the delta:\n%s", secondMsg)
+	}
+}
+
+// TestReviewBaselineDecoupledFromGeneralSnapshot is the coordinator-flagged
+// fix for #459/#460: the review scope (gh.newCommits) must be keyed off the
+// commits quack actually DELIVERED a review at, never off the general
+// snapshot (which advances on every dispatch, review or not). Scenario:
+// review delivered at [c1] -> c2 pushed -> a CONVERSATIONAL dispatch lands
+// (advances the general snapshot to [c1,c2] but must NOT advance the review
+// baseline) -> a review request must still see c2 as new -> once that review
+// IS delivered, the baseline advances and the NEXT review sees zero new.
+func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
+	// Two synthetic commits with real, distinct git patch-ids (gitPatchID
+	// reads a diff from stdin — no clone needed, see snapshot.go).
+	diffs := map[string]string{
+		"c1": "diff --git a/f1.txt b/f1.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/f1.txt\n@@ -0,0 +1 @@\n+c1\n",
+		"c2": "diff --git a/f2.txt b/f2.txt\nnew file mode 100644\nindex 0000000..2222222\n--- /dev/null\n+++ b/f2.txt\n@@ -0,0 +1 @@\n+c2\n",
+	}
+	var commitsJSON atomic.Value
+	commitsJSON.Store(`[{"sha":"c1","commit":{"message":"add f1"}}]`)
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case strings.Contains(r.URL.Path, "/pulls/") && strings.HasSuffix(r.URL.Path, "/commits"):
+			fmt.Fprint(w, commitsJSON.Load().(string))
+		case strings.Contains(r.URL.Path, "/commits/"): // single-commit diff (Accept: v3.diff)
+			parts := strings.Split(r.URL.Path, "/")
+			sha := parts[len(parts)-1]
+			fmt.Fprint(w, diffs[sha])
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			fmt.Fprint(w, `[]`)
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[]`)
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprint(w, `{"title":"Test PR","body":"","state":"open","head":{"ref":"feature","sha":"headsha"},"base":{"ref":"main"}}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+
+	run := func(runner *fakeRunner, task string) string {
+		t.Helper()
+		ext := NewExtension(app, config.GitHubExtensionConfig{
+			WebhookSecret: testSecret, Mention: "@quack", AllowedUsers: []string{"alice"},
+		}, runner, st, nil)
+		rec := httptest.NewRecorder()
+		ext.handleWebhook(rec, signedRequest("issue_comment", pullCommentBody("@quack "+task)))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("dispatch status = %d; want 202 (task=%q)", rec.Code, task)
+		}
+		select {
+		case msg := <-runner.gotMessage:
+			return msg
+		case <-time.After(2 * time.Second):
+			t.Fatalf("dispatch never reached the orchestrator (task=%q)", task)
+			return ""
+		}
+	}
+
+	// 1. First review ever: full review (no baseline yet), and it DELIVERS —
+	// the baseline should advance to just c1's patch-id.
+	first := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
+	if strings.Contains(first, "Focus your review on what's NEW") || strings.Contains(first, "already looked at every commit") {
+		t.Errorf("first-ever review should carry no incremental scoping language:\n%s", first)
+	}
+
+	// 2. c2 lands on the PR.
+	commitsJSON.Store(`[{"sha":"c1","commit":{"message":"add f1"}},{"sha":"c2","commit":{"message":"add f2"}}]`)
+
+	// 3. A CONVERSATIONAL dispatch (no review delivered) — this advances the
+	// GENERAL snapshot (comments/commits-as-seen) but must NOT touch the
+	// review baseline.
+	_ = run(&fakeRunner{gotMessage: make(chan string, 1), answer: "sure, here's my take", noPlan: true}, "what do you think so far? no need to re-review")
+
+	// 4. A review request now MUST still see c2 as new — if the review scope
+	// had been keyed off the general snapshot (the bug), c2 would already
+	// read as "seen" because step 3 advanced it.
+	second := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
+	if !strings.Contains(second, "Focus your review on what's NEW") || !strings.Contains(second, "c2") {
+		t.Errorf("review after a conversational dispatch must still scope to c2:\n%s", second)
+	}
+	if strings.Contains(second, "already looked at every commit") {
+		t.Errorf("review under-scoped itself off the general snapshot instead of the review baseline:\n%s", second)
+	}
+
+	// 5. Step 4 DELIVERED a review covering c2 — the baseline now advances,
+	// so the NEXT review sees zero new work.
+	third := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}, "review this")
+	if !strings.Contains(third, "already looked at every commit") {
+		t.Errorf("after the review in step 4 delivered, the next review should see zero new commits:\n%s", third)
 	}
 }
 

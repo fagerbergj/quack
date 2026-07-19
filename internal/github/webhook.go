@@ -610,6 +610,20 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		} else {
 			slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
 				"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
+			// This run ACTUALLY delivered a review (not a plan/PR/comment, and
+			// not a conversational dispatch that delivered nothing) — advance the
+			// review baseline to what was reviewed: the PR's commits as fetched at
+			// THIS dispatch's snapshot (gh.snap), before the run started. This is
+			// the ONLY place the baseline advances (#459 incremental-review fix).
+			if d.reviewDelivered {
+				// A fresh, short-lived context: runCtx may already be past its
+				// deadline on a slow run (the same reason the tail-comment logic
+				// below uses its own fresh context), and this write must not be
+				// skipped just because the run itself timed out.
+				baselineCtx, baselineCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				e.advanceReviewBaseline(baselineCtx, sessionID, gh.snap.Commits)
+				baselineCancel()
+			}
 		}
 	}
 	if delivered {
@@ -819,8 +833,16 @@ func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, rep
 		} else {
 			delta := diffSnapshots(prev, snap, triggerCommentID)
 			gh.text = renderDeltaDetail(delta)
-			gh.newCommits = delta.NewCommits
 		}
+	}
+	// The incremental-review scope is DELIBERATELY not delta.NewCommits above:
+	// that delta advances on every dispatch (comment/label/etc. included), so
+	// scoping a review off it would under-scope whenever a conversational
+	// dispatch landed between two reviews. reviewScope reads a SEPARATE
+	// baseline that only a delivered review advances (see advanceReviewBaseline,
+	// called from dispatch after a run that actually posted one).
+	if isPR {
+		gh.newCommits = e.reviewScope(ctx, sessionID, snap)
 	}
 
 	if e.store != nil {
@@ -832,6 +854,65 @@ func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, rep
 		}
 	}
 	return gh
+}
+
+// reviewScope returns the PR commits not yet covered by quack's last
+// DELIVERED review (nil — not an empty slice — when no review has ever been
+// delivered on this chat, meaning "review everything"; see
+// newCommitsAgainstBaseline). Best-effort: a lookup/decode failure logs and
+// falls back to nil (review everything) rather than silently under-scoping.
+func (e *Extension) reviewScope(ctx context.Context, sessionID string, snap Snapshot) []snapshotCommit {
+	if e.store == nil {
+		return nil
+	}
+	raw, ok, err := e.store.GetGithubReviewBaseline(ctx, sessionID)
+	if err != nil {
+		slog.Warn("github: GetGithubReviewBaseline failed; reviewing everything this run",
+			"component", "github", "chat", sessionID, "err", err)
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+	ids, err := unmarshalPatchIDs(raw)
+	if err != nil {
+		slog.Warn("github: stored review baseline did not decode; reviewing everything this run",
+			"component", "github", "chat", sessionID, "err", err)
+		return nil
+	}
+	reviewed := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		reviewed[id] = true
+	}
+	return newCommitsAgainstBaseline(snap.Commits, reviewed)
+}
+
+// advanceReviewBaseline persists the current PR commits' patch-ids as
+// "reviewed" — called ONLY after a dispatch that actually DELIVERED a review
+// this run (see dispatch's use of deliveryOutcome.reviewDelivered). A
+// conversational/plan/implement dispatch must NEVER call this: that's the
+// exact bug this baseline exists to avoid (scoping the next review off
+// whatever the general snapshot last happened to see, rather than off what
+// was actually reviewed).
+func (e *Extension) advanceReviewBaseline(ctx context.Context, sessionID string, commits []snapshotCommit) {
+	if e.store == nil {
+		return
+	}
+	ids := make([]string, 0, len(commits))
+	for _, c := range commits {
+		if c.PatchID != "" {
+			ids = append(ids, c.PatchID)
+		}
+	}
+	j, err := marshalPatchIDs(ids)
+	if err != nil {
+		slog.Warn("github: marshal review baseline failed; not persisted", "component", "github", "chat", sessionID, "err", err)
+		return
+	}
+	if err := e.store.SetGithubReviewBaseline(ctx, sessionID, j); err != nil {
+		slog.Warn("github: SetGithubReviewBaseline failed; the next review may under-scope",
+			"component", "github", "chat", sessionID, "err", err)
+	}
 }
 
 // workVerbRe matches an imperative that asks quack to DO something — review or
@@ -1026,11 +1107,13 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 				snap.HeadRef, headSHA, diffBase, diffBase, snap.HeadRef, diffBase, snap.HeadRef)
 		}
 		// Incremental review, rebase-safe (#459 §5): gh.newCommits is non-nil
-		// only on a resume (see loadGithubContext) — the commits whose
-		// patch-id is genuinely new since the last dispatch, computed
-		// independently of SHA (a rebase/force-push rewrites every SHA even
-		// when the underlying patch is unchanged).
-		if !gh.firstLoad {
+		// only once quack has DELIVERED at least one review on this chat (see
+		// reviewScope/advanceReviewBaseline) — the commits not yet covered by
+		// that review, computed by patch-id, independent of SHA (a
+		// rebase/force-push rewrites every SHA even when the underlying patch
+		// is unchanged) and independent of the general context delta (which
+		// advances on every dispatch, review or not).
+		if gh.newCommits != nil {
 			switch len(gh.newCommits) {
 			case 0:
 				b.WriteString("You have already looked at every commit currently on this pull request (by content — a rebase or force-push may have changed their SHAs without changing what they do). There is no new work to review; only respond to the discussion above. ")

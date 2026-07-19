@@ -65,6 +65,12 @@ type deliveryOutcome struct {
 	prNumber  int
 	prURL     string
 	pushedSHA string
+	// reviewDelivered is true when at least one staged "review" item posted
+	// successfully — dispatch's ONLY trigger to advance the review baseline
+	// (internal/github/webhook.go's advanceReviewBaseline). Never inferred
+	// from the judge/plan proxy: a conversational dispatch that delivers
+	// nothing must never advance it (see the #459 incremental-review fix).
+	reviewDelivered bool
 }
 
 // gitHost is the only host this extension supplies credentials for.
@@ -673,6 +679,9 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 		}
 		if res.prNumber != 0 {
 			detail.prNumber, detail.prURL = res.prNumber, res.prURL
+		}
+		if item.Kind == "review" {
+			detail.reviewDelivered = true
 		}
 	}
 	err = errors.Join(errs...)
