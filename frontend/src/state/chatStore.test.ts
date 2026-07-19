@@ -45,12 +45,15 @@ describe('activityFromTurn', () => {
   })
 })
 
-// Minimal SSE stream that closes immediately so the store doesn't hang.
+// Minimal SSE stream that closes immediately so the store doesn't hang. Always
+// terminated by `done` — every real completed run ends with one, and the
+// store now treats its absence as a dropped connection worth reconnecting
+// over (see chatStore.test.ts's "reconnect on drop" tests below for that path).
 function makeStream(body: string): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     start(ctrl) {
-      ctrl.enqueue(encoder.encode(body))
+      ctrl.enqueue(encoder.encode(body + 'event: done\ndata: {}\n\n'))
       ctrl.close()
     },
   })
@@ -398,7 +401,9 @@ describe('isTurnInProgress — re-subscribe gate', () => {
 })
 
 // Minimal EventSource stand-in: jsdom has none. Captures listeners so a test can
-// feed the same SSE vocabulary the hub replays, and records close().
+// feed the same SSE vocabulary the hub replays, and records close(). emit's
+// optional `id` mirrors the SSE `id:` field — EventSource surfaces it on the
+// MessageEvent as `lastEventId`, which is what a reconnect resumes past.
 class FakeEventSource {
   static last: FakeEventSource | null = null
   url: string
@@ -408,7 +413,10 @@ class FakeEventSource {
   constructor(url: string) { this.url = url; FakeEventSource.last = this }
   addEventListener(name: string, cb: (e: MessageEvent) => void) { (this.listeners[name] ??= []).push(cb) }
   close() { this.closed = true }
-  emit(name: string, data = '') { for (const cb of this.listeners[name] ?? []) cb({ data } as MessageEvent) }
+  emit(name: string, data = '', id?: number) {
+    const event = { data, lastEventId: id != null ? String(id) : '' } as MessageEvent
+    for (const cb of this.listeners[name] ?? []) cb(event)
+  }
 }
 
 describe('ChatStore.attach — reconnect to a live run', () => {
@@ -444,5 +452,127 @@ describe('ChatStore.attach — reconnect to a live run', () => {
     const first = FakeEventSource.last
     store.attach('c')
     expect(FakeEventSource.last).toBe(first) // no new EventSource opened
+  })
+})
+
+// Issue #383: a dropped SSE connection must be retried automatically —
+// resuming via Last-Event-ID — instead of tearing the run down and forcing a
+// manual page refresh.
+describe('ChatStore — reconnect on a dropped stream (#383)', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  it('an EventSource drop mid-run reconnects with Last-Event-ID and resumes without losing or duplicating events', () => {
+    vi.useFakeTimers()
+    try {
+      store.seed('c', [dagTurn('in_progress')])
+      store.attach('c')
+      const es1 = FakeEventSource.last!
+      expect(es1.url).toBe('/api/v1/chats/c/stream')
+
+      es1.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 1)
+      es1.emit('node_start', '{"node_id":"a","agent":"researcher"}', 2)
+      expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+
+      // Connection drops mid-run — no `done` was seen, so this must NOT tear
+      // the turn down (unlike the server's expected post-`done` close).
+      es1.onerror?.()
+      expect(es1.closed).toBe(true)
+      expect(store.get('c').live?.streaming).toBe(true)
+
+      // Bounded backoff, not an immediate hammer: no reconnect until the delay elapses.
+      expect(FakeEventSource.last).toBe(es1)
+      vi.advanceTimersByTime(999)
+      expect(FakeEventSource.last).toBe(es1)
+      vi.advanceTimersByTime(1)
+
+      const es2 = FakeEventSource.last!
+      expect(es2).not.toBe(es1)
+      expect(es2.url).toBe('/api/v1/chats/c/stream?last_event_id=2') // resumes past the last event actually seen
+
+      // The node's prior state (from es1) is untouched — resuming replays only
+      // what's new, so nothing already applied is lost or re-applied.
+      expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+      es2.emit('node_done', '{"node_id":"a"}', 3)
+      expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('done')
+
+      es2.emit('done', '{}', 4)
+      expect(store.get('c').live?.streaming).toBe(false)
+      expect(es2.closed).toBe(true) // onDone tore it down cleanly
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a clean close after `done` does not reconnect', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+    es.emit('done', '{}', 1)
+    expect(store.get('c').live?.streaming).toBe(false)
+    // EventSource fires `error` too once the server closes the connection —
+    // must not be mistaken for a drop and reopen a new stream.
+    es.onerror?.()
+    expect(FakeEventSource.last).toBe(es)
+  })
+
+  it('gives up and surfaces an error after repeated reconnect failures, without retrying forever', () => {
+    vi.useFakeTimers()
+    try {
+      store.seed('c', [dagTurn('in_progress')])
+      store.attach('c')
+
+      let last = FakeEventSource.last!
+      let attempts = 0
+      while (store.get('c').live?.streaming && attempts < 20) {
+        last.onerror?.()
+        vi.advanceTimersByTime(30_000) // more than the max backoff delay
+        last = FakeEventSource.last!
+        attempts++
+      }
+
+      expect(attempts).toBeLessThan(20) // it gave up rather than retrying forever
+      expect(store.get('c').live?.streaming).toBe(false)
+      expect(store.get('c').error).toMatch(/lost connection/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a POST stream that drops (no `done`, body just ends) hands off to the resumable GET stream, resetting local state first so the replay is not duplicated', async () => {
+    const dropped = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"worker-r0","text":"partial answer"}',
+      '',
+      // no `done` — the body simply ends here, simulating a mid-run drop.
+    ].join('\n')
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({ start(ctrl) { ctrl.enqueue(encoder.encode(dropped)); ctrl.close() } })
+    const res = new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(res))
+
+    await store.submit('c', 'go')
+
+    // The turn is still live — handed off to the GET stream, not failed.
+    expect(store.get('c').live?.streaming).toBe(true)
+    const es = FakeEventSource.last!
+    expect(es.url).toBe('/api/v1/chats/c/stream') // no id to resume past on this path — full replay
+    // Local state was cleared before the handoff, so the replay below isn't duplication.
+    expect(store.get('c').live?.dag).toBeUndefined()
+    expect(store.get('c').live?.text).toBe('')
+
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 1)
+    es.emit('node_done', '{"node_id":"a","output_preview":"final"}', 2)
+    expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('done')
+
+    es.emit('done', '{}', 3)
+    expect(store.get('c').live?.streaming).toBe(false)
   })
 })

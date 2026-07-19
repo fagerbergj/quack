@@ -1,4 +1,4 @@
-import { readAgentStream, attachAgentEventSource, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage } from './agentStream'
+import { readAgentStream, attachAgentEventSource, AGENT_EVENT_NAMES, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage } from './agentStream'
 import {
   startRun,
   appendRunThinking,
@@ -110,11 +110,22 @@ function turnFromLiveTurn(live: LiveTurn): Turn {
   }
 }
 
+// Reconnect tuning for a dropped SSE stream: capped exponential backoff so a
+// dead server/proxy isn't hammered, bounded so a permanently-gone server
+// eventually surfaces as an error instead of retrying forever.
+const MAX_RECONNECT_ATTEMPTS = 6
+const RECONNECT_BASE_DELAY_MS = 1000
+const RECONNECT_MAX_DELAY_MS = 15000
+function reconnectDelay(attempt: number): number {
+  return Math.min(RECONNECT_BASE_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS)
+}
+
 export class ChatStore {
   private states = new Map<string, ChatState>()
   private listeners = new Map<string, Set<Listener>>()
   private controllers = new Map<string, AbortController>()
   private eventSources = new Map<string, () => void>()  // chatID → teardown for an attached subscribe stream
+  private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()  // chatID → pending reconnect
   private generations = new Map<string, number>()
 
   get(chatId: string): ChatState {
@@ -145,9 +156,18 @@ export class ChatStore {
     this.controllers.delete(chatId)
     this.eventSources.get(chatId)?.()
     this.eventSources.delete(chatId)
+    this.cancelReconnect(chatId)
     this.states.delete(chatId)
     this.bumpGeneration(chatId)
     this.notify(chatId)
+  }
+
+  private cancelReconnect(chatId: string): void {
+    const t = this.reconnectTimers.get(chatId)
+    if (t) {
+      clearTimeout(t)
+      this.reconnectTimers.delete(chatId)
+    }
   }
 
   async submit(chatId: string, content: string, files?: File[], onTitle?: (title: string) => void): Promise<void> {
@@ -310,6 +330,7 @@ export class ChatStore {
     const controller = new AbortController()
     this.controllers.set(chatId, controller)
     const generation = this.bumpGeneration(chatId)
+    let handedOff = false
     try {
       const res = await fetchFn(controller.signal)
       if (!res.ok) {
@@ -319,8 +340,17 @@ export class ChatStore {
       if (!res.body) throw new Error('No response body')
 
       let streamError = ''
-      await readAgentStream(res.body, this.streamHandlers(chatId, msg => { streamError = msg }, onTitle))
+      const result = await readAgentStream(res.body, this.streamHandlers(chatId, msg => { streamError = msg }, onTitle))
       if (streamError) throw new Error(streamError)
+      if (!result.done) {
+        // The body ended without a `done` event — the connection dropped
+        // mid-run, not a normal completion. Hand off to the resumable GET
+        // stream (which supports Last-Event-ID reconnect) instead of failing
+        // the turn outright.
+        handedOff = true
+        this.resetLiveForResume(chatId)
+        this.openEventSource(chatId, generation, 0, 0)
+      }
     } catch (err: unknown) {
       if ((err as Error)?.name !== 'AbortError') {
         const msg = (err as Error)?.message || 'Request failed'
@@ -331,7 +361,7 @@ export class ChatStore {
       if (this.controllers.get(chatId) === controller) {
         this.controllers.delete(chatId)
       }
-      this.finishStream(chatId, generation)
+      if (!handedOff) this.finishStream(chatId, generation)
     }
   }
 
@@ -359,20 +389,74 @@ export class ChatStore {
   // its PUT no longer returns its own SSE body). Callers own seeding/resetting
   // `live` beforehand; this only wires the subscription + teardown.
   private subscribeToStream(chatId: string, generation: number): void {
-    const es = new EventSource(`/api/v1/chats/${chatId}/stream`)
+    this.openEventSource(chatId, generation, 0, 0)
+  }
+
+  // openEventSource opens (or, after a mid-run drop, reopens) the GET
+  // .../stream EventSource. lastEventId resumes from the server's durable
+  // event log (Last-Event-ID resume, M8) instead of replaying the whole run
+  // again. attempt drives a capped-exponential reconnect backoff so a dead
+  // server/proxy isn't hammered; it resets on every event actually received.
+  //
+  // The server closes the connection once the run's `done` is delivered;
+  // EventSource sees that as an `error` too, so onerror must tell a genuine
+  // drop (worth retrying) apart from that expected close (tear down, `done`
+  // already fired) — sawDone is the flag that distinguishes them.
+  private openEventSource(chatId: string, generation: number, lastEventId: number, attempt: number): void {
+    const url = lastEventId > 0
+      ? `/api/v1/chats/${chatId}/stream?last_event_id=${lastEventId}`
+      : `/api/v1/chats/${chatId}/stream`
+    const es = new EventSource(url)
+    let sawDone = false
+    let latestId = lastEventId
     const handlers: AgentStreamHandlers = {
       ...this.streamHandlers(chatId, msg => {
         const s = this.states.get(chatId)
         if (s) this.write(chatId, { ...s, error: msg })
       }),
-      onDone: () => this.teardownStream(chatId, generation),
+      onDone: () => { sawDone = true; this.teardownStream(chatId, generation) },
     }
     const close = attachAgentEventSource(es, handlers)
-    // The server closes the stream once the run's `done` is delivered; EventSource
-    // sees that as an error and would otherwise reconnect and re-replay the whole
-    // buffer (duplicating appended tokens). Tear down instead — `done` already fired.
-    es.onerror = () => this.teardownStream(chatId, generation)
+    // Track the latest SSE id seen (EventSource populates MessageEvent.lastEventId
+    // from the `id:` field) so a later reconnect resumes past it, and treat any
+    // received event as proof the connection is healthy again.
+    for (const name of AGENT_EVENT_NAMES) {
+      es.addEventListener(name, e => {
+        attempt = 0
+        const id = Number((e as MessageEvent).lastEventId)
+        if (Number.isFinite(id) && id > latestId) latestId = id
+      })
+    }
+    es.onerror = () => {
+      if (sawDone) return  // teardownStream already ran from onDone
+      close()
+      this.eventSources.delete(chatId)
+      if (this.generations.get(chatId) !== generation) return  // superseded by a newer run
+      if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+        const s = this.states.get(chatId)
+        if (s) this.write(chatId, { ...s, error: 'Lost connection to the server — reload to resume.' })
+        this.finishStream(chatId, generation)
+        return
+      }
+      const timer = setTimeout(() => {
+        this.reconnectTimers.delete(chatId)
+        if (this.generations.get(chatId) !== generation) return
+        this.openEventSource(chatId, generation, latestId, attempt + 1)
+      }, reconnectDelay(attempt))
+      this.reconnectTimers.set(chatId, timer)
+    }
     this.eventSources.set(chatId, close)
+  }
+
+  // resetLiveForResume clears a live turn's accumulated DAG/text/runs before
+  // handing off to a full stream replay (openEventSource with lastEventId=0)
+  // — the POST body carries no event ids to resume past, so the replay starts
+  // from the beginning; clearing first is what keeps that idempotent instead
+  // of duplicating everything already applied.
+  private resetLiveForResume(chatId: string): void {
+    const s = this.states.get(chatId)
+    if (!s?.live) return
+    this.write(chatId, { ...s, live: { ...s.live, dag: undefined, text: '', runs: [] } })
   }
 
   // teardownStream ends an attached run: closes its subscribe stream and flips the
@@ -393,6 +477,7 @@ export class ChatStore {
       close()
       this.eventSources.delete(chatId)
     }
+    this.cancelReconnect(chatId)
   }
 
   // streamHandlers builds the store-updating handler set shared by both transports:
