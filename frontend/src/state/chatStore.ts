@@ -554,6 +554,14 @@ export class ChatStore {
         this.write(chatId, { ...s, live: { ...s.live, dag: { ...s.live.dag, nodeAnswer: { ...s.live.dag.nodeAnswer, [nodeId]: '' } } } })
       }
 
+      // resetTopLevelText clears the orchestrator's top-level answer accumulator
+      // (no DAG node) — the top-level counterpart of resetAnswer above.
+      const resetTopLevelText = () => {
+        const s = this.states.get(chatId)
+        if (!s?.live) return
+        this.write(chatId, { ...s, live: { ...s.live, text: '' } })
+      }
+
       return {
         onAgentStart: d => {
           resetAnswer(d.nodeId, d.stage)
@@ -564,9 +572,22 @@ export class ChatStore {
         onAgentThinking: (runId, text, nid) => nid
           ? updateNodeRuns(nid, r => appendRunThinking(r, runId, text))
           : updateTopLevelRuns(r => appendRunThinking(r, runId, text)),
-        onAgentToolCall: (runId, callId, name, args, nid) => nid
-          ? updateNodeRuns(nid, r => appendRunToolCall(r, runId, callId, name, args))
-          : updateTopLevelRuns(r => appendRunToolCall(r, runId, callId, name, args)),
+        onAgentToolCall: (runId, callId, name, args, nid) => {
+          // A tool call means everything narrated so far in this run was
+          // pre-action throat-clearing, not the answer — mirrors the reset
+          // internal/acp/translate.go performs backend-side (#358), applied
+          // here to the LIVE stream (#387) so narration ahead of a tool call
+          // never renders as if it were the final answer.
+          if (nid) {
+            const st = this.states.get(chatId)
+            const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
+            if (run) resetAnswer(nid, run.stage)
+            updateNodeRuns(nid, r => appendRunToolCall(r, runId, callId, name, args))
+          } else {
+            resetTopLevelText()
+            updateTopLevelRuns(r => appendRunToolCall(r, runId, callId, name, args))
+          }
+        },
         onAgentToolResult: (runId, callId, name, result, nid) => nid
           ? updateNodeRuns(nid, r => fillRunToolResult(r, runId, callId, name, result))
           : updateTopLevelRuns(r => fillRunToolResult(r, runId, callId, name, result)),

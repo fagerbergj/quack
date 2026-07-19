@@ -8,7 +8,7 @@ import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef } from 'react'
 import type { Activity, ToolCall } from './messageParts'
 import { agentLabel } from './messageParts'
-import { summarizeArgs } from './toolFormat'
+import { summarizeArgs, previewLine, toolFailed } from './toolFormat'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
 
@@ -116,16 +116,23 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
   )
 }
 
-// ThinkBlock renders reasoning as a collapsed block. Long reasoning is
-// height-locked (Expandable) so a verbose chain-of-thought stays scannable.
+// ThinkBlock renders reasoning as a single-line, collapsed-by-default summary
+// (an icon + "Thought" + a truncated preview of the text) that expands to the
+// full chain-of-thought — Open WebUI's cleaner ethos (#385): scannable at a
+// glance, full detail on demand rather than a standing wall of text. Long
+// reasoning is height-locked (Expandable) once expanded so it still can't wall
+// off the node. A thin left rail (not a boxed card) keeps it visually
+// subordinate to the tool calls it sits beside.
 function ThinkBlock({ text }: { text: string }) {
   return (
-    <details className="my-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 not-prose">
-      <summary className="cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
-        thinking
+    <details className="group my-0.5 not-prose">
+      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+        <span aria-hidden className="shrink-0">💭</span>
+        <span className="italic shrink-0">Thought</span>
+        <span className="truncate text-gray-300 dark:text-gray-600 group-open:hidden">{previewLine(text)}</span>
       </summary>
-      <div className="px-3 pb-3 pt-1 text-xs text-gray-600 dark:text-gray-300">
-        <Expandable maxHeight={200} fade="from-gray-50 dark:from-gray-900/40">
+      <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
+        <Expandable maxHeight={200} fade="from-white dark:from-gray-800">
           <div className="whitespace-pre-wrap font-mono">{text}</div>
         </Expandable>
       </div>
@@ -133,23 +140,38 @@ function ThinkBlock({ text }: { text: string }) {
   )
 }
 
-// ToolBlock renders a tool call as a collapsed block: name + args summary;
-// expanded shows a per-tool rich view (ToolCallView) — a diff for edit_file, a
+// ToolBlock renders a tool call as a single-line, collapsed-by-default summary
+// — a status icon, the tool name, and a truncated representative arg — that
+// expands to a per-tool rich view (ToolCallView): a diff for edit_file, a
 // formatted view for the other common tools, a tidy fallback otherwise.
+// Refined toward the same compact, low-noise ethos as ThinkBlock (#385): a
+// thin left rail on expand instead of a bordered card, and a check/cross
+// status icon (done vs failed) rather than the "working" dots once settled.
 export function ToolBlock({ tool }: { tool: ToolCall }) {
   const argSummary = summarizeArgs(tool.args)
   return (
-    <details className="my-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 not-prose">
-      <summary className="cursor-pointer select-none px-3 py-2 text-xs flex items-center gap-2">
-        <code className="font-mono text-blue-600 dark:text-blue-400">{tool.name}</code>
-        {argSummary && <span className="text-gray-500 dark:text-gray-400 truncate">{argSummary}</span>}
-        {!tool.done && <Dots className="ml-auto" />}
+    <details className="group my-0.5 not-prose">
+      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px]">
+        <ToolStatusIcon tool={tool} />
+        <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{tool.name}</code>
+        {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
       </summary>
-      <div className="px-3 pb-3 pt-1 text-xs">
+      <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
         <ToolCallView tool={tool} />
       </div>
     </details>
   )
+}
+
+// ToolStatusIcon is the compact status marker heading a tool-call summary
+// line: the "working" dots while in flight, a check once it completed, a
+// cross when its result carried an error — status conveyed by icon+colour
+// together (WCAG 1.4.1), not colour alone.
+function ToolStatusIcon({ tool }: { tool: ToolCall }) {
+  if (!tool.done) return <Dots size="w-1 h-1" />
+  return toolFailed(tool.result)
+    ? <span className="text-red-500 dark:text-red-400 shrink-0" aria-hidden>✗</span>
+    : <span className="text-green-600 dark:text-green-400 shrink-0" aria-hidden>✓</span>
 }
 
 // Dots is the three-dot "working" indicator shared by tool calls, run cards, and

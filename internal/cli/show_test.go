@@ -198,3 +198,85 @@ func TestRunChatShowFollowLive(t *testing.T) {
 		t.Errorf("follow output = %q, want the final question: line", s)
 	}
 }
+
+// TestRunChatShowFollowToolsAndThinking pins #385's CLI half: `chat show -f`
+// used to have no case at all for agent_thinking/agent_tool_call/
+// agent_tool_result — tool calls and reasoning were invisible in the
+// terminal. It now renders a terse, one-line-per-event trace: "thinking…"
+// once per reasoning block (not once per streamed delta), and a "tool: …" /
+// "→ …" pair per call — never a raw JSON dump.
+func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running","turns":[]}`)
+	})
+	mux.HandleFunc("/api/v1/chats/c1/stream", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Reasoning streams as several small deltas — must collapse to ONE line.
+		io.WriteString(w, "event: agent_thinking\ndata: {\"node_id\":\"n1\",\"run_id\":\"r1\",\"text\":\"I should \"}\n\n")
+		io.WriteString(w, "event: agent_thinking\ndata: {\"node_id\":\"n1\",\"run_id\":\"r1\",\"text\":\"check the tests\"}\n\n")
+		io.WriteString(w, "event: agent_tool_call\ndata: {\"node_id\":\"n1\",\"run_id\":\"r1\",\"call_id\":\"c1\",\"name\":\"run_command\",\"args\":{\"command\":\"go test ./...\"}}\n\n")
+		io.WriteString(w, "event: agent_tool_result\ndata: {\"node_id\":\"n1\",\"run_id\":\"r1\",\"call_id\":\"c1\",\"name\":\"run_command\",\"result\":{\"exit_code\":0}}\n\n")
+		io.WriteString(w, "event: node_done\ndata: {\"node_id\":\"n1\"}\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, true)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, errOut.String())
+	}
+	s := out.String()
+	if got := strings.Count(s, "thinking…"); got != 1 {
+		t.Errorf("thinking… lines = %d, want exactly 1 (deltas of the same run must collapse), output:\n%s", got, s)
+	}
+	if !strings.Contains(s, `node n1: tool: run_command("go test ./...")`) {
+		t.Errorf("follow output missing the compact tool-call line:\n%s", s)
+	}
+	if !strings.Contains(s, "node n1:   → exit 0") {
+		t.Errorf("follow output missing the compact tool-result line:\n%s", s)
+	}
+	if strings.Contains(s, `"exit_code":0`) {
+		t.Errorf("follow output must not dump the raw tool result JSON:\n%s", s)
+	}
+}
+
+// TestRunChatShowFollowDiscardsPreamble pins #387 in the CLI: the old
+// per-token live print showed narration ahead of a tool call as if it were
+// already the answer, with no way to "un-print" it once a later tool call
+// proved it wasn't. `-f` no longer streams top-level tokens live at all; the
+// corrected (preamble-free) answer prints once, at the end, via the same
+// Report() path `chat send` uses.
+func TestRunChatShowFollowDiscardsPreamble(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/chats/c1", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running","turns":[]}`)
+	})
+	mux.HandleFunc("/api/v1/chats/c1/stream", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: agent_token\ndata: {\"text\":\"Let me look into that.\"}\n\n")
+		io.WriteString(w, "event: agent_tool_call\ndata: {\"call_id\":\"c1\",\"name\":\"get_user_choice\",\"args\":{}}\n\n")
+		io.WriteString(w, "event: agent_tool_result\ndata: {\"call_id\":\"c1\",\"name\":\"get_user_choice\",\"result\":{}}\n\n")
+		io.WriteString(w, "event: agent_token\ndata: {\"text\":\"the real answer\"}\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, true)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, errOut.String())
+	}
+	s := out.String()
+	if strings.Contains(s, "Let me look into that.") {
+		t.Errorf("follow output must not print pre-tool-call narration:\n%s", s)
+	}
+	if !strings.Contains(s, "the real answer") {
+		t.Errorf("follow output missing the final answer:\n%s", s)
+	}
+}

@@ -76,10 +76,13 @@ func TestTranslate_ExecuteToolCallPair(t *testing.T) {
 	}
 }
 
-// An edit's diff carries the interesting fields; the path must come back
-// node-relative (the ledger/judge namespace), and a diff outside the node dir
-// stays absolute so the jail refuses it downstream.
-func TestTranslate_EditDiffToWriteFile(t *testing.T) {
+// An edit's diff carries the interesting fields; #388 — this must map to
+// "edit_file" (not "write_file") so the frontend's ToolCallView keys it to
+// the before→after diff view native edit_file calls get, with the path
+// resolved node-relative (the ledger/judge namespace) and old/new text
+// carried in args (EditFileView's diff source), never absolute for a path
+// inside the node dir.
+func TestTranslate_EditDiffToEditFile(t *testing.T) {
 	tr := newTranslator("/work")
 	old := "a"
 	tr.translate(sdk.StartToolCall("t2", "Edit main.go", sdk.WithStartKind(sdk.ToolKindEdit)))
@@ -90,11 +93,43 @@ func TestTranslate_EditDiffToWriteFile(t *testing.T) {
 		t.Fatalf("want one durable spec, got %d", len(specs))
 	}
 	call, resp := specs[0].parts[0].FunctionCall, specs[0].parts[1].FunctionResponse
-	if call.Name != "write_file" || call.Args["path"] != "sub/main.go" {
-		t.Fatalf("edit should map to write_file with a node-relative path, got %s %v", call.Name, call.Args)
+	if call.Name != "edit_file" || call.Args["path"] != "sub/main.go" {
+		t.Fatalf("edit should map to edit_file with a node-relative path, got %s %v", call.Name, call.Args)
 	}
-	if resp.Response["bytes"] != 3 || resp.Response["created"] != false {
-		t.Fatalf("diff outcome lost: %+v", resp.Response)
+	if call.Args["old"] != "a" || call.Args["new"] != "abc" {
+		t.Fatalf("diff text lost: %+v", call.Args)
+	}
+	if resp.Response["replacements"] != 1 {
+		t.Fatalf("replacement note lost: %+v", resp.Response)
+	}
+}
+
+// A new file has no OldText; edit_file's args carry an empty old string (the
+// diff view then renders every line as added) rather than dropping the diff.
+func TestTranslate_EditDiffNewFile(t *testing.T) {
+	tr := newTranslator("/work")
+	tr.translate(sdk.StartToolCall("t2", "Create main.go", sdk.WithStartKind(sdk.ToolKindEdit)))
+	specs := tr.translate(sdk.UpdateToolCall("t2",
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
+		sdk.WithUpdateContent([]sdk.ToolCallContent{{Diff: &sdk.ToolCallContentDiff{Path: "/work/main.go", NewText: "package main"}}})))
+	call := specs[0].parts[0].FunctionCall
+	if call.Name != "edit_file" || call.Args["old"] != "" || call.Args["new"] != "package main" {
+		t.Fatalf("new-file diff mismapped: %+v", call.Args)
+	}
+}
+
+// An edit with no diff content (some agents omit it) has nothing to show a
+// before→after for — falls back to the plainer write_file view rather than
+// rendering edit_file with an empty diff.
+func TestTranslate_EditWithoutDiffFallsBackToWriteFile(t *testing.T) {
+	tr := newTranslator("/work")
+	specs := tr.translate(sdk.UpdateToolCall("t9",
+		sdk.WithUpdateKind(sdk.ToolKindEdit),
+		sdk.WithUpdateLocations([]sdk.ToolCallLocation{{Path: "/work/no-diff.go"}}),
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted)))
+	call := specs[0].parts[0].FunctionCall
+	if call.Name != "write_file" || call.Args["path"] != "no-diff.go" {
+		t.Fatalf("diff-less edit should fall back to write_file, got %s %v", call.Name, call.Args)
 	}
 }
 
