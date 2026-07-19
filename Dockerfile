@@ -14,7 +14,7 @@ RUN npm run build
 # 2) Build the Go server with the SPA embedded.
 # bookworm (glibc), NOT alpine (musl) — same reason as the frontend stage: the
 # runtime copies /usr/local/go from here and must be able to execute it.
-FROM golang:1.25-bookworm AS backend
+FROM golang:1.26-bookworm AS backend
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
