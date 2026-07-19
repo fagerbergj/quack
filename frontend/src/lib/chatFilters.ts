@@ -44,22 +44,20 @@ function countBy(chats: ChatSummary[], key: FacetKey): Map<string, number> {
 }
 
 // computeFacets derives the facet groups (with per-option counts) from the
-// chats actually present. GitHub-specific facets (origin, repo, type) are
-// omitted entirely when githubEnabled is false — matching the badges.
-export function computeFacets(chats: ChatSummary[], opts: { githubEnabled: boolean }): Facet[] {
+// chats actually present. A facet with no options (e.g. no GitHub-originated
+// chats in the list) is omitted.
+export function computeFacets(chats: ChatSummary[]): Facet[] {
   const facets: Facet[] = []
 
-  if (opts.githubEnabled) {
-    const counts = countBy(chats, 'origin')
-    facets.push({
-      key: 'origin',
-      label: 'Origin',
-      options: [
-        { value: 'direct', label: 'Direct', count: counts.get('direct') ?? 0 },
-        { value: 'github', label: 'GitHub', count: counts.get('github') ?? 0 },
-      ],
-    })
-  }
+  const originCounts = countBy(chats, 'origin')
+  facets.push({
+    key: 'origin',
+    label: 'Origin',
+    options: [
+      { value: 'direct', label: 'Direct', count: originCounts.get('direct') ?? 0 },
+      { value: 'github', label: 'GitHub', count: originCounts.get('github') ?? 0 },
+    ],
+  })
 
   const statusCounts = countBy(chats, 'status')
   if (statusCounts.size > 0) {
@@ -74,29 +72,27 @@ export function computeFacets(chats: ChatSummary[], opts: { githubEnabled: boole
     })
   }
 
-  if (opts.githubEnabled) {
-    const repoCounts = countBy(chats, 'repo')
-    if (repoCounts.size > 0) {
-      facets.push({
-        key: 'repo',
-        label: 'Repo',
-        options: Array.from(repoCounts, ([value, count]) => ({ value, label: value, count })).sort((a, b) =>
-          a.label.localeCompare(b.label),
-        ),
-      })
-    }
+  const repoCounts = countBy(chats, 'repo')
+  if (repoCounts.size > 0) {
+    facets.push({
+      key: 'repo',
+      label: 'Repo',
+      options: Array.from(repoCounts, ([value, count]) => ({ value, label: value, count })).sort((a, b) =>
+        a.label.localeCompare(b.label),
+      ),
+    })
+  }
 
-    const typeCounts = countBy(chats, 'type')
-    if (typeCounts.size > 0) {
-      facets.push({
-        key: 'type',
-        label: 'Type',
-        options: [
-          { value: 'issue', label: 'Issue', count: typeCounts.get('issue') ?? 0 },
-          { value: 'pr', label: 'PR', count: typeCounts.get('pr') ?? 0 },
-        ].filter(o => o.count > 0),
-      })
-    }
+  const typeCounts = countBy(chats, 'type')
+  if (typeCounts.size > 0) {
+    facets.push({
+      key: 'type',
+      label: 'Type',
+      options: [
+        { value: 'issue', label: 'Issue', count: typeCounts.get('issue') ?? 0 },
+        { value: 'pr', label: 'PR', count: typeCounts.get('pr') ?? 0 },
+      ].filter(o => o.count > 0),
+    })
   }
 
   return facets

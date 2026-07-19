@@ -1,5 +1,4 @@
 import type { ChatSummary } from '../api'
-import { useAppConfig, type AppConfig } from './appConfig'
 
 // isGithubChat: github_url is the authoritative signal (set by the webhook at
 // dispatch time); the id prefix is a fallback for chats persisted before that
@@ -25,18 +24,4 @@ export function parseGithubRef(c: ChatSummary): GithubRef | undefined {
   if (!m) return undefined
   const repo = c.github_repo ?? c.github_url.replace(/^https?:\/\/github\.com\//, '').split('/').slice(0, 2).join('/')
   return { repo, kind: m[1] === 'pull' ? 'pr' : 'issue', number: Number(m[2]) }
-}
-
-// isGithubEnabledConfig: enabled iff /config.json's extensions.github is
-// present. Optimistic by design — config === undefined (still loading) or
-// null (fetch failed/missing) both default to true, so a config outage never
-// hides the GitHub UI.
-export function isGithubEnabledConfig(config: AppConfig | null | undefined): boolean {
-  return config ? config.extensions?.github != null : true
-}
-
-// useGithubEnabled reads the server's /config.json (via useAppConfig) — the
-// single source of truth for whether the GitHub extension is on.
-export function useGithubEnabled(): boolean {
-  return isGithubEnabledConfig(useAppConfig())
 }

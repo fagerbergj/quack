@@ -38,8 +38,8 @@ const GH_PR = chat({
 const CHATS: ChatSummary[] = [DIRECT, GH_ISSUE, GH_PR]
 
 describe('computeFacets', () => {
-  it('includes origin, status, repo, type facets with counts when github is enabled', () => {
-    const facets = computeFacets(CHATS, { githubEnabled: true })
+  it('includes origin, status, repo, type facets with counts', () => {
+    const facets = computeFacets(CHATS)
     const byKey = Object.fromEntries(facets.map(f => [f.key, f]))
     expect(byKey.origin.options).toEqual([
       { value: 'direct', label: 'Direct', count: 1 },
@@ -53,20 +53,12 @@ describe('computeFacets', () => {
     ])
   })
 
-  it('omits origin/repo/type facets entirely when github is disabled', () => {
-    const facets = computeFacets(CHATS, { githubEnabled: false })
-    const keys = facets.map(f => f.key)
-    expect(keys).not.toContain('origin')
-    expect(keys).not.toContain('repo')
-    expect(keys).not.toContain('type')
-    expect(keys).toContain('status')
-  })
-
   it('omits a facet with no options (e.g. no github chats present)', () => {
-    const facets = computeFacets([DIRECT], { githubEnabled: true })
+    const facets = computeFacets([DIRECT])
     const keys = facets.map(f => f.key)
     expect(keys).not.toContain('repo')
     expect(keys).not.toContain('type')
+    expect(keys).toContain('origin')
   })
 })
 

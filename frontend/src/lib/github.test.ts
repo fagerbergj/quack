@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isGithubChat, isGithubEnabledConfig, parseGithubRef } from './github'
+import { isGithubChat, parseGithubRef } from './github'
 import type { ChatSummary } from '../api'
 
 function chat(overrides: Partial<ChatSummary>): ChatSummary {
@@ -49,24 +49,5 @@ describe('parseGithubRef', () => {
 
   it('is undefined for an unrecognized URL shape', () => {
     expect(parseGithubRef(chat({ github_url: 'https://github.com/acme/widget' }))).toBeUndefined()
-  })
-})
-
-describe('isGithubEnabledConfig', () => {
-  it('is optimistic (true) while /config.json is still loading (undefined)', () => {
-    expect(isGithubEnabledConfig(undefined)).toBe(true)
-  })
-
-  it('is optimistic (true) when /config.json failed or was missing (null)', () => {
-    expect(isGithubEnabledConfig(null)).toBe(true)
-  })
-
-  it('is true when extensions.github is present', () => {
-    expect(isGithubEnabledConfig({ extensions: { github: { mention: '@quack' } } })).toBe(true)
-  })
-
-  it('is false when extensions.github is absent from a loaded config', () => {
-    expect(isGithubEnabledConfig({ extensions: {} })).toBe(false)
-    expect(isGithubEnabledConfig({})).toBe(false)
   })
 })
