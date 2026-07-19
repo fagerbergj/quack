@@ -105,14 +105,18 @@ func histogramSumCount(t *testing.T, reader *metric.ManualReader, name string) (
 
 // TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns is #354's
 // core regression guard: quack.runs.active must net back to 0 once every
-// StartRun has a matching EndRun, on EVERY exit shape — a plain error, a
-// context-cancellation, and a clean return.
+// RunStarted has a matching RunFinished, on EVERY exit shape — a plain error,
+// a context-cancellation, and a clean return.
 func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) {
 	reader := newTestMeter(t)
 
 	runOnce := func(err error) {
-		_, span := StartRun(context.Background(), attribute.String(ChatIDKey, "chat-1"))
-		defer EndRun(span, err)
+		_, span := Start(context.Background(), "run", attribute.String(ChatIDKey, "chat-1"))
+		RunStarted()
+		defer func() {
+			RunFinished()
+			End(span, err)
+		}()
 	}
 	runOnce(errors.New("boom"))
 	runOnce(context.Canceled)
@@ -120,6 +124,43 @@ func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) 
 
 	if got := sumTotal(t, reader, "quack.runs.active"); got != 0 {
 		t.Errorf("quack.runs.active = %d after 3 matched start/end pairs (error, cancel, clean), want 0", got)
+	}
+}
+
+// TestRunQueuedGauge_TracksAdmittedButNotYetExecuting is #417's regression
+// guard: a run admitted (queued) but not yet holding its concurrency slot
+// must show up in quack.runs.queued, NOT quack.runs.active — and the
+// queued→active transition must net runs.queued back to 0 as it does so.
+func TestRunQueuedGauge_TracksAdmittedButNotYetExecuting(t *testing.T) {
+	reader := newTestMeter(t)
+
+	// Prime quack.runs.active so it has a data point to read (an UpDownCounter
+	// with no Add call yet produces no data point at all under the SDK's
+	// ManualReader, distinct from a genuine 0 reading).
+	RunStarted()
+	RunFinished()
+
+	RunQueued()
+	if got := sumTotal(t, reader, "quack.runs.queued"); got != 1 {
+		t.Fatalf("quack.runs.queued = %d after RunQueued, want 1", got)
+	}
+	if got := sumTotal(t, reader, "quack.runs.active"); got != 0 {
+		t.Fatalf("quack.runs.active = %d while only queued (not yet acquired), want 0", got)
+	}
+
+	// Acquire a slot: queued -> active.
+	RunUnqueued()
+	RunStarted()
+	if got := sumTotal(t, reader, "quack.runs.queued"); got != 0 {
+		t.Errorf("quack.runs.queued = %d after RunUnqueued, want 0", got)
+	}
+	if got := sumTotal(t, reader, "quack.runs.active"); got != 1 {
+		t.Errorf("quack.runs.active = %d after RunStarted, want 1", got)
+	}
+
+	RunFinished()
+	if got := sumTotal(t, reader, "quack.runs.active"); got != 0 {
+		t.Errorf("quack.runs.active = %d after RunFinished, want 0", got)
 	}
 }
 

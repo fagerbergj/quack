@@ -75,17 +75,19 @@ func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	}
 }
 
-// acquireRun blocks for a run slot, returning a release func. A no-op when unlimited
-// or when ctx is cancelled while waiting (the run then proceeds to its own ctx check).
-func (o *Orchestrator) acquireRun(ctx context.Context) func() {
+// acquireRun blocks for a run slot, returning a release func and whether a slot
+// was actually acquired. acquired is always true when unlimited; false when ctx
+// is cancelled while waiting (the run then proceeds to its own ctx check with a
+// no-op release).
+func (o *Orchestrator) acquireRun(ctx context.Context) (release func(), acquired bool) {
 	if o.runSem == nil {
-		return func() {}
+		return func() {}, true
 	}
 	select {
 	case o.runSem <- struct{}{}:
-		return func() { <-o.runSem }
+		return func() { <-o.runSem }, true
 	case <-ctx.Done():
-		return func() {}
+		return func() {}, false
 	}
 }
 
@@ -238,8 +240,20 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
-		ctx, span = otelobs.StartRun(ctx, attribute.String(otelobs.ChatIDKey, sessionID))
-		defer otelobs.EndRun(span, nil)
+		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
+		// queued tracks which gauge (runs.queued vs runs.active) this run currently
+		// occupies, so the deferred cleanup below decrements the right one on EVERY
+		// exit path — including cancelled-while-queued, which never reaches acquired.
+		otelobs.RunQueued()
+		queued := true
+		defer func() {
+			if queued {
+				otelobs.RunUnqueued()
+			} else {
+				otelobs.RunFinished()
+			}
+			otelobs.End(span, nil)
+		}()
 		origYield := yield
 		yield = func(ev stream.SSEEvent, err error) bool {
 			if err != nil {
@@ -251,8 +265,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 
 		// Server-wide concurrency gate: a burst of runs queues here instead of all
 		// hitting the model at once (max_active_nodes only bounds within a plan).
-		release := o.acquireRun(ctx)
+		release, acquired := o.acquireRun(ctx)
 		defer release()
+		if acquired {
+			otelobs.RunUnqueued()
+			queued = false
+			otelobs.RunStarted()
+		}
 		// Fresh turn: drop any cancelled-node flags from a prior turn so a reused
 		// node ID (n1, n2, …) doesn't inherit last turn's "stopped" rendering.
 		o.executor.ResetNodeCancels(sessionID)
