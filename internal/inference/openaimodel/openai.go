@@ -280,6 +280,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		// instead of delta.tool_calls (llama.cpp#22684). When no proper tool calls
 		// arrived, recover them from the thinking so the agent acts on them instead
 		// of stalling on an empty turn (the empty-node bug).
+		recoveredFromThought := false
 		if len(toolCallsMap) == 0 {
 			var rb strings.Builder
 			for _, p := range aggregatedContent.Parts {
@@ -309,7 +310,42 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 				for _, c := range calls {
 					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{FunctionCall: c})
 				}
+				recoveredFromThought = true
 				slog.WarnContext(ctx, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
+					"component", "inference", "model", o.ModelName, "count", len(calls))
+			}
+		}
+
+		// #427: the same leak can land in the plain answer text instead of
+		// reasoning_content (ask_advisor leaked as literal "<function=…>" in
+		// content) — scan that too when nothing proper or recovered above.
+		if len(toolCallsMap) == 0 && !recoveredFromThought {
+			var cb strings.Builder
+			for _, p := range aggregatedContent.Parts {
+				if !p.Thought && p.Text != "" {
+					cb.WriteString(p.Text)
+				}
+			}
+			if calls, cleaned := reasoningToolCalls(cb.String()); len(calls) > 0 {
+				rebuilt := make([]*genai.Part, 0, len(aggregatedContent.Parts)+len(calls))
+				contentReplaced := false
+				for _, p := range aggregatedContent.Parts {
+					if !p.Thought && p.Text != "" {
+						if !contentReplaced {
+							contentReplaced = true
+							if strings.TrimSpace(cleaned) != "" {
+								rebuilt = append(rebuilt, &genai.Part{Text: cleaned})
+							}
+						}
+						continue
+					}
+					rebuilt = append(rebuilt, p)
+				}
+				aggregatedContent.Parts = rebuilt
+				for _, c := range calls {
+					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{FunctionCall: c})
+				}
+				slog.WarnContext(ctx, "recovered tool calls leaked into answer content (bare <function=> form, #427)",
 					"component", "inference", "model", o.ModelName, "count", len(calls))
 			}
 		}
@@ -651,9 +687,23 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 		content.Parts = append(content.Parts, &genai.Part{Text: reasoningText, Thought: true})
 	}
 
-	if strings.TrimSpace(choice.Message.Content) != "" {
-		content.Parts = append(content.Parts, &genai.Part{Text: choice.Message.Content})
-	} else if reasoningText != "" && len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 {
+	// #427: the same leak can land in the plain answer content instead of
+	// reasoning_content (ask_advisor leaked as literal "<function=…>" text in
+	// the answer) — scan it too when no proper/recovered tool call exists yet.
+	answerText := choice.Message.Content
+	var recoveredFromContent []*genai.FunctionCall
+	if len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 && strings.TrimSpace(answerText) != "" {
+		var cleaned string
+		if recoveredFromContent, cleaned = reasoningToolCalls(answerText); len(recoveredFromContent) > 0 {
+			answerText = cleaned
+			slog.Warn("recovered tool calls leaked into answer content (bare <function=> form, #427)",
+				"component", "inference", "model", resp.Model, "count", len(recoveredFromContent))
+		}
+	}
+
+	if strings.TrimSpace(answerText) != "" {
+		content.Parts = append(content.Parts, &genai.Part{Text: answerText})
+	} else if reasoningText != "" && len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 && len(recoveredFromContent) == 0 {
 		// Content-side of #22684 (non-streaming path): the synthesized answer
 		// sometimes lands entirely inside reasoning_content, leaving content
 		// empty. Promote the reasoning to the answer instead of dropping it — a
@@ -677,6 +727,9 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 		}
 	}
 	for _, c := range recovered {
+		content.Parts = append(content.Parts, &genai.Part{FunctionCall: c})
+	}
+	for _, c := range recoveredFromContent {
 		content.Parts = append(content.Parts, &genai.Part{FunctionCall: c})
 	}
 
@@ -884,15 +937,46 @@ var toolCallRe = regexp.MustCompile(`(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>`
 //	</function>
 var toolCallXMLRe = regexp.MustCompile(`(?s)<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>`)
 
+// bareFunctionRe matches the same qwen <function=…> shape WITHOUT the
+// <tool_call> wrapper — seen when a call leaks straight into the assistant's
+// content instead of reasoning_content (#427: ask_advisor leaked as literal
+// "<function=ask_advisor>…" text in the answer). Matched blocks are only
+// treated as real calls once their body passes the parameter-block guard in
+// reasoningToolCalls — this regex alone is not enough to avoid misfiring on
+// prose that merely mentions "<function=" in passing.
+var bareFunctionRe = regexp.MustCompile(`(?s)<function=([^>]+)>(.*?)</function>`)
+
 // paramRe matches one <parameter=name>value</parameter> entry; values may span lines.
 var paramRe = regexp.MustCompile(`(?s)<parameter=([^>]+)>\s*(.*?)\s*</parameter>`)
 
-// reasoningToolCalls recovers tool calls that Qwen3.x streamed inside
-// reasoning_content as <tool_call> XML instead of delta.tool_calls
-// (llama.cpp#22684, closed not-planned — so the client must parse them). Both
-// the Hermes JSON form and qwen's <function>/<parameter> form are handled.
-// Without this the agent sees no tool call and an empty answer, and the node
-// stalls empty. Returns the parsed calls and the reasoning with those blocks removed.
+// parseXMLParams extracts <parameter=name>value</parameter> entries from a
+// <function=…> body into call args, shared by the wrapped and bare recovery paths.
+func parseXMLParams(body string) map[string]any {
+	args := map[string]any{}
+	for _, pm := range paramRe.FindAllStringSubmatch(body, -1) {
+		raw := strings.TrimSpace(pm[2])
+		var v any
+		// JSON-typed values (numbers, bools, objects) keep their type, as
+		// in qwen-agent's own converter; anything unparseable stays a string.
+		if json.Unmarshal([]byte(raw), &v) == nil {
+			args[strings.TrimSpace(pm[1])] = v
+		} else {
+			args[strings.TrimSpace(pm[1])] = raw
+		}
+	}
+	return args
+}
+
+// reasoningToolCalls recovers tool calls that a model leaked as literal XML
+// instead of proper delta.tool_calls — Qwen3.x's <tool_call> wrapper
+// (llama.cpp#22684, closed not-planned — so the client must parse them) plus
+// the bare <function=…> form seen leaking straight into content (#427,
+// recurrence of #402). Handles, in order: Hermes JSON
+// (<tool_call>{...}</tool_call>), qwen's wrapped <function>/<parameter> form,
+// and the same form without the <tool_call> wrapper. Without this the agent
+// sees no tool call — either an empty answer (stalls the node) or the raw XML
+// shown to the user. Returns the parsed calls and the text with matched
+// blocks removed.
 func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 	var calls []*genai.FunctionCall
 
@@ -916,28 +1000,38 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 		if name == "" {
 			continue
 		}
-		args := map[string]any{}
-		for _, pm := range paramRe.FindAllStringSubmatch(m[2], -1) {
-			raw := strings.TrimSpace(pm[2])
-			var v any
-			// JSON-typed values (numbers, bools, objects) keep their type, as
-			// in qwen-agent's own converter; anything unparseable stays a string.
-			if json.Unmarshal([]byte(raw), &v) == nil {
-				args[strings.TrimSpace(pm[1])] = v
-			} else {
-				args[strings.TrimSpace(pm[1])] = raw
-			}
+		calls = append(calls, &genai.FunctionCall{
+			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), name),
+			Name: name,
+			Args: parseXMLParams(m[2]),
+		})
+	}
+
+	// Strip the two wrapped forms before scanning for bare <function=…>
+	// blocks, so one already counted above isn't double-counted below.
+	withoutWrapped := toolCallXMLRe.ReplaceAllString(toolCallRe.ReplaceAllString(reasoning, ""), "")
+
+	cleaned := bareFunctionRe.ReplaceAllStringFunc(withoutWrapped, func(block string) string {
+		bm := bareFunctionRe.FindStringSubmatch(block)
+		name := strings.TrimSpace(bm[1])
+		body := bm[2]
+		// Guard against prose that merely mentions "<function=…>" in passing:
+		// the body must be fully accounted for by <parameter=…> blocks (or
+		// empty) — natural-language text between the tags fails this check
+		// and the block is left untouched as ordinary text.
+		if name == "" || strings.TrimSpace(paramRe.ReplaceAllString(body, "")) != "" {
+			return block
 		}
 		calls = append(calls, &genai.FunctionCall{
 			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), name),
 			Name: name,
-			Args: args,
+			Args: parseXMLParams(body),
 		})
-	}
+		return ""
+	})
 
 	if len(calls) == 0 {
 		return nil, reasoning
 	}
-	cleaned := toolCallXMLRe.ReplaceAllString(toolCallRe.ReplaceAllString(reasoning, ""), "")
 	return calls, cleaned
 }
