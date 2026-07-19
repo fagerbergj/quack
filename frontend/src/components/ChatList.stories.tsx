@@ -4,20 +4,26 @@ import { ChatList } from './ChatList'
 import type { ChatSummary } from '../api'
 
 const now = '2026-06-18T12:00:00Z'
-function chat(id: string, title: string): ChatSummary {
-  return { id, title, system_prompt: '', created_at: now, updated_at: now, status: 'idle' }
+function chat(id: string, title: string, status: ChatSummary['status'] = 'idle'): ChatSummary {
+  return { id, title, system_prompt: '', created_at: now, updated_at: now, status }
 }
 
-function githubChat(id: string, title: string, repo: string, ref = 'issues/1'): ChatSummary {
+function githubChat(
+  id: string,
+  title: string,
+  repo: string,
+  kind: 'issues' | 'pull' = 'issues',
+  status: ChatSummary['status'] = 'idle',
+): ChatSummary {
   return {
     id,
     title,
     system_prompt: '',
     created_at: now,
     updated_at: now,
-    status: 'idle',
+    status,
     github_repo: repo,
-    github_url: `https://github.com/${repo}/${ref}`,
+    github_url: `https://github.com/${repo}/${kind}/${id.match(/\d+$/)?.[0] ?? 1}`,
   }
 }
 
@@ -28,13 +34,15 @@ const CHATS: ChatSummary[] = [
   chat('4', 'Postgres connection pooling'),
 ]
 
-// A mixed list: direct chats interleaved with GitHub-originated ones (issue #386).
+// A mixed list: direct chats interleaved with GitHub-originated ones (issue #386),
+// with varied status and both issue/PR refs across two repos (issue #396 follow-up).
 const MIXED_CHATS: ChatSummary[] = [
   chat('direct-1', 'Best time to visit Dublin'),
-  githubChat('github-quack-386', 'Chats aren’t filterable by origin', 'fagerbergj/quack', 'issues/386'),
-  chat('direct-2', 'Debounce vs throttle in React'),
-  githubChat('github-quack-350', 'Force-push the work branch', 'fagerbergj/quack', 'pull/350'),
+  githubChat('github-quack-386', 'Chats aren’t filterable by origin', 'fagerbergj/quack', 'issues', 'running'),
+  chat('direct-2', 'Debounce vs throttle in React', 'failed'),
+  githubChat('github-quack-350', 'Force-push the work branch', 'fagerbergj/quack', 'pull', 'idle'),
   chat('direct-3', 'Postgres connection pooling'),
+  githubChat('github-games-3', 'Flappy bird collision tuning', 'fagerbergj/games', 'issues', 'needs_input'),
 ]
 
 const meta: Meta<typeof ChatList> = {
@@ -66,27 +74,45 @@ export const Searchable: Story = {
   args: { chats: CHATS, activeChatId: null },
 }
 
-// A mixed list: GitHub-originated rows carry the "GH" badge, direct rows don't.
-// The All/Direct/GitHub control above the list narrows which rows render —
-// click each to see the filter in action.
+// A mixed list: GitHub-originated rows carry a repo badge, an Issue/PR badge,
+// and (when not idle) a status pill. Open the funnel to filter by Origin,
+// Status, Repo, or Type.
 export const MixedOrigin: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
 }
 
-// Same mixed list with the "GitHub" filter selected: only badged rows remain.
+// Non-idle rows (running/failed/needs_input) show a small status pill; idle
+// rows stay quiet — no badge at all.
+export const StatusBadges: Story = {
+  args: {
+    chats: [
+      chat('running-1', 'Currently streaming', 'running'),
+      chat('failed-1', 'Hit an error', 'failed'),
+      chat('waiting-1', 'Paused on a question', 'needs_input'),
+      chat('idle-1', 'Nothing going on', 'idle'),
+    ],
+    activeChatId: null,
+  },
+}
+
+// Opens the filter popover and selects the GitHub origin facet — only
+// GitHub-originated rows remain, and the funnel shows an active-filter badge.
 export const FilteredToGithub: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(canvas.getByRole('button', { name: 'GitHub' }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Filter chats' }))
+    await userEvent.click(canvas.getByRole('checkbox', { name: /^GitHub/ }))
   },
 }
 
-// Same mixed list with the "Direct" filter selected: only unbadged rows remain.
-export const FilteredToDirect: Story = {
+// Selects the Repo facet for a single repo — narrows across both its issue
+// and PR rows, leaving the other repo's row out.
+export const FilteredToRepo: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(canvas.getByRole('button', { name: 'Direct' }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Filter chats' }))
+    await userEvent.click(canvas.getByRole('checkbox', { name: /^fagerbergj\/quack/ }))
   },
 }
