@@ -1,6 +1,6 @@
 {
   "name": "synthesizer",
-  "description": "Combines research findings from multiple completed web-researcher nodes into a single, well-structured answer with all inline citations preserved. Use only when two or more research nodes have run and their outputs need merging.",
+  "description": "Organizes the output of the plan's other node(s) — research, code exploration, or other findings — into the ONE deliverable that answers the user's request, with all inline citations preserved. Use whenever the final shape matters and isn't already guaranteed by a single node's own output: two or more nodes whose findings must read as one answer, or a structured write-up (a plan, a design, a comparison) derived from exploration even when only one feeder node ran.",
   "skills": [
     {
       "id": "synthesize_research",

@@ -198,7 +198,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		}
 		ds.Finish()
 		// Persist the new terminal answer as the chat's assistant message.
-		if answer := tools.TerminalOutput(plan, nodeOutputs); answer != "" {
+		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs); answer != "" {
 			persistCtx := context.WithoutCancel(ctx)
 			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID}); gerr == nil && resp != nil {
 				aev := session.NewEvent(persistCtx, "")
@@ -556,7 +556,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 					return
 				}
 				if !paused {
-					planCache.SetDelivered(tools.TerminalOutput(plan, nodeOutputs))
+					planCache.SetDelivered(o.finalizeAnswer(ctx, plan, nodeOutputs))
 				}
 			}
 		}
@@ -725,7 +725,7 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 		return
 	}
 	if !paused {
-		answer := tools.TerminalOutput(plan, nodeOutputs)
+		answer := o.finalizeAnswer(ctx, plan, nodeOutputs)
 		o.persistAnswer(ctx, userID, sessionID, answer)
 	}
 	yield(stream.Done(), nil)

@@ -24,9 +24,34 @@ Match the request to a known shape first; fall back to the general rules below.
 | Write/fix/refactor code in a repo | ONE `code-implementer` node (the gate derives its checks from the repo — see Code checks) |
 | Review a PR / diff / branch / proposed change (read-only, no edits) | Small/cohesive: ONE `code-reviewer` node. Large/multi-area: one `code-explorer` per slice of the diff → ONE terminal `code-reviewer` that validates the pooled findings and posts. See Reviewing a PR |
 | Explore / understand / analyze a codebase or repo's structure, conventions, or how something is implemented (read-only, no edits) | ONE `code-explorer` node — it clones and reads, cites files, never commits |
+| Produce an implementation PLAN (not the code itself) — "plan how to add X", "how would you implement Y", a `quack:plan`-labeled issue | one or more `code-explorer`/`web-researcher` feeder nodes → a terminal `synthesizer` that writes the plan. Frame the feeder node's task as "explore AND turn what you learn into a phased plan", not bare "explore" — see When to add a synthesizer below |
 | Learn how ANOTHER project (a third-party OSS repo) implements something — "how does OpenHands do X?", "how does goose expose tools?" | ONE `code-explorer` node per project — it CLONES THEIR REPO and reads the real source. NOT `web-researcher`: articles and docs describe code, only the code is the code. Use `web-researcher` only for facts that exist nowhere but the web (a blog post's rationale, a spec, pricing) |
 | Add/implement a feature AND deliver it | a chain of `code-implementer` nodes, one per independent goal-scoped portion (ONE node for a single coherent change) — each clones/commits locally; the plan itself declares `setup` + `delivery` (see Implement-and-deliver, Decomposing implementation, Declare setup + delivery) |
 | Research several projects, THEN design, THEN implement and deliver (a multi-phase request) | ONE DAG spanning ALL the phases: one `code-explorer` per project → (optionally ONE `synthesizer`) → a `code-implementer` chain (terminal). See Multi-phase requests |
+
+**When to add a synthesizer.** The `synthesizer` organizes the output of the plan's
+other node(s) into ONE deliverable that actually answers the user's question — its
+output is delivered to the user AS-IS, with no further formatting pass. Add a
+terminal `synthesizer` (`depends_on` the plan's other nodes) whenever the plan's
+final shape matters and isn't already guaranteed by a single node's own job:
+
+- Two or more research/exploration nodes whose findings must read as one answer —
+  the `synthesizer` merges them; without it, only the LAST node's raw output ships,
+  and the others are silently dropped from the delivered answer.
+- A plan whose deliverable is a structured write-up derived FROM exploration — a
+  plan, a design doc, a comparison, a recommendation — even when only ONE feeder
+  node runs. A bare `code-explorer`/`web-researcher` node is judged on exploration
+  accuracy, not on producing a phased plan; whether its raw report happens to read
+  as a plan depends on how you worded its task, which is not a decision the
+  synthesizer should be left to gamble on. Route explore → synthesizer instead, and
+  give the synthesizer's task the actual shape you want ("write a phased
+  implementation plan from the exploration findings below, with a diagram where it
+  clarifies the design").
+
+Skip it when a single node's own output IS the deliverable verbatim and needs no
+recombination or reshaping — a one-shot factual answer, a `code-implementer`'s
+committed change (delivered as a PR, not as chat text), or a `code-reviewer`'s
+posted review.
 
 **Multi-phase requests.** A request whose phases are spelled out ("research A, B and
 C by reading their source; synthesize a design; then implement it and open a PR") is
