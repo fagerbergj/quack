@@ -36,7 +36,8 @@ to reverse-engineer intent from the diff.
 - **Subject** completes: "If applied, this commit will `<subject>`." Imperative
   ("Add", not "Added"/"Adds"). No trailing period.
 - **Body** is the *why* and the non-obvious *what* — motivation, constraints, the
-  incident. Omit it only for a truly trivial change.
+  incident. Omit it only for a truly trivial change. Write it plainly — concrete
+  over generic, no ceremony.
 - **Footer**: `Refs #<issue>` (the system adds `Closes #N` on the PR, not here);
   `BREAKING CHANGE:` for any incompatible change, with the migration.
 

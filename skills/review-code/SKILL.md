@@ -129,7 +129,9 @@ Don't scatter line-by-line comments. Deliver:
    over holding it hostage to nits — and if you approve with non-blocking
    comments, say explicitly that they're non-blocking.
 
-Cite findings by `path:line` so the author can jump straight to them.
+Cite findings by `path:line` so the author can jump straight to them. Write the
+summary and each finding following the shared style ruleset at
+`~/.agents/AGENTS.md` — concrete, no ceremony, no canned "great work!" filler.
 
 On a GitHub PR, deliver this as one native review: record each finding as an
 inline comment (`github_add_review_comment`, path+line) the moment you spot it —
@@ -146,11 +148,11 @@ for substantive findings.
 
 ## Why this order
 
-Understanding comes first because you can't judge a change you don't grasp.
-Verification comes before critique because a review that trusts the author's
-claims is a rubber stamp. Severity comes before structure because the author's
-time is finite — block on what's genuinely wrong, and let the rest be
-suggestions.
+You can't judge a change you don't grasp, so understanding comes first.
+Verification comes before critique for the same reason: a review that trusts
+the author's claims is a rubber stamp, not a review. And severity outranks
+structure because the author's time is finite — block on what's genuinely
+wrong, and let the rest be suggestions.
 
 ## When this is lighter
 
