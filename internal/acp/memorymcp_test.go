@@ -2,12 +2,14 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	sdk "github.com/coder/acp-go-sdk"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -15,6 +17,48 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
+
+// TestMemoryMCPServers_SSEWireShape pins the session/new wire shape opencode
+// requires: an SSE server with type "sse" and a non-null headers array. The
+// original Http variant (type unset, headers nil) serialized to
+// {"type":"","headers":null,...}, which opencode rejected with -32602 and
+// killed the ACP subprocess — breaking every code node. Guard against regress.
+func TestMemoryMCPServers_SSEWireShape(t *testing.T) {
+	caps := sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}}
+
+	// No secret ⇒ empty (but non-nil) slice.
+	if got := memoryMCPServers("", caps); got == nil || len(got) != 0 {
+		t.Fatalf("no secret: want empty non-nil slice, got %#v", got)
+	}
+	// No MCP capability ⇒ empty.
+	if got := memoryMCPServers("abc", sdk.AgentCapabilities{}); len(got) != 0 {
+		t.Fatalf("no mcp capability: want empty, got %#v", got)
+	}
+
+	servers := memoryMCPServers("deadbeef", caps)
+	if len(servers) != 1 {
+		t.Fatalf("want 1 server, got %d", len(servers))
+	}
+	s := servers[0]
+	if s.Sse == nil || s.Http != nil {
+		t.Fatalf("want the SSE variant (not Http), got %#v", s)
+	}
+	if s.Sse.Type != "sse" {
+		t.Errorf("Type = %q, want \"sse\"", s.Sse.Type)
+	}
+	if s.Sse.Headers == nil {
+		t.Error("Headers is nil; opencode needs a non-null array")
+	}
+	// And the marshaled JSON must carry type:"sse" and headers:[] (not null).
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	if !strings.Contains(js, `"type":"sse"`) || strings.Contains(js, `"headers":null`) {
+		t.Errorf("wire JSON must have type:\"sse\" and a non-null headers array; got %s", js)
+	}
+}
 
 // fakeMCPEmbedder returns a fixed unit vector for every text, so a recall
 // query matches any stored point (cosine = 1) — the round-trip below is

@@ -113,15 +113,22 @@ func memoryMCPHandler() http.Handler {
 func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer {
 	// NewSessionRequest.McpServers is a required field on the wire (an omitted/
 	// null array 400s) — always return a non-nil slice, even when empty.
-	if secret == "" || !caps.McpCapabilities.Http {
+	if secret == "" || !(caps.McpCapabilities.Http || caps.McpCapabilities.Sse) {
 		return []sdk.McpServer{}
 	}
 	base := memoryMCPURL()
 	if base == "" {
 		return []sdk.McpServer{}
 	}
-	return []sdk.McpServer{{Http: &sdk.McpServerHttpInline{
-		Name: "quack-memory",
-		Url:  base + "/" + secret,
+	// opencode's session/new validates each server as an SSE-transport MCP:
+	// it requires type:"sse" and a non-null headers array. The earlier Http
+	// variant (type unset, headers nil) failed with -32602 Invalid params and
+	// killed the subprocess, breaking every ACP node. Declare the loopback
+	// memory server as SSE with explicit type + empty headers.
+	return []sdk.McpServer{{Sse: &sdk.McpServerSseInline{
+		Type:    "sse",
+		Name:    "quack-memory",
+		Url:     base + "/" + secret,
+		Headers: []sdk.HttpHeader{},
 	}}}
 }
