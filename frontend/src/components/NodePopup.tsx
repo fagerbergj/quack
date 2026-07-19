@@ -112,19 +112,22 @@ export function NodePopup({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl p-5 space-y-3"
+        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-5 pt-2 space-y-2"
         onClick={e => e.stopPropagation()}
       >
-        <button
-          onClick={onClose}
-          aria-label="Close"
-          className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
-        >
-          ✕
-        </button>
+        {/* Close on its own row so it never overlaps the content bubbles. */}
+        <div className="flex justify-end -mb-1">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
 
         {/* Prompt — the same bubble treatment as an assistant turn in chat. */}
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4 pr-10">
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
           <div className="flex items-center justify-between">
             <BubbleHeader agent={node.agent} />
             {notStarted && onEditTask && !editingTask && (
