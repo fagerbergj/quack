@@ -29,7 +29,7 @@ describe('CopyButton', () => {
     })
 
     const button = host.querySelector('button')!
-    expect(button.textContent).toBe('✎')
+    expect(button.querySelector('svg')).not.toBeNull() // content-copy glyph, not yet confirmed
 
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))

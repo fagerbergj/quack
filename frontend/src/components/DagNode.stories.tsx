@@ -352,3 +352,104 @@ export const OverflowMenuHiddenOnTerminal: Story = {
     isFinal: false,
   },
 }
+
+// ---- 0.9.0: compact collapse-to-one-line ethos (live UI feedback) ----------
+
+const markdownVerdict = [
+  '**Mostly solid**, but the rainfall claim is unbacked.',
+  '',
+  '- Cite a source for "Dublin gets 150 rainy days a year"',
+  '- The [Met Éireann](https://www.met.ie) climate page has monthly averages',
+].join('\n')
+
+// The judge verdict collapses to one line by default, matching ThinkBlock's
+// affordance — a truncated preview beside the round header, not a standing
+// paragraph.
+export const JudgeVerdictCollapsed: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 40_000, model: 'qwen3-30b-a3b' },
+    runs: [
+      workerDone(researchActivity),
+      judgeRun(1, 0.52, false, markdownVerdict),
+    ],
+    answer: 'Best time: **May–September**.',
+    isFinal: false,
+  },
+}
+
+// Clicking the verdict preview opens a popup with the full verdict — rendered
+// as formatted markdown (bold, list, link), not raw text or an inline expand.
+export const JudgeVerdictPopup: Story = {
+  ...JudgeVerdictCollapsed,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByText(/Mostly solid/))
+    await canvas.findByRole('dialog')
+  },
+}
+
+const markdownAnswer = [
+  '## Dublin in brief',
+  '',
+  'Visit between **May and September** for the best weather.',
+  '',
+  '- Guinness Storehouse',
+  '- Trinity College',
+  '',
+  'See [Met Éireann](https://www.met.ie) for monthly averages.',
+].join('\n')
+
+// The answer collapses to a one-line preview by default (same ethos as the
+// judge verdict and ThinkBlock/ToolBlock).
+export const AnswerCollapsed: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 34_000, model: 'qwen3-30b-a3b' },
+    runs: [workerDone(researchActivity)],
+    answer: markdownAnswer,
+    isFinal: false,
+  },
+}
+
+// Clicking the answer preview opens a popup with the full answer as markdown.
+export const AnswerPopup: Story = {
+  ...AnswerCollapsed,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByText('answer'))
+    await canvas.findByRole('dialog')
+  },
+}
+
+// A mechanical deterministic-check retry (the gate's continuation loop handing
+// the worker another tool-bearing round after e.g. a failed `go test`) is a
+// SEPARATE run under the hood but renders as ONE continuous activity feed —
+// not a second "1 step" block — because it isn't a meaningful stage boundary
+// the way a judge-triggered revise is. Regression guard for the render-level
+// grouping in groupWorkerRuns (DagNode.tsx).
+export const DeterministicRetryOneFeed: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 50_000, model: 'qwen3-30b-a3b' },
+    runs: [
+      {
+        runId: 'worker-r0', agent: 'web-researcher', stage: 'worker', done: true, model: 'qwen3-30b-a3b',
+        activity: researchActivity,
+      },
+      {
+        // Same stage ('worker'), a NEW run_id — the gate's continuation after a
+        // failed deterministic check, not a judge-triggered revise.
+        runId: 'worker-cont1', agent: 'web-researcher', stage: 'worker', done: true, model: 'qwen3-30b-a3b',
+        activity: [{ kind: 'tool', tool: { callId: 'c9', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true } }],
+      },
+    ],
+    answer: 'Best months to visit Dublin: **May–September**.',
+    isFinal: false,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    // One merged "N steps" summary, not two separate worker cards.
+    await canvas.findByText('4 steps')
+  },
+}
