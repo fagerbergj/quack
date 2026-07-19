@@ -72,6 +72,62 @@ func drain(t *testing.T, ex *Executor, plan Plan) {
 	runPlanSSE(t, ex, plan, "chat")
 }
 
+// TestExecute_TaskOverrideAppliesBeforeNodeStarts: SetNodeTaskOverride, called
+// before the node has started, actually drives the worker's prompt — a
+// regression test for the override having been dead code (getOverride was
+// never consulted; the node ran the plan's original node.Task regardless of
+// what the REST 200 implied was saved).
+func TestExecute_TaskOverrideAppliesBeforeNodeStarts(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	close(stub.unblock) // nothing to synchronize on; the override lands well before drain
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	if !ex.SetNodeTaskOverride("chat", "n1", "REVISED TASK TEXT") {
+		t.Fatal("SetNodeTaskOverride returned false for a not-yet-started node")
+	}
+	drain(t, ex, plan)
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if len(stub.prompts) == 0 {
+		t.Fatal("worker never ran")
+	}
+	if !strings.Contains(stub.prompts[0], "REVISED TASK TEXT") {
+		t.Errorf("worker prompt missing the overridden task: %q", stub.prompts[0])
+	}
+	if strings.Contains(stub.prompts[0], "do it") {
+		t.Errorf("worker prompt still contains the plan's ORIGINAL task text: %q", stub.prompts[0])
+	}
+}
+
+// TestExecute_TaskOverrideRejectedOnceNodeStarted: closes the TOCTOU between
+// "is this node started?" and "stash the override" — registerAndTakeOverride
+// registers the live control BEFORE the worker's first call, so an override
+// attempt that only lands once the worker is already running (as this test
+// forces via coopStub's start signal) must be rejected outright, never
+// silently accepted-but-ignored.
+func TestExecute_TaskOverrideRejectedOnceNodeStarted(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	var accepted bool
+	go func() {
+		<-stub.started
+		accepted = ex.SetNodeTaskOverride("chat", "n1", "too late")
+		close(stub.unblock)
+	}()
+	drain(t, ex, plan)
+
+	if accepted {
+		t.Error("SetNodeTaskOverride succeeded after the node had already started")
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if strings.Contains(stub.prompts[0], "too late") {
+		t.Error("a rejected override still leaked into the running node's prompt")
+	}
+}
+
 // TestExecute_CancelNodeStopsBeforeJudge: cancelling a running node makes the gate
 // stop at its next stage boundary — so the judge never runs.
 func TestExecute_CancelNodeStopsBeforeJudge(t *testing.T) {

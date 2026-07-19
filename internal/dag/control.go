@@ -168,7 +168,7 @@ type runControls struct {
 	m         map[string]map[string]*nodeControl // chatID → nodeID → control (live)
 	cancelled map[string]map[string]bool         // chatID → nodeID → user-cancelled; persists after the control is unregistered so the stream can mark the node "cancelled" (not "failed")
 	paused    map[string]map[string]bool         // chatID → nodeID → user-paused this run; persists past unregister, same reason as cancelled
-	overrides map[string]map[string]string       // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveTask)
+	overrides map[string]map[string]string       // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
 }
 
 func newRunControls() *runControls {
@@ -208,15 +208,31 @@ func (r *runControls) resetCancelled(chatID string) {
 	delete(r.overrides, chatID)
 }
 
-func (r *runControls) register(chatID, nodeID string) *nodeControl {
+// registerAndTakeOverride registers a live control for the node and, in the
+// SAME critical section, does an atomic, ONE-SHOT read of any pending task
+// override for it — so a SetNodeTaskOverride call racing this node's start
+// either lands strictly before (the node body sees it) or is rejected
+// outright (setOverrideIfNotStarted sees the now-live control), never a
+// lost-update in between. The override is consumed (deleted) here, not just
+// read: a node invoked again later (HITL resume, a fresh retry
+// re-registering the same node ID) must fall back to the plan's own
+// node.Task, not keep silently reapplying a one-time edit. ok reports
+// whether an override was present.
+func (r *runControls) registerAndTakeOverride(chatID, nodeID string) (c *nodeControl, override string, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.m[chatID] == nil {
 		r.m[chatID] = map[string]*nodeControl{}
 	}
-	c := &nodeControl{}
+	c = &nodeControl{}
 	r.m[chatID][nodeID] = c
-	return c
+	if m := r.overrides[chatID]; m != nil {
+		if t, present := m[nodeID]; present {
+			override, ok = t, true
+			delete(m, nodeID)
+		}
+	}
+	return c, override, ok
 }
 
 func (r *runControls) unregister(chatID, nodeID string) {
@@ -239,23 +255,29 @@ func (r *runControls) get(chatID, nodeID string) *nodeControl {
 	return nil
 }
 
-// setOverride stashes a not-yet-started node's edited task text, read by
-// graph.go's node body (effectiveTask) instead of the plan's own node.Task.
-// In-memory only — it applies to the CURRENT run's already-built graph, not
-// a future turn's fresh plan, which would carry the edit moot anyway.
-func (r *runControls) setOverride(chatID, nodeID, task string) {
+// setOverrideIfNotStarted stashes a not-yet-started node's edited task text,
+// read by graph.go's node body (effectiveTask) at registerAndTakeOverride
+// instead of the plan's own node.Task. In-memory only — it applies to the
+// CURRENT run's already-built graph, not a future turn's fresh plan, which
+// would carry the edit moot anyway.
+//
+// The "not started" check (no live control registered) and the write happen
+// under the SAME lock as register/registerAndTakeOverride, closing the race
+// where a node starts between a separate check-then-set: either this call
+// sees the control already live and rejects (false), or it wins and the
+// override is guaranteed visible to the node's own registerAndTakeOverride
+// (which cannot have run yet — this call and register share one mutex).
+func (r *runControls) setOverrideIfNotStarted(chatID, nodeID, task string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if m := r.m[chatID]; m != nil && m[nodeID] != nil {
+		return false // already running — immutable
+	}
 	if r.overrides[chatID] == nil {
 		r.overrides[chatID] = map[string]string{}
 	}
 	r.overrides[chatID][nodeID] = task
-}
-
-func (r *runControls) getOverride(chatID, nodeID string) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.overrides[chatID][nodeID]
+	return true
 }
 
 // CancelNode stops one running node of a chat's active run at its next gate-stage
@@ -391,13 +413,10 @@ func toQueuedMessage(m queuedMsg) QueuedMessage {
 
 // SetNodeTaskOverride edits a NOT-YET-STARTED node's task text. Returns false
 // if the node has already started (its control is registered) — its prompt
-// is then immutable. Best-effort against the start race documented on
-// runControls.setOverride: a node beginning at the exact instant of this call
-// may or may not see the edit.
+// is then immutable. Atomic against the start race (see
+// runControls.setOverrideIfNotStarted): a node beginning at the exact instant
+// of this call either loses the race outright (this returns false) or wins it
+// cleanly (the node is guaranteed to see the override) — never a lost update.
 func (e *Executor) SetNodeTaskOverride(chatID, nodeID, task string) bool {
-	if e.controls.get(chatID, nodeID) != nil {
-		return false // already running — immutable
-	}
-	e.controls.setOverride(chatID, nodeID, task)
-	return true
+	return e.controls.setOverrideIfNotStarted(chatID, nodeID, task)
 }

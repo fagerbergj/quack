@@ -252,27 +252,6 @@ export class ChatStore {
     }).catch(() => {})
   }
 
-  // steerNode interrupts one running node and re-runs it with new guidance against
-  // its same session (prior tool calls/results retained). The re-run streams over
-  // the SAME open connection — no abort, no re-plan.
-  steerNode(chatId: string, nodeId: string, guidance: string): void {
-    const g = guidance.trim()
-    if (!g) return
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'running', guidance: g }),
-    }).then(async res => {
-      // A dropped steer returns 409 (no live control — the node is between runs,
-      // e.g. restarting from an earlier steer). Surface it on the node rather
-      // than silently doing nothing ("steer doesn't work"); the note is
-      // overwritten by the node's next state update.
-      if (res.ok) return
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      this.markNodeError(chatId, nodeId, body.error || `steer rejected (HTTP ${res.status})`)
-    }).catch(() => {})
-  }
-
   // pauseNode suspends one running node at its next turn boundary, keeping its
   // accumulated work (resumable). Not optimistic, same reasoning as cancelNode.
   pauseNode(chatId: string, nodeId: string): void {
