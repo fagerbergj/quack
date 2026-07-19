@@ -703,9 +703,13 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 		return
 	}
 	lastSeq := lastEventID(r)
+	// hub.Active, not h.activeCancels: activeCancels is REST-only (the GitHub
+	// extension keeps its own, separate map for its cancel button), so it
+	// misses a webhook-driven run entirely. hub.Active covers every driver of
+	// a run on this chat, since they all publish through this one shared hub.
+	active := h.hub.Active(chatID)
 	replay, live, cancel, done := h.hub.Subscribe(chatID)
 	defer cancel()
-	_, active := h.activeCancels.Load(chatID)
 
 	// Cold path: the hub has no buffered events and no run is active in this
 	// process — a restart wiped the in-memory topic (the orchestrator goroutine

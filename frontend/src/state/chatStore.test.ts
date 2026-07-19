@@ -556,6 +556,27 @@ describe('ChatStore.attach — reconnect to a live run', () => {
     store.attach('c')
     expect(FakeEventSource.last).toBe(first) // no new EventSource opened
   })
+
+  // #282: opening a chat while its node is actively running must show LIVE
+  // activity (tool calls, streamed tokens) as it lands on the held-open
+  // stream — not just the terminal node_start/done bookends.
+  it('activity events (tool_call, token) landing on the held-open stream update the store live, no reload', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+    es.emit('node_start', '{"node_id":"a","agent":"researcher"}')
+    es.emit('agent_start', '{"node_id":"a","run_id":"r1","agent":"researcher","stage":"worker"}')
+
+    es.emit('agent_tool_call', '{"node_id":"a","run_id":"r1","call_id":"tc1","name":"web_search","args":{"q":"x"}}')
+    es.emit('agent_token', '{"node_id":"a","run_id":"r1","text":"partial answer text"}')
+
+    const dag = store.get('c').live?.dag
+    expect(dag?.nodeRuns['a']?.some(r => r.runId === 'r1')).toBe(true)
+    expect(dag?.nodeAnswer['a']).toContain('partial answer text')
+    expect(es.closed).toBe(false) // still streaming — no reload needed to see this
+  })
 })
 
 // Issue #383: a dropped SSE connection must be retried automatically —

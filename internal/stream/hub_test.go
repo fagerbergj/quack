@@ -92,6 +92,27 @@ func TestHubActive(t *testing.T) {
 	}
 }
 
+// A bare Subscribe (no run has ever published) auto-vivifies an empty topic
+// so a same-moment Publish never races past the registered subscriber — but
+// that placeholder must not itself read as Active, or a chat nobody ever ran
+// would show "running" forever (and the REST /stream handler's cold/warm
+// split would misfire on every later reconnect to the same never-run chat).
+func TestHubActiveNotFooledByBareSubscribe(t *testing.T) {
+	h := NewHub()
+	_, _, cancel, done := h.Subscribe("c")
+	defer cancel()
+	if done {
+		t.Fatal("a fresh topic has no run yet, so it's not done — subscriber awaits a live tail")
+	}
+	if h.Active("c") {
+		t.Error("Subscribe alone must not make an unrun chat read as Active")
+	}
+	h.Publish("c", 1, ev("a"))
+	if !h.Active("c") {
+		t.Error("a real publish on the same (already-subscribed) topic must read as Active")
+	}
+}
+
 // The first publish after a run ends starts a fresh stream.
 func TestHubNewRunResets(t *testing.T) {
 	h := NewHub()

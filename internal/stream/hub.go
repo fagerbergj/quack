@@ -33,9 +33,10 @@ type Event struct {
 }
 
 type topic struct {
-	buf  []Event
-	subs map[chan Event]struct{}
-	done bool
+	buf     []Event
+	subs    map[chan Event]struct{}
+	done    bool
+	started bool // true once a run has actually Published — see Active.
 }
 
 // NewHub returns an empty hub.
@@ -58,6 +59,7 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 		t = &topic{subs: map[chan Event]struct{}{}}
 		h.topics[key] = t
 	}
+	t.started = true
 	it := Event{Seq: seq, SSE: ev}
 	t.buf = append(t.buf, it)
 	if len(t.buf) > MaxReplay {
@@ -74,12 +76,16 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 }
 
 // Active reports whether a chat currently has a live (not yet Closed) run —
-// backs the REST status handler's `running` chat status.
+// backs the REST status handler's `running` chat status and the subscribe
+// handler's cold/warm split. Gated on started, not just topic existence:
+// Subscribe auto-vivifies an empty topic for a chat with no run at all (so a
+// same-moment Publish never races past an already-registered subscriber), and
+// that placeholder must not itself read as "running".
 func (h *Hub) Active(key string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	t := h.topics[key]
-	return t != nil && !t.done
+	return t != nil && t.started && !t.done
 }
 
 // Close marks the chat's run finished and closes its live subscriber channels
