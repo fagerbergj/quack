@@ -11,6 +11,14 @@ export function filterChatsByOrigin(chats: ChatSummary[], filter: OriginFilter):
   return chats.filter(c => (filter === 'github' ? isGithubChat(c) : !isGithubChat(c)))
 }
 
+// githubRef derives a short "Issue #N" / "PR #N" label from a github issue/PR
+// URL (…/issues/N or …/pull/N), or null when the URL isn't one of those.
+export function githubRef(url: string): { label: string; kind: 'issue' | 'pr' } | null {
+  const m = url.match(/\/(issues|pull)\/(\d+)/)
+  if (!m) return null
+  return m[1] === 'pull' ? { label: `PR #${m[2]}`, kind: 'pr' } : { label: `Issue #${m[2]}`, kind: 'issue' }
+}
+
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
   const mins = Math.floor(diff / 60000)
@@ -116,17 +124,48 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
               </span>
             </span>
             {/* Badge row below the title: always rendered (even with no badges)
-                so every row reserves the same vertical space and stays aligned. */}
-            <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
-              {isGithubChat(s) && (
-                <span
-                  title={s.github_repo ? `GitHub · ${s.github_repo}` : 'GitHub-originated chat'}
-                  aria-label="GitHub-originated chat"
-                  className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
-                >
-                  GH
-                </span>
-              )}
+                so every row reserves the same vertical space and stays aligned.
+                Repo + issue/PR badges link to GitHub; stopPropagation so a click
+                opens the link instead of selecting the chat. */}
+            <div className="flex items-center gap-1 h-4 mt-0.5 pr-6 overflow-hidden">
+              {isGithubChat(s) && (() => {
+                const ref = s.github_url ? githubRef(s.github_url) : null
+                const chip =
+                  'flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline'
+                return (
+                  <>
+                    {s.github_repo && (
+                      <a
+                        href={`https://github.com/${s.github_repo}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        title={s.github_repo}
+                        className={`${chip} truncate max-w-[120px]`}
+                      >
+                        {s.github_repo}
+                      </a>
+                    )}
+                    {ref && (
+                      <a
+                        href={s.github_url!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        title={ref.label}
+                        className={chip}
+                      >
+                        {ref.label}
+                      </a>
+                    )}
+                    {!s.github_repo && !ref && (
+                      <span className={chip} aria-label="GitHub-originated chat">
+                        GH
+                      </span>
+                    )}
+                  </>
+                )
+              })()}
             </div>
             <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
             <button
