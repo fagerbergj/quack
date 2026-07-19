@@ -1280,6 +1280,12 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					if u, ok := p.FunctionCall.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
 						pending[p.FunctionCall.ID] = strings.TrimSpace(u)
 					}
+					// ALSO route into the workspace ledger (isWorkspaceTool now
+					// covers web_fetch): a worker that fetched repo files from the
+					// web instead of reading the local clone must leave a visible
+					// trace, or the judge has nothing to catch it with (#360).
+					pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
+					pendingWsTool[p.FunctionCall.ID] = "web_fetch"
 				case "stage_memory":
 					if cand, ok := stagedCandidate(p.FunctionCall); ok {
 						s.act.staged = append(s.act.staged, cand)

@@ -15,9 +15,11 @@ import (
 // wsOpSpec names which call args and result fields summarize one workspace
 // tool in the ledger. Args identify WHAT the operation targeted; results
 // carry the outcome fields a claim would cite (sha for a commit, branch for
-// a branch, exit_code for a command). Tools not in this map (web/search/
+// a branch, exit_code for a command). Tools not in this map (web_search/
 // memory/HITL tools) are handled by the existing retrieval bookkeeping and
-// stay out of the workspace ledger.
+// stay out of the workspace ledger. web_fetch IS in this map (args only, no
+// results) so it appears here too — it targets a URL, not the workspace, but
+// its PRESENCE in the ledger is itself the signal (see wsOpSpecs).
 type wsOpSpec struct {
 	args    []string
 	results []string
@@ -32,6 +34,15 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"edit_file":   {args: []string{"path"}, results: []string{"replacements"}},
 	"delete_path": {args: []string{"path"}, results: []string{"deleted"}},
 	"run_command": {args: []string{"dir", "command"}, results: []string{"exit_code"}},
+
+	// web_fetch: a worker that fetched repo files off the web instead of
+	// reading the local clone (e.g. raw.githubusercontent.com) leaves NO
+	// grounding trace otherwise — the judge's ledger would look empty even
+	// though the worker "read" something (#360). Only the URL is kept;
+	// results are deliberately omitted so a fetched page body never bloats
+	// the ledger — the URL alone is what flags a claim as web-sourced rather
+	// than clone-verified.
+	"web_fetch": {args: []string{"url"}},
 
 	"git_clone":           {args: []string{"url", "dir"}, results: []string{"dir", "head", "default_branch"}},
 	"git_checkout":        {args: []string{"dir", "ref"}, results: []string{"branch", "head"}},

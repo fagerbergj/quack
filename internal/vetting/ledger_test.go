@@ -439,6 +439,38 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 	}
 }
 
+// TestWebFetchEntersWorkspaceLedger pins #360: a worker that web-fetches repo
+// files instead of reading the local clone must leave a visible ledger trace
+// (previously ZERO — the judge had nothing to catch it with), while still
+// feeding the existing citation-backing bookkeeping (recordFetch) unchanged.
+func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
+	const url = "https://raw.githubusercontent.com/example/repo/main/internal/tools/exa.go"
+	sess := newTestSession(t,
+		fnCall("f1", "web_fetch", map[string]any{"url": url}),
+		fnResp("f1", "web_fetch", map[string]any{"result": "package tools\n// exa.go contents"}),
+	)
+	act := activityFromSession(sess)
+
+	if len(act.workspace) != 1 || act.workspace[0].tool != "web_fetch" {
+		t.Fatalf("workspace ledger = %+v, want one web_fetch op recorded", act.workspace)
+	}
+	if !strings.Contains(act.workspace[0].detail, url) {
+		t.Errorf("web_fetch ledger detail = %q, want it to contain the URL", act.workspace[0].detail)
+	}
+	// The fetched page body must NOT leak into the ledger — only the URL matters.
+	if strings.Contains(act.workspace[0].detail, "exa.go contents") {
+		t.Errorf("web_fetch ledger detail leaked the response body: %q", act.workspace[0].detail)
+	}
+	// Existing citation-backing bookkeeping is unaffected.
+	if _, ok := act.fetched[url]; !ok {
+		t.Errorf("act.fetched missing %q; web_fetch's existing retrieval bookkeeping regressed", url)
+	}
+	// The section the judge reads renders the fetch, giving it a red flag to react to.
+	if ws := buildWorkspaceSection(act); !strings.Contains(ws, "web_fetch") || !strings.Contains(ws, url) {
+		t.Errorf("workspace section missing the web_fetch entry:\n%s", ws)
+	}
+}
+
 // TestActivityWrittenDefaultsToTheNodeDir: a worker that never cd's writes into
 // its node dir (the default cwd), so the captured path must carry it.
 func TestActivityWrittenDefaultsToTheNodeDir(t *testing.T) {
