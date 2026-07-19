@@ -1,30 +1,116 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import { Expandable } from './Expandable'
 import { NodePopup } from './NodePopup'
+import { StatusDot } from './StatusDot'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import { agentLabel, type AgentRun } from './messageParts'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
+// StatusBadge pairs the shared StatusDot with the status word — same visual
+// language as the chat list, spelled out (a node card has room a sidebar row
+// doesn't) rather than a colored pill.
 function StatusBadge({ status }: { status: NodeStatus }) {
-  const styles: Record<NodeStatus, string> = {
-    queued:  'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
-    running: 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400',
-    needs_input: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
-    paused:  'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400',
-    done:    'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
-    failed:  'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400',
-    cancelled: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
-  }
   const labels: Record<NodeStatus, string> = {
     queued: 'queued', running: 'running…', done: 'done', failed: 'failed',
     needs_input: 'waiting for you', paused: 'paused', cancelled: 'stopped',
   }
   return (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${styles[status]}`}>
+    <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-gray-500 dark:text-gray-400">
+      <StatusDot status={status} />
       {labels[status]}
     </span>
+  )
+}
+
+// NodeMenu is the node's ⋮ overflow menu: one click for pause/resume/cancel
+// (no popup round-trip), with "queue a message…" / "edit prompt" / "answer
+// question…" opening the popup only when they need its input/editor. Hidden
+// entirely on a terminal node (done/failed/cancelled) — nothing left to do.
+function NodeMenu({
+  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup,
+}: {
+  nodeId: string
+  status: NodeStatus
+  onCancel?: (nodeId: string) => void
+  onPause?: (nodeId: string) => void
+  onResume?: (nodeId: string) => void
+  canQueue: boolean
+  canEdit: boolean
+  canAnswer: boolean
+  onOpenPopup: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const terminal = status === 'done' || status === 'failed' || status === 'cancelled'
+  if (terminal) return null
+
+  const running = status === 'running'
+  const paused = status === 'paused'
+  const cancellable = running || paused || status === 'queued' || status === 'needs_input'
+  const hasSecondary = canAnswer || canQueue || canEdit
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-label="Node actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`w-5 h-5 flex items-center justify-center rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}
+      >
+        ⋮
+      </button>
+      {open && (
+        <div role="menu" className="absolute z-20 right-0 mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
+          {running && onPause && (
+            <button role="menuitem" onClick={() => { onPause(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              ⏸ Pause
+            </button>
+          )}
+          {paused && onResume && (
+            <button role="menuitem" onClick={() => { onResume(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              ▶ Resume
+            </button>
+          )}
+          {cancellable && onCancel && (
+            <button role="menuitem" onClick={() => { onCancel(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              ✕ Cancel
+            </button>
+          )}
+          {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
+          {canAnswer && (
+            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              ❓ Answer question…
+            </button>
+          )}
+          {canQueue && (
+            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+              ✉ Queue a message…
+            </button>
+          )}
+          {canEdit && (
+            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+              ✎ Edit prompt
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -96,13 +182,11 @@ const WorkerCard = memo(function WorkerCard({ run, running }: { run: AgentRun; r
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="text-[10px] font-semibold text-sky-600 dark:text-sky-400 uppercase tracking-wide">
-            Work
-          </span>
-          {running && <Spinner />}
-          <span className="text-xs text-gray-400 dark:text-gray-500">
-            {running ? 'activity…' : `${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
-          </span>
+          {running ? <Spinner /> : (
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              {`${run.activity.length} step${run.activity.length === 1 ? '' : 's'}`}
+            </span>
+          )}
           <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
@@ -259,14 +343,16 @@ interface Props {
   onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
   onEditTask?: (nodeId: string, task: string) => void
   onRetry?: (nodeId: string, guidance?: string) => void
+  onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
 
 export function DagNode({
   node, state, runs, answer, isFinal,
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
-  onRetry,
+  onRetry, onAnswerQuestion,
 }: Props) {
   const running = state.status === 'running'
+  const notStarted = state.status === 'queued'
   // Retry (→ queued) is legal from done, failed, or cancelled — see dag.CanTransition.
   const finished = state.status === 'done' || state.status === 'failed' || state.status === 'cancelled'
   // The actively-streaming run is the last not-yet-done run while the node runs.
@@ -275,7 +361,7 @@ export function DagNode({
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
 
   return (
-    <div className={`rounded-xl border shadow-sm overflow-hidden ${
+    <div className={`group rounded-xl border shadow-sm overflow-hidden ${
       isFinal
         ? 'border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800'
         : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
@@ -327,13 +413,26 @@ export function DagNode({
               <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
             </span>
           ) : null}
+          <NodeMenu
+            nodeId={node.id}
+            status={state.status}
+            onCancel={onCancel}
+            onPause={onPause}
+            onResume={onResume}
+            canQueue={running && !!onQueueMessage}
+            canEdit={notStarted && !!onEditTask}
+            canAnswer={state.status === 'needs_input' && !!onAnswerQuestion}
+            onOpenPopup={() => setPopupOpen(true)}
+          />
         </div>
       </div>
 
-      {/* Node summary — click to open the popup (#384): the full prompt as
-          markdown, plus (on a live turn) cancel/pause/resume and the message
-          queue. Optimized for clean presentation, not information density —
-          the full prompt is always recoverable from the trace. */}
+      {/* Node summary — click to open the popup (#384): the full prompt
+          rendered as a chat-native turn, plus (on a live turn) the message
+          queue / prompt editor / pending-question answer — one-click
+          pause/resume/cancel live in the ⋮ menu above instead. Optimized for
+          clean presentation, not information density — the full prompt is
+          always recoverable from the trace. */}
       <button
         onClick={() => setPopupOpen(true)}
         className="w-full text-left px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 truncate"
@@ -346,13 +445,11 @@ export function DagNode({
           node={node}
           state={state}
           onClose={() => setPopupOpen(false)}
-          onCancel={onCancel}
-          onPause={onPause}
-          onResume={onResume}
           onQueueMessage={onQueueMessage}
           onEditQueuedMessage={onEditQueuedMessage}
           onRemoveQueuedMessage={onRemoveQueuedMessage}
           onEditTask={onEditTask}
+          onAnswerQuestion={onAnswerQuestion}
         />
       )}
 

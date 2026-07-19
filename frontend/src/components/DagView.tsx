@@ -46,6 +46,9 @@ interface Props {
   // Retry a finished node (failed or done) + its downstream. Present when the turn
   // is the live one and not currently streaming.
   onRetryNode?: (nodeId: string, guidance?: string) => void
+  // Answers a paused node's mid-node question (needs_input), via the same
+  // resume path the top-level QuestionBubble uses.
+  onAnswerNodeQuestion?: (nodeId: string, answer: string) => void
 }
 
 // DagBubbleHeader is the DAG bubble's compact header — its own attribution line,
@@ -63,7 +66,7 @@ export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
 
 export function DagView({
   dag, onCancelNode, onPauseNode, onResumeNode, onQueueNodeMessage,
-  onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode,
+  onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onAnswerNodeQuestion,
 }: Props) {
   const nodeMap = Object.fromEntries(dag.nodes.map(n => [n.id, n]))
   const dependsOnMap: Record<string, string[]> = {}
@@ -116,6 +119,7 @@ export function DagView({
                   onRemoveQueuedMessage={onRemoveQueuedMessage}
                   onEditTask={onEditNodeTask}
                   onRetry={onRetryNode}
+                  onAnswerQuestion={onAnswerNodeQuestion}
                 />
               </div>
             ))}
