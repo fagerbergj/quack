@@ -113,11 +113,8 @@ function QueuedBadge({ count }: { count: number }) {
   )
 }
 
-// In-progress indicator: a single pulsating blue dot, matching the running
-// StatusDot — one "live" visual language everywhere, no bouncing-dots spinner.
-function Spinner() {
-  return <span className="flex-shrink-0 inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" aria-label="in progress" />
-}
+// (Per-run "spinner" dots were removed — redundant with the node header's
+// pulsing status dot, they read as a stray extra dot in run-card summaries.)
 
 // RunTimer shows a per-run elapsed timer: live while the run is open, frozen on
 // its final duration once complete. Floated right within a card summary.
@@ -243,11 +240,11 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          {running ? <Spinner /> : (
-            <span className="text-xs text-gray-400 dark:text-gray-500">
-              {`${activity.length} step${activity.length === 1 ? '' : 's'}`}
-            </span>
-          )}
+          {/* Step count (grows live); "running" is already the node header's
+              pulsing status dot + the timer — no separate spinner dot here. */}
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {`${activity.length} step${activity.length === 1 ? '' : 's'}`}
+          </span>
           <RunModel run={timerRun} />
           <RunTimer run={timerRun} />
         </summary>
@@ -324,7 +321,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
             Judge · round {run.round}
           </span>
-          {running ? <Spinner /> : run.score != null && (
+          {run.score != null && (
             <span className={`text-[10px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
               {run.passed ? '✓' : '✗'} {(run.score * 100).toFixed(0)}%
             </span>
@@ -355,7 +352,6 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
           <span className="text-[10px] font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide">
             ↺ Revised · round {run.round}
           </span>
-          {running && <Spinner />}
           <RunModel run={run} />
           <RunTimer run={run} />
         </summary>
