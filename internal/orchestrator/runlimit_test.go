@@ -99,6 +99,63 @@ func TestAcquireRunHonoursContextCancel(t *testing.T) {
 	}
 }
 
+// Queued must report true for exactly the window between admission and slot
+// acquisition — the same window Run() marks via queuedChats — and false both
+// before admission and once a slot is held. Backs the REST status handler's
+// queued-vs-running split (#417).
+func TestQueuedReportsAdmittedButNotAcquired(t *testing.T) {
+	const chatID = "chat-1"
+	o := &Orchestrator{}
+	o.SetMaxActiveRuns(1)
+
+	if o.Queued(chatID) {
+		t.Fatal("Queued reported true before admission")
+	}
+
+	// Fill the one slot with an unrelated run so chatID's own acquireRun blocks —
+	// mirrors Run()'s admission-then-acquire sequence around the semaphore.
+	holderRelease, acquired := o.acquireRun(context.Background())
+	if !acquired {
+		t.Fatal("acquireRun reported !acquired filling the first slot")
+	}
+
+	o.queuedChats.Store(chatID, struct{}{})
+	if !o.Queued(chatID) {
+		t.Fatal("Queued reported false while admitted and waiting on the semaphore")
+	}
+
+	got := make(chan func(), 1)
+	go func() {
+		rel, acquired := o.acquireRun(context.Background())
+		if !acquired {
+			t.Error("acquireRun reported !acquired on an uncancelled context")
+		}
+		o.queuedChats.Delete(chatID)
+		got <- rel
+	}()
+
+	// Still queued while the slot is held elsewhere.
+	select {
+	case <-got:
+		t.Fatal("chatID's run acquired a slot while the only slot was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if !o.Queued(chatID) {
+		t.Fatal("Queued flipped false before the slot was actually acquired")
+	}
+
+	holderRelease()
+	select {
+	case rel := <-got:
+		defer rel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("chatID's run never acquired after the slot freed")
+	}
+	if o.Queued(chatID) {
+		t.Fatal("Queued still reports true after the slot was acquired")
+	}
+}
+
 // A run cancelled while queued (never acquiring a slot) must decrement runs.queued,
 // not runs.active — the bug this fix addresses (#417): a queued-but-not-executing
 // run inflated quack.runs.active.

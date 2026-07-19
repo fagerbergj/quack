@@ -156,11 +156,15 @@ export default function Chat() {
       // the POST body stream is gone, so subscribe to the hub. attach no-ops if
       // this client already streams (it posted the run) — no double-subscribe.
       // detail.status is the hub's authoritative "a run is live" signal and is
-      // true through EVERY phase (planning, queued nodes, streaming) — the DAG
-      // check alone missed pre-DAG phases (no quack:dag item persisted yet), so
-      // a refresh during planning never reconnected. The DAG check stays as a
-      // fallback for a restarted server whose in-memory hub state died with it.
-      if (detail.status === 'running' || isTurnInProgress(detail.turns[detail.turns.length - 1])) {
+      // true through EVERY phase (queued behind max_active_runs, planning,
+      // queued nodes, streaming) — the DAG check alone missed pre-DAG phases (no
+      // quack:dag item persisted yet), so a refresh during planning never
+      // reconnected. queued is included: the run's hub topic is already live
+      // (response_created publishes at admission, before the run slot is
+      // acquired), so a refresh while queued must still attach. The DAG check
+      // stays as a fallback for a restarted server whose in-memory hub state
+      // died with it.
+      if (detail.status === 'running' || detail.status === 'queued' || isTurnInProgress(detail.turns[detail.turns.length - 1])) {
         store.attach(activeChatId)
       }
     }).catch(() => {})

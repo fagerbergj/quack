@@ -77,9 +77,10 @@ func TestRunChatList(t *testing.T) {
 }
 
 // TestRunChatListStatuses covers the plan's test case 1: STATUS renders for all
-// four ChatStatus values and each row is uniquely grep-able by its status (e.g.
+// five ChatStatus values and each row is uniquely grep-able by its status (e.g.
 // `grep needs_input` matches exactly the c2 row, not c1's "idle" or c4's
-// "failed").
+// "failed"). Includes queued (#417): a chat admitted but still waiting on the
+// server's max_active_runs slot, distinct from running.
 func TestRunChatListStatuses(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -87,7 +88,8 @@ func TestRunChatListStatuses(t *testing.T) {
 			{"id":"c1","title":"Idle one","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
 			{"id":"c2","title":"Waiting","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"needs_input","pending_question":"which region?"},
 			{"id":"c3","title":"Live","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running"},
-			{"id":"c4","title":"Broke","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"failed"}
+			{"id":"c4","title":"Broke","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"failed"},
+			{"id":"c5","title":"Behind the cap","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"queued"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -98,7 +100,7 @@ func TestRunChatListStatuses(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
 	byStatus := map[string]string{}
-	for _, status := range []string{"idle", "needs_input", "running", "failed"} {
+	for _, status := range []string{"idle", "needs_input", "running", "failed", "queued"} {
 		var matches []string
 		for _, l := range lines {
 			if strings.Contains(l, status) {
@@ -112,6 +114,9 @@ func TestRunChatListStatuses(t *testing.T) {
 	}
 	if !strings.Contains(byStatus["needs_input"], "c2") {
 		t.Errorf("needs_input row = %q, want it to be c2's row", byStatus["needs_input"])
+	}
+	if !strings.Contains(byStatus["queued"], "c5") {
+		t.Errorf("queued row = %q, want it to be c5's row", byStatus["queued"])
 	}
 	// The pending question itself is NOT in the list table (chat show/--json's job).
 	if strings.Contains(out.String(), "which region?") {

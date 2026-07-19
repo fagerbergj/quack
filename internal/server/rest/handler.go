@@ -1030,7 +1030,12 @@ func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummar
 // chatStatus computes a chat's derived status plus its pending question (set
 // only for needs_input):
 //
-//   - running — the hub has a live run for this chat.
+//   - queued — the orchestrator has admitted a run for this chat but it's
+//     still waiting on the max_active_runs slot. Checked BEFORE running: the
+//     hub's topic goes "active" at response_created, published before the
+//     slot is acquired, so hub.Active alone can't tell queued from executing.
+//   - running — the hub has a live run for this chat, and it's not (per the
+//     above) still queued.
 //   - needs_input — the chat's session history ends on an unanswered question.
 //     This MUST be (and is) the same scan the orchestrator's own resume path
 //     uses (orchestrator.LatestPendingQuestion over PriorEvents) — one place
@@ -1040,6 +1045,9 @@ func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummar
 //     followed it.
 //   - idle — none of the above.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
+	if h.orch.Queued(chatID) {
+		return schema.ChatStatusQueued, nil
+	}
 	if h.hub.Active(chatID) {
 		return schema.ChatStatusRunning, nil
 	}

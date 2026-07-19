@@ -103,9 +103,9 @@ func (f chatListFilters) validate() error {
 		return fmt.Errorf("--filter must be one of all, github, direct (got %q)", f.origin)
 	}
 	switch f.status {
-	case "", "idle", "running", "needs_input", "failed":
+	case "", "idle", "queued", "running", "needs_input", "failed":
 	default:
-		return fmt.Errorf("--status must be one of idle, running, needs_input, failed (got %q)", f.status)
+		return fmt.Errorf("--status must be one of idle, queued, running, needs_input, failed (got %q)", f.status)
 	}
 	switch f.kind {
 	case "", "issue", "pr":
@@ -138,8 +138,8 @@ func (f chatListFilters) keep(c schema.ChatSummary) bool {
 }
 
 // RunChatList is `quack chat list`: a table of chats (id, title, status,
-// origin, ref, updated), or raw JSON with --json. STATUS is one of the four
-// ChatStatus values (running/needs_input/failed/idle) so the row is
+// origin, ref, updated), or raw JSON with --json. STATUS is one of the five
+// ChatStatus values (queued/running/needs_input/failed/idle) so the row is
 // grep-able (`grep needs_input`); the pending question itself is `chat
 // show`/--json's job — this table stays narrow. filters narrows by origin,
 // status, github repo, and issue/PR type — a chat must pass every active one

@@ -104,7 +104,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
               className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
             >
               <span title={s.title || 'New chat'} className="flex items-center pr-6">
-                <StatusDot status={s.status} className="mr-1.5" />
+                <StatusDot status={s.status} className="mr-1.5" variant="chat" />
                 <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
                   {s.title || 'New chat'}
                 </span>
