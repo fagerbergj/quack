@@ -51,6 +51,9 @@ orchestrator:
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
   # tools: [commit_memory]        # bind commit_memory to enable user memory (recall + commit of personal facts)
+  # correct_review_finding (a conversational GitHub-PR false-positive correction into
+  # the coding memory bucket, #249) is always on whenever task memory (stage_memory,
+  # below) is configured — narrowly scoped by its own schema, so it needs no opt-in here.
 
 # Declarative agents. Each is an agent-card.json + prompt.md bundle on disk,
 # bound here to a model and a selection of built-in tools. Add an agent by

@@ -16,6 +16,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
 
 	"github.com/google/uuid"
@@ -557,6 +558,13 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// Registered synchronously (before the goroutine gets to run) so the cancel
 	// endpoint can never miss the run.
 	runCtx, cancelRun := context.WithCancel(ctx)
+	// Stamp the AUTHORITATIVE repo/PR this run is on — the only source
+	// correct_review_finding trusts for where a conversational correction may
+	// write (never the model's own say-so; see tools.WithGitHubPR). Only for a
+	// PR (not a plain issue): there is no finding to correct on an issue thread.
+	if p.Issue.PullRequest != nil {
+		runCtx = tools.WithGitHubPR(runCtx, owner, repo, number)
+	}
 	e.activeCancels.Store(sessionID, &activeRun{responseID: turnID, cancel: cancelRun})
 	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
 	// stays INLINE — wrapping it in another goroutine would let this function's
@@ -873,7 +881,8 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		fmt.Fprintf(&b, "GitHub user @%s asked a follow-up on %s/%s pull request #%d (pull_number=%d).\n\n",
 			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)
 		fmt.Fprintf(&b, "Their message:\n%s\n\n", task)
-		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from THIS thread's prior conversation — including any review you already posted, which is in your context. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.")
+		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from THIS thread's prior conversation — including any review you already posted, which is in your context. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.\n\n")
+		b.WriteString("If — and only if — their message explicitly corrects a SPECIFIC finding you posted on THIS pull request as a FALSE POSITIVE (wrong, not a real issue), call correct_review_finding BEFORE replying, with the finding you got wrong and their reason — so the next review of similar code doesn't repeat it. Do not call it for anything else (general questions, disagreement without a concrete reason, or findings that still stand).")
 		return b.String()
 	}
 
