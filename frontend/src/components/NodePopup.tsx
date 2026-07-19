@@ -52,9 +52,9 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
             if (e.key === 'Enter') { e.preventDefault(); onEdit?.(text); setEditing(false) }
             if (e.key === 'Escape') { setText(msg.text); setEditing(false) }
           }}
-          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-400"
+          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400"
         />
-        <button onClick={() => { onEdit?.(text); setEditing(false) }} className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline">save</button>
+        <button onClick={() => { onEdit?.(text); setEditing(false) }} className="text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:underline">save</button>
         <button onClick={() => { setText(msg.text); setEditing(false) }} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
       </li>
     )
@@ -62,8 +62,8 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
   return (
     <li className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
       <span className="flex-1 min-w-0">{msg.text}</span>
-      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-amber-600 dark:text-amber-400 hover:underline">✎</button>}
-      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-red-500 dark:text-red-400 hover:underline">✕</button>}
+      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">✎</button>}
+      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">✕</button>}
     </li>
   )
 }
@@ -112,24 +112,27 @@ export function NodePopup({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl p-5 space-y-3"
+        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-6 pt-2 space-y-2"
         onClick={e => e.stopPropagation()}
       >
-        <button
-          onClick={onClose}
-          aria-label="Close"
-          className="absolute right-4 top-4 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-        >
-          ✕
-        </button>
+        {/* Close on its own row so it never overlaps the content bubbles. */}
+        <div className="flex justify-end -mb-1">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
 
         {/* Prompt — the same bubble treatment as an assistant turn in chat. */}
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4 pr-10">
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
           <div className="flex items-center justify-between">
             <BubbleHeader agent={node.agent} />
             {notStarted && onEditTask && !editingTask && (
-              <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline">
-                edit
+              <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
+                ✎
               </button>
             )}
           </div>
@@ -207,7 +210,7 @@ export function NodePopup({
               className={`flex-1 min-w-0 text-xs px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
                 answering
                   ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
-                  : 'border-amber-300 dark:border-amber-700 focus:ring-amber-400'
+                  : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'
               }`}
             />
             <button
@@ -216,7 +219,7 @@ export function NodePopup({
               aria-label={answering ? 'Send answer' : 'Queue message'}
               title={answering ? 'Send answer' : 'Queue message'}
               className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
-                answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-amber-600 hover:bg-amber-700'
+                answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
               }`}
             >
               ➤
