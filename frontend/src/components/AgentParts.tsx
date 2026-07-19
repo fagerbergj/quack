@@ -218,21 +218,34 @@ export function ToolBlock({ tool, agent }: { tool: ToolCall; agent?: string }) {
 // cross when its result carried an error — status conveyed by icon+colour
 // together (WCAG 1.4.1), not colour alone.
 function ToolStatusIcon({ tool }: { tool: ToolCall }) {
-  if (!tool.done) return <Dots size="w-1 h-1" />
+  if (!tool.done) return <Dots variant="compact" size="w-1 h-1" />
   return toolFailed(tool.result)
     ? <span className="text-red-500 dark:text-red-400 shrink-0" aria-hidden>✗</span>
     : <span className="text-green-600 dark:text-green-400 shrink-0" aria-hidden>✓</span>
 }
 
-// Dots is the "working" indicator shared by tool calls, run cards, and the
-// live/pending answer bubbles — three bouncing dots with staggered delays, the
-// classic "in flight" spinner. `size` is a Tailwind w/h class pair.
-export function Dots({ className = '', size = 'w-1.5 h-1.5' }: { className?: string; size?: string }) {
+// Dots is the "working" indicator. Two variants (#421): the chat-level answer
+// bubble's loading state ('chat', the default) keeps the three staggered
+// `animate-bounce` dots, gray to match the rest of the UI's muted status
+// chrome — count is deliberate there, confirmed elsewhere (#424) not to
+// shrink to one. The 'compact' variant (a single blue `animate-pulse` dot)
+// is for tight, high-multiplicity spots — a tool call's status icon, where a
+// chat can have several of these mounted at once and three independent
+// bounce timelines apiece added up to real animation cost without the
+// horizontal room three dots need anyway. `size` is a Tailwind w/h class pair.
+export function Dots({ className = '', size = 'w-1.5 h-1.5', variant = 'chat' }: { className?: string; size?: string; variant?: 'chat' | 'compact' }) {
+  if (variant === 'compact') {
+    return (
+      <span className={`inline-flex items-center ${className}`} aria-label="working">
+        <span className={`inline-block ${size} rounded-full bg-blue-500 animate-pulse`} />
+      </span>
+    )
+  }
   return (
     <span className={`inline-flex items-center gap-0.5 ${className}`} aria-label="working">
-      <span className={`inline-block ${size} rounded-full bg-blue-500 animate-bounce [animation-delay:-0.3s]`} />
-      <span className={`inline-block ${size} rounded-full bg-blue-500 animate-bounce [animation-delay:-0.15s]`} />
-      <span className={`inline-block ${size} rounded-full bg-blue-500 animate-bounce`} />
+      <span className={`inline-block ${size} rounded-full bg-gray-400 dark:bg-gray-500 animate-bounce [animation-delay:-0.3s]`} />
+      <span className={`inline-block ${size} rounded-full bg-gray-400 dark:bg-gray-500 animate-bounce [animation-delay:-0.15s]`} />
+      <span className={`inline-block ${size} rounded-full bg-gray-400 dark:bg-gray-500 animate-bounce`} />
     </span>
   )
 }

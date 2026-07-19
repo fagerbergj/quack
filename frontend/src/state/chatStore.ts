@@ -723,7 +723,16 @@ export class ChatStore {
 
       return {
         onAgentStart: d => {
-          resetAnswer(d.nodeId, d.stage)
+          // A fresh top-level (no-node) run starting means any text already
+          // accumulated from a PRIOR top-level run is a stale, superseded
+          // attempt at the same reply — not a continuation to concatenate onto.
+          // Without this, two full top-level runs against the same live turn
+          // (e.g. the GitHub dispatch's no-plan-ran nudge re-driving the
+          // orchestrator, #422) render the answer doubled: the first attempt's
+          // text followed by the second's. Mirrors resetAnswer's per-node reset
+          // below, which already does this for DAG node runs.
+          if (d.nodeId) resetAnswer(d.nodeId, d.stage)
+          else resetTopLevelText()
           return d.nodeId
             ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
             : updateTopLevelRuns(r => startRun(r, runArgs(d)))

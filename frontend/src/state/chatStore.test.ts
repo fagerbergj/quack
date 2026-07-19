@@ -415,6 +415,36 @@ describe('ChatStore — mid-node steering', () => {
     expect(store.get('c').live?.text).toBe('the real answer')
   })
 
+  // #422: a second top-level run against the same live turn (e.g. the GitHub
+  // dispatch driving the orchestrator twice when its first pass ran no plan)
+  // must not concatenate its answer onto the first run's — the answer bubble
+  // rendered the reply doubled before this reset existed.
+  it('a second top-level run replaces the first run\'s live text instead of appending to it', async () => {
+    const sse = [
+      'event: agent_start',
+      'data: {"run_id":"orchestrator-r1","agent":"orchestrator","stage":"worker"}',
+      '',
+      'event: agent_token',
+      'data: {"run_id":"orchestrator-r1","text":"first attempt answer"}',
+      '',
+      'event: agent_complete',
+      'data: {"run_id":"orchestrator-r1","stage":"worker"}',
+      '',
+      'event: agent_start',
+      'data: {"run_id":"orchestrator-r2","agent":"orchestrator","stage":"worker"}',
+      '',
+      'event: agent_token',
+      'data: {"run_id":"orchestrator-r2","text":"second attempt answer"}',
+      '',
+      'event: agent_complete',
+      'data: {"run_id":"orchestrator-r2","stage":"worker"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    expect(store.get('c').live?.text).toBe('second attempt answer')
+  })
+
   it('cancelNode and pauseNode PUT the node status endpoint', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
     store.cancelNode('c', 'a')
