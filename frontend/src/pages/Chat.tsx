@@ -11,6 +11,7 @@ import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { activityFromTurn, isTurnInProgress, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
+import { GitHubLink } from '../components/GitHubLink'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
 // This IS the DAG turn's answer — never mix in the orchestrator's own top-level
@@ -20,12 +21,23 @@ export function liveDagFinalText(dag: DagTurnState): string {
   return finalId != null ? (dag.nodeAnswer[finalId] ?? '') : ''
 }
 
+// chatGitHubLink (#382) extracts the header's back-link target from a chat's
+// summary: present only for a GitHub-originated chat (github_url set by the
+// webhook at dispatch time), null for a direct chat — so the header renders
+// nothing extra for local chats.
+export function chatGitHubLink(chat: ChatSummary | undefined): { url: string; repo?: string } | null {
+  if (!chat?.github_url) return null
+  return { url: chat.github_url, repo: chat.github_repo }
+}
+
 export default function Chat() {
   const urlChatId = useChatId()
 
   const store = useChatStore()
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
+  const activeChat = chats.find(s => s.id === activeChatId)
+  const githubLink = chatGitHubLink(activeChat)
   const state = useChatState(activeChatId)
   const streaming = state.live?.streaming ?? false
   const error = state.error
@@ -248,8 +260,9 @@ export default function Chat() {
               ☰
             </button>
             <h1 className="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {chats.find(s => s.id === activeChatId)?.title || (activeChatId ? 'New chat' : 'Chat')}
+              {activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
             </h1>
+            {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
           <button
             onClick={() => setShowSettings(s => !s)}
