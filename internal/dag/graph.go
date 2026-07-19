@@ -215,6 +215,16 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				markGateFailed(ctx, node.ID)
 				return "", nil
 			}
+			if errors.Is(err, vetting.ErrNodePaused) {
+				// Paused → same graph-completion constraint as cancel/empty (the
+				// static workflow graph needs this node to return to unblock its
+				// dependents — see dag.Executor.PauseNode's ponytail note): the DAG
+				// continues on the partial answer (continue-but-warn), and the
+				// stream layer (executor.go's userPaused check) renders it as
+				// node_paused, resumable, instead of node_done/node_cancelled.
+				markGateFailed(ctx, node.ID)
+				return answer, nil
+			}
 			if err == nil {
 				// Record the gate outcome IN PROCESS first: node_done is assembled
 				// before this node's state delta is appended, so a fresh sessions.Get

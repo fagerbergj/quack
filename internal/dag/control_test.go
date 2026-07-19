@@ -109,6 +109,10 @@ func nodeEnd(events []stream.SSEEvent, nodeID string) string {
 			if d.NodeID == nodeID {
 				return stream.EventNodeCancelled
 			}
+		case stream.NodePausedData:
+			if d.NodeID == nodeID {
+				return stream.EventNodePaused
+			}
 		}
 	}
 	return ""
@@ -148,15 +152,18 @@ func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
 	})
 }
 
-// TestExecute_SteerNodeReRunsWithGuidance: steering a running node re-runs its
-// worker with the guidance appended, then proceeds to the judge.
-func TestExecute_SteerNodeReRunsWithGuidance(t *testing.T) {
+// TestExecute_QueueNodeMessageReRunsWithGuidance: queueing a message for a
+// running node re-runs its worker with the message folded in (drained at the
+// next gate-stage boundary, never mid-call), then proceeds to the judge.
+func TestExecute_QueueNodeMessageReRunsWithGuidance(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
 
 	go func() {
 		<-stub.started
-		ex.SteerNode("chat", "n1", "focus on cost") // steer while the worker is mid-draft
+		if _, ok := ex.QueueNodeMessage("chat", "n1", "focus on cost"); !ok {
+			t.Error("QueueNodeMessage returned false for a LIVE node")
+		}
 		close(stub.unblock)
 	}()
 	drain(t, ex, plan)
@@ -164,13 +171,39 @@ func TestExecute_SteerNodeReRunsWithGuidance(t *testing.T) {
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
 	if stub.workerCalls != 2 {
-		t.Fatalf("worker ran %d times; steer should trigger a second (guided) run", stub.workerCalls)
+		t.Fatalf("worker ran %d times; a queued message should trigger a second (guided) run", stub.workerCalls)
 	}
 	if !strings.Contains(stub.prompts[1], "focus on cost") {
-		t.Errorf("re-run prompt missing the steer guidance: %q", stub.prompts[1])
+		t.Errorf("re-run prompt missing the queued message: %q", stub.prompts[1])
 	}
 	if stub.judgeCalls != 1 {
-		t.Errorf("judge ran %d times; expected 1 after the steered re-run", stub.judgeCalls)
+		t.Errorf("judge ran %d times; expected 1 after the re-run", stub.judgeCalls)
+	}
+}
+
+// TestExecute_PauseNodeStopsBeforeJudgeAndKeepsAnswer: pausing a running node
+// stops it at its next gate-stage boundary (like cancel) but the answer
+// propagates as a paused node, resumable — not cancelled.
+func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	go func() {
+		<-stub.started
+		if !ex.PauseNode("chat", "n1") {
+			t.Error("PauseNode returned false for a LIVE node")
+		}
+		close(stub.unblock)
+	}()
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+
+	stub.mu.Lock()
+	if stub.judgeCalls != 0 {
+		t.Errorf("judge ran %d times; pause should have stopped the node before judging", stub.judgeCalls)
+	}
+	stub.mu.Unlock()
+	if got := nodeEnd(events, "n1"); got != stream.EventNodePaused {
+		t.Errorf("n1 ended as %q; want node_paused", got)
 	}
 }
 
@@ -209,73 +242,66 @@ func TestExecute_CancelNodeReportsDelivery(t *testing.T) {
 	}
 }
 
-// TestExecute_SteerNodeReportsDelivery: a steer aimed at a genuinely running node
-// is delivered (true) and picked up; one aimed at nothing is not (false, which the
-// handler already surfaces as 409).
-func TestExecute_SteerNodeReportsDelivery(t *testing.T) {
+// TestExecute_QueueNodeMessageReportsDelivery: queueing a message aimed at a
+// genuinely running node is delivered (ok=true) and picked up; one aimed at
+// nothing is not (ok=false, which the handler surfaces as 404).
+func TestExecute_QueueNodeMessageReportsDelivery(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
 
 	var delivered bool
 	go func() {
 		<-stub.started
-		delivered = ex.SteerNode("chat", "n1", "focus on cost")
+		_, delivered = ex.QueueNodeMessage("chat", "n1", "focus on cost")
 		close(stub.unblock)
 	}()
 	drain(t, ex, plan)
 
 	if !delivered {
-		t.Fatal("SteerNode returned false for a LIVE node")
+		t.Fatal("QueueNodeMessage returned false for a LIVE node")
 	}
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
 	if stub.workerCalls != 2 || !strings.Contains(stub.prompts[1], "focus on cost") {
-		t.Errorf("steer not picked up: %d worker calls, prompts=%v", stub.workerCalls, stub.prompts)
+		t.Errorf("queued message not picked up: %d worker calls, prompts=%v", stub.workerCalls, stub.prompts)
 	}
-	if ex.SteerNode("chat", "n1", "too late") {
-		t.Error("SteerNode reported success after the node finished")
+	if _, ok := ex.QueueNodeMessage("chat", "n1", "too late"); ok {
+		t.Error("QueueNodeMessage reported success after the node finished")
 	}
 }
 
-// TestExecute_NodeSteerGuidanceDeliversOnceThenGateStillReRuns: NodeSteerGuidance
-// is the tool layer's query side of SteerNode (mirrors NodeCancelled) — it must
-// hand back the guidance to the FIRST caller (a worker's next tool call) and ""
-// to any caller after that, since the point is a one-shot immediate nudge, not a
-// sticky prompt. The gate-stage TakeSteer (exercised by
-// TestExecute_SteerNodeReportsDelivery above) must still fire afterwards and
-// drive its own re-run — the tool-layer delivery must not swallow the guidance
-// that the gate boundary needs for the backstop re-run.
-func TestExecute_NodeSteerGuidanceDeliversOnceThenGateStillReRuns(t *testing.T) {
+// TestExecute_EditRemoveQueuedMessage: a not-yet-delivered queued message can
+// be edited or removed; a delivered one is immutable.
+func TestExecute_EditRemoveQueuedMessage(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
 
-	if g := ex.NodeSteerGuidance("chat", "n1"); g != "" {
-		t.Errorf("NodeSteerGuidance returned %q before the node was even running", g)
-	}
-
-	var first, second string
 	go func() {
 		<-stub.started
-		if !ex.SteerNode("chat", "n1", "focus on cost") {
-			t.Error("SteerNode returned false for a LIVE node")
+		m, ok := ex.QueueNodeMessage("chat", "n1", "first draft")
+		if !ok {
+			t.Error("QueueNodeMessage returned false for a LIVE node")
 		}
-		first = ex.NodeSteerGuidance("chat", "n1")
-		second = ex.NodeSteerGuidance("chat", "n1")
+		if !ex.EditQueuedMessage("chat", "n1", m.ID, "edited") {
+			t.Error("EditQueuedMessage failed on a not-yet-delivered message")
+		}
+		removable, ok2 := ex.QueueNodeMessage("chat", "n1", "will be removed")
+		if !ok2 {
+			t.Error("QueueNodeMessage returned false for a LIVE node")
+		}
+		if !ex.RemoveQueuedMessage("chat", "n1", removable.ID) {
+			t.Error("RemoveQueuedMessage failed on a not-yet-delivered message")
+		}
 		close(stub.unblock)
 	}()
 	drain(t, ex, plan)
 
-	if first != "focus on cost" {
-		t.Errorf("NodeSteerGuidance first call = %q, want the pending guidance", first)
-	}
-	if second != "" {
-		t.Errorf("NodeSteerGuidance second call = %q, want \"\" (already delivered to a tool call)", second)
-	}
-	// The gate-stage boundary must STILL see the guidance and re-run — tool-layer
-	// delivery is additive, not a substitute for it.
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
-	if stub.workerCalls != 2 || !strings.Contains(stub.prompts[1], "focus on cost") {
-		t.Errorf("gate-stage re-run did not happen after tool-layer delivery: %d worker calls, prompts=%v", stub.workerCalls, stub.prompts)
+	if !strings.Contains(stub.prompts[1], "edited") {
+		t.Errorf("re-run prompt missing the edited message: %q", stub.prompts[1])
+	}
+	if strings.Contains(stub.prompts[1], "will be removed") {
+		t.Errorf("re-run prompt still contains the removed message: %q", stub.prompts[1])
 	}
 }

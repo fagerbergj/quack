@@ -502,10 +502,6 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		current = dag.NodeStatus(dn.Status)
 	}
 
-	if target == dag.StatusRunning && guidance == "" {
-		http.Error(w, "guidance is required to steer a running node", http.StatusBadRequest)
-		return
-	}
 	if !dag.CanTransition(current, target) {
 		writeJSON(w, http.StatusConflict, schema.TransitionError{
 			Error:   fmt.Sprintf("illegal transition: %s -> %s", current, target),
@@ -517,9 +513,9 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 
 	switch target {
 	case dag.StatusCancelled:
-		// Delivery is NOT optimistic (same as steer below): CancelNode returns
-		// false when no live control is registered for the node — the signal
-		// landed nowhere, and answering 200 + "cancelled" anyway makes the API lie.
+		// Delivery is NOT optimistic: CancelNode returns false when no live
+		// control is registered for the node — the signal landed nowhere, and
+		// answering 200 + "cancelled" anyway makes the API lie.
 		//
 		// A delivered cancel is still COOPERATIVE: the node's next tool call
 		// fails fast (tools.Deps.NodeCancelled) and the gate stops it at its
@@ -535,25 +531,97 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			return
 		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
-	case dag.StatusRunning:
-		// Steer delivery is NOT optimistic: unlike cancel (whose no-op case is
-		// benign), a silently dropped steer looks like "steer doesn't work" —
-		// the signal only lands while the node has a live control, and a node
-		// that is mid-restart from a PREVIOUS steer has none. Tell the client.
-		if !h.orch.SteerNode(chatID, nodeID, guidance) {
+	case dag.StatusPaused:
+		// Same non-optimistic-delivery reasoning as cancel above.
+		if !h.orch.PauseNode(chatID, nodeID) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
-				Error:   "node is not steerable right now (no live run — it may be restarting from an earlier steer or finishing); try again in a moment",
+				Error:   "node is not pausable right now (no live run); nothing was paused",
 				Current: schema.NodeStatus(current),
 				Allowed: allowedStatuses(current),
 			})
 			return
 		}
-		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusRunning))
+		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
+	case dag.StatusRunning:
+		// The only way here is paused → running: resume. A fresh re-run (like
+		// retry), reusing the rest of the plan's stored outputs — see
+		// dag.Executor.PauseNode's ponytail note on why this isn't a literal
+		// frozen-thread resume.
+		h.retryNodeAsync(dp, chatID, nodeID, guidance)
+		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	case dag.StatusQueued:
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
 		// The re-run is optimistically queued; its progress streams over the
 		// chat's existing hub/event-log relay (GET .../stream), same as any run.
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+	}
+}
+
+// QueueNodeMessage handles POST .../nodes/{node_id}/queue: append a message to
+// a running node's queue, delivered at its next turn boundary (never
+// mid-turn). 404s if the node isn't currently live — unlike cancel/pause,
+// there is no cooperative fallback for a message with nowhere to land.
+func (h *Handler) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	var body schema.QueueMessageBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
+		http.Error(w, "message is required", http.StatusBadRequest)
+		return
+	}
+	m, ok := h.orch.QueueNodeMessage(chatID, nodeID, strings.TrimSpace(body.Message))
+	if !ok {
+		http.Error(w, "node is not running right now; the message has nowhere to land", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, queuedMessageWire(m))
+}
+
+// EditQueuedMessage handles PATCH .../nodes/{node_id}/queue/{message_id}:
+// rewrite a not-yet-delivered queued message.
+func (h *Handler) EditQueuedMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID, messageID schema.MessageID) {
+	var body schema.QueueMessageBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
+		http.Error(w, "message is required", http.StatusBadRequest)
+		return
+	}
+	if !h.orch.EditQueuedMessage(chatID, nodeID, messageID, strings.TrimSpace(body.Message)) {
+		http.Error(w, "no such pending queued message (unknown, or already delivered)", http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// RemoveQueuedMessage handles DELETE .../nodes/{node_id}/queue/{message_id}:
+// drop a not-yet-delivered queued message.
+func (h *Handler) RemoveQueuedMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID, messageID schema.MessageID) {
+	if !h.orch.RemoveQueuedMessage(chatID, nodeID, messageID) {
+		http.Error(w, "no such pending queued message (unknown, or already delivered)", http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// EditNodeTask handles PATCH .../nodes/{node_id}: replace a not-yet-started
+// node's task text. 409 once the node has started (its control is live).
+func (h *Handler) EditNodeTask(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	var body schema.EditNodeTaskBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Task) == "" {
+		http.Error(w, "task is required", http.StatusBadRequest)
+		return
+	}
+	if !h.orch.SetNodeTaskOverride(chatID, nodeID, body.Task) {
+		http.Error(w, "the node has already started; its prompt is immutable", http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// queuedMessageWire converts a dag.QueuedMessage to its wire shape.
+func queuedMessageWire(m dag.QueuedMessage) schema.QueuedMessage {
+	return schema.QueuedMessage{
+		Id:        m.ID,
+		Text:      m.Text,
+		Delivered: m.Delivered,
+		CreatedAt: m.CreatedAt,
 	}
 }
 

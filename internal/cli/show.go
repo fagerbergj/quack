@@ -195,6 +195,20 @@ func (f *followState) printLine(out io.Writer, ev SSEEvent) {
 		if json.Unmarshal(ev.Data, &d) == nil {
 			fmt.Fprintf(out, "node %s needs_input: %s\n", d.NodeID, d.Message)
 		}
+	case "node_cancelled":
+		var d struct {
+			NodeID string `json:"node_id"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil {
+			fmt.Fprintf(out, "node %s cancelled\n", d.NodeID)
+		}
+	case "node_paused":
+		var d struct {
+			NodeID string `json:"node_id"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil {
+			fmt.Fprintf(out, "node %s paused\n", d.NodeID)
+		}
 	case "agent_thinking":
 		var d struct {
 			NodeID string `json:"node_id"`

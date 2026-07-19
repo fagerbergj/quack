@@ -155,6 +155,11 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	case stream.NodeNeedsInputData:
 		nodeID, to = d.NodeID, dag.StatusNeedsInput
 		n.NodeID, n.Status = d.NodeID, string(to)
+	case stream.NodePausedData:
+		// No FinishedAt: a paused node is suspended, not finished — it stays
+		// resumable (see dag.Executor.PauseNode).
+		nodeID, to = d.NodeID, dag.StatusPaused
+		n.NodeID, n.Status = d.NodeID, string(to)
 	case stream.NodeCancelledData:
 		nodeID, to = d.NodeID, dag.StatusCancelled
 		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t

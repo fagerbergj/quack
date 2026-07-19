@@ -173,6 +173,28 @@ describe('ChatStore — mid-node steering', () => {
     expect(ns?.steers).toEqual(['focus on cost'])
   })
 
+  it('node_paused marks the node paused, keeping its accumulated answer', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher"}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"worker-r0","text":"partial draft"}',
+      '',
+      'event: node_paused',
+      'data: {"node_id":"a"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const dag = store.get('c').live?.dag
+    expect(dag?.nodeStates['a']?.status).toBe('paused')
+    expect(dag?.nodeAnswer['a']).toBe('partial draft')
+  })
+
   it('node_needs_input marks the node waiting with its question', async () => {
     const sse = [
       'event: dag_plan',
@@ -291,24 +313,50 @@ describe('ChatStore — mid-node steering', () => {
     expect(store.get('c').live?.text).toBe('the real answer')
   })
 
-  it('steerNode and cancelNode PUT the node status endpoint', () => {
+  it('cancelNode and pauseNode PUT the node status endpoint', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
-    store.steerNode('c', 'a', '  do X  ')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'running', guidance: 'do X' }) }),
-    )
     store.cancelNode('c', 'a')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/chats/c/nodes/a/status',
       expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) }),
     )
+    store.pauseNode('c', 'a')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a/status',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused' }) }),
+    )
   })
 
-  it('steerNode ignores empty guidance', () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
-    store.steerNode('c', 'a', '   ')
+  it('queueNodeMessage POSTs to the queue endpoint and ignores empty text', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'q1', text: 'do X', delivered: false, created_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
+    await store.queueNodeMessage('c', 'a', '  do X  ')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a/queue',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ message: 'do X' }) }),
+    )
+    fetchMock.mockClear()
+    await store.queueNodeMessage('c', 'a', '   ')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('editNodeTask PATCHes the node and updates the local plan def on success', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"original","depends_on":[]}],"edges":[]}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }))
+    const ok = await store.editNodeTask('c', 'a', 'revised task')
+    expect(ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ task: 'revised task' }) }),
+    )
+    const node = store.get('c').live?.dag?.nodes.find(n => n.id === 'a')
+    expect(node?.task).toBe('revised task')
   })
 
   it('retryNode resets the target + descendants, PUTs the node status endpoint, then watches progress via GET /stream', async () => {

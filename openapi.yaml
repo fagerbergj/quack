@@ -108,8 +108,14 @@ paths:
         DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
         output item has been added; `node_queued` ({"node_id"}), `node_start`
         ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
-        `node_failed` ({"node_id","error"}), and `node_cancelled` ({"node_id"})
-        track node lifecycle.
+        `node_failed` ({"node_id","error"}), `node_cancelled` ({"node_id"}), and
+        `node_paused` ({"node_id"}) track node lifecycle. `node_steered`
+        ({"node_id","guidance"}) fires when a node's queued message(s) are
+        delivered at its next turn boundary and it re-runs with them folded
+        in. A node's pending queue itself (add/edit/remove) is tracked
+        client-side from the POST/PATCH/DELETE `.../queue` responses, not a
+        separate SSE event — those calls are synchronous and already tell the
+        caller what changed.
 
         `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
         reports one staged item's ACTUAL outward-boundary outcome (push +
@@ -148,6 +154,7 @@ paths:
         - node_failed
         - node_cancelled
         - node_needs_input
+        - node_paused
         - node_steered
         - delivery_result
         - chat_title
@@ -209,6 +216,7 @@ paths:
         - node_failed
         - node_cancelled
         - node_needs_input
+        - node_paused
         - node_steered
         - delivery_result
         - chat_title
@@ -225,25 +233,32 @@ paths:
   /api/v1/chats/{chat_id}/nodes/{node_id}/status:
     put:
       operationId: updateNodeStatus
-      summary: Transition a DAG node's status (cancel, retry, or steer)
+      summary: Transition a DAG node's status (cancel, pause/resume, or retry)
       description: |
-        A single resource-oriented endpoint replacing the old cancel/steer/retry
-        RPC verbs — the request body names the TARGET status:
+        A single resource-oriented endpoint — the request body names the
+        TARGET status:
 
         - `{"status":"cancelled"}` — cancel the node (legal from `queued`,
-          `running`, or `needs_input`). No-op (200, unchanged state) if the node
-          isn't currently live.
-        - `{"status":"running","guidance":"..."}` — steer: interrupt a RUNNING
-          node and re-run it against its SAME session (prior tool calls/results
-          retained) with the supplied guidance. Only legal from `running`;
-          `guidance` is required (400 without it).
-        - `{"status":"queued","guidance":"..."}` — retry: re-run a finished node
-          (and every node downstream of it) reusing the stored outputs of all
-          other nodes. Only legal from `done`, `failed`, or `cancelled`.
-          `guidance` is optional and folded into the node's task.
+          `running`, `paused`, or `needs_input`). Kills the in-flight
+          model/tool call via context; no resume. No-op (200, unchanged
+          state) if the node isn't currently live.
+        - `{"status":"paused"}` — suspend a RUNNING node at its next safe
+          point, keeping its accumulated work. Only legal from `running`.
+        - `{"status":"running"}` — resume a `paused` node: a fresh re-run
+          (like retry) that reuses the rest of the plan's stored outputs.
+          Only legal from `paused`.
+        - `{"status":"queued","guidance":"..."}` — retry: re-run a finished
+          node (and every node downstream of it) reusing the stored outputs
+          of all other nodes. Only legal from `done`, `failed`, or
+          `cancelled`. `guidance` is optional and folded into the node's task.
+
+        To steer a running node with a message, POST to
+        `.../nodes/{node_id}/queue` instead — it is delivered at the node's
+        next turn boundary, never mid-turn (replaces the old interrupt-based
+        steer).
 
         An illegal transition (e.g. `done` → `running`) returns 409 naming the
-        allowed target statuses. The re-run (steer/retry) streams over the
+        allowed target statuses. The re-run (resume/retry) streams over the
         chat's existing SSE connection — this endpoint does not open a new one.
       parameters:
         - $ref: "#/components/parameters/ChatID"
@@ -262,7 +277,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/DagNodeState"
         "400":
-          description: Bad request (e.g. steer without guidance)
+          description: Bad request
         "404":
           description: No such node
         "409":
@@ -272,6 +287,97 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TransitionError"
+
+  /api/v1/chats/{chat_id}/nodes/{node_id}:
+    patch:
+      operationId: editNodeTask
+      summary: Edit a not-yet-started node's prompt
+      description: |
+        Replaces a pending node's task text before it starts running. Legal
+        only while the node has no live/persisted "started" state (still
+        `queued`, and not yet dispatched — e.g. a downstream node waiting on
+        its dependencies in an already-streaming turn). Once a node has
+        started, its prompt is immutable — 409.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditNodeTaskBody"
+      responses:
+        "200":
+          description: Edited
+        "404":
+          description: No such node
+        "409":
+          description: The node has already started; its prompt is immutable
+
+  /api/v1/chats/{chat_id}/nodes/{node_id}/queue:
+    post:
+      operationId: queueNodeMessage
+      summary: Queue a message for a running node, delivered at its next turn boundary
+      description: |
+        Appends to the node's message queue — the replacement for the old
+        interrupt-based steer. The node drains its queue (in order) at its
+        next turn boundary; never mid-turn. Only legal while the node is
+        `running` (404 if no live control).
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueMessageBody"
+      responses:
+        "200":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueuedMessage"
+        "404":
+          description: No such node, or the node isn't running right now
+
+  /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}:
+    patch:
+      operationId: editQueuedMessage
+      summary: Edit a queued message that has not yet been delivered
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+        - $ref: "#/components/parameters/MessageID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueMessageBody"
+      responses:
+        "200":
+          description: Edited
+        "404":
+          description: No such queued message
+        "409":
+          description: Already delivered; immutable
+    delete:
+      operationId: removeQueuedMessage
+      summary: Remove a queued message that has not yet been delivered
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+        - $ref: "#/components/parameters/MessageID"
+      responses:
+        "204":
+          description: Removed
+        "404":
+          description: No such queued message
+        "409":
+          description: Already delivered; immutable
 
   /api/v1/chats/{chat_id}/responses/{response_id}/status:
     put:
@@ -310,6 +416,13 @@ components:
 
     NodeID:
       name: node_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+    MessageID:
+      name: message_id
       in: path
       required: true
       schema:
@@ -406,12 +519,13 @@ components:
         A DAG node's canonical lifecycle state. Legal transitions (enforced
         server-side by internal/dag.CanTransition):
           queued      → running, cancelled, failed (stale-on-restart)
-          running     → running (steer, in place), needs_input, done, failed, cancelled
+          running     → paused, needs_input, done, failed, cancelled
+          paused      → running (resume), cancelled
           needs_input → running (resumed), cancelled
           done        → queued (retry)
           failed      → queued (retry)
           cancelled   → queued (retry)
-      enum: [queued, running, needs_input, done, failed, cancelled]
+      enum: [queued, running, needs_input, paused, done, failed, cancelled]
 
     NodeStatusUpdateBody:
       type: object
@@ -421,9 +535,41 @@ components:
           $ref: "#/components/schemas/NodeStatus"
         guidance:
           type: string
-          description: Required when status is "running" (steer); optional and
-            folded into the node's task when status is "queued" (retry).
-            Unused for "cancelled".
+          description: Optional and folded into the node's task when status is
+            "queued" (retry, or resuming a paused node via a fresh re-run).
+            Unused for "cancelled" and "paused". To steer a RUNNING node,
+            queue a message instead (POST .../nodes/{node_id}/queue) — it is
+            delivered at the node's next turn boundary, not mid-turn.
+
+    QueuedMessage:
+      type: object
+      required: [id, text, delivered, created_at]
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        delivered:
+          type: boolean
+          description: True once handed to the node at a turn boundary — no
+            longer editable or removable.
+        created_at:
+          type: string
+          format: date-time
+
+    QueueMessageBody:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    EditNodeTaskBody:
+      type: object
+      required: [task]
+      properties:
+        task:
+          type: string
 
     ResponseStatus:
       type: string

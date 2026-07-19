@@ -51,21 +51,40 @@ export type SendMessageBody = {
  * A DAG node's canonical lifecycle state. Legal transitions (enforced
  * server-side by internal/dag.CanTransition):
  * queued      → running, cancelled, failed (stale-on-restart)
- * running     → running (steer, in place), needs_input, done, failed, cancelled
+ * running     → paused, needs_input, done, failed, cancelled
+ * paused      → running (resume), cancelled
  * needs_input → running (resumed), cancelled
  * done        → queued (retry)
  * failed      → queued (retry)
  * cancelled   → queued (retry)
  *
  */
-export type NodeStatus = 'queued' | 'running' | 'needs_input' | 'done' | 'failed' | 'cancelled';
+export type NodeStatus = 'queued' | 'running' | 'needs_input' | 'paused' | 'done' | 'failed' | 'cancelled';
 
 export type NodeStatusUpdateBody = {
     status: NodeStatus;
     /**
-     * Required when status is "running" (steer); optional and folded into the node's task when status is "queued" (retry). Unused for "cancelled".
+     * Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) — it is delivered at the node's next turn boundary, not mid-turn.
      */
     guidance?: string;
+};
+
+export type QueuedMessage = {
+    id: string;
+    text: string;
+    /**
+     * True once handed to the node at a turn boundary — no longer editable or removable.
+     */
+    delivered: boolean;
+    created_at: string;
+};
+
+export type QueueMessageBody = {
+    message: string;
+};
+
+export type EditNodeTaskBody = {
+    task: string;
 };
 
 /**
@@ -202,6 +221,8 @@ export type DagNodeState = {
 export type ChatId = string;
 
 export type NodeId = string;
+
+export type MessageId = string;
 
 export type ResponseId = string;
 
@@ -370,7 +391,7 @@ export type UpdateNodeStatusData = {
 
 export type UpdateNodeStatusErrors = {
     /**
-     * Bad request (e.g. steer without guidance)
+     * Bad request
      */
     400: unknown;
     /**
@@ -393,6 +414,120 @@ export type UpdateNodeStatusResponses = {
 };
 
 export type UpdateNodeStatusResponse = UpdateNodeStatusResponses[keyof UpdateNodeStatusResponses];
+
+export type EditNodeTaskData = {
+    body: EditNodeTaskBody;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}';
+};
+
+export type EditNodeTaskErrors = {
+    /**
+     * No such node
+     */
+    404: unknown;
+    /**
+     * The node has already started; its prompt is immutable
+     */
+    409: unknown;
+};
+
+export type EditNodeTaskResponses = {
+    /**
+     * Edited
+     */
+    200: unknown;
+};
+
+export type QueueNodeMessageData = {
+    body: QueueMessageBody;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue';
+};
+
+export type QueueNodeMessageErrors = {
+    /**
+     * No such node, or the node isn't running right now
+     */
+    404: unknown;
+};
+
+export type QueueNodeMessageResponses = {
+    /**
+     * Queued
+     */
+    200: QueuedMessage;
+};
+
+export type QueueNodeMessageResponse = QueueNodeMessageResponses[keyof QueueNodeMessageResponses];
+
+export type RemoveQueuedMessageData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        node_id: string;
+        message_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}';
+};
+
+export type RemoveQueuedMessageErrors = {
+    /**
+     * No such queued message
+     */
+    404: unknown;
+    /**
+     * Already delivered; immutable
+     */
+    409: unknown;
+};
+
+export type RemoveQueuedMessageResponses = {
+    /**
+     * Removed
+     */
+    204: void;
+};
+
+export type RemoveQueuedMessageResponse = RemoveQueuedMessageResponses[keyof RemoveQueuedMessageResponses];
+
+export type EditQueuedMessageData = {
+    body: QueueMessageBody;
+    path: {
+        chat_id: string;
+        node_id: string;
+        message_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}';
+};
+
+export type EditQueuedMessageErrors = {
+    /**
+     * No such queued message
+     */
+    404: unknown;
+    /**
+     * Already delivered; immutable
+     */
+    409: unknown;
+};
+
+export type EditQueuedMessageResponses = {
+    /**
+     * Edited
+     */
+    200: unknown;
+};
 
 export type UpdateResponseStatusData = {
     body: ResponseStatusUpdateBody;

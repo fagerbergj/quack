@@ -110,6 +110,7 @@ const (
 	NodeStatusDone       NodeStatus = "done"
 	NodeStatusFailed     NodeStatus = "failed"
 	NodeStatusNeedsInput NodeStatus = "needs_input"
+	NodeStatusPaused     NodeStatus = "paused"
 	NodeStatusQueued     NodeStatus = "queued"
 	NodeStatusRunning    NodeStatus = "running"
 )
@@ -124,6 +125,8 @@ func (e NodeStatus) Valid() bool {
 	case NodeStatusFailed:
 		return true
 	case NodeStatusNeedsInput:
+		return true
+	case NodeStatusPaused:
 		return true
 	case NodeStatusQueued:
 		return true
@@ -299,7 +302,8 @@ type DagNodeState struct {
 	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
 	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → running (steer, in place), needs_input, done, failed, cancelled
+	//   running     → paused, needs_input, done, failed, cancelled
+	//   paused      → running (resume), cancelled
 	//   needs_input → running (resumed), cancelled
 	//   done        → queued (retry)
 	//   failed      → queued (retry)
@@ -322,6 +326,11 @@ type DagOutputItem struct {
 // DagOutputItemType defines model for DagOutputItem.Type.
 type DagOutputItemType string
 
+// EditNodeTaskBody defines model for EditNodeTaskBody.
+type EditNodeTaskBody struct {
+	Task string `json:"task"`
+}
+
 // ItemStatus defines model for ItemStatus.
 type ItemStatus string
 
@@ -340,7 +349,8 @@ type MessageOutputItemType string
 // server-side by internal/dag.CanTransition):
 //
 //	queued      → running, cancelled, failed (stale-on-restart)
-//	running     → running (steer, in place), needs_input, done, failed, cancelled
+//	running     → paused, needs_input, done, failed, cancelled
+//	paused      → running (resume), cancelled
 //	needs_input → running (resumed), cancelled
 //	done        → queued (retry)
 //	failed      → queued (retry)
@@ -349,13 +359,14 @@ type NodeStatus string
 
 // NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
 type NodeStatusUpdateBody struct {
-	// Guidance Required when status is "running" (steer); optional and folded into the node's task when status is "queued" (retry). Unused for "cancelled".
+	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) — it is delivered at the node's next turn boundary, not mid-turn.
 	Guidance *string `json:"guidance,omitempty"`
 
 	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
 	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → running (steer, in place), needs_input, done, failed, cancelled
+	//   running     → paused, needs_input, done, failed, cancelled
+	//   paused      → running (resume), cancelled
 	//   needs_input → running (resumed), cancelled
 	//   done        → queued (retry)
 	//   failed      → queued (retry)
@@ -376,6 +387,21 @@ type OutputTextPart struct {
 
 // OutputTextPartType defines model for OutputTextPart.Type.
 type OutputTextPartType string
+
+// QueueMessageBody defines model for QueueMessageBody.
+type QueueMessageBody struct {
+	Message string `json:"message"`
+}
+
+// QueuedMessage defines model for QueuedMessage.
+type QueuedMessage struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Delivered True once handed to the node at a turn boundary — no longer editable or removable.
+	Delivered bool   `json:"delivered"`
+	Id        string `json:"id"`
+	Text      string `json:"text"`
+}
 
 // ReasoningPart defines model for ReasoningPart.
 type ReasoningPart struct {
@@ -415,7 +441,8 @@ type TransitionError struct {
 	// Current A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
 	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → running (steer, in place), needs_input, done, failed, cancelled
+	//   running     → paused, needs_input, done, failed, cancelled
+	//   paused      → running (resume), cancelled
 	//   needs_input → running (resumed), cancelled
 	//   done        → queued (retry)
 	//   failed      → queued (retry)
@@ -454,6 +481,9 @@ type Usage struct {
 // ChatID defines model for ChatID.
 type ChatID = string
 
+// MessageID defines model for MessageID.
+type MessageID = string
+
 // NodeID defines model for NodeID.
 type NodeID = string
 
@@ -462,6 +492,15 @@ type ResponseID = string
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
+
+// EditNodeTaskJSONRequestBody defines body for EditNodeTask for application/json ContentType.
+type EditNodeTaskJSONRequestBody = EditNodeTaskBody
+
+// QueueNodeMessageJSONRequestBody defines body for QueueNodeMessage for application/json ContentType.
+type QueueNodeMessageJSONRequestBody = QueueMessageBody
+
+// EditQueuedMessageJSONRequestBody defines body for EditQueuedMessage for application/json ContentType.
+type EditQueuedMessageJSONRequestBody = QueueMessageBody
 
 // UpdateNodeStatusJSONRequestBody defines body for UpdateNodeStatus for application/json ContentType.
 type UpdateNodeStatusJSONRequestBody = NodeStatusUpdateBody
@@ -694,7 +733,19 @@ type ServerInterface interface {
 	// Get a chat with its turns
 	// (GET /api/v1/chats/{chat_id})
 	GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
-	// Transition a DAG node's status (cancel, retry, or steer)
+	// Edit a not-yet-started node's prompt
+	// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id})
+	EditNodeTask(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// Queue a message for a running node, delivered at its next turn boundary
+	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/queue)
+	QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// Remove a queued message that has not yet been delivered
+	// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id})
+	RemoveQueuedMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID, messageId MessageID)
+	// Edit a queued message that has not yet been delivered
+	// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id})
+	EditQueuedMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID, messageId MessageID)
+	// Transition a DAG node's status (cancel, pause/resume, or retry)
 	// (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 	UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Send a message and stream the response
@@ -742,7 +793,31 @@ func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId Ch
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Transition a DAG node's status (cancel, retry, or steer)
+// Edit a not-yet-started node's prompt
+// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id})
+func (_ Unimplemented) EditNodeTask(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Queue a message for a running node, delivered at its next turn boundary
+// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/queue)
+func (_ Unimplemented) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Remove a queued message that has not yet been delivered
+// (DELETE /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id})
+func (_ Unimplemented) RemoveQueuedMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID, messageId MessageID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Edit a queued message that has not yet been delivered
+// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id})
+func (_ Unimplemented) EditQueuedMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID, messageId MessageID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Transition a DAG node's status (cancel, pause/resume, or retry)
 // (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 func (_ Unimplemented) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -858,6 +933,164 @@ func (siw *ServerInterfaceWrapper) GetChat(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChat(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EditNodeTask operation middleware
+func (siw *ServerInterfaceWrapper) EditNodeTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditNodeTask(w, r, chatId, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// QueueNodeMessage operation middleware
+func (siw *ServerInterfaceWrapper) QueueNodeMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.QueueNodeMessage(w, r, chatId, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveQueuedMessage operation middleware
+func (siw *ServerInterfaceWrapper) RemoveQueuedMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "message_id" -------------
+	var messageId MessageID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "message_id", chi.URLParam(r, "message_id"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "message_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveQueuedMessage(w, r, chatId, nodeId, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EditQueuedMessage operation middleware
+func (siw *ServerInterfaceWrapper) EditQueuedMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "message_id" -------------
+	var messageId MessageID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "message_id", chi.URLParam(r, "message_id"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "message_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditQueuedMessage(w, r, chatId, nodeId, messageId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1162,6 +1395,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.GetChat)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.EditNodeTask)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/queue", wrapper.QueueNodeMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}", wrapper.RemoveQueuedMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}", wrapper.EditQueuedMessage)
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/status", wrapper.UpdateNodeStatus)

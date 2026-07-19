@@ -271,19 +271,91 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 	return nil
 }
 
-// RunNodeSteer is `quack chat node steer <chat-id> <node-id> <guidance>`:
-// interrupt one RUNNING node and re-run it against its same session with the
-// guidance folded in. The re-run streams over the chat's existing SSE
-// connection — watch it with `chat show -f`.
-func RunNodeSteer(ctx context.Context, out io.Writer, server, chatID, nodeID, guidance string) error {
+// RunNodePause is `quack chat node pause <chat-id> <node-id>`: suspend one
+// RUNNING node at its next turn boundary, keeping its accumulated work.
+func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
 	c, err := NewClient(server)
 	if err != nil {
 		return err
 	}
-	if err := c.SteerNode(ctx, chatID, nodeID, guidance); err != nil {
+	if err := c.PauseNode(ctx, chatID, nodeID); err != nil {
 		return notFoundAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Steered node %s (chat %s) — watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
+	fmt.Fprintf(out, "Paused node %s (chat %s) — resume it with `quack chat node resume %s %s`.\n", nodeID, chatID, chatID, nodeID)
+	return nil
+}
+
+// RunNodeResume is `quack chat node resume <chat-id> <node-id>`: resume a
+// PAUSED node — a fresh re-run (like retry), reusing the rest of the plan's
+// stored outputs. Watch it with `chat show -f`.
+func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.ResumeNode(ctx, chatID, nodeID); err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Resuming node %s (chat %s) — watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
+	return nil
+}
+
+// RunNodeQueue is `quack chat node queue <chat-id> <node-id> <message>`:
+// append a message to a RUNNING node's queue, delivered at its next turn
+// boundary (never mid-turn) — replaces the old interrupt-based steer.
+func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, message string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	m, err := c.QueueNodeMessage(ctx, chatID, nodeID, message)
+	if err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Queued message %s for node %s (chat %s) — delivered at its next turn boundary.\n", m.Id, nodeID, chatID)
+	return nil
+}
+
+// RunNodeQueueEdit is `quack chat node queue-edit <chat-id> <node-id> <message-id> <text>`:
+// rewrite a not-yet-delivered queued message.
+func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID, text string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.EditQueuedMessage(ctx, chatID, nodeID, messageID, text); err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Edited queued message %s for node %s (chat %s).\n", messageID, nodeID, chatID)
+	return nil
+}
+
+// RunNodeQueueRemove is `quack chat node queue-remove <chat-id> <node-id> <message-id>`:
+// drop a not-yet-delivered queued message.
+func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.RemoveQueuedMessage(ctx, chatID, nodeID, messageID); err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Removed queued message %s for node %s (chat %s).\n", messageID, nodeID, chatID)
+	return nil
+}
+
+// RunNodeEditTask is `quack chat node edit <chat-id> <node-id> <task>`:
+// replace a not-yet-started node's prompt. Errors (409) once the node has
+// started — its prompt is then immutable.
+func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID, task string) error {
+	c, err := NewClient(server)
+	if err != nil {
+		return err
+	}
+	if err := c.EditNodeTask(ctx, chatID, nodeID, task); err != nil {
+		return notFoundAs(err, chatID)
+	}
+	fmt.Fprintf(out, "Edited node %s's prompt (chat %s).\n", nodeID, chatID)
 	return nil
 }
 

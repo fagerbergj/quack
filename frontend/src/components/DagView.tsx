@@ -34,9 +34,15 @@ function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): 
 
 interface Props {
   dag: DagTurnState
-  // Present only for a live, streaming run: per-node controls (stop / steer).
-  onStopNode?: (nodeId: string) => void
-  onSteerNode?: (nodeId: string, guidance: string) => void
+  // Present only for a live, streaming run: per-node controls (cancel / pause /
+  // resume / queue a message), surfaced in the node popup (#265).
+  onCancelNode?: (nodeId: string) => void
+  onPauseNode?: (nodeId: string) => void
+  onResumeNode?: (nodeId: string) => void
+  onQueueNodeMessage?: (nodeId: string, text: string) => void
+  onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
+  onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
+  onEditNodeTask?: (nodeId: string, task: string) => void
   // Retry a finished node (failed or done) + its downstream. Present when the turn
   // is the live one and not currently streaming.
   onRetryNode?: (nodeId: string, guidance?: string) => void
@@ -55,7 +61,10 @@ export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
   )
 }
 
-export function DagView({ dag, onStopNode, onSteerNode, onRetryNode }: Props) {
+export function DagView({
+  dag, onCancelNode, onPauseNode, onResumeNode, onQueueNodeMessage,
+  onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode,
+}: Props) {
   const nodeMap = Object.fromEntries(dag.nodes.map(n => [n.id, n]))
   const dependsOnMap: Record<string, string[]> = {}
   for (const n of dag.nodes) dependsOnMap[n.id] = n.depends_on ?? []
@@ -99,8 +108,13 @@ export function DagView({ dag, onStopNode, onSteerNode, onRetryNode }: Props) {
                   runs={getRuns(id)}
                   answer={getAnswer(id)}
                   isFinal={id === finalId}
-                  onStop={onStopNode}
-                  onSteer={onSteerNode}
+                  onCancel={onCancelNode}
+                  onPause={onPauseNode}
+                  onResume={onResumeNode}
+                  onQueueMessage={onQueueNodeMessage}
+                  onEditQueuedMessage={onEditQueuedMessage}
+                  onRemoveQueuedMessage={onRemoveQueuedMessage}
+                  onEditTask={onEditNodeTask}
                   onRetry={onRetryNode}
                 />
               </div>

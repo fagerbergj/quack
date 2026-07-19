@@ -130,7 +130,11 @@ func newChatCmd() *cobra.Command {
 	c := &cobra.Command{Use: "chat", Short: "Create and drive chat sessions"}
 
 	node := &cobra.Command{Use: "node", Short: "Control nodes within a chat's active run"}
-	node.AddCommand(newNodeStopCmd(), newNodeSteerCmd(), newNodeRetryCmd())
+	node.AddCommand(
+		newNodeStopCmd(), newNodePauseCmd(), newNodeResumeCmd(),
+		newNodeQueueCmd(), newNodeQueueEditCmd(), newNodeQueueRemoveCmd(),
+		newNodeEditCmd(), newNodeRetryCmd(),
+	)
 
 	c.AddCommand(
 		newChatNewCmd(),
@@ -302,16 +306,92 @@ func newNodeStopCmd() *cobra.Command {
 	}
 }
 
-// newNodeSteerCmd: `chat node steer` — interrupt a RUNNING node and re-run it
-// with guidance against its same session (updateNodeStatus status=running).
-func newNodeSteerCmd() *cobra.Command {
+// newNodePauseCmd: `chat node pause` — suspend a RUNNING node at its next
+// turn boundary, keeping its accumulated work (updateNodeStatus status=paused).
+func newNodePauseCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "steer <chat-id> <node-id> <guidance>",
-		Short: "Interrupt a running node and re-run it with new guidance (same session)",
+		Use:   "pause <chat-id> <node-id>",
+		Short: "Suspend a running node, keeping its accumulated work (resumable)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodePause(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1])
+			})
+		},
+	}
+}
+
+// newNodeResumeCmd: `chat node resume` — resume a PAUSED node with a fresh
+// re-run (updateNodeStatus status=running).
+func newNodeResumeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume <chat-id> <node-id>",
+		Short: "Resume a paused node (a fresh re-run, like retry)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodeResume(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1])
+			})
+		},
+	}
+}
+
+// newNodeQueueCmd: `chat node queue` — append a message to a RUNNING node's
+// queue, delivered at its next turn boundary (never mid-turn). Replaces the
+// old interrupt-based `chat node steer`.
+func newNodeQueueCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "queue <chat-id> <node-id> <message>",
+		Short: "Queue a message for a running node, delivered at its next turn boundary",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withTarget(cmd, func(t string) error {
-				return cli.RunNodeSteer(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2])
+				return cli.RunNodeQueue(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2])
+			})
+		},
+	}
+}
+
+// newNodeQueueEditCmd: `chat node queue-edit` — rewrite a not-yet-delivered
+// queued message.
+func newNodeQueueEditCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "queue-edit <chat-id> <node-id> <message-id> <text>",
+		Short: "Edit a not-yet-delivered queued message",
+		Args:  cobra.ExactArgs(4),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodeQueueEdit(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2], args[3])
+			})
+		},
+	}
+}
+
+// newNodeQueueRemoveCmd: `chat node queue-remove` — drop a not-yet-delivered
+// queued message.
+func newNodeQueueRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "queue-remove <chat-id> <node-id> <message-id>",
+		Short: "Remove a not-yet-delivered queued message",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodeQueueRemove(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2])
+			})
+		},
+	}
+}
+
+// newNodeEditCmd: `chat node edit` — replace a not-yet-started node's prompt
+// (immutable once the node has started).
+func newNodeEditCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit <chat-id> <node-id> <task>",
+		Short: "Edit a not-yet-started node's prompt",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunNodeEditTask(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], args[2])
 			})
 		},
 	}

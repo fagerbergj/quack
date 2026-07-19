@@ -33,9 +33,10 @@ func TestCommandTree(t *testing.T) {
 		}
 	}
 
-	// `chat node stop|steer|retry` are the deepest leaves — prove 3-level
-	// nesting resolves and the full updateNodeStatus surface is wired.
-	for _, sub := range []string{"stop", "steer", "retry"} {
+	// `chat node stop|pause|resume|queue|queue-edit|queue-remove|edit|retry`
+	// are the deepest leaves — prove 3-level nesting resolves and the full
+	// updateNodeStatus + queue + edit surface is wired (#265).
+	for _, sub := range []string{"stop", "pause", "resume", "queue", "queue-edit", "queue-remove", "edit", "retry"} {
 		if c, _, err := root.Find([]string{"chat", "node", sub}); err != nil || c.Name() != sub {
 			t.Errorf("chat node %s not registered: %v", sub, err)
 		}
