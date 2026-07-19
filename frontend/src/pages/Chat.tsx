@@ -21,6 +21,13 @@ export function liveDagFinalText(dag: DagTurnState): string {
   return finalId != null ? (dag.nodeAnswer[finalId] ?? '') : ''
 }
 
+// shouldQueueSubmit is the Composer send decision: queue while a run is
+// streaming (drained automatically once it finishes), send immediately
+// otherwise — the same immediate path as before this feature existed.
+export function shouldQueueSubmit(streaming: boolean): boolean {
+  return streaming
+}
+
 // chatGitHubLink (#382) extracts the header's back-link target from a chat's
 // summary: present only for a GitHub-originated chat (github_url set by the
 // webhook at dispatch time), null for a direct chat — so the header renders
@@ -264,13 +271,25 @@ export default function Chat() {
     }).then(() => loadChats().then(data => setChats(data)))
   }, [activeChatId, store, loadChats])
 
+  // submitMessage is the Composer's send action. While the chat is streaming
+  // it queues instead of starting a second concurrent run (store.drainQueue
+  // submits it automatically once the current run finishes); otherwise it
+  // sends immediately, same as before.
   const submitMessage = useCallback((text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
     if (!activeChatId) return
+    if (shouldQueueSubmit(streaming)) {
+      store.queueTurn(activeChatId, text)
+      return
+    }
     setLiveAttachmentPreviews(previews)
     store.submit(activeChatId, text, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
     }).then(() => loadChats().then(data => setChats(data)))
-  }, [activeChatId, store, loadChats])
+  }, [activeChatId, store, loadChats, streaming])
+
+  const handleRemoveQueued = useCallback((id: string) => {
+    if (activeChatId) store.unqueueTurn(activeChatId, id)
+  }, [activeChatId, store])
 
   // handleChoice answers a get_user_choice clarification by sending the chosen
   // option as the next message (the backend resumes it as the tool's answer).
@@ -576,6 +595,8 @@ export default function Chat() {
           streaming={streaming}
           onSubmit={submitMessage}
           onStop={handleStop}
+          queue={state.queue}
+          onRemoveQueued={handleRemoveQueued}
         />
       </div>
     </div>

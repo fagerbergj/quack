@@ -143,6 +143,108 @@ describe('ChatStore.submit — loading indicator gap (regression)', () => {
   })
 })
 
+// makeHangingStream is a `submit` response whose body never closes until the
+// test calls `close()` — lets a test observe state while a run is still
+// streaming, and then trigger its completion at will.
+function makeHangingStream(): { response: Response; close: () => void } {
+  const encoder = new TextEncoder()
+  let controller!: ReadableStreamDefaultController<Uint8Array>
+  const stream = new ReadableStream({ start(ctrl) { controller = ctrl } })
+  return {
+    response: new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+    close: () => {
+      controller.enqueue(encoder.encode('event: done\ndata: {}\n\n'))
+      controller.close()
+    },
+  }
+}
+
+describe('ChatStore — main-chat message queue', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let store: ChatStore
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    store = new ChatStore()
+    store.seed('chat-1', [])
+  })
+
+  it('queueing while streaming holds the message instead of starting a second run', async () => {
+    const hang = makeHangingStream()
+    fetchMock.mockResolvedValueOnce(hang.response)
+    const p = store.submit('chat-1', 'msg1')
+    expect(store.get('chat-1').live?.streaming).toBe(true)
+
+    store.queueTurn('chat-1', 'follow-up')
+    expect(store.get('chat-1').queue).toHaveLength(1)
+    expect(store.get('chat-1').queue[0].text).toBe('follow-up')
+    // Still streaming, and no second fetch (POST/GET) has fired for it.
+    expect(store.get('chat-1').live?.userText).toBe('msg1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    hang.close()
+    await p
+  })
+
+  it('submits the queued message once the run finishes', async () => {
+    const hang = makeHangingStream()
+    fetchMock.mockResolvedValueOnce(hang.response)
+    const p = store.submit('chat-1', 'msg1')
+    store.queueTurn('chat-1', 'follow-up')
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    fetchMock.mockResolvedValueOnce(makeStream(''))                                               // follow-up's own run
+
+    hang.close()
+    await p
+
+    await vi.waitFor(() => expect(store.get('chat-1').live?.userText).toBe('follow-up'))
+    expect(store.get('chat-1').queue).toEqual([])
+  })
+
+  it('drains multiple queued messages in order, submitting the next only after the prior completes', async () => {
+    const hang1 = makeHangingStream()
+    fetchMock.mockResolvedValueOnce(hang1.response)
+    const p1 = store.submit('chat-1', 'msg1')
+    store.queueTurn('chat-1', 'follow-up-1')
+    store.queueTurn('chat-1', 'follow-up-2')
+    expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['follow-up-1', 'follow-up-2'])
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    const hang2 = makeHangingStream()
+    fetchMock.mockResolvedValueOnce(hang2.response)                                               // follow-up-1's run
+
+    hang1.close()
+    await p1
+
+    await vi.waitFor(() => expect(store.get('chat-1').live?.userText).toBe('follow-up-1'))
+    // follow-up-2 stays queued until follow-up-1's own run finishes.
+    expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['follow-up-2'])
+    expect(store.get('chat-1').live?.streaming).toBe(true)
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    fetchMock.mockResolvedValueOnce(makeStream(''))                                               // follow-up-2's run
+    hang2.close()
+
+    await vi.waitFor(() => expect(store.get('chat-1').live?.userText).toBe('follow-up-2'))
+    expect(store.get('chat-1').queue).toEqual([])
+  })
+
+  it('removes a queued message before it is sent', () => {
+    store.queueTurn('chat-1', 'a')
+    store.queueTurn('chat-1', 'b')
+    const id = store.get('chat-1').queue[0].id
+    store.unqueueTurn('chat-1', id)
+    expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['b'])
+  })
+
+  it('is a no-op for a blank message', () => {
+    store.queueTurn('chat-1', '   ')
+    expect(store.get('chat-1').queue).toEqual([])
+  })
+})
+
 describe('ChatStore — mid-node steering', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
