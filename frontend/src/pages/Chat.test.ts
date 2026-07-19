@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { liveDagFinalText } from './Chat'
+import { liveDagFinalText, chatGitHubLink } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
+import type { ChatSummary } from '../api'
 
 // dag builds a minimal single-node DagTurnState (that node is the terminal node).
 function dag(nodeAnswer: Record<string, string>): DagTurnState {
@@ -50,5 +51,33 @@ describe('liveText selection (Chat.tsx local formula)', () => {
 
   it('falls back to top-level text when there is no DAG at all (plain orchestrator reply)', () => {
     expect(liveText(undefined, 'a direct reply')).toBe('a direct reply')
+  })
+})
+
+function chat(overrides: Partial<ChatSummary>): ChatSummary {
+  return {
+    id: 'c1',
+    system_prompt: '',
+    created_at: '2026-07-10T00:00:00Z',
+    updated_at: '2026-07-10T00:00:00Z',
+    status: 'idle',
+    ...overrides,
+  }
+}
+
+// Pins #382: the chat header exposes the originating GitHub PR/issue link for
+// a GitHub-originated chat, and nothing for a direct (local) chat.
+describe('chatGitHubLink', () => {
+  it('exposes the url + repo for a GitHub-originated chat', () => {
+    const c = chat({ id: 'github-acme-widgets-7', github_url: 'https://github.com/acme/widgets/issues/7', github_repo: 'acme/widgets' })
+    expect(chatGitHubLink(c)).toEqual({ url: 'https://github.com/acme/widgets/issues/7', repo: 'acme/widgets' })
+  })
+
+  it('is null for a direct chat with no github_url', () => {
+    expect(chatGitHubLink(chat({ id: 'a1b2c3' }))).toBeNull()
+  })
+
+  it('is null when there is no active chat at all', () => {
+    expect(chatGitHubLink(undefined)).toBeNull()
   })
 })

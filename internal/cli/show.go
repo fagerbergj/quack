@@ -55,6 +55,9 @@ func printChatSnapshot(out io.Writer, d schema.ChatDetail) {
 	fmt.Fprintf(out, "id:     %s\n", d.Id)
 	fmt.Fprintf(out, "title:  %s\n", chatTitle(d.Title))
 	fmt.Fprintf(out, "status: %s\n", d.Status)
+	if d.GithubUrl != nil && *d.GithubUrl != "" {
+		fmt.Fprintf(out, "github: %s\n", *d.GithubUrl)
+	}
 	if d.PendingQuestion != nil && *d.PendingQuestion != "" {
 		fmt.Fprintf(out, "question: %s\n", *d.PendingQuestion)
 	}

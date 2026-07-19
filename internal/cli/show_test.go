@@ -63,6 +63,50 @@ func TestRunChatShow(t *testing.T) {
 	}
 }
 
+// TestRunChatShowGithubLink pins #382: `chat show` surfaces the originating
+// GitHub PR/issue link when the chat carries one.
+func TestRunChatShowGithubLink(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	const withGithub = `{
+	  "id":"github-acme-widgets-7","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
+	  "system_prompt":"","title":"Widgets leak memory","status":"completed",
+	  "github_repo":"acme/widgets","github_url":"https://github.com/acme/widgets/issues/7",
+	  "turns":[]
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, withGithub)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "github-acme-widgets-7", false, false)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "github: https://github.com/acme/widgets/issues/7") {
+		t.Errorf("chat show output missing the github link:\n%s", out.String())
+	}
+}
+
+// TestRunChatShowNoGithubLink pins the negative case: a direct (non-github)
+// chat shows nothing extra — no "github:" line at all.
+func TestRunChatShowNoGithubLink(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, chatShowDetailJSON)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, false)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if strings.Contains(out.String(), "github:") {
+		t.Errorf("direct chat should show no github line:\n%s", out.String())
+	}
+}
+
 func TestRunChatShowJSON(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

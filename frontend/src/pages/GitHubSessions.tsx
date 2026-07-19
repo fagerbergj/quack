@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ChatSummary } from '../api'
 import { navigate } from '../router'
+import { GitHubLink } from '../components/GitHubLink'
 
 export interface GithubRepoGroup {
   repo: string
@@ -99,18 +100,7 @@ export function GitHubSessionsView({ chats }: { chats: ChatSummary[] }) {
                     </div>
                     <span className="text-xs text-gray-400 dark:text-gray-500">{relativeDate(c.updated_at)}</span>
                   </div>
-                  {c.github_url && (
-                    <a
-                      href={c.github_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      aria-label={`Open ${c.github_url} on GitHub`}
-                      className="flex-shrink-0 text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      ↗
-                    </a>
-                  )}
+                  {c.github_url && <GitHubLink url={c.github_url} className="flex-shrink-0" />}
                 </div>
               ))}
             </div>
