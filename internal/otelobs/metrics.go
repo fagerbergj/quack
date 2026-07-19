@@ -26,6 +26,7 @@ var m *metrics
 
 type metrics struct {
 	runsActive       metric.Int64UpDownCounter
+	runsQueued       metric.Int64UpDownCounter
 	nodesActive      metric.Int64UpDownCounter
 	roundDur         metric.Float64Histogram // attrs: agent, model, stage (worker rounds: draft/continuation/revise/hitl/confirm)
 	judgeScore       metric.Float64Histogram // attrs: agent
@@ -47,6 +48,10 @@ func initMetrics(meter metric.Meter) error {
 	var err error
 	if m2.runsActive, err = meter.Int64UpDownCounter("quack.runs.active",
 		metric.WithDescription("orchestrator runs currently in flight")); err != nil {
+		return err
+	}
+	if m2.runsQueued, err = meter.Int64UpDownCounter("quack.runs.queued",
+		metric.WithDescription("orchestrator runs admitted but waiting for a concurrency slot")); err != nil {
 		return err
 	}
 	if m2.nodesActive, err = meter.Int64UpDownCounter("quack.nodes.active",
@@ -93,19 +98,21 @@ func initMetrics(meter metric.Meter) error {
 	return nil
 }
 
-// RunStarted/RunFinished track quack.runs.active. Call in a matched pair on
-// every exit path (error, cancel, panic-unwind) — StartRun/EndRun below do
-// this FOR you, tied to the "run" span's own lifecycle, and are the preferred
-// call site; these two remain exported for the rare caller that needs the
-// gauge without a span.
+// RunStarted/RunFinished track quack.runs.active — a run that has ACQUIRED its
+// concurrency slot and is actually executing. RunQueued/RunUnqueued track
+// quack.runs.queued — a run admitted (its "run" span open) but still waiting
+// on max_active_runs. A run transits queued → active exactly once (or queued
+// → unqueued with no active, if cancelled before it acquires); the caller
+// (Orchestrator.Run) is responsible for calling exactly one matched pair from
+// each, on every exit path (error, cancel, panic-unwind).
 //
-// Neither this pair nor StartRun/EndRun can survive a hard process kill
-// (container restart) mid-run: the process that incremented the gauge never
-// runs its decrement, and the counter is orphaned high until the NEXT
-// process starts fresh at 0. That is inherent to an up/down counter across a
-// restart, not a code bug — treat quack.runs.active/quack.nodes.active as
-// advisory around a deploy; the durable event log and Tempo traces are the
-// source of truth for what was actually in flight.
+// Neither pair can survive a hard process kill (container restart) mid-run:
+// the process that incremented the gauge never runs its decrement, and the
+// counter is orphaned high until the NEXT process starts fresh at 0. That is
+// inherent to an up/down counter across a restart, not a code bug — treat
+// quack.runs.active/quack.runs.queued/quack.nodes.active as advisory around a
+// deploy; the durable event log and Tempo traces are the source of truth for
+// what was actually in flight.
 func RunStarted() {
 	if m != nil {
 		m.runsActive.Add(context.Background(), 1)
@@ -117,21 +124,16 @@ func RunFinished() {
 	}
 }
 
-// StartRun opens the "run" span and marks quack.runs.active +1 as ONE call —
-// pair with EndRun (typically via defer immediately after) so the gauge can
-// never be bumped without a matching span, or vice versa.
-func StartRun(ctx context.Context, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
-	ctx, span := Start(ctx, "run", attrs...)
-	RunStarted()
-	return ctx, span
+// RunQueued/RunUnqueued track quack.runs.queued — see RunStarted's doc.
+func RunQueued() {
+	if m != nil {
+		m.runsQueued.Add(context.Background(), 1)
+	}
 }
-
-// EndRun ends span (recording err) and marks quack.runs.active -1 — the
-// single code path both the span and the gauge end through, so they can't
-// drift apart on any of RunGatedRefine/Orchestrator.Run's exit paths.
-func EndRun(span oteltrace.Span, err error) {
-	End(span, err)
-	RunFinished()
+func RunUnqueued() {
+	if m != nil {
+		m.runsQueued.Add(context.Background(), -1)
+	}
 }
 
 // NodeStarted/NodeFinished track quack.nodes.active. See RunStarted's doc for

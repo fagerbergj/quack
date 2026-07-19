@@ -18,7 +18,10 @@ func TestMaxActiveRunsQueuesTheOverflow(t *testing.T) {
 
 	var inFlight, peak int64
 	acq := func() func() {
-		rel := o.acquireRun(context.Background())
+		rel, acquired := o.acquireRun(context.Background())
+		if !acquired {
+			t.Fatal("acquireRun reported !acquired on an uncancelled context")
+		}
 		n := atomic.AddInt64(&inFlight, 1)
 		for {
 			p := atomic.LoadInt64(&peak)
@@ -61,7 +64,11 @@ func TestMaxActiveRunsQueuesTheOverflow(t *testing.T) {
 func TestMaxActiveRunsUnlimited(t *testing.T) {
 	o := &Orchestrator{} // no SetMaxActiveRuns → unlimited
 	for i := 0; i < 50; i++ {
-		o.acquireRun(context.Background())() // acquire+release, must never block
+		rel, acquired := o.acquireRun(context.Background())
+		if !acquired {
+			t.Fatal("acquireRun reported !acquired when unlimited")
+		}
+		rel() // acquire+release, must never block
 	}
 }
 
@@ -69,16 +76,46 @@ func TestMaxActiveRunsUnlimited(t *testing.T) {
 func TestAcquireRunHonoursContextCancel(t *testing.T) {
 	o := &Orchestrator{}
 	o.SetMaxActiveRuns(1)
-	hold := o.acquireRun(context.Background()) // fill the one slot
+	hold, acquired := o.acquireRun(context.Background()) // fill the one slot
+	if !acquired {
+		t.Fatal("acquireRun reported !acquired filling the first slot")
+	}
 	defer hold()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { o.acquireRun(ctx)(); close(done) }()
+	go func() {
+		_, acquired := o.acquireRun(ctx)
+		if acquired {
+			t.Error("acquireRun reported acquired on a cancelled context")
+		}
+		close(done)
+	}()
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("acquireRun ignored context cancellation and hung")
 	}
+}
+
+// A run cancelled while queued (never acquiring a slot) must decrement runs.queued,
+// not runs.active — the bug this fix addresses (#417): a queued-but-not-executing
+// run inflated quack.runs.active.
+func TestAcquireRunContractDistinguishesQueuedFromAcquired(t *testing.T) {
+	o := &Orchestrator{}
+	o.SetMaxActiveRuns(1)
+	hold, acquired := o.acquireRun(context.Background())
+	if !acquired {
+		t.Fatal("acquireRun reported !acquired filling the first slot")
+	}
+	defer hold()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled: the second acquireRun must not block on runSem
+	rel, acquired := o.acquireRun(ctx)
+	if acquired {
+		t.Fatal("acquireRun reported acquired despite the slot being held and ctx cancelled")
+	}
+	rel() // release must be a safe no-op when !acquired
 }
