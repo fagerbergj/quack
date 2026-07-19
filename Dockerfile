@@ -54,7 +54,7 @@ RUN tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode
 # per-child rlimits (workspace.limits).
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates bubblewrap util-linux \
+      git ca-certificates bubblewrap util-linux make \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 WORKDIR /
