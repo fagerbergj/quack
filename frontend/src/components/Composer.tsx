@@ -34,12 +34,18 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
 
   // Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
   // Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
-  // max-h-48 + overflow-y-auto cap it and start scrolling past ~8 lines.
+  // capped at MAX_HEIGHT_PX (matches max-h-48). #425: overflow-y is toggled in JS
+  // rather than left as a permanent Tailwind class — an always-on `overflow-y-auto`
+  // renders a vertical scrollbar even on a single empty line in Chromium, since the
+  // scrollbar reserves its track regardless of whether content actually overflows.
+  const MAX_HEIGHT_PX = 192
   useLayoutEffect(() => {
     const ta = textareaRef.current
     if (!ta) return
     ta.style.height = 'auto'
-    ta.style.height = `${ta.scrollHeight}px`
+    const overflowing = ta.scrollHeight > MAX_HEIGHT_PX
+    ta.style.height = `${Math.min(ta.scrollHeight, MAX_HEIGHT_PX)}px`
+    ta.style.overflowY = overflowing ? 'auto' : 'hidden'
   }, [input])
 
   function submit() {
@@ -128,7 +134,9 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
           </button>
           <textarea
             ref={textareaRef}
-            className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 overflow-y-auto disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+            id="composer-input"
+            name="message"
+            className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
             rows={1}
             placeholder={disabled ? 'Select or start a chat first' : streaming ? 'Type a follow-up… (queues until the current response finishes)' : 'Ask something… (Enter to send, Shift+Enter for newline)'}
             value={input}

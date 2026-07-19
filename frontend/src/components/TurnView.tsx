@@ -88,8 +88,11 @@ export const TurnView = memo(function TurnView({
   const copyKey = `turn-${turn.id}`
   return (
     <div>
-      {/* User message (hidden when it's a clarification answer) */}
-      {!isChoiceAnswer && (
+      {/* User message — hidden when it's a clarification answer, or when the
+          turn has no user text at all (#434): a label/webhook-triggered plan
+          turn has no typed message, just its synthesized task (rendered in
+          the DAG bubble below), so there's nothing for this bubble to show. */}
+      {!isChoiceAnswer && turn.input.content && (
         <div className="flex justify-end mb-3">
           <div className="max-w-2xl ml-auto">
             <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">

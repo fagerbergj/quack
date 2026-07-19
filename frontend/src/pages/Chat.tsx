@@ -450,8 +450,12 @@ export default function Chat() {
               // role="log" + aria-live: screen readers announce streamed tokens as they
               // arrive (aria-atomic=false → only the new text, not the whole region).
               <div key="live" role="log" aria-live="polite" aria-atomic="false">
-                {/* User message (hidden when it's a clarification answer) */}
-                {!isChoiceAnswer && (
+                {/* User message — hidden when it's a clarification answer, or when the
+                    turn has no user text/attachments at all (#434): a label/webhook-
+                    triggered plan turn has no typed message, just its synthesized task
+                    (rendered in the DAG bubble below), so there's nothing for this
+                    bubble to show. */}
+                {!isChoiceAnswer && (live.userText || liveAttachmentPreviews.length > 0) && (
                   <div className="flex justify-end mb-3">
                     <div className="max-w-2xl ml-auto">
                       <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
@@ -522,14 +526,18 @@ export default function Chat() {
                         // No DAG: orchestrator answered directly (conversational or
                         // tool-based research where DAG events don't reach the frontend).
                         <div>
-                          <BubbleHeader agent="orchestrator" model={answerAttribution?.model} tokens={answerAttribution?.tokens} />
+                          <BubbleHeader
+                            agent="orchestrator"
+                            model={answerAttribution?.model}
+                            tokens={answerAttribution?.tokens}
+                            status={streaming ? 'running' : 'done'}
+                          />
                           {orchActivity.length > 0 && (
                             <ActivityList activity={orchActivity} />
                           )}
-                          {liveTopText
-                            ? <AssistantText text={liveTopText} />
-                            : streaming && <Dots />
-                          }
+                          {/* Running is conveyed by the header's pulsing StatusDot
+                              (#416) — no separate spinner dot while text streams in. */}
+                          {liveTopText && <AssistantText text={liveTopText} />}
                         </div>
                       )}
                     </div>

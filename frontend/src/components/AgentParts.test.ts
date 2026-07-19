@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import {
   startRun,
   appendRunThinking,
@@ -6,8 +8,10 @@ import {
   fillRunToolResult,
   completeRun,
   freezeOpenRuns,
+  ToolBlock,
   type AgentRun,
 } from './AgentParts'
+import type { ToolCall } from './messageParts'
 
 function run(runs: AgentRun[], runId: string): AgentRun {
   const r = runs.find(x => x.runId === runId)
@@ -125,5 +129,21 @@ describe('run-model reducers', () => {
     // Each thinking append is preceded by a tool call, so nothing coalesces:
     // N tool-call entries + N separate thinking entries.
     expect(finalRun.activity).toHaveLength(N * 2)
+  })
+})
+
+// #435 — Chrome DevTools flagged 177 instances of an interactive element
+// nested inside a `<summary>` on a live chat page; every collapsed tool
+// call's copy button was the source. The button now sits outside the
+// `<summary>`, as a sibling positioned over its corner.
+describe('ToolBlock — copy button is not nested inside <summary> (#435)', () => {
+  const tool: ToolCall = { callId: 'c1', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true }
+
+  it('renders the copy button as a sibling of <details>, never inside <summary>', () => {
+    const out = renderToStaticMarkup(createElement(ToolBlock, { tool }))
+    const summaryMatch = out.match(/<summary[^>]*>.*?<\/summary>/s)
+    expect(summaryMatch).not.toBeNull()
+    expect(summaryMatch![0]).not.toContain('<button')
+    expect(out).toContain('Copy tool call JSON')
   })
 })
