@@ -44,6 +44,35 @@ func parseAnswerReview(answer string) (event string, comments []ReviewComment, o
 	return event, comments, true
 }
 
+// augmentFromReviewStage folds an external reviewer's TOOL-staged review — the
+// review MCP surface's stage_review_comment/stage_review calls (internal/acp) —
+// into the activity, resolved via the node's advisor-thread token → MemSecret →
+// MemSession.Review. It runs BEFORE augmentFromAnswer so a tool-staged review
+// always beats the answer-tail parse; augmentFromAnswer's own "already staged"
+// guard then makes the fallback a no-op. A Snapshot (non-clearing): it fires on
+// every gate round and stays readable until the node's session is drained.
+func augmentFromReviewStage(act *workerActivity, advisorToken string) {
+	if advisorToken == "" {
+		return
+	}
+	t, ok := LookupAdvisorThread(advisorToken)
+	if !ok || t.MemSecret == "" {
+		return
+	}
+	ms, ok := LookupMemSession(t.MemSecret)
+	if !ok || ms.Review == nil {
+		return
+	}
+	sd, ok := ms.Review.Snapshot()
+	if !ok {
+		return
+	}
+	if act.stagedDelivery == nil {
+		act.stagedDelivery = map[string]StagedDelivery{}
+	}
+	act.stagedDelivery["review"] = sd
+}
+
 // augmentFromAnswer stages an external reviewer's answer as its review. Fires
 // only for ACP-backed workers on a task that demands a posted review, and only
 // when nothing is staged yet (a worker-staged review always wins — there isn't

@@ -125,6 +125,13 @@ type MemSession struct {
 	// so an MCP-staged candidate commits through the exact same pass-gated path
 	// as a native agent's stage_memory tool call.
 	Staged *MemStage
+	// Review is the review MCP surface's landing buffer (stage_review_comment +
+	// stage_review, internal/acp reviewmcp.go). Non-nil ONLY on a review-delivery
+	// node (an external read-only reviewer whose task demands a posted review) —
+	// its presence is what registers the two review tools. The gate reads a
+	// Snapshot into act.stagedDelivery["review"] so a tool-staged review beats
+	// the answer-tail fallback (augmentFromAnswer). nil ⇒ the tools aren't offered.
+	Review *ReviewStage
 }
 
 // MemStage is a per-node, mutex-guarded staging buffer stage_memory (over the
@@ -132,6 +139,56 @@ type MemSession struct {
 type MemStage struct {
 	mu    sync.Mutex
 	items []memory.Candidate
+}
+
+// ReviewStage is a per-node, mutex-guarded staging buffer the review MCP surface
+// (internal/acp reviewmcp.go) fills across a review node's rounds: an inline
+// comment per stage_review_comment call and the overall verdict+summary from
+// stage_review. Unlike MemStage it is READ, not drained — the gate snapshots it
+// on every round (Snapshot) and the same snapshot survives into commitDelivery.
+type ReviewStage struct {
+	mu       sync.Mutex
+	event    string
+	body     string
+	set      bool // a stage_review (verdict) call landed
+	comments []ReviewComment
+}
+
+// AddComment stages one inline, line-anchored finding.
+func (s *ReviewStage) AddComment(path string, line int, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.comments = append(s.comments, ReviewComment{Path: path, Line: line, Body: body})
+}
+
+// SetVerdict records the review's overall event + summary; a later call replaces
+// an earlier one (the reviewer's final word wins).
+func (s *ReviewStage) SetVerdict(event, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.event, s.body, s.set = event, body, true
+}
+
+// Snapshot renders the staged review as a StagedDelivery WITHOUT clearing the
+// buffer (the gate reads it every round). ok is false until at least one comment
+// or a verdict is staged. Comments without an explicit verdict post as a plain
+// comment review, mirroring augmentFromAnswer's verdict-less fallback.
+func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.set && len(s.comments) == 0 {
+		return StagedDelivery{}, false
+	}
+	event := s.event
+	if event == "" {
+		event = "comment"
+	}
+	return StagedDelivery{
+		Kind:     "review",
+		Event:    event,
+		Body:     s.body,
+		Comments: append([]ReviewComment(nil), s.comments...),
+	}, true
 }
 
 // Add appends one staged candidate.

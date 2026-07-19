@@ -239,6 +239,11 @@ func demandsPostedReview(task string) bool {
 	return prRe.MatchString(task) && postedReviewRe.MatchString(task)
 }
 
+// DemandsPostedReview is the exported task-shape test dag.buildGateNodes uses to
+// decide whether to mint the ACP review MCP surface (stage_review_comment/
+// stage_review) for a node — the surface exists only for a review-delivery node.
+func DemandsPostedReview(task string) bool { return demandsPostedReview(task) }
+
 // proseExts are the file extensions with no runnable surface: a change confined
 // to these cannot be executed, so behaviour_verified exempts it.
 var proseExts = map[string]bool{".md": true, ".markdown": true, ".rst": true, ".txt": true, ".yaml": true, ".yml": true}

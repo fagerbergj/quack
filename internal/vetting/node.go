@@ -305,10 +305,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		augmentFromRepo(&act, cfg)
 		return act
 	}
-	// actFor additionally folds in what the ANSWER itself carries — an external
-	// reviewer's structured verdict staged as its review (augmentFromAnswer).
+	// actFor additionally folds in the reviewer's staged review: first the tool-
+	// staged one (augmentFromReviewStage, the #451 review MCP surface), then the
+	// answer-tail fallback (augmentFromAnswer) — which no-ops once the tool path
+	// has staged, keeping the fallback for a reviewer that never called the tool.
 	actFor := func(answer string) workerActivity {
 		act := activity()
+		augmentFromReviewStage(&act, advisorToken)
 		augmentFromAnswer(&act, cfg, answer)
 		return act
 	}

@@ -79,29 +79,38 @@ func memoryMCPHandler() http.Handler {
 		secret := strings.Trim(r.URL.Path, "/")
 		srv := mcp.NewServer(&mcp.Implementation{Name: "quack-memory", Version: "0.1.0"}, nil)
 		sess, ok := vetting.LookupMemSession(secret)
-		if !ok || sess.Memory == nil {
+		if !ok {
 			return srv
 		}
-		mcp.AddTool(srv, &mcp.Tool{
-			Name:        "load_memory",
-			Description: "Recall relevant notes from shared memory about this repository/task family.",
-		}, func(ctx context.Context, _ *mcp.CallToolRequest, args loadMemoryInput) (*mcp.CallToolResult, any, error) {
-			text := sess.Memory.Recall(ctx, sess.Scope, args.Query)
-			if text == "" {
-				text = "(no relevant memory found)"
-			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
-		})
-		mcp.AddTool(srv, &mcp.Tool{
-			Name:        "stage_memory",
-			Description: "Stage a durable fact learned this run for shared memory. It is written only if this node's work is accepted.",
-		}, func(ctx context.Context, _ *mcp.CallToolRequest, args stageMemoryInput) (*mcp.CallToolResult, any, error) {
-			if sess.Staged == nil || strings.TrimSpace(args.Content) == "" {
-				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "memory staging unavailable for this node"}}}, nil, nil
-			}
-			sess.Staged.Add(memory.Candidate{Content: args.Content, Metadata: map[string]string{"bucket": args.Kind}})
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
-		})
+		// Each tool group is registered independently on the SAME per-node server,
+		// gated on the session carrying its buffer: memory (#344) rides Memory, the
+		// review surface (#451) rides Review. A review-only node (no memory) still
+		// gets its review tools, and a memory-only node never sees the review ones.
+		if sess.Memory != nil {
+			mcp.AddTool(srv, &mcp.Tool{
+				Name:        "load_memory",
+				Description: "Recall relevant notes from shared memory about this repository/task family.",
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, args loadMemoryInput) (*mcp.CallToolResult, any, error) {
+				text := sess.Memory.Recall(ctx, sess.Scope, args.Query)
+				if text == "" {
+					text = "(no relevant memory found)"
+				}
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
+			})
+			mcp.AddTool(srv, &mcp.Tool{
+				Name:        "stage_memory",
+				Description: "Stage a durable fact learned this run for shared memory. It is written only if this node's work is accepted.",
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, args stageMemoryInput) (*mcp.CallToolResult, any, error) {
+				if sess.Staged == nil || strings.TrimSpace(args.Content) == "" {
+					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "memory staging unavailable for this node"}}}, nil, nil
+				}
+				sess.Staged.Add(memory.Candidate{Content: args.Content, Metadata: map[string]string{"bucket": args.Kind}})
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
+			})
+		}
+		if sess.Review != nil {
+			registerReviewTools(srv, sess.Review)
+		}
 		return srv
 	}, nil)
 }
