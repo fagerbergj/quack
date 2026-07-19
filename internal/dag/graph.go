@@ -183,25 +183,34 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}
-			// A memory-participating external worker gets the ACP memory MCP surface
-			// (internal/acp): load_memory/stage_memory (#344). The credential is a
-			// FRESH random secret, never the advisor-thread token above — that token
-			// is derivable (planID+nodeID) and this node's own prompt discloses its
-			// running siblings' node IDs, so it must never double as a bearer
-			// credential handed to an untrusted external subprocess (see
-			// vetting.AdvisorTask.MemSecret). Native agents already have ADK-native
-			// load_memory/stage_memory tools, so this rides only cfg.ExternalWorker.
-			if cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil {
+			// An external worker gets ONE per-node MCP surface (internal/acp) whose
+			// credential is a FRESH random secret — never the advisor-thread token
+			// above, which is derivable (planID+nodeID) and disclosed to sibling
+			// nodes via the prompt, so it must never double as a bearer credential
+			// handed to an untrusted external subprocess (see AdvisorTask.MemSecret).
+			// The session carries whichever tool buffers the node is entitled to:
+			//   - memory (load_memory/stage_memory, #344) for a memory participant;
+			//   - review (stage_review_comment/stage_review, #451) for a read-only
+			//     reviewer whose task demands a posted review.
+			// Native agents have ADK-native equivalents, so both ride cfg.ExternalWorker.
+			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
+			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && vetting.DemandsPostedReview(effectiveNode.Task)
+			if memParticipant || reviewNode {
 				if secret, serr := vetting.NewMemSecret(); serr != nil {
-					slog.Warn("acp memory MCP secret unavailable; node runs without load_memory/stage_memory",
+					slog.Warn("acp MCP secret unavailable; node runs without its memory/review tools",
 						"component", "dag", "node", node.ID, "err", serr)
 				} else {
 					task.MemSecret = secret
-					vetting.RegisterMemSession(secret, vetting.MemSession{
-						Memory: cfg.Memory,
-						Scope:  vetting.MemoryScope(ctx, cfg, node.ID),
-						Staged: &vetting.MemStage{},
-					})
+					ms := vetting.MemSession{}
+					if memParticipant {
+						ms.Memory = cfg.Memory
+						ms.Scope = vetting.MemoryScope(ctx, cfg, node.ID)
+						ms.Staged = &vetting.MemStage{}
+					}
+					if reviewNode {
+						ms.Review = &vetting.ReviewStage{}
+					}
+					vetting.RegisterMemSession(secret, ms)
 					// Backstop: RunGatedRefine unregisters as soon as it drains the
 					// staging buffer, but several of its early-return paths (empty
 					// answer, cancelled, judge error) skip that point entirely — this

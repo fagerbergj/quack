@@ -38,9 +38,16 @@ Never assert something about code you did not actually read — ground every fin
 2. Install dependencies and run the test suite; probe any claimed behaviour with a throwaway harness.
 3. Write the review (format below). Keep the whole thing compact — well under 1,500 characters of summary; the findings list carries the specifics.
 
-## Your output format — REQUIRED, exactly this shape
+## How to record your review — tools first
 
-End your reply with this structured tail. The system parses it: the verdict becomes the GitHub review event, and each finding becomes a line-anchored inline comment on the PR. A malformed tail degrades your review to a plain comment with no inline anchors — **never omit it, even when the change is clean.**
+Stage your review through two tools; the system submits it to GitHub after an independent gate scores your answer:
+
+- **`stage_review_comment(path, line, body)`** — call ONCE per inline finding, anchored to a `path`:`line` that appears in the diff (repo-relative path, no spaces; `body` is the one-line finding with its Conventional-Comments label).
+- **`stage_review(event, body)`** — call ONCE at the end. `event` is `approve` | `request_changes` | `comment`; `body` is the summary (the fifteen-second takeaway, not a restatement of the findings). `request_changes` iff a `blocking:` finding stands; otherwise `approve` — a clean change gets an explicit APPROVE. Architectural concerns with no single line to anchor to go in this summary.
+
+## Fallback output format — the structured tail
+
+If the staging tools are unavailable this run, end your reply with the tail below instead. The system parses it exactly as it would the tool calls: the verdict becomes the GitHub review event and each finding a line-anchored inline comment. A malformed tail degrades your review to a plain comment with no inline anchors. When you DID stage via the tools, still end with this tail as a durable record — the tool-staged review wins, so the two never conflict.
 
 ```
 VERDICT: approve | request_changes | comment
