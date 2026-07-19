@@ -45,6 +45,9 @@ func (f *fakeAgent) NewSession(ctx context.Context, _ sdk.NewSessionRequest) (sd
 }
 
 func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.PromptResponse, error) {
+	send := func(u sdk.SessionUpdate) {
+		_ = f.conn.SessionUpdate(ctx, sdk.SessionNotification{SessionId: p.SessionId, Update: u})
+	}
 	switch f.mode {
 	case "hang":
 		// Cooperative: the SDK cancels this ctx on session/cancel.
@@ -54,9 +57,15 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		// Ignores cancellation entirely — only the process-group kill ends it
 		// (the v0.5.2 hang class).
 		select {}
-	}
-	send := func(u sdk.SessionUpdate) {
-		_ = f.conn.SessionUpdate(ctx, sdk.SessionNotification{SessionId: p.SessionId, Update: u})
+	case "slow":
+		// Alive but with gaps between updates — must never trip idle timeout
+		// on its own (each gap is shorter than the test's idle window).
+		send(sdk.UpdateAgentThoughtText("planning"))
+		time.Sleep(80 * time.Millisecond)
+		send(sdk.UpdateAgentMessageText("still "))
+		time.Sleep(80 * time.Millisecond)
+		send(sdk.UpdateAgentMessageText("working"))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	}
 	send(sdk.UpdateAgentThoughtText("planning"))
 	send(sdk.StartToolCall("t1", "go test ./...",
@@ -176,6 +185,52 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	}
 	if d := time.Since(t0); d > 15*time.Second {
 		t.Fatalf("stubborn agent survived %v — group kill failed", d)
+	}
+}
+
+// A round that goes silent — no updates, and the prompt RPC never returns —
+// must be treated as wedged and unblocked by the idle timeout, not left to
+// the caller's outer context (which in production is the 2h run deadline).
+func TestRound_IdleTimeout(t *testing.T) {
+	oldGrace := cancelGrace
+	cancelGrace = 200 * time.Millisecond
+	defer func() { cancelGrace = oldGrace }()
+
+	a := testAgent(t, "hang")
+	a.opts.IdleTimeout = 150 * time.Millisecond
+
+	result := make(chan error, 1)
+	go func() {
+		result <- a.round(context.Background(), t.TempDir(), "", "wedge forever", func(eventSpec) bool { return true })
+	}()
+
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "wedged") {
+			t.Fatalf("want a wedged idle-timeout error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("round did not return — idle timeout regression, would otherwise hang on the caller's outer context")
+	}
+}
+
+// Updates arriving with gaps just under the idle window must never trip a
+// false timeout — the round completes normally when done fires.
+func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
+	a := testAgent(t, "slow")
+	a.opts.IdleTimeout = 150 * time.Millisecond // each update gap is 80ms
+
+	var specs []eventSpec
+	err := a.round(context.Background(), t.TempDir(), "", "take your time", func(s eventSpec) bool {
+		specs = append(specs, s)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	final := specs[len(specs)-1]
+	if final.partial || final.parts[0].Text != "still working" {
+		t.Fatalf("final answer wrong: partial=%v %q", final.partial, final.parts[0].Text)
 	}
 }
 
