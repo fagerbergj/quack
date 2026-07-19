@@ -16,7 +16,7 @@ function relativeDate(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-const STATUS_DOT: Record<ChatSummary['status'], string> = {
+const STATUS_DOT_COLOR: Record<ChatSummary['status'], string> = {
   running: 'bg-blue-500',
   needs_input: 'bg-amber-500',
   failed: 'bg-red-500',
@@ -30,19 +30,18 @@ const STATUS_LABEL: Record<ChatSummary['status'], string> = {
   idle: 'Idle',
 }
 
-// StatusBadge: a subtle pill for running/needs_input/failed; idle renders
-// nothing (per the OTel-favor-presentation principle — the common case stays quiet).
-function StatusBadge({ status }: { status: ChatSummary['status'] }) {
+// StatusDot: a bare colored dot next to the chat title for running/needs_input/
+// failed; idle renders nothing (per the OTel-favor-presentation principle —
+// the common case stays quiet). The status name moves to the tooltip/aria-label
+// rather than rendering as text, to keep the title row compact.
+function StatusDot({ status }: { status: ChatSummary['status'] }) {
   if (status === 'idle') return null
   return (
     <span
       title={STATUS_LABEL[status]}
       aria-label={`Status: ${STATUS_LABEL[status]}`}
-      className="flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-medium px-1 py-0.5 rounded text-gray-500 dark:text-gray-400"
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[status]}`} aria-hidden="true" />
-      {STATUS_LABEL[status]}
-    </span>
+      className={`flex-shrink-0 inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${STATUS_DOT_COLOR[status]}`}
+    />
   )
 }
 
@@ -132,7 +131,8 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
               onClick={() => onSelect(s.id)}
               className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
             >
-              <span title={s.title || 'New chat'} className="block pr-6">
+              <span title={s.title || 'New chat'} className="flex items-center pr-6">
+                <StatusDot status={s.status} />
                 <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
                   {s.title || 'New chat'}
                 </span>
@@ -166,7 +166,6 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                     {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
                   </a>
                 )}
-                <StatusBadge status={s.status} />
               </div>
               <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
               <button

@@ -75,15 +75,16 @@ export const Searchable: Story = {
 }
 
 // A mixed list: GitHub-originated rows carry a repo badge and an Issue/PR
-// badge — both link out to GitHub — plus (when not idle) a status pill.
-// Filtering by Origin/Status/Repo/Type lives entirely in the funnel popover.
+// badge — both link out to GitHub — plus (when not idle) a colored status dot
+// next to the title. Filtering by Origin/Status/Repo/Type lives entirely in
+// the funnel popover.
 export const MixedOrigin: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
 }
 
-// Non-idle rows (running/failed/needs_input) show a small status pill; idle
-// rows stay quiet — no badge at all.
-export const StatusBadges: Story = {
+// Non-idle rows (running/failed/needs_input) show a small colored dot right
+// before the title (blue/red/amber); idle rows stay quiet — no dot at all.
+export const StatusDots: Story = {
   args: {
     chats: [
       chat('running-1', 'Currently streaming', 'running'),
