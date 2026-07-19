@@ -472,6 +472,11 @@ type TurnInput struct {
 // TurnInputRole defines model for TurnInput.Role.
 type TurnInputRole string
 
+// UpdateChatBody defines model for UpdateChatBody.
+type UpdateChatBody struct {
+	Title *string `json:"title,omitempty"`
+}
+
 // Usage defines model for Usage.
 type Usage struct {
 	InputTokens  *int `json:"input_tokens,omitempty"`
@@ -492,6 +497,9 @@ type ResponseID = string
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
+
+// UpdateChatJSONRequestBody defines body for UpdateChat for application/json ContentType.
+type UpdateChatJSONRequestBody = UpdateChatBody
 
 // EditNodeTaskJSONRequestBody defines body for EditNodeTask for application/json ContentType.
 type EditNodeTaskJSONRequestBody = EditNodeTaskBody
@@ -733,6 +741,9 @@ type ServerInterface interface {
 	// Get a chat with its turns
 	// (GET /api/v1/chats/{chat_id})
 	GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Update a chat's mutable fields
+	// (PATCH /api/v1/chats/{chat_id})
+	UpdateChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
 	// Edit a not-yet-started node's prompt
 	// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id})
 	EditNodeTask(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
@@ -790,6 +801,12 @@ func (_ Unimplemented) DeleteChat(w http.ResponseWriter, r *http.Request, chatId
 // Get a chat with its turns
 // (GET /api/v1/chats/{chat_id})
 func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update a chat's mutable fields
+// (PATCH /api/v1/chats/{chat_id})
+func (_ Unimplemented) UpdateChat(w http.ResponseWriter, r *http.Request, chatId ChatID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -933,6 +950,32 @@ func (siw *ServerInterfaceWrapper) GetChat(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChat(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateChat operation middleware
+func (siw *ServerInterfaceWrapper) UpdateChat(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateChat(w, r, chatId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1395,6 +1438,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.GetChat)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.UpdateChat)
 	})
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.EditNodeTask)

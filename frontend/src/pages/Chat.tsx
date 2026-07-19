@@ -30,6 +30,67 @@ export function chatGitHubLink(chat: ChatSummary | undefined): { url: string; re
   return { url: chat.github_url, repo: chat.github_repo }
 }
 
+export interface EditableChatTitleProps {
+  title: string
+  editable: boolean
+  onRename: (title: string) => void
+}
+
+// EditableChatTitle is the header's click-to-edit title: a click (when
+// `editable`, i.e. a chat is active) swaps the heading for a text input;
+// Enter/blur commits, Escape cancels. `onRename` fires only for an actual
+// change — a blank or unchanged draft is a silent no-op, not a rename to ''.
+export function EditableChatTitle({ title, editable, onRename }: EditableChatTitleProps) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function startEdit() {
+    if (!editable) return
+    setDraft(title)
+    setEditing(true)
+  }
+
+  function commit() {
+    setEditing(false)
+    const next = draft.trim()
+    if (next && next !== title) onRename(next)
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        autoFocus
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') inputRef.current?.blur()
+          if (e.key === 'Escape') setEditing(false)
+        }}
+        aria-label="Chat title"
+        className="text-base font-semibold text-gray-900 dark:text-white bg-transparent border-b border-blue-500 focus:outline-none min-w-0 flex-1"
+      />
+    )
+  }
+
+  return (
+    <h1
+      onClick={startEdit}
+      title={editable ? 'Click to rename' : undefined}
+      className={`group flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white truncate ${editable ? 'cursor-text' : ''}`}
+    >
+      <span className="truncate">{title}</span>
+      {editable && (
+        <span className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity flex-shrink-0" aria-hidden="true">
+          ✎
+        </span>
+      )}
+    </h1>
+  )
+}
+
 export default function Chat() {
   const urlChatId = useChatId()
 
@@ -42,8 +103,6 @@ export default function Chat() {
   const streaming = state.live?.streaming ?? false
   const error = state.error
   const live = state.live
-  const [systemPrompt, setSystemPrompt] = useState('')
-  const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [submittingChoice, setSubmittingChoice] = useState(false)
@@ -109,8 +168,14 @@ export default function Chat() {
     navigate(`/chat/${id}`)
   }
 
+  const handleRenameChat = useCallback(async (title: string) => {
+    if (!activeChatId) return
+    const updated = await api.renameChat(activeChatId, title)
+    setChats(prev => prev.map(c => c.id === activeChatId ? updated : c))
+  }, [activeChatId])
+
   async function handleNewChat() {
-    const chat = await api.createChat({ system_prompt: systemPrompt.trim() || undefined })
+    const chat = await api.createChat()
     setChats(prev => [chat, ...prev])
     setActiveChatId(chat.id)
     navigate(`/chat/${chat.id}`)
@@ -279,37 +344,14 @@ export default function Chat() {
             >
               ☰
             </button>
-            <h1 className="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
-            </h1>
+            <EditableChatTitle
+              title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
+              editable={!!activeChatId}
+              onRename={handleRenameChat}
+            />
             {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
-          <button
-            onClick={() => setShowSettings(s => !s)}
-            className={`text-xs px-3 py-1.5 rounded border transition-colors flex-shrink-0 ${showSettings ? 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200' : 'border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-500'}`}
-          >
-            Settings
-          </button>
         </div>
-
-        {showSettings && (
-          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-            <div className="flex items-start gap-6">
-              <div className="flex-1">
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
-                  System prompt (applied to new chats)
-                </label>
-                <textarea
-                  className="w-full rounded border border-gray-300 dark:border-gray-600 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
-                  rows={3}
-                  placeholder="Add context to guide answers…"
-                  value={systemPrompt}
-                  onChange={e => setSystemPrompt(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-        )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">
           {!activeChatId && (

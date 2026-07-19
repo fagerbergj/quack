@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -286,5 +287,81 @@ func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 	}
 	if turn.Model != nil {
 		t.Errorf("Model = %v, want nil (DAG turns carry no orchestrator model)", turn.Model)
+	}
+}
+
+// --- UpdateChat (manual rename) ----------------------------------------------
+
+func patchUpdateChat(t *testing.T, h *Handler, chatID string, body schema.UpdateChatBody) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/chats/"+chatID, bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.UpdateChat(rec, req, chatID)
+	return rec
+}
+
+// TestUpdateChat_RenamesTitle: a PATCH with a title updates the store and
+// echoes the new title back in the ChatSummary.
+func TestUpdateChat_RenamesTitle(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	c, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	newTitle := "Renamed by user"
+	rec := patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Title: &newTitle})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got schema.ChatSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Title == nil || *got.Title != newTitle {
+		t.Errorf("response Title = %v, want %q", got.Title, newTitle)
+	}
+
+	stored, err := h.store.GetChat(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if stored.Title != newTitle {
+		t.Errorf("stored Title = %q, want %q", stored.Title, newTitle)
+	}
+}
+
+// TestUpdateChat_EmptyTitle400: a missing or blank title is rejected — there's
+// nothing else settable yet, so an empty body is just a bad request.
+func TestUpdateChat_EmptyTitle400(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	c, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	blank := "   "
+	rec := patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Title: &blank})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (no title field); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateChat_NoSuchChat404: renaming a chat id that doesn't exist 404s
+// rather than silently upserting a title against a row that isn't there.
+func TestUpdateChat_NoSuchChat404(t *testing.T) {
+	h := newTestHandler(t)
+	title := "whatever"
+	rec := patchUpdateChat(t, h, "does-not-exist", schema.UpdateChatBody{Title: &title})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }

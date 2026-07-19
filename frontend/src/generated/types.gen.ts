@@ -87,6 +87,10 @@ export type EditNodeTaskBody = {
     task: string;
 };
 
+export type UpdateChatBody = {
+    title?: string;
+};
+
 /**
  * The only supported target status for a response — cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
  */
@@ -316,6 +320,31 @@ export type GetChatResponses = {
 };
 
 export type GetChatResponse = GetChatResponses[keyof GetChatResponses];
+
+export type UpdateChatData = {
+    body: UpdateChatBody;
+    path: {
+        chat_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}';
+};
+
+export type UpdateChatErrors = {
+    /**
+     * No such chat
+     */
+    404: unknown;
+};
+
+export type UpdateChatResponses = {
+    /**
+     * Updated
+     */
+    200: ChatSummary;
+};
+
+export type UpdateChatResponse = UpdateChatResponses[keyof UpdateChatResponses];
 
 export type SendChatMessageData = {
     body: SendMessageBody;

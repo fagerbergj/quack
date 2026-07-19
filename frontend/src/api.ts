@@ -7,6 +7,7 @@ import {
   createChat as sdkCreateChat,
   getChat as sdkGetChat,
   deleteChat as sdkDeleteChat,
+  updateChat as sdkUpdateChat,
   getResponse as sdkGetResponse,
 } from './generated'
 
@@ -58,6 +59,9 @@ export const api = {
       throw new Error(`Delete failed (${r.response ? r.response.status : 'no response'})`)
     }
   },
+
+  renameChat: async (chatId: string, title: string): Promise<ChatSummary> =>
+    unwrap(await sdkUpdateChat({ path: { chat_id: chatId }, body: { title } })),
 
   getResponse: async (chatId: string, responseId: string): Promise<Turn | null> => {
     const r = await sdkGetResponse({ path: { chat_id: chatId, response_id: responseId } })

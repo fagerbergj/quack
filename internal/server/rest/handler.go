@@ -223,6 +223,37 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 	writeJSON(w, http.StatusOK, buildTurn(*tc))
 }
 
+// UpdateChat applies a partial update to a chat's mutable metadata. The only
+// settable field today is Title (a manual rename); the body shape leaves
+// room to grow without a new endpoint.
+func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	var body schema.UpdateChatBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Title == nil || strings.TrimSpace(*body.Title) == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+	c, err := h.store.GetChat(r.Context(), chatID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if c == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	title := strings.TrimSpace(*body.Title)
+	if err := h.store.UpdateTitle(r.Context(), chatID, title); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	c.Title = title
+	writeJSON(w, http.StatusOK, h.toSummary(r.Context(), *c))
+}
+
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if err := h.store.DeleteChat(r.Context(), chatID); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
