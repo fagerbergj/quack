@@ -1677,3 +1677,196 @@ func TestHandleWebhookLabelPostsEyesReactionOnIssue(t *testing.T) {
 		})
 	}
 }
+
+// mentionCommentBody is issueCommentBody with the issue's title present, as a
+// real issue_comment payload carries it — used to pin #380's title backfill.
+func mentionCommentBody(commentBody, issueTitle string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"action":"created",
+		"comment":{"id":999,"body":%q,"user":{"login":"alice"}},
+		"issue":{"number":7,"title":%q},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5}
+	}`, commentBody, issueTitle))
+}
+
+// TestDispatchGeneratesTitle pins #380: a GitHub-webhook-dispatched chat gets a
+// real, non-placeholder title derived from the triggering issue — dispatch
+// never called generateTitle/UpdateTitle before this fix, so the chat's Title
+// column stayed empty forever (rendering as "New chat" in the UI).
+func TestDispatchGeneratesTitle(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret,
+		Mention:       "@quack",
+		AllowedUsers:  []string{"alice"},
+	}, runner, st, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", mentionCommentBody("@quack review this", "Widgets leak memory")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back; dispatch never completed")
+	}
+
+	sessionID := "github-acme-widgets-7"
+	c, err := st.GetChat(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if c == nil {
+		t.Fatal("chat row was never created")
+	}
+	if c.Title == "" || c.Title == "New chat" {
+		t.Errorf("Title = %q; want a real title derived from the issue", c.Title)
+	}
+	if c.Title != "Widgets leak memory" {
+		t.Errorf("Title = %q; want the issue title", c.Title)
+	}
+}
+
+// TestDispatchTitleFromLabelDrivenIssue pins #380 for the label-driven path
+// (quack:plan/quack:implement), which synthesizes its issueCommentPayload from
+// an issuesPayload rather than a real webhook comment.
+func TestDispatchTitleFromLabelDrivenIssue(t *testing.T) {
+	reacted := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+			select {
+			case reacted <- struct{}{}:
+			default:
+			}
+		default:
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## Plan\n\nthe plan", judgePassed: true}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret,
+		Mention:       "@quack",
+		Triggers:      []string{"issue_plan"},
+		AllowedUsers:  []string{"alice"},
+	}, runner, st, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:plan", "alice", false)))
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	select {
+	case <-reacted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("label-triggered run never dispatched")
+	}
+
+	sessionID := "github-acme-widgets-7"
+	deadline := time.Now().Add(2 * time.Second)
+	var c *store.Chat
+	for {
+		c, err = st.GetChat(context.Background(), sessionID)
+		if err != nil {
+			t.Fatalf("GetChat: %v", err)
+		}
+		if c != nil && c.Title != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("chat title never set for label-driven dispatch")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if c.Title != "Add widget cache" {
+		t.Errorf("Title = %q; want the issue title from issuesBody", c.Title)
+	}
+}
+
+// TestDispatchDoesNotOverwriteExistingTitle pins the once-only semantics: a
+// conversational follow-up on an already-titled session must not clobber the
+// title a prior dispatch set — mirrors runChat's own titleCh guard.
+func TestDispatchDoesNotOverwriteExistingTitle(t *testing.T) {
+	posted := make(chan string, 2)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	sessionID := "github-acme-widgets-7"
+	if err := st.SetChatGitHub(context.Background(), sessionID, "acme/widgets", "https://github.com/acme/widgets/pull/7"); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+	if err := st.UpdateTitle(context.Background(), sessionID, "Existing title"); err != nil {
+		t.Fatalf("UpdateTitle: %v", err)
+	}
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret,
+		Mention:       "@quack",
+		AllowedUsers:  []string{"alice"},
+	}, runner, st, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", mentionCommentBody("@quack what did you mean?", "A totally different title")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back; dispatch never completed")
+	}
+
+	c, err := st.GetChat(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if c.Title != "Existing title" {
+		t.Errorf("Title = %q; want the pre-existing title preserved", c.Title)
+	}
+}

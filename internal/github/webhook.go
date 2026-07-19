@@ -37,7 +37,8 @@ type issueCommentPayload struct {
 		} `json:"user"`
 	} `json:"comment"`
 	Issue struct {
-		Number int `json:"number"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
 		// PullRequest is present only when the issue is a PR (GitHub sends PR
 		// conversation comments as issue_comment events).
 		PullRequest *struct{} `json:"pull_request"`
@@ -102,7 +103,8 @@ type pullRequestPayload struct {
 	Action      string `json:"action"`
 	Number      int    `json:"number"`
 	PullRequest struct {
-		Head struct {
+		Title string `json:"title"`
+		Head  struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
 	} `json:"pull_request"`
@@ -235,6 +237,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 	// duplicated prompt.
 	synthetic := issueCommentPayload{Action: "created"}
 	synthetic.Issue.Number = p.Number
+	synthetic.Issue.Title = p.PullRequest.Title
 	synthetic.Issue.PullRequest = &struct{}{}
 	synthetic.Comment.User.Login = autoReviewUser
 	synthetic.Repository.Name = p.Repository.Name
@@ -277,6 +280,7 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	}
 	synthetic := issueCommentPayload{Action: "created"}
 	synthetic.Issue.Number = p.Issue.Number
+	synthetic.Issue.Title = p.Issue.Title
 	synthetic.Comment.User.Login = p.Sender.Login
 	synthetic.Repository.Name = p.Repository.Name
 	synthetic.Repository.Owner.Login = p.Repository.Owner.Login
@@ -512,6 +516,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
 	e.persistGithubLink(ctx, sessionID, owner, repo, number, p.Issue.PullRequest != nil)
+	e.ensureTitle(ctx, sessionID, p, task)
 	// Serialise runs on one PR: a follow-up that lands while a review is still
 	// running must WAIT, not run concurrently on the same session (concurrent runs
 	// corrupt each other — the answer skip and cross-run tool events seen in
@@ -673,6 +678,36 @@ func (e *Extension) persistGithubLink(ctx context.Context, sessionID, owner, rep
 	url := fmt.Sprintf("https://github.com/%s/%s/%s/%d", owner, repo, kind, number)
 	if err := e.store.SetChatGitHub(ctx, sessionID, owner+"/"+repo, url); err != nil {
 		slog.Warn("github: persist chat link failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+	}
+}
+
+// ensureTitle gives a github-origin chat a real title (#380): unlike a
+// first-party chat's runChat, dispatch never called generateTitle, so these
+// chats sat at the "New chat" placeholder forever. No live model call is
+// needed — the triggering issue/PR title is already a decent chat title.
+// Only sets it once (mirrors runChat's own titleCh check), so a later
+// conversational follow-up on the same session never clobbers it.
+func (e *Extension) ensureTitle(ctx context.Context, sessionID string, p issueCommentPayload, task string) {
+	if e.store == nil {
+		return
+	}
+	c, err := e.store.GetChat(ctx, sessionID)
+	if err != nil {
+		slog.Warn("github: title lookup failed", "component", "github", "chat", sessionID, "err", err)
+		return
+	}
+	if c != nil && c.Title != "" {
+		return
+	}
+	title := strings.TrimSpace(p.Issue.Title)
+	if title == "" {
+		title = truncate(task, 80)
+	}
+	if title == "" {
+		return
+	}
+	if err := e.store.UpdateTitle(ctx, sessionID, title); err != nil {
+		slog.Warn("github: title update failed", "component", "github", "chat", sessionID, "err", err)
 	}
 }
 
