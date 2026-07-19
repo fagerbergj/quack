@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { AttachmentStrip, type AttachmentItem } from './AttachmentUI'
+import type { QueuedTurn } from '../state/chatStore'
 
 export interface AttachmentPreview {
   url: string
@@ -10,16 +11,22 @@ export interface AttachmentPreview {
 export interface ComposerProps {
   // No active chat — input is disabled.
   disabled: boolean
-  // A turn is streaming — show Stop instead of Send and lock input.
+  // A turn is streaming — input stays live and Send queues instead of running
+  // a second turn; Stop appears alongside it to cancel the active run.
   streaming: boolean
   onSubmit: (text: string, files: File[], previews: AttachmentPreview[]) => void
   onStop: () => void
+  // Follow-ups queued while streaming, in send order — rendered as pending
+  // rows above the input; empty/omitted when nothing is queued.
+  queue?: QueuedTurn[]
+  onRemoveQueued?: (id: string) => void
 }
 
 // Composer owns the draft `input` + `attachments` locally so typing only re-renders
 // this small component, not the whole chat (the turn list / DAG trees). It hands the
-// finished message up via onSubmit.
-export function Composer({ disabled, streaming, onSubmit, onStop }: ComposerProps) {
+// finished message up via onSubmit — the caller decides whether that's an immediate
+// send or (while streaming) queuing it for after the current run.
+export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued }: ComposerProps) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -37,7 +44,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop }: ComposerProp
 
   function submit() {
     const trimmed = input.trim()
-    if ((!trimmed && attachments.length === 0) || streaming || disabled) return
+    if ((!trimmed && attachments.length === 0) || disabled) return
     const items = attachments.slice()
     const previews = items.map(a => ({ url: a.url, mime: a.file.type, name: a.file.name }))
     setInput('')
@@ -54,6 +61,30 @@ export function Composer({ disabled, streaming, onSubmit, onStop }: ComposerProp
 
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
+      {queue != null && queue.length > 0 && (
+        <ul className="flex flex-col gap-1.5 mb-3" aria-label="Queued messages">
+          {queue.map(item => (
+            <li
+              key={item.id}
+              className="flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 pl-3 pr-1.5 py-1 text-xs text-gray-600 dark:text-gray-300"
+            >
+              <span className="flex-shrink-0 text-gray-400 dark:text-gray-500">queued</span>
+              <span className="flex-1 min-w-0 truncate">{item.text}</span>
+              {onRemoveQueued && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveQueued(item.id)}
+                  aria-label="Remove queued message"
+                  title="Remove"
+                  className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 dark:text-gray-500 dark:hover:text-red-400 dark:hover:bg-red-950/30 transition-colors"
+                >
+                  ✕
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       <form onSubmit={e => { e.preventDefault(); submit() }} className="flex flex-col gap-2">
         <AttachmentStrip
           attachments={attachments}
@@ -94,13 +125,13 @@ export function Composer({ disabled, streaming, onSubmit, onStop }: ComposerProp
             ref={textareaRef}
             className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 overflow-y-auto disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
             rows={1}
-            placeholder={disabled ? 'Select or start a chat first' : 'Ask something… (Enter to send, Shift+Enter for newline)'}
+            placeholder={disabled ? 'Select or start a chat first' : streaming ? 'Type a follow-up… (queues until the current response finishes)' : 'Ask something… (Enter to send, Shift+Enter for newline)'}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={streaming || disabled}
+            disabled={disabled}
           />
-          {streaming ? (
+          {streaming && (
             <button
               type="button"
               onClick={onStop}
@@ -108,15 +139,14 @@ export function Composer({ disabled, streaming, onSubmit, onStop }: ComposerProp
             >
               Stop
             </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={(!input.trim() && attachments.length === 0) || disabled}
-              className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-            >
-              Send
-            </button>
           )}
+          <button
+            type="submit"
+            disabled={(!input.trim() && attachments.length === 0) || disabled}
+            className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+          >
+            {streaming ? 'Queue' : 'Send'}
+          </button>
         </div>
       </form>
     </div>

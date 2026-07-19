@@ -65,6 +65,14 @@ export interface LiveTurn {
   error: string
 }
 
+// QueuedTurn is a follow-up message typed while the chat's run is still
+// streaming — held client-side (no endpoint; this is a pure send deferral,
+// unlike the per-node queue) and auto-submitted in order once the run ends.
+export interface QueuedTurn {
+  id: string
+  text: string
+}
+
 export interface ChatState {
   // Completed turns from history (seeded from GET /chats/{id})
   turns: Turn[]
@@ -75,11 +83,13 @@ export interface ChatState {
   // loading indicator instantly instead of waiting on the archive round-trip.
   submitting?: boolean
   pendingUserText?: string
+  // Follow-ups queued while `live.streaming` was true, in send order.
+  queue: QueuedTurn[]
 }
 
 type Listener = () => void
 
-export const EMPTY_STATE: ChatState = { turns: [], error: '' }
+export const EMPTY_STATE: ChatState = { turns: [], error: '', queue: [] }
 
 // retrySet returns nodeId plus every node transitively downstream of it (via the
 // DAG edges) — the subgraph a retry re-runs because the target's output feeds them.
@@ -132,6 +142,7 @@ export class ChatStore {
   private eventSources = new Map<string, () => void>()  // chatID → teardown for an attached subscribe stream
   private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()  // chatID → pending reconnect
   private generations = new Map<string, number>()
+  private onTitleCallbacks = new Map<string, (title: string) => void>()  // chatID → last submit()'s onTitle, reused by drainQueue
 
   get(chatId: string): ChatState {
     return this.states.get(chatId) ?? EMPTY_STATE
@@ -153,7 +164,9 @@ export class ChatStore {
   seed(chatId: string, turns: Turn[]): void {
     const cur = this.states.get(chatId)
     if (cur && (cur.live?.streaming || cur.turns.length > 0)) return
-    this.write(chatId, { ...EMPTY_STATE, turns })
+    // Preserve a queue accumulated before the chat ever had a turn (e.g. queued
+    // during the very first, still-streaming run) across this reseed.
+    this.write(chatId, { ...EMPTY_STATE, turns, queue: cur?.queue ?? [] })
   }
 
   clear(chatId: string): void {
@@ -162,6 +175,7 @@ export class ChatStore {
     this.eventSources.get(chatId)?.()
     this.eventSources.delete(chatId)
     this.cancelReconnect(chatId)
+    this.onTitleCallbacks.delete(chatId)
     this.states.delete(chatId)
     this.bumpGeneration(chatId)
     this.notify(chatId)
@@ -180,6 +194,9 @@ export class ChatStore {
     if (!trimmed) return
     let cur = this.get(chatId)
     if (cur.live?.streaming) return
+    // Remembered so drainQueue's auto-submit of a later queued message can
+    // still report a title change, without the caller having to re-pass it.
+    if (onTitle) this.onTitleCallbacks.set(chatId, onTitle)
 
     // A finished previous turn still lives in `live` (finishStream only flips
     // the streaming flag). Replacing `live` would drop it from the UI, so first
@@ -225,6 +242,36 @@ export class ChatStore {
       },
       onTitle,
     )
+  }
+
+  // queueTurn holds a follow-up message locally while the chat's run streams
+  // (drainQueue submits it once that run ends) — the top-level counterpart of
+  // queueNodeMessage, but purely client-side: no endpoint, since deferring
+  // store.submit needs no server involvement.
+  queueTurn(chatId: string, text: string): void {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    const s = this.get(chatId)
+    this.write(chatId, { ...s, queue: [...s.queue, { id: crypto.randomUUID(), text: trimmed }] })
+  }
+
+  // unqueueTurn drops a not-yet-sent queued message.
+  unqueueTurn(chatId: string, id: string): void {
+    const s = this.get(chatId)
+    this.write(chatId, { ...s, queue: s.queue.filter(m => m.id !== id) })
+  }
+
+  // drainQueue submits the next queued follow-up once a run finishes — called
+  // from finishStream so it fires whether the run ended normally, was
+  // stopped, or dropped and reconnected. Submits one at a time: the auto
+  // submit() call re-enters finishStream on ITS completion, draining the rest
+  // in order rather than firing all queued messages at once.
+  private drainQueue(chatId: string): void {
+    const s = this.states.get(chatId)
+    if (!s || s.queue.length === 0) return
+    const [next, ...rest] = s.queue
+    this.write(chatId, { ...s, queue: rest })
+    void this.submit(chatId, next.text, undefined, this.onTitleCallbacks.get(chatId))
   }
 
   // stop cancels the chat's active run by response id (the id captured from
@@ -813,6 +860,7 @@ export class ChatStore {
     const s = this.states.get(chatId)
     if (!s?.live) return
     this.write(chatId, { ...s, live: { ...s.live, streaming: false } })
+    this.drainQueue(chatId)
   }
 
   private bumpGeneration(chatId: string): number {

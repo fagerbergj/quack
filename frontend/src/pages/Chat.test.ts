@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { liveDagFinalText, chatGitHubLink, EditableChatTitle } from './Chat'
+import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
@@ -17,6 +17,16 @@ function dag(nodeAnswer: Record<string, string>): DagTurnState {
     nodeAnswer,
   }
 }
+
+describe('shouldQueueSubmit — Composer send decision', () => {
+  it('queues while the chat is streaming', () => {
+    expect(shouldQueueSubmit(true)).toBe(true)
+  })
+
+  it('sends immediately when not streaming', () => {
+    expect(shouldQueueSubmit(false)).toBe(false)
+  })
+})
 
 // Regression: the answer bubble briefly showed the orchestrator's mid-processing
 // narration (top-level `live.text`) before flipping to the terminal node's real
