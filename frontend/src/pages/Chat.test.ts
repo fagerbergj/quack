@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest'
-import { liveDagFinalText, chatGitHubLink } from './Chat'
+// @vitest-environment jsdom
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { liveDagFinalText, chatGitHubLink, EditableChatTitle } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
@@ -79,5 +82,86 @@ describe('chatGitHubLink', () => {
 
   it('is null when there is no active chat at all', () => {
     expect(chatGitHubLink(undefined)).toBeNull()
+  })
+})
+
+// EditableChatTitle drives the header's click-to-edit rename affordance
+// (0.9.0): clicking the title swaps in an input; Enter/blur commits a real
+// change via onRename (the caller wires this to api.renameChat + a store
+// update), Escape cancels, and a blank/unchanged draft is a silent no-op —
+// never a rename to an empty title.
+describe('EditableChatTitle', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  // setInputValue goes through the native setter (bypassing React's value
+  // tracker) so the subsequent 'input' event is seen as a real change —
+  // setting .value directly is a no-op from React's perspective.
+  function setInputValue(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
+    setter.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  function renderTitle(props: { title: string; editable: boolean; onRename: (title: string) => void }) {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(EditableChatTitle, props))
+    })
+  }
+
+  it('commits a renamed title on Enter', () => {
+    const onRename = vi.fn()
+    renderTitle({ title: 'Old title', editable: true, onRename })
+
+    act(() => { host!.querySelector('h1')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    const input = host!.querySelector('input')! as HTMLInputElement
+    input.focus()
+    act(() => { setInputValue(input, 'New title') })
+    act(() => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+
+    expect(onRename).toHaveBeenCalledWith('New title')
+    expect(host!.querySelector('input')).toBeNull()
+  })
+
+  it('does not call onRename when the draft is unchanged or blank', () => {
+    const onRename = vi.fn()
+    renderTitle({ title: 'Old title', editable: true, onRename })
+
+    act(() => { host!.querySelector('h1')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    act(() => {
+      const input = host!.querySelector('input')! as HTMLInputElement
+      input.focus()
+      input.blur()
+    })
+    expect(onRename).not.toHaveBeenCalled()
+
+    act(() => { host!.querySelector('h1')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    act(() => {
+      const input = host!.querySelector('input')! as HTMLInputElement
+      input.focus()
+      setInputValue(input, '   ')
+      input.blur()
+    })
+    expect(onRename).not.toHaveBeenCalled()
+  })
+
+  it('is not clickable (no rename affordance) when not editable', () => {
+    const onRename = vi.fn()
+    renderTitle({ title: 'Chat', editable: false, onRename })
+
+    act(() => { host!.querySelector('h1')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(host!.querySelector('input')).toBeNull()
   })
 })

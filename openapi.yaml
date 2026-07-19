@@ -75,6 +75,31 @@ paths:
       responses:
         "204":
           description: Deleted
+    patch:
+      operationId: updateChat
+      summary: Update a chat's mutable fields
+      description: |
+        Partial update of a chat's mutable metadata. Today the only settable
+        field is `title` (a manual rename — overwrites whatever title, auto-
+        generated or previously set, the chat had before); the body shape
+        leaves room to grow without a new endpoint.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateChatBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatSummary"
+        "404":
+          description: No such chat
 
   /api/v1/chats/{chat_id}/responses:
     post:
@@ -569,6 +594,12 @@ components:
       required: [task]
       properties:
         task:
+          type: string
+
+    UpdateChatBody:
+      type: object
+      properties:
+        title:
           type: string
 
     ResponseStatus:

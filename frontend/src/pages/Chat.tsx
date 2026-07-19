@@ -30,6 +30,67 @@ export function chatGitHubLink(chat: ChatSummary | undefined): { url: string; re
   return { url: chat.github_url, repo: chat.github_repo }
 }
 
+export interface EditableChatTitleProps {
+  title: string
+  editable: boolean
+  onRename: (title: string) => void
+}
+
+// EditableChatTitle is the header's click-to-edit title: a click (when
+// `editable`, i.e. a chat is active) swaps the heading for a text input;
+// Enter/blur commits, Escape cancels. `onRename` fires only for an actual
+// change — a blank or unchanged draft is a silent no-op, not a rename to ''.
+export function EditableChatTitle({ title, editable, onRename }: EditableChatTitleProps) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function startEdit() {
+    if (!editable) return
+    setDraft(title)
+    setEditing(true)
+  }
+
+  function commit() {
+    setEditing(false)
+    const next = draft.trim()
+    if (next && next !== title) onRename(next)
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        autoFocus
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') inputRef.current?.blur()
+          if (e.key === 'Escape') setEditing(false)
+        }}
+        aria-label="Chat title"
+        className="text-base font-semibold text-gray-900 dark:text-white bg-transparent border-b border-blue-500 focus:outline-none min-w-0 flex-1"
+      />
+    )
+  }
+
+  return (
+    <h1
+      onClick={startEdit}
+      title={editable ? 'Click to rename' : undefined}
+      className={`group flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white truncate ${editable ? 'cursor-text' : ''}`}
+    >
+      <span className="truncate">{title}</span>
+      {editable && (
+        <span className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity flex-shrink-0" aria-hidden="true">
+          ✎
+        </span>
+      )}
+    </h1>
+  )
+}
+
 export default function Chat() {
   const urlChatId = useChatId()
 
@@ -106,6 +167,12 @@ export default function Chat() {
     setActiveChatId(id)
     navigate(`/chat/${id}`)
   }
+
+  const handleRenameChat = useCallback(async (title: string) => {
+    if (!activeChatId) return
+    const updated = await api.renameChat(activeChatId, title)
+    setChats(prev => prev.map(c => c.id === activeChatId ? updated : c))
+  }, [activeChatId])
 
   async function handleNewChat() {
     const chat = await api.createChat()
@@ -277,9 +344,11 @@ export default function Chat() {
             >
               ☰
             </button>
-            <h1 className="text-base font-semibold text-gray-900 dark:text-white truncate">
-              {activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
-            </h1>
+            <EditableChatTitle
+              title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
+              editable={!!activeChatId}
+              onRename={handleRenameChat}
+            />
             {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
         </div>
