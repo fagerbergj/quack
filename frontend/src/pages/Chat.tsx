@@ -42,8 +42,6 @@ export default function Chat() {
   const streaming = state.live?.streaming ?? false
   const error = state.error
   const live = state.live
-  const [systemPrompt, setSystemPrompt] = useState('')
-  const [showSettings, setShowSettings] = useState(false)
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [submittingChoice, setSubmittingChoice] = useState(false)
@@ -110,7 +108,7 @@ export default function Chat() {
   }
 
   async function handleNewChat() {
-    const chat = await api.createChat({ system_prompt: systemPrompt.trim() || undefined })
+    const chat = await api.createChat()
     setChats(prev => [chat, ...prev])
     setActiveChatId(chat.id)
     navigate(`/chat/${chat.id}`)
@@ -284,32 +282,7 @@ export default function Chat() {
             </h1>
             {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
-          <button
-            onClick={() => setShowSettings(s => !s)}
-            className={`text-xs px-3 py-1.5 rounded border transition-colors flex-shrink-0 ${showSettings ? 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200' : 'border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-500'}`}
-          >
-            Settings
-          </button>
         </div>
-
-        {showSettings && (
-          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-            <div className="flex items-start gap-6">
-              <div className="flex-1">
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
-                  System prompt (applied to new chats)
-                </label>
-                <textarea
-                  className="w-full rounded border border-gray-300 dark:border-gray-600 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
-                  rows={3}
-                  placeholder="Add context to guide answers…"
-                  value={systemPrompt}
-                  onChange={e => setSystemPrompt(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-        )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">
           {!activeChatId && (
