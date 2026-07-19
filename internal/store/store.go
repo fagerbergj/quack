@@ -53,6 +53,29 @@ type ChatTurn struct {
 	Model string `json:"model,omitempty"`
 }
 
+// GithubSnapshot stores the full GitHub state fetched at a github-origin
+// chat's last dispatch (internal/github/snapshot.go), keyed by ChatID
+// (github-<owner>-<repo>-<number>) — the ground truth a resume diffs against
+// to compute the turn's delta. JSON is the whole snapshot, opaque to this
+// package (mirrors DagPlan.PlanJSON below).
+type GithubSnapshot struct {
+	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
+	JSON      string    `json:"json"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// GithubReviewBaseline stores the patch-ids of the PR commits quack has
+// actually REVIEWED for one PR chat — separate from GithubSnapshot, which
+// advances on EVERY dispatch (review or not). Only a dispatch that actually
+// DELIVERS a review advances this row (internal/github's
+// advanceReviewBaseline), so a conversational dispatch between two reviews
+// can never make the next review under-scope itself.
+type GithubReviewBaseline struct {
+	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
+	PatchIDs  string    `json:"patch_ids"` // JSON array of strings; row absent = never reviewed
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // DagPlan stores the JSON-encoded plan for a chat turn so the DAG can be
 // re-displayed on page reload. TurnID links it to the ChatTurn that produced it.
 type DagPlan struct {
@@ -292,7 +315,7 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}); err != nil {
 		return nil, err
 	}
 	sessions, err := database.NewSessionService(dialector(), gormCfg)
@@ -444,6 +467,58 @@ func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url string) error {
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"github_repo", "github_url", "updated_at"}),
 	}).Create(c).Error
+}
+
+// GetGithubSnapshot returns the stored snapshot JSON for a github-origin
+// chat, or ("", false, nil) when none exists yet (first dispatch on this
+// session — the caller seeds instead of diffing).
+func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, bool, error) {
+	var row GithubSnapshot
+	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return row.JSON, true, nil
+}
+
+// SetGithubSnapshot upserts the current snapshot JSON for a github-origin
+// chat — called after every dispatch diffs against the prior one, so the
+// NEXT resume compares against what GitHub looked like this time.
+func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) error {
+	row := &GithubSnapshot{ChatID: chatID, JSON: json, UpdatedAt: time.Now().UTC()}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"json", "updated_at"}),
+	}).Create(row).Error
+}
+
+// GetGithubReviewBaseline returns the JSON patch-id list quack last
+// DELIVERED a review at for a PR chat, or ("", false, nil) when it has never
+// delivered a review here (the caller then reviews everything).
+func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (string, bool, error) {
+	var row GithubReviewBaseline
+	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return row.PatchIDs, true, nil
+}
+
+// SetGithubReviewBaseline upserts the JSON patch-id list for a PR chat —
+// called ONLY when a dispatch actually delivered a review this run, never on
+// every dispatch (that's GithubSnapshot's job).
+func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSON string) error {
+	row := &GithubReviewBaseline{ChatID: chatID, PatchIDs: patchIDsJSON, UpdatedAt: time.Now().UTC()}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"patch_ids", "updated_at"}),
+	}).Create(row).Error
 }
 
 // UpdateTitle sets the human-readable title for a chat.

@@ -152,6 +152,75 @@ func TestSetChatGitHub(t *testing.T) {
 	}
 }
 
+// TestGithubSnapshotRoundTrip pins the #459 snapshot store: no row yet reads
+// as (ok=false, no error), a set is readable back verbatim, and a second set
+// updates in place (one row per chat, not a growing history).
+func TestGithubSnapshotRoundTrip(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	id := "github-acme-widgets-7"
+
+	if _, ok, err := st.GetGithubSnapshot(ctx, id); err != nil || ok {
+		t.Fatalf("GetGithubSnapshot before any Set: ok=%v err=%v; want (false, nil)", ok, err)
+	}
+
+	if err := st.SetGithubSnapshot(ctx, id, `{"title":"v1"}`); err != nil {
+		t.Fatalf("SetGithubSnapshot (create): %v", err)
+	}
+	got, ok, err := st.GetGithubSnapshot(ctx, id)
+	if err != nil || !ok || got != `{"title":"v1"}` {
+		t.Fatalf("GetGithubSnapshot after create: got=%q ok=%v err=%v", got, ok, err)
+	}
+
+	if err := st.SetGithubSnapshot(ctx, id, `{"title":"v2"}`); err != nil {
+		t.Fatalf("SetGithubSnapshot (update): %v", err)
+	}
+	got, ok, err = st.GetGithubSnapshot(ctx, id)
+	if err != nil || !ok || got != `{"title":"v2"}` {
+		t.Fatalf("GetGithubSnapshot after update: got=%q ok=%v err=%v", got, ok, err)
+	}
+}
+
+// TestGithubReviewBaselineRoundTrip pins the #459 follow-up fix's store half:
+// separate from GithubSnapshot, no row until explicitly set, then readable
+// back verbatim and updatable in place.
+func TestGithubReviewBaselineRoundTrip(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	id := "github-acme-widgets-7"
+
+	if _, ok, err := st.GetGithubReviewBaseline(ctx, id); err != nil || ok {
+		t.Fatalf("GetGithubReviewBaseline before any Set: ok=%v err=%v; want (false, nil)", ok, err)
+	}
+
+	if err := st.SetGithubReviewBaseline(ctx, id, `["pid1"]`); err != nil {
+		t.Fatalf("SetGithubReviewBaseline (create): %v", err)
+	}
+	got, ok, err := st.GetGithubReviewBaseline(ctx, id)
+	if err != nil || !ok || got != `["pid1"]` {
+		t.Fatalf("GetGithubReviewBaseline after create: got=%q ok=%v err=%v", got, ok, err)
+	}
+
+	if err := st.SetGithubReviewBaseline(ctx, id, `["pid1","pid2"]`); err != nil {
+		t.Fatalf("SetGithubReviewBaseline (update): %v", err)
+	}
+	got, ok, err = st.GetGithubReviewBaseline(ctx, id)
+	if err != nil || !ok || got != `["pid1","pid2"]` {
+		t.Fatalf("GetGithubReviewBaseline after update: got=%q ok=%v err=%v", got, ok, err)
+	}
+
+	// Independent of GithubSnapshot — setting one must not create/affect the other.
+	if _, ok, err := st.GetGithubSnapshot(ctx, id); err != nil || ok {
+		t.Fatalf("GetGithubSnapshot should be untouched by SetGithubReviewBaseline: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestStoreUnknownKind(t *testing.T) {
 	if _, err := New("mysql", "x"); err == nil {
 		t.Error("New should reject an unknown store kind")

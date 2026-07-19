@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -48,6 +49,11 @@ type fakeRunner struct {
 	// a success; deliverErr (mutually exclusive) records a failure.
 	deliverOK  bool
 	deliverErr string
+	// deliverReview simulates a run that DELIVERED A REVIEW specifically
+	// (deliveryOutcome.reviewDelivered) — dispatch's ONLY trigger to advance
+	// the review baseline (#459's incremental-review fix). Independent of
+	// deliverOK: a plan/PR delivery must NOT set this.
+	deliverReview bool
 	// resets counts ResetSession calls — dispatch's T4 session-hygiene signal.
 	resets int32
 }
@@ -69,7 +75,9 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		if f.judgePassed {
 			yield(stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{JudgePassed: true}}, nil)
 		}
-		if f.deliverOK {
+		if f.deliverReview {
+			recordDelivery(sessionID, deliveryOutcome{reviewDelivered: true})
+		} else if f.deliverOK {
 			recordDeliveryResult(sessionID, nil)
 		} else if f.deliverErr != "" {
 			recordDeliveryResult(sessionID, fmt.Errorf("%s", f.deliverErr))
@@ -128,22 +136,38 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			fmt.Fprint(w, `{"slug":"quack"}`)
 		case strings.HasSuffix(r.URL.Path, "/files"):
-			fmt.Fprint(w, `[]`) // changed-files list (gatherReviewContext); overridden per-test where it matters
+			fmt.Fprint(w, `[]`) // changed-files list (snapshot fetch); overridden per-test where it matters
 		case strings.HasSuffix(r.URL.Path, "/reviews"):
 			fmt.Fprint(w, `[]`) // no prior review by default: first-time framing
+		case strings.HasSuffix(r.URL.Path, "/commits"):
+			fmt.Fprint(w, `[]`) // PR commit list (snapshot fetch); overridden per-test where it matters
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{}`)
 			postedComment <- string(body)
 		case strings.HasSuffix(r.URL.Path, "/comments"):
-			fmt.Fprint(w, `[]`) // GET: review-comment / conversation list (gatherReviewContext)
+			fmt.Fprint(w, `[]`) // GET: review-comment / conversation list (snapshot fetch)
 		case strings.Contains(r.URL.Path, "/pulls/"):
-			fmt.Fprint(w, `{"title":"Test PR","body":"A test PR.","head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
+			fmt.Fprint(w, `{"title":"Test PR","body":"A test PR.","state":"open","head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Test issue","body":"A test issue.","state":"open"}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 	}))
+}
+
+// isIssueMetaPath reports whether path is a bare .../issues/{number} request
+// (issueMeta's snapshot fetch) — as opposed to .../issues/{number}/comments
+// or .../reactions, which the switch above already matches first.
+func isIssueMetaPath(path string) bool {
+	parts := strings.Split(strings.TrimRight(path, "/"), "/")
+	if len(parts) < 2 || parts[len(parts)-2] != "issues" {
+		return false
+	}
+	_, err := strconv.Atoi(parts[len(parts)-1])
+	return err == nil
 }
 
 func issueCommentBody(commentBody string) []byte {
@@ -775,6 +799,8 @@ func TestAckReactionFailureDoesNotBlockRun(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{}`)
 			posted <- string(body)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Test issue","body":"","state":"open"}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -797,6 +823,12 @@ func TestAckReactionFailureDoesNotBlockRun(t *testing.T) {
 	}
 }
 
+// seedGC builds a first-load githubContext from a snapshot — runMessage's
+// most common test fixture (no store, no prior snapshot to diff against).
+func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
+	return githubContext{snap: snap, firstLoad: true, text: renderSeedContext(snap, excludeCommentID)}
+}
+
 func TestRunMessageReviewAwareForPR(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 
@@ -804,7 +836,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "review this, focusing on the auth path", reviewContext{}, nil)
+	msg := ext.runMessage(pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0))
 	for _, want := range []string{
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
@@ -828,7 +860,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 
 	// With the PR's refs known, the reviewer is told to CHECK OUT the head branch —
 	// without it a shallow clone's `git diff base...HEAD` is empty and it flails.
-	withRefs := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}}, nil)
+	withRefs := ext.runMessage(pr, "review this", seedGC(Snapshot{IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}, 0))
 	for _, want := range []string{"git_checkout `feat/x`", "git_diff main...feat/x", "is EMPTY until you check out the head"} {
 		if !strings.Contains(withRefs, want) {
 			t.Errorf("PR review message missing checkout guidance %q\n---\n%s", want, withRefs)
@@ -836,7 +868,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	}
 
 	// A PR request that DOES ask to change code keeps the implement path.
-	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", reviewContext{}, nil)
+	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", seedGC(Snapshot{IsPR: true}, 0))
 	if !strings.Contains(impl, "stage_pr") {
 		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
 	}
@@ -846,7 +878,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(issue, "add a feature", reviewContext{}, nil)
+	imsg := ext.runMessage(issue, "add a feature", seedGC(Snapshot{}, 0))
 	if strings.Contains(imsg, "stage_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
@@ -855,7 +887,10 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	}
 }
 
-func TestIssueThreadContextInMention(t *testing.T) {
+// TestSeedContextInMention pins the first-load-seeds-the-session half of #459
+// §3 for a plain issue mention: the issue body plus prior comments (quack's
+// own included), triggering comment excluded (it's quoted as the request).
+func TestSeedContextInMention(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 
 	var issue issueCommentPayload
@@ -866,92 +901,64 @@ func TestIssueThreadContextInMention(t *testing.T) {
 	issue.Repository.Name, issue.Repository.Owner.Login = "quack", "acme"
 	issue.Repository.CloneURL = "https://github.com/acme/quack.git"
 
-	thread := []commentView{
-		{ID: 100, User: "hegu-1", Body: "The gate should stay the authority."},
-		{ID: 200, User: "quack-jason[bot]", Body: "# Implementation Plan: mem0 as a vector store"},
-		{ID: 999, User: "fagerbergj", Body: "rework it — mem0 is not a store"}, // the trigger; must be excluded
+	snap := Snapshot{
+		Body: "We should evaluate mem0 as a memory backend.",
+		Comments: []snapshotComment{
+			{ID: 100, User: "hegu-1", Body: "The gate should stay the authority."},
+			{ID: 200, User: "quack-jason[bot]", Body: "# Implementation Plan: mem0 as a vector store"},
+			{ID: 999, User: "fagerbergj", Body: "rework it — mem0 is not a store"}, // the trigger; must be excluded
+		},
 	}
 
-	msg := ext.runMessage(issue, "rework it — mem0 is not a store", reviewContext{}, thread)
+	msg := ext.runMessage(issue, "rework it — mem0 is not a store", seedGC(snap, issue.Comment.ID))
 	for _, want := range []string{
 		"evaluate mem0 as a memory backend",        // issue body
 		"hegu-1", "gate should stay the authority", // a prior participant
 		"Implementation Plan: mem0 as a vector store", // quack's own prior plan
 	} {
 		if !strings.Contains(msg, want) {
-			t.Errorf("mention prompt missing thread context %q:\n%s", want, msg)
+			t.Errorf("mention prompt missing seeded context %q:\n%s", want, msg)
 		}
 	}
 	// The triggering comment is quoted as the request, not duplicated in the thread.
 	if strings.Count(msg, "rework it — mem0 is not a store") != 1 {
 		t.Errorf("triggering comment should appear exactly once (as the request), not in the thread dump:\n%s", msg)
 	}
-
-	// A label-driven synthetic (isLabelTrigger) must NOT get the thread block — its
-	// task already carries the discussion via planTask/implementTask.
-	issue.isLabelTrigger = true
-	if lbl := ext.runMessage(issue, "some plan task", reviewContext{}, thread); strings.Contains(lbl, "discussion so far") {
-		t.Errorf("label-triggered run should not inject the mention thread block:\n%s", lbl)
-	}
 }
 
-func TestRunMessageChangeAwareFraming(t *testing.T) {
+// TestResumeInjectsOnlyTheDelta pins #459's core behavior: a resume (a prior
+// snapshot exists) injects ONLY what changed, not the whole thread again — and
+// an unchanged snapshot injects an empty/no-op delta.
+func TestResumeInjectsOnlyTheDelta(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	var pr issueCommentPayload
-	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	var issue issueCommentPayload
+	issue.Issue.Number = 7
+	issue.Repository.Name, issue.Repository.Owner.Login = "widgets", "acme"
+
+	old := Snapshot{Body: "desc", Comments: []snapshotComment{{ID: 1, User: "bob", Body: "first comment"}}}
+	cur := Snapshot{Body: "desc", Comments: []snapshotComment{
+		{ID: 1, User: "bob", Body: "first comment"},
+		{ID: 2, User: "carol", Body: "a brand new comment"},
+	}}
+	delta := diffSnapshots(old, cur, 0)
+	gh := githubContext{snap: cur, text: renderDeltaDetail(delta)}
+	msg := ext.runMessage(issue, "what's new?", gh)
+	if !strings.Contains(msg, "a brand new comment") {
+		t.Errorf("resume message missing the new comment:\n%s", msg)
+	}
+	if strings.Contains(msg, "first comment") {
+		t.Errorf("resume message re-injected an UNCHANGED comment (should only carry the delta):\n%s", msg)
 	}
 
-	tests := []struct {
-		name        string
-		prevSHA     string
-		headSHA     string
-		wantContain []string
-		wantAbsent  []string
-	}{
-		{
-			name:        "no prior review keeps full first-time framing",
-			prevSHA:     "",
-			headSHA:     "",
-			wantAbsent:  []string{"previously reviewed", "Focus your review on what changed"},
-			wantContain: []string{"stage_review"},
-		},
-		{
-			name:    "prior review adds continuation framing with explicit head",
-			prevSHA: "aaa111",
-			headSHA: "ccc333",
-			wantContain: []string{
-				"previously reviewed this pull request at commit `aaa111`",
-				"current head is `ccc333`",
-				"git_diff aaa111..ccc333",
-				"do NOT repeat findings you already made",
-				"stage_review", // implement/review guidance still present
-			},
-		},
-		{
-			name:    "prior review without a known head falls back to HEAD",
-			prevSHA: "aaa111",
-			headSHA: "",
-			wantContain: []string{
-				"current head is `HEAD`",
-				"git_diff aaa111..HEAD",
-			},
-		},
+	// An unchanged snapshot: the delta is empty, nothing extra is injected.
+	unchanged := diffSnapshots(cur, cur, 0)
+	if !unchanged.Empty() {
+		t.Fatalf("diffSnapshots(cur, cur) = %+v; want an empty delta", unchanged)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			msg := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadSHA: tt.headSHA}, prevReviewSHA: tt.prevSHA}, nil)
-			for _, want := range tt.wantContain {
-				if !strings.Contains(msg, want) {
-					t.Errorf("message missing %q\n---\n%s", want, msg)
-				}
-			}
-			for _, absent := range tt.wantAbsent {
-				if strings.Contains(msg, absent) {
-					t.Errorf("message should not contain %q\n---\n%s", absent, msg)
-				}
-			}
-		})
+	ghNoop := githubContext{snap: cur, text: renderDeltaDetail(unchanged)}
+	noopMsg := ext.runMessage(issue, "anything new?", ghNoop)
+	if strings.Contains(noopMsg, "a brand new comment") || strings.Contains(noopMsg, "first comment") {
+		t.Errorf("an unchanged-snapshot resume should inject no comment content:\n%s", noopMsg)
 	}
 }
 
@@ -963,19 +970,19 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	rc := reviewContext{
-		meta:  prMeta{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main", Title: "Add widget", Body: "This adds a widget."},
-		files: []changedFile{{Filename: "a.go", Additions: 10, Deletions: 2}, {Filename: "b.go", Additions: 1}},
-		discussion: prDiscussion{
-			Comments:       []commentView{{User: "bob", Body: "looks good"}},
-			ReviewComments: []reviewCommentView{{User: "carol", Path: "a.go", Line: 5, Body: "nit"}},
-		},
+	snap := Snapshot{
+		IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main",
+		Title: "Add widget", Body: "This adds a widget.",
+		Files:          []changedFile{{Filename: "a.go", Additions: 10, Deletions: 2}, {Filename: "b.go", Additions: 1}},
+		Comments:       []snapshotComment{{User: "bob", Body: "looks good"}},
+		ReviewComments: []snapshotReviewComment{{User: "carol", Path: "a.go", Line: 5, Body: "nit"}},
 	}
-	msg := ext.runMessage(pr, "review this", rc, nil)
+	msg := ext.runMessage(pr, "review this", seedGC(snap, 0))
 	for _, want := range []string{
 		"PR title: Add widget", "This adds a widget", // intent
 		"Changed files (2)", "a.go (+10/-2)", "b.go (+1/-0)", // slicing data
-		"Existing discussion", "@bob: looks good", "@carol a.go:5: nit", // don't repeat
+		"@bob: looks good",      // conversation, don't repeat
+		"@carol a.go:5: nit",    // inline comment, don't repeat
 		"git_checkout `feat/x`", // checkout guidance
 	} {
 		if !strings.Contains(msg, want) {
@@ -993,7 +1000,7 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most? No need to re-review."), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "which finding matters most? No need to re-review.", reviewContext{}, nil)
+	msg := ext.runMessage(pr, "which finding matters most? No need to re-review.", seedGC(Snapshot{IsPR: true}, 0))
 	for _, want := range []string{"conversational follow-up", "Answer it directly", "Do NOT clone"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("conversational message missing %q\n---\n%s", want, msg)
@@ -1005,13 +1012,14 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 		}
 	}
 	// A genuine review request still gets the full playbook.
-	if rev := ext.runMessage(pr, "please review this PR", reviewContext{meta: prMeta{HeadRef: "x"}}, nil); !strings.Contains(rev, "stage_review") {
+	if rev := ext.runMessage(pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0)); !strings.Contains(rev, "stage_review") {
 		t.Errorf("a review request must still carry the review tools:\n%s", rev)
 	}
 }
 
-// A PR follow-up must get the thread injected (not depend on session continuity
-// alone), with the triggering comment excluded — #456 extended to PRs.
+// A PR follow-up must get the discussion injected (not depend on session
+// continuity alone), with the triggering comment excluded — #456 extended to
+// PRs, now via the unified snapshot seed (#459).
 func TestPRFollowupInjectsDiscussion(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	var pr issueCommentPayload
@@ -1019,14 +1027,15 @@ func TestPRFollowupInjectsDiscussion(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	pr.Comment.ID = 555
-	rc := reviewContext{discussion: prDiscussion{
-		Reviews: []reviewView{{User: "quack-jason[bot]", State: "COMMENTED", Body: "Two blockers in the auth path."}},
-		Comments: []commentView{
+	snap := Snapshot{
+		IsPR:    true,
+		Reviews: []snapshotReview{{User: "quack-jason[bot]", State: "COMMENTED", Body: "Two blockers in the auth path."}},
+		Comments: []snapshotComment{
 			{ID: 300, User: "hegu-1", Body: "Agree, the second one is the real issue."},
 			{ID: 555, User: "fagerbergj", Body: "which finding matters most?"}, // the trigger; must be excluded
 		},
-	}}
-	msg := ext.runMessage(pr, "which finding matters most?", rc, nil)
+	}
+	msg := ext.runMessage(pr, "which finding matters most?", seedGC(snap, pr.Comment.ID))
 	for _, want := range []string{
 		"conversation so far on this pull request",
 		"Two blockers in the auth path", // quack's own prior review
@@ -1043,6 +1052,247 @@ func TestPRFollowupInjectsDiscussion(t *testing.T) {
 		if strings.Contains(msg, absent) {
 			t.Errorf("PR follow-up must not carry the review playbook (%q):\n%s", absent, msg)
 		}
+	}
+}
+
+// TestRunMessageIncrementalReviewScoping pins #459 §5: a resume with new
+// commits scopes the review to just those; a resume with none says so
+// explicitly instead of triggering a full re-review.
+func TestRunMessageIncrementalReviewScoping(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// First-time review: no scoping language, full playbook.
+	first := ext.runMessage(pr, "review this", seedGC(Snapshot{IsPR: true}, 0))
+	for _, absent := range []string{"Focus your review on what's NEW", "already looked at every commit"} {
+		if strings.Contains(first, absent) {
+			t.Errorf("first-time review should not carry incremental-review framing (%q):\n%s", absent, first)
+		}
+	}
+
+	// Resume with new commits: scoped to exactly those, by SHA, not a re-review.
+	withNew := ext.runMessage(pr, "review this", githubContext{
+		snap:       Snapshot{IsPR: true},
+		newCommits: []snapshotCommit{{SHA: "abc1234567", Message: "fix the bug"}},
+	})
+	for _, want := range []string{"Focus your review on what's NEW", "abc1234", "git show"} {
+		if !strings.Contains(withNew, want) {
+			t.Errorf("incremental review message missing %q:\n%s", want, withNew)
+		}
+	}
+
+	// Resume with zero new commits (e.g. a rebase with no new work): says so,
+	// does not trigger a full re-review.
+	noneNew := ext.runMessage(pr, "review this", githubContext{snap: Snapshot{IsPR: true}, newCommits: []snapshotCommit{}})
+	if !strings.Contains(noneNew, "already looked at every commit") {
+		t.Errorf("zero-new-commits resume should say there's nothing new:\n%s", noneNew)
+	}
+}
+
+// TestDispatchFirstLoadSeedsThenResumeInjectsDelta is the end-to-end version
+// of #459: dispatch #1 on a fresh session seeds the FULL context (no prior
+// snapshot); a comment is added on GitHub between runs; dispatch #2 (a
+// resume) injects ONLY that new comment, not the whole thread again. Uses a
+// real store so the snapshot persistence itself is exercised, not just the
+// in-memory diff function.
+func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
+	var commentsJSON atomic.Value
+	commentsJSON.Store(`[{"id":1,"body":"the original comment","user":{"login":"bob"},"updated_at":"t0"}]`)
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, commentsJSON.Load().(string))
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Evaluate widgets","body":"Should we use widgets?","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "ok"}
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret, Mention: "@quack", AllowedUsers: []string{"alice"},
+	}, runner, st, nil)
+
+	rec1 := httptest.NewRecorder()
+	ext.handleWebhook(rec1, signedRequest("issue_comment", issueCommentBody("@quack what do you think?")))
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("first dispatch status = %d; want 202", rec1.Code)
+	}
+	var firstMsg string
+	select {
+	case firstMsg = <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first dispatch never reached the orchestrator")
+	}
+	if !strings.Contains(firstMsg, "the original comment") {
+		t.Errorf("first (seed) dispatch missing the existing comment:\n%s", firstMsg)
+	}
+	if !strings.Contains(firstMsg, "Should we use widgets?") {
+		t.Errorf("first (seed) dispatch missing the issue body:\n%s", firstMsg)
+	}
+
+	// A new comment lands on GitHub between runs.
+	commentsJSON.Store(`[
+		{"id":1,"body":"the original comment","user":{"login":"bob"},"updated_at":"t0"},
+		{"id":2,"body":"a brand-new follow-up","user":{"login":"carol"},"updated_at":"t1"}
+	]`)
+
+	rec2 := httptest.NewRecorder()
+	ext.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack anything new?")))
+	if rec2.Code != http.StatusAccepted {
+		t.Fatalf("second dispatch status = %d; want 202", rec2.Code)
+	}
+	var secondMsg string
+	select {
+	case secondMsg = <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second (resume) dispatch never reached the orchestrator")
+	}
+	if !strings.Contains(secondMsg, "a brand-new follow-up") {
+		t.Errorf("resume dispatch missing the new comment:\n%s", secondMsg)
+	}
+	if strings.Contains(secondMsg, "the original comment") {
+		t.Errorf("resume dispatch re-injected the UNCHANGED comment — should carry only the delta:\n%s", secondMsg)
+	}
+}
+
+// TestReviewBaselineDecoupledFromGeneralSnapshot is the coordinator-flagged
+// fix for #459/#460: the review scope (gh.newCommits) must be keyed off the
+// commits quack actually DELIVERED a review at, never off the general
+// snapshot (which advances on every dispatch, review or not). Scenario:
+// review delivered at [c1] -> c2 pushed -> a CONVERSATIONAL dispatch lands
+// (advances the general snapshot to [c1,c2] but must NOT advance the review
+// baseline) -> a review request must still see c2 as new -> once that review
+// IS delivered, the baseline advances and the NEXT review sees zero new.
+func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
+	// Two synthetic commits with real, distinct git patch-ids (gitPatchID
+	// reads a diff from stdin — no clone needed, see snapshot.go).
+	diffs := map[string]string{
+		"c1": "diff --git a/f1.txt b/f1.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/f1.txt\n@@ -0,0 +1 @@\n+c1\n",
+		"c2": "diff --git a/f2.txt b/f2.txt\nnew file mode 100644\nindex 0000000..2222222\n--- /dev/null\n+++ b/f2.txt\n@@ -0,0 +1 @@\n+c2\n",
+	}
+	var commitsJSON atomic.Value
+	commitsJSON.Store(`[{"sha":"c1","commit":{"message":"add f1"}}]`)
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case strings.Contains(r.URL.Path, "/pulls/") && strings.HasSuffix(r.URL.Path, "/commits"):
+			fmt.Fprint(w, commitsJSON.Load().(string))
+		case strings.Contains(r.URL.Path, "/commits/"): // single-commit diff (Accept: v3.diff)
+			parts := strings.Split(r.URL.Path, "/")
+			sha := parts[len(parts)-1]
+			fmt.Fprint(w, diffs[sha])
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			fmt.Fprint(w, `[]`)
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[]`)
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprint(w, `{"title":"Test PR","body":"","state":"open","head":{"ref":"feature","sha":"headsha"},"base":{"ref":"main"}}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+
+	run := func(runner *fakeRunner, task string) string {
+		t.Helper()
+		ext := NewExtension(app, config.GitHubExtensionConfig{
+			WebhookSecret: testSecret, Mention: "@quack", AllowedUsers: []string{"alice"},
+		}, runner, st, nil)
+		rec := httptest.NewRecorder()
+		ext.handleWebhook(rec, signedRequest("issue_comment", pullCommentBody("@quack "+task)))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("dispatch status = %d; want 202 (task=%q)", rec.Code, task)
+		}
+		select {
+		case msg := <-runner.gotMessage:
+			return msg
+		case <-time.After(2 * time.Second):
+			t.Fatalf("dispatch never reached the orchestrator (task=%q)", task)
+			return ""
+		}
+	}
+
+	// 1. First review ever: full review (no baseline yet), and it DELIVERS —
+	// the baseline should advance to just c1's patch-id.
+	first := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
+	if strings.Contains(first, "Focus your review on what's NEW") || strings.Contains(first, "already looked at every commit") {
+		t.Errorf("first-ever review should carry no incremental scoping language:\n%s", first)
+	}
+
+	// 2. c2 lands on the PR.
+	commitsJSON.Store(`[{"sha":"c1","commit":{"message":"add f1"}},{"sha":"c2","commit":{"message":"add f2"}}]`)
+
+	// 3. A CONVERSATIONAL dispatch (no review delivered) — this advances the
+	// GENERAL snapshot (comments/commits-as-seen) but must NOT touch the
+	// review baseline.
+	_ = run(&fakeRunner{gotMessage: make(chan string, 1), answer: "sure, here's my take", noPlan: true}, "what do you think so far? no need to re-review")
+
+	// 4. A review request now MUST still see c2 as new — if the review scope
+	// had been keyed off the general snapshot (the bug), c2 would already
+	// read as "seen" because step 3 advanced it.
+	second := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
+	if !strings.Contains(second, "Focus your review on what's NEW") || !strings.Contains(second, "c2") {
+		t.Errorf("review after a conversational dispatch must still scope to c2:\n%s", second)
+	}
+	if strings.Contains(second, "already looked at every commit") {
+		t.Errorf("review under-scoped itself off the general snapshot instead of the review baseline:\n%s", second)
+	}
+
+	// 5. Step 4 DELIVERED a review covering c2 — the baseline now advances,
+	// so the NEXT review sees zero new work.
+	third := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}, "review this")
+	if !strings.Contains(third, "already looked at every commit") {
+		t.Errorf("after the review in step 4 delivered, the next review should see zero new commits:\n%s", third)
 	}
 }
 
@@ -1547,6 +1797,8 @@ func TestDispatchCollapsesPriorPlanComment(t *testing.T) {
 			_ = json.Unmarshal(data, &b)
 			minimizedID = b.Variables.ID
 			fmt.Fprint(w, `{"data":{"minimizeComment":{"minimizedComment":{"isMinimized":true}}}}`)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Some issue","body":"","state":"open"}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -1574,19 +1826,18 @@ func TestDispatchCollapsesPriorPlanComment(t *testing.T) {
 	}
 }
 
-// TestImplementTaskIncludesDiscussion pins that the fetched issue comments (the
-// posted plan) are embedded in the implementation request.
-func TestImplementTaskIncludesDiscussion(t *testing.T) {
+// TestImplementTaskCore pins implementTask's own contribution — the issue
+// number/title and the delivery instructions. The discussion (the approved
+// plan) is no longer implementTask's job: it arrives via dispatch's unified
+// loadGithubContext, the same path every other trigger uses (#459) — see
+// TestHandleWebhookIssueImplementLabel for that end-to-end.
+func TestImplementTaskCore(t *testing.T) {
 	var p issuesPayload
 	p.Issue.Number = 7
 	p.Issue.Title = "Add widget cache"
 	p.Issue.Body = "Widgets are refetched on every request."
-	comments := []commentView{
-		{User: "quack[bot]", Body: "## Plan\n1. add lru cache to fetcher"},
-		{User: "alice", Body: "looks good, approved"},
-	}
-	msg := implementTask(p, comments)
-	for _, want := range []string{"add lru cache to fetcher", "looks good, approved", "@quack[bot]", "Closes #7", "stage_pr"} {
+	msg := implementTask(p)
+	for _, want := range []string{"Implement issue #7", "Add widget cache", "Closes #7", "stage_pr", "Never merge"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("implementTask missing %q:\n%s", want, msg)
 		}
