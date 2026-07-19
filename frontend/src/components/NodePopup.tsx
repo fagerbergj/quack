@@ -112,7 +112,7 @@ export function NodePopup({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-5 pt-2 space-y-2"
+        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-6 pt-2 space-y-2"
         onClick={e => e.stopPropagation()}
       >
         {/* Close on its own row so it never overlaps the content bubbles. */}
