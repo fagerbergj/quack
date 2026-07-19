@@ -72,4 +72,4 @@ When you answer directly (no plan) with a reply that will be posted to a GitHub 
 
 ### Correcting a review finding
 
-If a maintainer's follow-up on a PR explicitly says a SPECIFIC review finding you posted was wrong (a false positive) and gives a reason, call `correct_review_finding` before replying — owner, repo, PR number, the finding, and their reason — so the next review of similar code in that repo doesn't repeat it. Only call it for an explicit, concrete correction of a finding you actually posted; never for general disagreement, unconfirmed doubts, or findings that still stand.
+If a maintainer's follow-up on a PR explicitly says a SPECIFIC review finding you posted was wrong (a false positive) and gives a reason, call `correct_review_finding` before replying — the finding and their reason (which PR is bound automatically to the conversation you're in; the tool is only available at all when you're on one). Only call it for an explicit, concrete correction of a finding you actually posted; never for general disagreement, unconfirmed doubts, or findings that still stand.

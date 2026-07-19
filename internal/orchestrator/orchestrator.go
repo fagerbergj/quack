@@ -298,14 +298,19 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// into the shared coding bucket — a conversational correction that a
 		// review finding was a false positive. No recall here (the orchestrator
 		// doesn't review code); only the coding agents' gate-side recall reads
-		// what this writes.
+		// what this writes. Registered ONLY when ctx carries a VERIFIED GitHubPR
+		// (stamped by the webhook, never by model input) — a plain REST/MCP turn
+		// with no PR context never even sees this tool, closing the "any turn can
+		// write to any repo" hole a security review flagged in the first cut.
 		if o.taskMem != nil {
-			correctTool, err := tools.NewCorrectReviewFindingTool(o.taskMem)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: correct_review_finding tool: "+err.Error()), nil)
-				return
+			if pr, ok := tools.GitHubPRFromContext(ctx); ok {
+				correctTool, err := tools.NewCorrectReviewFindingTool(o.taskMem, pr)
+				if err != nil {
+					yield(stream.Errorf("orchestrator: correct_review_finding tool: "+err.Error()), nil)
+					return
+				}
+				toolList = append(toolList, correctTool)
 			}
-			toolList = append(toolList, correctTool)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{
