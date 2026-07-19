@@ -489,7 +489,6 @@ export function DagNode({
             ↻ steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
           </span>
         )}
-        {running && runs.length === 0 && <Spinner />}
         <div className="ml-auto flex items-center gap-2">
           {state.model && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[120px]" title={state.model}>
