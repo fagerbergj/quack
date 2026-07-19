@@ -244,3 +244,60 @@ func TestRoundDuration_MatchesTimedSpanWindow(t *testing.T) {
 		t.Errorf("quack.worker.round.duration recorded %.6fs, want it to equal the span's own window %.6fs (diff %.6fs)", sum, d.Seconds(), diff)
 	}
 }
+
+// TestRecordMemoryCommitFailure guards #436: a fire-and-forget memory-commit
+// error must leave a queryable counter series (reason + agent), not just a
+// WARN log — the gap the owner flagged after ~every node's commit timed out
+// under burst load.
+func TestRecordMemoryCommitFailure(t *testing.T) {
+	reader := newTestMeter(t)
+
+	RecordMemoryCommitFailure("explore-quack", "consolidation")
+	RecordMemoryCommitFailure("explore-quack", "embed_writes")
+
+	agents := sumAgents(t, reader, "quack.memory.commit.failures")
+	if !agents["explore-quack"] {
+		t.Errorf("quack.memory.commit.failures has no series for agent=%q (got agents %v)", "explore-quack", agents)
+	}
+	if total := sumTotal(t, reader, "quack.memory.commit.failures"); total != 2 {
+		t.Errorf("quack.memory.commit.failures total = %d, want 2", total)
+	}
+}
+
+func TestClassifyMemoryCommitError(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("memory: consolidation model: context deadline exceeded"), "consolidation"},
+		{errors.New("memory: embed for neighbours: context deadline exceeded"), "embed_neighbours"},
+		{errors.New("memory: embed writes: context deadline exceeded"), "embed_writes"},
+		{errors.New("memory: something else broke"), "other"},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := ClassifyMemoryCommitError(c.err); got != c.want {
+			t.Errorf("ClassifyMemoryCommitError(%v) = %q, want %q", c.err, got, c.want)
+		}
+	}
+}
+
+// TestJudgeScoreHistogram_HasExplicitBuckets guards #433: a 0-1 score
+// recorded against the OTel default buckets (5, 10, ...) lands entirely in
+// one bucket, making the histogram useless. Explicit sub-1.0 boundaries must
+// spread scores across multiple buckets.
+func TestJudgeScoreHistogram_HasExplicitBuckets(t *testing.T) {
+	reader := newTestMeter(t)
+	RecordJudgeVerdict("web-researcher", 0.3, false)
+	RecordJudgeVerdict("web-researcher", 0.9, true)
+
+	h, ok := collect(t, reader, "quack.judge.score").Data.(metricdata.Histogram[float64])
+	if !ok {
+		t.Fatalf("quack.judge.score is not a float64 Histogram")
+	}
+	for _, dp := range h.DataPoints {
+		if len(dp.Bounds) < 5 || dp.Bounds[len(dp.Bounds)-1] > 1.0 {
+			t.Errorf("quack.judge.score bucket bounds = %v, want explicit sub-1.0 boundaries", dp.Bounds)
+		}
+	}
+}
