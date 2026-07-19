@@ -430,7 +430,12 @@ interface Props {
   onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
 
-export function DagNode({
+// Memoized (#421): DagView re-renders on every SSE event for the whole DAG (any
+// node's token/tool-call/state change), and an unmemoized DagNode re-ran its full
+// body — popup state, timers, activity grouping — for every OTHER node too. The
+// callback props are stable (Chat.tsx wraps them in useCallback), so a shallow
+// compare bails out for every node except the one that actually changed.
+export const DagNode = memo(function DagNode({
   node, state, runs, answer, isFinal,
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
   onRetry, onAnswerQuestion,
@@ -571,4 +576,4 @@ export function DagNode({
       )}
     </div>
   )
-}
+})
