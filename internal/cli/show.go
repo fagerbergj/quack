@@ -42,8 +42,9 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 		return 0
 	}
 	st := newStreamState()
+	fs := newFollowState()
 	for ev := range c.Subscribe(ctx, id) {
-		printFollowLine(out, ev)
+		fs.printLine(out, ev)
 		st.handle(ev, nil)
 	}
 	return Report(out, errOut, id, st.result(id), false)
@@ -138,10 +139,30 @@ func formatScore(f *float64) string {
 	return fmt.Sprintf("%.2f", *f)
 }
 
-// printFollowLine renders one SSE event as a human-readable, line-oriented
-// trace for `chat show -f` (the TUI live view's replacement): "node r1
-// running", "node r1 needs_input: <question>", answer text as it lands.
-func printFollowLine(out io.Writer, ev SSEEvent) {
+// followState carries the small amount of cross-event bookkeeping printLine
+// needs so a stream of many small updates for the SAME reasoning block or tool
+// call collapses to one terse line each, instead of dumping every raw event
+// (#385 — collapse/summarize, the OTel traces are the full-detail surface now).
+type followState struct {
+	thinking map[string]bool // run_id -> already printed a "thinking…" line
+	tools    map[string]bool // call_id -> already printed the call's summary line
+}
+
+func newFollowState() *followState {
+	return &followState{thinking: map[string]bool{}, tools: map[string]bool{}}
+}
+
+// printLine renders one SSE event as a human-readable, line-oriented trace for
+// `chat show -f` (the TUI live view's replacement): "node r1 running", a terse
+// "tool: name(arg)" / "→ outcome" pair per tool call, one "thinking…" line per
+// reasoning block. The orchestrator's own top-level answer text is
+// deliberately NOT streamed here (unlike the old per-token print): narration
+// ahead of a tool call and the eventual final answer arrive on the same
+// channel, so printing tokens live has no way to "un-print" preamble once a
+// later tool call reveals it wasn't the answer (#387) — the final answer,
+// already reset per-tool-call by streamState (send.go), prints once via
+// Report at the end of RunChatShow instead.
+func (f *followState) printLine(out io.Writer, ev SSEEvent) {
 	switch ev.Name {
 	case "node_start":
 		var d struct {
@@ -173,13 +194,76 @@ func printFollowLine(out io.Writer, ev SSEEvent) {
 		if json.Unmarshal(ev.Data, &d) == nil {
 			fmt.Fprintf(out, "node %s needs_input: %s\n", d.NodeID, d.Message)
 		}
-	case "agent_token":
+	case "agent_thinking":
 		var d struct {
 			NodeID string `json:"node_id"`
-			Text   string `json:"text"`
+			RunID  string `json:"run_id"`
 		}
-		if json.Unmarshal(ev.Data, &d) == nil && d.NodeID == "" && d.Text != "" {
-			fmt.Fprint(out, d.Text)
+		if json.Unmarshal(ev.Data, &d) == nil && d.RunID != "" && !f.thinking[d.RunID] {
+			f.thinking[d.RunID] = true
+			fmt.Fprintf(out, "%sthinking…\n", followPrefix(d.NodeID))
+		}
+	case "agent_tool_call":
+		var d struct {
+			NodeID string         `json:"node_id"`
+			CallID string         `json:"call_id"`
+			Name   string         `json:"name"`
+			Args   map[string]any `json:"args"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil && d.Name != "" && !f.tools[d.CallID] {
+			f.tools[d.CallID] = true
+			fmt.Fprintf(out, "%stool: %s(%s)\n", followPrefix(d.NodeID), d.Name, summarizeToolArgs(d.Args))
+		}
+	case "agent_tool_result":
+		var d struct {
+			NodeID string `json:"node_id"`
+			Name   string `json:"name"`
+			Result any    `json:"result"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil && d.Name != "" {
+			fmt.Fprintf(out, "%s  → %s\n", followPrefix(d.NodeID), summarizeToolResult(d.Result))
 		}
 	}
+}
+
+// followPrefix labels a node-scoped trace line ("node n1: tool: …"); a
+// top-level (orchestrator) line carries no prefix.
+func followPrefix(nodeID string) string {
+	if nodeID == "" {
+		return ""
+	}
+	return "node " + nodeID + ": "
+}
+
+// summarizeToolArgs picks one representative arg to show beside the tool name
+// so a call is identifiable without a full JSON dump — mirrors the priority
+// order frontend/src/components/toolFormat.ts's summarizeArgs uses, for the
+// same call rendered consistently across the web UI and the CLI.
+func summarizeToolArgs(args map[string]any) string {
+	for _, key := range []string{"query", "url", "path", "command", "message", "id", "q"} {
+		if v, ok := args[key].(string); ok && v != "" {
+			b, err := json.Marshal(v)
+			if err == nil {
+				return string(b)
+			}
+		}
+	}
+	return ""
+}
+
+// summarizeToolResult renders a tool result as one short outcome word/phrase —
+// never the raw payload — matching #385's design principle that full detail
+// belongs to OTel traces, not the terminal trace.
+func summarizeToolResult(result any) string {
+	m, ok := result.(map[string]any)
+	if !ok {
+		return "ok"
+	}
+	if e, ok := m["error"].(string); ok && e != "" {
+		return "failed: " + e
+	}
+	if ec, ok := m["exit_code"].(float64); ok {
+		return fmt.Sprintf("exit %d", int(ec))
+	}
+	return "ok"
 }

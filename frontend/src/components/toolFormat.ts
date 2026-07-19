@@ -11,6 +11,21 @@ export function summarizeArgs(args: Record<string, unknown>): string {
   return ''
 }
 
+// previewLine collapses text to a single-line, length-capped preview — the
+// collapsed-state summary for a thinking block (#385: a scannable one-liner
+// beside the "Thought" label, not a wall of reasoning, until expanded).
+export function previewLine(text: string, max = 80): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim()
+  return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine
+}
+
+// toolFailed reports whether a completed tool call's result carries an error —
+// the compact summary line's status icon (✗ vs ✓, #385) keys off this rather
+// than any particular tool's own result shape.
+export function toolFailed(result: unknown): boolean {
+  return !!(result && typeof result === 'object' && 'error' in (result as Record<string, unknown>))
+}
+
 // prettyJSON renders a value as indented JSON, falling back to String on cycles.
 export function prettyJSON(v: unknown): string {
   try {

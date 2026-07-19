@@ -145,6 +145,18 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 		}
 		return "run_command", map[string]any{"command": cmd}
 	case sdk.ToolKindEdit:
+		// A diff carries the before/after text the frontend's diff view needs
+		// (EditFileView); map to "edit_file" — quack's native name for that
+		// view — so ACP edits render the same as native ones (#388). Without a
+		// diff there's nothing to show a before/after for, so fall back to the
+		// plainer write_file view.
+		if d := firstDiff(p.content); d != nil {
+			old := ""
+			if d.OldText != nil {
+				old = *d.OldText
+			}
+			return "edit_file", map[string]any{"path": t.rel(d.Path), "old": old, "new": d.NewText}
+		}
 		if path := t.editPath(p); path != "" {
 			return "write_file", map[string]any{"path": path}
 		}
@@ -184,6 +196,10 @@ func (t *translator) toolResponse(name string, p pendingTool, failed bool, rawOu
 			resp["output"] = bound(txt, 2000)
 		}
 		return resp
+	case "edit_file":
+		// EditFileView renders the diff from args (old/new), so the response
+		// only needs the applied-replacement note it already knows how to show.
+		return map[string]any{"replacements": 1}
 	case "write_file":
 		resp := map[string]any{}
 		if d := firstDiff(p.content); d != nil {

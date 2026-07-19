@@ -103,6 +103,32 @@ func TestRunChatSendFailed(t *testing.T) {
 	}
 }
 
+// TestRunChatSendCompleted_DiscardsPreamble: narration the orchestrator emits
+// before a top-level tool call ("I'll check the plan...") must not survive
+// into the final printed answer — only text after the last tool call does
+// (#387, mirrors internal/acp/translate.go's per-round reset, #358).
+func TestRunChatSendCompleted_DiscardsPreamble(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: agent_token\ndata: {\"text\":\"Let me check something first.\"}\n\n")
+		io.WriteString(w, "event: agent_tool_call\ndata: {\"call_id\":\"c1\",\"name\":\"get_user_choice\",\"args\":{}}\n\n")
+		io.WriteString(w, "event: agent_tool_result\ndata: {\"call_id\":\"c1\",\"name\":\"get_user_choice\",\"result\":{}}\n\n")
+		io.WriteString(w, "event: agent_token\ndata: {\"text\":\"the real answer\"}\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatSend(context.Background(), &out, &errOut, srv.URL, "c1", "hi", nil, false, false)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "the real answer" {
+		t.Errorf("stdout = %q, want %q (preamble before the tool call must be discarded)", got, "the real answer")
+	}
+}
+
 // TestRunChatSendEvents: --events routes the pipeline trace to stderr, leaving
 // stdout answer-only.
 func TestRunChatSendEvents(t *testing.T) {

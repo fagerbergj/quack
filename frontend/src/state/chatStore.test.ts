@@ -236,6 +236,61 @@ describe('ChatStore — mid-node steering', () => {
     expect(answer).toBe('REVISED ANSWER (sourced)')
   })
 
+  // #387: narration a worker emits BEFORE a tool call ("I'll check X first...")
+  // must not render as if it were the answer once the real answer streams in
+  // after the call — mirrors internal/acp/translate.go's per-round reset
+  // (#358), applied here to the live stream (a node's own worker/revise run,
+  // not just the ACP-delivered final text).
+  it("a tool call within a worker run discards narration emitted before it from the node's answer", async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r0","agent":"researcher","stage":"worker"}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"worker-r0","text":"Let me look that up first."}',
+      '',
+      'event: agent_tool_call',
+      'data: {"node_id":"a","run_id":"worker-r0","call_id":"c1","name":"web_search","args":{"query":"x"}}',
+      '',
+      'event: agent_tool_result',
+      'data: {"node_id":"a","run_id":"worker-r0","call_id":"c1","name":"web_search","result":{}}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"worker-r0","text":"the real answer"}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r0","stage":"worker"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    expect(store.get('c').live?.dag?.nodeAnswer['a']).toBe('the real answer')
+  })
+
+  // Same reset for the orchestrator's own top-level (no DAG node) reply.
+  it('a top-level tool call discards narration emitted before it from the live text', async () => {
+    const sse = [
+      'event: agent_token',
+      'data: {"text":"Let me check something first."}',
+      '',
+      'event: agent_tool_call',
+      'data: {"run_id":"orchestrator","call_id":"c1","name":"get_user_choice","args":{}}',
+      '',
+      'event: agent_tool_result',
+      'data: {"run_id":"orchestrator","call_id":"c1","name":"get_user_choice","result":{}}',
+      '',
+      'event: agent_token',
+      'data: {"text":"the real answer"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    expect(store.get('c').live?.text).toBe('the real answer')
+  })
+
   it('steerNode and cancelNode PUT the node status endpoint', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
     store.steerNode('c', 'a', '  do X  ')

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   summarizeArgs,
+  previewLine,
+  toolFailed,
   str,
   num,
   bool,
@@ -16,6 +18,29 @@ describe('summarizeArgs', () => {
   })
   it('returns empty when no representative arg is present', () => {
     expect(summarizeArgs({ depth: 2 })).toBe('')
+  })
+})
+
+describe('previewLine', () => {
+  it('collapses whitespace/newlines to a single line', () => {
+    expect(previewLine('line one\n  line two\t\tline three')).toBe('line one line two line three')
+  })
+  it('truncates with an ellipsis past the cap', () => {
+    expect(previewLine('a'.repeat(100), 10)).toBe('a'.repeat(10) + '…')
+  })
+  it('leaves short text untouched', () => {
+    expect(previewLine('short')).toBe('short')
+  })
+})
+
+describe('toolFailed', () => {
+  it('reports failed when the result carries an error field', () => {
+    expect(toolFailed({ error: 'boom' })).toBe(true)
+  })
+  it('reports not-failed for a normal result, or no result yet', () => {
+    expect(toolFailed({ exit_code: 0 })).toBe(false)
+    expect(toolFailed(undefined)).toBe(false)
+    expect(toolFailed('plain string result')).toBe(false)
   })
 })
 

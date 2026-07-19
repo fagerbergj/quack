@@ -103,12 +103,23 @@ func (s *streamState) handle(ev SSEEvent, events io.Writer) {
 		}
 	case "agent_tool_call":
 		var d struct {
-			Name string         `json:"name"`
-			Args map[string]any `json:"args"`
+			NodeID string         `json:"node_id"`
+			Name   string         `json:"name"`
+			Args   map[string]any `json:"args"`
 		}
-		if json.Unmarshal(ev.Data, &d) == nil && d.Name == getUserChoiceTool {
-			if q, ok := d.Args["question"].(string); ok && q != "" {
-				s.question = q
+		if json.Unmarshal(ev.Data, &d) == nil {
+			if d.NodeID == "" {
+				// A tool call means everything the orchestrator narrated so far was
+				// pre-action throat-clearing, not its answer — same reset
+				// internal/acp/translate.go performs backend-side (#358), applied
+				// here so the CLI's final printed answer (Report, below) never
+				// includes preamble ahead of a plan/dispatch call (#387).
+				s.orch.Reset()
+			}
+			if d.Name == getUserChoiceTool {
+				if q, ok := d.Args["question"].(string); ok && q != "" {
+					s.question = q
+				}
 			}
 		}
 	case "error":
