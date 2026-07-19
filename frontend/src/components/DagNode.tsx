@@ -191,7 +191,7 @@ const WorkerCard = memo(function WorkerCard({ run, running }: { run: AgentRun; r
           <RunTimer run={run} />
         </summary>
         <div className="px-4 pb-3">
-          <ActivityList activity={run.activity} />
+          <ActivityList activity={run.activity} agent={run.agent} />
         </div>
       </details>
     </div>
@@ -246,7 +246,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
-          <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
+          <div className="px-4 pb-3"><ActivityList activity={run.activity} agent={run.agent} /></div>
         )}
       </details>
       {/* Fail reason always visible (not hidden behind the collapsed card). */}
@@ -272,7 +272,7 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
-          <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
+          <div className="px-4 pb-3"><ActivityList activity={run.activity} agent={run.agent} /></div>
         )}
       </details>
     </div>

@@ -35,6 +35,14 @@ export function prettyJSON(v: unknown): string {
   }
 }
 
+// copyPayload is what a tool call's copy button (#404) puts on the clipboard —
+// the raw input/output JSON, for debugging a view that's best-effort (an ACP
+// call) or just incomplete. `output` is `null` (not omitted) while a call is
+// still in flight, so the shape is stable either way.
+export function copyPayload(args: unknown, result: unknown, done: boolean): string {
+  return prettyJSON({ input: args, output: done ? (result ?? null) : null })
+}
+
 // str reads a string field off a loosely-typed args/result bag, or undefined.
 export function str(bag: unknown, key: string): string | undefined {
   if (bag && typeof bag === 'object') {

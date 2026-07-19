@@ -79,15 +79,81 @@ describe('ToolCallView — other common tools', () => {
 })
 
 describe('ToolCallView — fallback', () => {
-  it('renders an unknown tool as tidy formatted args, not a details raw blob', () => {
+  it('renders an unknown tool with nested args as tidy pretty JSON, not a raw dump', () => {
     const out = html({
-      callId: 'c', name: 'web_search', done: true,
-      args: { query: 'dublin' }, result: { results: [] },
+      callId: 'c', name: 'mystery_tool', done: true,
+      args: { target: { region: 'eu', tags: ['a', 'b'] } }, result: { ok: true },
     })
     // formatted args + result labels, pretty JSON (indented) — never a bare dump.
     // Quotes are HTML-escaped in static markup (&quot;).
     expect(out).toContain('args')
     expect(out).toContain('result')
-    expect(out).toContain('&quot;query&quot;: &quot;dublin&quot;')
+    expect(out).toContain('&quot;region&quot;: &quot;eu&quot;')
+  })
+
+  it('renders an unknown tool with FLAT args as a compact key→value list', () => {
+    const out = html({
+      callId: 'c', name: 'mystery_flat_tool', done: true,
+      args: { title: 'Some ACP tool title' },
+    })
+    expect(out).toContain('title')
+    expect(out).toContain('Some ACP tool title')
+    // Not a JSON blob: no braces/quoted-key punctuation in the args block.
+    expect(out).not.toContain('&quot;title&quot;:')
+  })
+})
+
+describe('ToolCallView — new per-tool views (#404)', () => {
+  it('web_search shows the query and result cards, not raw JSON', () => {
+    const out = html({
+      callId: 'c', name: 'web_search', done: true,
+      args: { query: 'best time to visit Dublin' },
+      result: { results: [{ title: 'Dublin Climate', url: 'https://example.com/climate', snippet: 'Mild year-round.' }] },
+    })
+    expect(out).toContain('best time to visit Dublin')
+    expect(out).toContain('Dublin Climate')
+    expect(out).toContain('https://example.com/climate')
+    expect(out).not.toContain('&quot;results&quot;:')
+  })
+
+  it('web_fetch shows the url and the fetched text (a plain string result)', () => {
+    const out = html({
+      callId: 'c', name: 'web_fetch', done: true,
+      args: { url: 'https://example.com/climate' },
+      result: 'Dublin is mild year-round.',
+    })
+    expect(out).toContain('https://example.com/climate')
+    expect(out).toContain('Dublin is mild year-round.')
+  })
+
+  it('grep shows path:line matches, not a raw dump', () => {
+    const out = html({
+      callId: 'c', name: 'grep', done: true,
+      args: { pattern: 'TODO' },
+      result: { matches: [{ path: 'a.go', line: 12, text: '// TODO: fix' }], truncated: false },
+    })
+    expect(out).toContain('a.go')
+    expect(out).toContain('12')
+    expect(out).toContain('// TODO: fix')
+  })
+
+  it('get_user_choice highlights the chosen option once answered', () => {
+    const out = html({
+      callId: 'c', name: 'get_user_choice', done: true,
+      args: { question: 'Which Springfield?', options: ['Springfield, IL', 'Springfield, MA'] },
+      result: { status: 'answered', choice: 'Springfield, IL' },
+    })
+    expect(out).toContain('Which Springfield?')
+    expect(out).toContain('Springfield, IL')
+    expect(out).toContain('✓')
+  })
+
+  it('get_user_choice still pending shows the awaiting marker', () => {
+    const out = html({
+      callId: 'c', name: 'get_user_choice', done: true,
+      args: { question: 'Which Springfield?', options: ['A', 'B'] },
+      result: { status: 'pending' },
+    })
+    expect(out).toContain('awaiting your answer')
   })
 })

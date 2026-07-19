@@ -236,7 +236,7 @@ func (f *followState) printLine(out io.Writer, ev SSEEvent) {
 			Result any    `json:"result"`
 		}
 		if json.Unmarshal(ev.Data, &d) == nil && d.Name != "" {
-			fmt.Fprintf(out, "%s  → %s\n", followPrefix(d.NodeID), summarizeToolResult(d.Result))
+			fmt.Fprintf(out, "%s  → %s\n", followPrefix(d.NodeID), summarizeToolResult(d.Name, d.Result))
 		}
 	}
 }
@@ -268,8 +268,11 @@ func summarizeToolArgs(args map[string]any) string {
 
 // summarizeToolResult renders a tool result as one short outcome word/phrase —
 // never the raw payload — matching #385's design principle that full detail
-// belongs to OTel traces, not the terminal trace.
-func summarizeToolResult(result any) string {
+// belongs to OTel traces, not the terminal trace. `name` picks a tool-specific
+// outcome field (mirroring the per-tool web views in ToolCallView.tsx) so the
+// terminal trace carries the same load-bearing fact the UI does — a commit's
+// short sha, an edit's replacement count — not just a bare "ok" (#404 CLI parity).
+func summarizeToolResult(name string, result any) string {
 	m, ok := result.(map[string]any)
 	if !ok {
 		return "ok"
@@ -277,8 +280,65 @@ func summarizeToolResult(result any) string {
 	if e, ok := m["error"].(string); ok && e != "" {
 		return "failed: " + e
 	}
+	switch name {
+	case "run_command":
+		if ec, ok := m["exit_code"].(float64); ok {
+			return fmt.Sprintf("exit %d", int(ec))
+		}
+	case "edit_file":
+		if n, ok := m["replacements"].(float64); ok {
+			return fmt.Sprintf("%d replacement(s)", int(n))
+		}
+	case "write_file":
+		if created, ok := m["created"].(bool); ok {
+			if created {
+				return "created"
+			}
+			return "overwrote"
+		}
+	case "git_commit":
+		if sha, ok := m["sha"].(string); ok && sha != "" {
+			return "commit " + shortSha(sha)
+		}
+	case "git_push":
+		if sha, ok := m["sha"].(string); ok && sha != "" {
+			return "pushed " + shortSha(sha)
+		}
+	case "list_dir", "glob":
+		if n := resultCount(m, "entries", "paths"); n >= 0 {
+			return fmt.Sprintf("%d result(s)", n)
+		}
+	case "grep":
+		if n := resultCount(m, "matches"); n >= 0 {
+			return fmt.Sprintf("%d match(es)", n)
+		}
+	case "web_search":
+		if n := resultCount(m, "results"); n >= 0 {
+			return fmt.Sprintf("%d result(s)", n)
+		}
+	}
 	if ec, ok := m["exit_code"].(float64); ok {
 		return fmt.Sprintf("exit %d", int(ec))
 	}
 	return "ok"
+}
+
+// resultCount returns the length of the first array-valued key present among
+// keys, or -1 if none match — used to summarize a list-shaped result as a
+// count rather than dumping its contents.
+func resultCount(m map[string]any, keys ...string) int {
+	for _, k := range keys {
+		if arr, ok := m[k].([]any); ok {
+			return len(arr)
+		}
+	}
+	return -1
+}
+
+// shortSha bounds a sha to its conventional 7-char short form.
+func shortSha(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }
