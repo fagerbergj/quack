@@ -777,7 +777,9 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 		n, err := cfg.Memory.Commit(cctx, sc, author, staged, answer)
 		otelobs.End(commitSpan, err)
 		if err != nil {
-			slog.Warn("memory commit failed", "component", "vetting", "node", author, "err", err, "staged", len(staged))
+			reason := otelobs.ClassifyMemoryCommitError(err)
+			otelobs.RecordMemoryCommitFailure(author, reason)
+			slog.Warn("memory commit failed", "component", "vetting", "node", author, "err", err, "staged", len(staged), "reason", reason)
 			return
 		}
 		if n > 0 {

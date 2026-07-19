@@ -8,6 +8,7 @@ package otelobs
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -37,6 +38,7 @@ type metrics struct {
 	permAsk          metric.Int64Counter     // attrs: agent
 	memRecall        metric.Int64Counter     // attrs: hit
 	checksSkipped    metric.Int64Counter     // attrs: reason — deterministic checks did NOT run at all (see RecordChecksSkipped)
+	memCommitFail    metric.Int64Counter     // attrs: reason, agent — fire-and-forget memory commit that errored (see RecordMemoryCommitFailure)
 }
 
 // initMetrics builds every instrument from meter and installs it as the
@@ -59,11 +61,13 @@ func initMetrics(meter metric.Meter) error {
 		return err
 	}
 	if m2.roundDur, err = meter.Float64Histogram("quack.worker.round.duration",
-		metric.WithDescription("worker round wall time (draft/continuation/revise/hitl/confirm) — derived from the round's own span window, see StartTimedSpan"), metric.WithUnit("s")); err != nil {
+		metric.WithDescription("worker round wall time (draft/continuation/revise/hitl/confirm) — derived from the round's own span window, see StartTimedSpan"), metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(1, 2, 5, 10, 30, 60, 120, 300, 600)); err != nil {
 		return err
 	}
 	if m2.judgeScore, err = meter.Float64Histogram("quack.judge.score",
-		metric.WithDescription("independent judge weakest-link score (0-1); recorded on every agent's shared judge-round path (RunGatedRefine), not just one agent")); err != nil {
+		metric.WithDescription("independent judge weakest-link score (0-1); recorded on every agent's shared judge-round path (RunGatedRefine), not just one agent"),
+		metric.WithExplicitBucketBoundaries(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)); err != nil {
 		return err
 	}
 	if m2.judgeVerdict, err = meter.Int64Counter("quack.judge.verdict",
@@ -79,7 +83,8 @@ func initMetrics(meter metric.Meter) error {
 		return err
 	}
 	if m2.modelCallDur, err = meter.Float64Histogram("quack.model.call.duration",
-		metric.WithDescription("model call duration, swap-sensitive"), metric.WithUnit("s")); err != nil {
+		metric.WithDescription("model call duration, swap-sensitive"), metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(1, 2, 5, 10, 30, 60, 120, 300, 600)); err != nil {
 		return err
 	}
 	if m2.permAsk, err = meter.Int64Counter("quack.acp.permission_ask",
@@ -92,6 +97,10 @@ func initMetrics(meter metric.Meter) error {
 	}
 	if m2.checksSkipped, err = meter.Int64Counter("quack.gate.checks.skipped",
 		metric.WithDescription("nodes where the deterministic checks criterion did NOT run at all (no backstop), by reason — query this to find nodes that gated on judge score alone")); err != nil {
+		return err
+	}
+	if m2.memCommitFail, err = meter.Int64Counter("quack.memory.commit.failures",
+		metric.WithDescription("fire-and-forget memory commits that errored (consolidation/embed timeout etc — see RecordMemoryCommitFailure), by reason and agent — the only queryable signal for the M6 commit goroutine, which never fails a node")); err != nil {
 		return err
 	}
 	m = m2
@@ -282,6 +291,38 @@ func RecordChecksSkipped(reason string) {
 		return
 	}
 	m.checksSkipped.Add(context.Background(), 1, metric.WithAttributes(attribute.String("reason", reason)))
+}
+
+// RecordMemoryCommitFailure records a fire-and-forget memory commit that
+// errored (consolidation-model timeout, qdrant embed-write/neighbour timeout,
+// or other). reason should be one of the short machine-readable buckets
+// classified by the caller — see ClassifyMemoryCommitError.
+func RecordMemoryCommitFailure(agent, reason string) {
+	if m == nil {
+		return
+	}
+	m.memCommitFail.Add(context.Background(), 1, metric.WithAttributes(attrAgent(agent), attribute.String("reason", reason)))
+}
+
+// ClassifyMemoryCommitError buckets a memory-commit error into a short
+// machine-readable reason for RecordMemoryCommitFailure's "reason" attribute,
+// so Grafana can distinguish the consolidation-model timeout from the
+// embedder timeout instead of lumping every failure into one series.
+func ClassifyMemoryCommitError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "consolidat"):
+		return "consolidation"
+	case strings.Contains(msg, "neighbour") || strings.Contains(msg, "neighbor"):
+		return "embed_neighbours"
+	case strings.Contains(msg, "embed"):
+		return "embed_writes"
+	default:
+		return "other"
+	}
 }
 
 func attrAgent(v string) attribute.KeyValue          { return attribute.String("agent", v) }

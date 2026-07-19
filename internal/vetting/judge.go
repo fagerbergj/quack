@@ -491,6 +491,14 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 // and coding nodes cite the files they read, not web pages.
 var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 
+// codeCiteRe matches the code-explorer's inline file-read citation format —
+// "<repo>@<path>" or "<repo>@<path>:<line-range>" (e.g.
+// "quack@internal/dag/executor.go" or "quack@server/core/worker.go:207-216")
+// — used instead of Markdown links when citing files read off a clone. The
+// path segment requires at least one "/" so this can't mistake an email
+// address (a@b.com) for a citation.
+var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(?:-\d+)?))?`)
+
 // citationScore deterministically grades how well each cited link target in
 // the answer is backed by what the worker actually retrieved this session — no
 // model involved, so it can't "reason wrong" about a string match the way a
@@ -580,6 +588,26 @@ func citationScore(answer string, act workerActivity) (score float64, details []
 		}
 		dedup[key] = struct{}{}
 		details = append(details, citationDetail{url: target, score: s})
+		sum += s
+	}
+	for _, m := range codeCiteRe.FindAllStringSubmatch(answer, -1) {
+		repo, path := m[1], normalizePath(m[2])
+		if path == "" {
+			continue
+		}
+		key := "code:" + repo + "@" + path
+		if _, dup := dedup[key]; dup {
+			continue
+		}
+		dedup[key] = struct{}{}
+		// A code citation is repo-relative, but the ledger may hold it either
+		// bare (repo-relative) or clone-dir-prefixed (repo/path) — try both.
+		prefixed := repo + "/" + path
+		var s float64
+		if act.paths[path] || act.paths[prefixed] || underClonedDir(path, act.clonedDirs) || underClonedDir(prefixed, act.clonedDirs) {
+			s = 1.00
+		}
+		details = append(details, citationDetail{url: m[0], score: s})
 		sum += s
 	}
 	if len(details) == 0 {

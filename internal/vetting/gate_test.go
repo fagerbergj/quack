@@ -155,6 +155,50 @@ func TestCitationScoreSkippedWithoutRetrieval(t *testing.T) {
 	}
 }
 
+// TestCitationScoreCodeExplorerInlineFormat reenacts #437: the code-explorer
+// cites files via "<repo>@path[:lines]" inline text, not Markdown links.
+// citationScore must recognize this format and score backing from the ledger
+// (path actually read → 1.0), not silently drop the citation to a 0.00 mean.
+func TestCitationScoreCodeExplorerInlineFormat(t *testing.T) {
+	answer := strings.Join([]string{
+		"See quack@internal/foo.go:1-5 for the entry point.",
+		"Also quack@internal/bar.go was never opened.",
+	}, " ")
+	act := workerActivity{paths: map[string]bool{"internal/foo.go": true}}
+	score, details, ok := citationScore(answer, act)
+	if !ok {
+		t.Fatal("citationScore ok=false, want true (code citations present)")
+	}
+	if len(details) != 2 {
+		t.Fatalf("details = %+v, want 2 entries", details)
+	}
+	got := map[string]float64{}
+	for _, d := range details {
+		got[d.url] = d.score
+	}
+	if got["quack@internal/foo.go:1-5"] != 1.0 {
+		t.Errorf("read file scored %.2f, want 1.0", got["quack@internal/foo.go:1-5"])
+	}
+	if got["quack@internal/bar.go"] != 0.0 {
+		t.Errorf("untouched file scored %.2f, want 0.0", got["quack@internal/bar.go"])
+	}
+	if wantMean := 0.5; score != wantMean {
+		t.Errorf("mean score = %.3f, want %.3f", score, wantMean)
+	}
+}
+
+// TestCitationScoreDoesNotConfuseEmailForCodeCite guards the "at least one
+// slash in the path" constraint on codeCiteRe: an email address inside a
+// mailto: link must not be misread as an unbacked code citation.
+func TestCitationScoreDoesNotConfuseEmailForCodeCite(t *testing.T) {
+	answer := "[mail](mailto:a@b.com) [real](repo/file.go)"
+	act := workerActivity{paths: map[string]bool{"repo/file.go": true}}
+	score, details, ok := citationScore(answer, act)
+	if !ok || len(details) != 1 || score != 1.0 {
+		t.Errorf("score=%.2f details=%+v ok=%v, want 1.0 with exactly the path graded (email not counted)", score, details, ok)
+	}
+}
+
 func TestLengthScore(t *testing.T) {
 	for _, c := range []struct {
 		in   string
