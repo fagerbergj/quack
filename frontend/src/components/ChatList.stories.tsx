@@ -8,7 +8,7 @@ function chat(id: string, title: string): ChatSummary {
   return { id, title, system_prompt: '', created_at: now, updated_at: now, status: 'idle' }
 }
 
-function githubChat(id: string, title: string, repo: string): ChatSummary {
+function githubChat(id: string, title: string, repo: string, ref = 'issues/1'): ChatSummary {
   return {
     id,
     title,
@@ -17,7 +17,7 @@ function githubChat(id: string, title: string, repo: string): ChatSummary {
     updated_at: now,
     status: 'idle',
     github_repo: repo,
-    github_url: `https://github.com/${repo}/issues/1`,
+    github_url: `https://github.com/${repo}/${ref}`,
   }
 }
 
@@ -31,9 +31,9 @@ const CHATS: ChatSummary[] = [
 // A mixed list: direct chats interleaved with GitHub-originated ones (issue #386).
 const MIXED_CHATS: ChatSummary[] = [
   chat('direct-1', 'Best time to visit Dublin'),
-  githubChat('github-quack-386', 'Chats aren’t filterable by origin', 'fagerbergj/quack'),
+  githubChat('github-quack-386', 'Chats aren’t filterable by origin', 'fagerbergj/quack', 'issues/386'),
   chat('direct-2', 'Debounce vs throttle in React'),
-  githubChat('github-quack-350', 'Force-push the work branch', 'fagerbergj/quack'),
+  githubChat('github-quack-350', 'Force-push the work branch', 'fagerbergj/quack', 'pull/350'),
   chat('direct-3', 'Postgres connection pooling'),
 ]
 

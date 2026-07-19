@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterChatsByOrigin } from './ChatList'
+import { filterChatsByOrigin, githubRef } from './ChatList'
 import { isGithubChat } from '../pages/GitHubSessions'
 import type { ChatSummary } from '../api'
 
@@ -40,6 +40,20 @@ describe('filterChatsByOrigin', () => {
 
   it('is empty when no chat matches the filter', () => {
     expect(filterChatsByOrigin([CHATS[0]], 'github')).toEqual([])
+  })
+})
+
+describe('githubRef (badge label from an issue/PR url)', () => {
+  it('labels an issue url "Issue #N"', () => {
+    expect(githubRef('https://github.com/acme/widget/issues/386')).toEqual({ label: 'Issue #386', kind: 'issue' })
+  })
+
+  it('labels a pull url "PR #N"', () => {
+    expect(githubRef('https://github.com/acme/widget/pull/2')).toEqual({ label: 'PR #2', kind: 'pr' })
+  })
+
+  it('returns null for a url that is neither an issue nor a PR', () => {
+    expect(githubRef('https://github.com/acme/widget')).toBeNull()
   })
 })
 
