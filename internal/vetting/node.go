@@ -845,7 +845,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// to GitHub gets repaired or stripped before it ships — never gated on the
 	// judge/revise loop, since a mechanical slip is fixed mechanically.
 	for i := range dc.Items {
-		if body, changed := validateAndRepairMermaid(dc.Items[i].Body); changed {
+		if body, changed := ValidateAndRepairMermaid(dc.Items[i].Body); changed {
 			dc.Items[i].Body = body
 		}
 	}

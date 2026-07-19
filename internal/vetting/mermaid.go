@@ -20,7 +20,7 @@ import (
 // ```mermaid.
 var fenceOpenRe = regexp.MustCompile(`(?i)^( {0,3})(` + "`{3,}|~{3,}" + `)[ \t]*(\S*)`)
 
-// validateAndRepairMermaid walks md fence-depth-aware, one line at a time,
+// ValidateAndRepairMermaid walks md fence-depth-aware, one line at a time,
 // tracking which code fence (if any) is currently open — a ```mermaid opener
 // only starts a mermaid block when it's a genuine TOP-LEVEL fence, never one
 // merely quoted inside an unrelated fence's body (a ```go block whose content
@@ -35,7 +35,7 @@ var fenceOpenRe = regexp.MustCompile(`(?i)^( {0,3})(` + "`{3,}|~{3,}" + `)[ \t]*
 // gate has no reliable way to make a model fix mermaid syntax on a revise
 // round (see the package doc above) — a stripped diagram degrades to
 // readable text instead of sinking a round the model can't win.
-func validateAndRepairMermaid(md string) (out string, changed bool) {
+func ValidateAndRepairMermaid(md string) (out string, changed bool) {
 	if !strings.Contains(md, "```") && !strings.Contains(md, "~~~") {
 		return md, false
 	}

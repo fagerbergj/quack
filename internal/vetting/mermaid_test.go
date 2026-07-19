@@ -8,7 +8,7 @@ import (
 
 func TestValidateAndRepairMermaid_ValidDiagramUntouched(t *testing.T) {
 	md := "Here's the plan:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[Finish]\n```\n\nDone."
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if changed {
 		t.Fatalf("changed = true for an already-valid diagram, want untouched; out=%s", out)
 	}
@@ -19,7 +19,7 @@ func TestValidateAndRepairMermaid_ValidDiagramUntouched(t *testing.T) {
 
 func TestValidateAndRepairMermaid_NoMermaidBlockUntouched(t *testing.T) {
 	md := "No diagrams here, just prose and a ```go\nfmt.Println(1)\n``` block."
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if changed || out != md {
 		t.Fatalf("markdown with no mermaid fence must be left alone, got changed=%v out=%q", changed, out)
 	}
@@ -30,7 +30,7 @@ func TestValidateAndRepairMermaid_NoMermaidBlockUntouched(t *testing.T) {
 // actually rejects, not a guess. It must be stripped, not shipped.
 func TestValidateAndRepairMermaid_MissingHeaderStripped(t *testing.T) {
 	md := "Before.\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nAfter."
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if !changed {
 		t.Fatal("want changed=true — a diagram with no recognized header must be stripped")
 	}
@@ -49,7 +49,7 @@ func TestValidateAndRepairMermaid_MissingHeaderStripped(t *testing.T) {
 // recognize — another real, library-caught parse error (not a heuristic).
 func TestValidateAndRepairMermaid_UnknownSequenceArrowStripped(t *testing.T) {
 	md := "```mermaid\nsequenceDiagram\n    Alice ->>> Bob: bad arrow\n```"
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if !changed {
 		t.Fatal("want changed=true — an unrecognized sequence arrow must be stripped")
 	}
@@ -64,7 +64,7 @@ func TestValidateAndRepairMermaid_UnknownSequenceArrowStripped(t *testing.T) {
 // validates strict: a diagram that parses but renders wrong must still strip.
 func TestValidateAndRepairMermaid_UnquotedParenLabelStripped(t *testing.T) {
 	md := "```mermaid\nflowchart TD\n    A[Login (OAuth)] --> B[Done]\n```"
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if !changed {
 		t.Fatal("want changed=true — an unquoted paren label fails strict validation")
 	}
@@ -90,7 +90,7 @@ func TestValidateAndRepairMermaid_NestedFenceLeftUntouched(t *testing.T) {
 		"// ```\n" +
 		"fmt.Println(\"done\")\n" +
 		"```\n\nEnd."
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if changed || out != md {
 		t.Fatalf("nested ```mermaid quoted inside a ```go block must be untouched:\ngot changed=%v out=%q\nwant unchanged", changed, out)
 	}
@@ -102,7 +102,7 @@ func TestValidateAndRepairMermaid_NestedFenceLeftUntouched(t *testing.T) {
 func TestValidateAndRepairMermaid_NestedFenceUntouchedRealBlockStillStripped(t *testing.T) {
 	md := "```go\n// ```mermaid\n// not a real diagram\n// ```\nfmt.Println(1)\n```\n\n" +
 		"```mermaid\nA[Start] --> B[Finish]\n```"
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if !changed {
 		t.Fatal("want changed=true — the real top-level bad diagram must still be stripped")
 	}
@@ -121,7 +121,7 @@ func TestValidateAndRepairMermaid_NestedFenceUntouchedRealBlockStillStripped(t *
 // just by differently-cased fence info.
 func TestValidateAndRepairMermaid_CaseInsensitiveFence(t *testing.T) {
 	md := "```MERMAID\nA[Start] --> B[Finish]\n```"
-	out, changed := validateAndRepairMermaid(md)
+	out, changed := ValidateAndRepairMermaid(md)
 	if !changed {
 		t.Fatal("want changed=true — an invalid diagram in a ```MERMAID fence must still be validated and stripped")
 	}
