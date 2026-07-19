@@ -416,6 +416,15 @@ func AssistantText(items []schema.OutputItem) string {
 			continue
 		}
 		for _, part := range m.Content {
+			// OutputTextPart and ReasoningPart share the same {text, type}
+			// shape, so AsOutputTextPart() unmarshals a reasoning part
+			// without error too — check the discriminator first, or the
+			// orchestrator's raw chain-of-thought leaks in as if it were
+			// the answer (#419).
+			disc, err := part.Discriminator()
+			if err != nil || disc != string(schema.OutputText) {
+				continue
+			}
 			if tp, err := part.AsOutputTextPart(); err == nil {
 				sb.WriteString(tp.Text)
 			}

@@ -63,6 +63,46 @@ func TestRunChatShow(t *testing.T) {
 	}
 }
 
+// chatShowReasoningLeakJSON pins #419: a message item whose content mixes a
+// reasoning part ahead of the output_text part — ReasoningPart and
+// OutputTextPart share the same {text,type} JSON shape, so a naive "does it
+// unmarshal" check on AsOutputTextPart() would let the raw thinking through.
+const chatShowReasoningLeakJSON = `{
+  "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
+  "system_prompt":"","title":"Plan run","status":"completed",
+  "turns":[{"id":"t1","created_at":"2026-01-01T00:00:00Z",
+    "input":{"role":"user","content":"plan it"},
+    "output":[
+      {"type":"message","id":"m1","status":"completed","content":[
+        {"type":"reasoning","text":"The user wants me to produce an implementation plan... let me start by loading the relevant skills..."},
+        {"type":"output_text","text":"Here is the plan."}
+      ]}
+    ]}]
+}`
+
+// TestRunChatShowOmitsReasoning pins #419: the non-follow snapshot must not
+// leak raw orchestrator thinking into the printed answer.
+func TestRunChatShowOmitsReasoning(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, chatShowReasoningLeakJSON)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, false)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	s := out.String()
+	if !strings.Contains(s, "Here is the plan.") {
+		t.Errorf("chat show output missing the answer text:\n%s", s)
+	}
+	if strings.Contains(s, "let me start by loading") {
+		t.Errorf("chat show output leaked raw reasoning text:\n%s", s)
+	}
+}
+
 // TestRunChatShowGithubLink pins #382: `chat show` surfaces the originating
 // GitHub PR/issue link when the chat carries one.
 func TestRunChatShowGithubLink(t *testing.T) {
