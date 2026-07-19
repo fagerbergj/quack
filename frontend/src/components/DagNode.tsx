@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { AssistantText, ActivityList } from './AgentParts'
 import { Expandable } from './Expandable'
 import type { NodeState, NodeStatus } from '../state/chatStore'
@@ -67,7 +67,11 @@ function RunModel({ run }: { run: AgentRun }) {
 // so it sits below the judge rather than inside the worker card. Like every other
 // stage card it carries its own labeled header — without one, its activity rows
 // visually attach to whatever labeled card rendered above it.
-function WorkerCard({ run, running }: { run: AgentRun; running: boolean }) {
+// Memoized so an event on one run (a new run object, per messageParts' mapRun)
+// only re-renders that run's own card — sibling runs keep the same `run`
+// reference and bail out of the shallow prop compare, instead of every card in
+// the node re-rendering on every tool-call/thinking event (#379).
+const WorkerCard = memo(function WorkerCard({ run, running }: { run: AgentRun; running: boolean }) {
   const empty = run.activity.length === 0
   if (empty) {
     return running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
@@ -92,7 +96,7 @@ function WorkerCard({ run, running }: { run: AgentRun; running: boolean }) {
       </details>
     </div>
   )
-}
+})
 
 // NodeAnswer renders a node's vetted output as a collapsible at the foot of the
 // node. Shown for every node so each specialist's answer is inspectable — not just
@@ -113,7 +117,7 @@ function NodeAnswer({ answer }: { answer: string }) {
   )
 }
 
-function JudgeCard({ run, running }: { run: AgentRun; running: boolean }) {
+const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; running: boolean }) {
   if (run.done && run.status === 'unavailable') {
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
@@ -153,9 +157,9 @@ function JudgeCard({ run, running }: { run: AgentRun; running: boolean }) {
       )}
     </div>
   )
-}
+})
 
-function RevisionCard({ run, running }: { run: AgentRun; running: boolean }) {
+const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRun; running: boolean }) {
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
@@ -173,7 +177,7 @@ function RevisionCard({ run, running }: { run: AgentRun; running: boolean }) {
       </details>
     </div>
   )
-}
+})
 
 // NodeControls is the live per-node control row (stop / steer), shown only while
 // a node is running or queued and only on a live run (callbacks present). Steering

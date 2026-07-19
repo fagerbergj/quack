@@ -89,28 +89,33 @@ export function startRun(runs: AgentRun[], r: { runId: string; agent: string; st
 }
 
 // appendRunThinking adds reasoning to a run, coalescing with a trailing thinking item.
+// Mutates run.activity in place (push / index-assign) rather than spreading the
+// whole array — an event's cost is O(1) amortized, not O(run length), so a run
+// with N events stays O(N) total instead of O(N²) (#379). The run itself still
+// gets a new object identity (below) so callers keep seeing a fresh reference.
 export function appendRunThinking(runs: AgentRun[], runId: string, text: string): AgentRun[] {
   return mapRun(runs, runId, run => {
     const last = run.activity[run.activity.length - 1]
     if (last && last.kind === 'thinking') {
-      const activity = [...run.activity]
-      activity[activity.length - 1] = { kind: 'thinking', text: last.text + text }
-      return { ...run, activity }
+      run.activity[run.activity.length - 1] = { kind: 'thinking', text: last.text + text }
+    } else {
+      run.activity.push({ kind: 'thinking', text })
     }
-    return { ...run, activity: [...run.activity, { kind: 'thinking', text }] }
+    return { ...run }
   })
 }
 
-// appendRunToolCall adds a pending tool call to a run.
+// appendRunToolCall adds a pending tool call to a run (mutated in place, see above).
 export function appendRunToolCall(runs: AgentRun[], runId: string, callId: string, name: string, args: Record<string, unknown>): AgentRun[] {
-  return mapRun(runs, runId, run => ({
-    ...run,
-    activity: [...run.activity, { kind: 'tool', tool: { callId, name, args, done: false } }],
-  }))
+  return mapRun(runs, runId, run => {
+    run.activity.push({ kind: 'tool', tool: { callId, name, args, done: false } })
+    return { ...run }
+  })
 }
 
 // fillRunToolResult attaches a result to the matching pending tool call (by
 // call_id, falling back to the most recent pending call of the same name).
+// Mutated in place (see appendRunThinking) — only the matched slot is replaced.
 export function fillRunToolResult(runs: AgentRun[], runId: string, callId: string, name: string, result: unknown): AgentRun[] {
   return mapRun(runs, runId, run => {
     let idx = -1
@@ -122,10 +127,9 @@ export function fillRunToolResult(runs: AgentRun[], runId: string, callId: strin
       }
     }
     if (idx < 0) return run
-    const activity = [...run.activity]
-    const a = activity[idx] as { kind: 'tool'; tool: ToolCall }
-    activity[idx] = { kind: 'tool', tool: { ...a.tool, result, done: true } }
-    return { ...run, activity }
+    const a = run.activity[idx] as { kind: 'tool'; tool: ToolCall }
+    run.activity[idx] = { kind: 'tool', tool: { ...a.tool, result, done: true } }
+    return { ...run }
   })
 }
 
