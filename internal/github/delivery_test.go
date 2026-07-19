@@ -338,6 +338,43 @@ func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 	}
 }
 
+// TestDeliverReviewNeverPushesBranch pins #452: a review-only delivery whose
+// context carries a Branch + CloneDir (a setup-provisioned reviewer node always
+// does) must NOT push — a review lands on the existing PR via the API. Before
+// the stagesPush guard, Deliver force-pushed the reviewer's (base-HEAD) branch,
+// resetting the reviewed PR and wiping its commits. CloneDir here is a non-git
+// dir: the OLD code would try to push it and error; the fix skips push entirely.
+func TestDeliverReviewNeverPushesBranch(t *testing.T) {
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			io.WriteString(w, `{"id":9,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-9"}`)
+		case strings.Contains(r.URL.Path, "/git/ref/"):
+			// The push-verify endpoint — reaching it means a push was attempted.
+			t.Errorf("review delivery must never push/verify a branch, got %s %s", r.Method, r.URL.Path)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "github-acme-widgets-7",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		CloneDir:   t.TempDir(), // set, as a real reviewer node's is — must still not push
+		Branch:     "some-pr-branch",
+		Items:      []vetting.StagedDelivery{{Kind: "review", Event: "approve", Body: "looks good"}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("review-only Deliver should succeed without any push: %v", err)
+	}
+}
+
 // A gate FAIL still delivers the PR (a human decides) but opens it as a DRAFT
 // so it cannot be merged accidentally.
 func TestDeliverFailedGateOpensDraftPR(t *testing.T) {
