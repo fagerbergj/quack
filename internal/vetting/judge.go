@@ -60,7 +60,16 @@ const (
 	// workspace tools (read_file, list_dir, glob, grep). It tells the judge to
 	// OPEN the real artifacts and ground code-quality scores in them rather than
 	// the worker's self-report, while staying bounded and strictly read-only.
-	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. When the answer involves code or other workspace work, USE them to ground your quality scores in the real artifacts rather than trusting the worker's self-report — the workspace ledger below lists the paths the worker touched, so read_file those files, grep for patterns, and list_dir to inspect structure, then judge the ACTUAL code (correctness, edge cases, test thoroughness, matching the repo's existing conventions, the logic/render split) instead of the answer's description of it. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. Read only what you need to reach a verdict — inspect the changed files, do not spelunk the whole tree. For a pure-research answer with no workspace work you won't need them. "
+	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. When the answer involves code or other workspace work, USE them to ground your quality scores in the real artifacts rather than trusting the worker's self-report — the workspace ledger below lists the paths the worker touched, so read_file those files, grep for patterns, and list_dir to inspect structure, then judge the ACTUAL code (correctness, edge cases, test thoroughness, matching the repo's existing conventions, the logic/render split) instead of the answer's description of it. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. Read only what you need to reach a verdict — inspect the changed files, do not spelunk the whole tree. For a pure-research answer with no workspace work you won't need them. " +
+		// Ground-truth claim verification (#359): these tools reach the SAME
+		// clone/workspace the worker used (no separate clone spins up), so a
+		// specific, checkable claim about the repo — a referenced function,
+		// struct field, config key, or control-flow path — is no longer a matter
+		// of plausibility. Overrides judgeBehaviourTail's "don't penalise the
+		// unfamiliar" leniency for exactly this class of claim: that caveat
+		// protects claims you can't check (fresh web content); a repo claim you
+		// CAN check gets checked.
+		"CRITICAL for grounded/honesty-style criteria: when the answer makes a SPECIFIC, checkable claim about this workspace's code — 'references cfg.RequireRetrieval', 'the function takes a ctx param', 'the struct has a Foo field' — verify it by reading the actual file or grepping for the symbol BEFORE scoring that criterion; do not accept it because it sounds plausible or reads confidently. A claim that contradicts what the file/grep actually shows is a fabrication regardless of whether it carries a citation, and sinks the criterion it backs. This does NOT apply to claims about things outside the workspace (recent web content, external facts you cannot check here) — for those, stay lenient exactly as instructed below. "
 
 	// judgeSkillsClause is appended when the judge holds the skill toolset
 	// (list_skills / load_skill / load_skill_resource — the SAME tools the worker

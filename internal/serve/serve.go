@@ -694,6 +694,14 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
+			// Adversarial verify (#370) reuses the SAME judge model + read tools
+			// as the primary judge — a skeptic checking a repo claim must reach
+			// the worker's real clone too, exactly like the primary judge (#359).
+			// gateCfg.SkepticRounds (from FromConfig) gates whether the stage
+			// actually fires; 0 leaves it a harmless unused factory.
+			if cfg.Gates.Judge.Skeptics > 0 {
+				gateCfg.Skeptic = vetting.NewSkepticFactory(judge, judgeReadTools)
+			}
 			safetyJudge = tools.NewSafetyJudge(judge)
 			// The plan judge reuses the SAME judge model — one extra tool-less,
 			// cheap call per plan submission, piggybacked on the model already
