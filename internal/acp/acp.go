@@ -60,6 +60,13 @@ type Options struct {
 	// StartTimeout bounds initialize + session/new (not the prompt itself,
 	// which runs under the node's own context). 0 ⇒ 60s.
 	StartTimeout time.Duration
+	// IdleTimeout bounds silence in a round: if opencode stops sending
+	// session/updates AND the prompt RPC never returns (wedged), the round
+	// would otherwise only unblock on the node's outer ctx (up to
+	// defaultRunTimeout = 2h). Reset on every update, so a round that's slow
+	// but alive — subprocess spin-up, model prefill before the first token —
+	// is never killed. 0 ⇒ 10m.
+	IdleTimeout time.Duration
 	// PermissionJudge answers the agent's session/request_permission asks —
 	// the ACP twin of the native guard ladder's judge tier. Everything a
 	// round legitimately needs is already allowed in the generated config,
@@ -92,6 +99,9 @@ func New(name, description string, opts Options) (*Agent, error) {
 	}
 	if opts.StartTimeout <= 0 {
 		opts.StartTimeout = 60 * time.Second
+	}
+	if opts.IdleTimeout <= 0 {
+		opts.IdleTimeout = 10 * time.Minute
 	}
 	a := &Agent{name: name, opts: opts, log: slog.With("component", "acp", "agent", name)}
 	inner, err := adkagent.New(adkagent.Config{
@@ -174,6 +184,12 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 	}
 }
 
+// promptDone carries the Prompt RPC's outcome off the goroutine in round.
+type promptDone struct {
+	resp sdk.PromptResponse
+	err  error
+}
+
 // round drives one subprocess round: spawn, handshake, prompt, stream updates
 // through the translator into emit, and emit the final answer spec last.
 // Separated from runPrompt so it is drivable with a plain context in tests.
@@ -221,10 +237,6 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 	otelobs.End(handshakeSpan, nil)
 	a.log.Info("acp round started", "cwd", cwd, "session", sess.SessionId)
 
-	type promptDone struct {
-		resp sdk.PromptResponse
-		err  error
-	}
 	done := make(chan promptDone, 1)
 	_, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String("agent", a.name), attribute.String("session_id", string(sess.SessionId)))
 	defer promptSpan.End() // safety net for the relay-stopped/cancel exits below; the done-branch sets the real status first
@@ -249,9 +261,26 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 		}
 		return true
 	}
+
+	// idleTimer fires when the round has gone silent: no update AND no
+	// prompt-done for IdleTimeout. Reset on every update so a round that's
+	// slow-but-alive (spin-up, model prefill) is never killed for it.
+	idleTimer := time.NewTimer(a.opts.IdleTimeout)
+	defer idleTimer.Stop()
+	resetIdle := func() {
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(a.opts.IdleTimeout)
+	}
+
 	for {
 		select {
 		case u := <-h.updates:
+			resetIdle()
 			if !relay(u) {
 				return nil
 			}
@@ -285,17 +314,26 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 			emit(final)
 			return nil
 		case <-ctx.Done():
-			// Graceful cancel: session/cancel, a short grace for the agent to
-			// resolve the prompt, then the deferred close kills the process group.
-			cctx, cancel := context.WithTimeout(context.Background(), cancelGrace)
-			_ = h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sess.SessionId})
-			select {
-			case <-done:
-			case <-cctx.Done():
-			}
-			cancel()
+			a.gracefulCancel(h, sess.SessionId, done)
 			return ctx.Err()
+		case <-idleTimer.C:
+			a.gracefulCancel(h, sess.SessionId, done)
+			return fmt.Errorf("acp: no activity for %s — treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
 		}
+	}
+}
+
+// gracefulCancel sends session/cancel and waits up to cancelGrace for the
+// prompt goroutine to acknowledge before returning; the caller's deferred
+// h.close then kills the process group. Shared by the ctx.Done() and
+// idle-timeout exits so the two paths can't drift.
+func (a *Agent) gracefulCancel(h *procHandle, sessID sdk.SessionId, done <-chan promptDone) {
+	cctx, cancel := context.WithTimeout(context.Background(), cancelGrace)
+	defer cancel()
+	_ = h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sessID})
+	select {
+	case <-done:
+	case <-cctx.Done():
 	}
 }
 
