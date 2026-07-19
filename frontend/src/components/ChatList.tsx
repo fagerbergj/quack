@@ -1,23 +1,8 @@
-import { useState } from 'react'
 import type { ChatSummary } from '../api'
-import { isGithubChat } from '../pages/GitHubSessions'
-
-export type OriginFilter = 'all' | 'github' | 'direct'
-
-// filterChatsByOrigin narrows by the same origin signal GitHubSessions.tsx
-// uses (isGithubChat) — no separate signal to keep in sync.
-export function filterChatsByOrigin(chats: ChatSummary[], filter: OriginFilter): ChatSummary[] {
-  if (filter === 'all') return chats
-  return chats.filter(c => (filter === 'github' ? isGithubChat(c) : !isGithubChat(c)))
-}
-
-// githubRef derives a short "Issue #N" / "PR #N" label from a github issue/PR
-// URL (…/issues/N or …/pull/N), or null when the URL isn't one of those.
-export function githubRef(url: string): { label: string; kind: 'issue' | 'pr' } | null {
-  const m = url.match(/\/(issues|pull)\/(\d+)/)
-  if (!m) return null
-  return m[1] === 'pull' ? { label: `PR #${m[2]}`, kind: 'pr' } : { label: `Issue #${m[2]}`, kind: 'issue' }
-}
+import { isGithubChat, parseGithubRef } from '../lib/github'
+import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
+import { FilterPanel } from './FilterPanel'
+import { navigate, useSearch } from '../router'
 
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -31,6 +16,35 @@ function relativeDate(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
+const STATUS_DOT_COLOR: Record<ChatSummary['status'], string> = {
+  running: 'bg-blue-500',
+  needs_input: 'bg-amber-500',
+  failed: 'bg-red-500',
+  idle: '',
+}
+
+const STATUS_LABEL: Record<ChatSummary['status'], string> = {
+  running: 'Running',
+  needs_input: 'Needs input',
+  failed: 'Failed',
+  idle: 'Idle',
+}
+
+// StatusDot: a bare colored dot next to the chat title for running/needs_input/
+// failed; idle renders nothing (per the OTel-favor-presentation principle —
+// the common case stays quiet). The status name moves to the tooltip/aria-label
+// rather than rendering as text, to keep the title row compact.
+function StatusDot({ status }: { status: ChatSummary['status'] }) {
+  if (status === 'idle') return null
+  return (
+    <span
+      title={STATUS_LABEL[status]}
+      aria-label={`Status: ${STATUS_LABEL[status]}`}
+      className={`flex-shrink-0 inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${STATUS_DOT_COLOR[status]}`}
+    />
+  )
+}
+
 export interface ChatListProps {
   chats: ChatSummary[]
   activeChatId: string | null
@@ -41,18 +55,25 @@ export interface ChatListProps {
   onCloseMobile: () => void
 }
 
-const ORIGIN_FILTERS: { value: OriginFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'direct', label: 'Direct' },
-  { value: 'github', label: 'GitHub' },
-]
-
 export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile }: ChatListProps) {
-  const [query, setQuery] = useState('')
-  const [originFilter, setOriginFilter] = useState<OriginFilter>('all')
-  const q = query.trim().toLowerCase()
-  const byOrigin = filterChatsByOrigin(chats, originFilter)
-  const filtered = q ? byOrigin.filter(c => (c.title ?? '').toLowerCase().includes(q)) : byOrigin
+  const search = useSearch()
+  const filterState = parseFilterState(search)
+  const { q, selected } = filterState
+
+  function setFilterState(next: { q?: string; selected?: SelectedFacets }) {
+    const state = { q: next.q ?? q, selected: next.selected ?? selected }
+    const qs = serializeFilterState(state)
+    navigate(window.location.pathname + (qs ? `?${qs}` : ''), { replace: true })
+  }
+
+  function toggleFacet(facetKey: string, value: string) {
+    const current = selected[facetKey] ?? []
+    const next = current.includes(value) ? current.filter(v => v !== value) : [...current, value]
+    setFilterState({ selected: { ...selected, [facetKey]: next } })
+  }
+
+  const facets = computeFacets(chats)
+  const filtered = filterChats(chats, filterState)
 
   return (
     <div className={`
@@ -79,31 +100,21 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           ✕
         </button>
       </div>
-      <div className="p-2 border-b border-gray-200 dark:border-gray-700">
+      <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-1.5">
         <input
           type="search"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
+          value={q}
+          onChange={e => setFilterState({ q: e.target.value })}
           placeholder="Search chats…"
           aria-label="Search chats"
-          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+          className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
         />
-      </div>
-      <div className="px-2 py-1.5 border-b border-gray-200 dark:border-gray-700 flex gap-1" role="group" aria-label="Filter by origin">
-        {ORIGIN_FILTERS.map(f => (
-          <button
-            key={f.value}
-            onClick={() => setOriginFilter(f.value)}
-            aria-pressed={originFilter === f.value}
-            className={`flex-1 text-[11px] px-2 py-1 rounded-md transition-colors ${
-              originFilter === f.value
-                ? 'bg-blue-600 text-white font-medium'
-                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+        <FilterPanel
+          facets={facets}
+          selected={selected}
+          onToggle={toggleFacet}
+          onClear={() => setFilterState({ selected: {} })}
+        />
       </div>
       <div className="flex-1 overflow-y-auto overscroll-contain">
         {chats.length === 0 && (
@@ -112,71 +123,61 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         {chats.length > 0 && filtered.length === 0 && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No matches</div>
         )}
-        {filtered.map(s => (
-          <div
-            key={s.id}
-            onClick={() => onSelect(s.id)}
-            className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
-          >
-            <span title={s.title || 'New chat'} className="block pr-6">
-              <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-                {s.title || 'New chat'}
-              </span>
-            </span>
-            {/* Badge row below the title: always rendered (even with no badges)
-                so every row reserves the same vertical space and stays aligned.
-                Repo + issue/PR badges link to GitHub; stopPropagation so a click
-                opens the link instead of selecting the chat. */}
-            <div className="flex items-center gap-1 h-4 mt-0.5 pr-6 overflow-hidden">
-              {isGithubChat(s) && (() => {
-                const ref = s.github_url ? githubRef(s.github_url) : null
-                const chip =
-                  'flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline'
-                return (
-                  <>
-                    {s.github_repo && (
-                      <a
-                        href={`https://github.com/${s.github_repo}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={e => e.stopPropagation()}
-                        title={s.github_repo}
-                        className={`${chip} truncate max-w-[120px]`}
-                      >
-                        {s.github_repo}
-                      </a>
-                    )}
-                    {ref && (
-                      <a
-                        href={s.github_url!}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={e => e.stopPropagation()}
-                        title={ref.label}
-                        className={chip}
-                      >
-                        {ref.label}
-                      </a>
-                    )}
-                    {!s.github_repo && !ref && (
-                      <span className={chip} aria-label="GitHub-originated chat">
-                        GH
-                      </span>
-                    )}
-                  </>
-                )
-              })()}
-            </div>
-            <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
-            <button
-              onClick={e => onDelete(s.id, e)}
-              aria-label="Delete chat"
-              className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
+        {filtered.map(s => {
+          const ref = parseGithubRef(s)
+          return (
+            <div
+              key={s.id}
+              onClick={() => onSelect(s.id)}
+              className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
             >
-              ×
-            </button>
-          </div>
-        ))}
+              <span title={s.title || 'New chat'} className="flex items-center pr-6">
+                <StatusDot status={s.status} />
+                <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
+                  {s.title || 'New chat'}
+                </span>
+              </span>
+              {/* Badge row below the title: always rendered (even with no badges)
+                  so every row reserves the same vertical space and stays aligned.
+                  Repo/Issue/PR badges link out to GitHub — filtering by repo/type
+                  lives entirely in the FilterPanel popover, not on the badges. */}
+              <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
+                {isGithubChat(s) && ref && (
+                  <a
+                    href={`https://github.com/${ref.repo}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    title={ref.repo}
+                    className="flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                  >
+                    {ref.repo}
+                  </a>
+                )}
+                {ref && s.github_url && (
+                  <a
+                    href={s.github_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
+                    className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                  >
+                    {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
+                  </a>
+                )}
+              </div>
+              <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
+              <button
+                onClick={e => onDelete(s.id, e)}
+                aria-label="Delete chat"
+                className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
+              >
+                ×
+              </button>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

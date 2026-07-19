@@ -1,6 +1,5 @@
 // GitHubLink renders a deep link back to the GitHub issue/PR that originated a
-// chat. Shared by the primary chat header (Chat.tsx) and the GitHub Sessions
-// list (GitHubSessions.tsx) so the two surfaces render the link identically.
+// chat. Used by the chat header (Chat.tsx).
 export function GitHubLink({ url, repo, className = '' }: { url: string; repo?: string; className?: string }) {
   return (
     <a

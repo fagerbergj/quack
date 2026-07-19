@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { filterChatsByOrigin, githubRef } from './ChatList'
-import { isGithubChat } from '../pages/GitHubSessions'
+import { filterChats } from '../lib/chatFilters'
+import { isGithubChat } from '../lib/github'
 import type { ChatSummary } from '../api'
 
-// No @testing-library/react in this repo (see GitHubSessions.test.ts) — coverage
-// targets the exported filter logic and the shared isGithubChat signal the
-// row badge and filter control both read from.
+// No @testing-library/react in this repo — ChatList's filter/facet logic
+// lives in ../lib/chatFilters and ../lib/github (see their own test files for
+// the bulk of the coverage); this file covers the origin-filter wiring
+// ChatList's badge/facet row depends on directly.
 
 function chat(overrides: Partial<ChatSummary>): ChatSummary {
   return {
@@ -23,41 +24,28 @@ const CHATS: ChatSummary[] = [
   chat({ id: 'github-acme-widget-1', title: 'GitHub chat', github_repo: 'acme/widget', github_url: 'https://github.com/acme/widget/issues/1' }),
 ]
 
-describe('filterChatsByOrigin', () => {
-  it('"all" returns every chat unchanged', () => {
-    expect(filterChatsByOrigin(CHATS, 'all')).toEqual(CHATS)
+describe('filterChats (origin facet)', () => {
+  it('no selection returns every chat unchanged', () => {
+    expect(filterChats(CHATS, { q: '', selected: {} })).toEqual(CHATS)
   })
 
-  it('"github" narrows to github-origin chats only', () => {
-    const result = filterChatsByOrigin(CHATS, 'github')
+  it('origin=github narrows to github-origin chats only', () => {
+    const result = filterChats(CHATS, { q: '', selected: { origin: ['github'] } })
     expect(result.map(c => c.id)).toEqual(['github-acme-widget-1'])
   })
 
-  it('"direct" narrows to non-github chats only', () => {
-    const result = filterChatsByOrigin(CHATS, 'direct')
+  it('origin=direct narrows to non-github chats only', () => {
+    const result = filterChats(CHATS, { q: '', selected: { origin: ['direct'] } })
     expect(result.map(c => c.id)).toEqual(['direct-1'])
   })
 
   it('is empty when no chat matches the filter', () => {
-    expect(filterChatsByOrigin([CHATS[0]], 'github')).toEqual([])
+    const result = filterChats([CHATS[1]], { q: '', selected: { origin: ['direct'] } })
+    expect(result).toEqual([])
   })
 })
 
-describe('githubRef (badge label from an issue/PR url)', () => {
-  it('labels an issue url "Issue #N"', () => {
-    expect(githubRef('https://github.com/acme/widget/issues/386')).toEqual({ label: 'Issue #386', kind: 'issue' })
-  })
-
-  it('labels a pull url "PR #N"', () => {
-    expect(githubRef('https://github.com/acme/widget/pull/2')).toEqual({ label: 'PR #2', kind: 'pr' })
-  })
-
-  it('returns null for a url that is neither an issue nor a PR', () => {
-    expect(githubRef('https://github.com/acme/widget')).toBeNull()
-  })
-})
-
-describe('origin badge signal (isGithubChat, shared with GitHubSessions)', () => {
+describe('origin badge signal (isGithubChat)', () => {
   it('is true for the github row and false for the direct row', () => {
     expect(isGithubChat(CHATS[0])).toBe(false)
     expect(isGithubChat(CHATS[1])).toBe(true)

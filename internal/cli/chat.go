@@ -6,18 +6,65 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// isGithubChat mirrors frontend/src/pages/GitHubSessions.tsx's isGithubChat:
-// GithubUrl is the authoritative signal (set by the webhook at dispatch
-// time), the "github-" id prefix a fallback for chats persisted before that
-// field existed.
+// isGithubChat mirrors frontend/src/lib/github.ts's isGithubChat: GithubUrl is
+// the authoritative signal (set by the webhook at dispatch time), the
+// "github-" id prefix a fallback for chats persisted before that field existed.
 func isGithubChat(c schema.ChatSummary) bool {
 	return c.GithubUrl != nil || strings.HasPrefix(c.Id, "github-")
+}
+
+var githubURLRE = regexp.MustCompile(`/(issues|pull)/(\d+)`)
+
+type githubRef struct {
+	Repo   string
+	Kind   string // "issue" or "pr"
+	Number int
+}
+
+// parseGithubRef mirrors frontend/src/lib/github.ts's parseGithubRef: the
+// issue/PR kind + number come off GithubUrl's path shape, the repo off
+// GithubRepo (falling back to the URL's owner/repo segment).
+func parseGithubRef(c schema.ChatSummary) (githubRef, bool) {
+	if c.GithubUrl == nil || *c.GithubUrl == "" {
+		return githubRef{}, false
+	}
+	m := githubURLRE.FindStringSubmatch(*c.GithubUrl)
+	if m == nil {
+		return githubRef{}, false
+	}
+	kind := "issue"
+	if m[1] == "pull" {
+		kind = "pr"
+	}
+	repo := ""
+	if c.GithubRepo != nil {
+		repo = *c.GithubRepo
+	} else if parts := strings.SplitN(strings.TrimPrefix(*c.GithubUrl, "https://github.com/"), "/", 3); len(parts) >= 2 {
+		repo = parts[0] + "/" + parts[1]
+	}
+	n, _ := strconv.Atoi(m[2])
+	return githubRef{Repo: repo, Kind: kind, Number: n}, true
+}
+
+// githubRefLabel renders "Issue #249" / "PR #257", or "-" when c isn't a
+// GitHub-originated chat with a parseable ref.
+func githubRefLabel(c schema.ChatSummary) string {
+	ref, ok := parseGithubRef(c)
+	if !ok {
+		return "-"
+	}
+	if ref.Kind == "pr" {
+		return fmt.Sprintf("PR #%d", ref.Number)
+	}
+	return fmt.Sprintf("Issue #%d", ref.Number)
 }
 
 // originFilterKeep reports whether c passes the --filter value ("all",
@@ -34,16 +81,72 @@ func originFilterKeep(c schema.ChatSummary, filter string) bool {
 	}
 }
 
+// chatListFilters bundles the four `chat list` narrowing flags. Each empty
+// field imposes no constraint; validate() rejects unrecognised values before
+// any of them reach the keep-checks below (mirrors frontend/src/lib/chatFilters.ts's
+// matchesFacets: every active facet must match, no ordering dependency).
+type chatListFilters struct {
+	origin string // "", "all", "github", "direct"
+	status string // "", or a ChatStatus value
+	repo   string // "", or an exact owner/repo match
+	kind   string // "", "issue", "pr"
+}
+
+// NewChatListFilters builds a chatListFilters from the `chat list` flag
+// values (origin filter, status, repo, github ref type).
+func NewChatListFilters(origin, status, repo, kind string) chatListFilters {
+	return chatListFilters{origin: origin, status: status, repo: repo, kind: kind}
+}
+
+func (f chatListFilters) validate() error {
+	if f.origin != "" && f.origin != "all" && f.origin != "github" && f.origin != "direct" {
+		return fmt.Errorf("--filter must be one of all, github, direct (got %q)", f.origin)
+	}
+	switch f.status {
+	case "", "idle", "running", "needs_input", "failed":
+	default:
+		return fmt.Errorf("--status must be one of idle, running, needs_input, failed (got %q)", f.status)
+	}
+	switch f.kind {
+	case "", "issue", "pr":
+	default:
+		return fmt.Errorf("--type must be one of issue, pr (got %q)", f.kind)
+	}
+	return nil
+}
+
+func (f chatListFilters) keep(c schema.ChatSummary) bool {
+	if !originFilterKeep(c, f.origin) {
+		return false
+	}
+	if f.status != "" && string(c.Status) != f.status {
+		return false
+	}
+	if f.repo != "" {
+		ref, ok := parseGithubRef(c)
+		if !ok || ref.Repo != f.repo {
+			return false
+		}
+	}
+	if f.kind != "" {
+		ref, ok := parseGithubRef(c)
+		if !ok || ref.Kind != f.kind {
+			return false
+		}
+	}
+	return true
+}
+
 // RunChatList is `quack chat list`: a table of chats (id, title, status,
-// origin, updated), or raw JSON with --json. STATUS is one of the four
+// origin, ref, updated), or raw JSON with --json. STATUS is one of the four
 // ChatStatus values (running/needs_input/failed/idle) so the row is
 // grep-able (`grep needs_input`); the pending question itself is `chat
-// show`/--json's job — this table stays narrow. filter narrows to
-// "github"/"direct" origin chats ("all" or "" keeps everything). Empty list
-// points at the next step.
-func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool, filter string) error {
-	if filter != "" && filter != "all" && filter != "github" && filter != "direct" {
-		return fmt.Errorf("--filter must be one of all, github, direct (got %q)", filter)
+// show`/--json's job — this table stays narrow. filters narrows by origin,
+// status, github repo, and issue/PR type — a chat must pass every active one
+// (mirrors the web sidebar's facet filtering). Empty list points at the next step.
+func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool, filters chatListFilters) error {
+	if err := filters.validate(); err != nil {
+		return err
 	}
 	c, err := NewClient(server)
 	if err != nil {
@@ -56,7 +159,7 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 	hadAny := len(chats) > 0
 	kept := chats[:0:0]
 	for _, ch := range chats {
-		if originFilterKeep(ch, filter) {
+		if filters.keep(ch) {
 			kept = append(kept, ch)
 		}
 	}
@@ -66,20 +169,20 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 	}
 	if len(chats) == 0 {
 		if hadAny {
-			fmt.Fprintf(out, "No %s chats.\n", filter)
+			fmt.Fprintln(out, "No chats match the given filters.")
 			return nil
 		}
 		fmt.Fprintln(out, "No chats yet — start one with `quack chat new`.")
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tTITLE\tSTATUS\tORIGIN\tUPDATED")
+	fmt.Fprintln(tw, "ID\tTITLE\tSTATUS\tORIGIN\tREF\tUPDATED")
 	for _, ch := range chats {
 		origin := "direct"
 		if isGithubChat(ch) {
 			origin = "github"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", ch.Id, chatTitle(ch.Title), ch.Status, origin, ch.UpdatedAt.Local().Format("2006-01-02 15:04"))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", ch.Id, chatTitle(ch.Title), ch.Status, origin, githubRefLabel(ch), ch.UpdatedAt.Local().Format("2006-01-02 15:04"))
 	}
 	return tw.Flush()
 }

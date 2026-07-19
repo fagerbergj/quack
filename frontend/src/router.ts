@@ -1,22 +1,20 @@
 import { useState, useEffect } from 'react'
 
-// Minimal History-API routing: the app has two views (Chat, GitHub) and one
-// URL param, the chat id in /chat/:chatId. No router dependency needed.
-
-export type View = 'chat' | 'github'
+// Minimal History-API routing: the app has one view (Chat) and one URL param,
+// the chat id in /chat/:chatId, plus the sidebar's filter/search state as
+// query params. No router dependency needed.
 
 function readChatId(): string | undefined {
   const m = window.location.pathname.match(/^\/chat\/([^/]+)/)
   return m ? decodeURIComponent(m[1]) : undefined
 }
 
-function readView(): View {
-  return /^\/github(\/|$)/.test(window.location.pathname) ? 'github' : 'chat'
-}
-
+// navigate(path) preserves the current query string when path doesn't specify
+// its own (no '?') — so switching chats never drops the sidebar's filter state.
 export function navigate(path: string, opts?: { replace?: boolean }) {
-  if (opts?.replace) window.history.replaceState(null, '', path)
-  else window.history.pushState(null, '', path)
+  const full = path.includes('?') ? path : path + window.location.search
+  if (opts?.replace) window.history.replaceState(null, '', full)
+  else window.history.pushState(null, '', full)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
@@ -31,14 +29,15 @@ export function useChatId(): string | undefined {
   return chatId
 }
 
-// Current top-level view ('chat' or 'github') from the URL; re-renders on
-// navigate() and browser back/forward.
-export function useView(): View {
-  const [view, setView] = useState(readView)
+// Current query string (e.g. "?q=foo&status=running"), the sidebar's filter
+// state; re-renders on navigate() and browser back/forward. Write with
+// navigate(pathname + '?' + qs, { replace: true }).
+export function useSearch(): string {
+  const [search, setSearch] = useState(() => window.location.search)
   useEffect(() => {
-    const onPop = () => setView(readView())
+    const onPop = () => setSearch(window.location.search)
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
-  return view
+  return search
 }

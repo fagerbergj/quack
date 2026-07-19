@@ -15,7 +15,7 @@ export const WithRepo: Story = {
   render: () => <GitHubLink url="https://github.com/acme/widgets/issues/7" repo="acme/widgets" />,
 }
 
-// As used in the GitHub Sessions list, where chats are already grouped by repo.
+// Without a repo label, e.g. once the repo is already shown elsewhere.
 export const LinkOnly: Story = {
   render: () => <GitHubLink url="https://github.com/acme/widgets/pull/42" />,
 }
