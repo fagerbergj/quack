@@ -39,6 +39,7 @@ type issueCommentPayload struct {
 	Issue struct {
 		Number int    `json:"number"`
 		Title  string `json:"title"`
+		Body   string `json:"body"`
 		// PullRequest is present only when the issue is a PR (GitHub sends PR
 		// conversation comments as issue_comment events).
 		PullRequest *struct{} `json:"pull_request"`
@@ -359,6 +360,41 @@ func implementTask(p issuesPayload, comments []commentView) string {
 	return b.String()
 }
 
+// issueThreadContext renders the issue body plus the prior comments on the
+// thread so a conversational/plan @mention can build on the discussion —
+// quack's OWN earlier plans/answers and other participants included — instead
+// of seeing only the triggering comment (#456). The triggering comment is
+// dropped (it is already quoted as the request), and the MOST RECENT comments
+// are kept when the thread is long (a conversation cares about what was said
+// last, unlike implementTask which keeps the first). "" when there is nothing
+// but the trigger.
+func issueThreadContext(p issueCommentPayload, comments []commentView) string {
+	var b strings.Builder
+	if body := strings.TrimSpace(p.Issue.Body); body != "" {
+		fmt.Fprintf(&b, "Issue #%d — %s:\n%s\n\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title), truncate(body, 4000))
+	}
+	prior := make([]commentView, 0, len(comments))
+	for _, c := range comments {
+		if c.ID == p.Comment.ID {
+			continue // already quoted verbatim as "Their request"
+		}
+		prior = append(prior, c)
+	}
+	if len(prior) > 0 {
+		const maxComments = 40
+		b.WriteString("Prior comments on this thread (oldest first; your own earlier plans/answers are included — build on them, don't repeat them):\n")
+		start := 0
+		if len(prior) > maxComments {
+			fmt.Fprintf(&b, "  … %d earlier comments omitted\n", len(prior)-maxComments)
+			start = len(prior) - maxComments
+		}
+		for _, c := range prior[start:] {
+			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
+		}
+	}
+	return b.String()
+}
+
 // planTask synthesizes the planning request for a plan-labeled issue — there is
 // no human comment to extract a task from, only the issue itself.
 func planTask(p issuesPayload) string {
@@ -531,7 +567,22 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	if p.Issue.PullRequest != nil && isWorkRequest(task) {
 		rc = e.gatherReviewContext(ctx, owner, repo, number)
 	}
-	message := e.runMessage(p, task, rc)
+	// A real @mention on an ISSUE (not a label-driven synthetic, not a PR whose
+	// thread rides the session) is otherwise blind to the discussion — it would
+	// see only the triggering comment. Gather the thread so a plan/conversation
+	// mention can build on the issue body + prior comments, quack's own prior
+	// plan included (#456). Best-effort: a fetch failure just answers from the
+	// trigger, as before.
+	var thread []commentView
+	if p.Issue.PullRequest == nil && !p.isLabelTrigger {
+		if cs, cerr := e.app.listIssueComments(ctx, owner, repo, number); cerr != nil {
+			slog.Warn("github: listIssueComments failed; answering the mention from the triggering comment alone",
+				"component", "github", "repo", owner+"/"+repo, "issue", number, "err", cerr)
+		} else {
+			thread = cs
+		}
+	}
+	message := e.runMessage(p, task, rc, thread)
 
 	// A LABEL-driven work request starts a FRESH session: unlike a conversational
 	// @mention (kept for continuity), a new attempt must not inherit a prior
@@ -906,7 +957,7 @@ func truncate(s string, n int) string {
 // out), the PR's title/description (intent), the changed-files list (so the
 // planner can slice the review by area), the existing discussion (so the reviewer
 // doesn't repeat it), and quack's last-reviewed commit (change-aware follow-ups).
-func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewContext) string {
+func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewContext, thread []commentView) string {
 	isPR := p.Issue.PullRequest != nil
 	owner, repo := p.Repository.Owner.Login, p.Repository.Name
 
@@ -946,6 +997,15 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 	fmt.Fprintf(&b, "You are handling a request from GitHub user @%s, who mentioned you on %s/%s %s #%d.\n\n",
 		p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
 	fmt.Fprintf(&b, "Their request:\n%s\n\n", task)
+	// A conversational/plan mention on an issue: give the model the discussion it
+	// is replying INTO, not just the triggering comment (#456). Skipped for PRs
+	// (their thread rides the durable session) and label-driven synthetics (whose
+	// task already carries the plan/discussion via planTask/implementTask).
+	if !isPR && !p.isLabelTrigger {
+		if tc := issueThreadContext(p, thread); tc != "" {
+			fmt.Fprintf(&b, "For context, here is the issue and the discussion so far:\n%s\n", tc)
+		}
+	}
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q, clone URL %s). Declare it in your plan's `setup` "+
 		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) — the harness "+
 		"clones it and checks out that branch for you, BEFORE any node runs, AT THE ROOT of each repo-touching "+

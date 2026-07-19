@@ -804,7 +804,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "review this, focusing on the auth path", reviewContext{})
+	msg := ext.runMessage(pr, "review this, focusing on the auth path", reviewContext{}, nil)
 	for _, want := range []string{
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
@@ -828,7 +828,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 
 	// With the PR's refs known, the reviewer is told to CHECK OUT the head branch —
 	// without it a shallow clone's `git diff base...HEAD` is empty and it flails.
-	withRefs := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}})
+	withRefs := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}}, nil)
 	for _, want := range []string{"git_checkout `feat/x`", "git_diff main...feat/x", "is EMPTY until you check out the head"} {
 		if !strings.Contains(withRefs, want) {
 			t.Errorf("PR review message missing checkout guidance %q\n---\n%s", want, withRefs)
@@ -836,7 +836,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	}
 
 	// A PR request that DOES ask to change code keeps the implement path.
-	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", reviewContext{})
+	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", reviewContext{}, nil)
 	if !strings.Contains(impl, "stage_pr") {
 		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
 	}
@@ -846,12 +846,52 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(issue, "add a feature", reviewContext{})
+	imsg := ext.runMessage(issue, "add a feature", reviewContext{}, nil)
 	if strings.Contains(imsg, "stage_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
 	if !strings.Contains(imsg, "stage_pr") {
 		t.Errorf("issue run message should keep implement-path guidance:\n%s", imsg)
+	}
+}
+
+func TestIssueThreadContextInMention(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+
+	var issue issueCommentPayload
+	issue.Issue.Number = 269
+	issue.Issue.Title = "Evaluate mem0"
+	issue.Issue.Body = "We should evaluate mem0 as a memory backend."
+	issue.Comment.ID = 999 // the triggering comment
+	issue.Repository.Name, issue.Repository.Owner.Login = "quack", "acme"
+	issue.Repository.CloneURL = "https://github.com/acme/quack.git"
+
+	thread := []commentView{
+		{ID: 100, User: "hegu-1", Body: "The gate should stay the authority."},
+		{ID: 200, User: "quack-jason[bot]", Body: "# Implementation Plan: mem0 as a vector store"},
+		{ID: 999, User: "fagerbergj", Body: "rework it — mem0 is not a store"}, // the trigger; must be excluded
+	}
+
+	msg := ext.runMessage(issue, "rework it — mem0 is not a store", reviewContext{}, thread)
+	for _, want := range []string{
+		"evaluate mem0 as a memory backend",        // issue body
+		"hegu-1", "gate should stay the authority", // a prior participant
+		"Implementation Plan: mem0 as a vector store", // quack's own prior plan
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("mention prompt missing thread context %q:\n%s", want, msg)
+		}
+	}
+	// The triggering comment is quoted as the request, not duplicated in the thread.
+	if strings.Count(msg, "rework it — mem0 is not a store") != 1 {
+		t.Errorf("triggering comment should appear exactly once (as the request), not in the thread dump:\n%s", msg)
+	}
+
+	// A label-driven synthetic (isLabelTrigger) must NOT get the thread block — its
+	// task already carries the discussion via planTask/implementTask.
+	issue.isLabelTrigger = true
+	if lbl := ext.runMessage(issue, "some plan task", reviewContext{}, thread); strings.Contains(lbl, "discussion so far") {
+		t.Errorf("label-triggered run should not inject the mention thread block:\n%s", lbl)
 	}
 }
 
@@ -900,7 +940,7 @@ func TestRunMessageChangeAwareFraming(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadSHA: tt.headSHA}, prevReviewSHA: tt.prevSHA})
+			msg := ext.runMessage(pr, "review this", reviewContext{meta: prMeta{HeadSHA: tt.headSHA}, prevReviewSHA: tt.prevSHA}, nil)
 			for _, want := range tt.wantContain {
 				if !strings.Contains(msg, want) {
 					t.Errorf("message missing %q\n---\n%s", want, msg)
@@ -931,7 +971,7 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 			ReviewComments: []reviewCommentView{{User: "carol", Path: "a.go", Line: 5, Body: "nit"}},
 		},
 	}
-	msg := ext.runMessage(pr, "review this", rc)
+	msg := ext.runMessage(pr, "review this", rc, nil)
 	for _, want := range []string{
 		"PR title: Add widget", "This adds a widget", // intent
 		"Changed files (2)", "a.go (+10/-2)", "b.go (+1/-0)", // slicing data
@@ -953,7 +993,7 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most? No need to re-review."), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "which finding matters most? No need to re-review.", reviewContext{})
+	msg := ext.runMessage(pr, "which finding matters most? No need to re-review.", reviewContext{}, nil)
 	for _, want := range []string{"conversational follow-up", "Answer it directly", "Do NOT clone"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("conversational message missing %q\n---\n%s", want, msg)
@@ -965,7 +1005,7 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 		}
 	}
 	// A genuine review request still gets the full playbook.
-	if rev := ext.runMessage(pr, "please review this PR", reviewContext{meta: prMeta{HeadRef: "x"}}); !strings.Contains(rev, "stage_review") {
+	if rev := ext.runMessage(pr, "please review this PR", reviewContext{meta: prMeta{HeadRef: "x"}}, nil); !strings.Contains(rev, "stage_review") {
 		t.Errorf("a review request must still carry the review tools:\n%s", rev)
 	}
 }
