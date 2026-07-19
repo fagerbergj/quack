@@ -219,17 +219,19 @@ func withTarget(cmd *cobra.Command, fn func(target string) error) error {
 
 func newChatListCmd() *cobra.Command {
 	var asJSON bool
+	var filter string
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List chats",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withTarget(cmd, func(t string) error {
-				return cli.RunChatList(cmd.Context(), cmd.OutOrStdout(), t, asJSON)
+				return cli.RunChatList(cmd.Context(), cmd.OutOrStdout(), t, asJSON, filter)
 			})
 		},
 	}
 	asJSONFlag(c, &asJSON)
+	c.Flags().StringVar(&filter, "filter", "all", "filter by origin: all, github, direct")
 	return c
 }
 

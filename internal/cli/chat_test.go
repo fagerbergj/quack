@@ -65,7 +65,7 @@ func TestRunChatList(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunChatList(context.Background(), &out, srv.URL, false); err != nil {
+	if err := RunChatList(context.Background(), &out, srv.URL, false, "all"); err != nil {
 		t.Fatalf("RunChatList: %v", err)
 	}
 	s := out.String()
@@ -93,7 +93,7 @@ func TestRunChatListStatuses(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunChatList(context.Background(), &out, srv.URL, false); err != nil {
+	if err := RunChatList(context.Background(), &out, srv.URL, false, "all"); err != nil {
 		t.Fatalf("RunChatList: %v", err)
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
@@ -126,11 +126,86 @@ func TestRunChatListEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 	var out bytes.Buffer
-	if err := RunChatList(context.Background(), &out, srv.URL, false); err != nil {
+	if err := RunChatList(context.Background(), &out, srv.URL, false, "all"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "No chats yet") {
 		t.Errorf("empty list should guide the user, got %q", out.String())
+	}
+}
+
+// TestRunChatListOrigin covers issue #386: the ORIGIN column reads
+// github/direct off the same signal (github_url, falling back to the
+// "github-" id prefix) the web ChatList badge uses.
+func TestRunChatListOrigin(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"data":[
+			{"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+			{"id":"github-acme-widget-1","title":"Via issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1","github_repo":"acme/widget"}
+		]}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunChatList(context.Background(), &out, srv.URL, false, "all"); err != nil {
+		t.Fatalf("RunChatList: %v", err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "ORIGIN") {
+		t.Errorf("header missing ORIGIN column:\n%s", s)
+	}
+	for _, l := range strings.Split(s, "\n") {
+		switch {
+		case strings.Contains(l, "c1"):
+			if !strings.Contains(l, "direct") {
+				t.Errorf("direct chat row missing origin=direct: %q", l)
+			}
+		case strings.Contains(l, "github-acme-widget-1"):
+			if !strings.Contains(l, "github") {
+				t.Errorf("github chat row missing origin=github: %q", l)
+			}
+		}
+	}
+}
+
+// TestRunChatListFilter covers the --filter flag: "github" and "direct"
+// each narrow to exactly the matching row; an unrecognised value errors.
+func TestRunChatListFilter(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"data":[
+			{"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+			{"id":"github-acme-widget-1","title":"Via issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1"}
+		]}`)
+	}))
+	defer srv.Close()
+
+	var githubOut bytes.Buffer
+	if err := RunChatList(context.Background(), &githubOut, srv.URL, false, "github"); err != nil {
+		t.Fatalf("RunChatList(github): %v", err)
+	}
+	if strings.Contains(githubOut.String(), "c1") {
+		t.Errorf("--filter github should exclude the direct chat: %q", githubOut.String())
+	}
+	if !strings.Contains(githubOut.String(), "github-acme-widget-1") {
+		t.Errorf("--filter github should include the github chat: %q", githubOut.String())
+	}
+
+	var directOut bytes.Buffer
+	if err := RunChatList(context.Background(), &directOut, srv.URL, false, "direct"); err != nil {
+		t.Fatalf("RunChatList(direct): %v", err)
+	}
+	if strings.Contains(directOut.String(), "github-acme-widget-1") {
+		t.Errorf("--filter direct should exclude the github chat: %q", directOut.String())
+	}
+	if !strings.Contains(directOut.String(), "c1") {
+		t.Errorf("--filter direct should include the direct chat: %q", directOut.String())
+	}
+
+	var errOut bytes.Buffer
+	if err := RunChatList(context.Background(), &errOut, srv.URL, false, "bogus"); err == nil {
+		t.Error("expected an error for an unrecognised --filter value")
 	}
 }
 
