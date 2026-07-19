@@ -61,7 +61,7 @@ const (
 	// OPEN the real artifacts and ground code-quality scores in them rather than
 	// the worker's self-report, while staying bounded and strictly read-only.
 	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. They reach the SAME clone/workspace the worker used (no separate clone spins up), so any specific, checkable claim the answer makes about THIS repo's code — a file exists, a function/struct/field/symbol, a config key, a control-flow path — is no longer a matter of plausibility. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. " +
-		// Ground-truth claim verification (#359, hardened #360 after a judge
+		// Ground-truth claim verification (#359, hardened after a judge
 		// scored 100% on a code-exploration answer by rationalizing "the
 		// ledger shows they read exa.go" when the ledger was empty and the
 		// worker had actually web_fetched the file from GitHub instead of

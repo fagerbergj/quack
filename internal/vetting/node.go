@@ -1283,7 +1283,7 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					// ALSO route into the workspace ledger (isWorkspaceTool now
 					// covers web_fetch): a worker that fetched repo files from the
 					// web instead of reading the local clone must leave a visible
-					// trace, or the judge has nothing to catch it with (#360).
+					// trace, or the judge has nothing to catch it with.
 					pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
 					pendingWsTool[p.FunctionCall.ID] = "web_fetch"
 				case "stage_memory":

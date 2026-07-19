@@ -38,7 +38,7 @@ var wsOpSpecs = map[string]wsOpSpec{
 	// web_fetch: a worker that fetched repo files off the web instead of
 	// reading the local clone (e.g. raw.githubusercontent.com) leaves NO
 	// grounding trace otherwise — the judge's ledger would look empty even
-	// though the worker "read" something (#360). Only the URL is kept;
+	// though the worker "read" something. Only the URL is kept;
 	// results are deliberately omitted so a fetched page body never bloats
 	// the ledger — the URL alone is what flags a claim as web-sourced rather
 	// than clone-verified.

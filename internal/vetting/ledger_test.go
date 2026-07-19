@@ -439,7 +439,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 	}
 }
 
-// TestWebFetchEntersWorkspaceLedger pins #360: a worker that web-fetches repo
+// TestWebFetchEntersWorkspaceLedger pins the grounding trace: a worker that web-fetches repo
 // files instead of reading the local clone must leave a visible ledger trace
 // (previously ZERO — the judge had nothing to catch it with), while still
 // feeding the existing citation-backing bookkeeping (recordFetch) unchanged.
