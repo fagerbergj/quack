@@ -308,10 +308,12 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// runImplement acks the implement label with a comment, gathers the issue's
-// discussion (the posted plan lives there), and dispatches the implementation
-// run on the issue's session — the same session the planning run used, so the
-// plan is also in the model's own history.
+// runImplement acks the implement label with a comment and dispatches the
+// implementation run on the issue's session — the same session the planning
+// run used, so the plan is also in the model's own history. The discussion
+// (which carries the approved plan) is no longer gathered here: dispatch's
+// unified loadGithubContext injects it, the same path every other trigger
+// uses (#459) — this used to re-fetch it separately just for implementTask.
 func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
 	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
@@ -320,78 +322,25 @@ func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload)
 		slog.Warn("github: implement ack comment failed", "component", "github",
 			"repo", owner+"/"+repo, "issue", number, "err", err)
 	}
-	comments, err := e.app.listIssueComments(ctx, owner, repo, number)
-	if err != nil {
-		slog.Warn("github: listIssueComments failed; implementing from the issue body and session history alone",
-			"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
-	}
 	cancel()
-	e.dispatch(synthetic, implementTask(p, comments))
+	e.dispatch(synthetic, implementTask(p))
 }
 
 // implementTask synthesizes the implementation request for an implement-labeled
-// issue: the issue itself plus its discussion (which carries the approved plan).
+// issue — the issue itself; the approved plan and rest of the discussion
+// arrive separately via loadGithubContext's injected context (#459).
 //
 // ponytail: this used to also chain the new PR into the review-label flow
 // (labels=[…] on open) — dropped because StagedDelivery carries no labels
 // (the worker never opens the PR itself anymore). Restore once plan.Delivery
 // does, or have the delivery step apply the review label itself post-open.
-func implementTask(p issuesPayload, comments []commentView) string {
+func implementTask(p issuesPayload) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
-	if body := strings.TrimSpace(p.Issue.Body); body != "" {
-		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
-	}
-	if len(comments) > 0 {
-		const maxComments = 40
-		b.WriteString("\nIssue discussion (includes the approved plan — follow it):\n")
-		for i, c := range comments {
-			if i == maxComments {
-				fmt.Fprintf(&b, "  … and %d more\n", len(comments)-maxComments)
-				break
-			}
-			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
-		}
-	}
-	fmt.Fprintf(&b, "\nA maintainer approved this for implementation. Implement it per the plan and discussion, commit your work locally, "+
+	fmt.Fprintf(&b, "\nA maintainer approved this for implementation (see the approved plan in the discussion below). Implement it per the plan, commit your work locally, "+
 		"then call stage_pr with a title and a body that includes `Closes #%d` — you do not push or open the pull request yourself; "+
 		"the pull request is opened for you once your work passes review", p.Issue.Number)
 	b.WriteString(". Never merge anything — merging is a human decision.")
-	return b.String()
-}
-
-// issueThreadContext renders the issue body plus the prior comments on the
-// thread so a conversational/plan @mention can build on the discussion —
-// quack's OWN earlier plans/answers and other participants included — instead
-// of seeing only the triggering comment (#456). The triggering comment is
-// dropped (it is already quoted as the request), and the MOST RECENT comments
-// are kept when the thread is long (a conversation cares about what was said
-// last, unlike implementTask which keeps the first). "" when there is nothing
-// but the trigger.
-func issueThreadContext(p issueCommentPayload, comments []commentView) string {
-	var b strings.Builder
-	if body := strings.TrimSpace(p.Issue.Body); body != "" {
-		fmt.Fprintf(&b, "Issue #%d — %s:\n%s\n\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title), truncate(body, 4000))
-	}
-	prior := make([]commentView, 0, len(comments))
-	for _, c := range comments {
-		if c.ID == p.Comment.ID {
-			continue // already quoted verbatim as "Their request"
-		}
-		prior = append(prior, c)
-	}
-	if len(prior) > 0 {
-		const maxComments = 40
-		b.WriteString("Prior comments on this thread (oldest first; your own earlier plans/answers are included — build on them, don't repeat them):\n")
-		start := 0
-		if len(prior) > maxComments {
-			fmt.Fprintf(&b, "  … %d earlier comments omitted\n", len(prior)-maxComments)
-			start = len(prior) - maxComments
-		}
-		for _, c := range prior[start:] {
-			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
-		}
-	}
 	return b.String()
 }
 
@@ -561,50 +510,27 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	var rc reviewContext
-	// A work request (review/implement) needs the full plan-time PR context. A
-	// conversational PR follow-up needs only the discussion — so it answers from
-	// the thread, not the durable session alone, which gets trimmed and never
-	// held comments others posted after quack's review (#456, extended to PRs).
-	if p.Issue.PullRequest != nil {
-		if isWorkRequest(task) {
-			rc = e.gatherReviewContext(ctx, owner, repo, number)
-		} else if !p.isLabelTrigger {
-			if d, derr := e.app.listPRDiscussion(ctx, owner, repo, number); derr != nil {
-				slog.Warn("github: listPRDiscussion failed; answering the follow-up from the session alone",
-					"component", "github", "repo", owner+"/"+repo, "pr", number, "err", derr)
-			} else {
-				rc.discussion = d
-			}
-		}
-	}
-	// A real @mention on an ISSUE (not a label-driven synthetic, not a PR whose
-	// thread rides the session) is otherwise blind to the discussion — it would
-	// see only the triggering comment. Gather the thread so a plan/conversation
-	// mention can build on the issue body + prior comments, quack's own prior
-	// plan included (#456). Best-effort: a fetch failure just answers from the
-	// trigger, as before.
-	var thread []commentView
-	if p.Issue.PullRequest == nil && !p.isLabelTrigger {
-		if cs, cerr := e.app.listIssueComments(ctx, owner, repo, number); cerr != nil {
-			slog.Warn("github: listIssueComments failed; answering the mention from the triggering comment alone",
-				"component", "github", "repo", owner+"/"+repo, "issue", number, "err", cerr)
-		} else {
-			thread = cs
-		}
-	}
-	message := e.runMessage(p, task, rc, thread)
-
 	// A LABEL-driven work request starts a FRESH session: unlike a conversational
 	// @mention (kept for continuity), a new attempt must not inherit a prior
 	// attempt's events, which can make the run conclude the work is "already
-	// done" instead of doing it.
-	if p.isLabelTrigger && isWorkRequest(task) {
+	// done" instead of doing it. The stored GitHub snapshot must be forgotten
+	// too — otherwise the fresh session would still only get the DELTA since
+	// the stale snapshot (near-empty), instead of the full context a reset
+	// session needs (see loadGithubContext's forceReseed).
+	resetSession := p.isLabelTrigger && isWorkRequest(task)
+	if resetSession {
 		if err := e.runner.ResetSession(ctx, runUserID, sessionID); err != nil {
 			slog.Warn("github: session reset failed; this attempt may inherit stale history",
 				"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 		}
 	}
+
+	// One unified fetch-diff-persist path for issues and PRs alike (#459):
+	// fetch the full current GitHub state, diff it against the snapshot stored
+	// from the last dispatch (seeding on first load, delta-only on resume),
+	// and persist the new snapshot for next time.
+	gh := e.loadGithubContext(ctx, sessionID, owner, repo, number, p.Issue.PullRequest != nil, p.Comment.ID, resetSession)
+	message := e.runMessage(p, task, gh)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 
@@ -827,46 +753,85 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 	return planRan, judgePassed
 }
 
-// reviewContext is everything the orchestrator needs to PLAN a PR review without
-// a node cloning first — the webhook payload carries none of it. Every field is
-// best-effort: a failed fetch just omits that slice of context.
-type reviewContext struct {
-	meta          prMeta
-	files         []changedFile
-	discussion    prDiscussion
-	prevReviewSHA string
+// githubContext is the loaded, ready-to-inject GitHub state for one dispatch
+// (#459) — the single result loadGithubContext produces and runMessage
+// consumes, for an issue or a PR alike.
+type githubContext struct {
+	snap Snapshot
+	// text is the rendered context to inject this turn: the full seed on
+	// first load, or just the delta on resume ("" when resuming onto an
+	// unchanged snapshot — nothing to say).
+	text string
+	// firstLoad is true when no prior snapshot existed for this session (or
+	// one was deliberately forgotten — see loadGithubContext's forceReseed).
+	firstLoad bool
+	// newCommits are the PR commits to scope an incremental review to (see
+	// Delta.NewCommits) — nil on a first load (review everything), a
+	// (possibly empty) slice on resume.
+	newCommits []snapshotCommit
 }
 
-// gatherReviewContext assembles a PR's plan-time context from the GitHub API.
-// Each fetch is independent and best-effort — a failure logs and omits that part
-// rather than sinking the whole run.
-func (e *Extension) gatherReviewContext(ctx context.Context, owner, repo string, number int) reviewContext {
-	var rc reviewContext
-	if m, err := e.app.pullMeta(ctx, owner, repo, number); err != nil {
-		slog.Warn("github: pullMeta failed; planner lacks the PR's intent and refs",
-			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
-	} else {
-		rc.meta = m
+// loadGithubContext is the ONE fetch-diff-persist path every dispatch goes
+// through, issue or PR, work request or conversational follow-up (#459's
+// "one unified path" — replaces gatherReviewContext/issueThreadContext/
+// discussionSummary cherry-picking, and #457/#458's inject-everything
+// interim). It fetches the CURRENT full GitHub state, diffs it against the
+// snapshot stored from the last dispatch (or seeds, on first load), persists
+// the new snapshot, and returns the rendered context ready to inject as a
+// session EVENT via runMessage → e.runner.Run's message argument — never as
+// bare UserContent (llmagent builds its request from Session().Events()
+// only; a fresh prompt passed any other way is silently dropped).
+//
+// forceReseed treats this dispatch as a first load regardless of what's
+// stored: a label-driven work request resets the ADK session (T4 hygiene)
+// before this runs, and a fresh session needs the FULL context, not a delta
+// against a snapshot from a conversation the reset just erased.
+func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, repo string, number int, isPR bool, triggerCommentID int64, forceReseed bool) githubContext {
+	snap, err := e.fetchSnapshot(ctx, owner, repo, number, isPR)
+	if err != nil {
+		slog.Warn("github: fetchSnapshot failed; this turn runs with no fresh GitHub context",
+			"component", "github", "repo", owner+"/"+repo, "number", number, "err", err)
+		return githubContext{snap: snap, firstLoad: true}
 	}
-	if f, err := e.app.pullFiles(ctx, owner, repo, number); err != nil {
-		slog.Warn("github: pullFiles failed; planner cannot slice the review by file",
-			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
-	} else {
-		rc.files = f
+
+	var prevJSON string
+	var hasPrev bool
+	if e.store != nil && !forceReseed {
+		prevJSON, hasPrev, err = e.store.GetGithubSnapshot(ctx, sessionID)
+		if err != nil {
+			slog.Warn("github: GetGithubSnapshot failed; treating this as a first load",
+				"component", "github", "chat", sessionID, "err", err)
+			hasPrev = false
+		}
 	}
-	if d, err := e.app.listPRDiscussion(ctx, owner, repo, number); err != nil {
-		slog.Warn("github: listPRDiscussion failed; planner lacks prior discussion",
-			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
+
+	gh := githubContext{snap: snap}
+	if !hasPrev {
+		gh.firstLoad = true
+		gh.text = renderSeedContext(snap, triggerCommentID)
 	} else {
-		rc.discussion = d
+		prev, uerr := unmarshalSnapshot(prevJSON)
+		if uerr != nil {
+			slog.Warn("github: stored snapshot did not decode; treating this as a first load",
+				"component", "github", "chat", sessionID, "err", uerr)
+			gh.firstLoad = true
+			gh.text = renderSeedContext(snap, triggerCommentID)
+		} else {
+			delta := diffSnapshots(prev, snap, triggerCommentID)
+			gh.text = renderDeltaDetail(delta)
+			gh.newCommits = delta.NewCommits
+		}
 	}
-	if sha, err := e.app.lastReviewedSHA(ctx, owner, repo, number); err != nil {
-		slog.Warn("github: lastReviewedSHA failed; first-time review framing",
-			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
-	} else {
-		rc.prevReviewSHA = sha
+
+	if e.store != nil {
+		if j, merr := marshalSnapshot(snap); merr != nil {
+			slog.Warn("github: marshal snapshot failed; not persisted", "component", "github", "chat", sessionID, "err", merr)
+		} else if serr := e.store.SetGithubSnapshot(ctx, sessionID, j); serr != nil {
+			slog.Warn("github: SetGithubSnapshot failed; next resume may re-see this turn's changes",
+				"component", "github", "chat", sessionID, "err", serr)
+		}
 	}
-	return rc
+	return gh
 }
 
 // workVerbRe matches an imperative that asks quack to DO something — review or
@@ -944,24 +909,6 @@ func discussionSummary(d prDiscussion) string {
 	return b.String()
 }
 
-// excludeComment returns d with one comment id dropped from its general
-// conversation — the triggering follow-up comment, which is quoted separately
-// and must not be repeated in the thread dump. Reviews/inline comments are left
-// untouched (a follow-up is never one of those).
-func excludeComment(d prDiscussion, id int64) prDiscussion {
-	if id == 0 || len(d.Comments) == 0 {
-		return d
-	}
-	out := d
-	out.Comments = make([]commentView, 0, len(d.Comments))
-	for _, c := range d.Comments {
-		if c.ID != id {
-			out.Comments = append(out.Comments, c)
-		}
-	}
-	return out
-}
-
 // truncate shortens s to at most n runes, marking any cut with an ellipsis.
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
@@ -981,14 +928,15 @@ func truncate(s string, n int) string {
 // — until maxContinueRounds. vetting.ImplementationIntent is the SAME
 // discriminator the planner backstop uses, so the two can't drift.
 //
-// rc carries the plan-time PR context the webhook payload lacks — head/base refs
-// (a shallow clone's `git diff base...HEAD` is empty until the head is checked
-// out), the PR's title/description (intent), the changed-files list (so the
-// planner can slice the review by area), the existing discussion (so the reviewer
-// doesn't repeat it), and quack's last-reviewed commit (change-aware follow-ups).
-func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewContext, thread []commentView) string {
+// gh carries the loaded GitHub context (#459's unified snapshot+diff path) —
+// head/base refs (a shallow clone's `git diff base...HEAD` is empty until the
+// head is checked out), the PR's title/description (intent), the current
+// commits (rebase-safe incremental-review scoping via gh.newCommits), and the
+// rendered seed/delta text (the discussion, so the reviewer doesn't repeat it).
+func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubContext) string {
 	isPR := p.Issue.PullRequest != nil
 	owner, repo := p.Repository.Owner.Login, p.Repository.Name
+	snap := gh.snap
 
 	// A PR follow-up that asks for no work (review/implement) is CONVERSATIONAL —
 	// "which finding matters most?", "what did you mean?". Answer it directly from
@@ -1000,10 +948,11 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		fmt.Fprintf(&b, "GitHub user @%s asked a follow-up on %s/%s pull request #%d (pull_number=%d).\n\n",
 			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)
 		fmt.Fprintf(&b, "Their message:\n%s\n\n", task)
-		// Inject the PR thread so the answer doesn't depend on session continuity
-		// alone (#456). The triggering comment is dropped — it's quoted above.
-		if ds := discussionSummary(excludeComment(rc.discussion, p.Comment.ID)); ds != "" {
-			fmt.Fprintf(&b, "The conversation so far on this pull request (your own prior reviews/answers included):\n%s\n", ds)
+		// Inject the loaded context so the answer doesn't depend on session
+		// continuity alone (#456) — the full discussion on first load, or just
+		// what's new since the last dispatch on resume (#459).
+		if gh.text != "" {
+			fmt.Fprintf(&b, "The conversation so far on this pull request (your own prior reviews/answers included):\n%s\n", gh.text)
 		}
 		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from the conversation above and any review you already posted. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.\n\n")
 		b.WriteString("If — and only if — their message explicitly corrects a SPECIFIC finding you posted on THIS pull request as a FALSE POSITIVE (wrong, not a real issue), call correct_review_finding BEFORE replying, with the finding you got wrong and their reason — so the next review of similar code doesn't repeat it. Do not call it for anything else (general questions, disagreement without a concrete reason, or findings that still stand).")
@@ -1019,11 +968,11 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 	if base == "" {
 		base = "main"
 	}
-	diffBase := rc.meta.BaseRef
+	diffBase := snap.BaseRef
 	if diffBase == "" {
 		diffBase = base
 	}
-	headSHA := rc.meta.HeadSHA
+	headSHA := snap.HeadSHA
 	if headSHA == "" {
 		headSHA = "HEAD"
 	}
@@ -1031,14 +980,12 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 	fmt.Fprintf(&b, "You are handling a request from GitHub user @%s, who mentioned you on %s/%s %s #%d.\n\n",
 		p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
 	fmt.Fprintf(&b, "Their request:\n%s\n\n", task)
-	// A conversational/plan mention on an issue: give the model the discussion it
-	// is replying INTO, not just the triggering comment (#456). Skipped for PRs
-	// (their thread rides the durable session) and label-driven synthetics (whose
-	// task already carries the plan/discussion via planTask/implementTask).
-	if !isPR && !p.isLabelTrigger {
-		if tc := issueThreadContext(p, thread); tc != "" {
-			fmt.Fprintf(&b, "For context, here is the issue and the discussion so far:\n%s\n", tc)
-		}
+	// An issue's loaded context: the full thread on first load, just the delta
+	// on resume (#459) — injected the SAME way for every trigger (mention,
+	// quack:plan, quack:implement), unlike the old issueThreadContext/
+	// implementTask split (#459 §7 — consolidate, don't duplicate).
+	if !isPR && gh.text != "" {
+		fmt.Fprintf(&b, "For context, here is the issue and the discussion so far:\n%s\n", gh.text)
 	}
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q, clone URL %s). Declare it in your plan's `setup` "+
 		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) — the harness "+
@@ -1054,29 +1001,47 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, rc reviewCont
 		owner, repo, base, p.Repository.CloneURL, base)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d).\n\n", p.Issue.Number, p.Issue.Number)
-		if t := strings.TrimSpace(rc.meta.Title); t != "" {
+		if t := strings.TrimSpace(snap.Title); t != "" {
 			fmt.Fprintf(&b, "PR title: %s\n", t)
 		}
-		if body := strings.TrimSpace(rc.meta.Body); body != "" {
+		if body := strings.TrimSpace(snap.Body); body != "" {
 			fmt.Fprintf(&b, "PR description:\n%s\n", truncate(body, 1500))
 		}
-		if s := changedFilesSummary(rc.files); s != "" {
+		if s := changedFilesSummary(snap.Files); s != "" {
 			b.WriteString("\n" + s)
 		}
-		if s := discussionSummary(rc.discussion); s != "" {
-			b.WriteString("\nExisting discussion — take it into account, do NOT repeat it:\n" + s)
+		if gh.text != "" {
+			label := "Existing discussion — take it into account, do NOT repeat it:\n"
+			if !gh.firstLoad {
+				label = "" // gh.text is already framed as a "since your last look" delta below
+			}
+			b.WriteString("\n" + label + gh.text)
 		}
 		b.WriteString("\n")
-		if rc.meta.HeadRef != "" {
+		if snap.HeadRef != "" {
 			// The clone (already your workspace root — no `cd` needed) only holds
 			// the BASE branch (shallow), where `git diff base...HEAD` is EMPTY.
 			// Check out the head branch to see the changes.
 			fmt.Fprintf(&b, "The clone is your workspace root already. The PR's changes are on branch `%s` (head commit `%s`), based on `%s`. The clone only has the base branch, so `git diff %s...HEAD` is EMPTY until you check out the head: run git_checkout `%s` FIRST (fetch/unshallow if needed), then `git_diff %s...%s` is exactly this PR's diff. Do this before reviewing — the base branch alone shows no changes. ",
-				rc.meta.HeadRef, headSHA, diffBase, diffBase, rc.meta.HeadRef, diffBase, rc.meta.HeadRef)
+				snap.HeadRef, headSHA, diffBase, diffBase, snap.HeadRef, diffBase, snap.HeadRef)
 		}
-		if rc.prevReviewSHA != "" {
-			fmt.Fprintf(&b, "You previously reviewed this pull request at commit `%s`. The current head is `%s`. Focus your review on what changed since then — use git_diff %s..%s (or git log %s..%s) — and take the existing review discussion into account; do NOT repeat findings you already made. ",
-				rc.prevReviewSHA, headSHA, rc.prevReviewSHA, headSHA, rc.prevReviewSHA, headSHA)
+		// Incremental review, rebase-safe (#459 §5): gh.newCommits is non-nil
+		// only on a resume (see loadGithubContext) — the commits whose
+		// patch-id is genuinely new since the last dispatch, computed
+		// independently of SHA (a rebase/force-push rewrites every SHA even
+		// when the underlying patch is unchanged).
+		if !gh.firstLoad {
+			switch len(gh.newCommits) {
+			case 0:
+				b.WriteString("You have already looked at every commit currently on this pull request (by content — a rebase or force-push may have changed their SHAs without changing what they do). There is no new work to review; only respond to the discussion above. ")
+			default:
+				shas := make([]string, 0, len(gh.newCommits))
+				for _, c := range gh.newCommits {
+					shas = append(shas, shortSHA(c.SHA))
+				}
+				fmt.Fprintf(&b, "Focus your review on what's NEW since you last looked — %d commit(s) not seen before (by content, robust to any rebase/force-push): %s. Use `git show <sha>` for each rather than re-reviewing the whole PR, and take the existing review discussion into account — do NOT repeat findings you already made. ",
+					len(gh.newCommits), strings.Join(shas, ", "))
+			}
 		}
 		lead := "If the request is to REVIEW this PR: read its changes"
 		if reviewOnly {

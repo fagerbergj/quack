@@ -152,6 +152,38 @@ func TestSetChatGitHub(t *testing.T) {
 	}
 }
 
+// TestGithubSnapshotRoundTrip pins the #459 snapshot store: no row yet reads
+// as (ok=false, no error), a set is readable back verbatim, and a second set
+// updates in place (one row per chat, not a growing history).
+func TestGithubSnapshotRoundTrip(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	id := "github-acme-widgets-7"
+
+	if _, ok, err := st.GetGithubSnapshot(ctx, id); err != nil || ok {
+		t.Fatalf("GetGithubSnapshot before any Set: ok=%v err=%v; want (false, nil)", ok, err)
+	}
+
+	if err := st.SetGithubSnapshot(ctx, id, `{"title":"v1"}`); err != nil {
+		t.Fatalf("SetGithubSnapshot (create): %v", err)
+	}
+	got, ok, err := st.GetGithubSnapshot(ctx, id)
+	if err != nil || !ok || got != `{"title":"v1"}` {
+		t.Fatalf("GetGithubSnapshot after create: got=%q ok=%v err=%v", got, ok, err)
+	}
+
+	if err := st.SetGithubSnapshot(ctx, id, `{"title":"v2"}`); err != nil {
+		t.Fatalf("SetGithubSnapshot (update): %v", err)
+	}
+	got, ok, err = st.GetGithubSnapshot(ctx, id)
+	if err != nil || !ok || got != `{"title":"v2"}` {
+		t.Fatalf("GetGithubSnapshot after update: got=%q ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestStoreUnknownKind(t *testing.T) {
 	if _, err := New("mysql", "x"); err == nil {
 		t.Error("New should reject an unknown store kind")

@@ -400,6 +400,7 @@ func (a *App) listIssueComments(ctx context.Context, owner, repo string, number 
 		Body      string    `json:"body"`
 		User      ghUserRef `json:"user"`
 		CreatedAt string    `json:"created_at"`
+		UpdatedAt string    `json:"updated_at"`
 	}
 	path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, number)
 	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &raw); err != nil {
@@ -407,9 +408,98 @@ func (a *App) listIssueComments(ctx context.Context, owner, repo string, number 
 	}
 	out := make([]commentView, 0, len(raw))
 	for _, c := range raw {
-		out = append(out, commentView{ID: c.ID, NodeID: c.NodeID, Body: c.Body, User: c.User.Login, CreatedAt: c.CreatedAt})
+		out = append(out, commentView{ID: c.ID, NodeID: c.NodeID, Body: c.Body, User: c.User.Login, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt})
 	}
 	return out, nil
+}
+
+// issueMeta fetches an issue or PR's title/body/state/labels via the issues
+// endpoint (GitHub treats a PR as an issue for this purpose too, but omits PR
+// -only fields like head/base — see pullMeta for those). This is the
+// issue-side half of a snapshot fetch (snapshot.go); pullMeta covers PRs.
+func (a *App) issueMeta(ctx context.Context, owner, repo string, number int) (title, body, state string, labels []string, err error) {
+	tok, terr := a.tokenForRepo(ctx, owner, repo)
+	if terr != nil {
+		return "", "", "", nil, terr
+	}
+	var out struct {
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		State  string `json:"state"`
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, number)
+	if err = a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return "", "", "", nil, err
+	}
+	labels = make([]string, 0, len(out.Labels))
+	for _, l := range out.Labels {
+		labels = append(labels, l.Name)
+	}
+	return out.Title, out.Body, out.State, labels, nil
+}
+
+// prCommitView is one commit in a PR's commit list (from pulls/{n}/commits) —
+// just enough to derive its rebase-stable patch-id (snapshot.go).
+type prCommitView struct {
+	SHA     string
+	Message string
+}
+
+// listPRCommits fetches a PR's current commit list (per_page=250 — PRs beyond
+// that are rare and the incremental-review delta just sees fewer of them).
+func (a *App) listPRCommits(ctx context.Context, owner, repo string, number int) ([]prCommitView, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/commits?per_page=250", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]prCommitView, 0, len(raw))
+	for _, c := range raw {
+		out = append(out, prCommitView{SHA: c.SHA, Message: c.Commit.Message})
+	}
+	return out, nil
+}
+
+// commitDiff fetches one commit's unified diff (Accept: vnd.github.v3.diff,
+// not doJSON's usual +json — a raw text response, not a JSON envelope). This
+// is the input `git patch-id` needs to compute a rebase-stable commit
+// identity (snapshot.go) — no local clone required, patch-id reads a diff
+// from stdin.
+func (a *App) commitDiff(ctx context.Context, owner, repo, sha string) (string, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/commits/%s", a.apiBase, owner, repo, sha)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("github: build commit diff request: %w", err)
+	}
+	req.Header.Set("Authorization", "token "+tok)
+	req.Header.Set("Accept", "application/vnd.github.v3.diff")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("github: commit diff %s: %w", sha, err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("github: commit diff %s: status %d: %s", sha, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return string(data), nil
 }
 
 // doGraphQL executes one authenticated GraphQL query/mutation against
@@ -624,13 +714,16 @@ type reviewCommentView struct {
 
 // commentView is one top-level conversation comment (from issues/{n}/comments).
 // NodeID is its GraphQL id, needed only to minimizeComment it; "" for
-// call sites (like listPRDiscussion's) that don't fetch it.
+// call sites (like listPRDiscussion's) that don't fetch it. UpdatedAt is what
+// the snapshot diff (snapshot.go) uses to detect an edited comment — GitHub
+// bumps it on any body edit, unchanged otherwise.
 type commentView struct {
 	ID        int64  `json:"id"`
 	NodeID    string `json:"node_id,omitempty"`
 	Body      string `json:"body"`
 	User      string `json:"user"`
 	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 // reviewView is one submitted review (from pulls/{n}/reviews).
@@ -742,10 +835,16 @@ type prMeta struct {
 	BaseRef string
 	Title   string
 	Body    string
+	// State/Labels round out prMeta into the full PR object a snapshot fetch
+	// needs (snapshot.go) — the pulls/{n} endpoint already returns both, so
+	// snapshot fetch doesn't need issueMeta's separate /issues/{n} call for a PR.
+	State  string
+	Labels []string
 }
 
-// pullMeta fetches a PR's head ref/sha, base ref, title and description — the
-// git coordinates the reviewer needs plus the intent the planner needs.
+// pullMeta fetches a PR's head ref/sha, base ref, title, description,
+// state and labels — the git coordinates the reviewer needs plus the intent
+// and status the planner/snapshot needs.
 func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prMeta, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -754,6 +853,7 @@ func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prM
 	var out struct {
 		Title string `json:"title"`
 		Body  string `json:"body"`
+		State string `json:"state"`
 		Head  struct {
 			Ref string `json:"ref"`
 			SHA string `json:"sha"`
@@ -761,12 +861,22 @@ func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prM
 		Base struct {
 			Ref string `json:"ref"`
 		} `json:"base"`
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number)
 	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
 		return prMeta{}, err
 	}
-	return prMeta{HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref, Title: out.Title, Body: out.Body}, nil
+	labels := make([]string, 0, len(out.Labels))
+	for _, l := range out.Labels {
+		labels = append(labels, l.Name)
+	}
+	return prMeta{
+		HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref,
+		Title: out.Title, Body: out.Body, State: out.State, Labels: labels,
+	}, nil
 }
 
 // changedFile is one file in a PR's diff — path + churn, enough for the planner
