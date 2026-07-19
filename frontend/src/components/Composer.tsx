@@ -62,28 +62,33 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
       {queue != null && queue.length > 0 && (
-        <ul className="flex flex-col gap-1.5 mb-3" aria-label="Queued messages">
+        <div className="flex flex-col gap-2 mb-3" aria-label="Queued messages">
           {queue.map(item => (
-            <li
-              key={item.id}
-              className="flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 pl-3 pr-1.5 py-1 text-xs text-gray-600 dark:text-gray-300"
-            >
-              <span className="flex-shrink-0 text-gray-400 dark:text-gray-500">queued</span>
-              <span className="flex-1 min-w-0 truncate">{item.text}</span>
-              {onRemoveQueued && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveQueued(item.id)}
-                  aria-label="Remove queued message"
-                  title="Remove"
-                  className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 dark:text-gray-500 dark:hover:text-red-400 dark:hover:bg-red-950/30 transition-colors"
-                >
-                  ✕
-                </button>
-              )}
-            </li>
+            // Looks like the user's own message bubble, just grayed out with a
+            // "queued" hint — not a separate pill design.
+            <div key={item.id} className="group flex justify-end">
+              <div className="max-w-2xl ml-auto">
+                <div className="bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                  {item.text}
+                </div>
+                <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  <span>queued</span>
+                  {onRemoveQueued && (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveQueued(item.id)}
+                      aria-label="Remove queued message"
+                      title="Remove"
+                      className="opacity-0 group-hover:opacity-100 hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
+                    >
+                      remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
       <form onSubmit={e => { e.preventDefault(); submit() }} className="flex flex-col gap-2">
         <AttachmentStrip
