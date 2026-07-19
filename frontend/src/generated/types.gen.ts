@@ -5,6 +5,21 @@ export type ClientOptions = {
 };
 
 /**
+ * A discovery document (in the spirit of an OIDC discovery document or a SCIM ServiceProviderConfig) describing which optional extensions this server has configured. Each capability is its own object rather than a bare boolean so it can grow fields later without changing shape.
+ *
+ */
+export type Capabilities = {
+    github: GitHubCapability;
+};
+
+/**
+ * The GitHub App extension (internal/github) — repo-linked chats, webhook dispatch, PR/issue delivery.
+ */
+export type GitHubCapability = {
+    enabled: boolean;
+};
+
+/**
  * A chat's derived state: `running` while a turn is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny — the workspace.guards confirm tier — or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
  *
  */
@@ -220,6 +235,22 @@ export type HealthCheckResponses = {
 };
 
 export type HealthCheckResponse = HealthCheckResponses[keyof HealthCheckResponses];
+
+export type GetCapabilitiesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/capabilities';
+};
+
+export type GetCapabilitiesResponses = {
+    /**
+     * The server's enabled capabilities
+     */
+    200: Capabilities;
+};
+
+export type GetCapabilitiesResponse = GetCapabilitiesResponses[keyof GetCapabilitiesResponses];
 
 export type ListChatsData = {
     body?: never;

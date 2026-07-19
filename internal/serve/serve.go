@@ -516,7 +516,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	}
 
 	handler = server.New(server.Options{
-		REST:       rest.NewHandler(st, orch, llm, jail, runHub),
+		REST:       rest.NewHandler(st, orch, llm, jail, runHub, cfg.Extensions.GitHub != nil),
 		MCP:        mcpserver.Handler(orch),
 		SPA:        spa,
 		Extensions: extensions,

@@ -24,6 +24,18 @@ paths:
               schema:
                 type: string
 
+  /api/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Which optional extensions are enabled
+      responses:
+        "200":
+          description: The server's enabled capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+
   /api/v1/chats:
     get:
       operationId: listChats
@@ -323,6 +335,30 @@ components:
         type: string
 
   schemas:
+
+    # -------------------------------------------------------------------------
+    # Capabilities
+    # -------------------------------------------------------------------------
+
+    Capabilities:
+      type: object
+      description: >
+        A discovery document (in the spirit of an OIDC discovery document or a
+        SCIM ServiceProviderConfig) describing which optional extensions this
+        server has configured. Each capability is its own object rather than a
+        bare boolean so it can grow fields later without changing shape.
+      required: [github]
+      properties:
+        github:
+          $ref: "#/components/schemas/GitHubCapability"
+
+    GitHubCapability:
+      type: object
+      description: The GitHub App extension (internal/github) — repo-linked chats, webhook dispatch, PR/issue delivery.
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
 
     # -------------------------------------------------------------------------
     # Chat

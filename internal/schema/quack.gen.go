@@ -205,6 +205,12 @@ type AgentActivityOutputItem struct {
 // AgentActivityOutputItemType defines model for AgentActivityOutputItem.Type.
 type AgentActivityOutputItemType string
 
+// Capabilities A discovery document (in the spirit of an OIDC discovery document or a SCIM ServiceProviderConfig) describing which optional extensions this server has configured. Each capability is its own object rather than a bare boolean so it can grow fields later without changing shape.
+type Capabilities struct {
+	// Github The GitHub App extension (internal/github) — repo-linked chats, webhook dispatch, PR/issue delivery.
+	Github GitHubCapability `json:"github"`
+}
+
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
 	CreatedAt time.Time `json:"created_at"`
@@ -321,6 +327,11 @@ type DagOutputItem struct {
 
 // DagOutputItemType defines model for DagOutputItem.Type.
 type DagOutputItemType string
+
+// GitHubCapability The GitHub App extension (internal/github) — repo-linked chats, webhook dispatch, PR/issue delivery.
+type GitHubCapability struct {
+	Enabled bool `json:"enabled"`
+}
 
 // ItemStatus defines model for ItemStatus.
 type ItemStatus string
@@ -682,6 +693,9 @@ func (t *OutputItem) UnmarshalJSON(b []byte) error {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Which optional extensions are enabled
+	// (GET /api/v1/capabilities)
+	GetCapabilities(w http.ResponseWriter, r *http.Request)
 	// List chats
 	// (GET /api/v1/chats)
 	ListChats(w http.ResponseWriter, r *http.Request)
@@ -717,6 +731,12 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// Which optional extensions are enabled
+// (GET /api/v1/capabilities)
+func (_ Unimplemented) GetCapabilities(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // List chats
 // (GET /api/v1/chats)
@@ -786,6 +806,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetCapabilities operation middleware
+func (siw *ServerInterfaceWrapper) GetCapabilities(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCapabilities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListChats operation middleware
 func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Request) {
@@ -1151,6 +1185,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/capabilities", wrapper.GetCapabilities)
+	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats", wrapper.ListChats)
 	})

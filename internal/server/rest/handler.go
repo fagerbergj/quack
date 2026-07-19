@@ -80,17 +80,27 @@ type Handler struct {
 	hub           *stream.Hub      // fans a chat's run to extra subscribers (other devices)
 	eventLog      *runlog.EventLog // durably persists the run stream, backing replay across restarts
 	activeCancels sync.Map         // chatID → *activeRun
+	githubEnabled bool             // extensions.github configured (config.Extensions.GitHub != nil)
 }
 
 // NewHandler builds a REST handler. jail may be nil (no workspace configured).
 // hub may be nil to get a private hub; pass a shared *stream.Hub (e.g. from
 // internal/serve) when another driver of runs on the same chats — such as the
 // GitHub webhook dispatcher — needs live subscribers to see the same events.
-func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub) *Handler {
+func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, githubEnabled bool) *Handler {
 	if hub == nil {
 		hub = stream.NewHub()
 	}
-	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s)}
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), githubEnabled: githubEnabled}
+}
+
+// GetCapabilities reports which optional extensions this server has configured
+// (a discovery document, in the spirit of an OIDC discovery document or SCIM
+// ServiceProviderConfig) so the frontend can conditionally render extension UI.
+func (h *Handler) GetCapabilities(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, schema.Capabilities{
+		Github: schema.GitHubCapability{Enabled: h.githubEnabled},
+	})
 }
 
 func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
