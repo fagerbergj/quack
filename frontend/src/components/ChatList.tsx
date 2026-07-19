@@ -110,7 +110,14 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
             onClick={() => onSelect(s.id)}
             className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
           >
-            <span title={s.title || 'New chat'} className="flex items-center gap-1.5 pr-6">
+            <span title={s.title || 'New chat'} className="block pr-6">
+              <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
+                {s.title || 'New chat'}
+              </span>
+            </span>
+            {/* Badge row below the title: always rendered (even with no badges)
+                so every row reserves the same vertical space and stays aligned. */}
+            <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
               {isGithubChat(s) && (
                 <span
                   title={s.github_repo ? `GitHub · ${s.github_repo}` : 'GitHub-originated chat'}
@@ -120,10 +127,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                   GH
                 </span>
               )}
-              <span className={`text-sm truncate ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-                {s.title || 'New chat'}
-              </span>
-            </span>
+            </div>
             <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
             <button
               onClick={e => onDelete(s.id, e)}
