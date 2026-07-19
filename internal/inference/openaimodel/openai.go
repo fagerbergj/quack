@@ -287,12 +287,25 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 					rb.WriteString(p.Text)
 				}
 			}
-			if calls, _ := reasoningToolCalls(rb.String()); len(calls) > 0 {
+			if calls, cleaned := reasoningToolCalls(rb.String()); len(calls) > 0 {
+				// A leaked block can span several streamed thought parts, so per-part
+				// regex stripping leaves residue — re-emit the cleaned reasoning as
+				// one thought part in place of the originals.
+				rebuilt := make([]*genai.Part, 0, len(aggregatedContent.Parts)+len(calls))
+				thoughtReplaced := false
 				for _, p := range aggregatedContent.Parts {
 					if p.Thought && p.Text != "" {
-						p.Text = toolCallRe.ReplaceAllString(p.Text, "")
+						if !thoughtReplaced {
+							thoughtReplaced = true
+							if strings.TrimSpace(cleaned) != "" {
+								rebuilt = append(rebuilt, &genai.Part{Text: cleaned, Thought: true})
+							}
+						}
+						continue
 					}
+					rebuilt = append(rebuilt, p)
 				}
+				aggregatedContent.Parts = rebuilt
 				for _, c := range calls {
 					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{FunctionCall: c})
 				}
@@ -618,14 +631,29 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 			var text string
 			if err := json.Unmarshal([]byte(raw), &text); err == nil && text != "" {
 				reasoningText = text
-				content.Parts = append(content.Parts, &genai.Part{Text: text, Thought: true})
 			}
 		}
 	}
 
+	// Same recovery as the streaming path: qwen leaks <tool_call> XML into
+	// reasoning_content. Remap it into real function calls BEFORE the
+	// empty-content fallback below, so the raw XML is never promoted to the answer.
+	var recovered []*genai.FunctionCall
+	if reasoningText != "" && len(choice.Message.ToolCalls) == 0 {
+		var cleaned string
+		if recovered, cleaned = reasoningToolCalls(reasoningText); len(recovered) > 0 {
+			reasoningText = cleaned
+			slog.Warn("recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
+				"component", "inference", "model", resp.Model, "count", len(recovered))
+		}
+	}
+	if reasoningText != "" {
+		content.Parts = append(content.Parts, &genai.Part{Text: reasoningText, Thought: true})
+	}
+
 	if strings.TrimSpace(choice.Message.Content) != "" {
 		content.Parts = append(content.Parts, &genai.Part{Text: choice.Message.Content})
-	} else if reasoningText != "" && len(choice.Message.ToolCalls) == 0 {
+	} else if reasoningText != "" && len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 {
 		// Content-side of #22684 (non-streaming path): the synthesized answer
 		// sometimes lands entirely inside reasoning_content, leaving content
 		// empty. Promote the reasoning to the answer instead of dropping it — a
@@ -647,6 +675,9 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 				},
 			})
 		}
+	}
+	for _, c := range recovered {
+		content.Parts = append(content.Parts, &genai.Part{FunctionCall: c})
 	}
 
 	var usageMetadata *genai.GenerateContentResponseUsageMetadata
@@ -844,18 +875,28 @@ func parseJSONArgs(argsJSON string) map[string]any {
 // toolCallRe matches a Hermes-style <tool_call>{json}</tool_call> block.
 var toolCallRe = regexp.MustCompile(`(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>`)
 
+// toolCallXMLRe matches qwen's other leak format inside <tool_call>:
+//
+//	<function=web_fetch>
+//	<parameter=url>
+//	https://…
+//	</parameter>
+//	</function>
+var toolCallXMLRe = regexp.MustCompile(`(?s)<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>`)
+
+// paramRe matches one <parameter=name>value</parameter> entry; values may span lines.
+var paramRe = regexp.MustCompile(`(?s)<parameter=([^>]+)>\s*(.*?)\s*</parameter>`)
+
 // reasoningToolCalls recovers tool calls that Qwen3.x streamed inside
 // reasoning_content as <tool_call> XML instead of delta.tool_calls
-// (llama.cpp#22684, closed not-planned — so the client must parse them). Without
-// this the agent sees no tool call and an empty answer, and the node stalls empty.
-// Returns the parsed calls and the reasoning with those blocks removed.
+// (llama.cpp#22684, closed not-planned — so the client must parse them). Both
+// the Hermes JSON form and qwen's <function>/<parameter> form are handled.
+// Without this the agent sees no tool call and an empty answer, and the node
+// stalls empty. Returns the parsed calls and the reasoning with those blocks removed.
 func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
-	matches := toolCallRe.FindAllStringSubmatch(reasoning, -1)
-	if len(matches) == 0 {
-		return nil, reasoning
-	}
 	var calls []*genai.FunctionCall
-	for i, m := range matches {
+
+	for _, m := range toolCallRe.FindAllStringSubmatch(reasoning, -1) {
 		var tc struct {
 			Name      string         `json:"name"`
 			Arguments map[string]any `json:"arguments"`
@@ -864,10 +905,39 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 			continue
 		}
 		calls = append(calls, &genai.FunctionCall{
-			ID:   fmt.Sprintf("rtc_%d_%s", i, tc.Name),
+			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), tc.Name),
 			Name: tc.Name,
 			Args: tc.Arguments,
 		})
 	}
-	return calls, toolCallRe.ReplaceAllString(reasoning, "")
+
+	for _, m := range toolCallXMLRe.FindAllStringSubmatch(reasoning, -1) {
+		name := strings.TrimSpace(m[1])
+		if name == "" {
+			continue
+		}
+		args := map[string]any{}
+		for _, pm := range paramRe.FindAllStringSubmatch(m[2], -1) {
+			raw := strings.TrimSpace(pm[2])
+			var v any
+			// JSON-typed values (numbers, bools, objects) keep their type, as
+			// in qwen-agent's own converter; anything unparseable stays a string.
+			if json.Unmarshal([]byte(raw), &v) == nil {
+				args[strings.TrimSpace(pm[1])] = v
+			} else {
+				args[strings.TrimSpace(pm[1])] = raw
+			}
+		}
+		calls = append(calls, &genai.FunctionCall{
+			ID:   fmt.Sprintf("rtc_%d_%s", len(calls), name),
+			Name: name,
+			Args: args,
+		})
+	}
+
+	if len(calls) == 0 {
+		return nil, reasoning
+	}
+	cleaned := toolCallXMLRe.ReplaceAllString(toolCallRe.ReplaceAllString(reasoning, ""), "")
+	return calls, cleaned
 }
