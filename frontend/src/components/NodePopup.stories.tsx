@@ -18,7 +18,8 @@ const node: DagNodeDef = {
   depends_on: [],
 }
 
-// The rendered-markdown prompt, no controls (a completed/historical turn).
+// The prompt renders through the same BubbleHeader + AssistantText markdown
+// treatment as a chat bubble — no controls (a completed/historical turn).
 export const ReadOnly: Story = {
   args: {
     node,
@@ -27,18 +28,18 @@ export const ReadOnly: Story = {
   },
 }
 
-// A not-yet-started node: the prompt is editable.
+// A not-yet-started node: the prompt is editable. Pause/cancel now live in
+// DagNode's ⋮ menu, not here.
 export const PendingEditablePrompt: Story = {
   args: {
     node,
     state: { status: 'queued' },
     onClose: () => {},
     onEditTask: () => {},
-    onCancel: () => {},
   },
 }
 
-// A running node: cancel/pause + the queue input, with one queued message.
+// A running node: the queue input + history, one queued message pending.
 export const RunningWithQueue: Story = {
   args: {
     node,
@@ -50,21 +51,40 @@ export const RunningWithQueue: Story = {
       ],
     },
     onClose: () => {},
-    onCancel: () => {},
-    onPause: () => {},
     onQueueMessage: () => {},
     onEditQueuedMessage: () => {},
     onRemoveQueuedMessage: () => {},
   },
 }
 
-// A paused node: resume + cancel.
+// A paused node — resume/cancel live in the ⋮ menu; the popup shows only the
+// prompt.
 export const PausedResumable: Story = {
   args: {
     node,
     state: { status: 'paused' },
     onClose: () => {},
-    onCancel: () => {},
-    onResume: () => {},
+  },
+}
+
+// #401 HITL follow-up: a needs_input node surfaces its pending question as its
+// own chat-style bubble, with the SAME input widget the queue uses — now
+// wired to answer (resumes the node) instead of queue.
+export const NeedsInputAnswerable: Story = {
+  args: {
+    node,
+    state: { status: 'needs_input', question: 'Should I include hostel prices, or hotels only?' },
+    onClose: () => {},
+    onAnswerQuestion: () => {},
+  },
+}
+
+// If the resume wiring isn't available (e.g. a historical/reloaded turn), the
+// question still surfaces, read-only — never blocked on backend work.
+export const NeedsInputReadOnly: Story = {
+  args: {
+    node,
+    state: { status: 'needs_input', question: 'Should I include hostel prices, or hotels only?' },
+    onClose: () => {},
   },
 }

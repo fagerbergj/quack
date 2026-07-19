@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within, userEvent } from 'storybook/test'
 import { DagNode } from './DagNode'
 import type { DagNodeDef } from '../state/agentStream'
 import type { AgentRun, Activity } from './messageParts'
@@ -48,7 +49,10 @@ const judgeRun = (round: number, score: number, passed: boolean, feedback: strin
 // ---- stories ----------------------------------------------------------------
 
 export const Queued: Story = {
-  args: { node: wrNode, state: { status: 'queued' }, runs: [], answer: '', isFinal: false },
+  args: {
+    node: wrNode, state: { status: 'queued' }, runs: [], answer: '', isFinal: false,
+    onCancel: () => {}, onEditTask: () => {},
+  },
 }
 
 export const Running: Story = {
@@ -65,6 +69,9 @@ export const Running: Story = {
       }]}
       answer=""
       isFinal={false}
+      onCancel={() => {}}
+      onPause={() => {}}
+      onQueueMessage={() => {}}
     />
   ),
 }
@@ -255,5 +262,93 @@ export const LongContentManyRounds: Story = {
     ],
     answer: longAnswer,
     isFinal: true,
+  },
+}
+
+// ---- 0.9.0: ⋮ overflow menu + needs_input (#384/#265 follow-up) ------------
+
+// A mid-node HITL question (StatusDot amber, matching needs_input everywhere
+// else in the app) — answering it happens in the popup (menu → "Answer
+// question…"), not here.
+export const NeedsInput: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'needs_input', question: 'Should I include hostel prices, or hotels only?', startedAt: Date.now() - 6_000 },
+    runs: [{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity.slice(0, 1) }],
+    answer: '',
+    isFinal: false,
+    onCancel: () => {},
+    onAnswerQuestion: () => {},
+  },
+}
+
+// The ⋮ menu opened on a running node: Pause + Cancel one click away, plus
+// "Queue a message…" (opens the popup — it needs the input).
+export const OverflowMenuRunning: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{ status: 'running', startedAt: Date.now() - 12_000 }}
+      runs={[{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity.slice(0, 1) }]}
+      answer=""
+      isFinal={false}
+      onCancel={() => {}}
+      onPause={() => {}}
+      onQueueMessage={() => {}}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Node actions' }))
+  },
+}
+
+// The ⋮ menu opened on a paused node: Resume + Cancel.
+export const OverflowMenuPaused: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{ status: 'paused', startedAt: Date.now() - 20_000 }}
+      runs={[workerDone(researchActivity)]}
+      answer=""
+      isFinal={false}
+      onResume={() => {}}
+      onCancel={() => {}}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Node actions' }))
+  },
+}
+
+// The ⋮ menu opened on a needs_input node: Cancel + "Answer question…".
+export const OverflowMenuNeedsInput: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{ status: 'needs_input', question: 'Should I include hostel prices, or hotels only?', startedAt: Date.now() - 6_000 }}
+      runs={[{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity.slice(0, 1) }]}
+      answer=""
+      isFinal={false}
+      onCancel={() => {}}
+      onAnswerQuestion={() => {}}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Node actions' }))
+  },
+}
+
+// A terminal node (done/failed/cancelled) has no ⋮ menu at all — nothing left
+// to do. Regression guard for the menu's terminal-state hiding.
+export const OverflowMenuHiddenOnTerminal: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 10_000 },
+    runs: [workerDone(researchActivity.slice(0, 1))],
+    answer: 'Best months to visit Dublin: **May–September**.',
+    isFinal: false,
   },
 }

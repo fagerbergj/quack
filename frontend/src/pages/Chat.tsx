@@ -428,6 +428,7 @@ export default function Chat() {
                               onEditQueuedMessage={handleEditQueuedMessage}
                               onRemoveQueuedMessage={handleRemoveQueuedMessage}
                               onEditNodeTask={handleEditNodeTask}
+                              onAnswerNodeQuestion={handleAnswerNode}
                             />
                           </div>
                         )}
