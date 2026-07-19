@@ -509,6 +509,41 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	}
 }
 
+// The plan/answer comment path (dispatch posting e.runner.LatestAnswer directly)
+// is separate from the trust gate's commitDelivery, which only strips staged
+// PR/review bodies (#371) — this proves dispatch ALSO strips an invalid
+// ```mermaid block from the answer before it's posted, not just delivered PRs.
+func TestHandleWebhookStripsInvalidMermaidFromAnswer(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	badAnswer := "Here's the plan:\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nDone."
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: badAnswer}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	var body string
+	select {
+	case body = <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back")
+	}
+	if strings.Contains(body, "```mermaid") {
+		t.Fatalf("posted comment still has the invalid diagram fenced as mermaid: %s", body)
+	}
+	if !strings.Contains(body, "diagram omitted") {
+		t.Fatalf("posted comment = %s, want the omitted-diagram fallback", body)
+	}
+	if !strings.Contains(body, "A[Start]") || !strings.Contains(body, "B[Finish]") {
+		t.Fatalf("posted comment = %s, want the raw source preserved as a plain-text fallback", body)
+	}
+}
+
 // When the run submits a formal review (github_submit_review), the review IS the
 // deliverable on the PR — dispatch must NOT also post the run's text summary as a
 // duplicate top-level comment.
