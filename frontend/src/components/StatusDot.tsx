@@ -30,11 +30,15 @@ export function StatusDot({ status, className = '' }: { status: DotStatus; class
   const color = COLOR[status]
   if (!color) return null
   const label = LABEL[status] ?? status
+  // Running pulses so the single dot conveys "live" on its own — the same
+  // meaning everywhere it appears (chat list + DAG nodes), replacing the
+  // node-only bouncing spinner.
+  const pulse = status === 'running' ? 'animate-pulse' : ''
   return (
     <span
       title={label}
       aria-label={`Status: ${label}`}
-      className={`flex-shrink-0 inline-block w-1.5 h-1.5 rounded-full ${color} ${className}`}
+      className={`flex-shrink-0 inline-block w-1.5 h-1.5 rounded-full ${color} ${pulse} ${className}`}
     />
   )
 }

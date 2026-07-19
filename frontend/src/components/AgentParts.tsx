@@ -224,14 +224,10 @@ function ToolStatusIcon({ tool }: { tool: ToolCall }) {
     : <span className="text-green-600 dark:text-green-400 shrink-0" aria-hidden>✓</span>
 }
 
-// Dots is the three-dot "working" indicator shared by tool calls, run cards, and
-// the live/pending answer bubbles. `size` is a Tailwind w/h class pair.
+// Dots is the "working" indicator shared by tool calls, run cards, and the
+// live/pending answer bubbles — a single pulsating blue dot, matching the
+// running StatusDot so "in flight" reads the same everywhere (no bouncing
+// three-dot spinner). `size` is a Tailwind w/h class pair.
 export function Dots({ className = '', size = 'w-1.5 h-1.5' }: { className?: string; size?: string }) {
-  return (
-    <span className={`flex items-center gap-1 text-gray-400 ${className}`}>
-      <span className={`${size} rounded-full bg-gray-400 animate-bounce [animation-delay:-0.3s]`} />
-      <span className={`${size} rounded-full bg-gray-400 animate-bounce [animation-delay:-0.15s]`} />
-      <span className={`${size} rounded-full bg-gray-400 animate-bounce`} />
-    </span>
-  )
+  return <span className={`flex-shrink-0 inline-block ${size} rounded-full bg-blue-500 animate-pulse ${className}`} aria-label="working" />
 }
