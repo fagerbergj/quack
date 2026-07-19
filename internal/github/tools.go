@@ -634,7 +634,7 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 	if dc.IssueNumber == 0 {
 		dc.IssueNumber = prNumberFromChatID(dc.ChatID)
 	}
-	if dc.Branch != "" && dc.CloneDir != "" {
+	if dc.Branch != "" && dc.CloneDir != "" && stagesPush(dc.Items) {
 		tok, terr := a.tokenForRepo(ctx, owner, repo)
 		if terr != nil {
 			err = fmt.Errorf("github: delivery: %w", terr)
@@ -677,6 +677,20 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 	}
 	err = errors.Join(errs...)
 	return outcomes, err
+}
+
+// stagesPush reports whether any staged item is opened from the work branch.
+// Only a pull_request needs the branch pushed; a review or comment lands on the
+// existing PR/issue via the API and must NEVER push — a force-push of a
+// review-only run once reset the reviewed PR's branch to base HEAD, wiping its
+// commits (#452).
+func stagesPush(items []vetting.StagedDelivery) bool {
+	for _, it := range items {
+		if it.Kind == "pull_request" {
+			return true
+		}
+	}
+	return false
 }
 
 // itemOutcomesForPushFailure reports every staged item as failed with the

@@ -27,6 +27,12 @@ import (
 // probe fires only on setup-provisioned nodes with an empty ledger; memoise per
 // HEAD sha if it ever shows up in a profile.
 func augmentFromRepo(act *workerActivity, cfg Config) {
+	// A read-only reviewer/explorer makes no commits; synthesizing disk state
+	// into a pull_request staging for it would push its (base-HEAD) branch and
+	// reset the reviewed PR, wiping commits (#452).
+	if cfg.ReadOnly {
+		return
+	}
 	if cfg.Setup == nil || cfg.Workspace == nil || act.committed {
 		return
 	}
