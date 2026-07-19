@@ -74,9 +74,9 @@ export const Searchable: Story = {
   args: { chats: CHATS, activeChatId: null },
 }
 
-// A mixed list: GitHub-originated rows carry a repo badge, an Issue/PR badge,
-// and (when not idle) a status pill. Open the funnel to filter by Origin,
-// Status, Repo, or Type.
+// A mixed list: GitHub-originated rows carry a repo badge and an Issue/PR
+// badge — both link out to GitHub — plus (when not idle) a status pill.
+// Filtering by Origin/Status/Repo/Type lives entirely in the funnel popover.
 export const MixedOrigin: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
 }

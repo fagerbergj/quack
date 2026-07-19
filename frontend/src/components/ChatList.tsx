@@ -73,10 +73,6 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
     setFilterState({ selected: { ...selected, [facetKey]: next } })
   }
 
-  function selectOnlyRepo(repo: string) {
-    setFilterState({ selected: { ...selected, repo: [repo] } })
-  }
-
   const facets = computeFacets(chats)
   const filtered = filterChats(chats, filterState)
 
@@ -142,29 +138,33 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                 </span>
               </span>
               {/* Badge row below the title: always rendered (even with no badges)
-                  so every row reserves the same vertical space and stays aligned. */}
+                  so every row reserves the same vertical space and stays aligned.
+                  Repo/Issue/PR badges link out to GitHub — filtering by repo/type
+                  lives entirely in the FilterPanel popover, not on the badges. */}
               <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
                 {isGithubChat(s) && ref && (
-                  <button
-                    onClick={e => {
-                      e.stopPropagation()
-                      selectOnlyRepo(ref.repo)
-                    }}
-                    title={`Filter to ${ref.repo}`}
-                    aria-label={`Filter to repo ${ref.repo}`}
-                    className="flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
+                  <a
+                    href={`https://github.com/${ref.repo}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    title={ref.repo}
+                    className="flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
                   >
                     {ref.repo}
-                  </button>
+                  </a>
                 )}
-                {ref && (
-                  <span
+                {ref && s.github_url && (
+                  <a
+                    href={s.github_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
                     title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-                    aria-label={ref.kind === 'pr' ? `Pull request ${ref.number}` : `Issue ${ref.number}`}
-                    className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                    className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
                   >
                     {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
-                  </span>
+                  </a>
                 )}
                 <StatusBadge status={s.status} />
               </div>
