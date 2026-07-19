@@ -154,7 +154,9 @@ func TestToSummaryGithubFields(t *testing.T) {
 }
 
 // TestChatStatusRunning: the hub having a live topic for the chat wins over
-// everything else (checked first).
+// needs_input/failed/idle (checked before them; queued, checked before running,
+// is orchestrator-only state this test's chat never enters — see
+// TestQueuedReportsAdmittedButNotAcquired in the orchestrator package).
 func TestChatStatusRunning(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

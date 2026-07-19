@@ -65,6 +65,12 @@ type Orchestrator struct {
 	// WITHIN one plan; nothing bounded the number of plans, so a burst of webhooks or
 	// REST calls fanned out unbounded onto one model. nil = no limit.
 	runSem chan struct{}
+	// queuedChats holds the chatIDs currently admitted but still waiting on runSem
+	// (Run() called RunQueued but hasn't acquired a slot yet). Backs Queued, which
+	// the REST status handler checks BEFORE hub.Active — the hub's topic goes
+	// "started" at response_created, published before the semaphore is acquired, so
+	// hub.Active alone can't tell a queued run from an executing one.
+	queuedChats sync.Map // chatID -> struct{}
 }
 
 // SetMaxActiveRuns caps concurrent orchestrator runs server-wide (config
@@ -89,6 +95,13 @@ func (o *Orchestrator) acquireRun(ctx context.Context) (release func(), acquired
 	case <-ctx.Done():
 		return func() {}, false
 	}
+}
+
+// Queued reports whether chatID's run is admitted but still waiting on runSem
+// (queued), as opposed to holding a slot and executing, or not running at all.
+func (o *Orchestrator) Queued(chatID string) bool {
+	_, ok := o.queuedChats.Load(chatID)
+	return ok
 }
 
 // CancelNode stops one running node of the chat's active run (continue-but-warn:
@@ -246,7 +259,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// exit path — including cancelled-while-queued, which never reaches acquired.
 		otelobs.RunQueued()
 		queued := true
+		o.queuedChats.Store(sessionID, struct{}{})
 		defer func() {
+			o.queuedChats.Delete(sessionID)
 			if queued {
 				otelobs.RunUnqueued()
 			} else {
@@ -268,6 +283,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		release, acquired := o.acquireRun(ctx)
 		defer release()
 		if acquired {
+			o.queuedChats.Delete(sessionID)
 			otelobs.RunUnqueued()
 			queued = false
 			otelobs.RunStarted()

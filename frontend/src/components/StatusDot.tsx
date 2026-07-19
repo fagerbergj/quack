@@ -2,9 +2,9 @@ import type { ChatStatus, NodeStatus } from '../generated'
 
 // StatusDot is the app's single "state at a glance" indicator: a bare colored
 // dot, shared by the chat list (ChatList) and DAG nodes (DagNode). Quiet states
-// (idle, queued, done) render nothing — per the same "the common case stays
-// quiet" principle the chat-list dot already followed — so the dot only draws
-// the eye when something needs attention or is in flight.
+// (idle, done) render nothing — per the same "the common case stays quiet"
+// principle the chat-list dot already followed — so the dot only draws the eye
+// when something needs attention or is in flight.
 export type DotStatus = ChatStatus | NodeStatus
 
 const COLOR: Partial<Record<DotStatus, string>> = {
@@ -26,13 +26,21 @@ const LABEL: Partial<Record<DotStatus, string>> = {
   done: 'Done',
 }
 
-export function StatusDot({ status, className = '' }: { status: DotStatus; className?: string }) {
-  const color = COLOR[status]
+export function StatusDot({ status, className = '', variant = 'node' }: {
+  status: DotStatus
+  className?: string
+  // A chat waiting behind max_active_runs is worth flagging (it's a distinct,
+  // in-flight-adjacent state); a DAG node that's merely queued within its own
+  // plan is the common case and stays quiet, per the file-level comment above.
+  // Node status is the default since DagNode is StatusDot's original caller.
+  variant?: 'chat' | 'node'
+}) {
+  const color = status === 'queued' && variant === 'chat' ? 'bg-gray-400 dark:bg-gray-500' : COLOR[status]
   if (!color) return null
   const label = LABEL[status] ?? status
   // Running pulses so the single dot conveys "live" on its own — the same
   // meaning everywhere it appears (chat list + DAG nodes), replacing the
-  // node-only bouncing spinner.
+  // node-only bouncing spinner. Queued never pulses: it isn't actively running.
   const pulse = status === 'running' ? 'animate-pulse' : ''
   return (
     <span

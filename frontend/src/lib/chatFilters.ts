@@ -15,6 +15,7 @@ const FACET_KEYS = ['origin', 'status', 'repo', 'type'] as const
 type FacetKey = (typeof FACET_KEYS)[number]
 
 const STATUS_LABELS: Record<ChatSummary['status'], string> = {
+  queued: 'Queued',
   running: 'Running',
   needs_input: 'Needs input',
   failed: 'Failed',

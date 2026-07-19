@@ -82,12 +82,16 @@ export const MixedOrigin: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
 }
 
-// Non-idle rows (running/failed/needs_input) show a small colored dot right
-// before the title (blue/red/amber); idle rows stay quiet — no dot at all.
+// Non-idle rows (running/failed/needs_input/queued) show a small colored dot
+// right before the title (blue/red/amber/gray); idle rows stay quiet — no dot
+// at all. queued (#417) is gray and non-pulsing — admitted but still waiting
+// on the server's max_active_runs slot, distinct from the pulsing blue
+// running dot for the one chat actually executing.
 export const StatusDots: Story = {
   args: {
     chats: [
       chat('running-1', 'Currently streaming', 'running'),
+      chat('queued-1', 'Waiting behind the run cap', 'queued'),
       chat('failed-1', 'Hit an error', 'failed'),
       chat('waiting-1', 'Paused on a question', 'needs_input'),
       chat('idle-1', 'Nothing going on', 'idle'),
