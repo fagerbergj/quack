@@ -34,8 +34,8 @@ Verification.
 
 ## Description — answer what the diff can't
 
-Every description answers **what** changed, **why**, and **how to verify** it. Add
-the rest as the change warrants:
+Every description answers **what** changed, **why**, and **how to verify** it.
+Write it concrete over generic, no ceremony. Add the rest as the change warrants:
 
 - **Why** — the problem and context (one paragraph). Without it the reviewer guesses.
 - **What** — the change at a glance. For several commits, a short list in reading order.
