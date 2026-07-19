@@ -8,9 +8,10 @@ import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef } from 'react'
 import type { Activity, ToolCall } from './messageParts'
 import { agentLabel } from './messageParts'
-import { summarizeArgs, previewLine, toolFailed } from './toolFormat'
+import { summarizeArgs, previewLine, toolFailed, copyPayload } from './toolFormat'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
+import { CopyButton } from './CopyButton'
 
 // Answer text is Markdown that may embed a little raw HTML — notably the
 // collapsible `<details><summary>Sources</summary>…</details>` block the
@@ -30,6 +31,18 @@ export * from './messageParts'
 // RECENT is how many of a run's most recent activity items stay visible; older
 // ones fold into a "⋯ N earlier" toggle so a long run stays scannable.
 const RECENT = 3
+
+// ACP_AGENTS mirrors config/quack.yaml's acp-bound bundles (code-implementer,
+// code-reviewer, code-explorer) — the only agents whose tool calls arrive over
+// the Agent Client Protocol, remapped by internal/acp/translate.go rather than
+// invoked as a native quack tool. There's no per-call wire marker (#404) — the
+// agent name is already threaded onto every run and ACP/native bundles never
+// overlap, so it's a clean, no-backend-change signal for the "ACP" badge.
+const ACP_AGENTS = new Set(['code-implementer', 'code-reviewer', 'code-explorer'])
+
+export function isAcpAgent(agent?: string): boolean {
+  return !!agent && ACP_AGENTS.has(agent)
+}
 
 // CopyablePre wraps a fenced code block in a relative container with a one-click
 // copy button. rehype-highlight runs AFTER sanitize (see AssistantText), so the
@@ -93,7 +106,7 @@ export function BubbleHeader({ agent, model, tokens }: { agent: string; model?: 
 // ActivityList renders a run's ordered activity (thinking + tool calls), windowed
 // to the most recent few. Keys index into the append-only list so streaming
 // reconciliation stays stable.
-export function ActivityList({ activity }: { activity: Activity[] }) {
+export function ActivityList({ activity, agent }: { activity: Activity[]; agent?: string }) {
   const [showAll, setShowAll] = useState(false)
   const hidden = Math.max(0, activity.length - RECENT)
   const start = showAll ? 0 : hidden
@@ -110,9 +123,25 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
       {activity.slice(start).map((a, i) => (
         a.kind === 'thinking'
           ? <ThinkBlock key={start + i} text={a.text} />
-          : <ToolBlock key={start + i} tool={a.tool} />
+          : <ToolBlock key={start + i} tool={a.tool} agent={agent} />
       ))}
     </>
+  )
+}
+
+// ThoughtIcon is a crisp inline SVG (currentColor, so it inherits the
+// muted text colour and stays legible in both themes) — replaces an earlier
+// emoji glyph that rendered pixelated/mismatched-colour on a dark background,
+// since emoji are drawn from the platform's colour-emoji font rather than the
+// surrounding text style.
+function ThoughtIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" className="shrink-0 w-3 h-3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1.75a5.25 5.25 0 0 0-4.42 8.08L3 13.25l3.6-1.13A5.25 5.25 0 1 0 8 1.75Z" />
+      <circle cx="5.4" cy="7" r="0.6" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="7" r="0.6" fill="currentColor" stroke="none" />
+      <circle cx="10.6" cy="7" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
   )
 }
 
@@ -127,7 +156,7 @@ function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="group my-0.5 not-prose">
       <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-        <span aria-hidden className="shrink-0">💭</span>
+        <ThoughtIcon />
         <span className="italic shrink-0">Thought</span>
         <span className="truncate text-gray-300 dark:text-gray-600 group-open:hidden">{previewLine(text)}</span>
       </summary>
@@ -140,6 +169,22 @@ function ThinkBlock({ text }: { text: string }) {
   )
 }
 
+// AcpBadge marks a tool call that arrived over the Agent Client Protocol
+// (an external code-implementer/-reviewer/-explorer subprocess, #404): its
+// payload shapes aren't fully ours to control, so ToolCallView renders it
+// best-effort — the badge sets that expectation, and the copy button (always
+// present) is the escape hatch for whatever doesn't render nicely.
+function AcpBadge() {
+  return (
+    <span
+      title="Run by an external ACP agent — rendered best-effort"
+      className="shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
+    >
+      ACP
+    </span>
+  )
+}
+
 // ToolBlock renders a tool call as a single-line, collapsed-by-default summary
 // — a status icon, the tool name, and a truncated representative arg — that
 // expands to a per-tool rich view (ToolCallView): a diff for edit_file, a
@@ -147,14 +192,19 @@ function ThinkBlock({ text }: { text: string }) {
 // Refined toward the same compact, low-noise ethos as ThinkBlock (#385): a
 // thin left rail on expand instead of a bordered card, and a check/cross
 // status icon (done vs failed) rather than the "working" dots once settled.
-export function ToolBlock({ tool }: { tool: ToolCall }) {
+// `agent` (the run's agent bundle name) drives the ACP badge — see isAcpAgent.
+export function ToolBlock({ tool, agent }: { tool: ToolCall; agent?: string }) {
   const argSummary = summarizeArgs(tool.args)
   return (
     <details className="group my-0.5 not-prose">
       <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px]">
         <ToolStatusIcon tool={tool} />
         <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{tool.name}</code>
+        {isAcpAgent(agent) && <AcpBadge />}
         {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
+        <span className="ml-auto shrink-0">
+          <CopyButton text={copyPayload(tool.args, tool.result, tool.done)} label="Copy tool call JSON" />
+        </span>
       </summary>
       <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
         <ToolCallView tool={tool} />

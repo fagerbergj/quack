@@ -116,15 +116,114 @@ export const GitLog: Story = render({
   },
 })
 
-// Unknown tool → tidy formatted fallback (pretty args + result, never a raw blob).
-export const Fallback: Story = render({
-  callId: 'c', name: 'web_search', done: true,
-  args: { query: 'best time to visit Dublin', max_results: 5 },
-  result: { results: [{ title: 'Dublin Climate', url: 'https://example.com' }] },
+// Unknown tool, nested args → tidy pretty-printed JSON fallback (never a raw blob).
+export const FallbackNested: Story = render({
+  callId: 'c', name: 'mystery_tool', done: true,
+  args: { target: { region: 'eu-west', tags: ['prod', 'db'] } },
+  result: { ok: true, note: 'no custom view for this tool yet' },
+})
+
+// Unknown tool, FLAT args (e.g. an ACP tool kind we don't specially map) →
+// a compact key→value list instead of pretty JSON.
+export const FallbackFlat: Story = render({
+  callId: 'c', name: 'move', done: true,
+  args: { title: 'rename src/old.ts → src/new.ts' },
+  result: { moved: true },
 })
 
 // A call still running: args show, result is pending.
 export const Running: Story = render({
   callId: 'c', name: 'run_command', done: false,
   args: { dir: '.', command: 'npm run build' },
+})
+
+// ── the tools added by #404 ─────────────────────────────────────────────────
+
+export const WebSearch: Story = render({
+  callId: 'c', name: 'web_search', done: true,
+  args: { query: 'best time to visit Dublin' },
+  result: {
+    results: [
+      { title: 'Dublin Climate Guide', url: 'https://example.com/climate', snippet: 'Mild year-round; May–September is warmest.' },
+      { title: 'Best Time to Visit Ireland', url: 'https://example.com/ireland', snippet: 'Shoulder seasons avoid the summer crowds.' },
+    ],
+  },
+})
+
+export const WebFetch: Story = render({
+  callId: 'c', name: 'web_fetch', done: true,
+  args: { url: 'https://example.com/climate' },
+  result: 'Dublin has a temperate maritime climate. Summers are mild, winters cool and damp.',
+})
+
+export const ListDir: Story = render({
+  callId: 'c', name: 'list_dir', done: true,
+  args: { path: 'internal/dag', depth: 1 },
+  result: { entries: [{ path: 'internal/dag/plan.go', dir: false, size: 1024 }, { path: 'internal/dag/planner.go', dir: false, size: 2048 }, { path: 'internal/dag/graph_test.go', dir: false, size: 512 }], truncated: false, cwd: '.' },
+})
+
+export const Glob: Story = render({
+  callId: 'c', name: 'glob', done: true,
+  args: { pattern: '**/*_test.go', path: 'internal/dag' },
+  result: { paths: ['internal/dag/plan_test.go', 'internal/dag/graph_test.go'], truncated: false, cwd: '.' },
+})
+
+export const Grep: Story = render({
+  callId: 'c', name: 'grep', done: true,
+  args: { pattern: 'TODO', glob: '*.go' },
+  result: { matches: [{ path: 'internal/dag/plan.go', line: 42, text: '// TODO: validate cycles' }], truncated: false, cwd: '.' },
+})
+
+export const AskAdvisor: Story = render({
+  callId: 'c', name: 'ask_advisor', done: true,
+  args: { request: "I'm about to fix the debounce timer leak — should I clear it in a cleanup or add a guard flag?" },
+  result: { advice: 'A cleanup function is the idiomatic React pattern — a guard flag is easy to forget on every new effect.' },
+})
+
+export const StageMemory: Story = render({
+  callId: 'c', name: 'stage_memory', done: true,
+  args: { content: 'This repo runs `go test ./...` before every commit.', kind: 'convention', bucket: 'repo' },
+  result: 'Staged for memory (kept only if the answer passes vetting).',
+})
+
+export const LoadMemory: Story = render({
+  callId: 'c', name: 'load_memory', done: true,
+  args: { query: 'repo build commands' },
+  result: { memories: [{ content: { parts: [{ text: 'Build with `make build`; test with `go test ./...`.' }] }, author: 'repo' }] },
+})
+
+export const GetUserChoicePending: Story = render({
+  callId: 'c', name: 'get_user_choice', done: true,
+  args: { question: 'Which Springfield do you mean?', options: ['Springfield, IL', 'Springfield, MA', 'Springfield, OR'] },
+  result: { status: 'pending' },
+})
+
+export const GetUserChoiceAnswered: Story = render({
+  callId: 'c', name: 'get_user_choice', done: true,
+  args: { question: 'Which Springfield do you mean?', options: ['Springfield, IL', 'Springfield, MA'] },
+  result: { status: 'answered', choice: 'Springfield, IL' },
+})
+
+export const AskUser: Story = render({
+  callId: 'c', name: 'ask_user', done: true,
+  args: { question: 'Do you want the migration to run against staging first?' },
+  result: { status: 'forwarded to the user; their answer will arrive in a follow-up' },
+})
+
+export const GitStatus: Story = render({
+  callId: 'c', name: 'git_status', done: true,
+  args: { dir: '.' },
+  result: { branch: 'feat/404-tool-rendering', clean: false },
+})
+
+export const GitBranch: Story = render({
+  callId: 'c', name: 'git_branch', done: true,
+  args: { dir: '.', name: 'feat/404-tool-rendering' },
+  result: { current: 'feat/404-tool-rendering' },
+})
+
+export const GitPush: Story = render({
+  callId: 'c', name: 'git_push', done: true,
+  args: { dir: '.' },
+  result: { remote: 'origin', branch: 'feat/404-tool-rendering', sha: 'a1b2c3d4e5f6' },
 })

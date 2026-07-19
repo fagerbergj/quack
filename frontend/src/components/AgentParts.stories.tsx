@@ -78,6 +78,51 @@ export const NativeEditFileDiff: Story = {
   },
 }
 
+// The "Thought" icon is a crisp currentColor SVG (not an emoji, which used to
+// render pixelated/off-colour on a dark background) — toggle the Storybook
+// toolbar's dark-mode control to check it renders cleanly in both themes.
+export const ThinkBlockIcon: Story = {
+  args: {
+    activity: [
+      { kind: 'thinking', text: 'Checking both themes: this icon is an inline SVG using currentColor, so it should look crisp and correctly muted whether the page is light or dark.' },
+    ],
+  },
+}
+
+// An ACP code-implementer's tool call carries the "ACP" badge (#404) — best
+// effort, external-agent origin, distinct from a native tool call.
+export const AcpBadgedCall: Story = {
+  args: {
+    activity: [
+      { kind: 'tool', tool: { callId: 'c1', name: 'edit_file', done: true, args: { path: 'src/hooks/useDebounce.ts', old: 'let t', new: 'let timer' }, result: { replacements: 1 } } },
+    ],
+    agent: 'code-implementer',
+  },
+}
+
+// The same call from a NATIVE agent carries no badge — the badge is strictly
+// an ACP-origin signal, not a generic "external tool" marker.
+export const NativeCallNoBadge: Story = {
+  args: {
+    activity: [
+      { kind: 'tool', tool: { callId: 'c1', name: 'edit_file', done: true, args: { path: 'src/hooks/useDebounce.ts', old: 'let t', new: 'let timer' }, result: { replacements: 1 } } },
+    ],
+    agent: 'web-researcher',
+  },
+}
+
+// Every tool call carries a small copy-JSON button (✎ → ✓ on click) in its
+// collapsed summary line — the escape hatch for whatever a rendered view
+// doesn't show nicely. Click it here (clipboard writes are inert in a
+// sandboxed Storybook iframe, but the ✓ flash still confirms the click fired).
+export const CopyButtonOnToolCall: Story = {
+  args: {
+    activity: [
+      { kind: 'tool', tool: { callId: 'c1', name: 'run_command', done: true, args: { command: 'go test ./...' }, result: { exit_code: 0, output: 'ok' } } },
+    ],
+  },
+}
+
 // With more than 3 items, older ones fold behind a "⋯ N earlier" toggle.
 export const Windowed: Story = {
   args: {

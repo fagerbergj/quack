@@ -8,6 +8,7 @@ import {
   bool,
   lineDiff,
   parseUnifiedDiff,
+  copyPayload,
 } from './toolFormat'
 
 describe('summarizeArgs', () => {
@@ -95,6 +96,24 @@ describe('lineDiff (edit_file old → new)', () => {
       { type: 'remove', text: '  return x' },
       { type: 'add', text: '    return x' },
     ])
+  })
+})
+
+describe('copyPayload (the tool-call copy button, #404)', () => {
+  it('bundles input and output under stable keys', () => {
+    const out = JSON.parse(copyPayload({ path: 'a.ts' }, { replacements: 1 }, true))
+    expect(out).toEqual({ input: { path: 'a.ts' }, output: { replacements: 1 } })
+  })
+
+  it('outputs null (not undefined/omitted) while the call is still in flight', () => {
+    const out = JSON.parse(copyPayload({ path: 'a.ts' }, undefined, false))
+    expect(out).toEqual({ input: { path: 'a.ts' }, output: null })
+  })
+
+  it('a completed call with a falsy-but-real result (0, "", false) still reports it, not null', () => {
+    expect(JSON.parse(copyPayload({}, 0, true)).output).toBe(0)
+    expect(JSON.parse(copyPayload({}, '', true)).output).toBe('')
+    expect(JSON.parse(copyPayload({}, false, true)).output).toBe(false)
   })
 })
 
