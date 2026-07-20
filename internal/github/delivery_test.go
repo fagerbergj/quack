@@ -205,6 +205,8 @@ func TestDeliverCommentIdempotentEdit(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"alice"}}`) // prAuthor: a human, not the bot → normal review path
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
 			io.WriteString(w, `[{"id":555,"node_id":"NODE555","body":"progress: 40%\n\n<!-- quack:delivery:comment:status -->","user":{"login":"quack[bot]"}}]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -253,6 +255,8 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"alice"}}`) // prAuthor: a human, not the bot → normal review path
 		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
 			io.WriteString(w, `[]`) // no inline comments drafted
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
@@ -289,6 +293,41 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 	}
 }
 
+// A review on a PR quack authored can't carry a verdict (GitHub 422s an author
+// approving their own PR), so it delivers as a plain comment — never a
+// submit_review — still carrying the findings.
+func TestDeliverReviewOnOwnPRIsCommentNoVerdict(t *testing.T) {
+	var commentBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"quack[bot]"}}`) // quack authored this PR
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			commentBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"id":1,"html_url":"https://github.com/acme/widgets/pull/7#issuecomment-1"}`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			t.Error("must not submit a formal review verdict on a PR quack authored")
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true, ChatID: "chat-ownpr", CloneURL: "https://github.com/acme/widgets.git", IssueNumber: 7,
+		Items: []vetting.StagedDelivery{{Kind: "review", Event: "approve", Body: "clean change",
+			Comments: []vetting.ReviewComment{{Path: "main.go", Line: 42, Body: "tiny nit"}}}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	body := string(commentBody)
+	if !strings.Contains(body, "clean change") || !strings.Contains(body, "main.go:42") {
+		t.Fatalf("self-review comment missing the review body/findings:\n%s", body)
+	}
+}
+
 // An external (ACP) reviewer's staged review carries gate-parsed inline
 // comments and no ledger PR number — delivery posts the comments and recovers
 // the PR from the GitHub-dispatched chat id.
@@ -298,6 +337,8 @@ func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"alice"}}`) // prAuthor: a human, not the bot → normal review path
 		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
 			// main.go line 42 commentable on the RIGHT side.
 			io.WriteString(w, `[{"filename":"main.go","patch":"@@ -42,1 +42,1 @@\n-old\n+new"}]`)
@@ -349,6 +390,8 @@ func TestDeliverReviewNeverPushesBranch(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"alice"}}`) // prAuthor: a human, not the bot → normal review path
 		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
 			io.WriteString(w, `[]`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
@@ -383,6 +426,8 @@ func TestDeliverFailedGateOpensDraftPR(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"alice"}}`) // prAuthor: a human, not the bot → normal review path
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
 			io.WriteString(w, `[]`) // no existing open PR
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):

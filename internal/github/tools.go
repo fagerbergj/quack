@@ -794,6 +794,21 @@ func gateCaveat(dc vetting.DeliveryContext, body string) string {
 	return banner + body
 }
 
+// formatInlineFindings renders a review's line-anchored findings as plain text
+// for a review delivered as a plain comment, which can't carry inline review
+// comments (see deliverOne's "review" case).
+func formatInlineFindings(cs []vetting.ReviewComment) string {
+	if len(cs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Findings:\n")
+	for _, c := range cs {
+		fmt.Fprintf(&b, "- `%s:%d` — %s\n", c.Path, c.Line, strings.TrimSpace(c.Body))
+	}
+	return b.String()
+}
+
 func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.DeliveryContext, item vetting.StagedDelivery) (deliveryItemResult, error) {
 	switch item.Kind {
 	case "pull_request":
@@ -811,6 +826,24 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 	case "review":
 		if dc.IssueNumber == 0 {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review has no pull request number to submit against")
+		}
+		// GitHub rejects an approve/request_changes verdict on a PR you authored
+		// (422). When quack authored the PR under review, the review is delivered
+		// as a plain comment with no verdict — the findings still post; there is
+		// just no formal approval (so quack:merge, which requires one, declines it).
+		if bot, berr := a.botLogin(ctx); berr == nil {
+			if author, aerr := a.prAuthor(ctx, owner, repo, dc.IssueNumber); aerr == nil && author == bot {
+				body := "_quack authored this PR, so GitHub won't let it record an approve or request-changes verdict — this review is a comment. A maintainer decides._\n\n" + strings.TrimSpace(item.Body)
+				if fs := formatInlineFindings(item.Comments); fs != "" {
+					body += "\n\n" + fs
+				}
+				if err := a.postIssueComment(ctx, owner, repo, dc.IssueNumber, gateCaveat(dc, body)); err != nil {
+					return deliveryItemResult{}, fmt.Errorf("github: delivery: self-review comment: %w", err)
+				}
+				slog.Info("github: self-review posted as a comment (no verdict — own PR)",
+					"component", "github", "repo", owner+"/"+repo, "pr", dc.IssueNumber)
+				return deliveryItemResult{}, nil
+			}
 		}
 		event := strings.ToUpper(item.Event)
 		if !reviewEvents[event] {
