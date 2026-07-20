@@ -111,7 +111,7 @@ export function BubbleHeader({ agent, model, tokens, status }: { agent: string; 
 // ActivityList renders a run's ordered activity (thinking + tool calls), windowed
 // to the most recent few. Keys index into the append-only list so streaming
 // reconciliation stays stable.
-export function ActivityList({ activity, agent }: { activity: Activity[]; agent?: string }) {
+export function ActivityList({ activity }: { activity: Activity[] }) {
   const [showAll, setShowAll] = useState(false)
   const hidden = Math.max(0, activity.length - RECENT)
   const start = showAll ? 0 : hidden
@@ -128,7 +128,7 @@ export function ActivityList({ activity, agent }: { activity: Activity[]; agent?
       {activity.slice(start).map((a, i) => (
         a.kind === 'thinking'
           ? <ThinkBlock key={start + i} text={a.text} />
-          : <ToolBlock key={start + i} tool={a.tool} agent={agent} />
+          : <ToolBlock key={start + i} tool={a.tool} />
       ))}
     </>
   )
@@ -179,7 +179,7 @@ function ThinkBlock({ text }: { text: string }) {
 // payload shapes aren't fully ours to control, so ToolCallView renders it
 // best-effort — the badge sets that expectation, and the copy button (always
 // present) is the escape hatch for whatever doesn't render nicely.
-function AcpBadge() {
+export function AcpBadge() {
   return (
     <span
       title="Run by an external ACP agent — rendered best-effort"
@@ -197,22 +197,20 @@ function AcpBadge() {
 // Refined toward the same compact, low-noise ethos as ThinkBlock (#385): a
 // thin left rail on expand instead of a bordered card, and a check/cross
 // status icon (done vs failed) rather than the "working" dots once settled.
-// `agent` (the run's agent bundle name) drives the ACP badge — see isAcpAgent.
-// The copy button sits in a sibling header row layered over the summary's
-// right edge (#435), not nested inside the `<summary>` itself: a `<summary>`
+  // The copy button sits in a sibling header row layered over the summary's
+  // right edge (#435), not nested inside the `<summary>` itself: a `<summary>`
 // is already the disclosure's own interactive control, and a button nested
 // inside it is invalid HTML that breaks keyboard use (Enter/Space on the
 // summary vs. the nested button conflict).
-export function ToolBlock({ tool, agent }: { tool: ToolCall; agent?: string }) {
+export function ToolBlock({ tool }: { tool: ToolCall }) {
   const argSummary = summarizeArgs(tool.args)
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
         <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 pr-6 text-[11px]">
           <ToolStatusIcon tool={tool} />
-          <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{tool.name}</code>
-          {isAcpAgent(agent) && <AcpBadge />}
-          {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
+         <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{tool.name}</code>
+           {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
         </summary>
         <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
           <ToolCallView tool={tool} />
