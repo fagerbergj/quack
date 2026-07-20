@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -361,9 +362,11 @@ func planTask(p issuesPayload) string {
 const mergeTimeout = 2 * time.Minute
 
 // mergeIfApproved is the merge-label handler: merge ONLY at the intersection of
-// a human's label (repo write access) and quack's own APPROVED review. Anything
-// else gets an explanatory comment — re-applying the label after quack approves
-// is the retry, so no state is stored.
+// a human's label (repo write access) and quack's own approving review verdict
+// — a formal APPROVED review, or (on a PR quack authored, where GitHub forbids
+// a formal self-review) the verdict marker in quack's own-PR comment-review.
+// Anything else gets an explanatory comment — re-applying the label after
+// quack approves is the retry, so no state is stored.
 func (e *Extension) mergeIfApproved(p pullRequestPayload) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Number
 	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
@@ -376,19 +379,20 @@ func (e *Extension) mergeIfApproved(p pullRequestPayload) {
 		}
 	}
 
-	state, err := e.latestOwnReviewState(ctx, owner, repo, number)
+	verdict, err := e.latestQuackVerdict(ctx, owner, repo, number)
 	if err != nil {
 		slog.Error("github: merge-label review lookup failed", "component", "github",
 			"repo", owner+"/"+repo, "pr", number, "err", err)
 		comment(fmt.Sprintf("Not merging: I could not read this PR's reviews (%v). Re-apply the `%s` label to retry.", err, e.labels.Merge))
 		return
 	}
-	if state != "APPROVED" {
-		if state == "" {
-			state = "missing — I have not reviewed this PR"
+	if verdict != "approve" {
+		reason := "I have not reviewed this PR yet"
+		if verdict != "" {
+			reason = fmt.Sprintf("my latest review is %s, not an approval", verdict)
 		}
-		comment(fmt.Sprintf("Not merging: my latest review is %s. Ask me to review (apply `%s` or mention me), then re-apply `%s` once I approve.",
-			state, e.labels.Review, e.labels.Merge))
+		comment(fmt.Sprintf("Not merging: %s. Ask me to review (apply `%s` or mention me), then re-apply `%s` once I approve.",
+			reason, e.labels.Review, e.labels.Merge))
 		return
 	}
 	if err := e.app.mergePR(ctx, owner, repo, number); err != nil {
@@ -400,25 +404,71 @@ func (e *Extension) mergeIfApproved(p pullRequestPayload) {
 	comment(fmt.Sprintf("Merged — my review approved this PR and @%s authorized the merge via the `%s` label.", p.Sender.Login, e.labels.Merge))
 }
 
-// latestOwnReviewState returns the state of quack's most recent VERDICT review
-// (APPROVED / CHANGES_REQUESTED / DISMISSED) on the PR — COMMENTED reviews carry
-// no verdict and are skipped. "" means quack has no verdict on this PR.
-func (e *Extension) latestOwnReviewState(ctx context.Context, owner, repo string, number int) (string, error) {
-	reviews, err := e.app.listReviews(ctx, owner, repo, number)
-	if err != nil {
-		return "", err
-	}
+// reviewVerdictMarkerRe extracts quack's verdict from the hidden marker
+// embedded in an own-PR review comment (deliverOne's own-PR branch,
+// internal/github/tools.go): GitHub forbids a formal review on a PR quack
+// authored (422), so that verdict has no formal review record — the marker is
+// the only place latestQuackVerdict can read it from.
+var reviewVerdictMarkerRe = regexp.MustCompile(`<!-- quack:delivery:review:(approve|request_changes|comment) -->`)
+
+// formalReviewVerdicts maps a formal GitHub review state to the same verdict
+// vocabulary as reviewVerdictMarkerRe ("approve" / "request_changes" /
+// "comment"), so both sources merge into one timeline.
+var formalReviewVerdicts = map[string]string{
+	"APPROVED":          "approve",
+	"CHANGES_REQUESTED": "request_changes",
+	"COMMENTED":         "comment",
+}
+
+// latestQuackVerdict returns quack's most recent review verdict on the PR —
+// "approve", "request_changes", or "comment" — reading BOTH formal reviews and
+// own-PR comment-reviews (verdict marker), since a PR quack authored can only
+// ever carry the latter. "" means quack has not reviewed this PR yet.
+func (e *Extension) latestQuackVerdict(ctx context.Context, owner, repo string, number int) (string, error) {
 	bot, err := e.app.botLogin(ctx)
 	if err != nil {
 		return "", err
 	}
-	state := ""
-	for _, r := range reviews { // chronological: the last verdict wins
-		if r.User.Login == bot && r.State != "COMMENTED" {
-			state = r.State
-		}
+	type dated struct {
+		at      time.Time
+		verdict string
 	}
-	return state, nil
+	var verdicts []dated
+
+	reviews, err := e.app.listReviews(ctx, owner, repo, number)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range reviews {
+		v := formalReviewVerdicts[r.State]
+		if r.User.Login != bot || v == "" {
+			continue
+		}
+		at, _ := time.Parse(time.RFC3339, r.SubmittedAt)
+		verdicts = append(verdicts, dated{at, v})
+	}
+
+	comments, err := e.app.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range comments {
+		if c.User != bot {
+			continue
+		}
+		m := reviewVerdictMarkerRe.FindStringSubmatch(c.Body)
+		if m == nil {
+			continue
+		}
+		at, _ := time.Parse(time.RFC3339, c.CreatedAt)
+		verdicts = append(verdicts, dated{at, m[1]})
+	}
+
+	if len(verdicts) == 0 {
+		return "", nil
+	}
+	sort.Slice(verdicts, func(i, j int) bool { return verdicts[i].at.Before(verdicts[j].at) })
+	return verdicts[len(verdicts)-1].verdict, nil
 }
 
 // ackReaction posts a deterministic 👀 (eyes) reaction on the mentioning comment

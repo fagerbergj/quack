@@ -23,6 +23,10 @@ import (
 var (
 	verdictRe = regexp.MustCompile(`(?mi)^\s*VERDICT:\s*(approve|request_changes|comment)\s*$`)
 	findingRe = regexp.MustCompile(`(?m)^\s*[-*]\s+([^\s:]+):(\d+):\s*(.+)$`)
+	// fallbackPreambleRe matches a reviewer's own aside about falling back to the
+	// VERDICT/FINDINGS tail (agents/code-reviewer/prompt.md's fallback path) —
+	// meant to explain the tail to us, never to a human reader.
+	fallbackPreambleRe = regexp.MustCompile(`(?mi)^.*\bstaging tools?\b.*\bfallback\b.*$\n?`)
 )
 
 // parseAnswerReview extracts the structured verdict and inline findings from a
@@ -42,6 +46,19 @@ func parseAnswerReview(answer string) (event string, comments []ReviewComment, o
 		comments = append(comments, ReviewComment{Path: f[1], Line: line, Body: strings.TrimSpace(f[3])})
 	}
 	return event, comments, true
+}
+
+// StripVerdictTail returns answer with the machine-parseable VERDICT/FINDINGS
+// tail (see parseAnswerReview) and any fallback-format preamble removed — the
+// clean, human-facing text for a review posted as a plain comment (the own-PR
+// path, deliverOne in internal/github/tools.go, which can't post a formal
+// verdict at all and must not leak the parser's tail to the reader).
+func StripVerdictTail(answer string) string {
+	s := fallbackPreambleRe.ReplaceAllString(answer, "")
+	if loc := verdictRe.FindStringIndex(s); loc != nil {
+		s = s[:loc[0]]
+	}
+	return strings.TrimSpace(s)
 }
 
 // augmentFromReviewStage folds an external reviewer's TOOL-staged review — the
