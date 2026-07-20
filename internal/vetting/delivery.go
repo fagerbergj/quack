@@ -149,22 +149,11 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 		deliveryWording(d), strings.Join(missing, " and "), want)}, true
 }
 
-// postedReviewRe matches a task that asks for a review to be POSTED on the pull
-// request — a posting verb next to the thing posted ("post your findings as
-// inline review comments", "submit the review", "leave a review"), or the
-// passive equivalent ("the review must be submitted"). Deliberately narrow: a
-// prose ask ("what do you think of this code?", "summarise the diff on PR #4",
-// "review the architecture and report your findings") is answered IN the answer,
-// and a false positive there would deadlock the node in continuation rounds it
-// could never satisfy — the same discipline as the delivery check above.
-var postedReviewRe = regexp.MustCompile(
-	`(?i)(\b(post|submit|leave|publish)\b[^.\n]{0,80}\b(reviews?|inline comments?|review comments?)\b` +
-		`|\b(reviews?|comments?)\b[^.\n]{0,40}\b(posted|submitted|published)\b)`)
-
-// reviewCriterion scores `review_posted` for a node: 0 when the task demands a
-// review be posted on a pull request and the worker's ledger shows no SUCCESSFUL
+// reviewCriterion scores `review_posted` for a node: 0 when the node IS a
+// code-reviewer (isReviewer — a review-delivery node by construction, see
+// Config.IsReviewer) and the worker's ledger shows no SUCCESSFUL
 // github_submit_review, 1 when it does. ok=false ⇒ the criterion does not apply
-// (the task asks for no posted review), leaving every other node untouched.
+// (not a reviewer node), leaving every other node untouched.
 //
 // A non-empty answer with nothing posted otherwise reads as "done" to
 // workIncomplete. Posting a review is mechanically checkable, so it is checked
@@ -181,8 +170,8 @@ func hasStagedReview(act workerActivity) bool {
 	return ok
 }
 
-func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
-	if !demandsPostedReview(task) {
+func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterionScore, bool) {
+	if !isReviewer {
 		return criterionScore{}, false
 	}
 	if act.reviewSubmitted || hasStagedReview(act) {
@@ -220,29 +209,17 @@ func reviewCriterion(task string, act workerActivity) (criterionScore, bool) {
 //
 // Everything else (research, analysis, synthesis; a delivered coding task) is
 // complete as far as the gate is concerned — the judge takes it from here.
-func workIncomplete(answer, task string, act workerActivity, readOnly bool) bool {
+func workIncomplete(answer, task string, act workerActivity, readOnly, isReviewer bool) bool {
 	if strings.TrimSpace(answer) == "" {
 		return true
 	}
-	for _, c := range incompleteCriteria(task, act, readOnly) {
+	for _, c := range incompleteCriteria(task, act, readOnly, isReviewer) {
 		if c.Score < 1 {
 			return true
 		}
 	}
 	return false
 }
-
-// demandsPostedReview reports whether a task asks for a review of a real code
-// change (a PR) to be POSTED — the ONE task-shape test shared by review_posted
-// and behaviour_verified, so the two can never disagree about what a review is.
-func demandsPostedReview(task string) bool {
-	return prRe.MatchString(task) && postedReviewRe.MatchString(task)
-}
-
-// DemandsPostedReview is the exported task-shape test dag.buildGateNodes uses to
-// decide whether to mint the ACP review MCP surface (stage_review_comment/
-// stage_review) for a node — the surface exists only for a review-delivery node.
-func DemandsPostedReview(task string) bool { return demandsPostedReview(task) }
 
 // proseExts are the file extensions with no runnable surface: a change confined
 // to these cannot be executed, so behaviour_verified exempts it.
@@ -264,11 +241,11 @@ func noRunnableSurface(act workerActivity) bool {
 	return true
 }
 
-// behaviourCriterion scores `behaviour_verified` for a node: 0 when the task is
-// to review a real code change and the worker's ledger holds no SUCCESSFUL
+// behaviourCriterion scores `behaviour_verified` for a node: 0 when the node IS
+// a code-reviewer (isReviewer) and the worker's ledger holds no SUCCESSFUL
 // run_command — no test run, no build, no probe — 1 when it does. ok=false ⇒ the
-// criterion does not apply (no code change to execute, or nothing runnable in
-// it), leaving every other node untouched.
+// criterion does not apply (not a reviewer node, or nothing runnable in the
+// change), leaving every other node untouched.
 //
 // Merely prompting a reviewer to run the code works about half the time (a live
 // probe caught a show-stopper that a read-only review of the same PR then called
@@ -279,8 +256,8 @@ func noRunnableSurface(act workerActivity) bool {
 // Deliberately weak on WHAT ran: any successful run_command counts (the test
 // suite, a build, a probe). Grading the command itself would be an LLM judgment,
 // which is the very thing this check exists to stop relying on.
-func behaviourCriterion(task string, act workerActivity) (criterionScore, bool) {
-	if !demandsPostedReview(task) || noRunnableSurface(act) {
+func behaviourCriterion(task string, act workerActivity, isReviewer bool) (criterionScore, bool) {
+	if !isReviewer || noRunnableSurface(act) {
 		return criterionScore{}, false
 	}
 	if act.ranCommand {
@@ -296,7 +273,7 @@ func behaviourCriterion(task string, act workerActivity) (criterionScore, bool) 
 // this task — the one definition of "the work is actually done", shared by
 // workIncomplete, foldDeterministic and the continuation prompt so they can
 // never drift apart.
-func incompleteCriteria(task string, act workerActivity, readOnly bool) map[string]criterionScore {
+func incompleteCriteria(task string, act workerActivity, readOnly, isReviewer bool) map[string]criterionScore {
 	out := map[string]criterionScore{}
 	// A read-only agent (code-reviewer / code-explorer) has no commit/push tools, so
 	// a delivery demand read off its task is unsatisfiable — skip it. Its completion
@@ -306,10 +283,10 @@ func incompleteCriteria(task string, act workerActivity, readOnly bool) map[stri
 			out["delivery_complete"] = c
 		}
 	}
-	if c, ok := reviewCriterion(task, act); ok {
+	if c, ok := reviewCriterion(task, act, isReviewer); ok {
 		out["review_posted"] = c
 	}
-	if c, ok := behaviourCriterion(task, act); ok {
+	if c, ok := behaviourCriterion(task, act, isReviewer); ok {
 		out["behaviour_verified"] = c
 	}
 	return out

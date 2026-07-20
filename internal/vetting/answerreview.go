@@ -121,10 +121,10 @@ func augmentFromPRStage(act *workerActivity, advisorToken string) {
 }
 
 // augmentFromAnswer stages an external reviewer's answer as its review. Fires
-// only for ACP-backed workers on a task that demands a posted review, and only
-// when nothing is staged yet (a worker-staged review always wins — there isn't
-// one on the ACP path, but the guard keeps this probe monotonic like the git
-// probe: it fills gaps, never replaces).
+// only for an ACP-backed code-reviewer node (cfg.IsReviewer), and only when
+// nothing is staged yet (a worker-staged review always wins — there isn't one
+// on the ACP path, but the guard keeps this probe monotonic like the git probe:
+// it fills gaps, never replaces).
 //
 // A verdict-less answer still stages a plain comment-review: an honest wall of
 // findings without the structured tail must post as a comment rather than
@@ -133,12 +133,10 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if !cfg.ExternalWorker || strings.TrimSpace(answer) == "" {
 		return
 	}
-	// Only a READ-ONLY reviewer stages a review from its answer. Without this,
-	// an implementer whose TASK merely talks about reviews trips demandsPostedReview
-	// (a pure text match) and gets a spurious review staged alongside its PR — then
-	// submitted to the trigger issue number, 404ing (#471). Symmetric to
-	// augmentFromRepo's ReadOnly guard (an implementer synthesizes a PR, a reviewer
-	// does not; a reviewer synthesizes a review, an implementer does not).
+	// Only a READ-ONLY node can BE the code-reviewer this probe is for — belt and
+	// suspenders alongside cfg.IsReviewer below (an implementer synthesizes a PR,
+	// a reviewer does not; a reviewer synthesizes a review, an implementer does
+	// not — see augmentFromRepo's ReadOnly guard).
 	if !cfg.ReadOnly {
 		return
 	}
@@ -150,7 +148,11 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if cfg.Setup == nil {
 		return
 	}
-	if !demandsPostedReview(cfg.Task) {
+	// The structural signal (Config.IsReviewer, stamped from the node's AGENT —
+	// dag.reviewerAgent — not the task's wording): a task-text regex left this
+	// path dead for a task with no posting verb, e.g. the label-review default
+	// "Review this pull request." (#482).
+	if !cfg.IsReviewer {
 		return
 	}
 	if _, staged := act.stagedDelivery["review"]; staged {

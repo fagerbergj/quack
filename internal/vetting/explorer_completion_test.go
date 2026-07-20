@@ -35,13 +35,13 @@ func TestReadOnlyNodeIsNotHeldToTheUserRequestsDelivery(t *testing.T) {
 	act := workerActivity{}
 	answer := "goose registers tools via ExtensionManager (crates/goose/src/agents/extension_manager.rs)…"
 
-	if workIncomplete(answer, explorerTask, act, false) {
+	if workIncomplete(answer, explorerTask, act, false, false) {
 		t.Fatal("an explorer that produced its report is being called incomplete against its OWN task")
 	}
 
 	// The bug: judged against the assembled prompt, the explorer inherits the user's
 	// delivery demand and can never finish.
-	if !workIncomplete(answer, assembledPrompt, act, false) {
+	if !workIncomplete(answer, assembledPrompt, act, false, false) {
 		t.Skip("the assembled prompt no longer reads as implement-and-deliver; this test can no longer detect the regression")
 	}
 	// ...which is precisely why the loop must never be given the prompt. Guard it:
@@ -57,10 +57,10 @@ func TestImplementerIsStillHeldToItsDelivery(t *testing.T) {
 
 	answer := "I implemented code mode. Here is the design…"
 
-	if !workIncomplete(answer, implementerTask, workerActivity{}, false) {
+	if !workIncomplete(answer, implementerTask, workerActivity{}, false, false) {
 		t.Fatal("an implementer that committed and pushed NOTHING was accepted as finished")
 	}
-	if !workIncomplete(answer, implementerTask, workerActivity{committed: true}, false) {
+	if !workIncomplete(answer, implementerTask, workerActivity{committed: true}, false, false) {
 		t.Fatal("an implementer that committed but never pushed was accepted as finished")
 	}
 }

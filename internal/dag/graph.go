@@ -84,6 +84,10 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.NodeID = workspaceNodeID(plan, node)
 		// Carried only for observability (span/metric attribute) — see vetting.Config.Agent.
 		cfg.Agent = node.AgentName
+		// The structural review-delivery signal (#482): a code-reviewer node IS a
+		// review-delivery node by construction, independent of how its task is
+		// worded — see vetting.Config.IsReviewer.
+		cfg.IsReviewer = node.AgentName == reviewerAgent
 		// The node's task text drives the deterministic delivery check
 		// (vetting/delivery.go): a task that says commit/push/open-a-PR cannot pass
 		// unless the workspace ledger shows the worker actually did it.
@@ -190,12 +194,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// handed to an untrusted external subprocess (see AdvisorTask.MemSecret).
 			// The session carries whichever tool buffers the node is entitled to:
 			//   - memory (load_memory/stage_memory, #344) for a memory participant;
-			//   - review (stage_review_comment/stage_review, #451) for a read-only
-			//     reviewer whose task demands a posted review;
+			//   - review (stage_review_comment/stage_review, #451) for a code-reviewer
+			//     node (structural — see vetting.Config.IsReviewer, #482);
 			//   - stage_pr for a WRITE worker at the terminal delivery node.
 			// Native agents have ADK-native equivalents, so both ride cfg.ExternalWorker.
 			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
-			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && vetting.DemandsPostedReview(effectiveNode.Task)
+			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && cfg.IsReviewer
 			// A WRITE worker at the chain's terminal delivery point (cfg.Deliver
 			// non-nil, mid-chain nodes get nil at graph.go:113) gets stage_pr —
 			// the same structural gate augmentFromRepo stages its fallback PR under.

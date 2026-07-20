@@ -195,9 +195,9 @@ const reviewTask = "Review pull request #4 on https://github.com/fagerbergj/game
 
 func TestReviewCriterionFailsWhenNothingWasPosted(t *testing.T) {
 	act := workerActivity{paths: map[string]bool{"games/README.md": true}}
-	got, ok := reviewCriterion(reviewTask, act)
+	got, ok := reviewCriterion(reviewTask, act, true)
 	if !ok {
-		t.Fatal("review_posted must apply to a task that demands a posted review")
+		t.Fatal("review_posted must apply to a reviewer node")
 	}
 	if got.Score != 0 {
 		t.Fatalf("Score = %v, want 0 (no review was posted)", got.Score)
@@ -209,9 +209,9 @@ func TestReviewCriterionFailsWhenNothingWasPosted(t *testing.T) {
 
 func TestReviewCriterionPassesWhenReviewSubmitted(t *testing.T) {
 	act := workerActivity{reviewCommented: true, reviewSubmitted: true}
-	got, ok := reviewCriterion(reviewTask, act)
+	got, ok := reviewCriterion(reviewTask, act, true)
 	if !ok {
-		t.Fatal("review_posted must apply to a task that demands a posted review")
+		t.Fatal("review_posted must apply to a reviewer node")
 	}
 	if got.Score != 1 {
 		t.Errorf("got %+v, want Score 1 — the review WAS submitted", got)
@@ -222,7 +222,7 @@ func TestReviewCriterionPassesWhenReviewSubmitted(t *testing.T) {
 // accumulates a draft (see internal/github) — the review exists on the PR only
 // after github_submit_review.
 func TestReviewCriterionFailsOnDraftedButUnsubmittedComments(t *testing.T) {
-	got, ok := reviewCriterion(reviewTask, workerActivity{reviewCommented: true})
+	got, ok := reviewCriterion(reviewTask, workerActivity{reviewCommented: true}, true)
 	if !ok || got.Score != 0 {
 		t.Fatalf("got %+v (applies=%v), want Score 0 — drafted comments were never submitted", got, ok)
 	}
@@ -231,20 +231,25 @@ func TestReviewCriterionFailsOnDraftedButUnsubmittedComments(t *testing.T) {
 	}
 }
 
-// A prose ask ("what do you think of this code?", "summarise this diff") is
-// answered IN the answer — a false positive here would deadlock it in
-// continuation rounds it can never satisfy.
-func TestReviewCriterionDoesNotFireOnProseTask(t *testing.T) {
-	tasks := []string{
+// The gate is structural now (#482): review_posted never fires for a node that
+// isn't the code-reviewer agent, no matter how the task reads — including the
+// bare label-review default that has no posting verb at all.
+func TestReviewCriterionKeysOnIsReviewerNotTaskText(t *testing.T) {
+	nonReviewerTasks := []string{
 		"What do you think of this code? Explain the tradeoffs.",
 		"Summarise the diff on pull request #4 and report what changed.",
 		"Review the architecture of the repository and report your findings.",
 		"Research how other projects post code reviews and cite your sources.",
 	}
-	for _, task := range tasks {
-		if _, ok := reviewCriterion(task, workerActivity{}); ok {
-			t.Errorf("review_posted fired on a task that asks for no posted review: %q", task)
+	for _, task := range nonReviewerTasks {
+		if _, ok := reviewCriterion(task, workerActivity{}, false); ok {
+			t.Errorf("review_posted fired for a non-reviewer node: %q", task)
 		}
+	}
+	// A reviewer node with the bare label-review task (no posting verb —
+	// dag.autoReviewTask's shape pre-#482) still applies the criterion.
+	if _, ok := reviewCriterion("Review this pull request.", workerActivity{}, true); !ok {
+		t.Error("review_posted must apply to a reviewer node even when the task names no posting verb (#482)")
 	}
 }
 
@@ -262,7 +267,7 @@ func TestReviewCriterionFailsWhenSubmitErrored(t *testing.T) {
 	if !act.reviewCommented {
 		t.Error("the successful github_add_review_comment should be recorded")
 	}
-	got, ok := reviewCriterion(reviewTask, act)
+	got, ok := reviewCriterion(reviewTask, act, true)
 	if !ok || got.Score != 0 {
 		t.Errorf("got %+v (applies=%v), want Score 0 — the submit failed, so nothing was posted", got, ok)
 	}
@@ -291,10 +296,10 @@ func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 	pollutedTask := "Review PR #5, and open a pull request is what it does — it will Add a Flappy Bird game. " +
 		"Read the diff and post inline review comments; submit the review."
 	act := workerActivity{reviewSubmitted: true, ranCommand: true}
-	if !workIncomplete("Reviewed.", pollutedTask, act, false) {
+	if !workIncomplete("Reviewed.", pollutedTask, act, false, true) {
 		t.Skip("polluted task no longer reads as implement-and-deliver; the ReadOnly guard would not fire")
 	}
-	if workIncomplete("Reviewed.", pollutedTask, act, true) {
+	if workIncomplete("Reviewed.", pollutedTask, act, true, true) {
 		t.Error("a read-only reviewer with a submitted review must be COMPLETE — delivery must not apply to an agent that cannot commit")
 	}
 }
@@ -303,13 +308,13 @@ func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 // done — this is the exact live regression (a status update passed as an answer).
 func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	statusUpdate := "I encountered technical difficulties with the shallow clone and could not complete the review."
-	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false) {
+	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false, true) {
 		t.Error("a non-empty answer that posted no review must be incomplete — the continuation loop has to re-invoke the reviewer with its tools")
 	}
-	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false) {
+	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false, true) {
 		t.Error("a submitted review is complete work")
 	}
-	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}, false) {
+	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}, false, false) {
 		t.Error("a prose task with a non-empty answer must not be held incomplete")
 	}
 }
@@ -334,7 +339,7 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 		fnCall("2", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
 		fnResp("2", "read_file", map[string]any{"content": "export function step() {}"}),
 	))
-	got, ok := behaviourCriterion(reviewTask, act)
+	got, ok := behaviourCriterion(reviewTask, act, true)
 	if !ok {
 		t.Fatal("behaviour_verified must apply to a review of a real code change")
 	}
@@ -344,7 +349,7 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	if !strings.Contains(got.Reason, "run_command") {
 		t.Errorf("Reason = %q, want it to name run_command", got.Reason)
 	}
-	if !workIncomplete("The game is fully functional.", reviewTask, act, false) {
+	if !workIncomplete("The game is fully functional.", reviewTask, act, false, true) {
 		t.Error("a read-only review must be INCOMPLETE work — the continuation loop has to hand the reviewer its tools back")
 	}
 }
@@ -359,7 +364,7 @@ func TestBehaviourCriterionPassesWhenTheReviewerRanTheCode(t *testing.T) {
 	if !act.ranCommand {
 		t.Fatal("activityFromSession must record a successful run_command")
 	}
-	got, ok := behaviourCriterion(reviewTask, act)
+	got, ok := behaviourCriterion(reviewTask, act, true)
 	if !ok || got.Score != 1 {
 		t.Fatalf("got %+v (applies=%v), want Score 1 — the reviewer executed the code", got, ok)
 	}
@@ -377,7 +382,7 @@ func TestBehaviourCriterionFailsWhenTheCommandErrored(t *testing.T) {
 	if act.ranCommand {
 		t.Fatal("a FAILED run_command must not count as an execution")
 	}
-	got, ok := behaviourCriterion(reviewTask, act)
+	got, ok := behaviourCriterion(reviewTask, act, true)
 	if !ok || got.Score != 0 {
 		t.Errorf("got %+v (applies=%v), want Score 0 — nothing ran", got, ok)
 	}
@@ -392,10 +397,10 @@ func TestBehaviourCriterionDoesNotFireOnProseTask(t *testing.T) {
 		"Review the architecture of the repository and report your findings.",
 	}
 	for _, task := range tasks {
-		if _, ok := behaviourCriterion(task, workerActivity{}); ok {
+		if _, ok := behaviourCriterion(task, workerActivity{}, false); ok {
 			t.Errorf("behaviour_verified fired on a task with no code change to execute: %q", task)
 		}
-		if workIncomplete("…", task, workerActivity{}, false) {
+		if workIncomplete("…", task, workerActivity{}, false, false) {
 			t.Errorf("prose task held incomplete: %q", task)
 		}
 	}
@@ -410,12 +415,12 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 		fnCall("2", "read_file", map[string]any{"path": "games/.github/workflows/ci.yaml"}),
 		fnResp("2", "read_file", map[string]any{"content": "on: push"}),
 	))
-	if _, ok := behaviourCriterion(reviewTask, act); ok {
+	if _, ok := behaviourCriterion(reviewTask, act, true); ok {
 		t.Error("behaviour_verified must not fire on a review whose change has no runnable surface (.md/.yaml only)")
 	}
 	if workIncomplete("Docs look good.", reviewTask, workerActivity{
 		paths: act.paths, reviewSubmitted: true,
-	}, false) {
+	}, false, true) {
 		t.Error("a submitted docs-only review is complete work")
 	}
 }
@@ -424,7 +429,7 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 // judge thought of the prose.
 func TestFoldDeterministicHardFailsUnpostedReview(t *testing.T) {
 	v := verdict{Score: 0.9, Criteria: map[string]criterionScore{"review_quality": {Score: 0.9}}}
-	got := foldDeterministic(context.Background(), v, "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask})
+	got := foldDeterministic(context.Background(), v, "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask, IsReviewer: true})
 	if c := got.Criteria["review_posted"]; c.Score != 0 {
 		t.Fatalf("review_posted = %+v, want Score 0", c)
 	}
