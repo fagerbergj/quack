@@ -32,6 +32,7 @@ func TestParseAnswerReview(t *testing.T) {
 func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true,
+		ReadOnly:       true, // a code-reviewer is read-only
 		Task:           "Review PR #7 and post your findings as inline review comments",
 	}
 	act := workerActivity{}
@@ -69,9 +70,19 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 		t.Fatal("probe fired for a non-review task")
 	}
 
-	// An already-staged review always wins.
+	// #471: a NON-read-only implementer whose task merely TALKS about reviews
+	// (demandsPostedReview is a pure text match) must NOT stage a review — that
+	// review would ride alongside its PR and 404 against the trigger issue number.
+	act = workerActivity{}
+	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: false,
+		Task: "Implement the HITL review flow: change how quack posts a review and open a pull request"}, reviewAnswer)
+	if len(act.stagedDelivery) != 0 {
+		t.Fatal("probe staged a review for a non-read-only implementer whose task mentions reviews (#471)")
+	}
+
+	// An already-staged review always wins (reviewer path).
 	act = workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "existing"}}}
-	augmentFromAnswer(&act, Config{ExternalWorker: true, Task: reviewTask}, reviewAnswer)
+	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: true, Task: reviewTask}, reviewAnswer)
 	if act.stagedDelivery["review"].Body != "existing" {
 		t.Fatal("probe replaced a staged review")
 	}

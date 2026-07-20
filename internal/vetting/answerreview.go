@@ -86,6 +86,15 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if !cfg.ExternalWorker || strings.TrimSpace(answer) == "" {
 		return
 	}
+	// Only a READ-ONLY reviewer stages a review from its answer. Without this,
+	// an implementer whose TASK merely talks about reviews trips demandsPostedReview
+	// (a pure text match) and gets a spurious review staged alongside its PR — then
+	// submitted to the trigger issue number, 404ing (#471). Symmetric to
+	// augmentFromRepo's ReadOnly guard (an implementer synthesizes a PR, a reviewer
+	// does not; a reviewer synthesizes a review, an implementer does not).
+	if !cfg.ReadOnly {
+		return
+	}
 	if !demandsPostedReview(cfg.Task) {
 		return
 	}
