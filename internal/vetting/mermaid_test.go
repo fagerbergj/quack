@@ -155,6 +155,34 @@ func TestMermaidError(t *testing.T) {
 // mermaidCriterion is the gate wiring: it must find an invalid diagram in
 // either the answer text or a staged delivery body, and stay inapplicable
 // (ok=false) when nothing invalid is present anywhere.
+func TestDegradeInvalidMermaid_WarningOutsideFence(t *testing.T) {
+	md := "Before.\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nAfter."
+	got, issues := DegradeInvalidMermaid(md)
+	if len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1", issues)
+	}
+	wantLine := "> ⚠️ invalid mermaid diagram (parse error"
+	lines := strings.Split(got, "\n")
+	foundWarning, foundTextFence := false, false
+	for _, line := range lines {
+		if strings.HasPrefix(line, wantLine) {
+			if foundTextFence {
+				t.Fatal("warning appeared after the ```text fence — it must come before the fence opener")
+			}
+			foundWarning = true
+		}
+		if line == "```text" {
+			foundTextFence = true
+		}
+	}
+	if !foundWarning {
+		t.Fatal("expected a warning line starting with '> ⚠️ invalid mermaid diagram'")
+	}
+	if !foundTextFence {
+		t.Fatal("expected ```text fence in degraded output")
+	}
+}
+
 func TestMermaidCriterion_DetectsInvalidStagedBody(t *testing.T) {
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nA[Start] --> B[End]\n```"},

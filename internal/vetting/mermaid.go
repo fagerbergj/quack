@@ -107,8 +107,8 @@ func DegradeInvalidMermaid(md string) (string, []mermaidIssue) {
 		issues = append(issues, mermaidIssue{line: openLine + 1, err: reason})
 		out = append(out, lines[last:openLine]...)
 		m := fenceOpenRe.FindStringSubmatch(lines[openLine])
-		out = append(out, m[1]+m[2]+"text")
 		out = append(out, fmt.Sprintf("> ⚠️ invalid mermaid diagram (%s) — shown as text, not rendered", reason))
+		out = append(out, m[1]+m[2]+"text")
 		out = append(out, lines[openLine+1:closeLine+1]...)
 		last = closeLine + 1
 	})
