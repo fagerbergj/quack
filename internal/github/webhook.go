@@ -530,6 +530,25 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// from the last dispatch (seeding on first load, delta-only on resume),
 	// and persist the new snapshot for next time.
 	gh := e.loadGithubContext(ctx, sessionID, owner, repo, number, p.Issue.PullRequest != nil, p.Comment.ID, resetSession)
+
+	// Never run a label-triggered work request (plan/implement) blind: if
+	// GitHub's required context fetch failed outright (retries exhausted),
+	// the agent would be told to "follow the plan/discussion below" with
+	// nothing actually injected — exactly the #467 failure mode. A
+	// conversational @mention is exempt: answering from the trigger comment
+	// alone is a legitimate degraded mode there.
+	if p.isLabelTrigger && gh.contextUnavailable && (isWorkRequest(task) || p.planOnly) {
+		slog.Warn("github: label-triggered work request has no usable GitHub context; aborting rather than running blind",
+			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		abortCtx, abortCancel := context.WithTimeout(context.Background(), reactionTimeout)
+		abortMsg := "Couldn't load this issue's plan and discussion from GitHub (a transient error fetching it) — not running blind. Re-apply the label to retry."
+		if err := e.app.postIssueComment(abortCtx, owner, repo, number, abortMsg); err != nil {
+			slog.Warn("github: abort comment failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+		}
+		abortCancel()
+		return
+	}
+
 	message := e.runMessage(p, task, gh)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
@@ -779,6 +798,14 @@ type githubContext struct {
 	// firstLoad is true when no prior snapshot existed for this session (or
 	// one was deliberately forgotten — see loadGithubContext's forceReseed).
 	firstLoad bool
+	// contextUnavailable is true when fetchSnapshot's REQUIRED meta call
+	// (issueMeta/pullMeta) failed — as opposed to a legitimately empty
+	// issue/PR. Distinct from firstLoad: a fresh issue with no comments yet
+	// is also firstLoad but has real (empty) context; this flags "GitHub
+	// could not be read at all" so a label-triggered work request can abort
+	// instead of running with an empty snapshot it mistakes for the truth
+	// (#467).
+	contextUnavailable bool
 	// newCommits are the PR commits to scope an incremental review to (see
 	// Delta.NewCommits) — nil on a first load (review everything), a
 	// (possibly empty) slice on resume.
@@ -803,9 +830,14 @@ type githubContext struct {
 func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, repo string, number int, isPR bool, triggerCommentID int64, forceReseed bool) githubContext {
 	snap, err := e.fetchSnapshot(ctx, owner, repo, number, isPR)
 	if err != nil {
-		slog.Warn("github: fetchSnapshot failed; this turn runs with no fresh GitHub context",
+		// The required meta call (issueMeta/pullMeta, already retried at the
+		// HTTP layer for transient failures) still failed — this is NOT a
+		// legitimately empty issue, it's GitHub unreachable. Flag it so a
+		// label-triggered work request can refuse to run blind rather than
+		// silently treating the empty snapshot as "no discussion yet" (#467).
+		slog.Warn("github: fetchSnapshot failed; this turn has no usable GitHub context",
 			"component", "github", "repo", owner+"/"+repo, "number", number, "err", err)
-		return githubContext{snap: snap, firstLoad: true}
+		return githubContext{snap: snap, firstLoad: true, contextUnavailable: true}
 	}
 
 	var prevJSON string

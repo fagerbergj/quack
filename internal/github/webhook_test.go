@@ -1762,6 +1762,102 @@ func TestDispatchDoesNotResetSessionForMention(t *testing.T) {
 	}
 }
 
+// TestFetchSnapshotRequiredMetaFailureSurfacesAsUnusable pins #467's first
+// guard: when the required meta call (issueMeta) fails persistently (retries
+// at the HTTP layer exhausted), loadGithubContext must flag the context as
+// UNAVAILABLE — not silently return an empty-but-"valid" firstLoad snapshot,
+// which is indistinguishable from a legitimately empty new issue.
+func TestFetchSnapshotRequiredMetaFailureSurfacesAsUnusable(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case isIssueMetaPath(r.URL.Path):
+			// Persistently unavailable — outlives doJSON's own retry budget.
+			http.Error(w, `{"message":"No server is currently available to service your request."}`, http.StatusServiceUnavailable)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	ext := newTestExtension(t, &fakeRunner{}, gh.URL)
+	got := ext.loadGithubContext(context.Background(), "sess-1", "acme", "widgets", 7, false, 0, false)
+	if !got.contextUnavailable {
+		t.Error("contextUnavailable = false; want true when the required meta fetch fails")
+	}
+	if !got.firstLoad {
+		t.Error("firstLoad = false; want true (no snapshot to diff against)")
+	}
+}
+
+// TestDispatchAbortsLabelImplementWhenContextUnavailable pins #467's second
+// guard: a label-triggered implement whose GitHub context could not be
+// loaded (required fetch failed) must NOT dispatch "implement per the plan"
+// to the runner — it must abort with an honest comment instead.
+func TestDispatchAbortsLabelImplementWhenContextUnavailable(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case isIssueMetaPath(r.URL.Path):
+			// The transient 503 from #467's diagnosis, persisting past the retry budget.
+			http.Error(w, `{"message":"No server is currently available to service your request."}`, http.StatusServiceUnavailable)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_implement"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:implement", "alice", false)))
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	select {
+	case <-posted: // the "On it — implementing…" ack comment
+	case <-time.After(2 * time.Second):
+		t.Fatal("no ack comment posted")
+	}
+
+	var abortComment string
+	select {
+	case abortComment = <-posted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no abort comment posted")
+	}
+	if !strings.Contains(abortComment, "not running blind") || !strings.Contains(abortComment, "Re-apply the label") {
+		t.Errorf("abort comment = %q; want the don't-run-blind message", abortComment)
+	}
+
+	// The runner must never have been asked to implement anything.
+	select {
+	case msg := <-runner.gotMessage:
+		t.Errorf("runner.Run was called with %q; want no dispatch when context is unavailable", msg)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if got := atomic.LoadInt32(&runner.calls); got != 0 {
+		t.Errorf("runner.calls = %d; want 0 (must not implement blind)", got)
+	}
+}
+
 // TestDispatchCollapsesPriorPlanComment pins plan half: when a NEW plan
 // is posted for an issue, any PRIOR quack plan comment (carrying the plan
 // delivery marker) is minimized via GraphQL before the new one lands, so the
