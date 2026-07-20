@@ -191,11 +191,16 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// The session carries whichever tool buffers the node is entitled to:
 			//   - memory (load_memory/stage_memory, #344) for a memory participant;
 			//   - review (stage_review_comment/stage_review, #451) for a read-only
-			//     reviewer whose task demands a posted review.
+			//     reviewer whose task demands a posted review;
+			//   - stage_pr for a WRITE worker at the terminal delivery node.
 			// Native agents have ADK-native equivalents, so both ride cfg.ExternalWorker.
 			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
 			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && vetting.DemandsPostedReview(effectiveNode.Task)
-			if memParticipant || reviewNode {
+			// A WRITE worker at the chain's terminal delivery point (cfg.Deliver
+			// non-nil, mid-chain nodes get nil at graph.go:113) gets stage_pr —
+			// the same structural gate augmentFromRepo stages its fallback PR under.
+			prNode := cfg.ExternalWorker && !cfg.ReadOnly && cfg.Deliver != nil
+			if memParticipant || reviewNode || prNode {
 				if secret, serr := vetting.NewMemSecret(); serr != nil {
 					slog.Warn("acp MCP secret unavailable; node runs without its memory/review tools",
 						"component", "dag", "node", node.ID, "err", serr)
@@ -209,6 +214,9 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 					}
 					if reviewNode {
 						ms.Review = &vetting.ReviewStage{}
+					}
+					if prNode {
+						ms.PRStage = &vetting.PRStage{}
 					}
 					vetting.RegisterMemSession(secret, ms)
 					// Backstop: RunGatedRefine unregisters as soon as it drains the

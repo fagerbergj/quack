@@ -87,8 +87,9 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 				Kind:   "pull_request",
 				Branch: act.currentBranch,
 				Title:  title,
-				// ponytail: commit subjects as the body — synthesize a proper PR
-				// description from the answer text if this reads too thin in review.
+				// Fallback body: the implementer authors a real title+body via the
+				// pr-authoring skill and stage_pr (augmentFromPRStage overrides this);
+				// this commit-subject synthesis only stands if it never staged one.
 				Body: "Commits:\n" + body,
 			}
 		}

@@ -57,3 +57,28 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
 	})
 }
+
+// stagePRInput is stage_pr's input: the title + body the implementer authored
+// with the pr-authoring skill (that skill owns the template — the repo's or its
+// default — so nothing here is deterministic beyond requiring both fields).
+type stagePRInput struct {
+	Title string `json:"title" jsonschema:"the PR title: type(scope): subject, imperative, <=50 chars, references the issue"`
+	Body  string `json:"body" jsonschema:"the PR description authored per the pr-authoring skill (what/why/how/verify, repo template or the skill's default)"`
+}
+
+// registerPRTool adds stage_pr to a per-node server, landing the call in the
+// node's PRStage. The gate opens the PR with it after the answer passes; a node
+// that never calls stage_pr falls back to augmentFromRepo's commit-subject
+// synthesis. Registered only on an implement-delivery node (PRStage non-nil).
+func registerPRTool(srv *mcp.Server, pr *vetting.PRStage) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "stage_pr",
+		Description: "Stage the pull request title and description for this change, authored per the pr-authoring skill. Call once, after committing; the gate opens the PR with exactly this after your work passes review. You never push or open the PR yourself.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args stagePRInput) (*mcp.CallToolResult, any, error) {
+		if strings.TrimSpace(args.Title) == "" || strings.TrimSpace(args.Body) == "" {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_pr needs a non-empty title and body"}}}, nil, nil
+		}
+		pr.Set(strings.TrimSpace(args.Title), strings.TrimSpace(args.Body))
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
+	})
+}

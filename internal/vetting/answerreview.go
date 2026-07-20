@@ -73,6 +73,36 @@ func augmentFromReviewStage(act *workerActivity, advisorToken string) {
 	act.stagedDelivery["review"] = sd
 }
 
+// augmentFromPRStage folds a stage_pr-staged PR (the implementer authored the
+// title+body via the pr-authoring skill) OVER augmentFromRepo's commit-subject
+// fallback, keeping the branch the disk probe resolved (the worker authored only
+// text). No stage_pr call ⇒ Snapshot ok is false ⇒ no-op, and the fallback
+// stands. Runs in actFor, after augmentFromRepo has staged the fallback.
+func augmentFromPRStage(act *workerActivity, advisorToken string) {
+	if advisorToken == "" {
+		return
+	}
+	t, ok := LookupAdvisorThread(advisorToken)
+	if !ok || t.MemSecret == "" {
+		return
+	}
+	ms, ok := LookupMemSession(t.MemSecret)
+	if !ok || ms.PRStage == nil {
+		return
+	}
+	sd, ok := ms.PRStage.Snapshot()
+	if !ok {
+		return
+	}
+	if act.stagedDelivery == nil {
+		act.stagedDelivery = map[string]StagedDelivery{}
+	}
+	if cur, ok := act.stagedDelivery["pr"]; ok {
+		sd.Branch = cur.Branch
+	}
+	act.stagedDelivery["pr"] = sd
+}
+
 // augmentFromAnswer stages an external reviewer's answer as its review. Fires
 // only for ACP-backed workers on a task that demands a posted review, and only
 // when nothing is staged yet (a worker-staged review always wins — there isn't

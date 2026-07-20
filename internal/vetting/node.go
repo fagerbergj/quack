@@ -313,6 +313,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		act := activity()
 		augmentFromReviewStage(&act, advisorToken)
 		augmentFromAnswer(&act, cfg, answer)
+		augmentFromPRStage(&act, advisorToken)
 		return act
 	}
 

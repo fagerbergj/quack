@@ -111,6 +111,9 @@ func memoryMCPHandler() http.Handler {
 		if sess.Review != nil {
 			registerReviewTools(srv, sess.Review)
 		}
+		if sess.PRStage != nil {
+			registerPRTool(srv, sess.PRStage)
+		}
 		return srv
 	}, nil)
 }
