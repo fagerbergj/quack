@@ -865,6 +865,45 @@ describe('ChatStore — fresh dag_plan resets top-level accumulators (#463)', ()
   })
 })
 
+describe('ChatStore — attach on idle chat fires live turn (#463)', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  // #463 (part 2): when a run goes active on an already-open chat, the
+  // Chat.tsx useEffect fires attach — lifting any history turns into `live`
+  // and opening the /stream subscribe so events start flowing.  Without this
+  // path the chat box stays blank while the Running badge shows.
+  it('attach called on idle chat lifts history into live and starts streaming', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    expect(store.get('c').live).toBeUndefined()
+
+    store.attach('c')
+    const es = FakeEventSource.last!
+    expect(es.url).toBe('/api/v1/chats/c/stream')
+    expect(store.get('c').live?.streaming).toBe(true)
+    // The in-progress turn was lifted out of history into `live`.
+    expect(store.get('c').turns).toHaveLength(0)
+    expect(store.get('c').live?.userText).toBe('hi')
+  })
+
+  it('a fresh dag_plan on this live stream creates a visible DAG with queued nodes', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
+    const dag = store.get('c').live?.dag
+    expect(dag).toBeDefined()
+    expect(dag?.nodeStates['a']?.status).toBe('queued')
+    expect(es.closed).toBe(false) // still streaming
+  })
+})
+
 // Issue #463 (part 2): confirm sequential submits already get clean state via archive path.
 describe('ChatStore — submit already produces clean turns (#463)', () => {
   let fetchMock: ReturnType<typeof vi.fn>
