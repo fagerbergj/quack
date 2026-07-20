@@ -125,6 +125,14 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if !cfg.ReadOnly {
 		return
 	}
+	// No provisioned clone/PR ⇒ nothing to review against: a read-only node whose
+	// TASK merely mentions reviews (e.g. a code-explorer investigating the review
+	// path on an ISSUE) would otherwise stage a review that delivery then can't
+	// post — "'' is not a github.com clone URL". Symmetric with augmentFromRepo's
+	// cfg.Setup guard: a reviewer node is setup-provisioned, an explorer is not.
+	if cfg.Setup == nil {
+		return
+	}
 	if !demandsPostedReview(cfg.Task) {
 		return
 	}
