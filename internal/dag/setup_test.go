@@ -55,6 +55,62 @@ func TestSetupQualifyingNodes(t *testing.T) {
 	}
 }
 
+func TestIsReviewOnlySetup(t *testing.T) {
+	tests := []struct {
+		name string
+		plan Plan
+		want bool
+	}{
+		{"no qualifying nodes", Plan{Nodes: []Node{{ID: "explore", AgentName: explorerAgent}}}, false},
+		{"implementer only", Plan{Nodes: []Node{{ID: "impl", AgentName: implementerAgent}}}, false},
+		{"reviewer only", Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent}}}, true},
+		{"implementer then reviewer (implement chain)", Plan{Nodes: []Node{
+			{ID: "impl", AgentName: implementerAgent},
+			{ID: "review", AgentName: reviewerAgent, DependsOn: []string{"impl"}},
+		}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isReviewOnlySetup(tt.plan); got != tt.want {
+				t.Errorf("isReviewOnlySetup(%+v) = %v, want %v", tt.plan.Nodes, got, tt.want)
+			}
+		})
+	}
+}
+
+// runPlanSetup must compute CheckoutExistingHead from the plan's qualifying
+// nodes and pass it to setupFn — review-only true, anything with an
+// implementer false — even though it is never planner-declared JSON.
+func TestRunPlanSetup_ComputesCheckoutExistingHead(t *testing.T) {
+	tests := []struct {
+		name  string
+		nodes []Node
+		want  bool
+	}{
+		{"reviewer only", []Node{{ID: "review", AgentName: reviewerAgent}}, true},
+		{"implementer only", []Node{{ID: "impl", AgentName: implementerAgent}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got bool
+			ex := &Executor{setupFn: func(_ context.Context, _, _, _ string, s Setup) error {
+				got = s.CheckoutExistingHead
+				return nil
+			}}
+			plan := Plan{
+				Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+				Nodes: tt.nodes,
+			}
+			if err := ex.runPlanSetup(context.Background(), "u", "c", plan); err != nil {
+				t.Fatalf("runPlanSetup: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("setupFn's Setup.CheckoutExistingHead = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunPlanSetup_NilSetupIsNoOp(t *testing.T) {
 	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error {
 		t.Fatal("setupFn must never be called when plan.Setup is nil")

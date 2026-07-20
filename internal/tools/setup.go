@@ -10,28 +10,40 @@ import (
 )
 
 // SetupClone is the harness-executed twin of a worker's own git_clone plus a
-// new branch checkout — dag.Plan's declared Setup PRE-step, run once before
-// any node. Authenticated via the SAME credential/tokenSource path
+// branch checkout — dag.Plan's declared Setup PRE-step, run once before any
+// node. Authenticated via the SAME credential/tokenSource path
 // git_clone/PushBranch use. repoURL must be a plain https:// URL
 // (validateCloneURL) — a plan's Setup.Repo is orchestrator-declared, not
 // operator-trusted, exactly like a worker's git_clone url. dir is
 // workspace-relative (jail.Resolve-ready — see workspace.SetupCloneDir, which
 // lands the clone AT the node's own root, unlike a worker's own git_clone,
-// which typically lands one level under it). Returns the resolved absolute
-// clone dir.
-func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource) (string, error) {
+// which typically lands one level under it). checkoutExistingHead selects
+// which of the two branch checkouts setupCloneAndBranch runs (see its doc).
+// Returns the resolved absolute clone dir.
+func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource) (string, error) {
 	if _, err := validateCloneURL(repoURL); err != nil {
 		return "", err
 	}
 	b := gitBinding{userID: userID, jail: jail, caps: caps, credentials: credentials, tokenSource: tokenSource}
 	b.chatID = chatID
-	return setupCloneAndBranch(ctx, b, dir, repoURL, baseRef, workBranch)
+	return setupCloneAndBranch(ctx, b, dir, repoURL, baseRef, workBranch, checkoutExistingHead)
 }
 
 // setupCloneAndBranch is SetupClone past URL validation — split out so tests
 // can drive it against a local (file://) remote, exactly like cloneRepo's own
 // test seam (see cloneIntoJail in git_test.go).
-func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRef, workBranch string) (string, error) {
+//
+// checkoutExistingHead distinguishes an IMPLEMENT setup from a REVIEW one:
+//   - false (implement): workBranch is a NEW branch to create off baseRef —
+//     `checkout -b`, unchanged from before this existed. A re-run/supersede
+//     must start fresh from base, never continue a stale remote branch.
+//   - true (review): workBranch is an EXISTING remote branch (a PR head) —
+//     `checkout -b` off baseRef would create an empty LOCAL branch shadowing
+//     the real remote one, leaving the reviewer looking at base with no diff
+//     (the bug this guards against). Instead, fetch the real branch and check
+//     it out, and unshallow so `git diff baseRef...HEAD` (three-dot, needs the
+//     merge-base) is computable.
+func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool) (string, error) {
 	if strings.TrimSpace(baseRef) == "" {
 		return "", fmt.Errorf("setup: base_ref must not be empty")
 	}
@@ -52,7 +64,20 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if _, err := b.cloneRepo(repoURL, dir, nil, baseRef); err != nil {
 		return "", fmt.Errorf("setup: clone: %w", err)
 	}
-	if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-b", workBranch}, b.caps, nil); err != nil {
+	if checkoutExistingHead {
+		// The initial clone is shallow (depth 1, base only) — unshallow so
+		// baseRef's full history is present and a three-dot diff against it has
+		// a merge-base to compute.
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", "origin"}, b.caps, nil); err != nil {
+			return "", fmt.Errorf("setup: unshallow base history for review: %w", err)
+		}
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "origin", workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, nil); err != nil {
+			return "", fmt.Errorf("setup: fetch review head %q: %w", workBranch, err)
+		}
+		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + workBranch}, b.caps, nil); err != nil {
+			return "", fmt.Errorf("setup: checkout review head %q: %w", workBranch, err)
+		}
+	} else if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-b", workBranch}, b.caps, nil); err != nil {
 		return "", fmt.Errorf("setup: checkout -b %q: %w", workBranch, err)
 	}
 	// A committer identity in the clone so a worker that shells out to

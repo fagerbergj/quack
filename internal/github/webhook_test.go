@@ -969,13 +969,17 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 		}
 	}
 
-	// With the PR's refs known, the reviewer is told to CHECK OUT the head branch —
-	// without it a shallow clone's `git diff base...HEAD` is empty and it flails.
+	// With the PR's refs known, the reviewer is told the clone is ALREADY on the
+	// head branch (setup's CheckoutExistingHead — see internal/tools/setup.go)
+	// with the diff ready — no checkout needed, and no stale "empty diff" claim.
 	withRefs := ext.runMessage(pr, "review this", seedGC(Snapshot{IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}, 0))
-	for _, want := range []string{"git_checkout `feat/x`", "git_diff main...feat/x", "is EMPTY until you check out the head"} {
+	for _, want := range []string{"already checked out on the PR's head branch `feat/x`", "git_diff main...feat/x"} {
 		if !strings.Contains(withRefs, want) {
-			t.Errorf("PR review message missing checkout guidance %q\n---\n%s", want, withRefs)
+			t.Errorf("PR review message missing diff-ready guidance %q\n---\n%s", want, withRefs)
 		}
+	}
+	if strings.Contains(withRefs, "git_checkout") {
+		t.Errorf("PR review message should no longer tell the reviewer to check out the head — setup does it now:\n%s", withRefs)
 	}
 
 	// A PR request that DOES ask to change code keeps the implement path.
@@ -1092,9 +1096,9 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 	for _, want := range []string{
 		"PR title: Add widget", "This adds a widget", // intent
 		"Changed files (2)", "a.go (+10/-2)", "b.go (+1/-0)", // slicing data
-		"@bob: looks good",      // conversation, don't repeat
-		"@carol a.go:5: nit",    // inline comment, don't repeat
-		"git_checkout `feat/x`", // checkout guidance
+		"@bob: looks good",   // conversation, don't repeat
+		"@carol a.go:5: nit", // inline comment, don't repeat
+		"already checked out on the PR's head branch `feat/x`", // diff-ready guidance
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("run message missing %q\n---\n%s", want, msg)

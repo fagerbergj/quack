@@ -39,6 +39,25 @@ func setupQualifyingNodes(plan Plan) []Node {
 	return out
 }
 
+// isReviewOnlySetup reports whether the plan's qualifying nodes are
+// review-only — a reviewerAgent node with NO implementerAgent node. That is
+// the structural signal that Setup.WorkBranch names an EXISTING remote PR
+// head to check out, not a new branch to create off BaseRef: an implementer
+// anywhere in the qualifying set means the chain still needs a fresh branch
+// to commit on, even if a reviewer runs later in that same chain.
+func isReviewOnlySetup(plan Plan) bool {
+	nodes := setupQualifyingNodes(plan)
+	if len(nodes) == 0 {
+		return false
+	}
+	for _, n := range nodes {
+		if n.AgentName == implementerAgent {
+			return false
+		}
+	}
+	return true
+}
+
 // runPlanSetup executes the plan's declared PRE-step exactly once, before any
 // node runs: clone Setup.Repo at Setup.BaseRef, then checkout -b
 // Setup.WorkBranch, into ONE shared workspace location (workspace.
@@ -64,6 +83,7 @@ func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan
 		return fmt.Errorf("dag: setup: repo, base_ref, and work_branch must all be set (got repo=%q base_ref=%q work_branch=%q)",
 			s.Repo, s.BaseRef, s.WorkBranch)
 	}
+	s.CheckoutExistingHead = isReviewOnlySetup(plan)
 	if e.setupFn == nil {
 		return fmt.Errorf("dag: plan declares setup but no setup executor is configured")
 	}
