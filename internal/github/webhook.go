@@ -596,11 +596,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// the review. So if a work request ran no plan, nudge once to actually run it.
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly — never nudged.
-	planRan, judgePassed := e.drive(runCtx, sessionID, message, owner, repo, number, turnID, pub)
-	if !planRan && (isWorkRequest(task) || p.planOnly) {
+	planRan, judgePassed, paused, needsInput := e.drive(runCtx, sessionID, message, owner, repo, number, turnID, pub)
+	if !planRan && !paused && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
-		_, jp2 := e.drive(runCtx, sessionID, runNudge, owner, repo, number, turnID, pub)
+		_, jp2, _, _ := e.drive(runCtx, sessionID, runNudge, owner, repo, number, turnID, pub)
 		judgePassed = judgePassed || jp2
 	}
 	if pub != nil {
@@ -648,6 +648,26 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	if delivered {
 		slog.Info("github: work delivered on the PR; skipping the duplicate summary comment",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		return
+	}
+
+	// A HITL pause means the run is NOT finished — a node asked the human for
+	// input. Post the question as a GitHub comment so the maintainer can answer
+	// on-thread; the reply feeds back into the same session and resumes the
+	// paused node (orchestrator.Run → resumeNodeRun). Never post the "produced
+	// no answer" tail in this case: doing so would bury the HITL question.
+	if paused {
+		comment := fmt.Sprintf("⏸️ quack has a question before proceeding:\n\n**%s**\n\n%s",
+			needsInput.NodeID, needsInput.Message)
+		hitlCtx, hitlCancel := context.WithTimeout(context.Background(), time.Minute)
+		defer hitlCancel()
+		if err := e.app.postIssueComment(hitlCtx, owner, repo, number, comment); err != nil {
+			slog.Error("github: HITL question comment post failed", "component", "github",
+				"repo", owner+"/"+repo, "issue", number, "err", err)
+		} else {
+			slog.Info("github: HITL question posted", "component", "github",
+				"repo", owner+"/"+repo, "issue", number, "node", needsInput.NodeID)
+		}
 		return
 	}
 
@@ -742,20 +762,24 @@ const runNudge = "You answered without running anything. Do NOT reply in prose: 
 
 // drive runs one orchestrator turn to completion and reports whether it
 // EXECUTED a plan (a dag_plan event) and whether ANY node's trust gate PASSED
-// its judge round. A run with no plan produced only a direct-text answer (the
-// work never happened). judgePassed is dispatch's proxy for "the staged
-// delivery set was posted": commitDelivery runs synchronously inside the
-// gate, strictly before node_done fires (see internal/vetting/node.go), so by
-// the time node_done reports a pass here, delivery has already been attempted
-// — a failed delivery is still logged loudly (slog.Error) even though this
-// proxy can't distinguish it from "nothing was staged" (a conversational node
-// gated the same way). dispatch only trusts this proxy for a task that
-// DEMANDED delivery in the first place (isWorkRequest) — see its caller.
+// its judge round. paused indicates the run hit a HITL pause (node_needs_input)
+// — in that case, no answer was produced yet and dispatch must NOT post the
+// default tail comment; instead it posts the question as a GitHub comment so
+// the maintainer can answer on-thread which resumes the same session.
+// A run with no plan produced only a direct-text answer (the work never
+// happened). judgePassed is dispatch's proxy for "the staged delivery set was
+// posted": commitDelivery runs synchronously inside the gate, strictly before
+// node_done fires (see internal/vetting/node.go), so by the time node_done
+// reports a pass here, delivery has already been attempted — a failed delivery
+// is still logged loudly (slog.Error) even though this proxy can't distinguish
+// it from "nothing was staged" (a conversational node gated the same way).
+// dispatch only trusts this proxy for a task that DEMANDED delivery in the
+// first place (isWorkRequest) — see its caller.
 //
 // pub is nil when the extension has no store (test harnesses that don't need
 // persistence) — every persistence step below is then a no-op, matching drive's
 // old behavior exactly.
-func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool) {
+func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool, paused bool, needsInput stream.NodeNeedsInputData) {
 	var planID string
 	for ev, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
 		if err != nil {
@@ -775,6 +799,11 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 			if d, ok := ev.Data.(stream.NodeDoneData); ok && d.JudgePassed {
 				judgePassed = true
 			}
+		case stream.EventNodeNeedsInput:
+			if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
+				paused = true
+				needsInput = d
+			}
 		}
 		if pub != nil {
 			if planID != "" {
@@ -783,7 +812,7 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 			pub.Publish(ev)
 		}
 	}
-	return planRan, judgePassed
+	return planRan, judgePassed, paused, needsInput
 }
 
 // githubContext is the loaded, ready-to-inject GitHub state for one dispatch
