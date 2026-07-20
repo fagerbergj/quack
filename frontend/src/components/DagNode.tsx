@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { AssistantText, ActivityList } from './AgentParts'
+import { AssistantText, ActivityList, AcpBadge, isAcpAgent } from './AgentParts'
 import { CopyButton } from './CopyButton'
 import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
@@ -249,7 +249,7 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
           <RunTimer run={timerRun} />
         </summary>
         <div className="px-4 pb-3">
-          <ActivityList activity={activity} agent={runs[runs.length - 1].agent} />
+          <ActivityList activity={activity} />
         </div>
       </details>
     </div>
@@ -330,7 +330,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
-          <div className="px-4 pb-3"><ActivityList activity={run.activity} agent={run.agent} /></div>
+          <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
         )}
       </details>
       {/* Verdict collapses to one line, like ThinkBlock — full reasoning opens
@@ -356,7 +356,7 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
-          <div className="px-4 pb-3"><ActivityList activity={run.activity} agent={run.agent} /></div>
+          <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
         )}
       </details>
     </div>
@@ -461,6 +461,7 @@ export const DagNode = memo(function DagNode({
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
           {agentLabel(node.agent)}
         </span>
+        {isAcpAgent(node.agent) && <AcpBadge />}
         <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
           <span
