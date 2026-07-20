@@ -67,7 +67,7 @@ func TestCodeImplementerBundle(t *testing.T) {
 	// The prompt carries the anti-fabrication hard rule that pairs with the
 	// judge's claims_match_activity criterion (ACP phrasing: the gate reads the
 	// clone, so claims are checked against git itself).
-	for _, marker := range []string{"Report only what actually happened", "You commit locally. You never push"} {
+	for _, marker := range []string{"Report only what actually happened", "you never push or open the PR"} {
 		if !strings.Contains(b.Prompt, marker) {
 			t.Errorf("prompt missing expected hard-rule marker %q", marker)
 		}
