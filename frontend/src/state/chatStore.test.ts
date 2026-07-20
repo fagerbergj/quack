@@ -832,3 +832,74 @@ describe('ChatStore — reconnect on a dropped stream (#383)', () => {
     expect(store.get('c').live?.streaming).toBe(false)
   })
 })
+
+// Issue #463: when a fresh dag_plan arrives on a LiveTurn that has accumulated
+// top-level content (from pre-DAG orchestrator narration or replays into an old
+// turn), the stale text/runs bleed into the new DAG scope.  The fix: onDagPlan
+// also resets live.text and live.runs when creating a fresh DAG.
+describe('ChatStore — fresh dag_plan resets top-level accumulators (#463)', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  it('a fresh dag_plan emitted into a live turn that has accumulated stale text + runs clears them', () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    // Pre-planning phase: orchestrator emits top-level text (no DAG yet).
+    es.emit('agent_start', '{"run_id":"orchestrator","stage":"worker"}')
+    es.emit('agent_token', '{"text":"PRE-DAG NARRATION"}')
+    expect(store.get('c').live?.text).toBe('PRE-DAG NARRATION')
+    expect(store.get('c').live?.runs).toHaveLength(1)
+
+    // FINALLY a dag_plan arrives — signals a fresh DAG for a new run.
+    es.emit('dag_plan', '{"plan_id":"p-new","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
+
+    // #463: stale top-level content must be purged when replacing with a fresh DAG.
+    expect(store.get('c').live?.text).toBe('')
+    expect(store.get('c').live?.runs).toEqual([])
+  })
+})
+
+// Issue #463 (part 2): confirm sequential submits already get clean state via archive path.
+describe('ChatStore — submit already produces clean turns (#463)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let store: ChatStore
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    store = new ChatStore()
+    store.seed('c', [])
+  })
+
+  it('creates fresh LiveTurn for each submit — prev text does not leak into next turn', async () => {
+    const sseOld = [
+      'event: agent_token',
+      'data: {"text":"OLD ANSWER"}',
+      '',
+      'event: done\ndata: {}\n\n',
+    ].join('\n')
+
+    fetchMock.mockResolvedValueOnce(makeStream(sseOld))
+    await store.submit('c', 'msg1')
+    expect(store.get('c').live?.text).toBe('OLD ANSWER')
+    expect(store.get('c').live?.streaming).toBe(false)
+
+    // Next submit: archive GET + fresh LiveTurn.  Stale text must not carry forward.
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
+    const sseNew = [
+      'event: agent_token',
+      'data: {"text":"NEW ANSWER"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sseNew))
+    await store.submit('c', 'msg2')
+
+    expect(store.get('c').live?.text).toBe('NEW ANSWER')
+  })
+})

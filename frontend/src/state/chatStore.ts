@@ -793,6 +793,9 @@ export class ChatStore {
         onDagPlan: plan => {
           const s = this.states.get(chatId)
           if (!s?.live) return
+          // #463: when a fresh DAG arrives (e.g. after pre-DAG orchestrator
+          // narration, or a new hub dispatch replaying into the same LiveTurn),
+          // purge stale top-level accumulators that don't belong under this DAG.
           const nodeStates: Record<string, NodeState> = {}
           for (const n of plan.nodes) nodeStates[n.id] = { status: 'queued' }
           const dag: DagTurnState = {
@@ -804,7 +807,7 @@ export class ChatStore {
             nodeAnswer: {},
             startedAt: plan.started_at_ms ?? Date.now(),
           }
-          this.write(chatId, { ...s, live: { ...s.live, dag } })
+          this.write(chatId, { ...s, live: { ...s.live, dag, text: '', runs: [] } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
