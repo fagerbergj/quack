@@ -544,13 +544,18 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 // is separate from the trust gate's commitDelivery, which only strips staged
 // PR/review bodies (#371) — this proves dispatch ALSO strips an invalid
 // ```mermaid block from the answer before it's posted, not just delivered PRs.
-func TestHandleWebhookStripsInvalidMermaidFromAnswer(t *testing.T) {
+// #448 reversed the prior design (#371): an invalid ```mermaid block is no
+// longer silently stripped from the answer before it's posted — that's now a
+// deterministic gate criterion (vetting.mermaidCriterion) that fails the
+// node and feeds the concrete error back to the worker as revise feedback,
+// so dispatch here just posts whatever the run produced, verbatim.
+func TestHandleWebhookPostsAnswerVerbatimNoMermaidStripping(t *testing.T) {
 	posted := make(chan string, 1)
 	gh := stubGitHub(t, posted)
 	defer gh.Close()
 
-	badAnswer := "Here's the plan:\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nDone."
-	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: badAnswer}
+	answer := "Here's the plan:\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nDone."
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: answer}
 	ext := newTestExtension(t, runner, gh.URL)
 
 	rec := httptest.NewRecorder()
@@ -564,14 +569,14 @@ func TestHandleWebhookStripsInvalidMermaidFromAnswer(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no comment posted back")
 	}
-	if strings.Contains(body, "```mermaid") {
-		t.Fatalf("posted comment still has the invalid diagram fenced as mermaid: %s", body)
-	}
-	if !strings.Contains(body, "diagram omitted") {
-		t.Fatalf("posted comment = %s, want the omitted-diagram fallback", body)
+	if !strings.Contains(body, "```mermaid") {
+		t.Fatalf("posted comment = %s, want the invalid diagram still fenced as mermaid (no stripping)", body)
 	}
 	if !strings.Contains(body, "A[Start]") || !strings.Contains(body, "B[Finish]") {
-		t.Fatalf("posted comment = %s, want the raw source preserved as a plain-text fallback", body)
+		t.Fatalf("posted comment = %s, want the diagram content posted unchanged", body)
+	}
+	if strings.Contains(body, "diagram omitted") {
+		t.Fatalf("posted comment = %s, want no omitted-diagram fallback — stripping is gone", body)
 	}
 }
 
