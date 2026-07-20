@@ -374,6 +374,10 @@ type AgentConfig struct {
 type AcpAgentConfig struct {
 	Command []string          `yaml:"command"` // argv, e.g. ["opencode", "acp"]
 	Env     map[string]string `yaml:"env"`     // extra subprocess environment (overrides generated defaults)
+	// McpServers is a list of MCP server URLs that the ACP agent will connect
+	// to (e.g. context7). Passes straight through into opencode's mcp config
+	// block in OPENCODE_CONFIG_CONTENT — zero Go abstraction, just plumbing.
+	McpServers []string `yaml:"mcp_servers"`
 	// ReadOnly marks an ACP agent that never commits/delivers code (a reviewer
 	// or explorer): the gate then skips the commit/push delivery demand exactly
 	// as it does for native read-only agents (vetting.Config.ReadOnly).

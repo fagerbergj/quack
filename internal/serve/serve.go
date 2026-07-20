@@ -1087,6 +1087,11 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 	if len(skillPaths) > 0 {
 		cfg["skills"] = m{"paths": skillPaths}
 	}
+	// ACP agent MCP servers (e.g. context7): passes straight through into
+	// opencode's native "mcp" config block — just plumbing, no Go MCP client.
+	if len(ac.Acp.McpServers) > 0 {
+		cfg["mcp"] = m{"servers": ac.Acp.McpServers}
+	}
 	content, err := json.Marshal(cfg)
 	if err != nil {
 		return nil
