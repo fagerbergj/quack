@@ -964,6 +964,26 @@ func (a *App) pullFiles(ctx context.Context, owner, repo string, number int) ([]
 	return out, nil
 }
 
+// prAuthor returns a PR's author login — used to detect quack's OWN PRs
+// (author == botLogin), where GitHub forbids submitting an approve/request-
+// changes review (422 "Can not approve your own pull request").
+func (a *App) prAuthor(ctx context.Context, owner, repo string, number int) (string, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return "", err
+	}
+	return out.User.Login, nil
+}
+
 // botLogin returns quack's own commenting identity ("{app-slug}[bot]"),
 // fetched once via GET /app (App-JWT authed, not an installation token) and
 // cached for the process lifetime — an App's slug never changes.
