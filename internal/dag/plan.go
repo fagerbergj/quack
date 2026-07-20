@@ -44,6 +44,13 @@ type Setup struct {
 	Repo       string `json:"repo"`
 	BaseRef    string `json:"base_ref"`
 	WorkBranch string `json:"work_branch"`
+
+	// CheckoutExistingHead is computed by runPlanSetup (never planner-declared,
+	// hence json:"-") from the plan's qualifying nodes: true when WorkBranch
+	// names an EXISTING remote branch to check out as-is (a review — its
+	// commits must be fetched, not created), false when it names a NEW branch
+	// to create off BaseRef (an implement).
+	CheckoutExistingHead bool `json:"-"`
 }
 
 // Delivery is the plan's declared POST-step: how the gated result reaches

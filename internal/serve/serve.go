@@ -724,7 +724,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// empty workspace, re-cloned into a subdir, and delivery then pushed from
 		// the wrong (non-repo) directory.
 		*setupOut = func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
-			_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, workspaceCaps, gitCredentials, gitTokenSource)
+			_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource)
 			return err
 		}
 	}

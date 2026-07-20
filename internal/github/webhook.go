@@ -1292,11 +1292,12 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		}
 		b.WriteString("\n")
 		if snap.HeadRef != "" {
-			// The clone (already your workspace root — no `cd` needed) only holds
-			// the BASE branch (shallow), where `git diff base...HEAD` is EMPTY.
-			// Check out the head branch to see the changes.
-			fmt.Fprintf(&b, "The clone is your workspace root already. The PR's changes are on branch `%s` (head commit `%s`), based on `%s`. The clone only has the base branch, so `git diff %s...HEAD` is EMPTY until you check out the head: run git_checkout `%s` FIRST (fetch/unshallow if needed), then `git_diff %s...%s` is exactly this PR's diff. Do this before reviewing — the base branch alone shows no changes. ",
-				snap.HeadRef, headSHA, diffBase, diffBase, snap.HeadRef, diffBase, snap.HeadRef)
+			// Setup (dag.Setup.CheckoutExistingHead — see internal/tools/setup.go)
+			// already fetched and checked out this PR's real head branch, with
+			// base's full history present, so the diff is ready with no checkout
+			// needed.
+			fmt.Fprintf(&b, "The clone is your workspace root already, already checked out on the PR's head branch `%s` (head commit `%s`), based on `%s`. `git_diff %s...%s` is exactly this PR's diff — no checkout needed. ",
+				snap.HeadRef, headSHA, diffBase, diffBase, snap.HeadRef)
 		}
 		// Incremental review, rebase-safe (#459 §5): gh.newCommits is non-nil
 		// only once quack has DELIVERED at least one review on this chat (see
