@@ -1487,7 +1487,7 @@ func TestHandleWebhookMergeLabelRespectsAllowlist(t *testing.T) {
 	approved := `[{"state":"APPROVED","user":{"login":"quack[bot]"}}]`
 	posted := make(chan string, 2)
 	merged := make(chan struct{}, 1)
-	gh := mergeStub(t, approved, posted, merged)
+	gh := mergeStub(t, approved, "", posted, merged)
 	defer gh.Close()
 
 	runner := &fakeRunner{gotMessage: make(chan string, 1)}
@@ -1952,10 +1952,14 @@ func TestImplementTaskCore(t *testing.T) {
 	}
 }
 
-// mergeStub is stubGitHub plus a reviews list and a merge endpoint; merged
-// signals when the merge PUT lands.
-func mergeStub(t *testing.T, reviewsJSON string, posted chan<- string, merged chan<- struct{}) *httptest.Server {
+// mergeStub is stubGitHub plus a reviews list, an issue-comments list (own-PR
+// verdict markers), and a merge endpoint; merged signals when the merge PUT
+// lands. commentsJSON == "" defaults to an empty list.
+func mergeStub(t *testing.T, reviewsJSON, commentsJSON string, posted chan<- string, merged chan<- struct{}) *httptest.Server {
 	t.Helper()
+	if commentsJSON == "" {
+		commentsJSON = "[]"
+	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/installation"):
@@ -1969,6 +1973,8 @@ func mergeStub(t *testing.T, reviewsJSON string, posted chan<- string, merged ch
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge"):
 			merged <- struct{}{}
 			fmt.Fprint(w, `{"merged":true}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, commentsJSON)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
@@ -1997,27 +2003,34 @@ func TestHandleWebhookMergeLabel(t *testing.T) {
 		name        string
 		triggers    []string
 		reviews     string
+		comments    string // own-PR verdict-marker comments; "" = none
 		sender      string
 		wantMerge   bool
 		wantComment string // substring of the posted comment; "" = no comment expected
 	}{
-		{"approved review merges", []string{"merge"}, approved, "alice", true, "Merged"},
+		{"approved review merges", []string{"merge"}, approved, "", "alice", true, "Merged"},
 		{"changes-requested refuses", []string{"merge"},
 			`[{"state":"APPROVED","user":{"login":"quack[bot]"}},{"state":"CHANGES_REQUESTED","user":{"login":"quack[bot]"}}]`,
-			"alice", false, "Not merging: my latest review is CHANGES_REQUESTED"},
+			"", "alice", false, "Not merging: my latest review is request_changes, not an approval"},
 		{"no quack review refuses", []string{"merge"},
-			`[{"state":"APPROVED","user":{"login":"alice"}}]`, "alice", false, "I have not reviewed this PR"},
-		{"COMMENTED carries no verdict", []string{"merge"},
-			`[{"state":"APPROVED","user":{"login":"quack[bot]"}},{"state":"COMMENTED","user":{"login":"quack[bot]"}}]`,
+			`[{"state":"APPROVED","user":{"login":"alice"}}]`, "", "alice", false, "I have not reviewed this PR"},
+		{"COMMENTED carries no verdict but still refuses without a later approve", []string{"merge"},
+			`[{"state":"APPROVED","user":{"login":"quack[bot]"},"submitted_at":"2026-01-01T00:00:00Z"},{"state":"COMMENTED","user":{"login":"quack[bot]"},"submitted_at":"2026-01-02T00:00:00Z"}]`,
+			"", "alice", false, "Not merging: my latest review is comment, not an approval"},
+		{"own-PR comment-review marker approves and merges", []string{"merge"}, `[]`,
+			`[{"user":{"login":"quack[bot]"},"body":"LGTM\n\n<!-- quack:delivery:review:approve -->","created_at":"2026-01-01T00:00:00Z"}]`,
 			"alice", true, "Merged"},
-		{"trigger not enabled is a no-op", []string{"mention"}, approved, "alice", false, ""},
-		{"bot sender cannot authorize", []string{"merge"}, approved, "other[bot]", false, ""},
+		{"own-PR comment-review marker request_changes refuses", []string{"merge"}, `[]`,
+			`[{"user":{"login":"quack[bot]"},"body":"needs work\n\n<!-- quack:delivery:review:request_changes -->","created_at":"2026-01-01T00:00:00Z"}]`,
+			"alice", false, "Not merging: my latest review is request_changes, not an approval"},
+		{"trigger not enabled is a no-op", []string{"mention"}, approved, "", "alice", false, ""},
+		{"bot sender cannot authorize", []string{"merge"}, approved, "", "other[bot]", false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			posted := make(chan string, 2)
 			merged := make(chan struct{}, 1)
-			gh := mergeStub(t, tt.reviews, posted, merged)
+			gh := mergeStub(t, tt.reviews, tt.comments, posted, merged)
 			defer gh.Close()
 
 			runner := &fakeRunner{gotMessage: make(chan string, 1)}

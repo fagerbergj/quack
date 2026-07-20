@@ -833,15 +833,20 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		// just no formal approval (so quack:merge, which requires one, declines it).
 		if bot, berr := a.botLogin(ctx); berr == nil {
 			if author, aerr := a.prAuthor(ctx, owner, repo, dc.IssueNumber); aerr == nil && author == bot {
-				body := "_quack authored this PR, so GitHub won't let it record an approve or request-changes verdict — this review is a comment. A maintainer decides._\n\n" + strings.TrimSpace(item.Body)
+				verdict := strings.ToLower(strings.TrimSpace(item.Event))
+				if !reviewEvents[strings.ToUpper(verdict)] {
+					verdict = "comment"
+				}
+				body := "_quack authored this PR, so GitHub won't let it record an approve or request-changes verdict — this review is a comment. A maintainer decides._\n\n" + vetting.StripVerdictTail(item.Body)
 				if fs := formatInlineFindings(item.Comments); fs != "" {
 					body += "\n\n" + fs
 				}
+				body += "\n\n" + deliveryMarker("review:"+verdict)
 				if err := a.postIssueComment(ctx, owner, repo, dc.IssueNumber, gateCaveat(dc, body)); err != nil {
 					return deliveryItemResult{}, fmt.Errorf("github: delivery: self-review comment: %w", err)
 				}
-				slog.Info("github: self-review posted as a comment (no verdict — own PR)",
-					"component", "github", "repo", owner+"/"+repo, "pr", dc.IssueNumber)
+				slog.Info("github: self-review posted as a comment (no formal verdict — own PR)",
+					"component", "github", "repo", owner+"/"+repo, "pr", dc.IssueNumber, "verdict", verdict)
 				return deliveryItemResult{}, nil
 			}
 		}

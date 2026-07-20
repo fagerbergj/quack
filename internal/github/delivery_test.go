@@ -322,9 +322,80 @@ func TestDeliverReviewOnOwnPRIsCommentNoVerdict(t *testing.T) {
 	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	body := string(commentBody)
+	body := decodedCommentBody(t, commentBody)
 	if !strings.Contains(body, "clean change") || !strings.Contains(body, "main.go:42") {
 		t.Fatalf("self-review comment missing the review body/findings:\n%s", body)
+	}
+	if !strings.Contains(body, "<!-- quack:delivery:review:approve -->") {
+		t.Fatalf("self-review comment missing its verdict marker (needed by the quack:merge gate, #482):\n%s", body)
+	}
+}
+
+// decodedCommentBody extracts the human-readable "body" field from a
+// github_issue_comment POST payload — json.Marshal HTML-escapes the delivery
+// marker's `<`/`>`, so tests must decode rather than substring-match the raw
+// wire bytes.
+func decodedCommentBody(t *testing.T, raw []byte) string {
+	t.Helper()
+	var v struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("decode posted comment: %v\nraw: %s", err, raw)
+	}
+	return v.Body
+}
+
+// TestDeliverReviewOnOwnPRStripsVerdictTail pins #482: the raw ACP reviewer
+// answer carries a machine-parseable VERDICT/FINDINGS tail (for
+// augmentFromAnswer) and sometimes a fallback-format preamble — neither
+// belongs in the human-facing own-PR comment.
+func TestDeliverReviewOnOwnPRStripsVerdictTail(t *testing.T) {
+	var commentBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"quack[bot]"}}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			commentBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"id":1,"html_url":"https://github.com/acme/widgets/pull/7#issuecomment-1"}`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			t.Error("must not submit a formal review verdict on a PR quack authored")
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	rawAnswer := "Since staging tools aren't available in this environment, here is the full structured review as the fallback output format:\n\n" +
+		"This change looks solid overall.\n\n" +
+		"VERDICT: approve\n" +
+		"FINDINGS:\n" +
+		"- main.go:42: tiny nit\n"
+	dc := vetting.DeliveryContext{
+		GatePassed: true, ChatID: "chat-ownpr-tail", CloneURL: "https://github.com/acme/widgets.git", IssueNumber: 7,
+		Items: []vetting.StagedDelivery{{Kind: "review", Event: "approve", Body: rawAnswer,
+			Comments: []vetting.ReviewComment{{Path: "main.go", Line: 42, Body: "tiny nit"}}}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	body := decodedCommentBody(t, commentBody)
+	if !strings.Contains(body, "This change looks solid overall.") {
+		t.Fatalf("self-review comment dropped the human-facing summary:\n%s", body)
+	}
+	if strings.Contains(body, "VERDICT:") || strings.Contains(body, "FINDINGS:") {
+		t.Fatalf("self-review comment leaked the machine-parseable tail:\n%s", body)
+	}
+	if strings.Contains(body, "fallback output format") {
+		t.Fatalf("self-review comment leaked the fallback-format preamble:\n%s", body)
+	}
+	if !strings.Contains(body, "main.go:42") {
+		t.Fatalf("self-review comment dropped the rendered inline finding:\n%s", body)
+	}
+	if !strings.Contains(body, "<!-- quack:delivery:review:approve -->") {
+		t.Fatalf("self-review comment missing its verdict marker:\n%s", body)
 	}
 }
 
