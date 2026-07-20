@@ -752,22 +752,61 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 			e.runTimeout, answer)
 	} else if answer == "" {
 		answer = "quack finished but produced no answer."
-	} else if p.planOnly {
-		// A genuine plan (not a timeout/empty placeholder): collapse any PRIOR
-		// plan comment on this issue before posting the new one, so the thread
-		// shows the CURRENT plan, not a pile of dead attempts. The marker
-		// is what a later run's collapse finds.
-		e.app.collapsePriorComments(tailCtx, owner, repo, number, "plan")
-		answer += "\n\n" + deliveryMarker("plan")
+	} else {
+		// This is the orchestrator's own write-up, not a gated worker answer —
+		// it never runs through mermaidCriterion (#480 regression, #483). Check
+		// and revise it directly.
+		answer = e.reviseInvalidMermaid(runCtx, sessionID, owner, repo, number, turnID, pub, answer)
+		if p.planOnly {
+			// A genuine plan (not a timeout/empty placeholder): collapse any PRIOR
+			// plan comment on this issue before posting the new one, so the thread
+			// shows the CURRENT plan, not a pile of dead attempts. The marker
+			// is what a later run's collapse finds.
+			e.app.collapsePriorComments(tailCtx, owner, repo, number, "plan")
+			answer += "\n\n" + deliveryMarker("plan")
+		}
 	}
-	// Mermaid validity (#448) is a deterministic gate criterion now
-	// (vetting.mermaidCriterion): this answer already passed it (or shipped
-	// gate-failed, same as any other unmet criterion) — nothing to strip here.
 	if err := e.app.postIssueComment(tailCtx, owner, repo, number, answer); err != nil {
 		slog.Error("github comment post failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 		return
 	}
 	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number, "timed_out", timedOut)
+}
+
+// reviseInvalidMermaid nudges the same run once more (mirrors the runNudge
+// re-drive above) with the concrete parse error, then falls back to
+// vetting.DegradeInvalidMermaid if it's still invalid — a visible, labeled
+// degrade, never a silent strip. runCtx must still be alive (the caller only
+// reaches this once cancellation/timeout are ruled out).
+func (e *Extension) reviseInvalidMermaid(runCtx context.Context, sessionID, owner, repo string, number int, turnID string, pub *runlog.Publisher, answer string) string {
+	issues := vetting.FindInvalidMermaid(answer)
+	if len(issues) == 0 {
+		return answer
+	}
+	feedback := make([]string, len(issues))
+	for i, iss := range issues {
+		feedback[i] = iss.Feedback()
+	}
+	slog.Warn("github: plan/research answer has invalid mermaid; nudging one revise",
+		"component", "github", "repo", owner+"/"+repo, "issue", number, "issues", feedback)
+	nudge := fmt.Sprintf(
+		"Your last answer contains invalid mermaid diagram(s) that GitHub cannot render:\n\n- %s\n\nFix each diagram so it parses, or remove it if it isn't essential, then repost your complete answer.",
+		strings.Join(feedback, "\n- "))
+	e.drive(runCtx, sessionID, nudge, owner, repo, number, turnID, pub)
+	if revised := strings.TrimSpace(e.runner.LatestAnswer(runCtx, runUserID, sessionID)); revised != "" {
+		answer = revised
+	}
+	if stillInvalid := vetting.FindInvalidMermaid(answer); len(stillInvalid) > 0 {
+		degraded, issues := vetting.DegradeInvalidMermaid(answer)
+		feedback = feedback[:0]
+		for _, iss := range issues {
+			feedback = append(feedback, iss.Feedback())
+		}
+		slog.Warn("github: plan/research answer still has invalid mermaid after one revise; degrading to a visible text block",
+			"component", "github", "repo", owner+"/"+repo, "issue", number, "issues", feedback)
+		return degraded
+	}
+	return answer
 }
 
 // persistGithubLink stores the web URL of the originating issue/PR on the

@@ -47,6 +47,25 @@ func FindInvalidMermaid(md string) []mermaidIssue {
 	}
 	lines := strings.Split(md, "\n")
 	var issues []mermaidIssue
+	walkMermaidBlocks(lines, func(openLine, _ int, reason string) {
+		if reason != "" {
+			issues = append(issues, mermaidIssue{line: openLine + 1, err: reason})
+		}
+	})
+	return issues
+}
+
+// Feedback formats one issue as "line N: reason" — the shape mermaidCriterion
+// feeds the gate; github/webhook.go reuses it for the plan/research nudge.
+func (i mermaidIssue) Feedback() string {
+	return fmt.Sprintf("line %d: %s", i.line, i.err)
+}
+
+// walkMermaidBlocks is the one fence-walker shared by FindInvalidMermaid and
+// DegradeInvalidMermaid: it visits each genuine top-level ```mermaid block's
+// 0-based fence-open/fence-close line indices plus its validation reason ("" if
+// valid).
+func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, reason string)) {
 	for i := 0; i < len(lines); {
 		m := fenceOpenRe.FindStringSubmatch(lines[i])
 		if m == nil {
@@ -58,17 +77,46 @@ func FindInvalidMermaid(md string) []mermaidIssue {
 		if close == -1 {
 			// Unterminated fence: everything to EOF is inside it — nothing here is
 			// a genuine, closed top-level block worth checking.
-			return issues
+			return
 		}
 		if info == "mermaid" {
 			body := strings.Join(lines[i+1:close], "\n")
-			if reason := mermaidError(body); reason != "" {
-				issues = append(issues, mermaidIssue{line: i + 1, err: reason})
-			}
+			visit(i, close, mermaidError(body))
 		}
 		i = close + 1
 	}
-	return issues
+}
+
+// DegradeInvalidMermaid is the plan/research path's last-resort ceiling
+// (github/webhook.go, after one failed revise): rewrites each still-invalid
+// ```mermaid fence into a labeled ```text fence with a visible warning note —
+// a visible degradation, not the old silent strip. Returns md unchanged and
+// issues=nil when nothing is invalid.
+func DegradeInvalidMermaid(md string) (string, []mermaidIssue) {
+	if !strings.Contains(md, "```") && !strings.Contains(md, "~~~") {
+		return md, nil
+	}
+	lines := strings.Split(md, "\n")
+	var issues []mermaidIssue
+	out := make([]string, 0, len(lines))
+	last := 0
+	walkMermaidBlocks(lines, func(openLine, closeLine int, reason string) {
+		if reason == "" {
+			return
+		}
+		issues = append(issues, mermaidIssue{line: openLine + 1, err: reason})
+		out = append(out, lines[last:openLine]...)
+		m := fenceOpenRe.FindStringSubmatch(lines[openLine])
+		out = append(out, m[1]+m[2]+"text")
+		out = append(out, fmt.Sprintf("> ⚠️ invalid mermaid diagram (%s) — shown as text, not rendered", reason))
+		out = append(out, lines[openLine+1:closeLine+1]...)
+		last = closeLine + 1
+	})
+	if len(issues) == 0 {
+		return md, nil
+	}
+	out = append(out, lines[last:]...)
+	return strings.Join(out, "\n"), issues
 }
 
 // findFenceClose returns the index of the line that closes a fence opened
