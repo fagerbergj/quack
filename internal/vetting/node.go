@@ -440,16 +440,16 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// which carries the user's verbatim request as background: judged against
 		// that, every node in a "commit and open a PR" plan is forever incomplete,
 		// including the read-only explorers.
-		if workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly) {
+		if workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer) {
 			_, contSpan := otelobs.Start(nodeCtx, "gate.continuation",
 				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
 			contAttempts := 0
-			for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly); attempt++ {
+			for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer); attempt++ {
 				contAttempts = attempt
 				act := actFor(answer)
 				log.Warn("work not finished; continuing the worker with its tools",
 					"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
-				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly)+markerLine,
+				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly, cfg.IsReviewer)+markerLine,
 					fmt.Sprintf("worker-cont%d%s", attempt, sfx), "continuation", promptEmit)
 				if err != nil {
 					log.Error("worker continuation failed", "attempt", attempt, "err", err)
@@ -1155,7 +1155,7 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	// ledger shows it did, and one told to POST a review on a PR cannot pass
 	// unless it submitted one (delivery.go). Untouched for a node whose task
 	// demands neither.
-	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly) {
+	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly, cfg.IsReviewer) {
 		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)

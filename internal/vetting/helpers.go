@@ -48,6 +48,18 @@ type Config struct {
 	// completion is review_posted / exploration, never delivery.
 	ReadOnly bool
 
+	// IsReviewer marks a node whose AGENT is dag's reviewerAgent (code-reviewer),
+	// stamped structurally by dag.buildGateNodes from node.AgentName — never from
+	// the task's wording. A code-reviewer node is a review-delivery node by
+	// construction: review-staging (minting stage_review/stage_review_comment),
+	// review_posted/behaviour_verified completion, and the answer-tail fallback
+	// (augmentFromAnswer) all key off this instead of a task-text regex, which
+	// used to leave the whole review-delivery path disabled for a task with no
+	// posting verb — e.g. the label-review default, "Review this pull request."
+	// (#482). A ReadOnly node whose task merely MENTIONS review stays false here,
+	// which is what keeps #471 (a spurious review staged off task text) fixed.
+	IsReviewer bool
+
 	// Memory, when set, receives the agent's staged tradecraft on a judge pass
 	// (M6). nil disables the gated commit path.
 	// ponytail: the gated-commit-on-pass path is not yet wired into RunGatedRefine

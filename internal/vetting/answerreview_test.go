@@ -59,6 +59,7 @@ func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true,
 		ReadOnly:       true,                                                                                // a code-reviewer is read-only
+		IsReviewer:     true,                                                                                // structural signal (#482): the node's agent IS the code-reviewer
 		Setup:          &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"}, // a reviewer is setup-provisioned
 		Task:           "Review PR #7 and post your findings as inline review comments",
 	}
@@ -80,47 +81,72 @@ func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	}
 }
 
+// TestAugmentFromAnswer_StagesReview_BareTaskText pins #482: the label-review
+// default (dag.autoReviewTask, "Review this pull request.") has no posting verb
+// at all, so the old task-text gate (demandsPostedReview) left this path dead.
+// The structural signal (IsReviewer) stages it regardless of wording.
+func TestAugmentFromAnswer_StagesReview_BareTaskText(t *testing.T) {
+	cfg := Config{
+		ExternalWorker: true,
+		ReadOnly:       true,
+		IsReviewer:     true,
+		Setup:          &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"},
+		Task:           "Review this pull request.",
+	}
+	act := workerActivity{}
+	augmentFromAnswer(&act, cfg, reviewAnswer)
+	if _, ok := act.stagedDelivery["review"]; !ok {
+		t.Fatal("review not staged for a reviewer node with a bare, verb-less review task (#482)")
+	}
+}
+
 func TestAugmentFromAnswer_Guards(t *testing.T) {
 	reviewTask := "Review PR #7 and post your findings as inline review comments"
+	reviewerCfg := Config{ExternalWorker: true, ReadOnly: true, IsReviewer: true,
+		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"}, Task: reviewTask}
 
 	// Native workers stage via the tool — the probe must not fire.
 	act := workerActivity{}
-	augmentFromAnswer(&act, Config{ExternalWorker: false, Task: reviewTask}, reviewAnswer)
+	cfg := reviewerCfg
+	cfg.ExternalWorker = false
+	augmentFromAnswer(&act, cfg, reviewAnswer)
 	if len(act.stagedDelivery) != 0 {
 		t.Fatal("probe fired for a native worker")
 	}
 
-	// Non-review tasks (implement flows) must not stage a review.
+	// A non-reviewer node (IsReviewer false) must not stage a review, no matter
+	// what its task says.
 	act = workerActivity{}
 	augmentFromAnswer(&act, Config{ExternalWorker: true, Task: "Add a widget, commit, and open a pull request"}, reviewAnswer)
 	if len(act.stagedDelivery) != 0 {
-		t.Fatal("probe fired for a non-review task")
+		t.Fatal("probe fired for a non-reviewer node")
 	}
 
-	// #471: a NON-read-only implementer whose task merely TALKS about reviews
-	// (demandsPostedReview is a pure text match) must NOT stage a review — that
-	// review would ride alongside its PR and 404 against the trigger issue number.
+	// #471: a NON-read-only implementer whose task merely TALKS about reviews must
+	// NOT stage a review — that review would ride alongside its PR and 404
+	// against the trigger issue number. Now guaranteed structurally: an
+	// implementer node is never IsReviewer, whatever its task says.
 	act = workerActivity{}
 	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: false,
 		Task: "Implement the HITL review flow: change how quack posts a review and open a pull request"}, reviewAnswer)
 	if len(act.stagedDelivery) != 0 {
-		t.Fatal("probe staged a review for a non-read-only implementer whose task mentions reviews (#471)")
+		t.Fatal("probe staged a review for a non-reviewer implementer whose task mentions reviews (#471)")
 	}
 
 	// An already-staged review always wins (reviewer path).
-	setup := &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"}
 	act = workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "existing"}}}
-	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: true, Setup: setup, Task: reviewTask}, reviewAnswer)
+	augmentFromAnswer(&act, reviewerCfg, reviewAnswer)
 	if act.stagedDelivery["review"].Body != "existing" {
 		t.Fatal("probe replaced a staged review")
 	}
 
-	// #482: a read-only node whose task mentions reviews but has NO Setup (a
-	// code-explorer investigating the review path on an ISSUE, not a PR) must NOT
-	// stage a review — delivery would then fail with "'' is not a github.com
-	// clone URL". Only a setup-provisioned reviewer stages.
+	// #482: a read-only reviewer node with NO Setup (a code-explorer investigating
+	// the review path on an ISSUE, not a PR) must NOT stage a review — delivery
+	// would then fail with "'' is not a github.com clone URL".
 	act = workerActivity{}
-	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: true, Task: reviewTask}, reviewAnswer)
+	cfg = reviewerCfg
+	cfg.Setup = nil
+	augmentFromAnswer(&act, cfg, reviewAnswer)
 	if len(act.stagedDelivery) != 0 {
 		t.Fatal("probe staged a review with no Setup (no PR to review against) (#482)")
 	}

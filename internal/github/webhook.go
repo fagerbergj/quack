@@ -132,7 +132,7 @@ type pullRequestPayload struct {
 
 // autoReviewTask is the synthesized request for a pr_opened/label-triggered
 // auto-review — there is no human comment to extract a task from.
-const autoReviewTask = "Review this pull request."
+const autoReviewTask = "Review this pull request and post your findings as inline review comments and a verdict."
 
 // autoReviewUser is the synthetic "commenter" attributed to an auto-review run
 // (no human triggered it).
