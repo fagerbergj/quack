@@ -335,7 +335,7 @@ func TestUpdateResponseStatus_CancelsActiveRun(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, responseID := "c1", "r1"
 	cancelled := false
-	h.activeCancels.Store(chatID, &activeRun{responseID: responseID, cancel: func() { cancelled = true }})
+	h.hub.RegisterRun(chatID, responseID, func() { cancelled = true })
 
 	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status", strings.NewReader(string(b)))
@@ -354,7 +354,7 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := "c1"
 	cancelled := false
-	h.activeCancels.Store(chatID, &activeRun{responseID: "the-real-one", cancel: func() { cancelled = true }})
+	h.hub.RegisterRun(chatID, "the-real-one", func() { cancelled = true })
 
 	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/chats/"+chatID+"/responses/stale/status", strings.NewReader(string(b)))
@@ -366,6 +366,47 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 	}
 	if cancelled {
 		t.Error("cancel func should not have been invoked for a stale response id")
+	}
+}
+
+// --- DeleteChat --------------------------------------------------------------
+
+// TestDeleteChat_CancelsActiveRun is #468's core regression: DELETE must kill
+// a run still in flight on the chat, not just drop its row while the run
+// keeps executing. Registers a run's cancel handle the same way startRun does
+// (via the shared hub) and asserts DeleteChat invokes it.
+func TestDeleteChat_CancelsActiveRun(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := "c1"
+	if _, err := h.store.CreateChat(context.Background(), ""); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	cancelled := false
+	h.hub.RegisterRun(chatID, "r1", func() { cancelled = true })
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats/"+chatID, nil)
+	rec := httptest.NewRecorder()
+	h.DeleteChat(rec, req, chatID)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if !cancelled {
+		t.Error("DeleteChat did not cancel the chat's active run")
+	}
+}
+
+// TestDeleteChat_UnknownOrFinishedChatNoOp confirms DELETE stays a safe no-op
+// (still 204, no panic) when nothing is registered — the already-finished or
+// never-started case.
+func TestDeleteChat_UnknownOrFinishedChatNoOp(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats/no-such-chat", nil)
+	rec := httptest.NewRecorder()
+	h.DeleteChat(rec, req, "no-such-chat")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -63,23 +63,14 @@ const titleInstruction = "Generate a concise chat title (3–6 words, no punctua
 // dies with "emitUp: context canceled", and the chat goes idle with no answer.
 const runTimeout = 24 * time.Hour
 
-// activeRun is the live handle to a chat's in-flight run: its response id (the
-// turn id, surfaced in the stream's opening response_created event) and the
-// cancel func PUT .../responses/{response_id}/status invokes by id.
-type activeRun struct {
-	responseID string
-	cancel     context.CancelFunc
-}
-
 // Handler implements schema.ServerInterface backed by the store + orchestrator.
 type Handler struct {
-	store         *store.Store
-	orch          *orchestrator.Orchestrator
-	titler        model.LLM
-	jail          *workspace.Jail  // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
-	hub           *stream.Hub      // fans a chat's run to extra subscribers (other devices)
-	eventLog      *runlog.EventLog // durably persists the run stream, backing replay across restarts
-	activeCancels sync.Map         // chatID → *activeRun
+	store    *store.Store
+	orch     *orchestrator.Orchestrator
+	titler   model.LLM
+	jail     *workspace.Jail  // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
+	hub      *stream.Hub      // fans a chat's run to extra subscribers (other devices); also the cancel-run registry (#468)
+	eventLog *runlog.EventLog // durably persists the run stream, backing replay across restarts
 }
 
 // NewHandler builds a REST handler. jail may be nil (no workspace configured).
@@ -255,6 +246,12 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	// Kill any run still in flight on this chat FIRST — deleting the chat out
+	// from under a live run (UI-initiated or GitHub-dispatched, same registry)
+	// must actually stop it, not just drop its row while it keeps executing
+	// (#468). A no-op (nothing registered) is the expected, safe outcome for
+	// an already-finished or unknown chat.
+	h.hub.CancelRun(chatID)
 	if err := h.store.DeleteChat(r.Context(), chatID); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -356,20 +353,20 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 // to sleep stops the client READING the stream; the DAG keeps executing, keeps
 // publishing to the hub + durable event log, and any client (this one on
 // reconnect, or another device via GET .../stream) can attach and watch it live.
-// Only PUT .../responses/{id}/status {"status":"cancelled"} may kill it.
+// PUT .../responses/{id}/status {"status":"cancelled"} or DELETE the chat to kill it.
 func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.Part) {
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 	// Registered synchronously (before the goroutine gets to run) so the cancel
 	// endpoint can never miss the run it was just told about.
-	h.activeCancels.Store(chatID, &activeRun{responseID: turnID, cancel: cancelRun})
+	h.hub.RegisterRun(chatID, turnID, cancelRun)
 	go func() {
 		// Mark the run finished for hub subscribers once it returns (after its final
 		// Done is published) — LAST, so that by the time a viewer sees the stream
-		// close, the run is already off activeCancels (cancelling it now 404s).
+		// close, the run is already off the registry (cancelling it now 404s/no-ops).
 		defer h.hub.Close(chatID)
 		defer func() {
 			cancelRun()
-			h.activeCancels.Delete(chatID)
+			h.hub.UnregisterRun(chatID)
 		}()
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
@@ -471,13 +468,10 @@ func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, c
 		http.Error(w, "unsupported target status", http.StatusBadRequest)
 		return
 	}
-	v, ok := h.activeCancels.Load(chatID)
-	run, _ := v.(*activeRun)
-	if !ok || run == nil || run.responseID != responseID {
+	if !h.hub.CancelResponse(chatID, responseID) {
 		http.Error(w, "no active run with this response id", http.StatusNotFound)
 		return
 	}
-	run.cancel()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -695,10 +689,10 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	}
 	go func() {
 		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
-		h.activeCancels.Store(chatID, &activeRun{responseID: dp.TurnID, cancel: cancelRun})
+		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 		defer func() {
 			cancelRun()
-			h.activeCancels.Delete(chatID)
+			h.hub.UnregisterRun(chatID)
 		}()
 		defer h.hub.Close(chatID)
 
@@ -734,10 +728,8 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 		return
 	}
 	lastSeq := lastEventID(r)
-	// hub.Active, not h.activeCancels: activeCancels is REST-only (the GitHub
-	// extension keeps its own, separate map for its cancel button), so it
-	// misses a webhook-driven run entirely. hub.Active covers every driver of
-	// a run on this chat, since they all publish through this one shared hub.
+	// hub.Active covers every driver of a run on this chat (REST-started or
+	// GitHub-dispatched), since they all publish through this one shared hub.
 	active := h.hub.Active(chatID)
 	replay, live, cancel, done := h.hub.Subscribe(chatID)
 	defer cancel()
