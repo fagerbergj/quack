@@ -56,6 +56,10 @@ type fakeRunner struct {
 	deliverReview bool
 	// resets counts ResetSession calls — dispatch's T4 session-hygiene signal.
 	resets int32
+	// hitInput causes Run to emit a node_needs_input event mid-stream, simulating
+	// an ask_user call by the worker — dispatch should post a HITQ comment instead
+	// of the "produced no answer" tail.
+	hitInput bool
 }
 
 func (f *fakeRunner) ResetSession(context.Context, string, string) error {
@@ -71,6 +75,9 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 		}
 		if !f.noPlan {
 			yield(stream.SSEEvent{Name: stream.EventDagPlan}, nil) // a real run executes a plan
+		}
+		if f.hitInput {
+			yield(stream.NodeNeedsInput("node-1", "hitl-node-r0", "What version of Go should we target?"), nil)
 		}
 		if f.judgePassed {
 			yield(stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{JudgePassed: true}}, nil)
@@ -2326,5 +2333,66 @@ func TestDispatchDoesNotOverwriteExistingTitle(t *testing.T) {
 	}
 	if c.Title != "Existing title" {
 		t.Errorf("Title = %q; want the pre-existing title preserved", c.Title)
+	}
+}
+
+// TestDispatchPostsHITLCommentOnPause verifies that when drive() encounters a
+// node_needs_input event (simulating an ask_user call), dispatch posts the
+// HITL question as a GitHub comment instead of falling through to the "produced
+// no answer" tail. The reply webhook resumes the same session via run →
+// orchestrator.Run → resumeNodeRun.
+func TestDispatchPostsHITLCommentOnPause(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "should not appear", hitInput: true}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack research and advise")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "quack has a question before proceeding") {
+			t.Errorf("posted comment missing HITL framing: %s", body)
+		}
+		if strings.Contains(body, "node-1") && !strings.Contains(body, "version of Go") {
+			t.Errorf("HITL comment should carry node name and question: %s", body)
+		}
+		if strings.Contains(body, "produced no answer") {
+			t.Errorf("HITL pause should NOT post the 'produced no answer' tail; got: %s", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no HITL comment posted after ask_user pause")
+	}
+}
+
+// TestDispatchSkipsNudgeOnPause verifies that dispatch does NOT nudge a run that
+// hit a HITL pause — the nudge is only for runs that produced no plan but were
+// otherwise complete (not paused).
+func TestDispatchSkipsNudgeOnPause(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 4), answer: "ok", hitInput: true}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back")
+	}
+	if got := atomic.LoadInt32(&runner.calls); got != 1 {
+		t.Errorf("runner invoked %d times, want 1 (HITL pause must not trigger the nudge)", got)
 	}
 }
