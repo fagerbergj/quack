@@ -228,6 +228,12 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 	// siblings' node IDs in its own prompt, and the advisor-thread token those
 	// IDs would let it reconstruct must never double as a bearer credential.
 	mcpServers := memoryMCPServers(memSecret, initResp.AgentCapabilities)
+	// #482: the negotiated caps decide whether load_memory/stage_memory/
+	// stage_review reach this subprocess at all — log them so a "tools
+	// unavailable" report is diagnosable from prod logs instead of guessed at.
+	a.log.Debug("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
+		"mcp_sse", initResp.AgentCapabilities.McpCapabilities.Sse, "mcp_acp", initResp.AgentCapabilities.McpCapabilities.Acp,
+		"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "")
 	sess, err := h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
 	if err != nil {
 		otelobs.End(handshakeSpan, err)
