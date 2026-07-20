@@ -32,7 +32,8 @@ func TestParseAnswerReview(t *testing.T) {
 func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true,
-		ReadOnly:       true, // a code-reviewer is read-only
+		ReadOnly:       true,                                                                                // a code-reviewer is read-only
+		Setup:          &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"}, // a reviewer is setup-provisioned
 		Task:           "Review PR #7 and post your findings as inline review comments",
 	}
 	act := workerActivity{}
@@ -81,9 +82,20 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 	}
 
 	// An already-staged review always wins (reviewer path).
+	setup := &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"}
 	act = workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "existing"}}}
-	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: true, Task: reviewTask}, reviewAnswer)
+	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: true, Setup: setup, Task: reviewTask}, reviewAnswer)
 	if act.stagedDelivery["review"].Body != "existing" {
 		t.Fatal("probe replaced a staged review")
+	}
+
+	// #482: a read-only node whose task mentions reviews but has NO Setup (a
+	// code-explorer investigating the review path on an ISSUE, not a PR) must NOT
+	// stage a review — delivery would then fail with "'' is not a github.com
+	// clone URL". Only a setup-provisioned reviewer stages.
+	act = workerActivity{}
+	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: true, Task: reviewTask}, reviewAnswer)
+	if len(act.stagedDelivery) != 0 {
+		t.Fatal("probe staged a review with no Setup (no PR to review against) (#482)")
 	}
 }

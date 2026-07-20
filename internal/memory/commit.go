@@ -226,7 +226,14 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 	// consolidation model); harmless to others.
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + user.String()}}}},
-		Config:   &genai.GenerateContentConfig{SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}}},
+		Config: &genai.GenerateContentConfig{
+			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}},
+			// JSON mode grammar-constrains the model to valid JSON, so a stray escape
+			// (a bare `\s` from a regex/path in a memory) can't crash json.Unmarshal
+			// with "invalid character 's' in string escape code". The prompt already
+			// says "Reply with ONLY JSON", satisfying json_object mode's require-json rule.
+			ResponseMIMEType: "application/json",
+		},
 	}
 	var sb strings.Builder
 	for resp, err := range s.consolidator.GenerateContent(ctx, req, false) {
