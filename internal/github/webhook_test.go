@@ -701,18 +701,18 @@ func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 	}
 }
 
-// Two runs on the SAME PR session must not run concurrently — the second queues
-// on the session lock until the first finishes (concurrent runs on one session
-// corrupt each other).
+// Two runs on the SAME PR session are deduped: the second trigger finds the
+// sessionID in the inflight set and returns early (dedup guard fires before
+// the session lock). After the first run completes, a third dispatch succeeds.
 func TestDispatchSerializesSameSession(t *testing.T) {
-	posted := make(chan string, 4)
+	posted := make(chan string, 2)
 	gh := stubGitHub(t, posted)
 	defer gh.Close()
 
 	runner := &fakeRunner{gotMessage: make(chan string, 4), answer: "ok", block: make(chan struct{})}
 	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
 
-	// Two mentions on issue #7 → same session. Both ack 202 and spawn a dispatch.
+	// Two mentions on issue #7 → same session. Both ack 202; dedup drops the second.
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
 		ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
@@ -726,18 +726,39 @@ func TestDispatchSerializesSameSession(t *testing.T) {
 	for atomic.LoadInt32(&runner.calls) < 1 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	time.Sleep(150 * time.Millisecond) // give the second a chance to (wrongly) start
+	time.Sleep(150 * time.Millisecond) // give the deduplicated goroutine time to ack
 	if got := atomic.LoadInt32(&runner.calls); got != 1 {
-		t.Fatalf("runner.calls = %d while the first run holds the session lock; want 1 (the second must queue)", got)
+		t.Fatalf("runner.calls = %d while the first run holds the inflight guard; want 1 (the second must be deduped)", got)
 	}
 
-	close(runner.block) // let the first finish; the second then acquires the lock
-	deadline = time.Now().Add(2 * time.Second)
-	for atomic.LoadInt32(&runner.calls) < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+	close(runner.block) // let the first finish
+
+	// Wait for posted comment to confirm dispatch completed cleanly.
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first dispatch never posted its answer")
 	}
+
+	if got := atomic.LoadInt32(&runner.calls); got != 1 {
+		t.Errorf("runner.calls = %d after first dispatch and deduped second; want 1", got)
+	}
+
+	// After the first completes, a third dispatch on the same sessionID must succeed.
+	rec3 := httptest.NewRecorder()
+	ext.handleWebhook(rec3, signedRequest("issue_comment", issueCommentBody("@quack again")))
+	if rec3.Code != http.StatusAccepted {
+		t.Fatalf("third dispatch status = %d; want 202", rec3.Code)
+	}
+
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("third dispatch never posted its answer")
+	}
+
 	if got := atomic.LoadInt32(&runner.calls); got != 2 {
-		t.Errorf("runner.calls = %d after releasing the lock; want 2 (the queued run should proceed)", got)
+		t.Errorf("runner.calls = %d after third dispatch; want 2 (first ran, second was deduped, third ran)", got)
 	}
 }
 
@@ -1169,6 +1190,7 @@ func TestRunMessageIncrementalReviewScoping(t *testing.T) {
 // real store so the snapshot persistence itself is exercised, not just the
 // in-memory diff function.
 func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
+	posted := make(chan string, 1) // first dispatch's posted answer
 	var commentsJSON atomic.Value
 	commentsJSON.Store(`[{"id":1,"body":"the original comment","user":{"login":"bob"},"updated_at":"t0"}]`)
 
@@ -1182,8 +1204,13 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"id":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{}`)
+			select {
+			case posted <- string(body):
+			default:
+			}
 		case strings.HasSuffix(r.URL.Path, "/comments"):
 			fmt.Fprint(w, commentsJSON.Load().(string))
 		case isIssueMetaPath(r.URL.Path):
@@ -1225,6 +1252,13 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 	}
 	if !strings.Contains(firstMsg, "Should we use widgets?") {
 		t.Errorf("first (seed) dispatch missing the issue body:\n%s", firstMsg)
+	}
+
+	// Wait for dispatch #1 to finish posting its answer so the inflight entry is cleaned up.
+	select {
+	case <-posted:
+	default:
+		time.Sleep(500 * time.Millisecond) // give it a moment if posted wasn't buffered yet
 	}
 
 	// A new comment lands on GitHub between runs.
@@ -2470,5 +2504,174 @@ func TestDispatchSkipsNudgeOnPause(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&runner.calls); got != 1 {
 		t.Errorf("runner invoked %d times, want 1 (HITL pause must not trigger the nudge)", got)
+	}
+}
+
+// dedupRunner is a fakeRunner that also records which Run() calls it receives
+// via channel `runCalls`, enabling dispatch tests to detect whether a second
+// call was dropped by the in-flight guard.
+type dedupRunner struct {
+	*fakeRunner
+	runCalls chan string // sessionIDs of every Run() call (blocks until read)
+}
+
+func newDedupRunner() *dedupRunner {
+	return &dedupRunner{
+		fakeRunner: &fakeRunner{gotMessage: make(chan string, 4), answer: "ok"},
+		runCalls:   make(chan string, 4),
+	}
+}
+
+func (d *dedupRunner) Run(ctx context.Context, label string, sessionID string, message string, parts []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+	select {
+	case d.runCalls <- sessionID:
+	default:
+	}
+	return d.fakeRunner.Run(ctx, label, sessionID, message, parts)
+}
+
+// TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard checks that when two
+// webhooks hit the same Extension within milliseconds (same issue → same sessionID),
+// only ONE dispatch actually runs — LoadOrStore claims it and the second returns
+// early. Also verifies that after the first run completes, a new dispatch succeeds.
+func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
+	dr := newDedupRunner()
+	posted := make(chan string, 2)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret, Mention: "@quack", AllowedUsers: []string{"alice"},
+	}, dr, nil, nil)
+
+	dr.fakeRunner.block = make(chan struct{}) // block first dispatch so inflight stays
+
+	// Fire two mentions on the SAME issue (#7). Both ack 202 and spawn a goroutine.
+	rec1 := httptest.NewRecorder()
+	ext.handleWebhook(rec1, signedRequest("issue_comment", issueCommentBody("@quack first")))
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("first dispatch status = %d; want 202", rec1.Code)
+	}
+
+	// The handleWebhook goroutine for the first mention will call dispatch,
+	// which claims sessionID in inflight, then hits dr.block and stays there.
+	// Fire a second mention immediately — dispatch should find sessionID in
+	// inflight, ack with a best-effort 👀 reaction, and return early.
+	rec2 := httptest.NewRecorder()
+	ext.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack second")))
+	if rec2.Code != http.StatusAccepted {
+		t.Fatalf("second dispatch status = %d; want 202 (handler acks even if deduped)", rec2.Code)
+	}
+
+	// Wait a moment for the ackDedup goroutine to fire on the stub server.
+	time.Sleep(200 * time.Millisecond)
+
+	// Now let the first dispatch complete. After it finishes, its defer should
+	// delete the inflight entry, allowing a third dispatch to proceed.
+	close(dr.fakeRunner.block)
+
+	// Drain: should contain exactly ONE sessionID (the first dispatch that ran).
+	firstSession := ""
+	select {
+	case sid := <-dr.runCalls:
+		firstSession = sid
+	case <-time.After(2 * time.Second):
+		t.Fatal("no Run() call recorded")
+	}
+	if firstSession != "github-acme-widgets-7" {
+		t.Errorf("expected sessionID %q, got %q", "github-acme-widgets-7", firstSession)
+	}
+
+	select {
+	case <-dr.runCalls:
+		t.Fatal("second concurrent trigger on same sessionID should have been deduplicated by LoadOrStore")
+	default:
+	}
+
+	// Let the first dispatch finish and observe it posting. Then verify that a
+	// third dispatch (after the run completes) succeeds — inflight entry was cleaned up.
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first dispatch never posted its answer")
+	}
+
+	rec3 := httptest.NewRecorder()
+	ext.handleWebhook(rec3, signedRequest("issue_comment", issueCommentBody("@quack third")))
+	if rec3.Code != http.StatusAccepted {
+		t.Fatalf("third dispatch status = %d; want 202", rec3.Code)
+	}
+
+	select {
+	case sid := <-dr.runCalls:
+		if sid != "github-acme-widgets-7" {
+			t.Errorf("expected sessionID github-acme-widgets-7 after reuse, got %q", sid)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("third dispatch didn't run — inflight entry wasn't cleaned up after the first completed")
+	}
+
+	if got := atomic.LoadInt32(&dr.calls); got != 2 {
+		t.Errorf("runner calls = %d, want 2 (first + third; second was deduplicated)", got)
+	}
+}
+
+// TestDispatchDedupDifferentSessionsAllowsConcurrent verifies that dispatches on
+// DIFFERENT sessions (different issues/PRs) all proceed — the inflight guard only
+// blocks duplicate sessionIDs.
+func TestDispatchDedupDifferentSessionsAllowsConcurrent(t *testing.T) {
+	dr := newDedupRunner()
+	posting := make(chan string, 2)
+	gh := stubGitHub(t, posting)
+	defer gh.Close()
+
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+
+	ext := NewExtension(app, config.GitHubExtensionConfig{
+		WebhookSecret: testSecret, Mention: "@quack", AllowedUsers: []string{"alice"},
+	}, dr, nil, nil)
+
+	for _, issueNum := range []int{7, 8} {
+		body := fmt.Sprintf(`{
+			"action":"created",
+			"comment":{"id":999,"body":"@quack task %d","user":{"login":"alice"}},
+			"issue":{"number":%d},
+			"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+			"installation":{"id":5}
+		}`, issueNum, issueNum)
+		rec := httptest.NewRecorder()
+		ext.handleWebhook(rec, signedRequest("issue_comment", []byte(body)))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("issue #%d dispatch status = %d; want 202", issueNum, rec.Code)
+		}
+	}
+
+	received := make(map[string]bool)
+	for i := 0; i < 2; i++ {
+		select {
+		case sid := <-dr.runCalls:
+			received[sid] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("expected %d dispatch run calls, only got %d", 2-len(received), len(received))
+		}
+	}
+
+	if !received["github-acme-widgets-7"] {
+		t.Error("missing sessionID for issue #7")
+	}
+	if !received["github-acme-widgets-8"] {
+		t.Error("missing sessionID for issue #8")
 	}
 }

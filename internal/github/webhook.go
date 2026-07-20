@@ -503,6 +503,22 @@ func (e *Extension) ackLabelReaction(p issuesPayload) {
 	}
 }
 
+// ackDedup fires a best-effort 👀 reaction on the issue/PR that triggered a
+// deduplicated dispatch ("a run is already in-flight on this thread"). It is
+// fire-and-forget: a failure is logged at WARN and never panics. The method
+// picks the right reaction target (comment vs issue) because a dedup can arrive
+// from either an @mention comment or a label event.
+func (e *Extension) ackDedup(owner, repo string, number int) {
+	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
+	defer cancel()
+	// reactToIssue works for both plain issues and PRs: reactions land on the
+	// /repos/{owner}/{repo}/issues/{number}/reactions endpoint regardless.
+	if _, err := e.app.reactToIssue(ctx, owner, repo, number, "eyes"); err != nil {
+		slog.Warn("github dedup ack reaction failed", "component", "github",
+			"repo", owner+"/"+repo, "issue", number, "err", err)
+	}
+}
+
 // triggerTask decides whether a comment triggers a run and extracts the task
 // text after the mention. The trigger is: a created issue_comment whose body
 // contains the configured mention. Returns ("", false) otherwise.
@@ -547,10 +563,23 @@ func verifySignature(secret, body []byte, header string) bool {
 // PR event) — dispatch fetches the PR's head/base refs authoritatively anyway.
 func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
+
+	// Dedup: one active run per issue/PR thread. A second trigger that arrives
+	// while a run is in-flight (same sessionID) is silently skipped with a
+	// best-effort 👀 reaction on the triggering event — it never panics even
+	// if the GitHub API call fails.
+	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
+	if _, inflight := e.inflight.LoadOrStore(sessionID, struct{}{}); inflight {
+		slog.Info("deduplicated trigger", "sessionID", sessionID)
+		go e.ackDedup(owner, repo, number)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), e.runTimeout)
 	defer cancel()
 
-	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
+	defer e.inflight.Delete(sessionID)
+
 	e.persistGithubLink(ctx, sessionID, owner, repo, number, p.Issue.PullRequest != nil)
 	e.ensureTitle(ctx, sessionID, p, task)
 	// Serialise runs on one PR: a follow-up that lands while a review is still

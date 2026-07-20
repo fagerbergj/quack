@@ -73,6 +73,11 @@ type Extension struct {
 	// corrupt each other (garbled answers, cross-run tool events). sessionID →
 	// *sync.Mutex.
 	runLocks sync.Map
+	// inflight tracks sessionIDs that currently have a dispatch in-flight to
+	// dedup near-simultaneous triggers (issue_comment + label within ~1s).
+	// LoadOrStore at the top of dispatch() claims it; defer Delete releases
+	// it when the run completes. sessionID -> empty struct.
+	inflight sync.Map
 	// runTimeout bounds one webhook-driven run (extensions.github.run_timeout_minutes).
 	runTimeout time.Duration
 }
