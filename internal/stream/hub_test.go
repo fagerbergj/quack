@@ -129,3 +129,97 @@ func TestHubNewRunResets(t *testing.T) {
 		t.Errorf("reset replay = %v, want [new]", replay)
 	}
 }
+
+// --- run-cancel registry (#468) ----------------------------------------------
+//
+// This is the seam that makes DELETE/stop reach a run regardless of which
+// driver started it: the REST handler and the GitHub webhook extension both
+// register their run's cancel func here (RegisterRun) instead of keeping
+// separate, mutually-unreachable maps, so CancelRun/CancelResponse cancel
+// either kind of run identically.
+
+func TestHubCancelRun(t *testing.T) {
+	h := NewHub()
+	cancelled := false
+	h.RegisterRun("c1", "r1", func() { cancelled = true })
+
+	if !h.CancelRun("c1") {
+		t.Fatal("CancelRun on a registered run should report true")
+	}
+	if !cancelled {
+		t.Error("CancelRun did not invoke the registered cancel func")
+	}
+}
+
+// CancelRun on a chat with nothing registered — unknown or already-finished —
+// must be a safe no-op, not a panic or a false "cancelled".
+func TestHubCancelRun_UnknownChatNoOp(t *testing.T) {
+	h := NewHub()
+	if h.CancelRun("no-such-chat") {
+		t.Error("CancelRun on an unregistered chat should report false")
+	}
+}
+
+func TestHubCancelResponse_MatchesID(t *testing.T) {
+	h := NewHub()
+	cancelled := false
+	h.RegisterRun("c1", "r1", func() { cancelled = true })
+
+	if !h.CancelResponse("c1", "r1") {
+		t.Fatal("CancelResponse with the matching response id should report true")
+	}
+	if !cancelled {
+		t.Error("CancelResponse did not invoke the registered cancel func")
+	}
+}
+
+// A stale response id (from a superseded run) must not cancel whatever is
+// running now — mirrors the UI stop button's guard.
+func TestHubCancelResponse_WrongIDNoOp(t *testing.T) {
+	h := NewHub()
+	cancelled := false
+	h.RegisterRun("c1", "the-real-one", func() { cancelled = true })
+
+	if h.CancelResponse("c1", "stale") {
+		t.Error("CancelResponse with a mismatched response id should report false")
+	}
+	if cancelled {
+		t.Error("CancelResponse must not invoke cancel for a mismatched response id")
+	}
+}
+
+// UnregisterRun makes a run uncancellable again — the driver calls this once
+// its run ends, so a late DELETE/stop on a finished run is a no-op rather than
+// reaching into a stale (possibly reused) cancel func.
+func TestHubUnregisterRun(t *testing.T) {
+	h := NewHub()
+	cancelled := false
+	h.RegisterRun("c1", "r1", func() { cancelled = true })
+	h.UnregisterRun("c1")
+
+	if h.CancelRun("c1") {
+		t.Error("CancelRun should report false once the run is unregistered")
+	}
+	if cancelled {
+		t.Error("cancel func must not fire after UnregisterRun")
+	}
+}
+
+// A GitHub-dispatched run and a REST-started run are both just callers of
+// RegisterRun on the same Hub instance — this pins that the registry is
+// driver-agnostic: whichever goroutine registered a chat's cancel func, the
+// same CancelRun call reaches it. (internal/github.dispatch and
+// rest.Handler.startRun both call exactly this method on the shared hub.)
+func TestHubCancelRun_ReachesEitherDriver(t *testing.T) {
+	h := NewHub()
+	uiCancelled, githubCancelled := false, false
+	h.RegisterRun("ui-chat", "r1", func() { uiCancelled = true })
+	h.RegisterRun("github-acme-widget-1", "r2", func() { githubCancelled = true })
+
+	if !h.CancelRun("ui-chat") || !uiCancelled {
+		t.Error("CancelRun must reach a REST-registered run")
+	}
+	if !h.CancelRun("github-acme-widget-1") || !githubCancelled {
+		t.Error("CancelRun must reach a GitHub-dispatched run through the same registry")
+	}
+}

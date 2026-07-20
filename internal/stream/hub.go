@@ -1,6 +1,9 @@
 package stream
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // Hub fans out a chat's SSE event stream to multiple subscribers, so a run
 // started on one device can be watched live from another. Events are keyed by
@@ -14,9 +17,72 @@ import "sync"
 // handler falls back to when a topic is cold. Each event carries the per-chat Seq
 // the run loop assigned, so the live tail and the durable log share one numbering
 // (a reconnecting client resumes by Last-Event-ID).
+//
+// The hub also carries the cancel-run registry: it's the one thing already
+// shared between every driver of a run (the REST handler AND the GitHub
+// webhook extension — see NewExtension), so registering cancel handles here
+// instead of in a per-driver map is what makes stop/DELETE reach a
+// GitHub-dispatched run too (#468).
 type Hub struct {
 	mu     sync.Mutex
 	topics map[string]*topic
+	runs   sync.Map // chatID → *runHandle
+}
+
+// runHandle is the live cancel handle for a chat's in-flight run: the response
+// id it's cancellable by (CancelResponse's guard against cancelling a
+// stale/superseded run) and its cancel func.
+type runHandle struct {
+	responseID string
+	cancel     context.CancelFunc
+}
+
+// RegisterRun records chatID's active run so CancelRun/CancelResponse can reach
+// it — called synchronously before the run's goroutine starts, so the cancel
+// path can never miss a run it was just told about. Overwrites any stale
+// handle for the same chat (a chat has at most one active run at a time).
+func (h *Hub) RegisterRun(chatID, responseID string, cancel context.CancelFunc) {
+	h.runs.Store(chatID, &runHandle{responseID: responseID, cancel: cancel})
+}
+
+// UnregisterRun drops chatID's cancel handle once its run ends — the run's
+// driver must defer this, mirroring Close, so a finished run can't be
+// "cancelled" again and CancelRun/CancelResponse correctly report false
+// afterward. Idempotent.
+func (h *Hub) UnregisterRun(chatID string) {
+	h.runs.Delete(chatID)
+}
+
+// CancelRun cancels chatID's active run unconditionally, regardless of driver
+// (REST-started or GitHub-dispatched) — the DELETE-chat path, which has no
+// response id to match against. Reports whether a run was found and
+// cancelled; false is the expected, safe outcome for an unknown or
+// already-finished chat.
+func (h *Hub) CancelRun(chatID string) bool {
+	v, ok := h.runs.Load(chatID)
+	if !ok {
+		return false
+	}
+	v.(*runHandle).cancel()
+	return true
+}
+
+// CancelResponse cancels chatID's active run only if responseID names it — the
+// UI stop button's guard against cancelling a run that isn't the one it
+// observed (a stale id from a superseded run 404s rather than silently
+// cancelling whatever happens to be running now). Reports whether it matched
+// and cancelled.
+func (h *Hub) CancelResponse(chatID, responseID string) bool {
+	v, ok := h.runs.Load(chatID)
+	if !ok {
+		return false
+	}
+	rh := v.(*runHandle)
+	if rh.responseID != responseID {
+		return false
+	}
+	rh.cancel()
+	return true
 }
 
 // MaxReplay caps a topic's replay buffer (events), and the durable log windows to

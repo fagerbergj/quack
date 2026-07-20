@@ -565,10 +565,12 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		pub.Publish(stream.ResponseCreated(turnID))
 	}
 
-	// Wrap the run context with a cancel so the UI's stop button can cancel
-	// this run via the same activeCancels registry used for UI-initiated runs.
-	// Registered synchronously (before the goroutine gets to run) so the cancel
-	// endpoint can never miss the run.
+	// Wrap the run context with a cancel and register it on the SHARED hub —
+	// the same registry the REST handler's DELETE/stop-button paths use for
+	// UI-initiated runs — so both drivers of a run are cancellable uniformly
+	// (#468: previously this ctx was Background-derived and unreachable by
+	// either). Registered synchronously (before the goroutine gets to run) so
+	// the cancel endpoint can never miss the run.
 	runCtx, cancelRun := context.WithCancel(ctx)
 	// Stamp the AUTHORITATIVE repo/PR this run is on — the only source
 	// correct_review_finding trusts for where a conversational correction may
@@ -577,17 +579,17 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	if p.Issue.PullRequest != nil {
 		runCtx = tools.WithGitHubPR(runCtx, owner, repo, number)
 	}
-	e.activeCancels.Store(sessionID, &activeRun{responseID: turnID, cancel: cancelRun})
+	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
 	// stays INLINE — wrapping it in another goroutine would let this function's
 	// `defer cancel()` (run ctx) and `defer lock.Unlock()` (session lock) fire the
 	// moment it spawned, before the run finished. Deregister LAST (deferred
-	// cancel+Delete, then hub.Close) so a viewer sees the stream close only after
-	// the run is already off activeCancels (cancelling it then 404s).
+	// cancel+unregister, then hub.Close) so a viewer sees the stream close only
+	// after the run is already off the registry (cancelling it then 404s/no-ops).
 	defer e.hub.Close(sessionID)
 	defer func() {
 		cancelRun()
-		e.activeCancels.Delete(sessionID)
+		e.hub.UnregisterRun(sessionID)
 	}()
 
 	// A WORK request (review/implement) always runs as a plan. A mid-tier
