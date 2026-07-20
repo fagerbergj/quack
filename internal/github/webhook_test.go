@@ -60,6 +60,9 @@ type fakeRunner struct {
 	// an ask_user call by the worker — dispatch should post a HITQ comment instead
 	// of the "produced no answer" tail.
 	hitInput bool
+	// revisedAnswer, if set, replaces answer starting on Run's SECOND call —
+	// simulates the model fixing its answer on a mermaid-revise re-drive.
+	revisedAnswer string
 }
 
 func (f *fakeRunner) ResetSession(context.Context, string, string) error {
@@ -69,7 +72,10 @@ func (f *fakeRunner) ResetSession(context.Context, string, string) error {
 
 func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		atomic.AddInt32(&f.calls, 1)
+		calls := atomic.AddInt32(&f.calls, 1)
+		if calls > 1 && f.revisedAnswer != "" {
+			f.answer = f.revisedAnswer
+		}
 		if f.block != nil {
 			<-f.block
 		}
@@ -549,13 +555,62 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 // deterministic gate criterion (vetting.mermaidCriterion) that fails the
 // node and feeds the concrete error back to the worker as revise feedback,
 // so dispatch here just posts whatever the run produced, verbatim.
-func TestHandleWebhookPostsAnswerVerbatimNoMermaidStripping(t *testing.T) {
+// #480 regression (#483): the orchestrator's plan/research write-up never ran
+// through mermaidCriterion, so an invalid diagram shipped unchecked. Fixed
+// answer: the revise round should land it verbatim, valid, un-degraded.
+func TestHandleWebhookInvalidMermaidRevisedFixesDiagram(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	invalid := "Here's the plan:\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nDone."
+	fixed := "Here's the plan:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[Finish]\n```\n\nDone."
+	gotMessage := make(chan string, 2)
+	runner := &fakeRunner{gotMessage: gotMessage, answer: invalid, revisedAnswer: fixed}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+
+	// First Run() call is the original dispatch; the second is the mermaid
+	// revise nudge — it must name the concrete parse error.
+	<-gotMessage
+	var nudge string
+	select {
+	case nudge = <-gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no revise nudge dispatched")
+	}
+	if !strings.Contains(nudge, "invalid mermaid") || !strings.Contains(nudge, "parse error") {
+		t.Fatalf("nudge = %q, want it to name the invalid mermaid and the concrete parse error", nudge)
+	}
+
+	var body string
+	select {
+	case body = <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back")
+	}
+	if !strings.Contains(body, "```mermaid") || strings.Contains(body, "```text") {
+		t.Fatalf("posted comment = %s, want the fixed diagram posted as mermaid, not degraded", body)
+	}
+	if atomic.LoadInt32(&runner.calls) != 2 {
+		t.Fatalf("Run() calls = %d, want exactly 2 (original + one bounded revise)", runner.calls)
+	}
+}
+
+// When the agent can't fix it even after the one revise round, the ceiling
+// degrades to a VISIBLE, labeled ```text block — never a silent strip.
+func TestHandleWebhookInvalidMermaidStillBadAfterReviseDegradesVisibly(t *testing.T) {
 	posted := make(chan string, 1)
 	gh := stubGitHub(t, posted)
 	defer gh.Close()
 
 	answer := "Here's the plan:\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nDone."
-	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: answer}
+	runner := &fakeRunner{gotMessage: make(chan string, 2), answer: answer}
 	ext := newTestExtension(t, runner, gh.URL)
 
 	rec := httptest.NewRecorder()
@@ -569,14 +624,17 @@ func TestHandleWebhookPostsAnswerVerbatimNoMermaidStripping(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no comment posted back")
 	}
-	if !strings.Contains(body, "```mermaid") {
-		t.Fatalf("posted comment = %s, want the invalid diagram still fenced as mermaid (no stripping)", body)
+	if strings.Contains(body, "```mermaid") {
+		t.Fatalf("posted comment = %s, want the still-invalid diagram degraded, not shipped as mermaid", body)
 	}
-	if !strings.Contains(body, "A[Start]") || !strings.Contains(body, "B[Finish]") {
-		t.Fatalf("posted comment = %s, want the diagram content posted unchanged", body)
+	if !strings.Contains(body, "```text") || !strings.Contains(body, "A[Start]") || !strings.Contains(body, "B[Finish]") {
+		t.Fatalf("posted comment = %s, want the diagram content still VISIBLE inside a labeled text block", body)
 	}
-	if strings.Contains(body, "diagram omitted") {
-		t.Fatalf("posted comment = %s, want no omitted-diagram fallback — stripping is gone", body)
+	if !strings.Contains(body, "invalid mermaid diagram") {
+		t.Fatalf("posted comment = %s, want a visible note explaining the degradation", body)
+	}
+	if atomic.LoadInt32(&runner.calls) != 2 {
+		t.Fatalf("Run() calls = %d, want exactly 2 (original + one bounded revise, no loop)", runner.calls)
 	}
 }
 
