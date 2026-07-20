@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -673,12 +674,23 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		return
 	}
 
+	// A hub-cancelled run is NOT a timeout: runCtx is cancellable from the shared
+	// registry that DELETE/stop AND a re-run supersede use. Reporting "hit its run
+	// deadline (4h)" there is a lie — the run may have been stopped after seconds —
+	// and on a supersede a SIBLING run is still delivering, so a "nothing delivered,
+	// re-apply the label" comment actively misleads. Say nothing and let it. Only a
+	// genuine DeadlineExceeded gets the tail treatment below.
+	if errors.Is(runCtx.Err(), context.Canceled) {
+		slog.Info("github: run cancelled (stopped or superseded); skipping tail comment",
+			"component", "github", "repo", owner+"/"+repo, "issue", number)
+		return
+	}
 	// The tail must OUTLIVE the run: after a deadline kill, ctx is dead and both
 	// LatestAnswer and the comment post would fail with it — the run then dies
 	// with zero external signal (#286: a 2h-deadline kill posted nothing). Use a
 	// fresh bounded context, and say what actually happened.
 	tailCtx := runCtx
-	timedOut := runCtx.Err() != nil
+	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	if timedOut {
 		var tailCancel context.CancelFunc
 		tailCtx, tailCancel = context.WithTimeout(context.Background(), time.Minute)
