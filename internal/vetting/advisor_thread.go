@@ -132,6 +132,12 @@ type MemSession struct {
 	// Snapshot into act.stagedDelivery["review"] so a tool-staged review beats
 	// the answer-tail fallback (augmentFromAnswer). nil ⇒ the tools aren't offered.
 	Review *ReviewStage
+	// PRStage is the stage_pr MCP surface's landing buffer (internal/acp
+	// reviewmcp.go). Non-nil ONLY on an implement-delivery node (an external
+	// WRITE worker at the chain's terminal delivery point) — its presence is what
+	// registers stage_pr. The gate snapshots it into act.stagedDelivery["pr"] so a
+	// skill-authored title+body beats augmentFromRepo's commit-subject fallback.
+	PRStage *PRStage
 }
 
 // MemStage is a per-node, mutex-guarded staging buffer stage_memory (over the
@@ -189,6 +195,38 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 		Body:     s.body,
 		Comments: append([]ReviewComment(nil), s.comments...),
 	}, true
+}
+
+// PRStage is a per-node, mutex-guarded buffer the stage_pr MCP tool
+// (internal/acp reviewmcp.go) fills on an implement-delivery node: the PR title
+// and body the worker authored via the pr-authoring skill. Like ReviewStage it
+// is READ, not drained — the gate snapshots it each round (Snapshot), and the
+// same snapshot survives into commitDelivery.
+type PRStage struct {
+	mu    sync.Mutex
+	title string
+	body  string
+	set   bool
+}
+
+// Set records the PR title + body; a later call replaces an earlier one.
+func (s *PRStage) Set(title, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.title, s.body, s.set = title, body, true
+}
+
+// Snapshot renders the staged PR as a StagedDelivery (Kind pull_request — the
+// delivery discriminator). The branch is left empty: the worker authored only
+// text, so the gate fills the branch from the disk probe (augmentFromPRStage).
+// ok is false until stage_pr lands.
+func (s *PRStage) Snapshot() (StagedDelivery, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.set {
+		return StagedDelivery{}, false
+	}
+	return StagedDelivery{Kind: "pull_request", Title: s.title, Body: s.body}, true
 }
 
 // Add appends one staged candidate.
