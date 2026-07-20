@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux; only served when QUACK_PPROF_ADDR is set (see Run)
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1087,11 +1088,37 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 	if len(skillPaths) > 0 {
 		cfg["skills"] = m{"paths": skillPaths}
 	}
+	// ACP agent MCP servers (e.g. context7): each URL becomes one entry in
+	// opencode's native "mcp" map, keyed by a derived name — {name: {type:
+	// "remote", url, enabled}} — the shape opencode.json uses. NOT {"servers":
+	// [...]}, which opencode silently ignores (so the servers would never load).
+	if len(ac.Acp.McpServers) > 0 {
+		servers := m{}
+		for i, u := range ac.Acp.McpServers {
+			servers[mcpServerName(u, i)] = m{"type": "remote", "url": u, "enabled": true}
+		}
+		cfg["mcp"] = servers
+	}
 	content, err := json.Marshal(cfg)
 	if err != nil {
 		return nil
 	}
 	return []string{"OPENCODE_CONFIG_CONTENT=" + string(content)}
+}
+
+// mcpServerName derives opencode's per-server config key from an MCP server URL
+// — the registrable domain label (e.g. "context7" from https://mcp.context7.com/mcp)
+// — falling back to mcp-<i> when the URL can't be parsed.
+func mcpServerName(raw string, i int) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return fmt.Sprintf("mcp-%d", i)
+	}
+	labels := strings.Split(u.Hostname(), ".")
+	if n := len(labels); n >= 2 {
+		return labels[n-2] // mcp.context7.com → context7
+	}
+	return labels[0]
 }
 
 // acpSkillPaths are the on-disk skill roots handed to an ACP agent's

@@ -84,6 +84,8 @@ agents:
     # skill library is injected via opencode's skills.paths. No quack tools, no memory.
     acp:
       command: ["opencode", "acp"]
+      mcp_servers:
+        - https://mcp.context7.com/mcp
   code-reviewer:
     bundle: agents/code-reviewer      # card + prompt.md (ACP preamble: values + VERDICT/FINDINGS output contract) + rubric.md
     provider: default
@@ -109,6 +111,8 @@ agents:
     # Judged by its bundle rubric (exploration quality), not web citations.
     acp:
       command: ["opencode", "acp"]
+      mcp_servers:
+        - https://mcp.context7.com/mcp
       read_only: true
   synthesizer:
     bundle: agents/synthesizer
