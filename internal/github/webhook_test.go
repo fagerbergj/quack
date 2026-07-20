@@ -704,6 +704,20 @@ func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 // Two runs on the SAME PR session are deduped: the second trigger finds the
 // sessionID in the inflight set and returns early (dedup guard fires before
 // the session lock). After the first run completes, a third dispatch succeeds.
+// waitInflightClear blocks until the dedup claim for sessionID is released (the
+// dispatch goroutine's deferred inflight.Delete has run), failing after 2s.
+func waitInflightClear(t *testing.T, ext *Extension, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, held := ext.inflight.Load(sessionID); !held {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("inflight claim for %s never cleared", sessionID)
+}
+
 func TestDispatchSerializesSameSession(t *testing.T) {
 	posted := make(chan string, 2)
 	gh := stubGitHub(t, posted)
@@ -743,6 +757,12 @@ func TestDispatchSerializesSameSession(t *testing.T) {
 	if got := atomic.LoadInt32(&runner.calls); got != 1 {
 		t.Errorf("runner.calls = %d after first dispatch and deduped second; want 1", got)
 	}
+
+	// The inflight claim is released by dispatch's deferred Delete, which runs on
+	// RETURN — i.e. AFTER the comment post above. <-posted alone doesn't imply the
+	// session is free, so wait for the claim to actually clear before re-triggering
+	// (otherwise the third dispatch races the release and gets deduped in CI).
+	waitInflightClear(t, ext, "github-acme-widgets-7")
 
 	// After the first completes, a third dispatch on the same sessionID must succeed.
 	rec3 := httptest.NewRecorder()
