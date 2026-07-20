@@ -1,13 +1,19 @@
-// A deterministic pass over every ```mermaid fenced block in delivered
-// markdown (#371): GitHub renders an invalid diagram as a blank/broken box,
-// and nothing upstream checks the syntax before it ships. Runs as part of
-// commitDelivery, mutating each StagedDelivery.Body in place — mechanical, so
-// it never needs a revise round the model can't reliably satisfy anyway
-// (#358's buffer-reset reasoning: a "please write valid mermaid" instruction
-// is exactly the kind of thing a model ignores intermittently).
+// A deterministic scan of every ```mermaid fenced block bound for delivery
+// (#448): GitHub renders an invalid diagram as a broken box, and nothing
+// upstream checks the syntax before it ships. This package used to STRIP an
+// invalid block to plain text (#371) — reversed by #448: stripping hides the
+// defect instead of fixing it, and the agent that wrote the bad diagram is
+// the one who can fix it. So this now only DETECTS and reports; mermaidCriterion
+// (checks.go-adjacent, wired in node.go's foldDeterministic) fails the
+// deterministic gate with the concrete error, feeding a revise round instead
+// of silently degrading. #358 argued a bare "write valid mermaid" instruction
+// is exactly what a model ignores intermittently — true, but irrelevant here:
+// the feedback below always names the actual parse/validation error and which
+// block, which is the actionable instruction #358 didn't have.
 package vetting
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -20,62 +26,49 @@ import (
 // ```mermaid.
 var fenceOpenRe = regexp.MustCompile(`(?i)^( {0,3})(` + "`{3,}|~{3,}" + `)[ \t]*(\S*)`)
 
-// ValidateAndRepairMermaid walks md fence-depth-aware, one line at a time,
-// tracking which code fence (if any) is currently open — a ```mermaid opener
-// only starts a mermaid block when it's a genuine TOP-LEVEL fence, never one
+// mermaidIssue is one invalid top-level ```mermaid block found while scanning
+// markdown: the 1-based line number of its fence-open line (so revise
+// feedback can point at it in a long answer) and the concrete reason it's
+// invalid.
+type mermaidIssue struct {
+	line int
+	err  string
+}
+
+// FindInvalidMermaid walks md fence-depth-aware, one line at a time, tracking
+// which code fence (if any) is currently open — a ```mermaid opener only
+// starts a mermaid block when it's a genuine TOP-LEVEL fence, never one
 // merely quoted inside an unrelated fence's body (a ```go block whose content
-// contains the literal text "```mermaid" must be left byte-for-byte alone).
-// Any block that fails to parse, or fails strict validation, is replaced with
-// a plain-text fallback (the raw source in a plain code fence, with a note) —
-// never auto-repaired: mermaid-check's errors come from a real parser, not a
-// guess, so there's nothing to mechanically patch with confidence. changed
-// reports whether md was modified.
-//
-// Strip, not fail-the-gate: delivery must never block on a diagram, and the
-// gate has no reliable way to make a model fix mermaid syntax on a revise
-// round (see the package doc above) — a stripped diagram degrades to
-// readable text instead of sinking a round the model can't win.
-func ValidateAndRepairMermaid(md string) (out string, changed bool) {
+// contains the literal text "```mermaid" is never descended into). Detection
+// only — md is never modified; see the package doc for why.
+func FindInvalidMermaid(md string) []mermaidIssue {
 	if !strings.Contains(md, "```") && !strings.Contains(md, "~~~") {
-		return md, false
+		return nil
 	}
 	lines := strings.Split(md, "\n")
-	result := make([]string, 0, len(lines))
+	var issues []mermaidIssue
 	for i := 0; i < len(lines); {
 		m := fenceOpenRe.FindStringSubmatch(lines[i])
 		if m == nil {
-			result = append(result, lines[i])
 			i++
 			continue
 		}
 		fenceChar, fenceLen, info := m[2][0], len(m[2]), strings.ToLower(m[3])
 		close := findFenceClose(lines, i+1, fenceChar, fenceLen)
 		if close == -1 {
-			// Unterminated fence: everything to EOF is inside it — copy through
-			// untouched (nothing here is a genuine, closed top-level block).
-			result = append(result, lines[i:]...)
-			return strings.Join(result, "\n"), changed
+			// Unterminated fence: everything to EOF is inside it — nothing here is
+			// a genuine, closed top-level block worth checking.
+			return issues
 		}
 		if info == "mermaid" {
 			body := strings.Join(lines[i+1:close], "\n")
-			if mermaidValid(body) {
-				result = append(result, lines[i:close+1]...)
-			} else {
-				changed = true
-				result = append(result, "_[diagram omitted: invalid mermaid syntax]_", "", "```text")
-				result = append(result, lines[i+1:close]...)
-				result = append(result, "```")
+			if reason := mermaidError(body); reason != "" {
+				issues = append(issues, mermaidIssue{line: i + 1, err: reason})
 			}
-		} else {
-			// A non-mermaid fence (or a mermaid-looking one nested inside another
-			// fence — findFenceClose already consumed straight to ITS OWN close,
-			// so nothing inside was inspected as a potential opener) — copied
-			// through verbatim, never descended into.
-			result = append(result, lines[i:close+1]...)
 		}
 		i = close + 1
 	}
-	return strings.Join(result, "\n"), changed
+	return issues
 }
 
 // findFenceClose returns the index of the line that closes a fence opened
@@ -104,26 +97,86 @@ func findFenceClose(lines []string, start int, fenceChar byte, fenceLen int) int
 	return -1
 }
 
-// mermaidValid reports whether body parses AND passes STRICT validation.
-// Strict, because one of the issue's named failure modes — an unquoted
-// label containing parentheses — surfaces as a validator warning
-// (NoParenthesesInLabels), not a parse error, and a diagram that renders
-// wrong on GitHub is exactly what this exists to catch regardless of the
-// severity mermaid-check assigns it.
+// mermaidError returns "" if body is valid mermaid, else a concrete,
+// actionable reason it isn't — a real parser/validator error, or the
+// supplementary quoted-label rule below. Strict validation, because one of
+// the issue's named failure modes — an unquoted label containing parentheses
+// — surfaces as a validator warning (NoParenthesesInLabels), not a parse
+// error, and a diagram that renders wrong on GitHub is exactly what this
+// exists to catch regardless of the severity mermaid-check assigns it.
 //
-// recover()-guarded: mermaid-check is a young (v0.0.4) third-party parser
-// sitting on the single-shot, no-retry delivery path (commitDelivery blocks,
-// no goroutine) — a panic here must degrade to "invalid, strip" rather than
-// take the node down with it.
-func mermaidValid(body string) (valid bool) {
+// recover()-guarded: mermaid-check is a young (v0.0.4) third-party parser: a
+// panic here must degrade to "invalid" with a reason, never take the gate
+// round down with it.
+func mermaidError(body string) (reason string) {
 	defer func() {
 		if recover() != nil {
-			valid = false
+			reason = "the mermaid checker could not process this diagram — simplify it"
 		}
 	}()
+	if r := quotedLabelIssue(body); r != "" {
+		return r
+	}
 	diagram, err := mermaid.Parse(body)
 	if err != nil {
-		return false
+		return fmt.Sprintf("parse error: %v", err)
 	}
-	return len(mermaid.Validate(diagram, true)) == 0
+	if warnings := mermaid.Validate(diagram, true); len(warnings) > 0 {
+		return fmt.Sprintf("validation error: %v", warnings[0])
+	}
+	return ""
+}
+
+// mermaidCriterion is the GATE side of #448: scans the answer plus every
+// currently staged delivery body (StagedDelivery.Body — the PR/review/comment
+// text about to ship to GitHub) for an invalid ```mermaid block. ok=false
+// means nothing invalid was found (matches sufficient_length's convention
+// above — a passing check adds no entry to v.Criteria). The first offending
+// block's line + reason becomes the Reason, which composeFeedback (node.go)
+// folds into the next revise prompt — the model gets the actual parser error
+// and the block it came from, not a generic "check your mermaid".
+func mermaidCriterion(answer string, act workerActivity) (criterionScore, bool) {
+	texts := make([]string, 0, len(act.stagedDelivery)+1)
+	texts = append(texts, answer)
+	for _, sd := range act.stagedDelivery {
+		texts = append(texts, sd.Body)
+	}
+	for _, t := range texts {
+		if issues := FindInvalidMermaid(t); len(issues) > 0 {
+			iss := issues[0]
+			return criterionScore{Score: 0, Reason: fmt.Sprintf(
+				"deterministic: invalid mermaid diagram at line %d: %s", iss.line, iss.err)}, true
+		}
+	}
+	return criterionScore{}, false
+}
+
+// mermaidLabelRe finds a single-level bracket/paren/brace node label
+// ([...], (...), {...}) — the label text itself is not allowed to contain
+// another one of these delimiters, which is enough to isolate each label
+// without a real parse.
+var mermaidLabelRe = regexp.MustCompile(`[\[({]([^\[\]{}()\n]*)[\])}]`)
+
+// quotedLabelIssue is the supplementary check mermaid-check v0.0.4 misses
+// (#448): a bracket/paren/brace node label containing a bare double-quote
+// that is NOT the whole label quoted (mermaid's own escape form,
+// A["label with \"quotes\""]) breaks GitHub's real mermaid.js parser even
+// though mermaid-check parses and strictly validates it clean — verified
+// empirically against the issue's own example
+// (A[bundle name<br/>e.g. "code-reviewer"]).
+func quotedLabelIssue(body string) string {
+	for _, m := range mermaidLabelRe.FindAllStringSubmatch(body, -1) {
+		label := m[1]
+		if !strings.Contains(label, `"`) {
+			continue
+		}
+		trimmed := strings.TrimSpace(label)
+		if len(trimmed) >= 2 && strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`) {
+			continue // fully-quoted label — mermaid's own escape form, valid
+		}
+		return fmt.Sprintf(
+			`label %q has a double-quote inside an unquoted bracket/paren/brace label — GitHub's parser rejects this; wrap the WHOLE label in double quotes and escape inner quotes (e.g. ["label with \"quotes\""]) or remove the quotes`,
+			label)
+	}
+	return ""
 }

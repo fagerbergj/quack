@@ -847,14 +847,11 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			}
 		}
 	}
-	// Deterministic mermaid validation (#371): every diagram in a body headed
-	// to GitHub gets repaired or stripped before it ships — never gated on the
-	// judge/revise loop, since a mechanical slip is fixed mechanically.
-	for i := range dc.Items {
-		if body, changed := ValidateAndRepairMermaid(dc.Items[i].Body); changed {
-			dc.Items[i].Body = body
-		}
-	}
+	// Mermaid validity (#448) is now a deterministic GATE criterion
+	// (mermaidCriterion, mermaid.go) checked before this point — a body
+	// reaching commitDelivery has already passed that check (or shipped as a
+	// gate-failed draft, same as any other unmet deterministic criterion).
+	// Nothing left to strip or repair here.
 
 	kinds := make([]string, len(dc.Items))
 	for i, item := range dc.Items {
@@ -1146,6 +1143,13 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	// node that has neither (research, synthesis).
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
 		v.Criteria["checks_pass"] = c
+	}
+	// Mermaid validity (#448): checked against the answer AND every currently
+	// staged delivery body — whichever is about to ship to GitHub. Only added
+	// on a failure (mirrors sufficient_length above): a clean diagram, or no
+	// diagram at all, needs no entry.
+	if c, ok := mermaidCriterion(answer, act); ok {
+		v.Criteria["mermaid_valid"] = c
 	}
 	// Delivery: a node whose task says commit/push/PR cannot pass unless the
 	// ledger shows it did, and one told to POST a review on a PR cannot pass

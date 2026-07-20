@@ -1,88 +1,89 @@
 package vetting
 
 import (
-	"context"
 	"strings"
 	"testing"
 )
 
-func TestValidateAndRepairMermaid_ValidDiagramUntouched(t *testing.T) {
+func TestFindInvalidMermaid_ValidDiagramPasses(t *testing.T) {
 	md := "Here's the plan:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[Finish]\n```\n\nDone."
-	out, changed := ValidateAndRepairMermaid(md)
-	if changed {
-		t.Fatalf("changed = true for an already-valid diagram, want untouched; out=%s", out)
-	}
-	if out != md {
-		t.Fatalf("out = %q, want unchanged input", out)
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none for a valid diagram", issues)
 	}
 }
 
-func TestValidateAndRepairMermaid_NoMermaidBlockUntouched(t *testing.T) {
+func TestFindInvalidMermaid_NoMermaidBlockPasses(t *testing.T) {
 	md := "No diagrams here, just prose and a ```go\nfmt.Println(1)\n``` block."
-	out, changed := ValidateAndRepairMermaid(md)
-	if changed || out != md {
-		t.Fatalf("markdown with no mermaid fence must be left alone, got changed=%v out=%q", changed, out)
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none — no mermaid fence at all", issues)
 	}
 }
 
 // A missing diagram-type header is a real parse error from mermaid-check
 // ("unknown or unsupported diagram type") — a known-bad diagram the library
-// actually rejects, not a guess. It must be stripped, not shipped.
-func TestValidateAndRepairMermaid_MissingHeaderStripped(t *testing.T) {
+// actually rejects, not a heuristic.
+func TestFindInvalidMermaid_MissingHeaderDetected(t *testing.T) {
 	md := "Before.\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nAfter."
-	out, changed := ValidateAndRepairMermaid(md)
-	if !changed {
-		t.Fatal("want changed=true — a diagram with no recognized header must be stripped")
+	issues := FindInvalidMermaid(md)
+	if len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 for a missing diagram-type header", issues)
 	}
-	if strings.Contains(out, "```mermaid") {
-		t.Fatalf("out still contains a mermaid fence, want it stripped: %q", out)
+	if issues[0].line != 3 {
+		t.Fatalf("line = %d, want 3 (the fence-open line)", issues[0].line)
 	}
-	if !strings.Contains(out, "Before.") || !strings.Contains(out, "After.") {
-		t.Fatalf("out = %q, want surrounding prose preserved", out)
-	}
-	if !strings.Contains(out, "A[Start] --> B[Finish]") {
-		t.Fatalf("out = %q, want the raw source kept as a plain-text fallback", out)
+	if !strings.Contains(issues[0].err, "parse error") {
+		t.Fatalf("err = %q, want a parse error", issues[0].err)
 	}
 }
 
-// sequenceDiagram with an arrow token mermaid-check's parser doesn't
-// recognize — another real, library-caught parse error (not a heuristic).
-func TestValidateAndRepairMermaid_UnknownSequenceArrowStripped(t *testing.T) {
-	md := "```mermaid\nsequenceDiagram\n    Alice ->>> Bob: bad arrow\n```"
-	out, changed := ValidateAndRepairMermaid(md)
-	if !changed {
-		t.Fatal("want changed=true — an unrecognized sequence arrow must be stripped")
+// The issue's own named quote-in-unquoted-label case (#448): mermaid-check
+// v0.0.4 parses AND strictly validates this clean (verified empirically),
+// but GitHub's real parser errors on it — the supplementary quotedLabelIssue
+// check exists exactly to close this false-negative.
+func TestFindInvalidMermaid_QuoteInUnquotedLabelDetected(t *testing.T) {
+	md := "```mermaid\ngraph TD\n  A[bundle name<br/>e.g. \"code-reviewer\"] --> B[x]\n```"
+	issues := FindInvalidMermaid(md)
+	if len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 for the quote-in-unquoted-label case", issues)
 	}
-	if strings.Contains(out, "```mermaid") {
-		t.Fatalf("out still contains a mermaid fence, want it stripped: %q", out)
+	if !strings.Contains(issues[0].err, "double-quote") {
+		t.Fatalf("err = %q, want it to name the double-quote problem", issues[0].err)
+	}
+}
+
+// A fully-quoted label using mermaid's own escape form must NOT trip the
+// supplementary quote check — only a BARE quote inside an unquoted label is
+// invalid.
+func TestFindInvalidMermaid_FullyQuotedLabelWithEscapedQuotesPasses(t *testing.T) {
+	md := "```mermaid\nflowchart TD\n  A[\"bundle name, e.g. \\\"code-reviewer\\\"\"] --> B[Done]\n```"
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none — the whole label is quoted", issues)
 	}
 }
 
 // The issue's own named example — a bracket label with an unquoted paren —
 // parses fine (mermaid-check is lenient at the AST level) but fails STRICT
-// validation (NoParenthesesInLabels), which is exactly why validateAndRepair
-// validates strict: a diagram that parses but renders wrong must still strip.
-func TestValidateAndRepairMermaid_UnquotedParenLabelStripped(t *testing.T) {
+// validation (NoParenthesesInLabels).
+func TestFindInvalidMermaid_UnquotedParenLabelDetected(t *testing.T) {
 	md := "```mermaid\nflowchart TD\n    A[Login (OAuth)] --> B[Done]\n```"
-	out, changed := ValidateAndRepairMermaid(md)
-	if !changed {
-		t.Fatal("want changed=true — an unquoted paren label fails strict validation")
+	issues := FindInvalidMermaid(md)
+	if len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 for an unquoted paren label", issues)
 	}
-	if strings.Contains(out, "```mermaid") {
-		t.Fatalf("out still contains a mermaid fence, want it stripped: %q", out)
-	}
-	if !strings.Contains(out, "Login (OAuth)") {
-		t.Fatalf("out = %q, want the raw source kept as a plain-text fallback", out)
+}
+
+func TestFindInvalidMermaid_UnknownSequenceArrowDetected(t *testing.T) {
+	md := "```mermaid\nsequenceDiagram\n    Alice ->>> Bob: bad arrow\n```"
+	if issues := FindInvalidMermaid(md); len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 for an unrecognized sequence arrow", issues)
 	}
 }
 
 // BLOCKING regression: a ```mermaid-looking fence quoted INSIDE an unrelated
 // fence's body (a ```go block whose content merely mentions "```mermaid",
-// e.g. in a comment demonstrating markdown) must be left byte-for-byte
-// untouched — not treated as a real mermaid opener, not stripped, not
-// mangled. Reachable in practice: delivered PR/review/comment bodies
-// routinely quote code or examples.
-func TestValidateAndRepairMermaid_NestedFenceLeftUntouched(t *testing.T) {
+// e.g. in a comment demonstrating markdown) must never be treated as a real
+// mermaid opener.
+func TestFindInvalidMermaid_NestedFenceIgnored(t *testing.T) {
 	md := "Example:\n\n```go\n" +
 		"// Here's how you'd write a bad diagram:\n" +
 		"// ```mermaid\n" +
@@ -90,120 +91,91 @@ func TestValidateAndRepairMermaid_NestedFenceLeftUntouched(t *testing.T) {
 		"// ```\n" +
 		"fmt.Println(\"done\")\n" +
 		"```\n\nEnd."
-	out, changed := ValidateAndRepairMermaid(md)
-	if changed || out != md {
-		t.Fatalf("nested ```mermaid quoted inside a ```go block must be untouched:\ngot changed=%v out=%q\nwant unchanged", changed, out)
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none — the ```mermaid text is nested inside a ```go block, not a real fence", issues)
 	}
 }
 
 // The same regression, but proving a REAL top-level bad mermaid block right
-// next to the nested false-positive is still caught and stripped — the fix
-// must not overcorrect into ignoring every ```mermaid fence.
-func TestValidateAndRepairMermaid_NestedFenceUntouchedRealBlockStillStripped(t *testing.T) {
+// next to the nested false-positive is still caught.
+func TestFindInvalidMermaid_NestedFenceIgnoredRealBlockStillDetected(t *testing.T) {
 	md := "```go\n// ```mermaid\n// not a real diagram\n// ```\nfmt.Println(1)\n```\n\n" +
 		"```mermaid\nA[Start] --> B[Finish]\n```"
-	out, changed := ValidateAndRepairMermaid(md)
-	if !changed {
-		t.Fatal("want changed=true — the real top-level bad diagram must still be stripped")
-	}
-	if !strings.Contains(out, "// ```mermaid") {
-		t.Fatalf("out = %q, want the nested false-positive inside the go block preserved verbatim", out)
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if line == "```mermaid" {
-			t.Fatalf("out = %q, want the real invalid top-level mermaid fence stripped (no top-level ```mermaid opener left)", out)
-		}
+	if issues := FindInvalidMermaid(md); len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 — the real top-level bad diagram, not the nested false-positive", issues)
 	}
 }
 
 // GitHub renders ```Mermaid / ```MERMAID the same as ```mermaid — the fence
-// match must be case-insensitive so a bad diagram can't ship unvalidated
-// just by differently-cased fence info.
-func TestValidateAndRepairMermaid_CaseInsensitiveFence(t *testing.T) {
+// match must be case-insensitive.
+func TestFindInvalidMermaid_CaseInsensitiveFence(t *testing.T) {
 	md := "```MERMAID\nA[Start] --> B[Finish]\n```"
-	out, changed := ValidateAndRepairMermaid(md)
-	if !changed {
-		t.Fatal("want changed=true — an invalid diagram in a ```MERMAID fence must still be validated and stripped")
-	}
-	if strings.Contains(out, "MERMAID") && strings.Contains(out, "```MERMAID") {
-		t.Fatalf("out = %q, want the invalid diagram stripped regardless of fence case", out)
+	if issues := FindInvalidMermaid(md); len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 regardless of fence case", issues)
 	}
 }
 
-// mermaidValid must degrade to "invalid" rather than panic through — a young
-// third-party parser on the single-shot, no-retry delivery path.
-func TestMermaidValid_RecoversFromPanic(t *testing.T) {
+// mermaidError must degrade to a reason rather than panic through — a young
+// third-party parser on the gate's checks path.
+func TestMermaidError_RecoversFromPanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("mermaidValid must recover internally, panicked instead: %v", r)
+			t.Fatalf("mermaidError must recover internally, panicked instead: %v", r)
 		}
 	}()
-	// Not expected to panic in practice — this just proves the call is safe
-	// to make on arbitrary/adversarial input without a defer at the call site.
-	if mermaidValid(strings.Repeat("A", 1<<20)) {
+	if mermaidError(strings.Repeat("A", 1<<20)) == "" {
 		t.Fatal("garbage input must not validate as a diagram")
 	}
 }
 
-func TestMermaidValid(t *testing.T) {
+func TestMermaidError(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
-		want bool
+		name    string
+		body    string
+		invalid bool
 	}{
-		{"valid flowchart", "flowchart TD\nA[Start] --> B[Finish]", true},
-		{"valid sequence", "sequenceDiagram\nAlice->>Bob: Hello", true},
-		{"no header", "A[Start] --> B[Finish]", false},
-		{"unquoted paren label", "flowchart TD\nA[Login (OAuth)] --> B[Done]", false},
-		{"unknown sequence arrow", "sequenceDiagram\nAlice ->>> Bob: bad", false},
-		{"empty", "", false},
+		{"valid flowchart", "flowchart TD\nA[Start] --> B[Finish]", false},
+		{"valid sequence", "sequenceDiagram\nAlice->>Bob: Hello", false},
+		{"no header", "A[Start] --> B[Finish]", true},
+		{"unquoted paren label", "flowchart TD\nA[Login (OAuth)] --> B[Done]", true},
+		{"quote in unquoted label", "flowchart TD\nA[bundle name, e.g. \"code-reviewer\"] --> B[Done]", true},
+		{"unknown sequence arrow", "sequenceDiagram\nAlice ->>> Bob: bad", true},
+		{"empty", "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := mermaidValid(c.body); got != c.want {
-				t.Errorf("mermaidValid(%q) = %v, want %v", c.body, got, c.want)
+			got := mermaidError(c.body) != ""
+			if got != c.invalid {
+				t.Errorf("mermaidError(%q) invalid = %v, want %v", c.body, got, c.invalid)
 			}
 		})
 	}
 }
 
-// commitDelivery must apply the mermaid pass to every staged item's Body
-// before handing it to Deliver — end-to-end wiring, not just the pure func.
-func TestCommitDelivery_StripsInvalidMermaidInStagedBody(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
-		fnCall("1", "stage_pr", map[string]any{
-			"title": "Add feature",
-			"body":  "See the flow:\n\n```mermaid\nA[Start] --> B[End]\n```",
-		}),
-	))
-	var gotBody string
-	commitDelivery(context.Background(), nil, Config{Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
-		if len(dc.Items) != 1 {
-			t.Fatalf("Items = %d, want 1", len(dc.Items))
-		}
-		gotBody = dc.Items[0].Body
-		return nil, nil
-	}}, "n1", act, GateResult{Passed: true})
-	if strings.Contains(gotBody, "```mermaid") {
-		t.Fatalf("body still has the invalid diagram fenced as mermaid: %q", gotBody)
+// mermaidCriterion is the gate wiring: it must find an invalid diagram in
+// either the answer text or a staged delivery body, and stay inapplicable
+// (ok=false) when nothing invalid is present anywhere.
+func TestMermaidCriterion_DetectsInvalidStagedBody(t *testing.T) {
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nA[Start] --> B[End]\n```"},
+	}}
+	c, ok := mermaidCriterion("", act)
+	if !ok {
+		t.Fatal("want ok=true — the staged PR body has an invalid diagram")
 	}
-	if !strings.Contains(gotBody, "A[Start] --> B[End]") {
-		t.Fatalf("body = %q, want the raw source preserved as a plain-text fallback", gotBody)
+	if c.Score != 0 {
+		t.Fatalf("Score = %v, want 0", c.Score)
+	}
+	if !strings.Contains(c.Reason, "parse error") {
+		t.Fatalf("Reason = %q, want it to carry the concrete parse error", c.Reason)
 	}
 }
 
-// A valid diagram staged for delivery must reach Deliver byte-for-byte.
-func TestCommitDelivery_LeavesValidMermaidUntouched(t *testing.T) {
-	body := "See the flow:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"
-	act := activityFromSession(newTestSession(t,
-		fnCall("1", "stage_pr", map[string]any{"title": "Add feature", "body": body}),
-	))
-	var gotBody string
-	commitDelivery(context.Background(), nil, Config{Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
-		gotBody = dc.Items[0].Body
-		return nil, nil
-	}}, "n1", act, GateResult{Passed: true})
-	if gotBody != body {
-		t.Fatalf("body = %q, want unchanged %q", gotBody, body)
+func TestMermaidCriterion_ValidEverywherePasses(t *testing.T) {
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"},
+	}}
+	if _, ok := mermaidCriterion("no diagrams here", act); ok {
+		t.Fatal("want ok=false — nothing invalid anywhere")
 	}
 }

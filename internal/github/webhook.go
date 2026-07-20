@@ -710,10 +710,9 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		e.app.collapsePriorComments(tailCtx, owner, repo, number, "plan")
 		answer += "\n\n" + deliveryMarker("plan")
 	}
-	// Strip any invalid ```mermaid block (#371) before it ships: this path
-	// (plan/research answers posted as an issue comment) is separate from the
-	// trust gate's commitDelivery, which only strips staged PR/review bodies.
-	answer, _ = vetting.ValidateAndRepairMermaid(answer)
+	// Mermaid validity (#448) is a deterministic gate criterion now
+	// (vetting.mermaidCriterion): this answer already passed it (or shipped
+	// gate-failed, same as any other unmet criterion) — nothing to strip here.
 	if err := e.app.postIssueComment(tailCtx, owner, repo, number, answer); err != nil {
 		slog.Error("github comment post failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 		return
