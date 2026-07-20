@@ -241,44 +241,104 @@ func (a *App) tokenForRepo(ctx context.Context, owner, repo string) (string, err
 	return a.InstallationToken(ctx, id)
 }
 
+// maxGETAttempts bounds the retry loop below: the first try plus up to two
+// retries on a transient failure.
+const maxGETAttempts = 3
+
+// retryBaseDelay is the first backoff sleep; it doubles each subsequent
+// retry (retryBaseDelay, 2*retryBaseDelay, ...).
+const retryBaseDelay = 200 * time.Millisecond
+
+// isRetryableStatus reports whether an HTTP status is a transient GitHub
+// failure worth retrying: 5xx (server-side, including the "no server
+// available" 503 that triggered #467) and 429 (rate limited).
+func isRetryableStatus(code int) bool {
+	return code == http.StatusTooManyRequests || code >= 500
+}
+
 // doJSON performs one authenticated REST call: marshals reqBody (nil ⇒ no body),
 // sets the Authorization + GitHub headers, and decodes a 2xx JSON response into
 // out (nil ⇒ discard). A non-2xx status is an error carrying GitHub's message.
 // authz is never logged.
+//
+// GET requests get a bounded retry (up to maxGETAttempts, exponential
+// backoff) on a transient failure — a 5xx/429 response or a connection/
+// timeout error — since a GET is idempotent and safe to repeat. Every other
+// method (POST/PATCH/PUT/DELETE) is tried exactly once: retrying a mutating
+// call risks a duplicate (e.g. a comment posted twice).
 func (a *App) doJSON(ctx context.Context, method, path, authz string, reqBody, out any) error {
-	var body io.Reader
+	var bodyBytes []byte
 	if reqBody != nil {
 		b, err := json.Marshal(reqBody)
 		if err != nil {
 			return fmt.Errorf("github: marshal request: %w", err)
 		}
-		body = bytes.NewReader(b)
+		bodyBytes = b
 	}
-	req, err := http.NewRequestWithContext(ctx, method, a.apiBase+path, body)
-	if err != nil {
-		return fmt.Errorf("github: build request: %w", err)
+
+	attempts := 1
+	if method == http.MethodGet {
+		attempts = maxGETAttempts
 	}
-	req.Header.Set("Authorization", authz)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := a.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("github: %s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("github: %s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	if out != nil && len(data) > 0 {
-		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("github: decode %s %s response: %w", method, path, err)
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		var body io.Reader
+		if bodyBytes != nil {
+			body = bytes.NewReader(bodyBytes)
 		}
+		req, err := http.NewRequestWithContext(ctx, method, a.apiBase+path, body)
+		if err != nil {
+			return fmt.Errorf("github: build request: %w", err)
+		}
+		req.Header.Set("Authorization", authz)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if bodyBytes != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := a.http.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("github: %s %s: %w", method, path, err)
+			if attempt < attempts && retryAfterErr(ctx, attempt) {
+				continue
+			}
+			return lastErr
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("github: %s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+			if isRetryableStatus(resp.StatusCode) && attempt < attempts && retryAfterErr(ctx, attempt) {
+				continue
+			}
+			return lastErr
+		}
+		if out != nil && len(data) > 0 {
+			if err := json.Unmarshal(data, out); err != nil {
+				return fmt.Errorf("github: decode %s %s response: %w", method, path, err)
+			}
+		}
+		return nil
 	}
-	return nil
+	return lastErr
+}
+
+// retryAfterErr sleeps an exponential backoff (retryBaseDelay * 2^(attempt-1))
+// before a retry, honoring ctx: it returns false (no retry) if ctx is
+// cancelled/expires first, so a caller's deadline is never overrun waiting on
+// a backoff that will lose anyway.
+func retryAfterErr(ctx context.Context, attempt int) bool {
+	d := retryBaseDelay * time.Duration(1<<uint(attempt-1))
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // postIssueComment posts a comment on an issue or PR (GitHub treats PR
