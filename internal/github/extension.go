@@ -76,7 +76,8 @@ type Extension struct {
 	// inflight tracks sessionIDs that currently have a dispatch in-flight to
 	// dedup near-simultaneous triggers (issue_comment + label within ~1s).
 	// LoadOrStore at the top of dispatch() claims it; defer Delete releases
-	// it when the run completes. sessionID -> empty struct.
+	// it when the run completes. sessionID -> struct{}{} (a zero-size sentinel;
+	// only key presence matters).
 	inflight sync.Map
 	// runTimeout bounds one webhook-driven run (extensions.github.run_timeout_minutes).
 	runTimeout time.Duration

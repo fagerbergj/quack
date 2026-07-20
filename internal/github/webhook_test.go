@@ -2623,6 +2623,11 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 		t.Fatal("first dispatch never posted its answer")
 	}
 
+	// The inflight claim clears in dispatch's deferred Delete, which runs on
+	// RETURN — after the post above. Wait for the actual release before the third
+	// trigger, else it races the release and gets wrongly deduped under load.
+	waitInflightClear(t, ext, "github-acme-widgets-7")
+
 	rec3 := httptest.NewRecorder()
 	ext.handleWebhook(rec3, signedRequest("issue_comment", issueCommentBody("@quack third")))
 	if rec3.Code != http.StatusAccepted {
