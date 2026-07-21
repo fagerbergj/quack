@@ -116,10 +116,11 @@ type GitHubExtensionConfig struct {
 // Applying a label requires repo write access, so labels double as the
 // permission model — no separate allowlist.
 type GitHubLabels struct {
-	Plan      string `yaml:"plan"`      // on an issue: post an implementation plan ("issue_plan" trigger)
-	Implement string `yaml:"implement"` // on an issue: implement the plan, open a PR ("issue_implement" trigger)
-	Review    string `yaml:"review"`    // on a PR: review it once ("label" trigger; alias auto_review_label)
-	Merge     string `yaml:"merge"`     // on a PR: merge IF quack's latest review approved ("merge" trigger)
+	Plan       string `yaml:"plan"`        // on an issue: post an implementation plan ("issue_plan" trigger)
+	Implement  string `yaml:"implement"`   // on an issue: implement the plan, open a PR ("issue_implement" trigger)
+	Review     string `yaml:"review"`      // on a PR: review it once ("label" trigger; alias auto_review_label)
+	Merge      string `yaml:"merge"`       // on a PR: merge IF quack's latest review approved ("merge" trigger)
+	PartialFix string `yaml:"partial_fix"` // signals a partial fix — suppresses unconditional Closes #N in acks and PR bodies
 }
 
 // defaultMention is the trigger phrase when github.mention is unset.
@@ -136,6 +137,8 @@ const defaultImplementLabel = "quack:implement"
 
 // defaultMergeLabel is the label name when github.labels.merge is unset.
 const defaultMergeLabel = "quack:merge"
+
+const defaultPartialFixLabel = "quack:partial-fix"
 
 // validGitHubTriggers is the whitelist for github.triggers entries.
 var validGitHubTriggers = map[string]bool{
@@ -902,6 +905,9 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	if g.Labels.Merge == "" {
 		g.Labels.Merge = defaultMergeLabel
+	}
+	if g.Labels.PartialFix == "" {
+		g.Labels.PartialFix = defaultPartialFixLabel
 	}
 	if len(g.AllowedUsers) == 0 {
 		slog.Warn("config: extensions.github.allowed_users is empty; DENYING every human-invoked trigger " +

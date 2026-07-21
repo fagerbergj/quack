@@ -30,5 +30,3 @@ Default PR body template. Used only when the target repo has no
 ## Out of scope
 
 <!-- Deliberate follow-ups this PR does NOT do. Omit for a small fix. -->
-
-Closes #<issue>

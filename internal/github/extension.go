@@ -121,6 +121,9 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 	if labels.Merge == "" {
 		labels.Merge = "quack:merge"
 	}
+	if labels.PartialFix == "" {
+		labels.PartialFix = "quack:partial-fix"
+	}
 	if hub == nil {
 		hub = stream.NewHub()
 	}
