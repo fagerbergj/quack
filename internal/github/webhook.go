@@ -327,14 +327,11 @@ func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload)
 		slog.Warn("github: fetch issue labels failed; running without partial-fix signal", "component", "github",
 			"repo", owner+"/"+repo, "issue", number, "err", err)
 	}
-	e.dispatch(synthetic, implementTask(p, labels))
+	e.dispatch(synthetic, implementTask(p, labels, e.labels.PartialFix))
 }
 
-const partialFixLabel = "quack:partial-fix"
-
-// hasPartialFix reports whether the given label names include a partial-fix
-// signal.
-func hasPartialFix(names []string) bool {
+// hasPartialFix reports whether names includes the configured partial-fix label.
+func hasPartialFix(partialFixLabel string, names []string) bool {
 	for _, n := range names {
 		if n == partialFixLabel {
 			return true
@@ -348,7 +345,7 @@ func hasPartialFix(names []string) bool {
 // arrive separately via loadGithubContext's injected context (#459).
 // The labels param carries every label currently on the issue (fetched at
 // dispatch start), used to conditionally suppress unconditional Closes #N.
-func implementTask(p issuesPayload, labels []string) string {
+func implementTask(p issuesPayload, labels []string, partialFixLabel string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
 
@@ -356,7 +353,7 @@ func implementTask(p issuesPayload, labels []string) string {
 		fmt.Fprintf(&b, "\nIssue description (may be incomplete — see discussion below):\n%s\n", truncate(body, 4000))
 	}
 
-	isPartial := hasPartialFix(labels)
+	isPartial := hasPartialFix(partialFixLabel, labels)
 	if isPartial {
 		b.WriteString("\nA maintainer approved this for implementation (see the approved plan in the discussion below). This is a partial fix: implement the changes, commit locally, and call stage_pr. Do NOT use a Closes keyword — the issue will not be fully closed by this PR.")
 	} else {

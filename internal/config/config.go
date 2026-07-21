@@ -138,6 +138,8 @@ const defaultImplementLabel = "quack:implement"
 // defaultMergeLabel is the label name when github.labels.merge is unset.
 const defaultMergeLabel = "quack:merge"
 
+const defaultPartialFixLabel = "quack:partial-fix"
+
 // validGitHubTriggers is the whitelist for github.triggers entries.
 var validGitHubTriggers = map[string]bool{
 	"mention": true, "pr_opened": true, "label": true,
@@ -903,6 +905,9 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	if g.Labels.Merge == "" {
 		g.Labels.Merge = defaultMergeLabel
+	}
+	if g.Labels.PartialFix == "" {
+		g.Labels.PartialFix = defaultPartialFixLabel
 	}
 	if len(g.AllowedUsers) == 0 {
 		slog.Warn("config: extensions.github.allowed_users is empty; DENYING every human-invoked trigger " +

@@ -2046,15 +2046,27 @@ func TestImplementTaskCore(t *testing.T) {
 	p.Issue.Number = 7
 	p.Issue.Title = "Add widget cache"
 	p.Issue.Body = "Widgets are refetched on every request."
-	msg := implementTask(p, nil)
+	msg := implementTask(p, nil, "quack:partial-fix")
 	for _, want := range []string{"Implement issue #7", "Add widget cache", "Closes #7", "stage_pr", "Never merge"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("implementTask missing %q:\n%s", want, msg)
 		}
 	}
 
+	// A CUSTOM configured partial-fix label is what's honoured — not a hardcoded
+	// default (the blocking finding on #505).
+	custom := implementTask(p, []string{"bug", "my-org:incomplete"}, "my-org:incomplete")
+	if strings.Contains(custom, "`Closes #7`") {
+		t.Errorf("custom partial-fix label ignored — Closes still present:\n%s", custom)
+	}
+	// The default string must NOT trigger partial-fix when a custom label is configured.
+	notCustom := implementTask(p, []string{"quack:partial-fix"}, "my-org:incomplete")
+	if !strings.Contains(notCustom, "`Closes #7`") {
+		t.Errorf("non-matching label wrongly suppressed Closes:\n%s", notCustom)
+	}
+
 	// Partial-fix: should NOT instruct a Closes keyword.
-	partialMsg := implementTask(p, []string{"bug", "quack:partial-fix"})
+	partialMsg := implementTask(p, []string{"bug", "quack:partial-fix"}, "quack:partial-fix")
 	for _, absent := range []string{"`Closes #7`"} {
 		if strings.Contains(partialMsg, absent) {
 			t.Errorf("partial-fix task must not instruct closing with the keyword %q:\n%s", absent, partialMsg)
