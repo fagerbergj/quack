@@ -50,7 +50,7 @@ orchestrator:
   skills: [plan-work, format-markdown, present-coding-plan, contribute]
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
-  # tools: [commit_memory]        # bind commit_memory to enable user memory (recall + commit of personal facts)
+  tools: [commit_memory]         # bind commit_memory to enable user memory (recall + commit of per-user preferences)
   # correct_review_finding (a conversational GitHub-PR false-positive correction into
   # the coding memory bucket, #249) is always on whenever task memory (stage_memory,
   # below) is configured - narrowly scoped by its own schema, so it needs no opt-in here.

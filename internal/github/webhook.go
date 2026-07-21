@@ -591,6 +591,15 @@ func verifySignature(secret, body []byte, header string) bool {
 func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
 
+	// Key this run by the commenter's login so memories and ADK sessions are
+	// partitioned per-person (#262: one maintainer's preferences must not leak
+	// into another's). Falls back to "github" when there's no comment author
+	// (no human invoker present — should not happen on live events, but safe).
+	login := p.Comment.User.Login
+	if login == "" {
+		login = runUserID
+	}
+
 	// Dedup: one active run per issue/PR thread. A second trigger that arrives
 	// while a run is in-flight (same sessionID) is silently skipped with a
 	// best-effort 👀 reaction on the triggering event - it never panics even
@@ -626,7 +635,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// session needs (see loadGithubContext's forceReseed).
 	resetSession := p.isLabelTrigger && isWorkRequest(task)
 	if resetSession {
-		if err := e.runner.ResetSession(ctx, runUserID, sessionID); err != nil {
+		if err := e.runner.ResetSession(ctx, login, sessionID); err != nil {
 			slog.Warn("github: session reset failed; this attempt may inherit stale history",
 				"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 		}
@@ -705,11 +714,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// the review. So if a work request ran no plan, nudge once to actually run it.
 	// A purely conversational follow-up ("what did you mean by that finding?")
 	// legitimately runs no plan and must be answered directly - never nudged.
-	planRan, judgePassed, paused, needsInput := e.drive(runCtx, sessionID, message, owner, repo, number, turnID, pub)
+	planRan, judgePassed, paused, needsInput := e.drive(runCtx, login, sessionID, message, owner, repo, number, turnID, pub)
 	if !planRan && !paused && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
-		_, jp2, _, _ := e.drive(runCtx, sessionID, runNudge, owner, repo, number, turnID, pub)
+		_, jp2, _, _ := e.drive(runCtx, login, sessionID, runNudge, owner, repo, number, turnID, pub)
 		judgePassed = judgePassed || jp2
 	}
 	if pub != nil {
@@ -802,7 +811,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		tailCtx, tailCancel = context.WithTimeout(context.Background(), time.Minute)
 		defer tailCancel()
 	}
-	answer := strings.TrimSpace(e.runner.LatestAnswer(tailCtx, runUserID, sessionID))
+	answer := strings.TrimSpace(e.runner.LatestAnswer(tailCtx, login, sessionID))
 	if timedOut {
 		answer = fmt.Sprintf("⚠️ quack hit its run deadline (%s) before finishing; nothing was delivered. Re-apply the label to retry.\n\nLast progress:\n\n%s",
 			e.runTimeout, answer)
@@ -812,7 +821,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		// This is the orchestrator's own write-up, not a gated worker answer -
 		// it never runs through mermaidCriterion (#480 regression, #483). Check
 		// and revise it directly.
-		answer = e.reviseInvalidMermaid(runCtx, sessionID, owner, repo, number, turnID, pub, answer)
+		answer = e.reviseInvalidMermaid(runCtx, login, sessionID, owner, repo, number, turnID, pub, answer)
 		if p.planOnly {
 			// A genuine plan (not a timeout/empty placeholder): collapse any PRIOR
 			// plan comment on this issue before posting the new one, so the thread
@@ -834,7 +843,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 // vetting.DegradeInvalidMermaid if it's still invalid - a visible, labeled
 // degrade, never a silent strip. runCtx must still be alive (the caller only
 // reaches this once cancellation/timeout are ruled out).
-func (e *Extension) reviseInvalidMermaid(runCtx context.Context, sessionID, owner, repo string, number int, turnID string, pub *runlog.Publisher, answer string) string {
+func (e *Extension) reviseInvalidMermaid(runCtx context.Context, uid, sessionID, owner, repo string, number int, turnID string, pub *runlog.Publisher, answer string) string {
 	issues := vetting.FindInvalidMermaid(answer)
 	if len(issues) == 0 {
 		return answer
@@ -848,8 +857,8 @@ func (e *Extension) reviseInvalidMermaid(runCtx context.Context, sessionID, owne
 	nudge := fmt.Sprintf(
 		"Your last answer contains invalid mermaid diagram(s) that GitHub cannot render:\n\n- %s\n\nFix each diagram so it parses, or remove it if it isn't essential, then repost your complete answer.",
 		strings.Join(feedback, "\n- "))
-	e.drive(runCtx, sessionID, nudge, owner, repo, number, turnID, pub)
-	if revised := strings.TrimSpace(e.runner.LatestAnswer(runCtx, runUserID, sessionID)); revised != "" {
+	e.drive(runCtx, uid, sessionID, nudge, owner, repo, number, turnID, pub)
+	if revised := strings.TrimSpace(e.runner.LatestAnswer(runCtx, uid, sessionID)); revised != "" {
 		answer = revised
 	}
 	if stillInvalid := vetting.FindInvalidMermaid(answer); len(stillInvalid) > 0 {
@@ -937,9 +946,9 @@ const runNudge = "You answered without running anything. Do NOT reply in prose: 
 // pub is nil when the extension has no store (test harnesses that don't need
 // persistence) - every persistence step below is then a no-op, matching drive's
 // old behavior exactly.
-func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool, paused bool, needsInput stream.NodeNeedsInputData) {
+func (e *Extension) drive(ctx context.Context, uid, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool, paused bool, needsInput stream.NodeNeedsInputData) {
 	var planID string
-	for ev, err := range e.runner.Run(ctx, runUserID, sessionID, message, nil) {
+	for ev, err := range e.runner.Run(ctx, uid, sessionID, message, nil) {
 		if err != nil {
 			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 			continue

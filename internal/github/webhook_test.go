@@ -481,7 +481,7 @@ func TestHandleWebhookPersistsTurnAndEventsForUI(t *testing.T) {
 	var turns []store.TurnContent
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		turns, err = st.GetTurnsWithContent(context.Background(), "quack", runUserID, sessionID)
+		turns, err = st.GetTurnsWithContent(context.Background(), "quack", "alice", sessionID)
 		if err != nil {
 			t.Fatalf("GetTurnsWithContent: %v", err)
 		}
