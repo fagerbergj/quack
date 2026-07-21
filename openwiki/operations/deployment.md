@@ -59,12 +59,13 @@ Handles production/preview deployment of the Quack application.
 
 ### `.github/workflows/openwiki-update.yml` — Automated OpenWiki Updates
 Scheduled daily at 08:00 UTC (`cron: "0 8 * * *"`) and triggerable manually via `workflow_dispatch`. Uses:
-- Node.js 22 (actions/setup-node@v4)
+- checkout@v4, Node.js 22 (actions/setup-node@v4)
 - Installs OpenWiki globally via npm
-- Runs `openwiki code --update --print`
-- Creates an update pull request via peter-evans/create-pull-request
+- Runs `openwiki code --update --print` with provider `openrouter`, model `z-ai/glm-5.2`
+- Creates an update pull request via peter-evans/create-pull-request@v7
+- Commit paths: `openwiki/`, `AGENTS.md`, `CLAUDE.md`, `.github/workflows/openwiki-update.yml`
 
-**Environment variables**: Requires `OPENWIKI_PROVIDER`, `OPENROUTER_API_KEY`, `OPENWIKI_MODEL_ID`, plus LangSmith tracing config.
+**Environment variables**: Requires `OPENWIKI_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPENWIKI_MODEL_ID=z-ai/glm-5.2`, plus LangSmith tracing (`LANGSMITH_API_KEY`, `LANGCHAIN_PROJECT=openwiki`, `LANGCHAIN_TRACING_V2=true`).
 
 ### Dependabot
 [`.github/dependabot.yml`](/.github/dependabot.yml) configures automated dependency updates for both Go modules and frontend packages. Recent automated bumps include:
