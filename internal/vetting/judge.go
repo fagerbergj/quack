@@ -435,7 +435,17 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)}}
+	promptText := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)
+	// Stamp the node's advisor-thread token onto the judge's OWN content,
+	// trailing — the same placement AdvisorThreadMarker uses for a worker's
+	// continuation/revise prompt (see node.go's markerLine) — so the judge's
+	// scopeFromContext (internal/tools/cwd.go) resolves its fs tools into the
+	// SAME node scope the worker used, independent of whatever the draft
+	// question's own text happens to carry (#502/#498).
+	if cfg.AdvisorToken != "" {
+		promptText += "\n\n" + AdvisorThreadMarker(cfg.AdvisorToken)
+	}
+	parts := []*genai.Part{{Text: promptText}}
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {
 			parts = append(parts, p)
