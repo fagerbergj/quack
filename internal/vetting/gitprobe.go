@@ -100,7 +100,7 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 const reviewDiffTruncatedMarker = "\n… (diff truncated)\n"
 
 // buildReviewDiffSection sources a REVIEW node's changedFiles slot from the
-// actual PR diff (base..HEAD) off the clone, since act.written is always
+// actual PR diff (base...HEAD) off the clone, since act.written is always
 // empty for a read-only reviewer (#498 step 1). Best-effort like
 // augmentFromRepo: any failure falls back to "" rather than failing the round.
 func buildReviewDiffSection(cfg Config) string {
@@ -120,7 +120,7 @@ func buildReviewDiffSection(cfg Config) string {
 	if head == "" {
 		return ""
 	}
-	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", base, head}, caps)
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", base + "..." + head}, caps)
 	if err != nil || res.ExitCode != 0 || strings.TrimSpace(res.Output) == "" {
 		return ""
 	}
