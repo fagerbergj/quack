@@ -111,6 +111,16 @@ type Config struct {
 	// but the ONE shared clone dir for a repo-touching node sharing a
 	// plan.Setup chain (dag.buildGateNodes stamps it via dag.workspaceNodeID).
 	NodeID string
+	// AdvisorToken is this node's advisor-thread token (ParseAdvisorThread's
+	// match on the draft prompt), set by RunGatedRefine right after it derives
+	// it (see markerLine). The agentic judge runs in its OWN fresh session —
+	// runJudgeRound stamps this into the content it hands the judge (mirroring
+	// AdvisorThreadMarker's placement in a worker's continuation/revise prompt)
+	// so the judge's read-only fs tools (scopeFromContext, internal/tools/cwd.go)
+	// resolve into the SAME node scope the worker used, not the chat root above
+	// it. Empty outside a gated node — the judge then holds no fs scope (no
+	// clone to reach) and its tools fall back to the unscoped root.
+	AdvisorToken string
 	// Agent is the plan node's agent name (n.AgentName), stamped per-node by
 	// dag.buildGateNodes — carried only for observability (span/metric
 	// attribute), never branched on inside the gate itself.

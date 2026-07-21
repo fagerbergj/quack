@@ -65,6 +65,10 @@ const (
 	// OPEN the real artifacts and ground code-quality scores in them rather than
 	// the worker's self-report, while staying bounded and strictly read-only.
 	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. They reach the SAME clone/workspace the worker used (no separate clone spins up), so any specific, checkable claim the answer makes about THIS repo's code — a file exists, a function/struct/field/symbol, a config key, a control-flow path — is no longer a matter of plausibility. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. " +
+		// Path grounding (#502/#498): the worker is told its cwd IS the clone root
+		// and to use plain repo-relative paths; give the judge the same discipline
+		// so it navigates the same tree without wasting rounds on the wrong root.
+		"The clone root is your working root — use plain repo-relative paths (e.g. `frontend/src/pages/Chat.tsx`, `internal/foo.go`). NEVER use a leading slash or an absolute path (`/frontend`, `/workspace/...`) — those resolve ABOVE the clone and will not find the code. If a path isn't found, drop any leading slash and retry it repo-relative before concluding the claim is unverifiable. " +
 		// Ground-truth claim verification (#359, hardened after a judge
 		// scored 100% on a code-exploration answer by rationalizing "the
 		// ledger shows they read exa.go" when the ledger was empty and the
@@ -431,7 +435,17 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	parts := []*genai.Part{{Text: buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)}}
+	promptText := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)
+	// Stamp the node's advisor-thread token onto the judge's OWN content,
+	// trailing — the same placement AdvisorThreadMarker uses for a worker's
+	// continuation/revise prompt (see node.go's markerLine) — so the judge's
+	// scopeFromContext (internal/tools/cwd.go) resolves its fs tools into the
+	// SAME node scope the worker used, independent of whatever the draft
+	// question's own text happens to carry (#502/#498).
+	if cfg.AdvisorToken != "" {
+		promptText += "\n\n" + AdvisorThreadMarker(cfg.AdvisorToken)
+	}
+	parts := []*genai.Part{{Text: promptText}}
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {
 			parts = append(parts, p)

@@ -156,3 +156,43 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 		t.Fatalf("verdict score = %v, want 0.9 (the judge must have read the WORKER's real game.go, not an empty sibling or a missing per-user-root file)", v.Score)
 	}
 }
+
+// TestJudgeReadToolsResolveViaConfigAdvisorToken pins #502/#498's fix: the
+// judge's own content (what runJudgeRound hands the runner as UserContent) is
+// buildJudgePrompt's output, not `question` itself, so scopeFromContext must
+// not depend on whatever marker `question`'s text happens to carry. Here
+// `question` carries NO marker at all — resolution must come entirely from
+// Config.AdvisorToken, which runJudgeRound stamps onto its own content.
+func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const userID, chatID, nodeID = "u1", "c1", "n1"
+	dir, err := jail.EnsureDir(userID, chatID, workspace.NodeDir(nodeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "game.go"), []byte("package game\n\nfunc Play() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	token := AdvisorThreadToken("plan-1", nodeID)
+	RegisterAdvisorThread(token, AdvisorTask{NodeID: nodeID, SessionID: chatID})
+	t.Cleanup(func() { UnregisterAdvisorThread(token) })
+
+	// No marker anywhere in the question text.
+	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
+
+	readTool := newJailedReadTool(t, jail, userID)
+	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
+
+	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10", AdvisorToken: token}, question,
+		"I implemented Play() in game.go", workerActivity{}, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.9 {
+		t.Fatalf("verdict score = %v, want 0.9 (Config.AdvisorToken alone must scope the judge's fs tools into the node's clone)", v.Score)
+	}
+}

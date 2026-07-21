@@ -264,6 +264,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		markerLine = "\n\n" + AdvisorThreadMarker(token)
 		advisorToken = token
 	}
+	// cfg is a per-call copy (RunGatedRefine takes it by value), so stamping it
+	// here only reaches this node's own judge rounds below — see
+	// Config.AdvisorToken.
+	cfg.AdvisorToken = advisorToken
 
 	// Gate-side recall for an EXTERNAL worker — the preload_memory twin (native
 	// agents get preload via their runner; an ACP subprocess has no runner, so

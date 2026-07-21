@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -103,6 +104,53 @@ func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
 		t.Errorf("Content = %q, want %q", res.Content, "hello\n")
 	}
 
+}
+
+// TestReadFileResolvesSetupCloneLeadingSlash pins #502/#498: the trust-gate
+// judge (same fs tools as the worker, see NewJudgeFactory) tried
+// list_dir("/frontend") against a setup-provisioned clone and got "no such
+// file" — jailPath's "/" branch still applies the node's own dir (nodeDir),
+// but a call whose advisor-thread registration doesn't carry a WorkspaceNodeID
+// must resolve identically either way. Registers exactly as dag/graph.go does
+// for a repo-touching (implementer/reviewer) chain node — WorkspaceNodeID =
+// workspace.SharedRepoScope, distinct from NodeID — the shape a judge's own
+// invocation carries too (same token, same registration).
+func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJail: %v", err)
+	}
+	fb := fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
+
+	token := vetting.AdvisorThreadToken("plan-1", "reviewer-node")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+		NodeID: "reviewer-node", WorkspaceNodeID: workspace.SharedRepoScope, SessionID: "c1",
+	})
+	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
+	ctx := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "review the PR\n\n" + vetting.AdvisorThreadMarker(token)}
+
+	cloneDir, err := j.EnsureDir("u1", "c1", workspace.SetupCloneDir(workspace.SharedRepoScope))
+	if err != nil {
+		t.Fatalf("EnsureDir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(cloneDir, "frontend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cloneDir, "frontend", "App.tsx"), []byte("app"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rel, err := fb.withCwd(ctx).listDir(listDirArgs{Path: "frontend"})
+	if err != nil {
+		t.Fatalf("list_dir(\"frontend\"): %v", err)
+	}
+	abs, err := fb.withCwd(ctx).listDir(listDirArgs{Path: "/frontend"})
+	if err != nil {
+		t.Fatalf("list_dir(\"/frontend\"): %v — a leading slash must resolve inside the clone, not the chat root", err)
+	}
+	if len(abs.Entries) != len(rel.Entries) || len(abs.Entries) == 0 {
+		t.Errorf("list_dir(\"/frontend\") entries = %v, want the same as the relative path %v", abs.Entries, rel.Entries)
+	}
 }
 
 // TestSetupCloneAndBranchIsIdempotent pins the persistent-workspace bug: a

@@ -313,6 +313,13 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	if !strings.Contains(with, "read-only workspace tools") || strings.Contains(with, "You have no tools") {
 		t.Errorf("read-tools behaviour missing its clause: %q", with)
 	}
+	// #502/#498: the judge must be told the clone root is its working root and
+	// never to use a leading-slash/absolute path — the worker gets this same
+	// grounding, and its absence sent a judge into a dead-end "/frontend" retry
+	// loop until the repeat-guard gave up (a silent gate bypass).
+	if !strings.Contains(with, "plain repo-relative paths") || !strings.Contains(with, "NEVER use a leading slash") {
+		t.Errorf("read-tools behaviour missing repo-relative path grounding: %q", with)
+	}
 	without := judgeBehaviour(false, false)
 	if !strings.Contains(without, "You have no tools") || strings.Contains(without, "read-only workspace tools") {
 		t.Errorf("no-tools behaviour missing its clause: %q", without)
