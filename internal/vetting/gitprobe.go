@@ -96,6 +96,43 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 	}
 }
 
+// reviewDiffTruncatedMarker caps a review diff at changedFilesBudget (judge.go).
+const reviewDiffTruncatedMarker = "\n… (diff truncated)\n"
+
+// buildReviewDiffSection sources a REVIEW node's changedFiles slot from the
+// actual PR diff (base..HEAD) off the clone, since act.written is always
+// empty for a read-only reviewer (#498 step 1). Best-effort like
+// augmentFromRepo: any failure falls back to "" rather than failing the round.
+func buildReviewDiffSection(cfg Config) string {
+	if cfg.Setup == nil || cfg.Workspace == nil {
+		return ""
+	}
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
+	if err != nil || !isDir(filepath.Join(dir, ".git")) {
+		return ""
+	}
+	caps := checksCaps(cfg)
+	base, err := baseCommit(dir, caps)
+	if err != nil {
+		return ""
+	}
+	head := gitLine(dir, caps, "rev-parse", "HEAD")
+	if head == "" {
+		return ""
+	}
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", base, head}, caps)
+	if err != nil || res.ExitCode != 0 || strings.TrimSpace(res.Output) == "" {
+		return ""
+	}
+	diff := res.Output
+	if len(diff) > changedFilesBudget {
+		diff = diff[:changedFilesBudget] + reviewDiffTruncatedMarker
+	}
+	return fmt.Sprintf(
+		"DIFF UNDER REVIEW (%s..%s, the actual change this review is OF — verify each finding against this diff, not the review's own description of it):\n\n%s",
+		short(base), short(head), diff)
+}
+
 // gitLine runs one git command in dir and returns its first output line ("" on
 // any failure — the probe is best-effort by construction).
 func gitLine(dir string, caps workspace.Caps, args ...string) string {
