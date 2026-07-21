@@ -155,6 +155,28 @@ func TestMermaidError(t *testing.T) {
 // mermaidCriterion is the gate wiring: it must find an invalid diagram in
 // either the answer text or a staged delivery body, and stay inapplicable
 // (ok=false) when nothing invalid is present anywhere.
+// TestDegradeInvalidMermaid_TwoBlocks verifies that with two invalid blocks in
+// one answer, both are degraded and the prose BETWEEN them is preserved (not
+// swallowed by a fence) — the `last` cursor advances correctly per block.
+func TestDegradeInvalidMermaid_TwoBlocks(t *testing.T) {
+	// Neither block declares a diagram type, so both fail validation (as in the
+	// single-block test above).
+	md := "```mermaid\nA[Start] --> B[Finish]\n```\n\nMiddle prose.\n\n```mermaid\nX --> Y\n```"
+	got, issues := DegradeInvalidMermaid(md)
+	if len(issues) != 2 {
+		t.Fatalf("issues = %d, want 2 (both blocks invalid)", len(issues))
+	}
+	if !strings.Contains(got, "Middle prose.") {
+		t.Fatalf("prose between the two degraded blocks was swallowed:\n%s", got)
+	}
+	if n := strings.Count(got, "```text"); n != 2 {
+		t.Fatalf("```text fences = %d, want 2", n)
+	}
+	if n := strings.Count(got, "> ⚠️ invalid mermaid diagram"); n != 2 {
+		t.Fatalf("warning callouts = %d, want 2", n)
+	}
+}
+
 func TestDegradeInvalidMermaid_WarningOutsideFence(t *testing.T) {
 	md := "Before.\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nAfter."
 	got, issues := DegradeInvalidMermaid(md)
