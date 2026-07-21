@@ -116,10 +116,11 @@ type GitHubExtensionConfig struct {
 // Applying a label requires repo write access, so labels double as the
 // permission model — no separate allowlist.
 type GitHubLabels struct {
-	Plan      string `yaml:"plan"`      // on an issue: post an implementation plan ("issue_plan" trigger)
-	Implement string `yaml:"implement"` // on an issue: implement the plan, open a PR ("issue_implement" trigger)
-	Review    string `yaml:"review"`    // on a PR: review it once ("label" trigger; alias auto_review_label)
-	Merge     string `yaml:"merge"`     // on a PR: merge IF quack's latest review approved ("merge" trigger)
+	Plan       string `yaml:"plan"`        // on an issue: post an implementation plan ("issue_plan" trigger)
+	Implement  string `yaml:"implement"`   // on an issue: implement the plan, open a PR ("issue_implement" trigger)
+	Review     string `yaml:"review"`      // on a PR: review it once ("label" trigger; alias auto_review_label)
+	Merge      string `yaml:"merge"`       // on a PR: merge IF quack's latest review approved ("merge" trigger)
+	PartialFix string `yaml:"partial_fix"` // signals a partial fix — suppresses unconditional Closes #N in acks and PR bodies
 }
 
 // defaultMention is the trigger phrase when github.mention is unset.

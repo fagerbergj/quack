@@ -310,39 +310,61 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// runImplement acks the implement label with a comment and dispatches the
-// implementation run on the issue's session — the same session the planning
-// run used, so the plan is also in the model's own history. The discussion
-// (which carries the approved plan) is no longer gathered here: dispatch's
-// unified loadGithubContext injects it, the same path every other trigger
-// uses (#459) — this used to re-fetch it separately just for implementTask.
+// runImplement dispatches the implementation run on the issue's session — the
+// same session the planning run used, so the plan is also in the model's own
+// history. The orchestrator's initial response IS the ack (no canned Go-side
+// comment). Fetches current labels to wire a contextual closing signal into the
+// task prompt: if the issue carries quack:partial-fix the implementer skips the
+// Closes keyword; otherwise it's instructed to close the issue.
 func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
+
 	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
-	ack := fmt.Sprintf("On it — implementing per the plan above. I'll open a pull request that references this issue (`Closes #%d`).", number)
-	if err := e.app.postIssueComment(ctx, owner, repo, number, ack); err != nil {
-		slog.Warn("github: implement ack comment failed", "component", "github",
+	defer cancel()
+
+	_, _, _, labels, err := e.app.issueMeta(ctx, owner, repo, number)
+	if err != nil {
+		slog.Warn("github: fetch issue labels failed; running without partial-fix signal", "component", "github",
 			"repo", owner+"/"+repo, "issue", number, "err", err)
 	}
-	cancel()
-	e.dispatch(synthetic, implementTask(p))
+	e.dispatch(synthetic, implementTask(p, labels))
+}
+
+const partialFixLabel = "quack:partial-fix"
+
+// hasPartialFix reports whether the given label names include a partial-fix
+// signal.
+func hasPartialFix(names []string) bool {
+	for _, n := range names {
+		if n == partialFixLabel {
+			return true
+		}
+	}
+	return false
 }
 
 // implementTask synthesizes the implementation request for an implement-labeled
 // issue — the issue itself; the approved plan and rest of the discussion
 // arrive separately via loadGithubContext's injected context (#459).
-//
-// ponytail: this used to also chain the new PR into the review-label flow
-// (labels=[…] on open) — dropped because StagedDelivery carries no labels
-// (the worker never opens the PR itself anymore). Restore once plan.Delivery
-// does, or have the delivery step apply the review label itself post-open.
-func implementTask(p issuesPayload) string {
+// The labels param carries every label currently on the issue (fetched at
+// dispatch start), used to conditionally suppress unconditional Closes #N.
+func implementTask(p issuesPayload, labels []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
-	fmt.Fprintf(&b, "\nA maintainer approved this for implementation (see the approved plan in the discussion below). Implement it per the plan, commit your work locally, "+
-		"then call stage_pr with a title and a body that includes `Closes #%d` — you do not push or open the pull request yourself; "+
-		"the pull request is opened for you once your work passes review", p.Issue.Number)
-	b.WriteString(". Never merge anything — merging is a human decision.")
+
+	if body := strings.TrimSpace(p.Issue.Body); body != "" {
+		fmt.Fprintf(&b, "\nIssue description (may be incomplete — see discussion below):\n%s\n", truncate(body, 4000))
+	}
+
+	isPartial := hasPartialFix(labels)
+	if isPartial {
+		b.WriteString("\nA maintainer approved this for implementation (see the approved plan in the discussion below). This is a partial fix: implement the changes, commit locally, and call stage_pr. Do NOT use a Closes keyword — the issue will not be fully closed by this PR.")
+	} else {
+		b.WriteString("\nA maintainer approved this for implementation (see the approved plan in the discussion below). Implement it per the plan, commit your work locally, " +
+			"then call stage_pr with a title and a body that includes `Closes #" + fmt.Sprintf("%d", p.Issue.Number) + "` — you do not push or open the pull request yourself; " +
+			"the pull request is opened for you once your work passes review")
+	}
+	b.WriteString("\nNever merge anything — merging is a human decision.")
 	return b.String()
 }
 

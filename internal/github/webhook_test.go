@@ -1798,15 +1798,8 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 				}
 				return
 			}
-			// The ack comment lands before the run.
-			select {
-			case c := <-posted:
-				if !strings.Contains(c, "Closes #7") {
-					t.Errorf("ack comment = %q, want the Closes #7 promise", c)
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("no ack comment posted")
-			}
+			// The implement task message is verified below. No canned ack comment
+			// is posted — the orchestrator's initial response serves as the ack.
 			select {
 			case msg := <-runner.gotMessage:
 				for _, want := range []string{"Implement issue #7", "Closes #7", "stage_pr", "Never merge"} {
@@ -1848,17 +1841,15 @@ func TestDispatchResetsSessionForLabelWorkRequest(t *testing.T) {
 		t.Fatalf("status = %d; want 202", rec.Code)
 	}
 	select {
-	case <-posted: // the "On it — implementing…" ack comment
-	case <-time.After(2 * time.Second):
-		t.Fatal("no ack comment posted")
-	}
-	select {
 	case <-runner.gotMessage:
 	case <-time.After(2 * time.Second):
 		t.Fatal("implement label did not dispatch a run")
 	}
 	select {
-	case <-posted: // the run's fallback summary comment
+	case body := <-posted: // the run's fallback summary comment (no canned ack posted anymore)
+		if !strings.Contains(body, "done") {
+			t.Errorf("summary comment = %q; want the runner's answer", body)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no summary comment posted")
 	}
@@ -1959,12 +1950,7 @@ func TestDispatchAbortsLabelImplementWhenContextUnavailable(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 
-	select {
-	case <-posted: // the "On it — implementing…" ack comment
-	case <-time.After(2 * time.Second):
-		t.Fatal("no ack comment posted")
-	}
-
+	// Since implement no longer posts a canned ack, only the abort comment lands.
 	var abortComment string
 	select {
 	case abortComment = <-posted:
@@ -2060,10 +2046,23 @@ func TestImplementTaskCore(t *testing.T) {
 	p.Issue.Number = 7
 	p.Issue.Title = "Add widget cache"
 	p.Issue.Body = "Widgets are refetched on every request."
-	msg := implementTask(p)
+	msg := implementTask(p, nil)
 	for _, want := range []string{"Implement issue #7", "Add widget cache", "Closes #7", "stage_pr", "Never merge"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("implementTask missing %q:\n%s", want, msg)
+		}
+	}
+
+	// Partial-fix: should NOT instruct a Closes keyword.
+	partialMsg := implementTask(p, []string{"bug", "quack:partial-fix"})
+	for _, absent := range []string{"`Closes #7`"} {
+		if strings.Contains(partialMsg, absent) {
+			t.Errorf("partial-fix task must not instruct closing with the keyword %q:\n%s", absent, partialMsg)
+		}
+	}
+	for _, want := range []string{"part" + "ial fix", "Do NOT use a Closes keyword", "stage_pr"} {
+		if !strings.Contains(partialMsg, want) {
+			t.Errorf("partial-fix task missing %q:\n%s", want, partialMsg)
 		}
 	}
 }
