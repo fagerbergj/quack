@@ -255,6 +255,17 @@ const (
 	maxChangedFiles    = 12
 )
 
+// changedFilesSection picks the judge prompt's changedFiles source: a review
+// node's act.written is always empty (read-only), so it sources the actual PR
+// diff off the clone instead (#498 step 1); every other node keeps today's
+// act.written-based behaviour.
+func changedFilesSection(cfg Config, act workerActivity) string {
+	if cfg.IsReviewer {
+		return buildReviewDiffSection(cfg)
+	}
+	return buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
+}
+
 // buildChangedFilesSection re-reads the files the worker actually wrote/edited
 // (act.written) off disk through the SAME jail its tools used and formats them
 // for the judge prompt, so a judge that (being a small model) won't tool-call
@@ -374,7 +385,7 @@ func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles st
 // caller (node.go) treats a returned error as a failed-closed gate, never a
 // pass, so a judge that can't be reached never ships an answer unvetted.
 func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
-	changedFiles := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
+	changedFiles := changedFilesSection(cfg, act)
 	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, act, 1.0)
 	v, err := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, act, emit)
 	if err == nil || ctx.Err() != nil {
