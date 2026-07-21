@@ -174,6 +174,24 @@ export default function Chat() {
     }
   }, [activeChatId])
 
+  // #499: poll the chat list so the sidebar stays current without a refresh.
+  useEffect(() => {
+    const PollingIntervalMs = 5000
+    let cancelled = false
+    async function doPoll() {
+      try {
+        const result = await api.listChats()
+        if (!cancelled) setChats(result.data)
+      } catch { /* transient — next poll will retry */ }
+    }
+    loadChats().then(data => { if (!cancelled) setChats(data) })
+    const id = setInterval(() => { void doPoll() }, PollingIntervalMs)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [loadChats])
+
   // #463: when a run goes active on an already-open chat (e.g. GitHub webhook
   // dispatched while the user views this chat), re-fire attach so the SSE
   // subscribe stream opens and live events start flowing.  Without it, only
