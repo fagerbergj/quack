@@ -364,3 +364,4 @@ workspace:
 #     #   implement: "quack:implement"
 #     #   review: "quack-auto-review"
 #     #   merge: "quack:merge"
+#     #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
