@@ -1,0 +1,77 @@
+name: Bug report
+description: A concrete, reproducible failure in quack.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report a **concrete failure**, not a vague wish. An issue that names the failing behaviour, where it happens in the code, and how to reproduce it is one quack (or a human) can plan a fix from directly. See [CONTRIBUTING.md](https://github.com/fagerbergj/quack/blob/main/CONTRIBUTING.md) for the issue → plan → implement → review loop.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happens
+      description: The actual behaviour, and what you expected instead.
+      placeholder: |
+        When X, quack does Y. I expected Z.
+        Error / log excerpt:
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The smallest set of steps (or the request/label) that triggers it. A failing case is worth more than a description.
+      placeholder: |
+        1. Apply `quack:plan` to an issue with …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: grounding
+    attributes:
+      label: Grounding (optional)
+      description: Where in the code you think it lives — `file:line` anchors, the failing node/stage, or relevant log lines. Speeds up the fix.
+      placeholder: "internal/vetting/node.go:277 — recall never fires because …"
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: quack image tag or the `main` sha you're on.
+      placeholder: "0.11.0 / sha 8139463"
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the system. (A maintainer applies the matching `area:*` label.)
+      options:
+        - agents (agents, skills, memory, tools)
+        - github (GitHub App / webhook)
+        - frontend (React / Vite)
+        - orchestrator / DAG / gate
+        - inference / models
+        - other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - "high — do next"
+        - "medium — soon"
+        - "low — nice to have"
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I confirmed it's real on current `main` / the deployed version (not already fixed).
+          required: true

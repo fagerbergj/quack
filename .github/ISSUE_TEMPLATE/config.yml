@@ -1,0 +1,7 @@
+# Freeform issues stay enabled — quack files issues via the API, and maintainers
+# who write a full spec by hand shouldn't be forced through a form.
+blank_issues_enabled: true
+contact_links:
+  - name: Contribution workflow
+    url: https://github.com/fagerbergj/quack/blob/main/CONTRIBUTING.md
+    about: The issue → plan → implement → review → merge loop, and the quack:* labels.
