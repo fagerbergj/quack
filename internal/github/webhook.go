@@ -459,12 +459,20 @@ func (e *Extension) latestQuackVerdict(ctx context.Context, owner, repo string, 
 		return "", err
 	}
 	for _, r := range reviews {
-		v := formalReviewVerdicts[r.State]
-		if r.User.Login != bot || v == "" {
+		if r.User.Login != bot {
 			continue
 		}
 		at, _ := time.Parse(time.RFC3339, r.SubmittedAt)
-		verdicts = append(verdicts, dated{at, v})
+		// Marker first: an own-PR review always submits as state COMMENTED
+		// (GitHub disallows approve/request_changes on your own PR) but carries
+		// the REAL verdict in the marker — the state alone would read as "comment".
+		if m := reviewVerdictMarkerRe.FindStringSubmatch(r.Body); m != nil {
+			verdicts = append(verdicts, dated{at, m[1]})
+			continue
+		}
+		if v := formalReviewVerdicts[r.State]; v != "" {
+			verdicts = append(verdicts, dated{at, v})
+		}
 	}
 
 	comments, err := e.app.listIssueComments(ctx, owner, repo, number)

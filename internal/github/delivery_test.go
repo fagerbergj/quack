@@ -293,22 +293,27 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 	}
 }
 
-// A review on a PR quack authored can't carry a verdict (GitHub 422s an author
-// approving their own PR), so it delivers as a plain comment — never a
-// submit_review — still carrying the findings.
+// A review on a PR quack authored can't carry an approve/request_changes
+// verdict (GitHub 422s an author approving their own PR) — but a COMMENT-event
+// review IS allowed, and #513 pins that it must still carry the findings as
+// real inline comments[], not flattened text.
 func TestDeliverReviewOnOwnPRIsCommentNoVerdict(t *testing.T) {
-	var commentBody []byte
+	var reviewBody []byte
 	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			io.WriteString(w, `{"slug":"quack"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
 			io.WriteString(w, `{"user":{"login":"quack[bot]"}}`) // quack authored this PR
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
-			commentBody, _ = io.ReadAll(r.Body)
-			io.WriteString(w, `{"id":1,"html_url":"https://github.com/acme/widgets/pull/7#issuecomment-1"}`)
-		case strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
-			t.Error("must not submit a formal review verdict on a PR quack authored")
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
+			io.WriteString(w, `[{"filename":"main.go","patch":"@@ -42,1 +42,1 @@\n-old\n+new"}]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			reviewBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"id":9,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-9"}`)
+		case strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			t.Error("must deliver the own-PR review as a review, not a flattened issue comment")
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -322,47 +327,53 @@ func TestDeliverReviewOnOwnPRIsCommentNoVerdict(t *testing.T) {
 	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	body := decodedCommentBody(t, commentBody)
-	if !strings.Contains(body, "clean change") || !strings.Contains(body, "main.go:42") {
-		t.Fatalf("self-review comment missing the review body/findings:\n%s", body)
+	var posted struct {
+		Event    string `json:"event"`
+		Body     string `json:"body"`
+		Comments []struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+			Body string `json:"body"`
+		} `json:"comments"`
 	}
-	if !strings.Contains(body, "<!-- quack:delivery:review:approve -->") {
-		t.Fatalf("self-review comment missing its verdict marker (needed by the quack:merge gate, #482):\n%s", body)
+	if err := json.Unmarshal(reviewBody, &posted); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// decodedCommentBody extracts the human-readable "body" field from a
-// github_issue_comment POST payload — json.Marshal HTML-escapes the delivery
-// marker's `<`/`>`, so tests must decode rather than substring-match the raw
-// wire bytes.
-func decodedCommentBody(t *testing.T, raw []byte) string {
-	t.Helper()
-	var v struct {
-		Body string `json:"body"`
+	if posted.Event != "COMMENT" {
+		t.Fatalf("review event = %q; want COMMENT (own PR can't carry approve/request_changes)", posted.Event)
 	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatalf("decode posted comment: %v\nraw: %s", err, raw)
+	if !strings.Contains(posted.Body, "clean change") {
+		t.Fatalf("self-review body missing the summary:\n%s", posted.Body)
 	}
-	return v.Body
+	if !strings.Contains(posted.Body, "<!-- quack:delivery:review:approve -->") {
+		t.Fatalf("self-review body missing its verdict marker (needed by the quack:merge gate, #482):\n%s", posted.Body)
+	}
+	if len(posted.Comments) != 1 || posted.Comments[0].Path != "main.go" || posted.Comments[0].Line != 42 {
+		t.Fatalf("finding did not land as an inline review comment (#513): %s", reviewBody)
+	}
 }
 
 // TestDeliverReviewOnOwnPRStripsVerdictTail pins #482: the raw ACP reviewer
 // answer carries a machine-parseable VERDICT/FINDINGS tail (for
 // augmentFromAnswer) and sometimes a fallback-format preamble — neither
-// belongs in the human-facing own-PR comment.
+// belongs in the human-facing own-PR review body.
 func TestDeliverReviewOnOwnPRStripsVerdictTail(t *testing.T) {
-	var commentBody []byte
+	var reviewBody []byte
 	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			io.WriteString(w, `{"slug":"quack"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
 			io.WriteString(w, `{"user":{"login":"quack[bot]"}}`)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
-			commentBody, _ = io.ReadAll(r.Body)
-			io.WriteString(w, `{"id":1,"html_url":"https://github.com/acme/widgets/pull/7#issuecomment-1"}`)
-		case strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
-			t.Error("must not submit a formal review verdict on a PR quack authored")
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
+			io.WriteString(w, `[{"filename":"main.go","patch":"@@ -42,1 +42,1 @@\n-old\n+new"}]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			reviewBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"id":9,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-9"}`)
+		case strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			t.Error("must deliver the own-PR review as a review, not a flattened issue comment")
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -381,21 +392,30 @@ func TestDeliverReviewOnOwnPRStripsVerdictTail(t *testing.T) {
 	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	body := decodedCommentBody(t, commentBody)
-	if !strings.Contains(body, "This change looks solid overall.") {
-		t.Fatalf("self-review comment dropped the human-facing summary:\n%s", body)
+	var posted struct {
+		Body     string `json:"body"`
+		Comments []struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+		} `json:"comments"`
 	}
-	if strings.Contains(body, "VERDICT:") || strings.Contains(body, "FINDINGS:") {
-		t.Fatalf("self-review comment leaked the machine-parseable tail:\n%s", body)
+	if err := json.Unmarshal(reviewBody, &posted); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(body, "fallback output format") {
-		t.Fatalf("self-review comment leaked the fallback-format preamble:\n%s", body)
+	if !strings.Contains(posted.Body, "This change looks solid overall.") {
+		t.Fatalf("self-review body dropped the human-facing summary:\n%s", posted.Body)
 	}
-	if !strings.Contains(body, "main.go:42") {
-		t.Fatalf("self-review comment dropped the rendered inline finding:\n%s", body)
+	if strings.Contains(posted.Body, "VERDICT:") || strings.Contains(posted.Body, "FINDINGS:") {
+		t.Fatalf("self-review body leaked the machine-parseable tail:\n%s", posted.Body)
 	}
-	if !strings.Contains(body, "<!-- quack:delivery:review:approve -->") {
-		t.Fatalf("self-review comment missing its verdict marker:\n%s", body)
+	if strings.Contains(posted.Body, "fallback output format") {
+		t.Fatalf("self-review body leaked the fallback-format preamble:\n%s", posted.Body)
+	}
+	if !strings.Contains(posted.Body, "<!-- quack:delivery:review:approve -->") {
+		t.Fatalf("self-review body missing its verdict marker:\n%s", posted.Body)
+	}
+	if len(posted.Comments) != 1 || posted.Comments[0].Path != "main.go" || posted.Comments[0].Line != 42 {
+		t.Fatalf("finding did not land as an inline review comment (#513): %s", reviewBody)
 	}
 }
 

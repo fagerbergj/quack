@@ -1424,6 +1424,45 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 	}
 }
 
+// TestLatestQuackVerdictReadsOwnPRReviewMarker pins #513's webhook half: an
+// own-PR review submits as a real review (state COMMENTED, since GitHub
+// disallows approve/request_changes on your own PR) carrying the actual
+// verdict in the hidden marker — latestQuackVerdict must read that marker,
+// not the state, or an own-PR approve would be misread as "comment".
+func TestLatestQuackVerdictReadsOwnPRReviewMarker(t *testing.T) {
+	keyPEM, _ := testKeyPEM(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
+			io.WriteString(w, `[{"state":"COMMENTED","body":"looks good\n\n<!-- quack:delivery:review:approve -->","user":{"login":"quack[bot]"},"submitted_at":"2026-07-20T00:00:00Z"}]`)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			io.WriteString(w, `[]`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+	app.installs["acme/widgets"] = 1
+	app.tokens[1] = cachedToken{token: "ghs_x", expires: time.Now().Add(time.Hour)}
+	ext := NewExtension(app, config.GitHubExtensionConfig{WebhookSecret: testSecret, Mention: "@quack"}, nil, nil, nil)
+
+	verdict, err := ext.latestQuackVerdict(context.Background(), "acme", "widgets", 7)
+	if err != nil {
+		t.Fatalf("latestQuackVerdict: %v", err)
+	}
+	if verdict != "approve" {
+		t.Errorf("verdict = %q; want %q (from the review body marker, not its COMMENTED state)", verdict, "approve")
+	}
+}
+
 func TestVerifySignature(t *testing.T) {
 	secret := []byte(testSecret)
 	body := []byte(`{"hello":"world"}`)
