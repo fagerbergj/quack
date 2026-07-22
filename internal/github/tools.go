@@ -794,21 +794,6 @@ func gateCaveat(dc vetting.DeliveryContext, body string) string {
 	return banner + body
 }
 
-// formatInlineFindings renders a review's line-anchored findings as plain text
-// for a review delivered as a plain comment, which can't carry inline review
-// comments (see deliverOne's "review" case).
-func formatInlineFindings(cs []vetting.ReviewComment) string {
-	if len(cs) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("Findings:\n")
-	for _, c := range cs {
-		fmt.Fprintf(&b, "- `%s:%d` — %s\n", c.Path, c.Line, strings.TrimSpace(c.Body))
-	}
-	return b.String()
-}
-
 func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.DeliveryContext, item vetting.StagedDelivery) (deliveryItemResult, error) {
 	switch item.Kind {
 	case "pull_request":
@@ -828,9 +813,9 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review has no pull request number to submit against")
 		}
 		// GitHub rejects an approve/request_changes verdict on a PR you authored
-		// (422). When quack authored the PR under review, the review is delivered
-		// as a plain comment with no verdict — the findings still post; there is
-		// just no formal approval (so quack:merge, which requires one, declines it).
+		// (422) — but a COMMENT-event review IS allowed on your own PR and still
+		// carries inline comments[], so findings land on the diff instead of
+		// flattening into the summary body.
 		if bot, berr := a.botLogin(ctx); berr == nil {
 			if author, aerr := a.prAuthor(ctx, owner, repo, dc.IssueNumber); aerr == nil && author == bot {
 				verdict := strings.ToLower(strings.TrimSpace(item.Event))
@@ -838,16 +823,16 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 					verdict = "comment"
 				}
 				body := "_quack authored this PR, so GitHub won't let it record an approve or request-changes verdict — this review is a comment. A maintainer decides._\n\n" + vetting.StripVerdictTail(item.Body)
-				if fs := formatInlineFindings(item.Comments); fs != "" {
-					body += "\n\n" + fs
-				}
 				body += "\n\n" + deliveryMarker("review:"+verdict)
-				if err := a.postIssueComment(ctx, owner, repo, dc.IssueNumber, gateCaveat(dc, body)); err != nil {
-					return deliveryItemResult{}, fmt.Errorf("github: delivery: self-review comment: %w", err)
+				a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
+				inline := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
+				res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: "COMMENT", Comments: inline})
+				if err != nil {
+					return deliveryItemResult{}, fmt.Errorf("github: delivery: self-review: %w", err)
 				}
-				slog.Info("github: self-review posted as a comment (no formal verdict — own PR)",
+				slog.Info("github: self-review delivered as a COMMENT-event review (no formal verdict — own PR)",
 					"component", "github", "repo", owner+"/"+repo, "pr", dc.IssueNumber, "verdict", verdict)
-				return deliveryItemResult{}, nil
+				return deliveryItemResult{url: res.URL}, nil
 			}
 		}
 		event := strings.ToUpper(item.Event)
