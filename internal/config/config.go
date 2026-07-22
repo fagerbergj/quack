@@ -354,23 +354,28 @@ func (g GatesConfig) Enabled() bool {
 // agent-card.json + prompt.md) to a provider/model and a selection of built-in
 // tools. Defining a new agent is adding a bundle directory plus one of these.
 type AgentConfig struct {
-	Bundle        string   `yaml:"bundle"`         // path to the agent bundle directory
-	Provider      string   `yaml:"provider"`       // inference provider name
-	Model         string   `yaml:"model"`          // model served to this agent
-	ContextWindow int      `yaml:"context_window"` // model's per-request context window in tokens (0 ⇒ no compaction)
-	Tools         []string `yaml:"tools"`          // built-in tool names (kind: builtin)
-	Inputs        []string `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
-	Gated         *bool    `yaml:"gated"`          // wrap in the trust gate? default true; set false for side-effecting/action agents
-	JudgeRounds   int      `yaml:"judge_rounds"`   // per-agent judge/revise round budget; 0 ⇒ inherit gates.judge.max_rounds
-	Judge         *bool    `yaml:"judge"`          // run the independent judge? default true; set false when the judge model cannot evaluate this output (a text judge cannot see media)
-	MemoryRole    string   `yaml:"memory_role"`    // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no role bucket)
-	Skills        []string `yaml:"skills"`         // built-in skill names this agent may load_skill (empty ⇒ none); project skills discovered in its jailed repo stay additive regardless (internal/skillsource)
+	Bundle        string       `yaml:"bundle"`         // path to the agent bundle directory
+	Provider      string       `yaml:"provider"`       // inference provider name
+	Model         string       `yaml:"model"`          // model served to this agent
+	ContextWindow int          `yaml:"context_window"` // model's per-request context window in tokens (0 ⇒ no compaction)
+	Tools         []string     `yaml:"tools"`          // built-in tool names (kind: builtin)
+	Inputs        []string     `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
+	Gated         *bool        `yaml:"gated"`          // wrap in the trust gate? default true; set false for side-effecting/action agents
+	JudgeRounds   int          `yaml:"judge_rounds"`   // per-agent judge/revise round budget; 0 ⇒ inherit gates.judge.max_rounds
+	Judge         *bool        `yaml:"judge"`          // run the independent judge? default true; set false when the judge model cannot evaluate this output (a text judge cannot see media)
+	Memory        MemoryConfig `yaml:"memory"`         // shared-memory bucket binding (empty Bucket ⇒ none)
+	Skills        []string     `yaml:"skills"`         // built-in skill names this agent may load_skill (empty ⇒ none); project skills discovered in its jailed repo stay additive regardless (internal/skillsource)
 	// Acp, when set, replaces the local llmagent worker with an EXTERNAL coding
 	// agent subprocess speaking the Agent Client Protocol (internal/acp) —
 	// opencode, claude-agent-acp, gemini-cli. provider/model still bind the
 	// model (injected into the subprocess via OPENCODE_CONFIG_CONTENT); tools
 	// is ignored (the external agent brings its own).
 	Acp *AcpAgentConfig `yaml:"acp"`
+}
+
+// MemoryConfig binds an agent into a shared-memory role bucket.
+type MemoryConfig struct {
+	Bucket string `yaml:"bucket"` // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no bucket)
 }
 
 // AcpAgentConfig configures an external ACP agent subprocess.
@@ -689,16 +694,16 @@ func (c *Config) validate() error {
 	if c.Orchestrator.Model == "" {
 		return fmt.Errorf("config: orchestrator.model is empty")
 	}
-	// Agents: memory_role names a SHARED role bucket, so a typo would silently hand
+	// Agents: memory.bucket names a SHARED role bucket, so a typo would silently hand
 	// an agent a private silo of its own — exactly what the bucket model replaced.
 	// Fail loudly instead.
 	// (The role names are memory.RoleCoding / memory.RoleResearch; spelled out here
 	// because internal/memory depends on this package, not the other way round.)
 	for name, a := range c.Agents {
-		switch a.MemoryRole {
+		switch a.Memory.Bucket {
 		case "", "coding", "research":
 		default:
-			return fmt.Errorf("config: agent %q has unknown memory_role %q (known: coding, research)", name, a.MemoryRole)
+			return fmt.Errorf("config: agent %q has unknown memory.bucket %q (known: coding, research)", name, a.Memory.Bucket)
 		}
 	}
 	// Stores registry: every entry must resolve (extends acyclic) and use a

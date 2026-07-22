@@ -10,7 +10,7 @@
 #   ./quack server stop    --config config/managed.yaml   # tears down stores too
 #
 # Tool backends (search/fetch) are NOT managed. This preset uses Exa's keyless
-# hosted MCP for search (no API key, no container) and a direct GET for fetch —
+# hosted MCP for search (no API key, no container) and a direct GET for fetch -
 # so the whole stack is zero-config beyond the LLM endpoint.
 providers:
   default:
@@ -50,7 +50,8 @@ agents:
     bundle: agents/web-researcher
     skills: [format-markdown, research-git-repos]
     provider: default
-    memory_role: research   # shared-memory role bucket (see internal/memory/scope.go)
+    memory:
+      bucket: research   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
@@ -59,7 +60,8 @@ agents:
   code-implementer:
     bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.md
     provider: default
-    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
+    memory:
+      bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
@@ -71,7 +73,8 @@ agents:
   code-reviewer:
     bundle: agents/code-reviewer      # card + prompt.md (values + VERDICT/FINDINGS contract) + rubric.md
     provider: default
-    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
+    memory:
+      bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
@@ -83,7 +86,8 @@ agents:
   code-explorer:
     bundle: agents/code-explorer      # card + prompt.md (read-only exploration) + rubric.md
     provider: default
-    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
+    memory:
+      bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds is plenty
@@ -101,9 +105,9 @@ agents:
 
 tools:
   web_search:
-    kind: exa            # keyless via Exa's hosted MCP — no container, no API key
+    kind: exa            # keyless via Exa's hosted MCP - no container, no API key
   web_fetch:
-    kind: direct         # plain SSRF-guarded GET — no render backend needed
+    kind: direct         # plain SSRF-guarded GET - no render backend needed
 
 gates:
   rubric_path: config/rubric.md
@@ -124,14 +128,14 @@ server:
   topology: managed       # quack server brings up the stores + tears them down
 
 # Workspace defaults on (root ./workspace, default caps). check_commands is
-# unset ⇒ the default allowlist applies (go/npm/make — see internal/config
+# unset ⇒ the default allowlist applies (go/npm/make - see internal/config
 # defaultCheckCommands); each derived check is gated on its binary existing on
 # the host, so a machine without the toolchain derives nothing. git_credentials
 # empty ⇒ public repos only (keyless path). No guard-ladder entries by default:
 # the code agents run as external ACP subprocesses (no quack write tools left to
 # guard); workspace.guards still accepts entries for any remaining tool.
 #
-# sandbox: bwrap is the DEFAULT and it matters most in exactly this preset —
+# sandbox: bwrap is the DEFAULT and it matters most in exactly this preset -
 # `quack server` here runs on the operator's own machine, as their own user, so
 # an unsandboxed child process would have their ~/.ssh, ~/.aws and .env. Install
 # bubblewrap (Debian/Ubuntu: apt-get install bubblewrap) or the server refuses to
@@ -142,13 +146,13 @@ workspace:
 
 # GitHub App extension: webhook receiver + App-authed git creds + the App-mention
 # trigger. Uncomment and set the env vars to enable it on this deployment. Uses the
-# App CLIENT ID as the JWT issuer (the App's CLIENT SECRET is unused — that's OAuth
+# App CLIENT ID as the JWT issuer (the App's CLIENT SECRET is unused - that's OAuth
 # only) and the private key inline as PEM contents via env (private_key_path is the
-# alternative for a mounted .pem file). Secrets MUST be ${VAR} refs — a literal is a
+# alternative for a mounted .pem file). Secrets MUST be ${VAR} refs - a literal is a
 # startup error.
 #
 # Kept COMMENTED (not active): the block is validated at load, and a present-but-
-# empty section (env vars unset) is a boot error — it requires an issuer, a private
+# empty section (env vars unset) is a boot error - it requires an issuer, a private
 # key, and a webhook_secret. So an operator uncomments it only once those env vars
 # are actually set, rather than shipping a config that fails to boot without them.
 # extensions:
@@ -160,7 +164,7 @@ workspace:
 #     mention: "@quack"
 #     # allowed_users: GitHub logins permitted to invoke quack via a mention
 #     # comment or a human-applied workflow label (case-insensitive). Empty
-#     # (default) DENIES every human-invoked trigger — auto-review is
+#     # (default) DENIES every human-invoked trigger - auto-review is
 #     # unaffected. Seed it with your own login(s) or quack won't respond.
 #     allowed_users: [fagerbergj]
 #     # triggers: which webhook events fire a run. Default [mention]. Others:
@@ -168,7 +172,7 @@ workspace:
 #     # is applied), issue_plan (plan an issue when labels.plan is applied),
 #     # issue_implement (implement the plan when labels.implement is applied),
 #     # merge (squash-merge a PR when labels.merge is applied by a human AND
-#     # quack's own latest review is APPROVED — needs pull request write incl. merge).
+#     # quack's own latest review is APPROVED - needs pull request write incl. merge).
 #     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
 #     # labels: the repo labels driving the label-based workflow (applying a label
 #     # needs repo write access, so labels double as the permission model).

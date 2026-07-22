@@ -34,7 +34,7 @@ session:
   compaction:
     enabled: ${QUACK_COMPACTION_ENABLED}  # unset ⇒ false
     provider: default
-    # optional fallback only — compaction normally runs on the active run/node's
+    # optional fallback only - compaction normally runs on the active run/node's
     # own worker model (already resident, so it's swap-free by construction).
     # Used only when there's no active worker model to reuse (e.g. standalone).
     model: ${QUACK_COMPACTION_MODEL}      # unset ⇒ no fallback, active model only
@@ -45,7 +45,7 @@ orchestrator:
   # plan-work: DAG-authoring playbook; format-markdown: direct-answer replies;
   # present-coding-plan: plan/comment structure for GitHub-facing replies (#253);
   # contribute: the issue→plan→agree→implement→review→merge umbrella that hands
-  # off to the others (kept alongside them, not on a worker — the orchestrator
+  # off to the others (kept alongside them, not on a worker - the orchestrator
   # is the only agent that owns the whole loop).
   skills: [plan-work, format-markdown, present-coding-plan, contribute]
   provider: default
@@ -53,17 +53,18 @@ orchestrator:
   # tools: [commit_memory]        # bind commit_memory to enable user memory (recall + commit of personal facts)
   # correct_review_finding (a conversational GitHub-PR false-positive correction into
   # the coding memory bucket, #249) is always on whenever task memory (stage_memory,
-  # below) is configured — narrowly scoped by its own schema, so it needs no opt-in here.
+  # below) is configured - narrowly scoped by its own schema, so it needs no opt-in here.
 
 # Declarative agents. Each is an agent-card.json + prompt.md bundle on disk,
 # bound here to a model and a selection of built-in tools. Add an agent by
-# dropping a bundle directory and adding an entry — no recompile.
+# dropping a bundle directory and adding an entry - no recompile.
 agents:
   web-researcher:
     bundle: agents/web-researcher
     skills: [format-markdown, research-git-repos]
     provider: default
-    memory_role: research   # shared-memory role bucket (see internal/memory/scope.go)
+    memory:
+      bucket: research   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
@@ -73,13 +74,14 @@ agents:
   code-implementer:
     bundle: agents/code-implementer   # card + prompt.md (ACP preamble: ponytail discipline, commit-only) + rubric.md
     provider: default
-    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
+    memory:
+      bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
     # The worker is an EXTERNAL coding agent over ACP (internal/acp):
     # opencode drives the model bound above (OPENCODE_CONFIG_CONTENT: OpenAI-compatible
-    # endpoint, headless permissions, git push DENIED — delivery stays gate-owned). The
+    # endpoint, headless permissions, git push DENIED - delivery stays gate-owned). The
     # gate reads its commits off the clone itself (vetting.augmentFromRepo) and quack's
     # skill library is injected via opencode's skills.paths. No quack tools, no memory.
     acp:
@@ -89,12 +91,13 @@ agents:
   code-reviewer:
     bundle: agents/code-reviewer      # card + prompt.md (ACP preamble: values + VERDICT/FINDINGS output contract) + rubric.md
     provider: default
-    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
+    memory:
+      bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 1             # 1 round: a review is one-pass, and we're diagnosing the gate
     # External ACP reviewer, read_only: it runs the change with its own tools but never
-    # commits/pushes; its ANSWER carries the review — the gate parses the structured
+    # commits/pushes; its ANSWER carries the review - the gate parses the structured
     # VERDICT/FINDINGS tail into a staged review with inline comments
     # (vetting.augmentFromAnswer) and posts it exactly once, gate-owned.
     acp:
@@ -103,7 +106,8 @@ agents:
   code-explorer:
     bundle: agents/code-explorer      # card + prompt.md (ACP preamble: read-only exploration, cite <repo>@<path>) + rubric.md
     provider: default
-    memory_role: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
+    memory:
+      bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap
@@ -132,7 +136,7 @@ agents:
     context_window: 32768       # qwen3-omni-30b served -c 32768 --parallel 1
     tools: []
     inputs: [text, image, audio]
-    judge: false      # gemma (the judge) cannot open media — its verdict is noise
+    judge: false      # gemma (the judge) cannot open media - its verdict is noise
   image-reader:
     bundle: agents/image-reader
     skills: [format-markdown]
@@ -141,7 +145,7 @@ agents:
     context_window: 32768       # qwen3-vl-32b served -c 32768
     tools: []
     inputs: [text, image]
-    judge: false      # gemma (the judge) cannot open media — its verdict is noise
+    judge: false      # gemma (the judge) cannot open media - its verdict is noise
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
@@ -165,7 +169,7 @@ tools:
   web_fetch:
     kind: crawl4ai                # direct (plain GET, no service) | crawl4ai (GET + browser render). empty ⇒ direct
     url: ${QUACK_CRAWL4AI_URL}          # required for crawl4ai (e.g. http://crawl4ai:11235); unused by kind: direct
-  # Memory tools (M6) — store-backed; binding one to an agent enables that memory.
+  # Memory tools (M6) - store-backed; binding one to an agent enables that memory.
   stage_memory:                   # task memory: researchers stage tradecraft, the gate commits it
     store: default_vector
     collection: task_memory
@@ -175,11 +179,11 @@ tools:
 
 # The trust gate wraps every agent and runs cheapest-first, each stage with its
 # own round budget (a stage with max_rounds:0 is skipped):
-#   1. deterministic_checks — free code checks (citation backing + length) that
+#   1. deterministic_checks - free code checks (citation backing + length) that
 #      drive cheap targeted revisions to drop fabricated citations up front.
-#   2. judge — an independent model scores the answer; the worker revises on fail.
+#   2. judge - an independent model scores the answer; the worker revises on fail.
 # Deterministic citation/length scores are always folded into the judge's verdict.
-# The advisor (agents/advisor) is NOT a gate stage — it's a tool (ask_advisor,
+# The advisor (agents/advisor) is NOT a gate stage - it's a tool (ask_advisor,
 # see agents' tools: lists) the worker calls at its own discretion. It reuses
 # the judge's provider/model and is only registered on worker bundles that list
 # it when the judge is enabled (see below): leave judge.model empty to disable
@@ -201,7 +205,7 @@ gates:
     max_iterations: 6       # safety cap on the judge's model turns per round
     context_window: 65536   # gemma's served slot (llm-swap --parallel 1 ⇒ full 64K/call); budgets the assembled judge prompt so it fits before the call instead of 400ing (#291)
     skeptics: 0              # adversarial verify (#370): N independent skeptics per load-bearing
-                              # PASSING criterion, majority-refute kills it. 0 (default) = off —
+                              # PASSING criterion, majority-refute kills it. 0 (default) = off -
                               # each qualifying criterion costs N extra judge-model calls.
 
 # DAG execution policy.
@@ -217,18 +221,18 @@ server:
   addr: ":8080"
   # topology: how the stores are provided. embedded (sqlite, no containers) and
   # external (you run Postgres/Qdrant and point the stores above at them) just
-  # run the process — the default. managed makes `quack server` bring up
+  # run the process - the default. managed makes `quack server` bring up
   # Postgres + Qdrant via an embedded docker-compose stack (`quack-stores`),
   # wait for them to be ready, then run; `quack server stop` tears them down
   # (volumes persist). managed needs host ports 5432 + 6334 free and docker
-  # available. Tool backends (search/fetch) are NOT managed — set them via the
+  # available. Tool backends (search/fetch) are NOT managed - set them via the
   # tools below (kind: exa for keyless, kind: direct for fetch).
   # topology: managed
 
-# OTel tracing/metrics — emission-only (Tempo/Grafana, the home-server
+# OTel tracing/metrics - emission-only (Tempo/Grafana, the home-server
 # monitoring stack, own trace/metric viewing; quack keeps no local store of
 # its own). enabled defaults to true; otlp_endpoint is what actually ships
-# spans/metrics anywhere — unset, providers are built but nothing exports.
+# spans/metrics anywhere - unset, providers are built but nothing exports.
 otel:
   enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true
   otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ providers built, nothing exported
@@ -236,8 +240,8 @@ otel:
   sample: 1.0                                # trace sample ratio in (0,1]
 
 # The agents' working disk (filesystem/git tools). One configured root; a
-# per-user jail lives under it (<root>/<user_id>/ — "local" today, the OIDC
-# subject later). Not bound to any agent's tools: list yet — see
+# per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC
+# subject later). Not bound to any agent's tools: list yet - see
 # .quack/plan-pr5-tool-schemas.md. Every field is optional; omitting this
 # section entirely still gets a working jail rooted at ./workspace with the
 # defaults below.
@@ -250,21 +254,21 @@ workspace:
   timeout_seconds: 60
 
   # sandbox: the OS boundary every run_command / gate-check CHILD PROCESS runs
-  # inside. The jail above is a PATH CHECK on the tools — it never constrained a
+  # inside. The jail above is a PATH CHECK on the tools - it never constrained a
   # child process, only its cwd, so before this a child (any child: `sh -c` slips
   # through the metachar filter untouched) could read ~/.ssh, ~/.aws, .env, and
   # anything else the server's OS user can read.
-  #   bwrap (default) — bubblewrap namespace: the child's filesystem is a
+  #   bwrap (default) - bubblewrap namespace: the child's filesystem is a
   #     read-only system view plus exactly two writable paths (its own working
   #     directory and its isolated $HOME). Nothing else EXISTS in there. Needs
   #     no root and no daemon; install it (Debian/Ubuntu: `apt-get install
   #     bubblewrap`). If it isn't installed/usable, the server REFUSES TO START.
   #     Because the namespace IS the wall, run_command runs its command line in a
   #     REAL SHELL (/bin/sh -c) in here: pipes, redirects, globs, $(…) and &&
-  #     all work. The metachar filter is not applied on this path — it blocked no
+  #     all work. The metachar filter is not applied on this path - it blocked no
   #     attack (`sh -c` never contained one of those characters), it only made
   #     agents write throwaway script files to route around it.
-  #   none — children run with the server user's full filesystem authority.
+  #   none - children run with the server user's full filesystem authority.
   #     Logs a loud WARN at startup. Only sane when the whole server is already
   #     confined (a throwaway container/VM) or you trust the agents with that
   #     account. With no OS boundary the habit guard is all there is, so THERE
@@ -279,25 +283,25 @@ workspace:
     address_space_mb: 8192   # RLIMIT_AS, PER PROCESS. Do not tighten much: node's V8
                              # reserves a huge VIRTUAL region at startup, so a small
                              # limit doesn't slim a build, it stops node running at all.
-    max_procs: 512           # RLIMIT_NPROC — only applied inside the bwrap user namespace
+    max_procs: 512           # RLIMIT_NPROC - only applied inside the bwrap user namespace
                              # (it is counted per-UID system-wide, so outside one it would
                              # break every fork). --unshare-pid contains fork bombs anyway.
     max_file_size_mb: 1024   # RLIMIT_FSIZE: one command cannot fill the disk.
 
-  # exec_path: extra PATH dirs for run_command/checks/git children — for toolchains
+  # exec_path: extra PATH dirs for run_command/checks/git children - for toolchains
   # outside the fixed system dirs (nvm, asdf, a $HOME-installed Go SDK). Under
   # sandbox: bwrap each entry is ALSO bind-mounted READ-ONLY into the child (a
-  # `.../bin` entry brings its sibling lib/, libexec/ and share/ with it — nvm's
+  # `.../bin` entry brings its sibling lib/, libexec/ and share/ with it - nvm's
   # `npm` is a symlink into ../lib), so the toolchain exists in there and nothing
   # else on the host does. Entries are bound VERBATIM: a toolchain that keeps
-  # runtime files elsewhere in its prefix (a Go SDK's GOROOT — src/, pkg/) needs
+  # runtime files elsewhere in its prefix (a Go SDK's GOROOT - src/, pkg/) needs
   # that directory listed too, or the child fails with "cannot find GOROOT" /
   # exit 127 "No such file or directory". Anything under /usr is already covered.
   # exec_path:
   #   - /home/user/.nvm/versions/node/v22.22.3/bin
   #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
   # check_commands: allowed command PREFIXES the planner may complete into a
-  # code-implementer node's `checks` (§4) — the trust gate runs these against
+  # code-implementer node's `checks` (§4) - the trust gate runs these against
   # the node's own workdir after each draft, and DERIVES a repo's own build/
   # vet/test commands from them when the planner set none. Defaults ON (this
   # list); each derived check is additionally gated on its binary existing on
@@ -306,21 +310,21 @@ workspace:
   # disables checks entirely.
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
 
-  # Deployment-level per-host HTTPS git credentials — ONE identity per host (a
+  # Deployment-level per-host HTTPS git credentials - ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos
   # only. `token` MUST be an ${VAR} env reference (a literal secret here is a
-  # startup error, not a silent leak — see docs/configuration/index.md).
+  # startup error, not a silent leak - see docs/configuration/index.md).
   # git_credentials:
   #   - host: github.com
   #     username: x-access-token       # default; GitHub PATs use this
   #     token: ${QUACK_GITHUB_TOKEN}
 
-  # git_push gates the git_push tool — the one outward-facing, non-undoable
+  # git_push gates the git_push tool - the one outward-facing, non-undoable
   # git operation in the set. Off by default even with a credential configured.
   # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
   # confirm | judge+confirm. No entries by default since 0.6.0: the code agents
   # run as external ACP subprocesses (internal/acp), so the write-side
-  # tools the ladder guarded are gone — the walls that remain are the jail on
+  # tools the ladder guarded are gone - the walls that remain are the jail on
   # the surviving read tools, the OS sandbox around gate-check children, and
   # gate-owned delivery (git push denied inside the subprocess).
   # guards:
@@ -328,14 +332,14 @@ workspace:
 
 # Bundled integrations (inbound + outbound). Optional; each is off unless its
 # sub-section is present. Commented out here because dev/local runs typically
-# have no GitHub App — uncomment and set the env vars to enable it.
+# have no GitHub App - uncomment and set the env vars to enable it.
 #
 # extensions.github wires the GitHub App extension: a webhook receiver, App-authed
 # git credentials, and the App-mention trigger. It needs EXACTLY ONE issuer
-# (client_id — GitHub's recommendation — or the legacy numeric app_id) and EXACTLY
+# (client_id - GitHub's recommendation - or the legacy numeric app_id) and EXACTLY
 # ONE private-key source (inline private_key PEM via ${VAR}, or private_key_path to
 # a mounted .pem). The App's CLIENT SECRET is NOT used (that's OAuth only). Secrets
-# (private_key, webhook_secret) MUST be ${VAR} env references — a literal is a
+# (private_key, webhook_secret) MUST be ${VAR} env references - a literal is a
 # startup error. A present-but-empty block fails to boot, so keep it commented
 # until the env vars are actually set.
 # extensions:
@@ -347,7 +351,7 @@ workspace:
 #     mention: "@quack"
 #     # allowed_users: GitHub logins permitted to invoke quack via a mention
 #     # comment or a human-applied workflow label (case-insensitive). Empty
-#     # (default) DENIES every human-invoked trigger — auto-review is
+#     # (default) DENIES every human-invoked trigger - auto-review is
 #     # unaffected. Seed it with your own login(s) or quack won't respond.
 #     allowed_users: [fagerbergj]
 #     # triggers: which webhook events fire a run. Default [mention]. Others:
@@ -355,7 +359,7 @@ workspace:
 #     # is applied), issue_plan (plan an issue when labels.plan is applied),
 #     # issue_implement (implement the plan when labels.implement is applied),
 #     # merge (squash-merge a PR when labels.merge is applied by a human AND
-#     # quack's own latest review is APPROVED — needs pull request write incl. merge).
+#     # quack's own latest review is APPROVED - needs pull request write incl. merge).
 #     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
 #     # labels: the repo labels driving the label-based workflow (applying a label
 #     # needs repo write access, so labels double as the permission model).
