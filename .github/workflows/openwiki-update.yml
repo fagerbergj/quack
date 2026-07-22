@@ -37,10 +37,10 @@ jobs:
       - name: Create OpenWiki update pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
+          # OpenWiki owns openwiki/ only. AGENTS.md/CLAUDE.md are hand-maintained
+          # (they carry a single pointer into openwiki/) — keep the generator out.
           add-paths: |
             openwiki
-            AGENTS.md
-            CLAUDE.md
           branch: openwiki/update
           commit-message: "docs: update OpenWiki"
           title: "docs: update OpenWiki"

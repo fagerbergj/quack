@@ -2,6 +2,8 @@
 
 This file provides guidance to AI coding agents working in this repository.
 
+> **Auto-generated code reference:** [`openwiki/`](openwiki/) is an LLM-generated wiki of the codebase — architecture, workflows, operations — refreshed from the code. Start there for a map of how a subsystem actually works; this file stays focused on the rules and the day-to-day commands.
+
 ## Hard Rules
 
 Never:
@@ -102,7 +104,7 @@ Ground-truth probes for external (ACP) workers: `augmentFromRepo` (gitprobe.go) 
 
 ### Agents: external ACP subprocesses + native bundles (`internal/acp/`, `internal/agent/`, `agents/`)
 
-ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`, docs/acp-coder.md) — `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
+ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`) — `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
 
 Native (llmagent) bundles remain for the non-code agents (web-researcher, synthesizer, media/image readers, advisor, orchestrator):
 

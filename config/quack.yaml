@@ -1,5 +1,5 @@
 # Quack configuration. Structure is declarative; ${VAR} are interpolated from
-# the environment (secrets never live in this file). See docs/configuration.md.
+# the environment (secrets never live in this file). See docs/configuration/index.md.
 providers:
   default:
     kind: openai            # API protocol; the endpoint picks the actual server
@@ -77,7 +77,7 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
-    # The worker is an EXTERNAL coding agent over ACP (internal/acp, docs/acp-coder.md):
+    # The worker is an EXTERNAL coding agent over ACP (internal/acp):
     # opencode drives the model bound above (OPENCODE_CONFIG_CONTENT: OpenAI-compatible
     # endpoint, headless permissions, git push DENIED — delivery stays gate-owned). The
     # gate reads its commits off the clone itself (vetting.augmentFromRepo) and quack's
@@ -309,7 +309,7 @@ workspace:
   # Deployment-level per-host HTTPS git credentials — ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos
   # only. `token` MUST be an ${VAR} env reference (a literal secret here is a
-  # startup error, not a silent leak — see docs/configuration.md).
+  # startup error, not a silent leak — see docs/configuration/index.md).
   # git_credentials:
   #   - host: github.com
   #     username: x-access-token       # default; GitHub PATs use this
@@ -319,7 +319,7 @@ workspace:
   # git operation in the set. Off by default even with a credential configured.
   # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
   # confirm | judge+confirm. No entries by default since 0.6.0: the code agents
-  # run as external ACP subprocesses (docs/acp-coder.md), so the write-side
+  # run as external ACP subprocesses (internal/acp), so the write-side
   # tools the ladder guarded are gone — the walls that remain are the jail on
   # the surviving read tools, the OS sandbox around gate-check children, and
   # gate-owned delivery (git push denied inside the subprocess).

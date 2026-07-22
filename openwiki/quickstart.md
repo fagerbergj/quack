@@ -48,7 +48,7 @@ Key environment variables:
 | `QUACK_SEARXNG_URL` | SearXNG web search endpoint |
 | `QUACK_WORKSPACE_ROOT` | Filesystem sandbox root (default `./workspace`) |
 
-See [`docs/configuration.md`](/docs/configuration.md) for full configuration details.
+See [`docs/configuration/index.md`](/docs/configuration/index.md) for full configuration details.
 
 ## Documentation Structure
 

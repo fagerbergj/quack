@@ -104,4 +104,4 @@ Add these between the criteria and the aggregation block when relevant:
 
 ---
 
-*For the evaluation strategy itself (how the gate invokes the judge, threshold config, revision loops), see `config/quack.yaml` and `docs/configuration.md`.*
+*For the evaluation strategy itself (how the gate invokes the judge, threshold config, revision loops), see `config/quack.yaml` and `docs/configuration/trust-gate.md`.*

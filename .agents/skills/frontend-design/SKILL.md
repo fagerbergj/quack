@@ -56,7 +56,7 @@ dep → a few lines) before a new dependency.
    Move draft state into its own component so keystrokes don't re-render the turn list; memoize
    completed turns so they don't re-parse markdown while a later turn streams; key any sibling-derived
    `useMemo` to a ref that's stable during streaming. Reach for `react-virtuoso` only if node count
-   alone still lags afterward (deferred in `docs/milestones.md`). → recipe in references.
+   alone still lags afterward. → recipe in references.
 
 2. **Optimistic-first store writes.** In `chatStore.submit`, write the optimistic state (live turn,
    or a `submitting` flag) **before** any awaited fetch, never after — otherwise the spinner waits
