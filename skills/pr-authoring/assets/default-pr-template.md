@@ -1,7 +1,5 @@
 <!--
-Default PR body template. Used only when the target repo has no
-.github/pull_request_template.md. Fill each section; DELETE any that don't apply
-(a two-line bugfix needs only Why + Verification). Keep the headings you keep.
+Default PR body template. Used only when the target repo has no .github/pull_request_template.md. Fill each section; DELETE any that don't apply (a two-line bugfix needs only Why + Verification). Keep the headings you keep.
 -->
 
 ## Why

@@ -118,20 +118,9 @@ Side-effecting tools should set the appropriate flag so the orchestrator can rou
 
 ### Portability rule (mandatory for external-backed tools)
 
-A builtin tool that talks to external software (a search engine, a render service,
-a vector store, a full-text index, a blob store) **must not** hardcode that
-backend. Define a small **port** (interface) the tool depends on, put each
-concrete backend in its own **adapter**, and select the adapter with a **kind**
-factory driven by config — so swapping the backend is a config change plus one new
-adapter, never a rewrite of the tool. Empty kind defaults to the one implemented
-adapter, so existing config keeps working.
+A builtin tool that talks to external software (a search engine, a render service, a vector store, a full-text index, a blob store) **must not** hardcode that backend. Define a small **port** (interface) the tool depends on, put each concrete backend in its own **adapter**, and select the adapter with a **kind** factory driven by config — so swapping the backend is a config change plus one new adapter, never a rewrite of the tool. Empty kind defaults to the one implemented adapter, so existing config keeps working.
 
-The web tools are the reference implementation: `WebSearcher` / `PageRenderer`
-ports + `newWebSearcher` / `newPageRenderer` factories in
-`internal/tools/backends.go`, with the SearXNG and crawl4ai adapters in
-`internal/tools/{searxng,crawl4ai}.go`. The pattern mirrors `inference.NewModel`
-(provider `kind` → adapter). This keeps the generic logic (SSRF guard, result
-shaping, html→markdown) in the tool and the swappable part behind the port.
+The web tools are the reference implementation: `WebSearcher` / `PageRenderer` ports + `newWebSearcher` / `newPageRenderer` factories in `internal/tools/backends.go`, with the SearXNG and crawl4ai adapters in `internal/tools/{searxng,crawl4ai}.go`. The pattern mirrors `inference.NewModel` (provider `kind` → adapter). This keeps the generic logic (SSRF guard, result shaping, html→markdown) in the tool and the swappable part behind the port.
 
 ---
 

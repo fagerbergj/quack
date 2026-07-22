@@ -2,13 +2,9 @@
 
 ## Snapshot testing — avoid for app components
 
-- **Pros**: one assertion, catches unexpected change on refactors/dep bumps, fine for stable
-  UI-library primitives.
-- **Cons**: rubber-stamped "accept" negates value; large snapshots un-reviewable in PRs; break on
-  reordered attrs / class changes / React internal wrappers with zero functional change;
-  **validates structure, not behaviour** — logic bugs pass.
-- **Verdict (2025–2026)**: prefer explicit behavioural assertions (RTL queries + userEvent).
-  Snapshots only for truly static primitives.
+- **Pros**: one assertion, catches unexpected change on refactors/dep bumps, fine for stable UI-library primitives.
+- **Cons**: rubber-stamped "accept" negates value; large snapshots un-reviewable in PRs; break on reordered attrs / class changes / React internal wrappers with zero functional change; **validates structure, not behaviour** — logic bugs pass.
+- **Verdict (2025–2026)**: prefer explicit behavioural assertions (RTL queries + userEvent). Snapshots only for truly static primitives.
 
 ## Visual regression
 
@@ -28,8 +24,7 @@
     } } },
   };
   ```
-- **Playwright CT** — renders components in a real browser, same locator/assertion model as E2E;
-  free, manual baselines.
+- **Playwright CT** — renders components in a real browser, same locator/assertion model as E2E; free, manual baselines.
   ```ts
   import { test, expect } from '@playwright/experimental-ct-react';
   test('renders correctly', async ({ mount }) => {
@@ -54,8 +49,7 @@ it('passes a11y after interaction', async () => {
 
 - **Catches**: missing alt/labels, contrast, invalid ARIA, heading structure, keyboard — 80+ rules.
 - **Doesn't catch**: whether alt text is *meaningful*, logical focus order, complex interactions.
-- Run **after interactions** — a11y is a property of every state. Keep it inside the RTL suite, not a
-  separate step.
+- Run **after interactions** — a11y is a property of every state. Keep it inside the RTL suite, not a separate step.
 
 ## Performance
 
@@ -66,18 +60,14 @@ it('passes a11y after interaction', async () => {
 </Profiler>
 ```
 
-- **Vitest**: `vitest-react-profiler` — count renders, detect unnecessary re-renders, mount/update
-  phases, profile hooks.
+- **Vitest**: `vitest-react-profiler` — count renders, detect unnecessary re-renders, mount/update phases, profile hooks.
 - **Jest/prod flows**: `react-automation-profiler` (Profiler + Puppeteer) for cross-build charts.
-- **Budgets in CI**: unit render-time (<16ms/component) → integration TTI/bundle size (<3s on 3G via
-  Puppeteer/Playwright) → E2E Lighthouse CI for Core Web Vitals.
+- **Budgets in CI**: unit render-time (<16ms/component) → integration TTI/bundle size (<3s on 3G via Puppeteer/Playwright) → E2E Lighthouse CI for Core Web Vitals.
 
 ## Storybook + testing
 
-- **Storybook 9+ Vitest addon** is the modern standard: `npx storybook add @storybook/addon-vitest`.
-  Adds visual + a11y tests and coverage from stories.
-- **Interaction tests** via `play()` are the single source of truth — auto-converted to Vitest
-  component tests:
+- **Storybook 9+ Vitest addon** is the modern standard: `npx storybook add @storybook/addon-vitest`. Adds visual + a11y tests and coverage from stories.
+- **Interaction tests** via `play()` are the single source of truth — auto-converted to Vitest component tests:
   ```ts
   export const Clickable = {
     args: { label: 'Click me' },
@@ -91,6 +81,4 @@ it('passes a11y after interaction', async () => {
 
 ## Flaky async tests
 
-Rarely random — deterministic, rooted in implicit shared state. Fix with proper async waits
-(`findBy*`/`waitFor`), provider/module isolation, and avoiding leaked singletons across files (see
-`pool`/`isolate` in `ci-and-tooling.md`). Never `setTimeout`/fake timers for async UI.
+Rarely random — deterministic, rooted in implicit shared state. Fix with proper async waits (`findBy*`/`waitFor`), provider/module isolation, and avoiding leaked singletons across files (see `pool`/`isolate` in `ci-and-tooling.md`). Never `setTimeout`/fake timers for async UI.

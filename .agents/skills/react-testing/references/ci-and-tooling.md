@@ -11,10 +11,8 @@
 | TypeScript | esbuild built-in | SWC or ts-jest |
 | Config reuse | shares `vite.config.ts` | standalone `jest.config.js` |
 
-- **New Vite/Nuxt/SvelteKit/ESM project → Vitest.** **React Native, large legacy webpack, deep
-  Jest investment → Jest.**
-- Vitest mirrors Jest's API; migrate via codemod. Friction: ESM mock hoisting (`vi.hoisted()`) and
-  RN presets (Jest-first).
+- **New Vite/Nuxt/SvelteKit/ESM project → Vitest.** **React Native, large legacy webpack, deep Jest investment → Jest.**
+- Vitest mirrors Jest's API; migrate via codemod. Friction: ESM mock hoisting (`vi.hoisted()`) and RN presets (Jest-first).
 
 ## Vitest config
 
@@ -70,11 +68,9 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 ## Parallelism
 
 **Vitest pools:**
-- `pool: 'threads'` (default) — worker threads share module caches; fastest, but can leak state via
-  module singletons.
+- `pool: 'threads'` (default) — worker threads share module caches; fastest, but can leak state via module singletons.
 - `pool: 'forks'` — process per file; full isolation, cold-start cost.
-- `isolate: true` (default) gives each file a fresh module graph. `isolate: false` ≈ 30% faster but
-  out-of-order failures from leaked mutations.
+- `isolate: true` (default) gives each file a fresh module graph. `isolate: false` ≈ 30% faster but out-of-order failures from leaked mutations.
 
 ```ts
 test: {
@@ -83,8 +79,7 @@ test: {
 }
 ```
 
-**Jest:** default `maxWorkers` = logical CPUs, isolated process per file. Sharding (Jest 28+) splits
-across CI machines: `jest --ci --shard=1/4`.
+**Jest:** default `maxWorkers` = logical CPUs, isolated process per file. Sharding (Jest 28+) splits across CI machines: `jest --ci --shard=1/4`.
 
 ## Coverage targets (industry baseline)
 

@@ -63,7 +63,7 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
-    # External ACP coder (docs/acp-coder.md): opencode drives the model above via
+    # External ACP coder (internal/acp): opencode drives the model above via
     # OPENCODE_CONFIG_CONTENT; git push is denied in the subprocess (delivery is
     # gate-owned) and the gate reads commits off the clone (augmentFromRepo).
     acp:

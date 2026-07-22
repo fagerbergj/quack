@@ -1,16 +1,16 @@
-// Package github is quack's GitHub App extension (see docs/github-app.md): it
-// authenticates as a GitHub App, exposes outbound tools (github_comment,
-// github_pull_request, the review-draft tools github_add_review_comment /
-// github_list_review_comments / github_delete_review_comment / github_submit_review,
-// and the discussion tools github_list_pr_comments / github_reply_to_review_comment /
-// github_react_to_comment) and a git-credential source authed with the App's
-// per-installation token, and mounts an inbound, signature-verified webhook
-// route that dispatches orchestrator runs on issue-comment mentions.
+// Package github is quack's GitHub App extension (see docs/extensions/github.md):
+// it authenticates as a GitHub App, exposes outbound tools (github_comment,
+// github_pull_request, the discussion tools github_list_pr_comments /
+// github_reply_to_review_comment / github_react_to_comment, and the
+// trust-gate-owned stage_pr / stage_review delivery) and a git-credential source
+// authed with the App's per-installation token, and mounts an inbound,
+// signature-verified webhook route that dispatches orchestrator runs on
+// mentions, labels, and PR events.
 //
 // Auth is done with golang-jwt/jwt (RS256 App JWT) + stdlib net/http for the
 // REST calls, NOT go-github/ghinstallation: the flow is one signed JWT plus a
 // handful of REST endpoints, and those libraries are a large dependency to save
-// ~80 lines in a self-hosted binary (see the docs' "Auth" section).
+// ~80 lines in a self-hosted binary.
 package github
 
 import (
