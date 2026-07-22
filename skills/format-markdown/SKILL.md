@@ -27,6 +27,7 @@ Reformat the provided Markdown document for clean visual rendering. Output only 
 
 ## Rules
 
+- Do not hard-wrap prose at a fixed column. Write one line per paragraph (and one line per list item) and let it soft-wrap. Fixed-width wrapping is an inherited print convention that produces noisy diffs and fights machine editing — a one-word change should not reflow a whole paragraph.
 - Blank line before and after every heading, code block, blockquote, list, and horizontal rule.
 - At most three heading levels (H1 for the title only, H2 for sections, H3 for subsections). Never skip levels.
 - Break any paragraph longer than 4–5 sentences into shorter ones or a list.

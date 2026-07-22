@@ -1,23 +1,12 @@
 # Configuration
 
-Everything structural in quack — models, thresholds, budgets, stores, agent bindings — is
-declarative YAML, kept out of the code so it can change without a rebuild. Secrets never
-live in the file: any value that looks like a token, key, or DSN is written as an `${ENV_VAR}`
-reference and interpolated at load time (`internal/config.Load`). A `token`, `private_key`, or
-`webhook_secret` written as a literal instead of `${VAR}` is a hard startup error, not a
-silent leak.
+Everything structural in quack — models, thresholds, budgets, stores, agent bindings — is declarative YAML, kept out of the code so it can change without a rebuild. Secrets never live in the file: any value that looks like a token, key, or DSN is written as an `${ENV_VAR}` reference and interpolated at load time (`internal/config.Load`). A `token`, `private_key`, or `webhook_secret` written as a literal instead of `${VAR}` is a hard startup error, not a silent leak.
 
-The shipped config lives at `config/quack.yaml`; the schema and defaults are in
-`internal/config/config.go`.
+The shipped config lives at `config/quack.yaml`; the schema and defaults are in `internal/config/config.go`.
 
 ## The `kind` shape
 
-Providers, stores, and several tools are pluggable through a `kind` discriminator: `kind`
-picks the adapter, and the rest of the block is that adapter's connection details. Today
-only one implementation exists for most of these (`openai` for providers, `postgres`/`qdrant`
-for stores), but the shape leaves room to add another adapter later without touching every
-caller — see `internal/inference/factory.go` for providers and `internal/tools/backends.go`
-for tools.
+Providers, stores, and several tools are pluggable through a `kind` discriminator: `kind` picks the adapter, and the rest of the block is that adapter's connection details. Today only one implementation exists for most of these (`openai` for providers, `postgres`/`qdrant` for stores), but the shape leaves room to add another adapter later without touching every caller — see `internal/inference/factory.go` for providers and `internal/tools/backends.go` for tools.
 
 ## Layout
 
@@ -63,6 +52,4 @@ The GitHub App extension (`extensions.github`) has its own page: [`../extensions
 | `QUACK_LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error` |
 | `QUACK_LOG_FORMAT` | slog output: `text` (default) or `json` |
 
-`QUACK_CODER_MODEL` is the one variable with a chained fallback: if it's unset, `code-implementer`
-and `code-reviewer` fall back to `QUACK_RESEARCHER_MODEL` (`internal/config`'s `expandEnv`), so a
-deployment that hasn't picked a dedicated coder model still gets a working one.
+`QUACK_CODER_MODEL` is the one variable with a chained fallback: if it's unset, `code-implementer` and `code-reviewer` fall back to `QUACK_RESEARCHER_MODEL` (`internal/config`'s `expandEnv`), so a deployment that hasn't picked a dedicated coder model still gets a working one.
