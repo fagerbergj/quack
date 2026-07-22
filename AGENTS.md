@@ -74,7 +74,7 @@ Module path: `github.com/fagerbergj/quack`. The binary entrypoint is `cmd/server
 
 ### Request lifecycle
 
-```
+```text
 HTTP request
   → internal/server/router.go   (chi router; registers generated REST routes + MCP mount)
   → internal/server/rest/       (REST handler; dispatches to orchestrator)
@@ -108,7 +108,7 @@ ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL
 
 Native (llmagent) bundles remain for the non-code agents (web-researcher, synthesizer, media/image readers, advisor, orchestrator):
 
-```
+```text
 agents/<name>/
   agent-card.json   # A2A AgentCard: identity + skills
   prompt.md         # system prompt (for ACP agents: the per-round preamble)
@@ -126,7 +126,7 @@ agents/<name>/
 
 `stream.SSEEvent` is the wire-level vocabulary shared by REST, MCP, and A2A. The key event sequence within a node:
 
-```
+```text
 dag_plan → node_queued → node_start
   → agent_start (stage: worker)
   → agent_thinking / agent_tool_call / agent_tool_result / agent_token

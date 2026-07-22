@@ -194,7 +194,7 @@ flowchart TD
   note["Every box is auto-wrapped:<br/>continuation → deterministic checks → judge<br/>(bounded rounds)"]
 ```
 
-#### APIs
+**APIs**
 
 Quack exposes three protocol faces over the same orchestrator, under `/api/v1/quack`:
 
@@ -236,7 +236,7 @@ caller's identity (user, groups) is available for authorization. The IdP setting
 deployment are in [docs/configuration/index.md](docs/configuration/index.md). (Outbound auth, for tools calling
 external services, is out of scope for now.)
 
-#### Tools
+**Tools**
 
 The orchestrator should be light on tools. It really only needs:
 
@@ -248,7 +248,7 @@ The orchestrator should be light on tools. It really only needs:
 | [`preloadmemorytool`][preloadmemorytool] | No (ADK) | Auto-injects relevant memory into the prompt at the start of each turn. |
 | `commit_memory` | Yes | Writes a durable fact to quack's own `memory.Store`; the orchestrator calls it directly for user facts, the gate calls it on a judge pass for task findings. |
 
-#### Data stores
+**Data stores**
 
 Stores sit **behind ports**, so a backend can be swapped or added. Quack needs two roles:
 
@@ -262,7 +262,7 @@ store (structured); per Goal 5, **only a gate pass commits a task finding** (use
 committed directly, since they're grounded in what the user said, not a worker's claim). Default
 backends and connections are in [docs/configuration/](docs/configuration/).
 
-#### Configuration
+**Configuration**
 
 Everything structural is **declarative YAML**; secrets (DSNs, tokens, API keys) come from env.
 **Providers and stores are pluggable by `kind`** — the shape allows backends beyond the defaults
@@ -290,14 +290,14 @@ model and a set of tools": they run as **external ACP subprocesses** (`opencode 
 quack tools at all — the gate reads their work straight off the clone or their answer instead. The
 integration lives in `internal/acp`; [the FAQ](docs/faq.md) covers why it's an external subprocess.
 
-#### APIs
+**APIs**
 
 Unlike the orchestrator's three faces, an agent speaks **A2A only**. It publishes an
 [AgentCard][agentcard] and is invoked over [A2A][a2a]: in-process via the registry today, promotable
 to a standalone A2A service later with no change to its definition. REST and MCP stay on the
 orchestrator (the user-facing front door); A2A is the agent-to-agent protocol.
 
-#### Tools
+**Tools**
 
 An agent's **`skills`** (its card) are capability-level and planner-facing: they are what the
 orchestrator routes on, and they are **decoupled from tools**. A capability can come from the
@@ -311,7 +311,7 @@ custom tools; the registry uses the same `kind` shape as everything else (`built
 `http` reserved), and each tool carries its own config. Side-effecting tools are flagged to route
 through the `confirmation_request` human-in-the-loop gate.
 
-#### Data stores
+**Data stores**
 
 Agents do **not** own stores. In-process, an agent runs inside the **orchestrator's ADK session** and
 exchanges data through shared session state (`output_key` out, `{key}` in), which is how a node's
@@ -319,7 +319,7 @@ result flows along DAG edges. Long-term memory is reached through the memory too
 same stores. (When an agent is promoted to a standalone A2A service it gets its own session, and the
 A2A `ContextID` maps back to the orchestrator's session for continuity.)
 
-#### Configuration
+**Configuration**
 
 Each agent is a small bundle: **`agent-card.json`** (the A2A AgentCard: identity, skills, version)
 and **`prompt.md`** (the system prompt). The Quack config binds the model (per-agent `inference`) and

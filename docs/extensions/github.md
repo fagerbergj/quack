@@ -6,7 +6,7 @@ posting plans, opening PRs, and leaving reviews as itself.
 
 The whole loop, driven by a label:
 
-```
+```text
 someone applies quack:implement to an approved issue
   → quack clones the repo, writes the code, commits locally
   → its trust gate vets the diff, then opens a PR (pre-labeled for review)
@@ -17,7 +17,7 @@ someone applies quack:implement to an approved issue
 
 or by mentioning it in a comment:
 
-```
+```text
 "@quack add a Flappy Bird game and open a PR"
   → quack clones the repo, writes the code, commits, and opens a PR
   → the final answer is posted back as a comment
@@ -57,7 +57,7 @@ it has no quack tools of its own, so it can't build up a review with API
 calls. Instead it reads the diff with its own tools and ends its answer with a
 structured tail:
 
-```
+```text
 VERDICT: approve | request_changes | comment
 FINDINGS:
 - path/to/file.go:42: the finding text
