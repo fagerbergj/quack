@@ -17,13 +17,9 @@ license: MIT
 
 ## Overview
 
-Decision-level guidance for testing React the way users actually use it. The guiding rule:
-**the more your tests resemble how the software is used, the more confidence they give**
-([Kent C. Dodds](https://kentcdodds.com/blog/write-tests)). Invest most in integration-level
-tests; test behaviour, not internals.
+Decision-level guidance for testing React the way users actually use it. The guiding rule: **the more your tests resemble how the software is used, the more confidence they give** ([Kent C. Dodds](https://kentcdodds.com/blog/write-tests)). Invest most in integration-level tests; test behaviour, not internals.
 
-Code templates and the full tables live in `references/recipes.md`. Config, parallelism, and
-coverage live in `references/ci-and-tooling.md`. Visual/a11y/perf live in `references/advanced.md`.
+Code templates and the full tables live in `references/recipes.md`. Config, parallelism, and coverage live in `references/ci-and-tooling.md`. Visual/a11y/perf live in `references/advanced.md`.
 
 quack's frontend already uses **Vitest + RTL + MSW** — match that grain before adding deps.
 
@@ -50,8 +46,7 @@ quack's frontend already uses **Vitest + RTL + MSW** — match that grain before
 
 ## Query priority (memorize this order)
 
-`getByRole` → `getByLabelText` → `getByPlaceholderText` → `getByText` → `getByDisplayValue` →
-`getByAltText` → `getByTestId` (last resort). Variant by intent:
+`getByRole` → `getByLabelText` → `getByPlaceholderText` → `getByText` → `getByDisplayValue` → `getByAltText` → `getByTestId` (last resort). Variant by intent:
 
 - **`getBy*`** — element you expect present (throws if missing = useful signal).
 - **`queryBy*`** — asserting absence (returns `null`).
@@ -66,18 +61,12 @@ quack's frontend already uses **Vitest + RTL + MSW** — match that grain before
 
 ## Tooling decisions
 
-- **New Vite/ESM project → Vitest** (native ESM, shares `vite.config.ts`, faster watch). **React
-  Native / large legacy Jest → stay on Jest.** See `references/ci-and-tooling.md`.
-- **Coverage gate**: `thresholds` in config fails CI on drop. Industry baseline ~80% statements/
-  functions/lines, ~75% branches. Report `lcov` to Codecov/Coveralls.
-- **Snapshots: avoid** for app components (rubber-stamped, break on irrelevant changes, test
-  structure not behaviour). OK only for truly static UI-library primitives.
+- **New Vite/ESM project → Vitest** (native ESM, shares `vite.config.ts`, faster watch). **React Native / large legacy Jest → stay on Jest.** See `references/ci-and-tooling.md`.
+- **Coverage gate**: `thresholds` in config fails CI on drop. Industry baseline ~80% statements/ functions/lines, ~75% branches. Report `lcov` to Codecov/Coveralls.
+- **Snapshots: avoid** for app components (rubber-stamped, break on irrelevant changes, test structure not behaviour). OK only for truly static UI-library primitives.
 
 ## Advanced (reach for these deliberately — `references/advanced.md`)
 
-- **Visual regression**: Chromatic (Storybook-native, component-level) → first choice if Storybook
-  exists; Playwright CT (real browser, free, manual baselines); Percy/Applitools (page-level).
-- **Accessibility**: `jest-axe` inside the RTL suite; run `axe()` *after* interactions, not just on
-  mount. Catches missing labels/contrast/ARIA — not whether alt text is *meaningful*.
-- **Performance**: React `<Profiler>` API; `vitest-react-profiler` for render-count assertions;
-  performance budgets (unit render-time → page TTI → Lighthouse CI) in the pipeline.
+- **Visual regression**: Chromatic (Storybook-native, component-level) → first choice if Storybook exists; Playwright CT (real browser, free, manual baselines); Percy/Applitools (page-level).
+- **Accessibility**: `jest-axe` inside the RTL suite; run `axe()` *after* interactions, not just on mount. Catches missing labels/contrast/ARIA — not whether alt text is *meaningful*.
+- **Performance**: React `<Profiler>` API; `vitest-react-profiler` for render-count assertions; performance budgets (unit render-time → page TTI → Lighthouse CI) in the pipeline.

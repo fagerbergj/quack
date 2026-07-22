@@ -8,20 +8,13 @@ description: >
 
 # Commit Authoring
 
-One implementer node = **one atomic commit**. Write the commit so it reads as a
-single, reviewable, testable unit — and write its message so a reviewer never has
-to reverse-engineer intent from the diff.
+One implementer node = **one atomic commit**. Write the commit so it reads as a single, reviewable, testable unit — and write its message so a reviewer never has to reverse-engineer intent from the diff.
 
 ## What "atomic" means (non-negotiable)
 
-- **One concern.** A subject that needs "and" is two commits. Never mix a refactor
-  with a behaviour change — the reviewer can't tell an intentional change from an
-  accident of the refactor.
-- **Builds and tests pass at THIS commit.** Rolling back to it leaves a working
-  tree (bisectable, revert-safe). Your node's `checks` enforce this.
-- **Under ~400 lines of diff.** Past that, review quality collapses. If the change
-  is bigger, it's more than one commit — it should have been more than one node;
-  flag it rather than growing the commit.
+- **One concern.** A subject that needs "and" is two commits. Never mix a refactor with a behaviour change — the reviewer can't tell an intentional change from an accident of the refactor.
+- **Builds and tests pass at THIS commit.** Rolling back to it leaves a working tree (bisectable, revert-safe). Your node's `checks` enforce this.
+- **Under ~400 lines of diff.** Past that, review quality collapses. If the change is bigger, it's more than one commit — it should have been more than one node; flag it rather than growing the commit.
 
 ## Message format (Conventional Commits + the seven rules)
 
@@ -33,13 +26,9 @@ to reverse-engineer intent from the diff.
 <footers>                       ← Refs #123 · BREAKING CHANGE: <what + migration>
 ```
 
-- **Subject** completes: "If applied, this commit will `<subject>`." Imperative
-  ("Add", not "Added"/"Adds"). No trailing period.
-- **Body** is the *why* and the non-obvious *what* — motivation, constraints, the
-  incident. Omit it only for a truly trivial change. Write it plainly — concrete
-  over generic, no ceremony.
-- **Footer**: `Refs #<issue>` (the system adds `Closes #N` on the PR, not here);
-  `BREAKING CHANGE:` for any incompatible change, with the migration.
+- **Subject** completes: "If applied, this commit will `<subject>`." Imperative ("Add", not "Added"/"Adds"). No trailing period.
+- **Body** is the *why* and the non-obvious *what* — motivation, constraints, the incident. Omit it only for a truly trivial change. Write it plainly — concrete over generic, no ceremony.
+- **Footer**: `Refs #<issue>` (the system adds `Closes #N` on the PR, not here); `BREAKING CHANGE:` for any incompatible change, with the migration.
 
 | type | use |
 |---|---|
@@ -65,5 +54,4 @@ One `type` per commit — if two apply, it's two commits.
 
 ## Check before committing
 
-Subject ≤50 and imperative · body says *why* · one concern · one `type` · builds+tests
-green at this commit · no "and".
+Subject ≤50 and imperative · body says *why* · one concern · one `type` · builds+tests green at this commit · no "and".

@@ -38,9 +38,7 @@ EXPOSE 8080
 ENTRYPOINT ["/quack"]
 ```
 
-Build flags: `-s` drops the symbol table, `-w` the DWARF debug info, `-trimpath` strips local
-filesystem paths from the binary (smaller + reproducible). `CGO_ENABLED=0` makes it static, which is
-what allows the `static-debian12` base.
+Build flags: `-s` drops the symbol table, `-w` the DWARF debug info, `-trimpath` strips local filesystem paths from the binary (smaller + reproducible). `CGO_ENABLED=0` makes it static, which is what allows the `static-debian12` base.
 
 ## 2. Safe `.dockerignore`
 
@@ -78,13 +76,11 @@ Applied to every long-running service (`db`, `searxng`, `crawl4ai`, `app`).
 
 ## Deferred compose patterns — add when the trigger fires
 
-These are intentionally NOT in quack's compose today (single-host dev stack). Each block notes when
-it earns its place.
+These are intentionally NOT in quack's compose today (single-host dev stack). Each block notes when it earns its place.
 
 ### Readiness gating — *add when first requests flakily fail because a backend isn't ready*
 
-`depends_on: condition: service_started` only waits for the container to *start*. For real readiness,
-give the dependency a healthcheck and depend on `service_healthy`:
+`depends_on: condition: service_started` only waits for the container to *start*. For real readiness, give the dependency a healthcheck and depend on `service_healthy`:
 
 ```yaml
   crawl4ai:
@@ -169,8 +165,7 @@ FROM searxng/searxng:latest@sha256:abc123…
 
 ## 5. CI/CD build (live) — `.github/workflows/ci.yaml` + `cd.yaml`
 
-CI builds the image on every PR (no push); CD publishes to GHCR on a `v*.*.*` tag. Both use the
-GitHub Actions BuildKit cache (`type=gha`), which is wiped-per-run-proof and zero-config:
+CI builds the image on every PR (no push); CD publishes to GHCR on a `v*.*.*` tag. Both use the GitHub Actions BuildKit cache (`type=gha`), which is wiped-per-run-proof and zero-config:
 
 ```yaml
 # ci.yaml — validate the build, don't push
@@ -199,12 +194,9 @@ GitHub Actions BuildKit cache (`type=gha`), which is wiped-per-run-proof and zer
     cache-to: type=gha,mode=max
 ```
 
-Cut a release: `git tag v1.2.3 && git push origin v1.2.3`. `latest` moves only on tags, never on a
-push to main. Next steps if needed: a Trivy scan job (`aquasecurity/trivy-action`, upload SARIF) and
-cosign keyless signing (`sigstore/cosign-installer` + `id-token: write`).
+Cut a release: `git tag v1.2.3 && git push origin v1.2.3`. `latest` moves only on tags, never on a push to main. Next steps if needed: a Trivy scan job (`aquasecurity/trivy-action`, upload SARIF) and cosign keyless signing (`sigstore/cosign-installer` + `id-token: write`).
 
-For a non-GitHub runner, `type=registry` cache is the portable equivalent:
-`--cache-to type=registry,ref=<reg>/quack-cache:build --cache-from type=registry,ref=<reg>/quack-cache:build`.
+For a non-GitHub runner, `type=registry` cache is the portable equivalent: `--cache-to type=registry,ref=<reg>/quack-cache:build --cache-from type=registry,ref=<reg>/quack-cache:build`.
 
 ## 6. Build secrets — *add when a build step needs a credential*
 

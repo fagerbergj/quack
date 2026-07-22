@@ -1,14 +1,12 @@
 # Quack CLI/TUI — implementation recipes
 
-Copy-ready skeletons for the decisions in `SKILL.md`. Read the matching section when you implement that
-piece. These are scaffolds to adapt, not drop-in final code.
+Copy-ready skeletons for the decisions in `SKILL.md`. Read the matching section when you implement that piece. These are scaffolds to adapt, not drop-in final code.
 
 ---
 
 ## 1. The Bubble Tea model (Init / Update / View)
 
-`internal/tui/chat.go`. `Update` is a pure reducer — every branch returns a new model and maybe a
-`tea.Cmd`. No I/O in the body.
+`internal/tui/chat.go`. `Update` is a pure reducer — every branch returns a new model and maybe a `tea.Cmd`. No I/O in the body.
 
 ```go
 package tui
@@ -66,8 +64,7 @@ Run it from the command layer: `tea.NewProgram(New(client, id), tea.WithAltScree
 
 ## 2. The SSE pump — a self-re-issuing tea.Cmd (principle 2)
 
-One event per message; `Update` re-issues to get the next. `m.sub` is a channel the client fills from the
-HTTP/SSE response body.
+One event per message; `Update` re-issues to get the next. `m.sub` is a channel the client fills from the HTTP/SSE response body.
 
 ```go
 type sseMsg struct{ ev stream.Event }
@@ -84,8 +81,7 @@ func waitForEvent(sub <-chan stream.Event) tea.Cmd {
 }
 ```
 
-The client (`internal/cli`) owns the actual `http.Client` + SSE parse, decoding the wire vocabulary into
-`stream.Event` and pushing onto `sub`. The TUI never touches `net/http`.
+The client (`internal/cli`) owns the actual `http.Client` + SSE parse, decoding the wire vocabulary into `stream.Event` and pushing onto `sub`. The TUI never touches `net/http`.
 
 ---
 
@@ -114,8 +110,7 @@ func TestUpdate_NodeEventReissuesPump(t *testing.T) {
 }
 ```
 
-Assert on the returned `cmd`'s presence/type, not by executing it (executing it would block on the
-channel — that's tier 2's job).
+Assert on the returned `cmd`'s presence/type, not by executing it (executing it would block on the channel — that's tier 2's job).
 
 ---
 
@@ -138,8 +133,7 @@ func TestTUI_RendersRun(t *testing.T) {
 }
 ```
 
-Regenerate after an intended visual change: `go test -run TUI -update ./internal/tui/...`, then eyeball
-the `.golden` diff (a Lipgloss tweak rewrites all of them — confirm it's what you meant).
+Regenerate after an intended visual change: `go test -run TUI -update ./internal/tui/...`, then eyeball the `.golden` diff (a Lipgloss tweak rewrites all of them — confirm it's what you meant).
 
 ---
 
@@ -206,8 +200,7 @@ func Print(ctx context.Context, c *Client, prompt string) error {
 }
 ```
 
-Color: rely on Lipgloss/`NO_COLOR` auto-detect for any styled bits, but the validation loop's
-`quack -p … | cat` check is the real gate — stdout must be escape-free when not a tty.
+Color: rely on Lipgloss/`NO_COLOR` auto-detect for any styled bits, but the validation loop's `quack -p … | cat` check is the real gate — stdout must be escape-free when not a tty.
 
 ---
 
@@ -234,9 +227,7 @@ func main() {
 }
 ```
 
-Each `cmdX()` returns a `*cobra.Command` whose `RunE` does one thing: build a `cli.Client`, call the one
-shared action func (the same func the in-TUI slash-command calls), print/stream the result. Keep the
-business logic out of `RunE` so it's unit-testable without cobra.
+Each `cmdX()` returns a `*cobra.Command` whose `RunE` does one thing: build a `cli.Client`, call the one shared action func (the same func the in-TUI slash-command calls), print/stream the result. Keep the business logic out of `RunE` so it's unit-testable without cobra.
 
 ---
 
