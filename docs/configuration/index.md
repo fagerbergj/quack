@@ -34,6 +34,7 @@ Each section gets its own page below:
 - **[Auth](auth.md)** — inbound OIDC and the gateway's trusted headers.
 - **[Workspace](workspace.md)** — the filesystem jail, the OS sandbox, and the guard ladder.
 - **[Deployment shapes](deployment.md)** — three full worked examples ([`examples/`](examples/)): fully local, Docker stack, remote full-featured.
+- **[Observability](observability.md)** — the OTel traces and metrics quack emits, and what each one is for.
 
 The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md).
 

@@ -82,13 +82,14 @@ flowchart TB
 - **Memory** - only adversarially-vetted findings are committed durably (semantic + structured), so quack learns over time without trusting a worker's raw claim: [`docs/configuration/stores.md`](docs/configuration/stores.md).
 - **Models, tools, stores, auth, workspace sandboxing** - the full configuration reference: [`docs/configuration/`](docs/configuration/).
 - **API surface** - REST, MCP, A2A, and streaming: [`docs/api.md`](docs/api.md).
+- **Observability** - OTel traces and metrics, emission-only: [`docs/configuration/observability.md`](docs/configuration/observability.md).
 - **Clients** - the CLI ([`docs/cli.md`](docs/cli.md)) and the web SPA ([`docs/ui.md`](docs/ui.md)); Opencode and Claude Code talk to quack over MCP, the GitHub App over its own webhook ([`docs/extensions/github.md`](docs/extensions/github.md)).
 
 ## Documentation
 
 For more information on how to work with and configure Quack, see:
 
-- [`docs/`](docs/) - human-written setup and configuration guides: the CLI, the web SPA, the API surface, configuration (models, agents, the trust gate, stores, auth, workspace, deployment shapes), the GitHub App, and the FAQ.
+- [`docs/`](docs/) - human-written setup and configuration guides: the CLI, the web SPA, the API surface, configuration (models, agents, the trust gate, stores, auth, workspace, deployment shapes, observability), the GitHub App, and the FAQ.
 - [`openwiki/`](openwiki/) - an auto-generated code reference (architecture, workflows, operations), refreshed from the code. Start here for "how does the code actually do X."
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - the issue → plan → implement → review → merge loop, dev setup, CI/CD.
 - [`AGENTS.md`](AGENTS.md) - the agent/developer guide and hard rules.
