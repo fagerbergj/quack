@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// requireBwrap skips a test when bubblewrap isn't usable on this host — LOUDLY
+// requireBwrap skips a test when bubblewrap isn't usable on this host - LOUDLY
 // (with the reason), never by quietly passing: a sandbox test that silently
 // no-ops is worse than no test.
 func requireBwrap(t *testing.T) {
@@ -32,7 +32,7 @@ func sandboxCaps(t *testing.T, mode SandboxMode) Caps {
 }
 
 // TestSandboxBlocksReadsOutsideTheJail is the whole point of the sandbox: a
-// child process — even one the metachar wall happily allows, and even `sh -c` —
+// child process - even one the metachar wall happily allows, and even `sh -c` -
 // cannot READ a file outside its working directory. The same command with
 // sandbox: none succeeds, which is what proves this test exercises the OS
 // boundary rather than some path check.
@@ -116,12 +116,12 @@ func TestSandboxAllowsWorkInsideTheJail(t *testing.T) {
 
 // TestSandboxMountsTheWorkRootAtOneFixedPath: the child's view of its own
 // workspace must be the MODEL's view of it. Caps.WorkRoot (the node's own
-// directory — the invisible root every fs tool resolves against) appears inside
+// directory - the invisible root every fs tool resolves against) appears inside
 // the namespace at SandboxWorkRoot and nowhere else, so `pwd` in a subdirectory
 // prints the same trailing path the tools use, with no host prefix at all.
 //
 // Before this, the child was chdir'd to the HOST path, so `pwd` printed the
-// server's workspace root, the chat id and the node id — and the model, handed a
+// server's workspace root, the chat id and the node id - and the model, handed a
 // second name for the one place it already knew as "/quack", went looking for
 // its workspace on the host filesystem (see internal/tools/sandbox_namespace_test.go).
 func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
@@ -141,14 +141,14 @@ func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
 	}
 	got := strings.TrimSpace(res.Output)
 	if want := SandboxWorkRoot + "/quack"; got != want {
-		t.Errorf("pwd = %q, want %q — the child must see the workspace at the fixed mount, not on the host", got, want)
+		t.Errorf("pwd = %q, want %q - the child must see the workspace at the fixed mount, not on the host", got, want)
 	}
 	if strings.Contains(got, work) {
 		t.Errorf("pwd = %q leaks the host path %q into the model's context", got, work)
 	}
 
 	// The write still lands on the real host tree (the fixed path is a MOUNT, not
-	// a copy) — the guarantee #214 exists for.
+	// a copy) - the guarantee #214 exists for.
 	if res, err := RunArgv(context.Background(), repo, []string{"sh", "-c", "echo built > ../built.txt"}, caps); err != nil || res.ExitCode != 0 {
 		t.Fatalf("write into the node's own workspace: err=%v exit=%d output=%q", err, res.ExitCode, res.Output)
 	}
@@ -164,12 +164,12 @@ func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
 		t.Fatalf("stray write errored (want a clean non-zero exit): %v", err)
 	}
 	if res.ExitCode == 0 {
-		t.Errorf("a write to the sandbox root succeeded (%q) — it would vanish with the mount", res.Output)
+		t.Errorf("a write to the sandbox root succeeded (%q) - it would vanish with the mount", res.Output)
 	}
 }
 
 // TestSandboxToolchainAndHomeSurviveTheFixedMount: remapping the WORKSPACE must not
-// disturb the other two things a real build needs — a toolchain from exec_path
+// disturb the other two things a real build needs - a toolchain from exec_path
 // (bound read-only at its OWN host path, because RunArgv resolves argv[0] on the
 // host and hands the child that absolute path) and the isolated $HOME the caches
 // land in (npm's _cacache, GOCACHE, ~/.gitconfig).
@@ -200,7 +200,7 @@ func TestSandboxToolchainAndHomeSurviveTheFixedMount(t *testing.T) {
 			err, res.ExitCode, res.Output)
 	}
 	if got := strings.TrimSpace(res.Output); got != caps.HomeDir {
-		t.Errorf("child HOME = %q, want the isolated home %q — a toolchain's cache must not land in the workspace",
+		t.Errorf("child HOME = %q, want the isolated home %q - a toolchain's cache must not land in the workspace",
 			got, caps.HomeDir)
 	}
 	if _, err := os.Stat(filepath.Join(caps.HomeDir, ".cache", "probe")); err != nil {
@@ -208,7 +208,7 @@ func TestSandboxToolchainAndHomeSurviveTheFixedMount(t *testing.T) {
 	}
 }
 
-// TestSandboxBlocksWritesOutsideTheJail: read containment is half of it — a
+// TestSandboxBlocksWritesOutsideTheJail: read containment is half of it - a
 // child must not be able to WRITE outside its working dir either.
 func TestSandboxBlocksWritesOutsideTheJail(t *testing.T) {
 	requireBwrap(t)

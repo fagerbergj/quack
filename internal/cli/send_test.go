@@ -12,7 +12,7 @@ import (
 )
 
 // TestRunChatSendCompleted: a full run streams only the final answer to
-// stdout — no trace, no ANSI, exit 0 (plan test case 3).
+// stdout - no trace, no ANSI, exit 0 (plan test case 3).
 func TestRunChatSendCompleted(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +80,7 @@ func TestRunChatSendNeedsInput(t *testing.T) {
 	}
 }
 
-// TestRunChatSendFailed: a stream error is a failure — exit 1, message on
+// TestRunChatSendFailed: a stream error is a failure - exit 1, message on
 // stderr, empty stdout (plan test case 6).
 func TestRunChatSendFailed(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
@@ -105,7 +105,7 @@ func TestRunChatSendFailed(t *testing.T) {
 
 // TestRunChatSendCompleted_DiscardsPreamble: narration the orchestrator emits
 // before a top-level tool call ("I'll check the plan...") must not survive
-// into the final printed answer — only text after the last tool call does
+// into the final printed answer - only text after the last tool call does
 // (#387, mirrors internal/acp/translate.go's per-round reset, #358).
 func TestRunChatSendCompleted_DiscardsPreamble(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())

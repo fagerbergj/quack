@@ -10,12 +10,12 @@ import (
 )
 
 // The review MCP surface (#451) gives the EXTERNAL (ACP) code-reviewer a real
-// agentic channel for its deliverable — line-anchored inline comments and a
-// verdict — instead of the gate reverse-engineering them out of a VERDICT:/
+// agentic channel for its deliverable - line-anchored inline comments and a
+// verdict - instead of the gate reverse-engineering them out of a VERDICT:/
 // FINDINGS: tail in the answer (vetting.augmentFromAnswer, still the fallback).
 // It rides the SAME per-node loopback server and secret as the memory surface
 // (memorymcp.go); registerReviewTools is called only when the node's session
-// carries a ReviewStage — minted exclusively for a review-delivery node, so the
+// carries a ReviewStage - minted exclusively for a review-delivery node, so the
 // implementer/explorer and every native agent never see these tools.
 
 // stageReviewCommentInput is stage_review_comment's input: one inline finding.
@@ -59,8 +59,8 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 }
 
 // stagePRInput is stage_pr's input: the title + body the implementer authored
-// with the pr-authoring skill (that skill owns the template — the repo's or its
-// default — so nothing here is deterministic beyond requiring both fields).
+// with the pr-authoring skill (that skill owns the template - the repo's or its
+// default - so nothing here is deterministic beyond requiring both fields).
 type stagePRInput struct {
 	Title string `json:"title" jsonschema:"the PR title: type(scope): subject, imperative, <=50 chars, references the issue"`
 	Body  string `json:"body" jsonschema:"the PR description authored per the pr-authoring skill (what/why/how/verify, repo template or the skill's default)"`

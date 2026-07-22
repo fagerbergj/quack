@@ -12,7 +12,7 @@ import (
 
 // SSRF protection. The web-researcher's `web_fetch` tool retrieves
 // user/agent-chosen URLs server-side, and the crawl4ai render backend fetches
-// URLs on our behalf too — both are SSRF vectors. We defend in two layers:
+// URLs on our behalf too - both are SSRF vectors. We defend in two layers:
 //
 //  1. ValidateURL rejects non-http(s) schemes and literal addresses that resolve
 //     to private / loopback / link-local ranges (incl. the 169.254.169.254 cloud
@@ -49,7 +49,7 @@ func ValidateURL(raw string) (*url.URL, error) {
 
 // blockedIP reports whether ip is in a range we refuse to connect to:
 // loopback, private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local
-// (169.254/16, fe80::/10 — covers the cloud metadata endpoint), CGNAT
+// (169.254/16, fe80::/10 - covers the cloud metadata endpoint), CGNAT
 // (100.64/10), unspecified, or multicast.
 func blockedIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||

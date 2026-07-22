@@ -111,7 +111,7 @@ export const JudgeRunning: Story = {
   ),
 }
 
-// Every stage card shows the model that produced it (RunModel, next to the timer) —
+// Every stage card shows the model that produced it (RunModel, next to the timer) -
 // each stage can run a different model (e.g. a cheaper judge model).
 export const JudgeRoundsAllDone: Story = {
   args: {
@@ -151,7 +151,7 @@ export const Truncated: Story = {
   },
 }
 
-// #379: a node whose worker run streamed 80 tool-call events — the
+// #379: a node whose worker run streamed 80 tool-call events - the
 // performance case the streaming-update fix targets (see messageParts.ts /
 // AgentParts.test.ts). Renders via the same WorkerCard + ActivityList path
 // as a live run; ActivityList windows to its most recent items so this stays
@@ -210,7 +210,7 @@ export const Paused: Story = {
 }
 
 // A running node with a queued (not-yet-delivered) message showing the ✉
-// badge — the message itself is edited/removed in the popup (#384).
+// badge - the message itself is edited/removed in the popup (#384).
 export const RunningWithQueuedMessage: Story = {
   render: () => (
     <DagNode
@@ -268,7 +268,7 @@ export const LongContentManyRounds: Story = {
 // ---- 0.9.0: ⋮ overflow menu + needs_input (#384/#265 follow-up) ------------
 
 // A mid-node HITL question (StatusDot amber, matching needs_input everywhere
-// else in the app) — answering it happens in the popup (menu → "Answer
+// else in the app) - answering it happens in the popup (menu → "Answer
 // question…"), not here.
 export const NeedsInput: Story = {
   args: {
@@ -283,7 +283,7 @@ export const NeedsInput: Story = {
 }
 
 // The ⋮ menu opened on a running node: Pause + Cancel one click away, plus
-// "Queue a message…" (opens the popup — it needs the input).
+// "Queue a message…" (opens the popup - it needs the input).
 export const OverflowMenuRunning: Story = {
   render: () => (
     <DagNode
@@ -341,7 +341,7 @@ export const OverflowMenuNeedsInput: Story = {
   },
 }
 
-// A terminal node (done/failed/cancelled) has no ⋮ menu at all — nothing left
+// A terminal node (done/failed/cancelled) has no ⋮ menu at all - nothing left
 // to do. Regression guard for the menu's terminal-state hiding.
 export const OverflowMenuHiddenOnTerminal: Story = {
   args: {
@@ -363,7 +363,7 @@ const markdownVerdict = [
 ].join('\n')
 
 // The judge verdict collapses to one line by default, matching ThinkBlock's
-// affordance — a truncated preview beside the round header, not a standing
+// affordance - a truncated preview beside the round header, not a standing
 // paragraph.
 export const JudgeVerdictCollapsed: Story = {
   args: {
@@ -378,7 +378,7 @@ export const JudgeVerdictCollapsed: Story = {
   },
 }
 
-// Clicking the verdict preview opens a popup with the full verdict — rendered
+// Clicking the verdict preview opens a popup with the full verdict - rendered
 // as formatted markdown (bold, list, link), not raw text or an inline expand.
 export const JudgeVerdictPopup: Story = {
   ...JudgeVerdictCollapsed,
@@ -424,8 +424,8 @@ export const AnswerPopup: Story = {
 
 // A mechanical deterministic-check retry (the gate's continuation loop handing
 // the worker another tool-bearing round after e.g. a failed `go test`) is a
-// SEPARATE run under the hood but renders as ONE continuous activity feed —
-// not a second "1 step" block — because it isn't a meaningful stage boundary
+// SEPARATE run under the hood but renders as ONE continuous activity feed -
+// not a second "1 step" block - because it isn't a meaningful stage boundary
 // the way a judge-triggered revise is. Regression guard for the render-level
 // grouping in groupWorkerRuns (DagNode.tsx).
 export const DeterministicRetryOneFeed: Story = {
@@ -438,7 +438,7 @@ export const DeterministicRetryOneFeed: Story = {
         activity: researchActivity,
       },
       {
-        // Same stage ('worker'), a NEW run_id — the gate's continuation after a
+        // Same stage ('worker'), a NEW run_id - the gate's continuation after a
         // failed deterministic check, not a judge-triggered revise.
         runId: 'worker-cont1', agent: 'web-researcher', stage: 'worker', done: true, model: 'qwen3-30b-a3b',
         activity: [{ kind: 'tool', tool: { callId: 'c9', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true } }],

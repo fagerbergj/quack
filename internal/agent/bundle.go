@@ -11,7 +11,7 @@ import (
 // Bundle is a declarative agent definition: an agent-card.json (identity +
 // skills) plus a prompt.md (the system instruction). Config binds the model
 // and the built-in tool selection separately, so defining a new agent is just
-// dropping a bundle directory (under agents/) and adding a config entry — no
+// dropping a bundle directory (under agents/) and adding a config entry - no
 // recompile. Bundles are read from disk in cwd first (live repo edits), then
 // the embedded copy (so an installed binary works from any directory).
 type Bundle struct {
@@ -68,7 +68,7 @@ func LoadBundle(dir string) (*Bundle, error) {
 	return &Bundle{Card: card, Prompt: prompt}, nil
 }
 
-// LoadBundleMemory reads an optional memory.md from the bundle directory — the
+// LoadBundleMemory reads an optional memory.md from the bundle directory - the
 // agent's "what to remember" guidance (M6). Returns "" if absent or empty. It is
 // appended to the agent's behaviour only when the memory feature is on, so the
 // guidance never dangles (and references no tools) when memory is disabled. This

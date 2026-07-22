@@ -24,7 +24,7 @@ import (
 // defaultReadLimit is read_file's default line window when `limit` is unset.
 // 2000 (not 500) so ordinary source files read WHOLE in one call: a truncated
 // read of a file the model needs entire (e.g. to append to it) sent weaker
-// models into re-reading the same head instead of paging — a harness-induced
+// models into re-reading the same head instead of paging - a harness-induced
 // loop (the repeat guard now backstops it, but the fix is to not truncate a
 // normal file at all).
 const defaultReadLimit = 2000
@@ -34,7 +34,7 @@ const defaultReadLimit = 2000
 const binarySniffBytes = 8 * 1024
 
 // grep's size bounds. caps.MaxResults bounds how MANY matches come back, not how
-// BIG they are — one "line" of a minified bundle is megabytes (a live grep once
+// BIG they are - one "line" of a minified bundle is megabytes (a live grep once
 // returned 48 MB). Bound the bytes, not just the count.
 const (
 	grepMatchMaxChars = 400             // per match, middle-elided (a minified line has no value anyway)
@@ -56,7 +56,7 @@ func truncateMiddle(s string, maxChars int) string {
 }
 
 // fsBinding is the (userID, jail, caps) triple every filesystem tool closes over
-// at construction — no identity parsing inside tool handlers. Tool logic lives in
+// at construction - no identity parsing inside tool handlers. Tool logic lives in
 // methods on fsBinding so it's unit-testable without ADK's agent.Context; the
 // functiontool closure is a one-line adapter.
 type fsBinding struct {
@@ -69,7 +69,7 @@ type fsBinding struct {
 	// chatID is the per-chat scope this call's paths resolve under
 	// (<root>/<user>/<chatID>/…). "" resolves the per-user root.
 	chatID string
-	// nodeDir is the calling node's directory within the chat scope — the node's
+	// nodeDir is the calling node's directory within the chat scope - the node's
 	// INVISIBLE ROOT: every model-supplied path is relative to it, applied only at
 	// resolve time, so concurrent nodes work in separate trees without the model
 	// ever seeing the dir. "" outside a gated node.
@@ -78,7 +78,7 @@ type fsBinding struct {
 
 // withCwd returns a copy of b bound to this call's context: the per-chat scope
 // and the calling node's dir (both from the advisor-thread marker in ctx) plus
-// the session working directory (ctx state; "" — the node's own root — until the
+// the session working directory (ctx state; "" - the node's own root - until the
 // worker cd's). A value receiver makes the copy; the shared startup binding is
 // never mutated.
 func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
@@ -91,7 +91,7 @@ func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
 // place of a raw b.jail.Resolve: a relative p resolves against b.cwd under the
 // node's own root, a "/"-prefixed p against the chat root (see jailPath),
 // everything scoped under b.chatID, and containment is still enforced by
-// Jail.Resolve — no cwd + path can escape the chat's (nor the user's) jail.
+// Jail.Resolve - no cwd + path can escape the chat's (nor the user's) jail.
 func (b fsBinding) resolve(p string) (string, error) {
 	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
@@ -121,7 +121,7 @@ func isBinary(b []byte) bool {
 }
 
 // readCapped reads up to max+1 bytes from r, reporting whether the read was
-// capped (more data existed) so callers can set `truncated` — never an error.
+// capped (more data existed) so callers can set `truncated` - never an error.
 func readCapped(r io.Reader, max int64) (data []byte, capped bool, err error) {
 	data, err = io.ReadAll(io.LimitReader(r, max+1))
 	if err != nil {
@@ -164,7 +164,7 @@ func newReadFile(d Deps) (tool.Tool, error) {
 			Description: fmt.Sprintf("Read a text file from your workspace. `path` is workspace-relative (never "+
 				"absolute). `offset` (0-based line, default 0) and `limit` (lines, default %d) window a large "+
 				"file; the result reports `total_lines` and sets `truncated: true` when more content exists than "+
-				"was returned. When truncated, the result gives `next_offset` — call again with `offset: next_offset` "+
+				"was returned. When truncated, the result gives `next_offset` - call again with `offset: next_offset` "+
 				"to continue (or read the file's END with `offset: total_lines - limit`). Never an error. Binary files are rejected.",
 				defaultReadLimit),
 		},
@@ -174,11 +174,11 @@ func newReadFile(d Deps) (tool.Tool, error) {
 
 // readFile is read_file's logic. Binary detection: a NUL byte in the first
 // binarySniffBytes is a hard error. Caps: the file is read up to
-// caps.MaxReadBytes; if more exists, `truncated` is set — never an error. On
+// caps.MaxReadBytes; if more exists, `truncated` is set - never an error. On
 // top of that, `offset`/`limit` window the lines actually read; a window
 // short of the read data's line count also sets `truncated`. total_lines
 // counts lines within the (possibly byte-capped) data actually read, so on a
-// byte-capped file it is a lower bound on the file's true line count —
+// byte-capped file it is a lower bound on the file's true line count -
 // `truncated: true` signals that.
 func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 	real, err := b.resolve(a.Path)
@@ -284,7 +284,7 @@ func newListDir(d Deps) (tool.Tool, error) {
 			Name: "list_dir",
 			Description: fmt.Sprintf("List files and directories in your workspace. `path` is workspace-relative "+
 				"(default: workspace root). `depth` bounds how many levels are listed (default 2). Returned "+
-				"paths are workspace-relative. Caps at %d entries; `truncated: true` means more exist — narrow "+
+				"paths are workspace-relative. Caps at %d entries; `truncated: true` means more exist - narrow "+
 				"`path`, or use `glob`/`grep` instead.", b.caps.MaxListEntries),
 		},
 		func(ctx agent.Context, a listDirArgs) (listDirResult, error) { return b.withCwd(ctx).listDir(a) },
@@ -390,7 +390,7 @@ func newGlob(d Deps) (tool.Tool, error) {
 			Name: "glob",
 			Description: fmt.Sprintf("Find files by name pattern (doublestar glob syntax, e.g. `**/*.go` or "+
 				"`src/**/*.test.ts`). `path` scopes the search (default: workspace root). Returned paths are "+
-				"workspace-relative. Caps at %d results; `truncated: true` means more exist — narrow the "+
+				"workspace-relative. Caps at %d results; `truncated: true` means more exist - narrow the "+
 				"pattern.", b.caps.MaxResults),
 		},
 		func(ctx agent.Context, a globArgs) (globResult, error) { return b.withCwd(ctx).glob(a) },
@@ -488,7 +488,7 @@ func newGrep(d Deps) (tool.Tool, error) {
 			Description: fmt.Sprintf("Search file contents by regular expression (Go/RE2 syntax) across your "+
 				"workspace. `path` scopes the search (default: workspace root); `glob` filters which files are "+
 				"searched by basename (e.g. `*.go`); `context` adds N surrounding lines to each match's `text`. "+
-				"Binary files are skipped. Caps at %d matches; `truncated: true` means more exist — narrow the "+
+				"Binary files are skipped. Caps at %d matches; `truncated: true` means more exist - narrow the "+
 				"pattern or path.", b.caps.MaxResults),
 		},
 		func(ctx agent.Context, a grepArgs) (grepResult, error) { return b.withCwd(ctx).grep(a) },
@@ -529,7 +529,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 			return nil
 		}
 		if d.IsDir() {
-			// Never descend into vendored/generated trees — but honour an explicit
+			// Never descend into vendored/generated trees - but honour an explicit
 			// request for one (`path: "node_modules/foo"`), which only ever means it.
 			if p != base && workspace.SkipDir(d.Name()) {
 				return filepath.SkipDir

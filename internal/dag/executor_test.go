@@ -172,7 +172,7 @@ func equalStrings(a, b []string) bool {
 
 // TestDagStream_SteeredRunEmitsNodeSteered: the first event of a -sN steered
 // re-run announces node_steered (with the delivered guidance) BEFORE the run's
-// agent_start — each generation exactly once. Regression: live e2e 2026-07-05,
+// agent_start - each generation exactly once. Regression: live e2e 2026-07-05,
 // steers landed server-side but the UI never heard about them (no emitter).
 func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 	agentByID := map[string]string{"n1": "web-researcher"}

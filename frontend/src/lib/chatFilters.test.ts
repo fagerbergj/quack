@@ -62,7 +62,7 @@ describe('computeFacets', () => {
   })
 
   // #417: queued (admitted but waiting behind max_active_runs) is a distinct
-  // ChatStatus from running — it must appear in the status facet with its own
+  // ChatStatus from running - it must appear in the status facet with its own
   // label, not fold into or get dropped alongside running.
   it('labels a queued chat distinctly from a running one', () => {
     const facets = computeFacets([DIRECT, chat({ id: 'q1', status: 'queued' })])

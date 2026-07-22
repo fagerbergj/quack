@@ -9,7 +9,7 @@ import (
 
 // queuedMsg is one message in a running node's queue: appended by the user,
 // drained (all at once, joined) at the node's next turn boundary. Delivered
-// messages are kept (for history) but are immutable — edit/remove only act on
+// messages are kept (for history) but are immutable - edit/remove only act on
 // the not-yet-delivered ones.
 type queuedMsg struct {
 	ID        string
@@ -26,15 +26,15 @@ func newMsgID() string {
 
 // nodeControl is the live handle to one running gated node. It implements
 // vetting.NodeControl: cancel, pause, and the queue drain are cooperative,
-// taking effect at the gate's stage boundaries (not mid-model-call — see docs
-// Phase 3c) — EXCEPT cancel, whose tool-layer check (NodeCancelled) makes it
+// taking effect at the gate's stage boundaries (not mid-model-call - see docs
+// Phase 3c) - EXCEPT cancel, whose tool-layer check (NodeCancelled) makes it
 // land within one tool call instead of waiting for a boundary.
 type nodeControl struct {
 	mu        sync.Mutex
 	cancelled bool
 	paused    bool
 	queue     []*queuedMsg
-	drained   [][]string // one entry per TakeQueued() drain, in order — generation N (the -sN run suffix) reads drained[N-1]
+	drained   [][]string // one entry per TakeQueued() drain, in order - generation N (the -sN run suffix) reads drained[N-1]
 }
 
 func (c *nodeControl) Cancelled() bool {
@@ -51,7 +51,7 @@ func (c *nodeControl) Paused() bool {
 
 // TakeQueued drains every not-yet-delivered queued message (in order),
 // marking each delivered, and returns them joined into one guidance block
-// ("" if the queue had nothing pending). This is the ONLY delivery path —
+// ("" if the queue had nothing pending). This is the ONLY delivery path -
 // unlike the old steer, nothing reaches the node mid-turn; a queued message
 // only ever lands here, at a gate-stage boundary.
 func (c *nodeControl) TakeQueued() string {
@@ -76,7 +76,7 @@ func (c *nodeControl) TakeQueued() string {
 }
 
 // drainedGeneration returns the joined guidance text of the Nth drain
-// (1-based — the -sN run-ID suffix), or "" if unknown.
+// (1-based - the -sN run-ID suffix), or "" if unknown.
 func (c *nodeControl) drainedGeneration(n int) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -148,7 +148,7 @@ func (c *nodeControl) removeQueued(id string) bool {
 }
 
 // snapshotQueue returns a copy of the current queue (delivered + pending), in
-// order — for the node_queue SSE sync event.
+// order - for the node_queue SSE sync event.
 func (c *nodeControl) snapshotQueue() []queuedMsg {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -162,7 +162,7 @@ func (c *nodeControl) snapshotQueue() []queuedMsg {
 // runControls tracks per-chat, per-node controls for active runs so the
 // orchestrator can cancel, pause, or queue a message for a single running
 // node while the DAG runs.
-// ponytail: a plain mutex-guarded map — one active run per chat, a few nodes.
+// ponytail: a plain mutex-guarded map - one active run per chat, a few nodes.
 type runControls struct {
 	mu        sync.Mutex
 	m         map[string]map[string]*nodeControl // chatID → nodeID → control (live)
@@ -210,7 +210,7 @@ func (r *runControls) resetCancelled(chatID string) {
 
 // registerAndTakeOverride registers a live control for the node and, in the
 // SAME critical section, does an atomic, ONE-SHOT read of any pending task
-// override for it — so a SetNodeTaskOverride call racing this node's start
+// override for it - so a SetNodeTaskOverride call racing this node's start
 // either lands strictly before (the node body sees it) or is rejected
 // outright (setOverrideIfNotStarted sees the now-live control), never a
 // lost-update in between. The override is consumed (deleted) here, not just
@@ -257,7 +257,7 @@ func (r *runControls) get(chatID, nodeID string) *nodeControl {
 
 // setOverrideIfNotStarted stashes a not-yet-started node's edited task text,
 // read by graph.go's node body (effectiveTask) at registerAndTakeOverride
-// instead of the plan's own node.Task. In-memory only — it applies to the
+// instead of the plan's own node.Task. In-memory only - it applies to the
 // CURRENT run's already-built graph, not a future turn's fresh plan, which
 // would carry the edit moot anyway.
 //
@@ -266,12 +266,12 @@ func (r *runControls) get(chatID, nodeID string) *nodeControl {
 // where a node starts between a separate check-then-set: either this call
 // sees the control already live and rejects (false), or it wins and the
 // override is guaranteed visible to the node's own registerAndTakeOverride
-// (which cannot have run yet — this call and register share one mutex).
+// (which cannot have run yet - this call and register share one mutex).
 func (r *runControls) setOverrideIfNotStarted(chatID, nodeID, task string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if m := r.m[chatID]; m != nil && m[nodeID] != nil {
-		return false // already running — immutable
+		return false // already running - immutable
 	}
 	if r.overrides[chatID] == nil {
 		r.overrides[chatID] = map[string]string{}
@@ -316,7 +316,7 @@ func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 // vetting.ErrNodePaused). Returns false if no such node is running.
 //
 // ponytail note on the checkpoint: ADK v2's workflow graph is static, so the
-// gate-node's own return is what unblocks its dependents — there is no way to
+// gate-node's own return is what unblocks its dependents - there is no way to
 // literally freeze the graph mid-flight the way an ask_user HITL pause does.
 // Pause therefore behaves like cancel (the node's current attempt ends,
 // dependents proceed continue-but-warn on its partial answer) but is
@@ -324,7 +324,7 @@ func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 // see the REST handler), reusing the rest of the plan's stored outputs. It
 // is not a frozen mid-tool-call checkpoint; a true one would need the same
 // ResumeOrRequestInput machinery ask_user uses, keyed by a user-triggered
-// (not worker-raised) interrupt — a larger lift left for a follow-up.
+// (not worker-raised) interrupt - a larger lift left for a follow-up.
 func (e *Executor) PauseNode(chatID, nodeID string) bool {
 	c := e.controls.get(chatID, nodeID)
 	if c == nil {
@@ -353,7 +353,7 @@ func (e *Executor) QueueNodeMessage(chatID, nodeID, text string) (QueuedMessage,
 }
 
 // NodeQueueGuidance returns the joined guidance text of a node's Nth queue
-// drain (1-based — the -sN run-ID suffix) for the node_steered SSE event, or
+// drain (1-based - the -sN run-ID suffix) for the node_steered SSE event, or
 // "" if unknown or the node isn't live.
 func (e *Executor) NodeQueueGuidance(chatID, nodeID string, gen int) string {
 	c := e.controls.get(chatID, nodeID)
@@ -412,11 +412,11 @@ func toQueuedMessage(m queuedMsg) QueuedMessage {
 }
 
 // SetNodeTaskOverride edits a NOT-YET-STARTED node's task text. Returns false
-// if the node has already started (its control is registered) — its prompt
+// if the node has already started (its control is registered) - its prompt
 // is then immutable. Atomic against the start race (see
 // runControls.setOverrideIfNotStarted): a node beginning at the exact instant
 // of this call either loses the race outright (this returns false) or wins it
-// cleanly (the node is guaranteed to see the override) — never a lost update.
+// cleanly (the node is guaranteed to see the override) - never a lost update.
 func (e *Executor) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 	return e.controls.setOverrideIfNotStarted(chatID, nodeID, task)
 }

@@ -15,7 +15,7 @@ import (
 )
 
 // Payload keys stored on each Qdrant point. payloadScope holds the BUCKET key
-// (repo:… / role:… / user:… — see scope.go). Its wire name stays "user_id": that is
+// (repo:… / role:… / user:… - see scope.go). Its wire name stays "user_id": that is
 // what points written before the bucket model carry (their value being an agent name
 // or a raw user id), and reading them back is exactly what makes the legacy
 // entitlement in Scope.Legacy work without a migration.

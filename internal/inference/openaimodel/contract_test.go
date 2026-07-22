@@ -94,7 +94,7 @@ func TestStreaming_TranslatesContentReasoningTools(t *testing.T) {
 // TestStreaming_EmptyTurnReasoningOnly reproduces the reasoning-model failure
 // mode that bit us live: the model streams only reasoning_content and hits the
 // length limit, so content (the non-thought text) comes back empty. Per #295,
-// the adapter promotes the reasoning to the answer rather than dropping it —
+// the adapter promotes the reasoning to the answer rather than dropping it -
 // and still returns a terminal response with finish=length.
 func TestStreaming_EmptyTurnReasoningOnly(t *testing.T) {
 	srv := sseServer(t,
@@ -148,7 +148,7 @@ func TestReasoningToolCalls(t *testing.T) {
 
 // TestReasoningToolCalls_XMLFunctionStyle covers the second qwen leak format:
 // tool calls in reasoning_content as <function=name><parameter=k>v</parameter>
-// XML inside <tool_call> (observed live from qwen3.x — the Hermes-JSON regex
+// XML inside <tool_call> (observed live from qwen3.x - the Hermes-JSON regex
 // never matches it, so the calls were lost and the raw XML ended up promoted
 // to the answer). Verbatim shape from the incident, multi-line values included.
 func TestReasoningToolCalls_XMLFunctionStyle(t *testing.T) {
@@ -315,7 +315,7 @@ func TestGenerate_RecoversXMLToolCallsFromReasoning(t *testing.T) {
 
 // TestReasoningToolCalls_BareFunctionForm covers #427 (recurrence of #402):
 // a tool call leaked as the bare <function=…><parameter=…>…</parameter></function>
-// form, with no <tool_call> wrapper — the shape ask_advisor leaked as literal
+// form, with no <tool_call> wrapper - the shape ask_advisor leaked as literal
 // text into the answer instead of executing.
 func TestReasoningToolCalls_BareFunctionForm(t *testing.T) {
 	text := "Let me check with the advisor.\n" +
@@ -343,8 +343,8 @@ func TestReasoningToolCalls_BareFunctionForm(t *testing.T) {
 
 // TestReasoningToolCalls_BareFunctionForm_NoFalsePositive guards the
 // misfire case #427 called out explicitly: prose that merely mentions
-// "<function=" while also closing with "</function>" — but whose body isn't
-// clean <parameter=…> structure — must NOT be parsed as a tool call.
+// "<function=" while also closing with "</function>" - but whose body isn't
+// clean <parameter=…> structure - must NOT be parsed as a tool call.
 func TestReasoningToolCalls_BareFunctionForm_NoFalsePositive(t *testing.T) {
 	text := "The docs describe a <function=foo> tag that wraps arguments, " +
 		"closed by </function> at the end of the block."
@@ -449,7 +449,7 @@ func jsonServer(t *testing.T, body string) *httptest.Server {
 }
 
 // TestGenerate_PromotesReasoningWhenContentEmpty covers issue #295: the
-// non-streaming path (used for actual worker rounds — RunConfig.StreamingMode
+// non-streaming path (used for actual worker rounds - RunConfig.StreamingMode
 // defaults to "none") dropped a synthesized answer that landed entirely in
 // reasoning_content, leaving content empty. The answer must be recovered.
 func TestGenerate_PromotesReasoningWhenContentEmpty(t *testing.T) {

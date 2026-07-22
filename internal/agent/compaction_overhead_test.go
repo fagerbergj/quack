@@ -8,7 +8,7 @@ import "testing"
 // The live failure: a code-explorer node's first turn carried a 728-character task
 // (~200 tokens estimated) while the provider billed ~6000 prompt tokens for the
 // system instruction and tool schemas. The old model learned measured/estimate ≈ 30,
-// clamped to the 8.0 ceiling, and then multiplied EVERY later turn by 8 — declaring a
+// clamped to the 8.0 ceiling, and then multiplied EVERY later turn by 8 - declaring a
 // genuinely ~7k-token request to be 56,344 tokens, roughly 49k of which never existed.
 // Compaction then found nothing it could free on a fresh session and shredded
 // contents[0]. The worker lost its task and woke up asking:
@@ -37,7 +37,7 @@ func TestCalibrationDoesNotInflateSmallRequests(t *testing.T) {
 		t.Fatalf("calibrated = %d, want %d", got, want)
 	}
 	if got > 20_000 {
-		t.Fatalf("calibrated a ~7k-token request at %d tokens — the fixed overhead is being multiplied again", got)
+		t.Fatalf("calibrated a ~7k-token request at %d tokens - the fixed overhead is being multiplied again", got)
 	}
 
 	// And the old model's fiction, for contrast: it must not be reachable.
@@ -50,7 +50,7 @@ func TestCalibrationDoesNotInflateSmallRequests(t *testing.T) {
 	// request that comfortably fits; the new one must not.
 	const budget = 45_536
 	if got > budget {
-		t.Fatalf("a ~7k-token request calibrated to %d, over the %d budget — compaction would panic and shred the task",
+		t.Fatalf("a ~7k-token request calibrated to %d, over the %d budget - compaction would panic and shred the task",
 			got, budget)
 	}
 }

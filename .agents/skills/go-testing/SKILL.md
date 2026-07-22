@@ -1,7 +1,7 @@
 ---
 name: go-testing
 description: |
-  Best practices for unit and integration testing Go servers and TUIs — stdlib-first. Covers table-driven
+  Best practices for unit and integration testing Go servers and TUIs - stdlib-first. Covers table-driven
   tests with t.Run subtests + t.Parallel, httptest (NewRequest/NewRecorder for handlers, NewServer for
   full-chain integration + third-party API stubs), testing middleware in isolation then composed,
   interface-based dependency injection with function-field mocks (and when gomock/mockery/testify earn
@@ -9,19 +9,19 @@ description: |
   testing.B.Loop pattern, testing Charm Bubble Tea TUIs (WithInput/WithOutput/WithoutRenderer, teatest
   golden files), and a CI matrix (go test -race -coverprofile, unit-vs-integration gating).
   Use when writing or reviewing any *_test.go in the quack Go backend (internal/, cmd/) or the Bubble Tea
-  TUI (internal/tui/) — picking a test shape, mocking a dependency, testing an HTTP handler/middleware,
-  or wiring CI. Do NOT use for frontend (vitest/MSW — see frontend-design) or non-Go code.
+  TUI (internal/tui/) - picking a test shape, mocking a dependency, testing an HTTP handler/middleware,
+  or wiring CI. Do NOT use for frontend (vitest/MSW - see frontend-design) or non-Go code.
 license: MIT
 metadata:
   author: jason
   version: "1.0"
 ---
 
-# Go Testing — Servers & TUIs
+# Go Testing - Servers & TUIs
 
 ## Overview
 
-Test Go with the standard library first. `go test` is the only runner; `testing`, `net/http/httptest`, and interface injection cover ~95% of cases. Reach for a third-party package only when it earns its place (`require` vs `assert`, golden files, gomock call-order assertions). This skill is the decision layer — which test shape, what to mock, real DB vs fake. Concrete patterns are inline below.
+Test Go with the standard library first. `go test` is the only runner; `testing`, `net/http/httptest`, and interface injection cover ~95% of cases. Reach for a third-party package only when it earns its place (`require` vs `assert`, golden files, gomock call-order assertions). This skill is the decision layer - which test shape, what to mock, real DB vs fake. Concrete patterns are inline below.
 
 ## When to Use
 
@@ -32,7 +32,7 @@ Test Go with the standard library first. `go test` is the only runner; `testing`
 
 ## When NOT to Use
 
-- Frontend tests — vitest + MSW, see `frontend-design`.
+- Frontend tests - vitest + MSW, see `frontend-design`.
 - Non-Go code.
 
 ## The decisions
@@ -79,14 +79,14 @@ func (m *MockUserService) GetUserByID(id string) (*User, error) {
 ```
 
 Zero deps, sufficient for most cases. Escalate only when justified:
-- **`gomock`/`mockgen`** — when you must assert call *order*/counts on generated, type-safe mocks.
-- **`mockery`** — simpler CLI generation from interfaces.
-- **`testify`** — `require` (halt on failed precondition) vs `assert` (collect failures), or golden-file comparisons. Lean stdlib otherwise.
-- **Third-party API** — stub it with `httptest.NewServer` and point your client's `BaseURL` at `stub.URL`.
+- **`gomock`/`mockgen`** - when you must assert call *order*/counts on generated, type-safe mocks.
+- **`mockery`** - simpler CLI generation from interfaces.
+- **`testify`** - `require` (halt on failed precondition) vs `assert` (collect failures), or golden-file comparisons. Lean stdlib otherwise.
+- **Third-party API** - stub it with `httptest.NewServer` and point your client's `BaseURL` at `stub.URL`.
 
 ### 5. Database: real over sqlmock
 
-Prefer **Testcontainers for Go** (real `postgres:16-alpine` in Docker) over `sqlmock` — sqlmock hides constraint violations, JSON operators, and transaction isolation. `defer container.Terminate(ctx)`, pull the conn string, point the repo at it. Gate these behind the integration split (section 8).
+Prefer **Testcontainers for Go** (real `postgres:16-alpine` in Docker) over `sqlmock` - sqlmock hides constraint violations, JSON operators, and transaction isolation. `defer container.Terminate(ctx)`, pull the conn string, point the repo at it. Gate these behind the integration split (section 8).
 
 ### 6. Benchmarks: Go 1.24+ `b.Loop()`
 
@@ -102,13 +102,13 @@ func BenchmarkHandler(b *testing.B) {
 }
 ```
 
-`b.Loop()` prevents dead-code elimination and auto-excludes setup before the loop — no `ResetTimer`/ `StopTimer` needed. Run `go test -bench=. -benchmem`; `-count` to average, `-cpu` for parallelism.
+`b.Loop()` prevents dead-code elimination and auto-excludes setup before the loop - no `ResetTimer`/ `StopTimer` needed. Run `go test -bench=. -benchmem`; `-count` to average, `-cpu` for parallelism.
 
 ### 7. TUIs: Bubble Tea
 
-- **Stdlib-ish:** `tea.NewProgram(model{}, tea.WithInput(&in), tea.WithOutput(&buf), tea.WithoutRenderer())` — feed keystrokes via `in`, assert on `buf.String()`. `WithoutRenderer()` skips paint for speed.
+- **Stdlib-ish:** `tea.NewProgram(model{}, tea.WithInput(&in), tea.WithOutput(&buf), tea.WithoutRenderer())` - feed keystrokes via `in`, assert on `buf.String()`. `WithoutRenderer()` skips paint for speed.
 - **Golden files + model state:** `teatest.NewTestModel(t, m, teatest.WithInitialTermSize(w,h))`, read `tm.FinalOutput(t)`, compare with `teatest.RequireEqualOutput(t, out)` (updates on `-update`).
-- The fastest TUI tests drive `model.Update()` directly with `tea.Msg`s and assert on returned state — no program loop. (See `quack-cli` for quack's three-tier TUI testing strategy.)
+- The fastest TUI tests drive `model.Update()` directly with `tea.Msg`s and assert on returned state - no program loop. (See `quack-cli` for quack's three-tier TUI testing strategy.)
 
 ### 8. CI
 
@@ -122,5 +122,5 @@ func BenchmarkHandler(b *testing.B) {
 
 ## Quack notes
 
-- Backend tests already follow table-driven + `httptest`; match that. CI runs `go test ./...` (see AGENTS.md) — keep new tests passing under `-race`.
+- Backend tests already follow table-driven + `httptest`; match that. CI runs `go test ./...` (see AGENTS.md) - keep new tests passing under `-race`.
 - TUI lives at `internal/tui/` (Bubble Tea); the `quack-cli` skill owns quack's specific TUI test tiers.

@@ -111,7 +111,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
               </span>
               {/* Badge row below the title: always rendered (even with no badges)
                   so every row reserves the same vertical space and stays aligned.
-                  Repo/Issue/PR badges link out to GitHub — filtering by repo/type
+                  Repo/Issue/PR badges link out to GitHub - filtering by repo/type
                   lives entirely in the FilterPanel popover, not on the badges. */}
               <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
                 {isGithubChat(s) && ref && (

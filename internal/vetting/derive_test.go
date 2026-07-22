@@ -12,7 +12,7 @@ import (
 )
 
 // Regression (live e2e 2026-07-12): the planner cannot know a repo's check
-// commands — it authors the DAG before anything has looked at the repo — so PR
+// commands - it authors the DAG before anything has looked at the repo - so PR
 // #180's "checks are mandatory" backstop forced it to GUESS (`go build` for a
 // JavaScript repo) and rejected 7 plans in a row; zero nodes ever ran. Checks
 // are a property of the REPO and are derived from it here, at gate time.
@@ -35,7 +35,7 @@ func TestDeriveChecksFromPackageJSON(t *testing.T) {
 	got := deriveChecks(dir, []string{"npm run"})
 	want := []string{"npm run build", "npm run lint", "npm run test"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("deriveChecks = %v, want %v (the repo's OWN scripts only — no invented `npx tsc`, no `dev`)", got, want)
+		t.Errorf("deriveChecks = %v, want %v (the repo's OWN scripts only - no invented `npx tsc`, no `dev`)", got, want)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestDeriveChecksEmptyAllowlistYieldsNone(t *testing.T) {
 }
 
 // End-to-end through the criterion: a code-implementer node with NO planner-set
-// checks and NO workdir still gets checks — the gate finds the one repo in its
+// checks and NO workdir still gets checks - the gate finds the one repo in its
 // workspace scope and derives them from it.
 func TestChecksPassCriterionDerivesWhenPlannerSetNone(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
@@ -117,7 +117,7 @@ func TestChecksPassCriterionDerivesWhenPlannerSetNone(t *testing.T) {
 	}
 	got, ok := checksPassCriterion(context.Background(), cfg)
 	if !ok {
-		t.Fatal("checks_pass should apply — the repo declares a `build` target")
+		t.Fatal("checks_pass should apply - the repo declares a `build` target")
 	}
 	if got.Score != 0 || !strings.Contains(got.Reason, "make build") {
 		t.Errorf("got %+v, want Score 0 naming the derived `make build` check", got)
@@ -179,7 +179,7 @@ func scopeCfg(t *testing.T, workdir string, allow ...string) (Config, string) {
 }
 
 // Regression (live e2e 2026-07-13): the planner set no usable workdir, so the
-// checks dir resolved to the workspace SCOPE ROOT — which holds no package.json.
+// checks dir resolved to the workspace SCOPE ROOT - which holds no package.json.
 // "no checks derived from the repo; skipping checks" ⇒ checks never ran ⇒ code
 // that does not typecheck passed the gate at 0.7. The repo was one level down
 // (<scope>/games), where git_clone put it: SEARCH for it.

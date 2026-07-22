@@ -8,7 +8,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// toolResultModel is toolResult but at role MODEL — the role production workers
+// toolResultModel is toolResult but at role MODEL - the role production workers
 // actually persist their tool results under (the orchestrator uses role user).
 func toolResultModel(name, id string, n int) *genai.Content {
 	return &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
@@ -18,7 +18,7 @@ func toolResultModel(name, id string, n int) *genai.Content {
 
 // TestNoBlankedToolResultsSurviveCompaction_ModelRole is the production-role
 // variant of the anti-amnesia invariant: a surviving tool result must be intact,
-// never a placeholder — even when the result is role MODEL (worker) not role USER
+// never a placeholder - even when the result is role MODEL (worker) not role USER
 // (orchestrator). If this fails while the role-user version passes, compaction
 // ejects worker tool results and the model re-reads the same file/command forever.
 func TestNoBlankedToolResultsSurviveCompaction_ModelRole(t *testing.T) {
@@ -45,7 +45,7 @@ func TestNoBlankedToolResultsSurviveCompaction_ModelRole(t *testing.T) {
 				continue
 			}
 			if got, _ := fr.Response["result"].(string); got != intact {
-				t.Fatalf("a role-MODEL tool result survived but was BLANKED (%q) — production worker results are ejected while role-user survive; the model sees it read the file, content gone, re-reads forever", truncate(got, 80))
+				t.Fatalf("a role-MODEL tool result survived but was BLANKED (%q) - production worker results are ejected while role-user survive; the model sees it read the file, content gone, re-reads forever", truncate(got, 80))
 			}
 		}
 	}

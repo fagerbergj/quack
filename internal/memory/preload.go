@@ -23,7 +23,7 @@ They may be useful for answering the user's current query.
 </PAST_CONVERSATIONS>`
 
 // oncePreload is a drop-in for ADK's preloadmemorytool that recalls memory ONCE per
-// invocation — at the first model step — instead of on every step of the tool-call
+// invocation - at the first model step - instead of on every step of the tool-call
 // loop. ADK documents preload as a turn-boundary action ("retrieve memory at the
 // beginning of each turn"), but the v1.4.0 flow runs every tool's ProcessRequest on
 // every runOneStep, so the stock tool re-searches and re-injects on each tool call.
@@ -52,7 +52,7 @@ func (oncePreload) ProcessRequest(ctx adkagent.Context, req *model.LLMRequest) e
 
 	// First-step guard. ToolContext exposes no session, but req.Contents (built by an
 	// earlier request processor) holds the history. The orchestrator's session is
-	// long-lived, so it also holds prior turns — anchor on the LATEST real user message
+	// long-lived, so it also holds prior turns - anchor on the LATEST real user message
 	// (the current turn) and skip if the model already produced output after it. On the
 	// first step there is none, so recall runs exactly once per turn; later tool-loop
 	// steps short-circuit.
@@ -78,8 +78,8 @@ func (oncePreload) ProcessRequest(ctx adkagent.Context, req *model.LLMRequest) e
 }
 
 // firstStep reports whether the model has not yet acted on the current turn, given
-// the request's content history. It finds the LATEST real user message — a user-role
-// content that carries text (function responses are also user-role but textless) —
+// the request's content history. It finds the LATEST real user message - a user-role
+// content that carries text (function responses are also user-role but textless) -
 // and returns true only if nothing follows it. The latest user message is the current
 // turn even in a long-lived session, so this works without matching exact query text
 // (which doesn't survive the A2A boundary byte-for-byte). Empty/no-user-message →
@@ -160,7 +160,7 @@ func appendInstruction(r *model.LLMRequest, inst string) {
 }
 
 // recallInstructions frames gate-side recall for an EXTERNAL (ACP) worker,
-// whose prompt quack assembles itself — the same role preloadInstructions
+// whose prompt quack assembles itself - the same role preloadInstructions
 // plays for a native agent's system instruction, worded for a coding agent.
 const recallInstructions = `The following notes were remembered from previous runs on this repository /
 task family. Use them instead of re-deriving what they already answer; they may
@@ -169,7 +169,7 @@ be stale, so verify anything load-bearing against the code itself.
 %s
 </MEMORY>`
 
-// Recall returns the formatted recall block for query under sc — the gate-side
+// Recall returns the formatted recall block for query under sc - the gate-side
 // twin of preload_memory for external workers (vetting injects it at the front
 // of the worker prompt). "" when the store is nil, nothing matches, or the
 // embedder is unavailable: recall is best-effort and bounded (Store.recall),

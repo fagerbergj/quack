@@ -30,7 +30,7 @@ func duckTheme() *huh.Theme {
 	t.Focused.Description = lipgloss.NewStyle().Foreground(lipgloss.Color(blurred)) // field subtitle
 
 	// Group title/description (the section header). ThemeBase leaves these as a
-	// zero style — unlike ThemeCharm et al., which set them at the end — so a
+	// zero style - unlike ThemeCharm et al., which set them at the end - so a
 	// group's .Title()/.Description() renders blank unless we set them here.
 	t.Group.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(duck)).Bold(true)
 	t.Group.Description = lipgloss.NewStyle().Foreground(lipgloss.Color(blurred))

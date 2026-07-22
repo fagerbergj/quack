@@ -17,7 +17,7 @@ import (
 // model’s context window is known, a BeforeModelCallback summarises + drops the
 // session before each model call so long runs can't overflow the window.
 // memoryGuidance, when non-empty, is the bundle's memory.md appended to the
-// behaviour layer (M6) — passed only for memory-participating agents when the
+// behaviour layer (M6) - passed only for memory-participating agents when the
 // feature is on, so it never dangles otherwise.
 func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string) (adkagent.Agent, error) {
 	return build(b, m, tools, toolsets, comp, memoryGuidance, "")
@@ -28,7 +28,7 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 // multi-turn session (the advisor: internal/tools/ask_advisor.go spins a
 // runner per consult over ONE shared agent instance). Pinning matters beyond
 // semantics: runner.Run force-sets an unset mode to ModeChat with an
-// unsynchronized check-then-write on the shared agent — a data race when two
+// unsynchronized check-then-write on the shared agent - a data race when two
 // consults from concurrently-running nodes hit it at once. A pre-set mode
 // turns that write into a pure read. Workers keep Build's unset mode: wrapped
 // in a workflow AgentNode they default to single-turn task mode (prompt-only,

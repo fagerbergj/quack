@@ -39,28 +39,28 @@ type fakeRunner struct {
 	calls        int32
 	noPlan       bool // when true, emit no dag_plan event (simulates a narration-only turn)
 	// judgePassed simulates a node's trust gate clearing its judge round (a
-	// node_done event with JudgePassed) — dispatch's fallback proxy for
+	// node_done event with JudgePassed) - dispatch's fallback proxy for
 	// "delivery was attempted" when nothing recorded an authoritative outcome
 	// (see takeDeliveryResult).
 	judgePassed bool
 	// deliverOK/deliverErr simulate the trust gate's own commitDelivery
-	// having ALREADY run and recorded its outcome (recordDeliveryResult) — the
+	// having ALREADY run and recorded its outcome (recordDeliveryResult) - the
 	// authoritative signal dispatch prefers over judgePassed. deliverOK records
 	// a success; deliverErr (mutually exclusive) records a failure.
 	deliverOK  bool
 	deliverErr string
 	// deliverReview simulates a run that DELIVERED A REVIEW specifically
-	// (deliveryOutcome.reviewDelivered) — dispatch's ONLY trigger to advance
+	// (deliveryOutcome.reviewDelivered) - dispatch's ONLY trigger to advance
 	// the review baseline (#459's incremental-review fix). Independent of
 	// deliverOK: a plan/PR delivery must NOT set this.
 	deliverReview bool
-	// resets counts ResetSession calls — dispatch's T4 session-hygiene signal.
+	// resets counts ResetSession calls - dispatch's T4 session-hygiene signal.
 	resets int32
 	// hitInput causes Run to emit a node_needs_input event mid-stream, simulating
-	// an ask_user call by the worker — dispatch should post a HITQ comment instead
+	// an ask_user call by the worker - dispatch should post a HITQ comment instead
 	// of the "produced no answer" tail.
 	hitInput bool
-	// revisedAnswer, if set, replaces answer starting on Run's SECOND call —
+	// revisedAnswer, if set, replaces answer starting on Run's SECOND call -
 	// simulates the model fixing its answer on a mermaid-revise re-drive.
 	revisedAnswer string
 }
@@ -111,7 +111,7 @@ func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*g
 func (f *fakeRunner) LatestAnswer(context.Context, string, string) string { return f.answer }
 
 // planRunner is fakeRunner's dag_plan event with real DagPlanData (PlanID +
-// one node), needed to assert the plan actually gets mirrored into the store —
+// one node), needed to assert the plan actually gets mirrored into the store -
 // fakeRunner's zero-value Data can't round-trip through a real persist path.
 type planRunner struct {
 	gotMessage chan string
@@ -172,7 +172,7 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 }
 
 // isIssueMetaPath reports whether path is a bare .../issues/{number} request
-// (issueMeta's snapshot fetch) — as opposed to .../issues/{number}/comments
+// (issueMeta's snapshot fetch) - as opposed to .../issues/{number}/comments
 // or .../reactions, which the switch above already matches first.
 func isIssueMetaPath(path string) bool {
 	parts := strings.Split(strings.TrimRight(path, "/"), "/")
@@ -403,7 +403,7 @@ func TestHandleWebhookMentionTriggersRun(t *testing.T) {
 	gh := stubGitHub(t, posted)
 	defer gh.Close()
 
-	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done — opened PR #12"}
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "done - opened PR #12"}
 	ext := newTestExtension(t, runner, gh.URL)
 
 	rec := httptest.NewRecorder()
@@ -432,7 +432,7 @@ func TestHandleWebhookMentionTriggersRun(t *testing.T) {
 }
 
 // A webhook-dispatched run must persist a turn + DAG-carrying chat_events for
-// its session, exactly like a UI-initiated run — otherwise getChat/
+// its session, exactly like a UI-initiated run - otherwise getChat/
 // GetTurnsWithContent has nothing to assemble and the GitHub tab shows an empty
 // session even though the run actually executed a plan (issue: DAG rows existed
 // but 0 turns/chat_events, so the UI rendered nothing).
@@ -505,7 +505,7 @@ func TestHandleWebhookPersistsTurnAndEventsForUI(t *testing.T) {
 
 // A webhook run that answers WITHOUT executing a plan (a narration preamble like
 // "Let me start by cloning the repo…") is nudged exactly once to actually run the
-// work — the fix for reviews that posted the preamble as if it were the review.
+// work - the fix for reviews that posted the preamble as if it were the review.
 func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	posted := make(chan string, 1)
 	gh := stubGitHub(t, posted)
@@ -548,10 +548,10 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 
 // The plan/answer comment path (dispatch posting e.runner.LatestAnswer directly)
 // is separate from the trust gate's commitDelivery, which only strips staged
-// PR/review bodies (#371) — this proves dispatch ALSO strips an invalid
+// PR/review bodies (#371) - this proves dispatch ALSO strips an invalid
 // ```mermaid block from the answer before it's posted, not just delivered PRs.
 // #448 reversed the prior design (#371): an invalid ```mermaid block is no
-// longer silently stripped from the answer before it's posted — that's now a
+// longer silently stripped from the answer before it's posted - that's now a
 // deterministic gate criterion (vetting.mermaidCriterion) that fails the
 // node and feeds the concrete error back to the worker as revise feedback,
 // so dispatch here just posts whatever the run produced, verbatim.
@@ -576,7 +576,7 @@ func TestHandleWebhookInvalidMermaidRevisedFixesDiagram(t *testing.T) {
 	}
 
 	// First Run() call is the original dispatch; the second is the mermaid
-	// revise nudge — it must name the concrete parse error.
+	// revise nudge - it must name the concrete parse error.
 	<-gotMessage
 	var nudge string
 	select {
@@ -603,7 +603,7 @@ func TestHandleWebhookInvalidMermaidRevisedFixesDiagram(t *testing.T) {
 }
 
 // When the agent can't fix it even after the one revise round, the ceiling
-// degrades to a VISIBLE, labeled ```text block — never a silent strip.
+// degrades to a VISIBLE, labeled ```text block - never a silent strip.
 func TestHandleWebhookInvalidMermaidStillBadAfterReviseDegradesVisibly(t *testing.T) {
 	posted := make(chan string, 1)
 	gh := stubGitHub(t, posted)
@@ -639,7 +639,7 @@ func TestHandleWebhookInvalidMermaidStillBadAfterReviseDegradesVisibly(t *testin
 }
 
 // When the run submits a formal review (github_submit_review), the review IS the
-// deliverable on the PR — dispatch must NOT also post the run's text summary as a
+// deliverable on the PR - dispatch must NOT also post the run's text summary as a
 // duplicate top-level comment.
 func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
 	posted := make(chan string, 1)
@@ -670,7 +670,7 @@ func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
 
 // A FAILED delivery must not count as delivered: a github_pull_request whose
 // result carries an error (e.g. the run was killed before the branch was pushed)
-// previously suppressed the summary/failure comment on the CALL alone — a silent
+// previously suppressed the summary/failure comment on the CALL alone - a silent
 // death with a "delivered" log line and nothing on GitHub (#286).
 func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 	posted := make(chan string, 1)
@@ -697,7 +697,7 @@ func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 			t.Errorf("fallback comment = %q; want the run's answer", body)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("no comment posted after a FAILED delivery — the silent-death bug")
+		t.Fatal("no comment posted after a FAILED delivery - the silent-death bug")
 	}
 }
 
@@ -759,7 +759,7 @@ func TestDispatchSerializesSameSession(t *testing.T) {
 	}
 
 	// The inflight claim is released by dispatch's deferred Delete, which runs on
-	// RETURN — i.e. AFTER the comment post above. <-posted alone doesn't imply the
+	// RETURN - i.e. AFTER the comment post above. <-posted alone doesn't imply the
 	// session is free, so wait for the claim to actually clear before re-triggering
 	// (otherwise the third dispatch races the release and gets deduped in CI).
 	waitInflightClear(t, ext, "github-acme-widgets-7")
@@ -934,7 +934,7 @@ func TestAckReactionFailureDoesNotBlockRun(t *testing.T) {
 	}
 }
 
-// seedGC builds a first-load githubContext from a snapshot — runMessage's
+// seedGC builds a first-load githubContext from a snapshot - runMessage's
 // most common test fixture (no store, no prior snapshot to diff against).
 func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
 	return githubContext{snap: snap, firstLoad: true, text: renderSeedContext(snap, excludeCommentID)}
@@ -970,8 +970,8 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	}
 
 	// With the PR's refs known, the reviewer is told the clone is ALREADY on the
-	// head branch (setup's CheckoutExistingHead — see internal/tools/setup.go)
-	// with the diff ready — no checkout needed, and no stale "empty diff" claim.
+	// head branch (setup's CheckoutExistingHead - see internal/tools/setup.go)
+	// with the diff ready - no checkout needed, and no stale "empty diff" claim.
 	withRefs := ext.runMessage(pr, "review this", seedGC(Snapshot{IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}, 0))
 	for _, want := range []string{"already checked out on the PR's head branch `feat/x`", "git_diff main...feat/x"} {
 		if !strings.Contains(withRefs, want) {
@@ -979,7 +979,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 		}
 	}
 	if strings.Contains(withRefs, "git_checkout") {
-		t.Errorf("PR review message should no longer tell the reviewer to check out the head — setup does it now:\n%s", withRefs)
+		t.Errorf("PR review message should no longer tell the reviewer to check out the head - setup does it now:\n%s", withRefs)
 	}
 
 	// A PR request that DOES ask to change code keeps the implement path.
@@ -1021,11 +1021,11 @@ func TestSeedContextInMention(t *testing.T) {
 		Comments: []snapshotComment{
 			{ID: 100, User: "hegu-1", Body: "The gate should stay the authority."},
 			{ID: 200, User: "quack-jason[bot]", Body: "# Implementation Plan: mem0 as a vector store"},
-			{ID: 999, User: "fagerbergj", Body: "rework it — mem0 is not a store"}, // the trigger; must be excluded
+			{ID: 999, User: "fagerbergj", Body: "rework it - mem0 is not a store"}, // the trigger; must be excluded
 		},
 	}
 
-	msg := ext.runMessage(issue, "rework it — mem0 is not a store", seedGC(snap, issue.Comment.ID))
+	msg := ext.runMessage(issue, "rework it - mem0 is not a store", seedGC(snap, issue.Comment.ID))
 	for _, want := range []string{
 		"evaluate mem0 as a memory backend",        // issue body
 		"hegu-1", "gate should stay the authority", // a prior participant
@@ -1036,13 +1036,13 @@ func TestSeedContextInMention(t *testing.T) {
 		}
 	}
 	// The triggering comment is quoted as the request, not duplicated in the thread.
-	if strings.Count(msg, "rework it — mem0 is not a store") != 1 {
+	if strings.Count(msg, "rework it - mem0 is not a store") != 1 {
 		t.Errorf("triggering comment should appear exactly once (as the request), not in the thread dump:\n%s", msg)
 	}
 }
 
 // TestResumeInjectsOnlyTheDelta pins #459's core behavior: a resume (a prior
-// snapshot exists) injects ONLY what changed, not the whole thread again — and
+// snapshot exists) injects ONLY what changed, not the whole thread again - and
 // an unchanged snapshot injects an empty/no-op delta.
 func TestResumeInjectsOnlyTheDelta(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
@@ -1107,9 +1107,9 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 }
 
 // #506: a review request whose discussion already contains a prior review
-// (quack's own, or — the broader trigger reported in dogfooding — a human's)
+// (quack's own, or - the broader trigger reported in dogfooding - a human's)
 // must still tell the orchestrator to post a FRESH review. Without an explicit
-// override, "Existing discussion — do NOT repeat it" plus a prior review already
+// override, "Existing discussion - do NOT repeat it" plus a prior review already
 // answering the PR reads as "already handled" and the run produces no reviewer
 // node at all (empty answer).
 func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
@@ -1153,7 +1153,7 @@ func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
 	}
 }
 
-// A conversational follow-up on a PR is answered from the session — the message
+// A conversational follow-up on a PR is answered from the session - the message
 // must NOT hand over the clone-and-review playbook, or the orchestrator re-reviews
 // instead of answering.
 func TestRunMessageConversationalFollowup(t *testing.T) {
@@ -1180,7 +1180,7 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 }
 
 // A PR follow-up must get the discussion injected (not depend on session
-// continuity alone), with the triggering comment excluded — #456 extended to
+// continuity alone), with the triggering comment excluded - #456 extended to
 // PRs, now via the unified snapshot seed (#459).
 func TestPRFollowupInjectsDiscussion(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
@@ -1353,7 +1353,7 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 		t.Errorf("resume dispatch missing the new comment:\n%s", secondMsg)
 	}
 	if strings.Contains(secondMsg, "the original comment") {
-		t.Errorf("resume dispatch re-injected the UNCHANGED comment — should carry only the delta:\n%s", secondMsg)
+		t.Errorf("resume dispatch re-injected the UNCHANGED comment - should carry only the delta:\n%s", secondMsg)
 	}
 }
 
@@ -1367,7 +1367,7 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 // IS delivered, the baseline advances and the NEXT review sees zero new.
 func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 	// Two synthetic commits with real, distinct git patch-ids (gitPatchID
-	// reads a diff from stdin — no clone needed, see snapshot.go).
+	// reads a diff from stdin - no clone needed, see snapshot.go).
 	diffs := map[string]string{
 		"c1": "diff --git a/f1.txt b/f1.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/f1.txt\n@@ -0,0 +1 @@\n+c1\n",
 		"c2": "diff --git a/f2.txt b/f2.txt\nnew file mode 100644\nindex 0000000..2222222\n--- /dev/null\n+++ b/f2.txt\n@@ -0,0 +1 @@\n+c2\n",
@@ -1437,7 +1437,7 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 		}
 	}
 
-	// 1. First review ever: full review (no baseline yet), and it DELIVERS —
+	// 1. First review ever: full review (no baseline yet), and it DELIVERS -
 	// the baseline should advance to just c1's patch-id.
 	first := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
 	if strings.Contains(first, "Focus your review on what's NEW") || strings.Contains(first, "already looked at every commit") {
@@ -1447,12 +1447,12 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 	// 2. c2 lands on the PR.
 	commitsJSON.Store(`[{"sha":"c1","commit":{"message":"add f1"}},{"sha":"c2","commit":{"message":"add f2"}}]`)
 
-	// 3. A CONVERSATIONAL dispatch (no review delivered) — this advances the
+	// 3. A CONVERSATIONAL dispatch (no review delivered) - this advances the
 	// GENERAL snapshot (comments/commits-as-seen) but must NOT touch the
 	// review baseline.
 	_ = run(&fakeRunner{gotMessage: make(chan string, 1), answer: "sure, here's my take", noPlan: true}, "what do you think so far? no need to re-review")
 
-	// 4. A review request now MUST still see c2 as new — if the review scope
+	// 4. A review request now MUST still see c2 as new - if the review scope
 	// had been keyed off the general snapshot (the bug), c2 would already
 	// read as "seen" because step 3 advanced it.
 	second := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
@@ -1463,7 +1463,7 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 		t.Errorf("review under-scoped itself off the general snapshot instead of the review baseline:\n%s", second)
 	}
 
-	// 5. Step 4 DELIVERED a review covering c2 — the baseline now advances,
+	// 5. Step 4 DELIVERED a review covering c2 - the baseline now advances,
 	// so the NEXT review sees zero new work.
 	third := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}, "review this")
 	if !strings.Contains(third, "already looked at every commit") {
@@ -1474,7 +1474,7 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 // TestLatestQuackVerdictReadsOwnPRReviewMarker pins #513's webhook half: an
 // own-PR review submits as a real review (state COMMENTED, since GitHub
 // disallows approve/request_changes on your own PR) carrying the actual
-// verdict in the hidden marker — latestQuackVerdict must read that marker,
+// verdict in the hidden marker - latestQuackVerdict must read that marker,
 // not the state, or an own-PR approve would be misread as "comment".
 func TestLatestQuackVerdictReadsOwnPRReviewMarker(t *testing.T) {
 	keyPEM, _ := testKeyPEM(t)
@@ -1721,7 +1721,7 @@ func TestHandleWebhookMergeLabelRespectsAllowlist(t *testing.T) {
 
 // TestHandleWebhookAutoReviewIgnoresAllowlist pins that the synthetic
 // pr_opened auto-review has no human invoker and fires regardless of
-// allowed_users (including empty/deny-all) — the allowlist gates
+// allowed_users (including empty/deny-all) - the allowlist gates
 // human-invoked triggers only.
 func TestHandleWebhookAutoReviewIgnoresAllowlist(t *testing.T) {
 	posted := make(chan string, 1)
@@ -1739,7 +1739,7 @@ func TestHandleWebhookAutoReviewIgnoresAllowlist(t *testing.T) {
 		WebhookSecret: testSecret,
 		Mention:       "@quack",
 		Triggers:      []string{"pr_opened"},
-		// AllowedUsers intentionally left unset (deny-all for human triggers) —
+		// AllowedUsers intentionally left unset (deny-all for human triggers) -
 		// must not block the synthetic auto-review.
 	}, runner, nil, nil)
 
@@ -1832,7 +1832,7 @@ func TestHandleWebhookIssuePlanLabel(t *testing.T) {
 }
 
 // TestHandleWebhookIssueOpenedNoOp pins that non-labeled issue actions are
-// ignored — the workflow is label-driven, not event-driven.
+// ignored - the workflow is label-driven, not event-driven.
 func TestHandleWebhookIssueOpenedNoOp(t *testing.T) {
 	posted := make(chan string, 1)
 	gh := stubGitHub(t, posted)
@@ -1885,7 +1885,7 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 				return
 			}
 			// The implement task message is verified below. No canned ack comment
-			// is posted — the orchestrator's initial response serves as the ack.
+			// is posted - the orchestrator's initial response serves as the ack.
 			select {
 			case msg := <-runner.gotMessage:
 				for _, want := range []string{"Implement issue #7", "Closes #7", "stage_pr", "Never merge"} {
@@ -1910,7 +1910,7 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 
 // TestDispatchResetsSessionForLabelWorkRequest pins T4 session hygiene: a
 // LABEL-driven work request (quack:implement) resets the session before
-// running, so a new attempt is not poisoned by a prior attempt's history —
+// running, so a new attempt is not poisoned by a prior attempt's history -
 // unlike a conversational @mention, which keeps full history for continuity
 // (TestDispatchDoesNotResetSessionForMention, below).
 func TestDispatchResetsSessionForLabelWorkRequest(t *testing.T) {
@@ -1970,7 +1970,7 @@ func TestDispatchDoesNotResetSessionForMention(t *testing.T) {
 // TestFetchSnapshotRequiredMetaFailureSurfacesAsUnusable pins #467's first
 // guard: when the required meta call (issueMeta) fails persistently (retries
 // at the HTTP layer exhausted), loadGithubContext must flag the context as
-// UNAVAILABLE — not silently return an empty-but-"valid" firstLoad snapshot,
+// UNAVAILABLE - not silently return an empty-but-"valid" firstLoad snapshot,
 // which is indistinguishable from a legitimately empty new issue.
 func TestFetchSnapshotRequiredMetaFailureSurfacesAsUnusable(t *testing.T) {
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1980,7 +1980,7 @@ func TestFetchSnapshotRequiredMetaFailureSurfacesAsUnusable(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
 			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
 		case isIssueMetaPath(r.URL.Path):
-			// Persistently unavailable — outlives doJSON's own retry budget.
+			// Persistently unavailable - outlives doJSON's own retry budget.
 			http.Error(w, `{"message":"No server is currently available to service your request."}`, http.StatusServiceUnavailable)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -2001,7 +2001,7 @@ func TestFetchSnapshotRequiredMetaFailureSurfacesAsUnusable(t *testing.T) {
 // TestDispatchAbortsLabelImplementWhenContextUnavailable pins #467's second
 // guard: a label-triggered implement whose GitHub context could not be
 // loaded (required fetch failed) must NOT dispatch "implement per the plan"
-// to the runner — it must abort with an honest comment instead.
+// to the runner - it must abort with an honest comment instead.
 func TestDispatchAbortsLabelImplementWhenContextUnavailable(t *testing.T) {
 	posted := make(chan string, 4)
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2122,10 +2122,10 @@ func TestDispatchCollapsesPriorPlanComment(t *testing.T) {
 	}
 }
 
-// TestImplementTaskCore pins implementTask's own contribution — the issue
+// TestImplementTaskCore pins implementTask's own contribution - the issue
 // number/title and the delivery instructions. The discussion (the approved
 // plan) is no longer implementTask's job: it arrives via dispatch's unified
-// loadGithubContext, the same path every other trigger uses (#459) — see
+// loadGithubContext, the same path every other trigger uses (#459) - see
 // TestHandleWebhookIssueImplementLabel for that end-to-end.
 func TestImplementTaskCore(t *testing.T) {
 	var p issuesPayload
@@ -2139,11 +2139,11 @@ func TestImplementTaskCore(t *testing.T) {
 		}
 	}
 
-	// A CUSTOM configured partial-fix label is what's honoured — not a hardcoded
+	// A CUSTOM configured partial-fix label is what's honoured - not a hardcoded
 	// default (the blocking finding on #505).
 	custom := implementTask(p, []string{"bug", "my-org:incomplete"}, "my-org:incomplete")
 	if strings.Contains(custom, "`Closes #7`") {
-		t.Errorf("custom partial-fix label ignored — Closes still present:\n%s", custom)
+		t.Errorf("custom partial-fix label ignored - Closes still present:\n%s", custom)
 	}
 	// The default string must NOT trigger partial-fix when a custom label is configured.
 	notCustom := implementTask(p, []string{"quack:partial-fix"}, "my-org:incomplete")
@@ -2290,7 +2290,7 @@ func TestHandleWebhookMergeLabel(t *testing.T) {
 // TestHandleWebhookPlanLabelPostsPlanEvenWhenDelivered pins the regression where a
 // plan-only run silently dropped its plan: isWorkRequest keys off the (work-verby)
 // issue text, so judgePassed && isWorkRequest made `delivered` true and dispatch
-// skipped the summary comment — but a plan-only run's deliverable IS that comment.
+// skipped the summary comment - but a plan-only run's deliverable IS that comment.
 // (Latent until github_comment was removed; before that the worker posted the plan
 // itself, masking the skip.) The prior plan-label test never set judgePassed, so it
 // couldn't catch this.
@@ -2315,12 +2315,12 @@ func TestHandleWebhookPlanLabelPostsPlanEvenWhenDelivered(t *testing.T) {
 			t.Errorf("posted comment is not the plan: %q", body)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("plan-only run did not post its plan — the delivered-skip dropped it")
+		t.Fatal("plan-only run did not post its plan - the delivered-skip dropped it")
 	}
 }
 
 // TestHandleWebhookLabelPostsEyesReactionOnIssue pins #252: a label-triggered run
-// (quack:plan / quack:implement) posts an instant 👀 on the ISSUE — POST to
+// (quack:plan / quack:implement) posts an instant 👀 on the ISSUE - POST to
 // /issues/{number}/reactions, NOT the comment-reaction endpoint (a label event
 // carries no comment ID, so ackReaction can't be reused).
 func TestHandleWebhookLabelPostsEyesReactionOnIssue(t *testing.T) {
@@ -2375,7 +2375,7 @@ func TestHandleWebhookLabelPostsEyesReactionOnIssue(t *testing.T) {
 }
 
 // mentionCommentBody is issueCommentBody with the issue's title present, as a
-// real issue_comment payload carries it — used to pin #380's title backfill.
+// real issue_comment payload carries it - used to pin #380's title backfill.
 func mentionCommentBody(commentBody, issueTitle string) []byte {
 	return []byte(fmt.Sprintf(`{
 		"action":"created",
@@ -2387,7 +2387,7 @@ func mentionCommentBody(commentBody, issueTitle string) []byte {
 }
 
 // TestDispatchGeneratesTitle pins #380: a GitHub-webhook-dispatched chat gets a
-// real, non-placeholder title derived from the triggering issue — dispatch
+// real, non-placeholder title derived from the triggering issue - dispatch
 // never called generateTitle/UpdateTitle before this fix, so the chat's Title
 // column stayed empty forever (rendering as "New chat" in the UI).
 func TestDispatchGeneratesTitle(t *testing.T) {
@@ -2516,7 +2516,7 @@ func TestDispatchTitleFromLabelDrivenIssue(t *testing.T) {
 
 // TestDispatchDoesNotOverwriteExistingTitle pins the once-only semantics: a
 // conversational follow-up on an already-titled session must not clobber the
-// title a prior dispatch set — mirrors runChat's own titleCh guard.
+// title a prior dispatch set - mirrors runChat's own titleCh guard.
 func TestDispatchDoesNotOverwriteExistingTitle(t *testing.T) {
 	posted := make(chan string, 2)
 	gh := stubGitHub(t, posted)
@@ -2603,7 +2603,7 @@ func TestDispatchPostsHITLCommentOnPause(t *testing.T) {
 }
 
 // TestDispatchSkipsNudgeOnPause verifies that dispatch does NOT nudge a run that
-// hit a HITL pause — the nudge is only for runs that produced no plan but were
+// hit a HITL pause - the nudge is only for runs that produced no plan but were
 // otherwise complete (not paused).
 func TestDispatchSkipsNudgeOnPause(t *testing.T) {
 	posted := make(chan string, 1)
@@ -2653,7 +2653,7 @@ func (d *dedupRunner) Run(ctx context.Context, label string, sessionID string, m
 
 // TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard checks that when two
 // webhooks hit the same Extension within milliseconds (same issue → same sessionID),
-// only ONE dispatch actually runs — LoadOrStore claims it and the second returns
+// only ONE dispatch actually runs - LoadOrStore claims it and the second returns
 // early. Also verifies that after the first run completes, a new dispatch succeeds.
 func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 	dr := newDedupRunner()
@@ -2683,7 +2683,7 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 
 	// The handleWebhook goroutine for the first mention will call dispatch,
 	// which claims sessionID in inflight, then hits dr.block and stays there.
-	// Fire a second mention immediately — dispatch should find sessionID in
+	// Fire a second mention immediately - dispatch should find sessionID in
 	// inflight, ack with a best-effort 👀 reaction, and return early.
 	rec2 := httptest.NewRecorder()
 	ext.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack second")))
@@ -2717,7 +2717,7 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 	}
 
 	// Let the first dispatch finish and observe it posting. Then verify that a
-	// third dispatch (after the run completes) succeeds — inflight entry was cleaned up.
+	// third dispatch (after the run completes) succeeds - inflight entry was cleaned up.
 	select {
 	case <-posted:
 	case <-time.After(2 * time.Second):
@@ -2725,7 +2725,7 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 	}
 
 	// The inflight claim clears in dispatch's deferred Delete, which runs on
-	// RETURN — after the post above. Wait for the actual release before the third
+	// RETURN - after the post above. Wait for the actual release before the third
 	// trigger, else it races the release and gets wrongly deduped under load.
 	waitInflightClear(t, ext, "github-acme-widgets-7")
 
@@ -2741,7 +2741,7 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 			t.Errorf("expected sessionID github-acme-widgets-7 after reuse, got %q", sid)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("third dispatch didn't run — inflight entry wasn't cleaned up after the first completed")
+		t.Fatal("third dispatch didn't run - inflight entry wasn't cleaned up after the first completed")
 	}
 
 	if got := atomic.LoadInt32(&dr.calls); got != 2 {
@@ -2750,7 +2750,7 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 }
 
 // TestDispatchDedupDifferentSessionsAllowsConcurrent verifies that dispatches on
-// DIFFERENT sessions (different issues/PRs) all proceed — the inflight guard only
+// DIFFERENT sessions (different issues/PRs) all proceed - the inflight guard only
 // blocks duplicate sessionIDs.
 func TestDispatchDedupDifferentSessionsAllowsConcurrent(t *testing.T) {
 	dr := newDedupRunner()

@@ -44,7 +44,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// Per-node CLIENT identity for an A2A agent (agent.nodeClient.ForNode):
 		// concurrent nodes running the SAME agent share ONE workflow session, and
 		// remoteagent picks the remote A2A session to continue by scanning that
-		// session backward for an event authored by its own Name — so with the
+		// session backward for an event authored by its own Name - so with the
 		// plain agent name a node adopts a SIBLING's remote session, task and all
 		// (live: the OpenHands explorer cloned goose). Keyed by plan+node so it is
 		// unique across nodes yet stable across a node's judge/revise rounds and a
@@ -64,11 +64,11 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if err != nil {
 			return nil, nil, err
 		}
-		// cfgFor returns a fresh Config copy (map-of-struct lookup) — safe to
+		// cfgFor returns a fresh Config copy (map-of-struct lookup) - safe to
 		// stamp this node's own fields onto it without affecting other nodes
 		// sharing the same agent.
 		cfg := cfgFor(n.AgentName)
-		// Remote (A2A) workers never see RunNode input — the gate must deliver
+		// Remote (A2A) workers never see RunNode input - the gate must deliver
 		// each prompt as a session event instead (see vetting.PromptEventNeeded).
 		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
 		node := n // capture per iteration
@@ -78,15 +78,15 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.Checks = node.Checks
 		cfg.Workdir = node.Workdir
 		// The workspace-directory scope for this node's fs/git tools and
-		// deterministic checks — node.ID for almost every node, but the ONE
+		// deterministic checks - node.ID for almost every node, but the ONE
 		// shared clone (workspace.SharedRepoScope) for a repo-touching node
 		// sharing a plan.Setup chain (see workspaceNodeID).
 		cfg.NodeID = workspaceNodeID(plan, node)
-		// Carried only for observability (span/metric attribute) — see vetting.Config.Agent.
+		// Carried only for observability (span/metric attribute) - see vetting.Config.Agent.
 		cfg.Agent = node.AgentName
 		// The structural review-delivery signal (#482): a code-reviewer node IS a
 		// review-delivery node by construction, independent of how its task is
-		// worded — see vetting.Config.IsReviewer.
+		// worded - see vetting.Config.IsReviewer.
 		cfg.IsReviewer = node.AgentName == reviewerAgent
 		// The node's task text drives the deterministic delivery check
 		// (vetting/delivery.go): a task that says commit/push/open-a-PR cannot pass
@@ -98,20 +98,20 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// planner-set list still wins.
 		cfg.DeriveChecks = node.AgentName == implementerAgent
 		// Per-chat workspace scope: the node's deterministic checks resolve their
-		// Workdir under <root>/<user>/<chatID>/ — the same tree the node's own
+		// Workdir under <root>/<user>/<chatID>/ - the same tree the node's own
 		// git_clone/fs tools wrote to (they derive the SAME chatID from the
 		// advisor-thread marker; see internal/tools chatScopeFromContext). chatID
 		// here is the run's chat/session id (== the workflow session id).
 		cfg.ChatID = chatID
 		// Thread the plan's declared Setup to the gate/delivery (see
-		// vetting.Config.Setup) — ONLY for the nodes runPlanSetup actually
+		// vetting.Config.Setup) - ONLY for the nodes runPlanSetup actually
 		// provisioned (setupQualifyingNodes: implementer/reviewer), the same
 		// set commitDelivery's workspace.SetupCloneDir(node.ID) resolves
 		// against.
 		if plan.Setup != nil && (node.AgentName == implementerAgent || node.AgentName == reviewerAgent) {
 			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
 			if nonTerminalRepoChainNode(plan, node) {
-				// Delivery fires exactly once, at the chain's terminal node — the
+				// Delivery fires exactly once, at the chain's terminal node - the
 				// only point the shared branch is complete. A mid-chain node that
 				// stages a PR anyway must never have it posted.
 				cfg.Deliver = nil
@@ -134,8 +134,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// can reach THIS node while it runs (cooperative, at gate-stage
 			// boundaries), and atomically pick up any pending prompt edit for this
 			// not-yet-started node (SetNodeTaskOverride) in the SAME critical
-			// section as the registration — see runControls.registerAndTakeOverride.
-			// Keep ctrl a nil interface when controls are off — a typed-nil would
+			// section as the registration - see runControls.registerAndTakeOverride.
+			// Keep ctrl a nil interface when controls are off - a typed-nil would
 			// panic in the gate's ctrl.Cancelled() check. effectiveNode carries the
 			// overridden task text (or node.Task unchanged) everywhere a node body
 			// would otherwise read node.Task: prompt construction, the advisor
@@ -159,9 +159,9 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
 			// Advisor-thread identity: stamp a per-node marker line into the worker's
-			// prompt — the ONE channel that reaches the ask_advisor tool even across
+			// prompt - the ONE channel that reaches the ask_advisor tool even across
 			// the A2A hop (the tool executes in the A2A server's runner, where the
-			// calling node is otherwise invisible) — and register the node's task +
+			// calling node is otherwise invisible) - and register the node's task +
 			// rubric under the token so the tool seeds the mentor's session with the
 			// desired outcome on first consult. Trailing placement + last-match
 			// parsing keeps the token unambiguous even when foreign markers ride
@@ -173,11 +173,11 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// invocation so guard-ladder tools (internal/tools/guard.go) can scan
 			// the workflow session for confirm decisions even when they execute
 			// inside the A2A server's runner (whose own context session holds no
-			// gate events — see vetting.AdvisorTask).
+			// gate events - see vetting.AdvisorTask).
 			task := vetting.AdvisorTask{
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,
 				// WorkspaceNodeID, not NodeID, is what the fs/git tools resolve their
-				// directory scope from (internal/tools scopeFromContext) — NodeID
+				// directory scope from (internal/tools scopeFromContext) - NodeID
 				// itself stays the REAL node id for cancel/pause/queue lookups
 				// (controls are registered under it above), which must never be
 				// redirected to the shared scope.
@@ -188,20 +188,20 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}
 			// An external worker gets ONE per-node MCP surface (internal/acp) whose
-			// credential is a FRESH random secret — never the advisor-thread token
+			// credential is a FRESH random secret - never the advisor-thread token
 			// above, which is derivable (planID+nodeID) and disclosed to sibling
 			// nodes via the prompt, so it must never double as a bearer credential
 			// handed to an untrusted external subprocess (see AdvisorTask.MemSecret).
 			// The session carries whichever tool buffers the node is entitled to:
 			//   - memory (load_memory/stage_memory, #344) for a memory participant;
 			//   - review (stage_review_comment/stage_review, #451) for a code-reviewer
-			//     node (structural — see vetting.Config.IsReviewer, #482);
+			//     node (structural - see vetting.Config.IsReviewer, #482);
 			//   - stage_pr for a WRITE worker at the terminal delivery node.
 			// Native agents have ADK-native equivalents, so both ride cfg.ExternalWorker.
 			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
 			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && cfg.IsReviewer
 			// A WRITE worker at the chain's terminal delivery point (cfg.Deliver
-			// non-nil, mid-chain nodes get nil at graph.go:113) gets stage_pr —
+			// non-nil, mid-chain nodes get nil at graph.go:113) gets stage_pr -
 			// the same structural gate augmentFromRepo stages its fallback PR under.
 			prNode := cfg.ExternalWorker && !cfg.ReadOnly && cfg.Deliver != nil
 			if memParticipant || reviewNode || prNode {
@@ -225,7 +225,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 					vetting.RegisterMemSession(secret, ms)
 					// Backstop: RunGatedRefine unregisters as soon as it drains the
 					// staging buffer, but several of its early-return paths (empty
-					// answer, cancelled, judge error) skip that point entirely — this
+					// answer, cancelled, judge error) skip that point entirely - this
 					// defer guarantees the session never outlives the node regardless.
 					defer vetting.UnregisterMemSession(secret)
 				}
@@ -250,7 +250,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if errors.Is(err, vetting.ErrNodePaused) {
 				// Paused → same graph-completion constraint as cancel/empty (the
 				// static workflow graph needs this node to return to unblock its
-				// dependents — see dag.Executor.PauseNode's ponytail note): the DAG
+				// dependents - see dag.Executor.PauseNode's ponytail note): the DAG
 				// continues on the partial answer (continue-but-warn), and the
 				// stream layer (executor.go's userPaused check) renders it as
 				// node_paused, resumable, instead of node_done/node_cancelled.

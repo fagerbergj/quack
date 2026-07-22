@@ -19,7 +19,7 @@ import (
 
 // implementerAgent is the well-known bundle name (config key agents/code-implementer)
 // of the only specialist that can change, commit, and push code. Referenced by name
-// the same way assemble() hardcodes "synthesizer" — the roster is name-keyed and both
+// the same way assemble() hardcodes "synthesizer" - the roster is name-keyed and both
 // roles carry a fixed contract the plan validation depends on.
 const implementerAgent = "code-implementer"
 const reviewerAgent = "code-reviewer"
@@ -27,7 +27,7 @@ const explorerAgent = "code-explorer"
 
 // reviewChurnThreshold is the changed-line count above which a single
 // code-reviewer node reliably chokes on the whole diff (compaction churn +
-// slow re-diffing — a live +1271-line PR stalled for 30+ min). Above it, the
+// slow re-diffing - a live +1271-line PR stalled for 30+ min). Above it, the
 // review must fan out into per-file-group explorers feeding one reviewer.
 const reviewChurnThreshold = 800
 
@@ -48,7 +48,7 @@ func totalChurn(message string) int {
 	return sum
 }
 
-// AgentInfo describes one available agent (name + description) — the roster the
+// AgentInfo describes one available agent (name + description) - the roster the
 // orchestrator authors a DAG from.
 type AgentInfo struct {
 	Name        string
@@ -58,17 +58,17 @@ type AgentInfo struct {
 // Planner validates an orchestrator-authored DAG and stamps the turn's context
 // (verbatim message, history, attachments) onto it for the executor. There is no
 // LLM here: the orchestrator authors the DAG itself, guided by the plan-work
-// skill. This checks it — known agents, unique ids, acyclic — and hardens the
+// skill. This checks it - known agents, unique ids, acyclic - and hardens the
 // synthesizer's dependencies.
 type Planner struct {
 	agents []AgentInfo
 	// checkCommands are the allowed check-command PREFIXES (workspace.
-	// check_commands) a node's `checks` may complete into — see §4 of
+	// check_commands) a node's `checks` may complete into - see §4 of
 	// .quack/plan-pr5-tool-schemas.md. Empty (default) means checks are
 	// unavailable: any node that sets `checks` is rejected at plan time.
 	checkCommands []string
 	// judge scores a proposed plan against the plan-quality rubric
-	// (vetting.PlanJudge) — replaces the old regex routing backstop. nil when
+	// (vetting.PlanJudge) - replaces the old regex routing backstop. nil when
 	// the judge stage is disabled (config.Gates.JudgeEnabled() == false):
 	// judgeRouting then no-ops rather than blocking plan validation on a
 	// dependency that was never wired.
@@ -77,7 +77,7 @@ type Planner struct {
 
 // NewPlanner returns a Planner over the available agent roster, the
 // configured check-command prefixes (workspace.check_commands; may be empty),
-// and the plan judge (may be nil — see Planner.judge).
+// and the plan judge (may be nil - see Planner.judge).
 func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
 	return &Planner{agents: agents, checkCommands: checkCommands, judge: judge}
 }
@@ -97,7 +97,7 @@ type RawNode struct {
 	DependsOn []string `json:"depends_on"`
 	// Checks are orchestrator-set deterministic gate commands (§4): each MUST
 	// prefix-match a configured workspace.check_commands entry and contain no
-	// shell metacharacters — validated at plan time (assemble/validateChecks),
+	// shell metacharacters - validated at plan time (assemble/validateChecks),
 	// never at run time. Typically set only on code-implementer nodes.
 	Checks []string `json:"checks,omitempty"`
 	// Workdir is the workspace-relative directory Checks run in (the node's
@@ -107,11 +107,11 @@ type RawNode struct {
 
 // Build validates the submitted nodes into a Plan and stamps the turn context.
 // setup and delivery are the orchestrator's declared pre/post steps (nil when
-// the request has no GitHub repo involved) — Build only validates delivery's
+// the request has no GitHub repo involved) - Build only validates delivery's
 // kind deterministically; whether setup/delivery are the RIGHT declaration for
 // this request type is the plan judge's job (judgeRouting). message is the
 // verbatim user request, history the prior turns, attachments the current
-// media — all threaded to every node by the executor. ctx bounds the
+// media - all threaded to every node by the executor. ctx bounds the
 // (optional) plan-judge call. Returns an error (no silent fallback) so the
 // orchestrator can fix and re-submit.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part) (plan *Plan, err error) {
@@ -138,14 +138,14 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 // judgeRouting replaces the old regex routing backstop (checkImplementationRouting)
 // with a small rubric judged by the existing judge (vetting.PlanJudge): the
 // judge reads the proposed plan against the user's actual request and scores
-// its SHAPE — right terminal deliverable, addresses the ask, grounded, minimal
-// decomposition, verifiable — so intent comes from context rather than
+// its SHAPE - right terminal deliverable, addresses the ask, grounded, minimal
+// decomposition, verifiable - so intent comes from context rather than
 // verb/delivery-term string matching, which mis-fired on a plan-only run whose
 // injected acceptance text ("open a PR") described the EVENTUAL implementation,
 // not this request.
 //
 // Graceful degradation: judge==nil (judge stage disabled) or a judge call error
-// both ALLOW the plan rather than blocking it — a routing check must never wedge
+// both ALLOW the plan rather than blocking it - a routing check must never wedge
 // a run on its own failure. Only an explicit reject from a judge that actually
 // ran turns into an error, so the orchestrator's existing re-plan loop is the
 // retry budget (same contract checkImplementationRouting had).
@@ -171,7 +171,7 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 }
 
 // planSummary renders the plan for the plan judge: each node's id, agent,
-// dependencies, and full task text, plus the declared setup/delivery — enough
+// dependencies, and full task text, plus the declared setup/delivery - enough
 // for the judge to assess the decomposition, terminal deliverable, AND
 // whether setup/delivery match the request type, without re-running anything.
 func planSummary(p *Plan) string {
@@ -202,7 +202,7 @@ func planSummary(p *Plan) string {
 // churns compaction and re-diffs slowly (a +1271-line PR stalled 30+ min). When
 // the run message reports churn above reviewChurnThreshold and the plan has a
 // reviewer but NO explorer to spread the reading across, reject with a targeted
-// fix — slice the changed files into per-group explorers feeding the one reviewer.
+// fix - slice the changed files into per-group explorers feeding the one reviewer.
 // Inert when the roster has no code-explorer, or when the plan already fans out.
 func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 	hasExplorer := false
@@ -306,7 +306,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	// the terminal fan-in: research → synthesize → implement is a perfectly good
 	// plan, and there the implementer depends ON the synthesizer. Blindly giving the
 	// synthesizer an edge to EVERY other node then points it at its own descendant
-	// and manufactures a cycle — which quack rejected as "dag plan contains a cycle",
+	// and manufactures a cycle - which quack rejected as "dag plan contains a cycle",
 	// blaming the orchestrator for a correct plan we had just corrupted (live:
 	// 5 explorers → synthesize-design → implement-code-mode, rejected repeatedly).
 	if len(plan.Nodes) > 1 {
@@ -332,7 +332,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			plan.Nodes[i].DependsOn = deps
 		}
 		// Harden: a multi-node plan with NO synthesizer and ≥2 terminal nodes
-		// can't run as a native graph (single-terminal rule — nativegraph.go).
+		// can't run as a native graph (single-terminal rule - nativegraph.go).
 		// The orchestrator sometimes omits the fan-in entirely; append one
 		// rather than failing the whole run. Skipped when the roster has no
 		// synthesizer (the graph build will then reject multi-terminal plans).
@@ -365,13 +365,13 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 // configured workspace.check_commands entry (the planner fills in arguments to
 // an operator-approved prefix; it never invents an executable command). Checks
 // run shell-less (workspace.RunPipeline), so metachars are literal argv content
-// — the prefix allowlist, not a metachar scan, is the boundary. An empty
-// checkCommands (the default) means checks are unavailable at all — a plan node
+// - the prefix allowlist, not a metachar scan, is the boundary. An empty
+// checkCommands (the default) means checks are unavailable at all - a plan node
 // that sets them is rejected with a targeted, fixable error rather than silently
 // dropped or run unchecked.
 func validateChecks(checks, checkCommands []string) error {
 	if len(checkCommands) == 0 {
-		return fmt.Errorf("checks are unavailable (workspace.check_commands is empty) — omit `checks`")
+		return fmt.Errorf("checks are unavailable (workspace.check_commands is empty) - omit `checks`")
 	}
 	for _, c := range checks {
 		c = strings.TrimSpace(c)
@@ -390,12 +390,12 @@ func validateChecks(checks, checkCommands []string) error {
 }
 
 // deliveryKinds are the only values the harness knows how to execute post-gate
-// (see the plan tool's description) — a constrained vocabulary the orchestrator
+// (see the plan tool's description) - a constrained vocabulary the orchestrator
 // picks from, not free text.
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
 
 // validateDelivery rejects a Delivery.Kind outside the constrained vocabulary
-// at plan time — same spirit as validateChecks: a targeted, fixable error
+// at plan time - same spirit as validateChecks: a targeted, fixable error
 // rather than the harness later choking on a kind it can't execute. Whether
 // this kind is the RIGHT one for the request type is the plan judge's job,
 // not this deterministic check.
@@ -409,7 +409,7 @@ func validateDelivery(d *Delivery) error {
 	return nil
 }
 
-// descendants returns every node that transitively DEPENDS ON id — the nodes
+// descendants returns every node that transitively DEPENDS ON id - the nodes
 // downstream of it. A hardening pass must never add an edge from a node to one of
 // its own descendants: that is a cycle by construction.
 func descendants(nodes []Node, id string) map[string]bool {

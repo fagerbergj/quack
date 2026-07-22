@@ -1,6 +1,6 @@
 # Trims the build context. Do NOT add `*.md`, `docs/`, or `config/` here: the
 # runtime image COPYs agents/**/prompt.md, skills/**/SKILL.md, rubric.md, and
-# config/constitution.md straight from the context — excluding markdown would
+# config/constitution.md straight from the context - excluding markdown would
 # silently ship a broken image.
 .git
 .github

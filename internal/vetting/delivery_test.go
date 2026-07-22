@@ -9,7 +9,7 @@ import (
 // Regression (live e2e 2026-07-13, TC2): a code-implementer node told to "Add a
 // Flappy Bird game … and open it as a pull request … Commit on a branch named
 // exactly add-flappy-bird-quack-v4" cloned the repo, wrote the game, ran the
-// tests — and then STOPPED, ending its answer with a markdown code block showing
+// tests - and then STOPPED, ending its answer with a markdown code block showing
 // the contents of the registration file it was supposed to write. It never wrote
 // that file, never committed, never pushed, never opened the PR. The judge PASSED
 // it at 0.7: task_completeness is an LLM judgment and it is flaky. Delivery is
@@ -47,7 +47,7 @@ func TestDeliveryCriterionPassesWhenCommittedAndPushed(t *testing.T) {
 		t.Fatal("delivery_complete must apply to a task that demands a pull request")
 	}
 	if got.Score != 1 {
-		t.Errorf("got %+v, want Score 1 — the work WAS committed and pushed", got)
+		t.Errorf("got %+v, want Score 1 - the work WAS committed and pushed", got)
 	}
 }
 
@@ -79,7 +79,7 @@ func TestDeliveryCriterionFailsWhenCommitErrored(t *testing.T) {
 	}
 	got, ok := deliveryCriterion(prTask, act)
 	if !ok || got.Score != 0 {
-		t.Errorf("got %+v (applies=%v), want Score 0 — the commit failed, so nothing was delivered", got, ok)
+		t.Errorf("got %+v (applies=%v), want Score 0 - the commit failed, so nothing was delivered", got, ok)
 	}
 }
 
@@ -103,7 +103,7 @@ func TestActivityFromSessionRecordsDelivery(t *testing.T) {
 	}
 }
 
-// A missing push alone is named precisely — the feedback must be actionable.
+// A missing push alone is named precisely - the feedback must be actionable.
 func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 	act := workerActivity{committed: true}
 	got, _ := deliveryCriterion("Fix the flaky test and push the commit to the branch.", act)
@@ -111,7 +111,7 @@ func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 		t.Fatalf("Score = %v, want 0 (nothing was pushed)", got.Score)
 	}
 	if strings.Contains(got.Reason, "no successful `git_commit`") {
-		t.Errorf("Reason = %q, must not claim a missing commit — the worker DID commit", got.Reason)
+		t.Errorf("Reason = %q, must not claim a missing commit - the worker DID commit", got.Reason)
 	}
 	if !strings.Contains(got.Reason, "git_push") {
 		t.Errorf("Reason = %q, want it to name the missing push", got.Reason)
@@ -119,8 +119,8 @@ func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 }
 
 // Regression (live, 2026-07-13): a code REVIEW of PR #4 on branch
-// `add-flappy-bird-openhands` was classified as implement-and-deliver — the impl
-// verb matched only INSIDE the branch name (\b sits on the hyphen) — so the
+// `add-flappy-bird-openhands` was classified as implement-and-deliver - the impl
+// verb matched only INSIDE the branch name (\b sits on the hyphen) - so the
 // planner's routing backstop demanded a code-implementer node for a read-only
 // review and rejected the plan 8 times in a row, burning the whole re-plan budget.
 const reviewPrompt = "Review pull request #4 on the GitHub repository https://github.com/fagerbergj/games " +
@@ -156,7 +156,7 @@ func TestImplementationIntent(t *testing.T) {
 }
 
 // The node-level delivery check keys off the NODE's task text, and a task that
-// directs a commit/push demands delivery on its own terms — the intent heuristic
+// directs a commit/push demands delivery on its own terms - the intent heuristic
 // must not be the only way in.
 func TestDeliveryCriterionAppliesToADirectedDeliveryTask(t *testing.T) {
 	if _, ok := deliveryCriterion("Commit on branch add-foo and open a PR.", workerActivity{}); !ok {
@@ -181,8 +181,8 @@ func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 // The review half of the same mechanism.
 //
 // Live e2e 2026-07-13: a code-reviewer node told to review a pull request and
-// post its findings produced a NON-EMPTY answer — a status update ("I hit
-// shallow-clone difficulties…") — and posted NOTHING: zero inline comments,
+// post its findings produced a NON-EMPTY answer - a status update ("I hit
+// shallow-clone difficulties…") - and posted NOTHING: zero inline comments,
 // zero reviews on the PR. Because the answer wasn't empty and the task demanded
 // no commit/push, workIncomplete said "done", no continuation fired, and the
 // half-finished work went to the judge. Posting a review is mechanically
@@ -214,17 +214,17 @@ func TestReviewCriterionPassesWhenReviewSubmitted(t *testing.T) {
 		t.Fatal("review_posted must apply to a reviewer node")
 	}
 	if got.Score != 1 {
-		t.Errorf("got %+v, want Score 1 — the review WAS submitted", got)
+		t.Errorf("got %+v, want Score 1 - the review WAS submitted", got)
 	}
 }
 
 // Drafted comments are not a posted review: github_add_review_comment only
-// accumulates a draft (see internal/github) — the review exists on the PR only
+// accumulates a draft (see internal/github) - the review exists on the PR only
 // after github_submit_review.
 func TestReviewCriterionFailsOnDraftedButUnsubmittedComments(t *testing.T) {
 	got, ok := reviewCriterion(reviewTask, workerActivity{reviewCommented: true}, true)
 	if !ok || got.Score != 0 {
-		t.Fatalf("got %+v (applies=%v), want Score 0 — drafted comments were never submitted", got, ok)
+		t.Fatalf("got %+v (applies=%v), want Score 0 - drafted comments were never submitted", got, ok)
 	}
 	if !strings.Contains(got.Reason, "draft") {
 		t.Errorf("Reason = %q, want it to explain the draft was never submitted", got.Reason)
@@ -232,7 +232,7 @@ func TestReviewCriterionFailsOnDraftedButUnsubmittedComments(t *testing.T) {
 }
 
 // The gate is structural now (#482): review_posted never fires for a node that
-// isn't the code-reviewer agent, no matter how the task reads — including the
+// isn't the code-reviewer agent, no matter how the task reads - including the
 // bare label-review default that has no posting verb at all.
 func TestReviewCriterionKeysOnIsReviewerNotTaskText(t *testing.T) {
 	nonReviewerTasks := []string{
@@ -246,7 +246,7 @@ func TestReviewCriterionKeysOnIsReviewerNotTaskText(t *testing.T) {
 			t.Errorf("review_posted fired for a non-reviewer node: %q", task)
 		}
 	}
-	// A reviewer node with the bare label-review task (no posting verb —
+	// A reviewer node with the bare label-review task (no posting verb -
 	// dag.autoReviewTask's shape pre-#482) still applies the criterion.
 	if _, ok := reviewCriterion("Review this pull request.", workerActivity{}, true); !ok {
 		t.Error("review_posted must apply to a reviewer node even when the task names no posting verb (#482)")
@@ -269,7 +269,7 @@ func TestReviewCriterionFailsWhenSubmitErrored(t *testing.T) {
 	}
 	got, ok := reviewCriterion(reviewTask, act, true)
 	if !ok || got.Score != 0 {
-		t.Errorf("got %+v (applies=%v), want Score 0 — the submit failed, so nothing was posted", got, ok)
+		t.Errorf("got %+v (applies=%v), want Score 0 - the submit failed, so nothing was posted", got, ok)
 	}
 }
 
@@ -288,28 +288,28 @@ func TestActivityFromSessionRecordsReview(t *testing.T) {
 	}
 }
 
-// A read-only reviewer (ReadOnly=true — no commit/push tools) must NOT be held to a
+// A read-only reviewer (ReadOnly=true - no commit/push tools) must NOT be held to a
 // delivery demand read off a task polluted with the PR's own "Add …/open a PR"
 // wording. It CANNOT commit, so demanding it loops forever; its completion is
 // review_posted, not delivery.
 func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
-	pollutedTask := "Review PR #5, and open a pull request is what it does — it will Add a Flappy Bird game. " +
+	pollutedTask := "Review PR #5, and open a pull request is what it does - it will Add a Flappy Bird game. " +
 		"Read the diff and post inline review comments; submit the review."
 	act := workerActivity{reviewSubmitted: true, ranCommand: true}
 	if !workIncomplete("Reviewed.", pollutedTask, act, false, true) {
 		t.Skip("polluted task no longer reads as implement-and-deliver; the ReadOnly guard would not fire")
 	}
 	if workIncomplete("Reviewed.", pollutedTask, act, true, true) {
-		t.Error("a read-only reviewer with a submitted review must be COMPLETE — delivery must not apply to an agent that cannot commit")
+		t.Error("a read-only reviewer with a submitted review must be COMPLETE - delivery must not apply to an agent that cannot commit")
 	}
 }
 
 // The continuation condition: a non-empty answer that posted no review is NOT
-// done — this is the exact live regression (a status update passed as an answer).
+// done - this is the exact live regression (a status update passed as an answer).
 func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	statusUpdate := "I encountered technical difficulties with the shallow clone and could not complete the review."
 	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false, true) {
-		t.Error("a non-empty answer that posted no review must be incomplete — the continuation loop has to re-invoke the reviewer with its tools")
+		t.Error("a non-empty answer that posted no review must be incomplete - the continuation loop has to re-invoke the reviewer with its tools")
 	}
 	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false, true) {
 		t.Error("a submitted review is complete work")
@@ -324,7 +324,7 @@ func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 //
 // Live e2e 2026-07-13: given run_command + write_file, the code-reviewer wrote a
 // throwaway trace harness, ran it, and printed "Start Y: 285.0, Final Y after 30
-// frames: 285.0 → BUG CONFIRMED — bird Y NEVER CHANGES" — a show-stopper in a PR
+// frames: 285.0 → BUG CONFIRMED - bird Y NEVER CHANGES" - a show-stopper in a PR
 // that passed typecheck, lint and all 19 of its own unit tests (the tests assert
 // the same absent behaviour). On the NEXT run, same PR, it wrote no probe, read
 // the diff, and called the game "fully functional". Prompt guidance alone is a
@@ -344,13 +344,13 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 		t.Fatal("behaviour_verified must apply to a review of a real code change")
 	}
 	if got.Score != 0 {
-		t.Fatalf("Score = %v, want 0 — the reviewer executed nothing", got.Score)
+		t.Fatalf("Score = %v, want 0 - the reviewer executed nothing", got.Score)
 	}
 	if !strings.Contains(got.Reason, "run_command") {
 		t.Errorf("Reason = %q, want it to name run_command", got.Reason)
 	}
 	if !workIncomplete("The game is fully functional.", reviewTask, act, false, true) {
-		t.Error("a read-only review must be INCOMPLETE work — the continuation loop has to hand the reviewer its tools back")
+		t.Error("a read-only review must be INCOMPLETE work - the continuation loop has to hand the reviewer its tools back")
 	}
 }
 
@@ -366,11 +366,11 @@ func TestBehaviourCriterionPassesWhenTheReviewerRanTheCode(t *testing.T) {
 	}
 	got, ok := behaviourCriterion(reviewTask, act, true)
 	if !ok || got.Score != 1 {
-		t.Fatalf("got %+v (applies=%v), want Score 1 — the reviewer executed the code", got, ok)
+		t.Fatalf("got %+v (applies=%v), want Score 1 - the reviewer executed the code", got, ok)
 	}
 }
 
-// A run_command that ERRORED never executed anything — same rule as
+// A run_command that ERRORED never executed anything - same rule as
 // written/committed/pushed: successful calls only.
 func TestBehaviourCriterionFailsWhenTheCommandErrored(t *testing.T) {
 	act := activityFromSession(newTestSession(t,
@@ -384,11 +384,11 @@ func TestBehaviourCriterionFailsWhenTheCommandErrored(t *testing.T) {
 	}
 	got, ok := behaviourCriterion(reviewTask, act, true)
 	if !ok || got.Score != 0 {
-		t.Errorf("got %+v (applies=%v), want Score 0 — nothing ran", got, ok)
+		t.Errorf("got %+v (applies=%v), want Score 0 - nothing ran", got, ok)
 	}
 }
 
-// A prose ask about a snippet has no code change to execute — a false positive
+// A prose ask about a snippet has no code change to execute - a false positive
 // would deadlock the node in continuation rounds it can never satisfy.
 func TestBehaviourCriterionDoesNotFireOnProseTask(t *testing.T) {
 	tasks := []string{

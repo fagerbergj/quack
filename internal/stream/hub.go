@@ -8,7 +8,7 @@ import (
 // Hub fans out a chat's SSE event stream to multiple subscribers, so a run
 // started on one device can be watched live from another. Events are keyed by
 // chat ID (one active run per chat). Each topic keeps a bounded replay buffer so
-// a late joiner — or a reconnecting client — gets the events so far, then the
+// a late joiner - or a reconnecting client - gets the events so far, then the
 // live tail. In-memory and single-process: fine for the self-hosted instance;
 // behind multiple replicas this would need a shared bus (see configuration).
 //
@@ -20,7 +20,7 @@ import (
 //
 // The hub also carries the cancel-run registry: it's the one thing already
 // shared between every driver of a run (the REST handler AND the GitHub
-// webhook extension — see NewExtension), so registering cancel handles here
+// webhook extension - see NewExtension), so registering cancel handles here
 // instead of in a per-driver map is what makes stop/DELETE reach a
 // GitHub-dispatched run too (#468).
 type Hub struct {
@@ -38,14 +38,14 @@ type runHandle struct {
 }
 
 // RegisterRun records chatID's active run so CancelRun/CancelResponse can reach
-// it — called synchronously before the run's goroutine starts, so the cancel
+// it - called synchronously before the run's goroutine starts, so the cancel
 // path can never miss a run it was just told about. Overwrites any stale
 // handle for the same chat (a chat has at most one active run at a time).
 func (h *Hub) RegisterRun(chatID, responseID string, cancel context.CancelFunc) {
 	h.runs.Store(chatID, &runHandle{responseID: responseID, cancel: cancel})
 }
 
-// UnregisterRun drops chatID's cancel handle once its run ends — the run's
+// UnregisterRun drops chatID's cancel handle once its run ends - the run's
 // driver must defer this, mirroring Close, so a finished run can't be
 // "cancelled" again and CancelRun/CancelResponse correctly report false
 // afterward. Idempotent.
@@ -54,7 +54,7 @@ func (h *Hub) UnregisterRun(chatID string) {
 }
 
 // CancelRun cancels chatID's active run unconditionally, regardless of driver
-// (REST-started or GitHub-dispatched) — the DELETE-chat path, which has no
+// (REST-started or GitHub-dispatched) - the DELETE-chat path, which has no
 // response id to match against. Reports whether a run was found and
 // cancelled; false is the expected, safe outcome for an unknown or
 // already-finished chat.
@@ -67,7 +67,7 @@ func (h *Hub) CancelRun(chatID string) bool {
 	return true
 }
 
-// CancelResponse cancels chatID's active run only if responseID names it — the
+// CancelResponse cancels chatID's active run only if responseID names it - the
 // UI stop button's guard against cancelling a run that isn't the one it
 // observed (a stale id from a superseded run 404s rather than silently
 // cancelling whatever happens to be running now). Reports whether it matched
@@ -102,7 +102,7 @@ type topic struct {
 	buf     []Event
 	subs    map[chan Event]struct{}
 	done    bool
-	started bool // true once a run has actually Published — see Active.
+	started bool // true once a run has actually Published - see Active.
 }
 
 // NewHub returns an empty hub.
@@ -115,7 +115,7 @@ func NewHub() *Hub { return &Hub{topics: map[string]*topic{}} }
 
 // Publish appends a sequenced event to the chat's topic and fans it to live
 // subscribers. The first publish after a topic is done (or absent) starts a fresh
-// run, discarding the previous run's buffer — so a new turn replaces the old
+// run, discarding the previous run's buffer - so a new turn replaces the old
 // stream. seq is the run loop's per-chat position for this event.
 func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 	h.mu.Lock()
@@ -141,7 +141,7 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 	}
 }
 
-// Active reports whether a chat currently has a live (not yet Closed) run —
+// Active reports whether a chat currently has a live (not yet Closed) run -
 // backs the REST status handler's `running` chat status and the subscribe
 // handler's cold/warm split. Gated on started, not just topic existence:
 // Subscribe auto-vivifies an empty topic for a chat with no run at all (so a
@@ -173,7 +173,7 @@ func (h *Hub) Close(key string) {
 }
 
 // Reset drops the chat's topic so a starting run can register its viewers on a
-// fresh, empty one — Subscribe would otherwise hand a client the PREVIOUS run's
+// fresh, empty one - Subscribe would otherwise hand a client the PREVIOUS run's
 // buffer (and, if that run was Closed, no live channel at all). Publish does the
 // same reset lazily on its first event; a run that wants subscribers attached
 // BEFORE it publishes calls this first.

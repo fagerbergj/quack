@@ -14,7 +14,7 @@ import (
 
 // TestMain doubles as the fake ACP agent: the tests re-exec the test binary
 // with QUACK_ACP_FAKE set, and this intercept runs the agent side of the
-// protocol over stdio instead of the test suite — a real subprocess round
+// protocol over stdio instead of the test suite - a real subprocess round
 // with no external dependency.
 func TestMain(m *testing.M) {
 	if mode := os.Getenv("QUACK_ACP_FAKE"); mode != "" {
@@ -54,11 +54,11 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		<-ctx.Done()
 		return sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
 	case "stubborn":
-		// Ignores cancellation entirely — only the process-group kill ends it
+		// Ignores cancellation entirely - only the process-group kill ends it
 		// (the v0.5.2 hang class).
 		select {}
 	case "slow":
-		// Alive but with gaps between updates — must never trip idle timeout
+		// Alive but with gaps between updates - must never trip idle timeout
 		// on its own (each gap is shorter than the test's idle window).
 		send(sdk.UpdateAgentThoughtText("planning"))
 		time.Sleep(80 * time.Millisecond)
@@ -164,12 +164,12 @@ func TestRound_CancelGraceful(t *testing.T) {
 		t.Fatalf("want context cancellation, got %v", err)
 	}
 	if d := time.Since(t0); d > 10*time.Second {
-		t.Fatalf("cancel took %v — subprocess not reaped", d)
+		t.Fatalf("cancel took %v - subprocess not reaped", d)
 	}
 }
 
 // A worker that ignores session/cancel entirely must still be reaped by the
-// process-group kill within the grace window — the v0.5.2 hang class.
+// process-group kill within the grace window - the v0.5.2 hang class.
 func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	old := cancelGrace
 	cancelGrace = 300 * time.Millisecond
@@ -184,11 +184,11 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 		t.Fatal("want an error from a cancelled round")
 	}
 	if d := time.Since(t0); d > 15*time.Second {
-		t.Fatalf("stubborn agent survived %v — group kill failed", d)
+		t.Fatalf("stubborn agent survived %v - group kill failed", d)
 	}
 }
 
-// A round that goes silent — no updates, and the prompt RPC never returns —
+// A round that goes silent - no updates, and the prompt RPC never returns -
 // must be treated as wedged and unblocked by the idle timeout, not left to
 // the caller's outer context (which in production is the 2h run deadline).
 func TestRound_IdleTimeout(t *testing.T) {
@@ -210,12 +210,12 @@ func TestRound_IdleTimeout(t *testing.T) {
 			t.Fatalf("want a wedged idle-timeout error, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("round did not return — idle timeout regression, would otherwise hang on the caller's outer context")
+		t.Fatal("round did not return - idle timeout regression, would otherwise hang on the caller's outer context")
 	}
 }
 
 // Updates arriving with gaps just under the idle window must never trip a
-// false timeout — the round completes normally when done fires.
+// false timeout - the round completes normally when done fires.
 func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
 	a := testAgent(t, "slow")
 	a.opts.IdleTimeout = 150 * time.Millisecond // each update gap is 80ms

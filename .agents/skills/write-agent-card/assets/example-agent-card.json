@@ -36,7 +36,7 @@
       "description": "Analyzes a pull request's diff for security vulnerabilities including SQL injection, XSS, hardcoded secrets, and unsafe deserialization. Triggers on requests involving code review, security audit, or vulnerability scanning.",
       "tags": ["security", "code-review", "vulnerability", "sdlc"],
       "examples": [
-        "Review this PR for security issues — https://github.com/org/repo/pull/142",
+        "Review this PR for security issues - https://github.com/org/repo/pull/142",
         "Scan the diff in /path/to/diff.json for hardcoded secrets or SQL injection patterns",
         "Does this code have any XSS vulnerabilities?"
       ],

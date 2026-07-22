@@ -22,7 +22,7 @@ import (
 // its own runner lifecycle (Get/Create → append) holding its own localSession
 // snapshot of the one advisor session row; the database service's optimistic
 // stale check (session/database/service.go applyEvent) rejects the loser's
-// append ("stale session error"). InMemoryService has no such check — which
+// append ("stale session error"). InMemoryService has no such check - which
 // is why the original tests missed it; this test runs against the REAL
 // database-backed service (sqlite dialect of the production Postgres one).
 //
@@ -85,7 +85,7 @@ func TestConsultAdvisor_ConcurrentSameThreadDBService(t *testing.T) {
 			t.Errorf("advisor session missing REQ-%d (a concurrent consult was lost)", i)
 		}
 	}
-	// The seed must appear EXACTLY once — the first consult to create the
+	// The seed must appear EXACTLY once - the first consult to create the
 	// thread seeds it; retried/serialized consults must not re-seed.
 	if got := strings.Count(all.String(), "SEED: the task"); got != 1 {
 		t.Errorf("seed appears %d times in the advisor session, want exactly 1", got)

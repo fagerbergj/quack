@@ -13,7 +13,7 @@ import (
 )
 
 // repeatGuard breaks identical-call loops: a model that re-issues the exact
-// same tool call (name + args) consecutively is not gathering new information —
+// same tool call (name + args) consecutively is not gathering new information -
 // it has wedged on a repetition attractor. Measured in dogfooding with full
 // request-tail instrumentation: the harness delivered every result and the
 // model repeated anyway (611× `git log`, 26× the same read_file), wedging nodes
@@ -30,20 +30,20 @@ type repeatGuard struct {
 }
 
 // repeatThreshold is the consecutive-identical-call count at which refusal
-// starts: the 1st call runs, an immediate identical retry (2nd) is allowed —
-// legitimate after a transient error — and the 3rd is refused.
+// starts: the 1st call runs, an immediate identical retry (2nd) is allowed -
+// legitimate after a transient error - and the 3rd is refused.
 const repeatThreshold = 3
 
 // repeatStates tracks the last call fingerprint per session, shared by every
 // tool of one registry build so consecutiveness is judged across tools (call A,
-// call B, call A is NOT a repeat). Keyed by ctx.SessionID() — per-run A2A
+// call B, call A is NOT a repeat). Keyed by ctx.SessionID() - per-run A2A
 // sessions, so state resets naturally with each run.
-// ponytail: entries are never pruned — a few dozen bytes per session on a
+// ponytail: entries are never pruned - a few dozen bytes per session on a
 // single-tenant bot; add pruning if sessions ever number in the millions.
 type repeatStates struct {
 	mu   sync.Mutex
 	last map[string]*repeatState
-	// fails counts consecutive FAILED calls per session+(tool, resource) — see
+	// fails counts consecutive FAILED calls per session+(tool, resource) - see
 	// pathFailThreshold. Keyed sessionID+"|"+tool+":"+resource.
 	fails map[string]int
 }
@@ -110,7 +110,7 @@ func (g *repeatGuard) IsLongRunning() bool { return g.inner.IsLongRunning() }
 
 func (g *repeatGuard) Declaration() *genai.FunctionDeclaration { return g.inner.Declaration() }
 
-// ProcessRequest re-points the dispatch entry at the wrapper — same shape and
+// ProcessRequest re-points the dispatch entry at the wrapper - same shape and
 // reason as cancelGuard.ProcessRequest.
 func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
 	if err := g.inner.ProcessRequest(ctx, req); err != nil {
@@ -125,13 +125,13 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 }
 
 // pathFailThreshold is the consecutive-FAILED-call count against the same
-// (tool, resource) — regardless of the other args — a resource may accumulate
+// (tool, resource) - regardless of the other args - a resource may accumulate
 // before the NEXT call against it is refused outright. Catches the
 // semantic-churn case the byte-identical guard above misses: an agent
 // re-reading/re-grepping the same path with a varying offset/pattern/line
 // number each try, never repeating the exact args, but never learning the
-// path itself is the problem (#306). A failed call always runs (its result —
-// the actual error — is informative); only once pathFailThreshold of them
+// path itself is the problem (#306). A failed call always runs (its result -
+// the actual error - is informative); only once pathFailThreshold of them
 // have run consecutively does the guard step in and refuse the next one
 // without executing it, so a genuinely stuck loop costs at most
 // pathFailThreshold wasted calls before it's caught. Deliberately narrower
@@ -145,7 +145,7 @@ const pathFailThreshold = 3
 // Run executes the call unless it trips one of two loop breakers:
 //  1. repeatThreshold-th (or later) consecutive byte-identical call.
 //  2. the (pathFailThreshold+1)-th consecutive call against a (tool, resource)
-//     that has already failed pathFailThreshold times in a row — semantic churn.
+//     that has already failed pathFailThreshold times in a row - semantic churn.
 //
 // Either returns a steering error the model can act on instead of the result.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
@@ -161,7 +161,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 			"tool", g.Name(), "consecutive", n, "session", sessionID)
 		return nil, fmt.Errorf(
 			"REFUSED (attempt %d): this is the %dth consecutive time you issued this exact %s call with these exact arguments. "+
-				"Its result has not changed — it is already in the conversation above. Re-issuing it again will be refused again. "+
+				"Its result has not changed - it is already in the conversation above. Re-issuing it again will be refused again. "+
 				"Take a DIFFERENT action: use the result you already have, try a different tool or different arguments, or if you "+
 				"are finished, stop calling tools and write your final answer now.",
 			n-repeatThreshold+1, n, g.Name())
@@ -175,7 +175,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 				"tool", g.Name(), "resource", resource, "consecutive_fails", fails, "session", sessionID)
 			return nil, fmt.Errorf(
 				"REFUSED: %s against %q has now failed %d times in a row with varying arguments. Varying the arguments "+
-					"further is not working — the problem is with %q itself or your understanding of it, not the "+
+					"further is not working - the problem is with %q itself or your understanding of it, not the "+
 					"specific call. Stop retrying this resource: inspect it a different way (e.g. list its "+
 					"surroundings), pick a different resource, or report the failure in your final answer.",
 				g.Name(), resource, fails, resource)
@@ -190,7 +190,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 }
 
 // resourceFingerprint extracts a stable per-call resource identity from a
-// tool call's marshaled args — the `path` or `url` field, if either is a
+// tool call's marshaled args - the `path` or `url` field, if either is a
 // non-empty string. Reports false when neither is present (unmarshalable args,
 // or a tool whose calls aren't resource-scoped), so callers can skip the
 // failure-streak check rather than fingerprint on the whole args blob (which

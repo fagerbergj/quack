@@ -140,7 +140,7 @@ func TestHITL_SingleNodePauseResume(t *testing.T) {
 }
 
 // newChattyAskTool is an ask_user tool that, unlike newAskTool, does NOT set
-// SkipSummarization — so after the ask the worker's model gets another turn and
+// SkipSummarization - so after the ask the worker's model gets another turn and
 // writes a DRAFT. That reproduces the live-bug STATE the plain ask can't: a
 // worker whose RunNode returns a NON-EMPTY draft while a fresh ask_user sits
 // unanswered in the session (a chatty code-implementer that asked a real design
@@ -236,10 +236,10 @@ func TestHITL_PausesDespiteNonEmptyDraft(t *testing.T) {
 		t.Fatalf("run1: %v", err)
 	}
 	if !paused {
-		t.Fatal("run1: worker asked a question with a non-empty draft — the node MUST pause, not proceed to the judge")
+		t.Fatal("run1: worker asked a question with a non-empty draft - the node MUST pause, not proceed to the judge")
 	}
 	if out1["n1"] != "" {
-		t.Errorf("run1: draft leaked as output %q — it should be discarded on the pause", out1["n1"])
+		t.Errorf("run1: draft leaked as output %q - it should be discarded on the pause", out1["n1"])
 	}
 	if pauseID != "hitl-n1-r1" || pauseMsg != "which direction?" {
 		t.Fatalf("run1: node_needs_input = (%q, %q), want (hitl-n1-r1, which direction?)", pauseID, pauseMsg)
@@ -303,7 +303,7 @@ func (s *multiRoundStub) GenerateContent(_ context.Context, req *model.LLMReques
 
 // TestHITL_MultiRoundFoldsFullTranscript: a node paused for TWO separate
 // questions across two rounds must see BOTH Q&A pairs on its final (answering)
-// run — not just the most recent one. Guards the withUserAnswer/hitlScan
+// run - not just the most recent one. Guards the withUserAnswer/hitlScan
 // full-transcript fix (a single-pair fold would silently drop round 1's Q&A).
 func TestHITL_MultiRoundFoldsFullTranscript(t *testing.T) {
 	stub := &multiRoundStub{}

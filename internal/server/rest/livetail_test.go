@@ -14,7 +14,7 @@ import (
 // waitForBody polls the recorder's accumulated body until it contains want, or
 // fails the test after a short timeout. httptest.ResponseRecorder's bytes.Buffer
 // isn't safe for concurrent read/write, but this package writes+reads only
-// strings, in a tight poll loop — fine for a test racing a background writer.
+// strings, in a tight poll loop - fine for a test racing a background writer.
 func waitForBody(t *testing.T, rec *httptest.ResponseRecorder, want string) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
@@ -34,9 +34,9 @@ func waitForBody(t *testing.T, rec *httptest.ResponseRecorder, want string) {
 // running (events already published, more still to come) and the request must
 // stay open, delivering new events as they land, instead of snapshotting the
 // history so far and closing. Crucially, the run here is published exactly as
-// the GitHub extension does — through the shared hub, with NOTHING registered
+// the GitHub extension does - through the shared hub, with NOTHING registered
 // in the handler's own activeCancels (that map is REST-only; a GitHub-dispatched
-// run registers in the extension's separate map) — so this also pins that
+// run registers in the extension's separate map) - so this also pins that
 // "active" is derived from the shared hub, not that REST-only registry.
 func TestSubscribeLiveTail(t *testing.T) {
 	h := newTestHandler(t)
@@ -58,7 +58,7 @@ func TestSubscribeLiveTail(t *testing.T) {
 	waitForBody(t, rec, "node_start")
 
 	// ...then, while still connected, a subsequent live event must arrive
-	// without a reload — the request must NOT have already completed.
+	// without a reload - the request must NOT have already completed.
 	select {
 	case <-done:
 		t.Fatal("stream completed instead of staying open for the live tail")
@@ -67,7 +67,7 @@ func TestSubscribeLiveTail(t *testing.T) {
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
 	waitForBody(t, rec, "node_done")
 
-	// The run ending closes the stream — mirrors what every driver of a run
+	// The run ending closes the stream - mirrors what every driver of a run
 	// (REST handler, GitHub webhook dispatcher) does: publish Done, then close
 	// the hub topic so it stops accepting a next run's events as this one's.
 	pub.Publish(stream.Done())
@@ -81,7 +81,7 @@ func TestSubscribeLiveTail(t *testing.T) {
 }
 
 // TestSubscribeIdleSnapshotsAndCloses is the non-regression counterpart: a
-// finished (or never-started) chat must still snapshot-and-close promptly —
+// finished (or never-started) chat must still snapshot-and-close promptly -
 // the fix for #282 must not turn every stream into a hanging connection.
 func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 	h := newTestHandler(t)
@@ -114,7 +114,7 @@ func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 
 // TestSubscribeLiveReconnectByLastEventID: a reconnect mid-run (Last-Event-ID
 // set) must resume past what the client already saw and pick up the live
-// tail without duplicating or dropping events — not just on the cold/durable
+// tail without duplicating or dropping events - not just on the cold/durable
 // path (TestSubscribeColdReplay covers that), but on the warm hub path too.
 func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	h := newTestHandler(t)

@@ -13,7 +13,7 @@ import (
 )
 
 // The bucket model (shared, subject-keyed memory): a memory belongs to a bucket
-// describing WHAT IT IS ABOUT — the repo, the role family, or the user — never to
+// describing WHAT IT IS ABOUT - the repo, the role family, or the user - never to
 // the agent that happened to write it. These tests are the contract.
 
 const (
@@ -47,7 +47,7 @@ func recall(t *testing.T, v *View, query string) []adkmemory.Entry {
 }
 
 // TestRepoBucketSharedByEveryCodingAgent is the whole point of the redesign: what
-// the EXPLORER learns about a repo must reach the IMPLEMENTER and the REVIEWER —
+// the EXPLORER learns about a repo must reach the IMPLEMENTER and the REVIEWER -
 // they work on the same subject, so they share the same bucket.
 func TestRepoBucketSharedByEveryCodingAgent(t *testing.T) {
 	ctx := context.Background()
@@ -75,7 +75,7 @@ func TestRepoBucketSharedByEveryCodingAgent(t *testing.T) {
 }
 
 // TestRoleBucketNotSharedAcrossFamilies: tradecraft is shared within a role family
-// (coding / research) but not across it — a researcher's fetch tactic is noise to a coder.
+// (coding / research) but not across it - a researcher's fetch tactic is noise to a coder.
 func TestRoleBucketNotSharedAcrossFamilies(t *testing.T) {
 	ctx := context.Background()
 	const fact = "a source's own docs beat a blog post about it"
@@ -132,7 +132,7 @@ func TestUserBucketRecalledByEveryone(t *testing.T) {
 
 // TestLegacyAgentScopedMemoriesStillLoad: memories written before the redesign are
 // keyed by the raw agent name (task) or raw user id (user). Reads stay tolerant of
-// them — no migration, nothing lost.
+// them - no migration, nothing lost.
 func TestLegacyAgentScopedMemoriesStillLoad(t *testing.T) {
 	s := newSQLiteStore(t, "task", nil)
 	upsertScoped(t, s, "1", "web-researcher", "transportforireland.ie is authoritative for Irish transit")
@@ -141,13 +141,13 @@ func TestLegacyAgentScopedMemoriesStillLoad(t *testing.T) {
 	if got := recall(t, v, "irish transit"); len(got) != 1 {
 		t.Fatalf("legacy agent-scoped memory recalled %d, want 1", len(got))
 	}
-	// It is still that agent's own memory — nobody else inherits the legacy silo.
+	// It is still that agent's own memory - nobody else inherits the legacy silo.
 	if got := recall(t, codingView(s, "code-implementer", repoA, "u1"), "irish transit"); len(got) != 0 {
 		t.Fatalf("legacy silo leaked %d memories to another agent, want 0", len(got))
 	}
 }
 
-// TestCommitRoutesCandidatesToTheirBuckets: one commit, three subjects — each
+// TestCommitRoutesCandidatesToTheirBuckets: one commit, three subjects - each
 // candidate lands in the bucket it declared, and the answer-extraction lands in the
 // default bucket (the repo, when the node has one).
 func TestCommitRoutesCandidatesToTheirBuckets(t *testing.T) {
@@ -179,7 +179,7 @@ func TestCommitRoutesCandidatesToTheirBuckets(t *testing.T) {
 }
 
 // TestCommitFallsBackToRoleWithoutARepo: a deployment (or a node) with no repo
-// context must still work — a repo-bucket write with no known repo falls back to the
+// context must still work - a repo-bucket write with no known repo falls back to the
 // role bucket rather than guessing a key.
 func TestCommitFallsBackToRoleWithoutARepo(t *testing.T) {
 	ctx := context.Background()
@@ -236,7 +236,7 @@ func TestScopeBuckets(t *testing.T) {
 	}
 }
 
-// echoModel is a consolidator that ADDs every staged candidate verbatim — so a test
+// echoModel is a consolidator that ADDs every staged candidate verbatim - so a test
 // can assert WHICH bucket each one landed in.
 type echoModel struct{}
 
@@ -266,7 +266,7 @@ func promptText(req *model.LLMRequest) string {
 	return b.String()
 }
 
-// preloadCtx is an agent context whose SearchMemory routes to a View — the real
+// preloadCtx is an agent context whose SearchMemory routes to a View - the real
 // recall path preload_memory takes at runtime.
 type preloadCtx struct {
 	*adkagent.ContextMock
@@ -280,7 +280,7 @@ func (c *preloadCtx) UserContent() *genai.Content {
 
 func (c *preloadCtx) SearchMemory(_ context.Context, query string) (*adkmemory.SearchResponse, error) {
 	// ADK hands the invocation context through; ContextMock's has no deadline support,
-	// so route the search on a plain one — the View is what's under test here.
+	// so route the search on a plain one - the View is what's under test here.
 	return c.view.SearchMemory(context.Background(), &adkmemory.SearchRequest{Query: query})
 }
 

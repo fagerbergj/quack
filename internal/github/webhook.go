@@ -63,7 +63,7 @@ type issueCommentPayload struct {
 	// GitHub payload.
 	planOnly bool
 	// isLabelTrigger marks a synthetic payload built from a label/pr_opened
-	// event (auto-review, quack:plan, quack:implement) — as opposed to a real
+	// event (auto-review, quack:plan, quack:implement) - as opposed to a real
 	// @mention comment. dispatch resets the session for a label-triggered work
 	// request (T4 session hygiene); a conversational @mention never does. Not
 	// part of the GitHub payload.
@@ -131,7 +131,7 @@ type pullRequestPayload struct {
 }
 
 // autoReviewTask is the synthesized request for a pr_opened/label-triggered
-// auto-review — there is no human comment to extract a task from.
+// auto-review - there is no human comment to extract a task from.
 const autoReviewTask = "Review this pull request and post your findings as inline review comments and a verdict."
 
 // autoReviewUser is the synthetic "commenter" attributed to an auto-review run
@@ -140,7 +140,7 @@ const autoReviewUser = "quack-auto-review"
 
 // handleWebhook is the inbound trust boundary: it verifies the HMAC signature
 // over the RAW body before doing anything else, then dispatches by event type
-// and returns FAST — the orchestrator run happens in a goroutine (GitHub
+// and returns FAST - the orchestrator run happens in a goroutine (GitHub
 // enforces a ~10s webhook timeout).
 func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBody))
@@ -172,9 +172,9 @@ func (e *Extension) handleIssueComment(w http.ResponseWriter, body []byte) {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
-	// Never act on another bot's comments — quack's own posted plans/summaries
+	// Never act on another bot's comments - quack's own posted plans/summaries
 	// and other integrations must not re-trigger runs.
-	// ponytail: rejects all bots, not just self — bots don't mention quack legitimately.
+	// ponytail: rejects all bots, not just self - bots don't mention quack legitimately.
 	if strings.HasSuffix(p.Comment.User.Login, "[bot]") {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -236,7 +236,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 	}
 
 	// Reuse the mention path's dispatch/runMessage by shaping the PR event as an
-	// issueCommentPayload — same session key, same review-tool guidance, no
+	// issueCommentPayload - same session key, same review-tool guidance, no
 	// duplicated prompt.
 	synthetic := issueCommentPayload{Action: "created"}
 	synthetic.Issue.Number = p.Number
@@ -259,7 +259,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 
 // handleIssues drives the label-driven issue workflow: applying the configured
 // plan label to an issue dispatches a planning run whose answer (the plan) is
-// posted back as an issue comment. Labels double as the permission model —
+// posted back as an issue comment. Labels double as the permission model -
 // only repo-write users can apply them.
 func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	var p issuesPayload
@@ -295,7 +295,7 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	switch {
 	case e.triggers["issue_plan"] && p.Label.Name == e.labels.Plan:
 		synthetic.planOnly = true
-		go e.ackLabelReaction(p) // instant 👀 on the issue — the label path's equivalent of ackReaction
+		go e.ackLabelReaction(p) // instant 👀 on the issue - the label path's equivalent of ackReaction
 		go e.dispatch(synthetic, planTask(p))
 	case e.triggers["issue_implement"] && p.Label.Name == e.labels.Implement:
 		go e.ackLabelReaction(p)
@@ -310,7 +310,7 @@ func (e *Extension) handleIssues(w http.ResponseWriter, body []byte) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// runImplement dispatches the implementation run on the issue's session — the
+// runImplement dispatches the implementation run on the issue's session - the
 // same session the planning run used, so the plan is also in the model's own
 // history. The orchestrator's initial response IS the ack (no canned Go-side
 // comment). Fetches current labels to wire a contextual closing signal into the
@@ -341,7 +341,7 @@ func hasPartialFix(partialFixLabel string, names []string) bool {
 }
 
 // implementTask synthesizes the implementation request for an implement-labeled
-// issue — the issue itself; the approved plan and rest of the discussion
+// issue - the issue itself; the approved plan and rest of the discussion
 // arrive separately via loadGithubContext's injected context (#459).
 // The labels param carries every label currently on the issue (fetched at
 // dispatch start), used to conditionally suppress unconditional Closes #N.
@@ -350,22 +350,22 @@ func implementTask(p issuesPayload, labels []string, partialFixLabel string) str
 	fmt.Fprintf(&b, "Implement issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
 
 	if body := strings.TrimSpace(p.Issue.Body); body != "" {
-		fmt.Fprintf(&b, "\nIssue description (may be incomplete — see discussion below):\n%s\n", truncate(body, 4000))
+		fmt.Fprintf(&b, "\nIssue description (may be incomplete - see discussion below):\n%s\n", truncate(body, 4000))
 	}
 
 	isPartial := hasPartialFix(partialFixLabel, labels)
 	if isPartial {
-		b.WriteString("\nA maintainer approved this for implementation (see the approved plan in the discussion below). This is a partial fix: implement the changes, commit locally, and call stage_pr. Do NOT use a Closes keyword — the issue will not be fully closed by this PR.")
+		b.WriteString("\nA maintainer approved this for implementation (see the approved plan in the discussion below). This is a partial fix: implement the changes, commit locally, and call stage_pr. Do NOT use a Closes keyword - the issue will not be fully closed by this PR.")
 	} else {
 		b.WriteString("\nA maintainer approved this for implementation (see the approved plan in the discussion below). Implement it per the plan, commit your work locally, " +
-			"then call stage_pr with a title and a body that includes `Closes #" + fmt.Sprintf("%d", p.Issue.Number) + "` — you do not push or open the pull request yourself; " +
+			"then call stage_pr with a title and a body that includes `Closes #" + fmt.Sprintf("%d", p.Issue.Number) + "` - you do not push or open the pull request yourself; " +
 			"the pull request is opened for you once your work passes review")
 	}
-	b.WriteString("\nNever merge anything — merging is a human decision.")
+	b.WriteString("\nNever merge anything - merging is a human decision.")
 	return b.String()
 }
 
-// planTask synthesizes the planning request for a plan-labeled issue — there is
+// planTask synthesizes the planning request for a plan-labeled issue - there is
 // no human comment to extract a task from, only the issue itself.
 func planTask(p issuesPayload) string {
 	var b strings.Builder
@@ -382,9 +382,9 @@ const mergeTimeout = 2 * time.Minute
 
 // mergeIfApproved is the merge-label handler: merge ONLY at the intersection of
 // a human's label (repo write access) and quack's own approving review verdict
-// — a formal APPROVED review, or (on a PR quack authored, where GitHub forbids
+// - a formal APPROVED review, or (on a PR quack authored, where GitHub forbids
 // a formal self-review) the verdict marker in quack's own-PR comment-review.
-// Anything else gets an explanatory comment — re-applying the label after
+// Anything else gets an explanatory comment - re-applying the label after
 // quack approves is the retry, so no state is stored.
 func (e *Extension) mergeIfApproved(p pullRequestPayload) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Number
@@ -420,13 +420,13 @@ func (e *Extension) mergeIfApproved(p pullRequestPayload) {
 		return
 	}
 	slog.Info("github pr merged", "component", "github", "repo", owner+"/"+repo, "pr", number, "user", p.Sender.Login)
-	comment(fmt.Sprintf("Merged — my review approved this PR and @%s authorized the merge via the `%s` label.", p.Sender.Login, e.labels.Merge))
+	comment(fmt.Sprintf("Merged - my review approved this PR and @%s authorized the merge via the `%s` label.", p.Sender.Login, e.labels.Merge))
 }
 
 // reviewVerdictMarkerRe extracts quack's verdict from the hidden marker
 // embedded in an own-PR review comment (deliverOne's own-PR branch,
 // internal/github/tools.go): GitHub forbids a formal review on a PR quack
-// authored (422), so that verdict has no formal review record — the marker is
+// authored (422), so that verdict has no formal review record - the marker is
 // the only place latestQuackVerdict can read it from.
 var reviewVerdictMarkerRe = regexp.MustCompile(`<!-- quack:delivery:review:(approve|request_changes|comment) -->`)
 
@@ -439,8 +439,8 @@ var formalReviewVerdicts = map[string]string{
 	"COMMENTED":         "comment",
 }
 
-// latestQuackVerdict returns quack's most recent review verdict on the PR —
-// "approve", "request_changes", or "comment" — reading BOTH formal reviews and
+// latestQuackVerdict returns quack's most recent review verdict on the PR -
+// "approve", "request_changes", or "comment" - reading BOTH formal reviews and
 // own-PR comment-reviews (verdict marker), since a PR quack authored can only
 // ever carry the latter. "" means quack has not reviewed this PR yet.
 func (e *Extension) latestQuackVerdict(ctx context.Context, owner, repo string, number int) (string, error) {
@@ -465,7 +465,7 @@ func (e *Extension) latestQuackVerdict(ctx context.Context, owner, repo string, 
 		at, _ := time.Parse(time.RFC3339, r.SubmittedAt)
 		// Marker first: an own-PR review always submits as state COMMENTED
 		// (GitHub disallows approve/request_changes on your own PR) but carries
-		// the REAL verdict in the marker — the state alone would read as "comment".
+		// the REAL verdict in the marker - the state alone would read as "comment".
 		if m := reviewVerdictMarkerRe.FindStringSubmatch(r.Body); m != nil {
 			verdicts = append(verdicts, dated{at, m[1]})
 			continue
@@ -499,7 +499,7 @@ func (e *Extension) latestQuackVerdict(ctx context.Context, owner, repo string, 
 }
 
 // ackReaction posts a deterministic 👀 (eyes) reaction on the mentioning comment
-// as an instant, code-level acknowledgment that quack saw the mention — it does
+// as an instant, code-level acknowledgment that quack saw the mention - it does
 // not wait on the model. Best effort: a failure is logged at WARN and never
 // blocks the run dispatch (the reaction is a nicety, not a gate).
 func (e *Extension) ackReaction(p issueCommentPayload) {
@@ -517,7 +517,7 @@ func (e *Extension) ackReaction(p issueCommentPayload) {
 
 // ackLabelReaction posts a deterministic 👀 reaction on the ISSUE as an instant
 // acknowledgment that a label-triggered run (quack:plan/quack:implement) started
-// — the label path's equivalent of ackReaction. It can't reuse ackReaction: a
+// - the label path's equivalent of ackReaction. It can't reuse ackReaction: a
 // label event carries no comment ID, so it reacts to the issue itself. Best
 // effort: a failure is logged at WARN and never blocks dispatch.
 func (e *Extension) ackLabelReaction(p issuesPayload) {
@@ -570,7 +570,7 @@ func (e *Extension) triggerTask(p issueCommentPayload) (string, bool) {
 
 // verifySignature checks GitHub's X-Hub-Signature-256 (HMAC-SHA256 of the raw
 // body, hex, prefixed "sha256=") against the configured secret using a
-// CONSTANT-TIME compare. A missing/malformed header or any mismatch is false —
+// CONSTANT-TIME compare. A missing/malformed header or any mismatch is false -
 // this is the trust boundary and there is no bypass.
 func verifySignature(secret, body []byte, header string) bool {
 	if len(secret) == 0 || !strings.HasPrefix(header, "sha256=") {
@@ -587,13 +587,13 @@ func verifySignature(secret, body []byte, header string) bool {
 // a comment. Runs in its own goroutine with a detached, bounded context so a
 // slow run never blocks the webhook ack. headSHA is the PR's current head
 // commit when known (the pr_opened/label auto-review path carries it from the
-// PR event) — dispatch fetches the PR's head/base refs authoritatively anyway.
+// PR event) - dispatch fetches the PR's head/base refs authoritatively anyway.
 func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
 
 	// Dedup: one active run per issue/PR thread. A second trigger that arrives
 	// while a run is in-flight (same sessionID) is silently skipped with a
-	// best-effort 👀 reaction on the triggering event — it never panics even
+	// best-effort 👀 reaction on the triggering event - it never panics even
 	// if the GitHub API call fails.
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
 	if _, inflight := e.inflight.LoadOrStore(sessionID, struct{}{}); inflight {
@@ -611,7 +611,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	e.ensureTitle(ctx, sessionID, p, task)
 	// Serialise runs on one PR: a follow-up that lands while a review is still
 	// running must WAIT, not run concurrently on the same session (concurrent runs
-	// corrupt each other — the answer skip and cross-run tool events seen in
+	// corrupt each other - the answer skip and cross-run tool events seen in
 	// dogfooding). The webhook already 202'd, so blocking this goroutine is fine.
 	lock := e.sessionLock(sessionID)
 	lock.Lock()
@@ -621,7 +621,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// @mention (kept for continuity), a new attempt must not inherit a prior
 	// attempt's events, which can make the run conclude the work is "already
 	// done" instead of doing it. The stored GitHub snapshot must be forgotten
-	// too — otherwise the fresh session would still only get the DELTA since
+	// too - otherwise the fresh session would still only get the DELTA since
 	// the stale snapshot (near-empty), instead of the full context a reset
 	// session needs (see loadGithubContext's forceReseed).
 	resetSession := p.isLabelTrigger && isWorkRequest(task)
@@ -641,14 +641,14 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// Never run a label-triggered work request (plan/implement) blind: if
 	// GitHub's required context fetch failed outright (retries exhausted),
 	// the agent would be told to "follow the plan/discussion below" with
-	// nothing actually injected — exactly the #467 failure mode. A
+	// nothing actually injected - exactly the #467 failure mode. A
 	// conversational @mention is exempt: answering from the trigger comment
 	// alone is a legitimate degraded mode there.
 	if p.isLabelTrigger && gh.contextUnavailable && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: label-triggered work request has no usable GitHub context; aborting rather than running blind",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		abortCtx, abortCancel := context.WithTimeout(context.Background(), reactionTimeout)
-		abortMsg := "Couldn't load this issue's plan and discussion from GitHub (a transient error fetching it) — not running blind. Re-apply the label to retry."
+		abortMsg := "Couldn't load this issue's plan and discussion from GitHub (a transient error fetching it) - not running blind. Re-apply the label to retry."
 		if err := e.app.postIssueComment(abortCtx, owner, repo, number, abortMsg); err != nil {
 			slog.Warn("github: abort comment failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 		}
@@ -672,14 +672,14 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		pub.Publish(stream.ResponseCreated(turnID))
 	}
 
-	// Wrap the run context with a cancel and register it on the SHARED hub —
+	// Wrap the run context with a cancel and register it on the SHARED hub -
 	// the same registry the REST handler's DELETE/stop-button paths use for
-	// UI-initiated runs — so both drivers of a run are cancellable uniformly
+	// UI-initiated runs - so both drivers of a run are cancellable uniformly
 	// (#468: previously this ctx was Background-derived and unreachable by
 	// either). Registered synchronously (before the goroutine gets to run) so
 	// the cancel endpoint can never miss the run.
 	runCtx, cancelRun := context.WithCancel(ctx)
-	// Stamp the AUTHORITATIVE repo/PR this run is on — the only source
+	// Stamp the AUTHORITATIVE repo/PR this run is on - the only source
 	// correct_review_finding trusts for where a conversational correction may
 	// write (never the model's own say-so; see tools.WithGitHubPR). Only for a
 	// PR (not a plain issue): there is no finding to correct on an issue thread.
@@ -688,7 +688,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
-	// stays INLINE — wrapping it in another goroutine would let this function's
+	// stays INLINE - wrapping it in another goroutine would let this function's
 	// `defer cancel()` (run ctx) and `defer lock.Unlock()` (session lock) fire the
 	// moment it spawned, before the run finished. Deregister LAST (deferred
 	// cancel+unregister, then hub.Close) so a viewer sees the stream close only
@@ -700,11 +700,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}()
 
 	// A WORK request (review/implement) always runs as a plan. A mid-tier
-	// orchestrator model sometimes answers in prose without calling plan — "Let me
-	// start by cloning the repo…" — and that preamble would be posted as if it were
+	// orchestrator model sometimes answers in prose without calling plan - "Let me
+	// start by cloning the repo…" - and that preamble would be posted as if it were
 	// the review. So if a work request ran no plan, nudge once to actually run it.
 	// A purely conversational follow-up ("what did you mean by that finding?")
-	// legitimately runs no plan and must be answered directly — never nudged.
+	// legitimately runs no plan and must be answered directly - never nudged.
 	planRan, judgePassed, paused, needsInput := e.drive(runCtx, sessionID, message, owner, repo, number, turnID, pub)
 	if !planRan && !paused && (isWorkRequest(task) || p.planOnly) {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
@@ -718,18 +718,18 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 
 	// A judge-passed work request already had its staged review/PR posted by the
-	// trust gate itself (commitDelivery) — posting the run's text summary too would
+	// trust gate itself (commitDelivery) - posting the run's text summary too would
 	// duplicate it. Only fall back to a summary comment when nothing was delivered.
 	// takeDeliveryDetail is AUTHORITATIVE when present (the delivery call's own
 	// outcome, not a proxy): a gate that passed but whose push then failed must NOT
-	// read as delivered. A plan-only run NEVER delivers a PR/review — its
-	// deliverable is the plan comment — so it must never read as delivered no
+	// read as delivered. A plan-only run NEVER delivers a PR/review - its
+	// deliverable is the plan comment - so it must never read as delivered no
 	// matter how work-verby the task text is.
 	// No delivery record means NOTHING was delivered: since the native
 	// delivery tools were deleted (0.6.0), the gate's commitDelivery is the
 	// only path to GitHub, and it always records its outcome. (The old
 	// judge-passed default dates from workers that pushed via their own tools
-	// recordlessly — kept, it masked a staged-nothing run as delivered.)
+	// recordlessly - kept, it masked a staged-nothing run as delivered.)
 	delivered := false
 	if d, ok := takeDeliveryDetail(sessionID); ok {
 		delivered = d.err == nil
@@ -739,7 +739,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 			slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
 				"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
 			// This run ACTUALLY delivered a review (not a plan/PR/comment, and
-			// not a conversational dispatch that delivered nothing) — advance the
+			// not a conversational dispatch that delivered nothing) - advance the
 			// review baseline to what was reviewed: the PR's commits as fetched at
 			// THIS dispatch's snapshot (gh.snap), before the run started. This is
 			// the ONLY place the baseline advances (#459 incremental-review fix).
@@ -760,7 +760,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		return
 	}
 
-	// A HITL pause means the run is NOT finished — a node asked the human for
+	// A HITL pause means the run is NOT finished - a node asked the human for
 	// input. Post the question as a GitHub comment so the maintainer can answer
 	// on-thread; the reply feeds back into the same session and resumes the
 	// paused node (orchestrator.Run → resumeNodeRun). Never post the "produced
@@ -782,7 +782,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 	// A hub-cancelled run is NOT a timeout: runCtx is cancellable from the shared
 	// registry that DELETE/stop AND a re-run supersede use. Reporting "hit its run
-	// deadline (4h)" there is a lie — the run may have been stopped after seconds —
+	// deadline (4h)" there is a lie - the run may have been stopped after seconds -
 	// and on a supersede a SIBLING run is still delivering, so a "nothing delivered,
 	// re-apply the label" comment actively misleads. Say nothing and let it. Only a
 	// genuine DeadlineExceeded gets the tail treatment below.
@@ -792,7 +792,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		return
 	}
 	// The tail must OUTLIVE the run: after a deadline kill, ctx is dead and both
-	// LatestAnswer and the comment post would fail with it — the run then dies
+	// LatestAnswer and the comment post would fail with it - the run then dies
 	// with zero external signal (#286: a 2h-deadline kill posted nothing). Use a
 	// fresh bounded context, and say what actually happened.
 	tailCtx := runCtx
@@ -809,7 +809,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	} else if answer == "" {
 		answer = "quack finished but produced no answer."
 	} else {
-		// This is the orchestrator's own write-up, not a gated worker answer —
+		// This is the orchestrator's own write-up, not a gated worker answer -
 		// it never runs through mermaidCriterion (#480 regression, #483). Check
 		// and revise it directly.
 		answer = e.reviseInvalidMermaid(runCtx, sessionID, owner, repo, number, turnID, pub, answer)
@@ -831,7 +831,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 // reviseInvalidMermaid nudges the same run once more (mirrors the runNudge
 // re-drive above) with the concrete parse error, then falls back to
-// vetting.DegradeInvalidMermaid if it's still invalid — a visible, labeled
+// vetting.DegradeInvalidMermaid if it's still invalid - a visible, labeled
 // degrade, never a silent strip. runCtx must still be alive (the caller only
 // reaches this once cancellation/timeout are ruled out).
 func (e *Extension) reviseInvalidMermaid(runCtx context.Context, sessionID, owner, repo string, number int, turnID string, pub *runlog.Publisher, answer string) string {
@@ -887,7 +887,7 @@ func (e *Extension) persistGithubLink(ctx context.Context, sessionID, owner, rep
 // ensureTitle gives a github-origin chat a real title (#380): unlike a
 // first-party chat's runChat, dispatch never called generateTitle, so these
 // chats sat at the "New chat" placeholder forever. No live model call is
-// needed — the triggering issue/PR title is already a decent chat title.
+// needed - the triggering issue/PR title is already a decent chat title.
 // Only sets it once (mirrors runChat's own titleCh check), so a later
 // conversational follow-up on the same session never clobbers it.
 func (e *Extension) ensureTitle(ctx context.Context, sessionID string, p issueCommentPayload, task string) {
@@ -914,28 +914,28 @@ func (e *Extension) ensureTitle(ctx context.Context, sessionID string, p issueCo
 	}
 }
 
-// runNudge is delivered when a webhook run answered without running a plan — a
+// runNudge is delivered when a webhook run answered without running a plan - a
 // firm instruction to actually do the work rather than narrate intent.
 const runNudge = "You answered without running anything. Do NOT reply in prose: use the plan and execute tools NOW to actually clone the repo, read the change, and carry out the review (or the requested change). Nothing has run yet and the user is waiting."
 
 // drive runs one orchestrator turn to completion and reports whether it
 // EXECUTED a plan (a dag_plan event) and whether ANY node's trust gate PASSED
 // its judge round. paused indicates the run hit a HITL pause (node_needs_input)
-// — in that case, no answer was produced yet and dispatch must NOT post the
+// - in that case, no answer was produced yet and dispatch must NOT post the
 // default tail comment; instead it posts the question as a GitHub comment so
 // the maintainer can answer on-thread which resumes the same session.
 // A run with no plan produced only a direct-text answer (the work never
 // happened). judgePassed is dispatch's proxy for "the staged delivery set was
 // posted": commitDelivery runs synchronously inside the gate, strictly before
 // node_done fires (see internal/vetting/node.go), so by the time node_done
-// reports a pass here, delivery has already been attempted — a failed delivery
+// reports a pass here, delivery has already been attempted - a failed delivery
 // is still logged loudly (slog.Error) even though this proxy can't distinguish
 // it from "nothing was staged" (a conversational node gated the same way).
 // dispatch only trusts this proxy for a task that DEMANDED delivery in the
-// first place (isWorkRequest) — see its caller.
+// first place (isWorkRequest) - see its caller.
 //
 // pub is nil when the extension has no store (test harnesses that don't need
-// persistence) — every persistence step below is then a no-op, matching drive's
+// persistence) - every persistence step below is then a no-op, matching drive's
 // old behavior exactly.
 func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool, paused bool, needsInput stream.NodeNeedsInputData) {
 	var planID string
@@ -974,19 +974,19 @@ func (e *Extension) drive(ctx context.Context, sessionID, message, owner, repo s
 }
 
 // githubContext is the loaded, ready-to-inject GitHub state for one dispatch
-// (#459) — the single result loadGithubContext produces and runMessage
+// (#459) - the single result loadGithubContext produces and runMessage
 // consumes, for an issue or a PR alike.
 type githubContext struct {
 	snap Snapshot
 	// text is the rendered context to inject this turn: the full seed on
 	// first load, or just the delta on resume ("" when resuming onto an
-	// unchanged snapshot — nothing to say).
+	// unchanged snapshot - nothing to say).
 	text string
 	// firstLoad is true when no prior snapshot existed for this session (or
-	// one was deliberately forgotten — see loadGithubContext's forceReseed).
+	// one was deliberately forgotten - see loadGithubContext's forceReseed).
 	firstLoad bool
 	// contextUnavailable is true when fetchSnapshot's REQUIRED meta call
-	// (issueMeta/pullMeta) failed — as opposed to a legitimately empty
+	// (issueMeta/pullMeta) failed - as opposed to a legitimately empty
 	// issue/PR. Distinct from firstLoad: a fresh issue with no comments yet
 	// is also firstLoad but has real (empty) context; this flags "GitHub
 	// could not be read at all" so a label-triggered work request can abort
@@ -994,19 +994,19 @@ type githubContext struct {
 	// (#467).
 	contextUnavailable bool
 	// newCommits are the PR commits to scope an incremental review to (see
-	// Delta.NewCommits) — nil on a first load (review everything), a
+	// Delta.NewCommits) - nil on a first load (review everything), a
 	// (possibly empty) slice on resume.
 	newCommits []snapshotCommit
 }
 
 // loadGithubContext is the ONE fetch-diff-persist path every dispatch goes
 // through, issue or PR, work request or conversational follow-up (#459's
-// "one unified path" — replaces gatherReviewContext/issueThreadContext/
+// "one unified path" - replaces gatherReviewContext/issueThreadContext/
 // discussionSummary cherry-picking, and #457/#458's inject-everything
 // interim). It fetches the CURRENT full GitHub state, diffs it against the
 // snapshot stored from the last dispatch (or seeds, on first load), persists
 // the new snapshot, and returns the rendered context ready to inject as a
-// session EVENT via runMessage → e.runner.Run's message argument — never as
+// session EVENT via runMessage → e.runner.Run's message argument - never as
 // bare UserContent (llmagent builds its request from Session().Events()
 // only; a fresh prompt passed any other way is silently dropped).
 //
@@ -1018,7 +1018,7 @@ func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, rep
 	snap, err := e.fetchSnapshot(ctx, owner, repo, number, isPR)
 	if err != nil {
 		// The required meta call (issueMeta/pullMeta, already retried at the
-		// HTTP layer for transient failures) still failed — this is NOT a
+		// HTTP layer for transient failures) still failed - this is NOT a
 		// legitimately empty issue, it's GitHub unreachable. Flag it so a
 		// label-triggered work request can refuse to run blind rather than
 		// silently treating the empty snapshot as "no discussion yet" (#467).
@@ -1076,7 +1076,7 @@ func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, rep
 }
 
 // reviewScope returns the PR commits not yet covered by quack's last
-// DELIVERED review (nil — not an empty slice — when no review has ever been
+// DELIVERED review (nil - not an empty slice - when no review has ever been
 // delivered on this chat, meaning "review everything"; see
 // newCommitsAgainstBaseline). Best-effort: a lookup/decode failure logs and
 // falls back to nil (review everything) rather than silently under-scoping.
@@ -1107,7 +1107,7 @@ func (e *Extension) reviewScope(ctx context.Context, sessionID string, snap Snap
 }
 
 // advanceReviewBaseline persists the current PR commits' patch-ids as
-// "reviewed" — called ONLY after a dispatch that actually DELIVERED a review
+// "reviewed" - called ONLY after a dispatch that actually DELIVERED a review
 // this run (see dispatch's use of deliveryOutcome.reviewDelivered). A
 // conversational/plan/implement dispatch must NEVER call this: that's the
 // exact bug this baseline exists to avoid (scoping the next review off
@@ -1134,11 +1134,11 @@ func (e *Extension) advanceReviewBaseline(ctx context.Context, sessionID string,
 	}
 }
 
-// workVerbRe matches an imperative that asks quack to DO something — review or
-// change code — as opposed to discussing it. CLAUSE-ANCHORED (start of text, after
+// workVerbRe matches an imperative that asks quack to DO something - review or
+// change code - as opposed to discussing it. CLAUSE-ANCHORED (start of text, after
 // sentence punctuation, or after please/and/then/also/to) so a verb buried
 // mid-sentence does not trip it: "No need to re-review" must NOT read as a review
-// request. An ALLOWLIST on purpose — a request matching nothing here is treated as
+// request. An ALLOWLIST on purpose - a request matching nothing here is treated as
 // conversational and NOT nudged, so "what did you mean by that finding?" is
 // answered directly instead of being shoved into a DAG.
 var workVerbRe = regexp.MustCompile(`(?i)(?:^|[.;:!?\n]\s*|\b(?:please|and|then|also|to)\s+)(review|audit|critique|assess|implement|fix|add|create|refactor|rewrite|write|update|change|remove|delete|rename|migrate|investigate|analy[sz]e|build|check)\b`)
@@ -1151,7 +1151,7 @@ func isWorkRequest(task string) bool {
 }
 
 // changedFilesSummary renders a compact, capped changed-files list for the plan
-// prompt — paths + churn so the planner can slice the review by area. Capped so a
+// prompt - paths + churn so the planner can slice the review by area. Capped so a
 // huge PR doesn't blow the prompt; the total count still conveys the scale.
 func changedFilesSummary(files []changedFile) string {
 	if len(files) == 0 {
@@ -1220,15 +1220,15 @@ func truncate(s string, n int) string {
 }
 
 // runMessage frames the task for the orchestrator: the user's verbatim request
-// (kept front-and-center — it carries their focus), where the repo is, and how to
+// (kept front-and-center - it carries their focus), where the repo is, and how to
 // act. A PR request with no implement-and-deliver intent is a REVIEW and MUST
 // carry no commit/push/PR language: otherwise the planner echoes it into the node
 // task and the vetting completion gate reads a phantom delivery demand off it
-// (delivery.go's demandedDelivery), looping the worker — re-cloning, re-reviewing
-// — until maxContinueRounds. vetting.ImplementationIntent is the SAME
+// (delivery.go's demandedDelivery), looping the worker - re-cloning, re-reviewing
+// - until maxContinueRounds. vetting.ImplementationIntent is the SAME
 // discriminator the planner backstop uses, so the two can't drift.
 //
-// gh carries the loaded GitHub context (#459's unified snapshot+diff path) —
+// gh carries the loaded GitHub context (#459's unified snapshot+diff path) -
 // head/base refs (a shallow clone's `git diff base...HEAD` is empty until the
 // head is checked out), the PR's title/description (intent), the current
 // commits (rebase-safe incremental-review scoping via gh.newCommits), and the
@@ -1238,7 +1238,7 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 	owner, repo := p.Repository.Owner.Login, p.Repository.Name
 	snap := gh.snap
 
-	// A PR follow-up that asks for no work (review/implement) is CONVERSATIONAL —
+	// A PR follow-up that asks for no work (review/implement) is CONVERSATIONAL -
 	// "which finding matters most?", "what did you mean?". Answer it directly from
 	// the durable session (which holds any review already posted); handing over the
 	// clone-and-review playbook makes the orchestrator re-review instead of
@@ -1249,13 +1249,13 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)
 		fmt.Fprintf(&b, "Their message:\n%s\n\n", task)
 		// Inject the loaded context so the answer doesn't depend on session
-		// continuity alone (#456) — the full discussion on first load, or just
+		// continuity alone (#456) - the full discussion on first load, or just
 		// what's new since the last dispatch on resume (#459).
 		if gh.text != "" {
 			fmt.Fprintf(&b, "The conversation so far on this pull request (your own prior reviews/answers included):\n%s\n", gh.text)
 		}
 		b.WriteString("This is a conversational follow-up. Answer it directly and concisely from the conversation above and any review you already posted. Do NOT clone the repo, run git, or start a new review unless they EXPLICITLY ask you to review again. Your answer is posted back as a comment.\n\n")
-		b.WriteString("If — and only if — their message explicitly corrects a SPECIFIC finding you posted on THIS pull request as a FALSE POSITIVE (wrong, not a real issue), call correct_review_finding BEFORE replying, with the finding you got wrong and their reason — so the next review of similar code doesn't repeat it. Do not call it for anything else (general questions, disagreement without a concrete reason, or findings that still stand).")
+		b.WriteString("If - and only if - their message explicitly corrects a SPECIFIC finding you posted on THIS pull request as a FALSE POSITIVE (wrong, not a real issue), call correct_review_finding BEFORE replying, with the finding you got wrong and their reason - so the next review of similar code doesn't repeat it. Do not call it for anything else (general questions, disagreement without a concrete reason, or findings that still stand).")
 		return b.String()
 	}
 
@@ -1281,22 +1281,22 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
 	fmt.Fprintf(&b, "Their request:\n%s\n\n", task)
 	// An issue's loaded context: the full thread on first load, just the delta
-	// on resume (#459) — injected the SAME way for every trigger (mention,
+	// on resume (#459) - injected the SAME way for every trigger (mention,
 	// quack:plan, quack:implement), unlike the old issueThreadContext/
-	// implementTask split (#459 §7 — consolidate, don't duplicate).
+	// implementTask split (#459 §7 - consolidate, don't duplicate).
 	if !isPR && gh.text != "" {
 		fmt.Fprintf(&b, "For context, here is the issue and the discussion so far:\n%s\n", gh.text)
 	}
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q, clone URL %s). Declare it in your plan's `setup` "+
-		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) — the harness "+
+		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) - the harness "+
 		"clones it and checks out that branch for you, BEFORE any node runs, AT THE ROOT of each repo-touching "+
 		"node's own working directory: the repo IS that node's working directory, not a subdirectory inside it. "+
-		"That node's task MUST say the repo is ALREADY cloned and checked out right there — never instruct the "+
-		"worker to clone THIS repository (no \"Clone <url>\" wording; the worker starts inside it) — and must "+
+		"That node's task MUST say the repo is ALREADY cloned and checked out right there - never instruct the "+
+		"worker to clone THIS repository (no \"Clone <url>\" wording; the worker starts inside it) - and must "+
 		"refer to files by plain repo-relative path (internal/foo.go, never ./repo/… or /workspace/…). A node "+
 		"whose job is to examine a DIFFERENT repository (a comparison target, a dependency) SHOULD be told to "+
-		"clone that other repo into its own working directory itself — that is allowed and expected. Repo-changing "+
-		"work is committed locally; delivery pushes the branch and opens the PR after the trust gate passes — no "+
+		"clone that other repo into its own working directory itself - that is allowed and expected. Repo-changing "+
+		"work is committed locally; delivery pushes the branch and opens the PR after the trust gate passes - no "+
 		"node ever pushes or opens a PR itself. ",
 		owner, repo, base, p.Repository.CloneURL, base)
 	if isPR {
@@ -1321,7 +1321,7 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 			b.WriteString("\nThis is a REQUEST FOR A REVIEW RIGHT NOW. Any prior review below — however many, yours or anyone else's — is background on what's already been said, never a reason to skip: you must still read the CURRENT diff and post a fresh review with stage_review. ")
 		}
 		if gh.text != "" {
-			label := "Existing discussion — take it into account, do NOT repeat it:\n"
+			label := "Existing discussion - take it into account, do NOT repeat it:\n"
 			if !gh.firstLoad {
 				label = "" // gh.text is already framed as a "since your last look" delta below
 			}
@@ -1329,16 +1329,16 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		}
 		b.WriteString("\n")
 		if snap.HeadRef != "" {
-			// Setup (dag.Setup.CheckoutExistingHead — see internal/tools/setup.go)
+			// Setup (dag.Setup.CheckoutExistingHead - see internal/tools/setup.go)
 			// already fetched and checked out this PR's real head branch, with
 			// base's full history present, so the diff is ready with no checkout
 			// needed.
-			fmt.Fprintf(&b, "The clone is your workspace root already, already checked out on the PR's head branch `%s` (head commit `%s`), based on `%s`. `git_diff %s...%s` is exactly this PR's diff — no checkout needed. ",
+			fmt.Fprintf(&b, "The clone is your workspace root already, already checked out on the PR's head branch `%s` (head commit `%s`), based on `%s`. `git_diff %s...%s` is exactly this PR's diff - no checkout needed. ",
 				snap.HeadRef, headSHA, diffBase, diffBase, snap.HeadRef)
 		}
 		// Incremental review, rebase-safe (#459 §5): gh.newCommits is non-nil
 		// only once quack has DELIVERED at least one review on this chat (see
-		// reviewScope/advanceReviewBaseline) — the commits not yet covered by
+		// reviewScope/advanceReviewBaseline) - the commits not yet covered by
 		// that review, computed by patch-id, independent of SHA (a
 		// rebase/force-push rewrites every SHA even when the underlying patch
 		// is unchanged) and independent of the general context delta (which
@@ -1346,13 +1346,13 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		if gh.newCommits != nil {
 			switch len(gh.newCommits) {
 			case 0:
-				b.WriteString("You have already looked at every commit currently on this pull request (by content — a rebase or force-push may have changed their SHAs without changing what they do). There is no new work to review; only respond to the discussion above. ")
+				b.WriteString("You have already looked at every commit currently on this pull request (by content - a rebase or force-push may have changed their SHAs without changing what they do). There is no new work to review; only respond to the discussion above. ")
 			default:
 				shas := make([]string, 0, len(gh.newCommits))
 				for _, c := range gh.newCommits {
 					shas = append(shas, shortSHA(c.SHA))
 				}
-				fmt.Fprintf(&b, "Focus your review on what's NEW since you last looked — %d commit(s) not seen before (by content, robust to any rebase/force-push): %s. Use `git show <sha>` for each rather than re-reviewing the whole PR, and take the existing review discussion into account — do NOT repeat findings you already made. ",
+				fmt.Fprintf(&b, "Focus your review on what's NEW since you last looked - %d commit(s) not seen before (by content, robust to any rebase/force-push): %s. Use `git show <sha>` for each rather than re-reviewing the whole PR, and take the existing review discussion into account - do NOT repeat findings you already made. ",
 					len(gh.newCommits), strings.Join(shas, ", "))
 			}
 		}
@@ -1360,12 +1360,12 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		if reviewOnly {
 			lead = "Review it: read its changes"
 		}
-		fmt.Fprintf(&b, "%s (git_diff) and its existing discussion (github_list_pr_comments — inline comments, conversation, prior reviews) so you don't repeat what's been said, then record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line — validated against the diff), and finish by calling stage_review with a summary body and an event verdict (approve / request_changes / comment) — you do not submit the review yourself; it is posted for you once your work passes review. Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the summary body. ",
+		fmt.Fprintf(&b, "%s (git_diff) and its existing discussion (github_list_pr_comments - inline comments, conversation, prior reviews) so you don't repeat what's been said, then record each finding the moment you spot it with github_add_review_comment (owner=%s, repo=%s, pull_number=%d, path, line - validated against the diff), and finish by calling stage_review with a summary body and an event verdict (approve / request_changes / comment) - you do not submit the review yourself; it is posted for you once your work passes review. Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the summary body. ",
 			lead, owner, repo, p.Issue.Number)
 	}
 	if reviewOnly {
 		// No commit/push/PR words: a review posts findings, it does not deliver code.
-		b.WriteString("This is a REVIEW-ONLY task: do NOT create a branch, commit, or push — deliver your findings with the review tools (github_add_review_comment, stage_review). ")
+		b.WriteString("This is a REVIEW-ONLY task: do NOT create a branch, commit, or push - deliver your findings with the review tools (github_add_review_comment, stage_review). ")
 		b.WriteString("Your final answer is posted back automatically. ")
 		b.WriteString("Answer concisely and reference the review you staged.")
 		return b.String()
@@ -1374,10 +1374,10 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		// Like reviewOnly: no commit/push/PR words, or the vetting completion gate
 		// reads a phantom delivery demand off the task and loops the worker.
 		b.WriteString("This is a PLANNING-ONLY task: read the repository as needed to ground the plan, but do NOT change code or deliver anything to GitHub. ")
-		b.WriteString("Your final answer — the plan — is posted back to the issue automatically.")
+		b.WriteString("Your final answer - the plan - is posted back to the issue automatically.")
 		return b.String()
 	}
-	b.WriteString("If the task needs code changes, work at your workspace root (the repo is already cloned and checked out there for you — plain relative paths, no prefix), commit your work locally on the branch already checked out for you, then call stage_pr with a title and body — you do not push or open the pull request yourself ")
+	b.WriteString("If the task needs code changes, work at your workspace root (the repo is already cloned and checked out there for you - plain relative paths, no prefix), commit your work locally on the branch already checked out for you, then call stage_pr with a title and body - you do not push or open the pull request yourself ")
 	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); it is opened for you once your work passes review. ", owner, repo, base)
 	b.WriteString("Your final answer is posted back automatically. ")
 	b.WriteString("Answer concisely and reference any branch, PR, or review you staged.")

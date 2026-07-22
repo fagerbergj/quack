@@ -3,13 +3,13 @@
 // Every prompt has four layers, ordered from most stable (bottom, best for
 // prompt caching) to least stable (top):
 //
-//  1. Identity  — who this agent is (name + description)
-//  2. Capabilities — what it can do (tools for specialist agents; skills for
-//     the orchestrator — subagents are omitted because ADK injects them
+//  1. Identity  - who this agent is (name + description)
+//  2. Capabilities - what it can do (tools for specialist agents; skills for
+//     the orchestrator - subagents are omitted because ADK injects them
 //     automatically via agentTransferInstructionTemplate)
-//  3. Behaviour — how it should behave (the agent's prompt.md)
-//  4. Writing — the shared prose ruleset (writing.md), applied to every agent
-//  5. Environment — contextual facts injected at startup (current date)
+//  3. Behaviour - how it should behave (the agent's prompt.md)
+//  4. Writing - the shared prose ruleset (writing.md), applied to every agent
+//  5. Environment - contextual facts injected at startup (current date)
 package promptbuilder
 
 import (
@@ -48,7 +48,7 @@ func Judge(tools []tool.Tool, behaviour string) string {
 }
 
 // Orchestrator assembles the system prompt for the orchestrator. agentRoster is
-// the available specialist agents (one "- name — description" line each) — the
+// the available specialist agents (one "- name - description" line each) - the
 // orchestrator authors a DAG over them and submits it to the plan tool; skills
 // come from the skills/ filesystem; behaviour from prompt.md.
 func Orchestrator(agentRoster string, skills []*skill.Frontmatter, behaviour string) string {
@@ -93,7 +93,7 @@ func layered(identity, capsHeader, capsBody, behaviour string) string {
 func toolLines(tools []tool.Tool) string {
 	var sb strings.Builder
 	for _, t := range tools {
-		fmt.Fprintf(&sb, "- `%s` — %s\n", t.Name(), t.Description())
+		fmt.Fprintf(&sb, "- `%s` - %s\n", t.Name(), t.Description())
 	}
 	return sb.String()
 }
@@ -107,7 +107,7 @@ func skillLines(skills []*skill.Frontmatter) string {
 	var sb strings.Builder
 	sb.WriteString("Use `load_skill(name)` to load a skill's full instructions before applying it.\n\n")
 	for _, s := range skills {
-		fmt.Fprintf(&sb, "- `%s` — %s\n", s.Name, s.Description)
+		fmt.Fprintf(&sb, "- `%s` - %s\n", s.Name, s.Description)
 	}
 	return sb.String()
 }

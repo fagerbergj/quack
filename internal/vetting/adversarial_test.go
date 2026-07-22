@@ -85,7 +85,7 @@ func TestAdversarialVerify_SkipsDeterministicAndFailingCriteria(t *testing.T) {
 }
 
 // TestAdversarialVerify_NoOpWhenDisabled proves the stage is a true no-op
-// (default) when cfg.Skeptic is unset — the common case, since Skeptics
+// (default) when cfg.Skeptic is unset - the common case, since Skeptics
 // defaults to 0.
 func TestAdversarialVerify_NoOpWhenDisabled(t *testing.T) {
 	q, a := testQuestionAnswer()
@@ -98,7 +98,7 @@ func TestAdversarialVerify_NoOpWhenDisabled(t *testing.T) {
 
 // alternatingSkepticModel refutes on its first call and survives on its
 // second (and repeats), so N rounds against it produce an even split whenever
-// N is even — the tie case.
+// N is even - the tie case.
 type alternatingSkepticModel struct{ calls int }
 
 func (*alternatingSkepticModel) Name() string { return "alternating-skeptic" }
@@ -125,7 +125,7 @@ func TestAdversarialVerify_TieFavoursThePrimaryJudge(t *testing.T) {
 }
 
 // patternSkepticModel yields a scripted refuted/survives verdict per call, in
-// order (repeating the last entry if called more times than scripted) — lets
+// order (repeating the last entry if called more times than scripted) - lets
 // a test pin an exact N-of-M split rather than only the unanimous cases.
 type patternSkepticModel struct {
 	calls   int
@@ -148,7 +148,7 @@ func (m *patternSkepticModel) GenerateContent(_ context.Context, _ *model.LLMReq
 
 // TestAdversarialVerify_TwoOfThreeMajority pins the exact majority rule the
 // earlier always-refute (3/3) test could not: 2 refutes out of 3 is a STRICT
-// majority and kills the finding, but 1 out of 3 is not and leaves it alone —
+// majority and kills the finding, but 1 out of 3 is not and leaves it alone -
 // distinguishing "majority" from "unanimity" (a buggy unanimous-refute rule
 // would also pass the 3/3 test but fail these).
 func TestAdversarialVerify_TwoOfThreeMajority(t *testing.T) {

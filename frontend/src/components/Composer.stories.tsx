@@ -22,12 +22,12 @@ export const Empty: Story = {
 }
 
 // While a turn streams: input stays live, Stop cancels the run, and Send
-// becomes Queue — a follow-up typed now waits for the run to finish.
+// becomes Queue - a follow-up typed now waits for the run to finish.
 export const Streaming: Story = {
   args: { disabled: false, streaming: true },
 }
 
-// A run is streaming and the user has already queued follow-ups — shown as
+// A run is streaming and the user has already queued follow-ups - shown as
 // pending rows above the composer, in send order, each removable.
 export const StreamingWithQueue: Story = {
   args: {
@@ -40,7 +40,7 @@ export const StreamingWithQueue: Story = {
   },
 }
 
-// No active chat — input disabled with a hint placeholder.
+// No active chat - input disabled with a hint placeholder.
 export const Disabled: Story = {
   args: { disabled: true, streaming: false },
 }

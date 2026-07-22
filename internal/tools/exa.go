@@ -25,7 +25,7 @@ const (
 )
 
 // exaSearcher is the WebSearcher adapter for Exa. With an API key it uses the REST
-// API (structured JSON — robust); without one it falls back to Exa's keyless hosted
+// API (structured JSON - robust); without one it falls back to Exa's keyless hosted
 // MCP and parses its text output. Either path satisfies the same port, so the
 // agent only ever sees web_search.
 type exaSearcher struct {
@@ -111,7 +111,7 @@ func parseExaREST(r io.Reader) ([]SearchResult, string, error) {
 // --- MCP (keyless fallback: text output) ---
 
 func (e *exaSearcher) searchMCP(ctx context.Context, query string) ([]SearchResult, string, error) {
-	// ponytail: connects per call (no pooled session) — fine for an occasionally
+	// ponytail: connects per call (no pooled session) - fine for an occasionally
 	// called search tool; add a reused session if latency ever matters.
 	c := mcp.NewClient(&mcp.Implementation{Name: "quack", Version: "1"}, nil)
 	sess, err := c.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: defaultExaMCP}, nil)

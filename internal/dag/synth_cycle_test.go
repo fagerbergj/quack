@@ -5,8 +5,8 @@ import "testing"
 // A synthesizer is NOT always the terminal fan-in. research → synthesize → implement
 // is a perfectly good plan: the implementer depends ON the synthesizer.
 //
-// The hardening pass used to give every synthesizer an edge to EVERY other node —
-// including its own descendants — which manufactures a cycle. quack then rejected the
+// The hardening pass used to give every synthesizer an edge to EVERY other node -
+// including its own descendants - which manufactures a cycle. quack then rejected the
 // plan with "dag plan contains a cycle", blaming the orchestrator for a correct plan
 // that quack itself had just corrupted.
 //
@@ -47,7 +47,7 @@ func TestSynthesizerHardeningDoesNotCreateACycle(t *testing.T) {
 	// ...and must NOT depend on the implementer, which depends on IT.
 	for _, d := range synth.DependsOn {
 		if d == "implement-code-mode" {
-			t.Fatal("the synthesizer was given an edge to its own descendant (implement-code-mode) — that is a cycle by construction")
+			t.Fatal("the synthesizer was given an edge to its own descendant (implement-code-mode) - that is a cycle by construction")
 		}
 	}
 

@@ -30,7 +30,7 @@ type jailedReadResult struct {
 // (scopeFromContext → Jail.Resolve): the advisor-thread marker embedded in the
 // invocation's UserContent names the (chatID, nodeDir) the call runs under, via
 // the process-local registry the gate populates for the WORKER. This is a
-// package-local stand-in (not internal/tools' real fs binding — importing that
+// package-local stand-in (not internal/tools' real fs binding - importing that
 // package here would cycle, since it already imports vetting for
 // ParseAdvisorThread/LookupAdvisorThread) that exercises the identical
 // resolution rule, proving whether the judge's tool calls land in the worker's
@@ -82,7 +82,7 @@ func contentText(c *genai.Content) string {
 
 // claimCheckingJudge calls read_file for the path the answer claims to
 // reference, then scores based on whether the file's real content backs the
-// claim — a stand-in for "verify the answer's claim against ground truth"
+// claim - a stand-in for "verify the answer's claim against ground truth"
 // rather than trusting it on sight.
 type claimCheckingJudge struct{ path string }
 
@@ -106,8 +106,8 @@ func (j claimCheckingJudge) GenerateContent(_ context.Context, req *model.LLMReq
 }
 
 // TestJudgeReadToolsResolveWorkersRealClone proves the judge's read-only
-// workspace tools resolve into the SAME clone the worker used — no second
-// clone, no separate jail scope — by driving the real gate plumbing: register
+// workspace tools resolve into the SAME clone the worker used - no second
+// clone, no separate jail scope - by driving the real gate plumbing: register
 // an advisor thread exactly as dag.newGatedNode does for a node's worker,
 // embed the resulting marker in the worker prompt (mirroring
 // graph.go/node.go), and confirm the judge's read_file call (scoped purely
@@ -127,7 +127,7 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "game.go"), []byte("package game\n\nfunc Play() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A sibling node's directory, holding a DIFFERENT file — proves the judge
+	// A sibling node's directory, holding a DIFFERENT file - proves the judge
 	// reads the CALLING node's own clone, not just any clone under the chat.
 	sibling, err := jail.EnsureDir(userID, chatID, workspace.NodeDir("n2"))
 	if err != nil {
@@ -161,7 +161,7 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 // judge's own content (what runJudgeRound hands the runner as UserContent) is
 // buildJudgePrompt's output, not `question` itself, so scopeFromContext must
 // not depend on whatever marker `question`'s text happens to carry. Here
-// `question` carries NO marker at all — resolution must come entirely from
+// `question` carries NO marker at all - resolution must come entirely from
 // Config.AdvisorToken, which runJudgeRound stamps onto its own content.
 func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())

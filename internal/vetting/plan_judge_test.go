@@ -10,7 +10,7 @@ import (
 )
 
 // stubPlanJudgeModel is a scripted model.LLM that always calls
-// submit_plan_verdict with the canned accept/reason — proving NewPlanJudge's
+// submit_plan_verdict with the canned accept/reason - proving NewPlanJudge's
 // tool wiring (submit tool built, run isolated, sink read back) without a live
 // model.
 type stubPlanJudgeModel struct {
@@ -26,7 +26,7 @@ func (s stubPlanJudgeModel) GenerateContent(_ context.Context, _ *model.LLMReque
 	}
 }
 
-// noVerdictModel ends its run without ever calling submit_plan_verdict —
+// noVerdictModel ends its run without ever calling submit_plan_verdict -
 // exercises NewPlanJudge's "judge ended without a verdict" error path.
 type noVerdictModel struct{}
 
@@ -92,7 +92,7 @@ func TestPlanJudgeAcceptsCohesiveSingleNodePlan(t *testing.T) {
 // TestPlanRubricCriterion7RequiresSingleNodeForCohesiveWork pins the reworded
 // rubric text against the live over-decomposition bug: the judge rejected a
 // correct single-node plan for splitting "into separate nodes for API
-// implementation, logic implementation, and testing/verification" — activity
+// implementation, logic implementation, and testing/verification" - activity
 // slicing, not independent-portion slicing. This asserts the instruction text
 // itself so the guidance can't silently regress without a model run.
 func TestPlanRubricCriterion7RequiresSingleNodeForCohesiveWork(t *testing.T) {
@@ -111,7 +111,7 @@ func TestPlanRubricCriterion7RequiresSingleNodeForCohesiveWork(t *testing.T) {
 
 // TestPlanRubricCriterion7ForbidsActivitySplit pins that the rubric names the
 // exact activity split the maintainer observed (API / logic / tests / checks
-// / commit) as a FAILURE, not a pass — the bug this fix closes.
+// / commit) as a FAILURE, not a pass - the bug this fix closes.
 func TestPlanRubricCriterion7ForbidsActivitySplit(t *testing.T) {
 	if !strings.Contains(planRubricInstruction, `splitting "API implementation" vs. "logic implementation" vs. "testing/verification" vs. "run checks" vs. "commit" into separate nodes for what is really one goal FAILS this criterion`) {
 		t.Error("criterion 7 rubric text must explicitly forbid splitting one cohesive goal into API/logic/tests/checks/commit nodes")

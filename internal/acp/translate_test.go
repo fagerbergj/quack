@@ -23,7 +23,7 @@ func TestTranslate_ThoughtAndMessageChunks(t *testing.T) {
 }
 
 // Narration before a tool call ("I'll investigate...") must not survive into
-// the delivered answer — only the contiguous block after the last tool call
+// the delivered answer - only the contiguous block after the last tool call
 // does (#358).
 func TestTranslate_AnswerResetsOnToolCall(t *testing.T) {
 	tr := newTranslator("/work")
@@ -76,7 +76,7 @@ func TestTranslate_ExecuteToolCallPair(t *testing.T) {
 	}
 }
 
-// An edit's diff carries the interesting fields; #388 — this must map to
+// An edit's diff carries the interesting fields; #388 - this must map to
 // "edit_file" (not "write_file") so the frontend's ToolCallView keys it to
 // the before→after diff view native edit_file calls get, with the path
 // resolved node-relative (the ledger/judge namespace) and old/new text
@@ -119,7 +119,7 @@ func TestTranslate_EditDiffNewFile(t *testing.T) {
 }
 
 // An edit with no diff content (some agents omit it) has nothing to show a
-// before→after for — falls back to the plainer write_file view rather than
+// before→after for - falls back to the plainer write_file view rather than
 // rendering edit_file with an empty diff.
 func TestTranslate_EditWithoutDiffFallsBackToWriteFile(t *testing.T) {
 	tr := newTranslator("/work")
@@ -146,7 +146,7 @@ func TestTranslate_FailedToolCallCarriesError(t *testing.T) {
 }
 
 // Agents may send a tool_call_update for an id the client never saw a
-// tool_call for (spec-sanctioned) — create-on-update, never a panic.
+// tool_call for (spec-sanctioned) - create-on-update, never a panic.
 func TestTranslate_CreateOnUpdate(t *testing.T) {
 	tr := newTranslator("/work")
 	kind := sdk.ToolKindExecute

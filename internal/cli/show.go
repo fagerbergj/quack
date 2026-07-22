@@ -146,7 +146,7 @@ func formatScore(f *float64) string {
 // followState carries the small amount of cross-event bookkeeping printLine
 // needs so a stream of many small updates for the SAME reasoning block or tool
 // call collapses to one terse line each, instead of dumping every raw event
-// (#385 — collapse/summarize, the OTel traces are the full-detail surface now).
+// (#385 - collapse/summarize, the OTel traces are the full-detail surface now).
 type followState struct {
 	thinking map[string]bool // run_id -> already printed a "thinking…" line
 	tools    map[string]bool // call_id -> already printed the call's summary line
@@ -163,7 +163,7 @@ func newFollowState() *followState {
 // deliberately NOT streamed here (unlike the old per-token print): narration
 // ahead of a tool call and the eventual final answer arrive on the same
 // channel, so printing tokens live has no way to "un-print" preamble once a
-// later tool call reveals it wasn't the answer (#387) — the final answer,
+// later tool call reveals it wasn't the answer (#387) - the final answer,
 // already reset per-tool-call by streamState (send.go), prints once via
 // Report at the end of RunChatShow instead.
 func (f *followState) printLine(out io.Writer, ev SSEEvent) {
@@ -254,7 +254,7 @@ func followPrefix(nodeID string) string {
 }
 
 // summarizeToolArgs picks one representative arg to show beside the tool name
-// so a call is identifiable without a full JSON dump — mirrors the priority
+// so a call is identifiable without a full JSON dump - mirrors the priority
 // order frontend/src/components/toolFormat.ts's summarizeArgs uses, for the
 // same call rendered consistently across the web UI and the CLI.
 func summarizeToolArgs(args map[string]any) string {
@@ -269,12 +269,12 @@ func summarizeToolArgs(args map[string]any) string {
 	return ""
 }
 
-// summarizeToolResult renders a tool result as one short outcome word/phrase —
-// never the raw payload — matching #385's design principle that full detail
+// summarizeToolResult renders a tool result as one short outcome word/phrase -
+// never the raw payload - matching #385's design principle that full detail
 // belongs to OTel traces, not the terminal trace. `name` picks a tool-specific
 // outcome field (mirroring the per-tool web views in ToolCallView.tsx) so the
-// terminal trace carries the same load-bearing fact the UI does — a commit's
-// short sha, an edit's replacement count — not just a bare "ok" (#404 CLI parity).
+// terminal trace carries the same load-bearing fact the UI does - a commit's
+// short sha, an edit's replacement count - not just a bare "ok" (#404 CLI parity).
 func summarizeToolResult(name string, result any) string {
 	m, ok := result.(map[string]any)
 	if !ok {
@@ -327,7 +327,7 @@ func summarizeToolResult(name string, result any) string {
 }
 
 // resultCount returns the length of the first array-valued key present among
-// keys, or -1 if none match — used to summarize a list-shaped result as a
+// keys, or -1 if none match - used to summarize a list-shaped result as a
 // count rather than dumping its contents.
 func resultCount(m map[string]any, keys ...string) int {
 	for _, k := range keys {

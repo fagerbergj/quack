@@ -24,7 +24,7 @@ type spyReadResult struct {
 }
 
 // newSpyReadTool returns a stand-in read_file tool that returns body and bumps
-// calls each time the judge invokes it — proving the judge actually opened the
+// calls each time the judge invokes it - proving the judge actually opened the
 // file before scoring, without needing a real jail.
 func newSpyReadTool(t *testing.T, body string, calls *int32) tool.Tool {
 	t.Helper()
@@ -62,7 +62,7 @@ func readFileResponseContent(req *model.LLMRequest) (string, bool) {
 }
 
 // scriptedJudge is a deterministic judge model: it first calls read_file for
-// the changed file, then — once it has the body back — submits a verdict whose
+// the changed file, then - once it has the body back - submits a verdict whose
 // score is DERIVED from the file's contents (pass iff it contains a test). This
 // proves the agentic read loop grounds the score in the real source.
 type scriptedJudge struct{}
@@ -118,7 +118,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 }
 
 // recordingJudge captures the full text of every judge prompt it receives
-// (into *prompt) and always submits a fixed-score verdict — a stand-in for
+// (into *prompt) and always submits a fixed-score verdict - a stand-in for
 // asserting what the ASSEMBLED judge prompt looked like, not what the judge
 // decided.
 type recordingJudge struct{ prompt *string }
@@ -141,7 +141,7 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	var seenPrompt string
 	factory := NewJudgeFactory(recordingJudge{prompt: &seenPrompt}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
-	// Far larger than any real judge slot (~125k tokens raw) — the same shape as
+	// Far larger than any real judge slot (~125k tokens raw) - the same shape as
 	// the #291 incident's 34K-token judge call against a 32K/64K model slot.
 	hugeAnswer := strings.Repeat("the worker wrote a very long answer. ", 15_000)
 	cfg := Config{Rubric: "score 0-10", JudgeContextWindow: 8_000} // small window forces a real clamp
@@ -156,13 +156,13 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 
 	budget := judgeCharBudget(cfg)
 	// stubAllText joins content parts with a trailing "\n" per part (test helper
-	// artifact, not part of the actual request) — trim it before comparing.
+	// artifact, not part of the actual request) - trim it before comparing.
 	seenPrompt = strings.TrimRight(seenPrompt, "\n")
 	if len(seenPrompt) > budget {
-		t.Errorf("judge saw a %d-char prompt, exceeds the %d-char budget derived from JudgeContextWindow — the oversized answer was not clamped", len(seenPrompt), budget)
+		t.Errorf("judge saw a %d-char prompt, exceeds the %d-char budget derived from JudgeContextWindow - the oversized answer was not clamped", len(seenPrompt), budget)
 	}
 	if len(seenPrompt) >= len(hugeAnswer) {
-		t.Errorf("judge prompt (%d chars) is not smaller than the raw answer (%d chars) — expected compaction", len(seenPrompt), len(hugeAnswer))
+		t.Errorf("judge prompt (%d chars) is not smaller than the raw answer (%d chars) - expected compaction", len(seenPrompt), len(hugeAnswer))
 	}
 }
 
@@ -184,7 +184,7 @@ type skillLoadResult struct {
 }
 
 // newSpyLoadSkillTool returns a stand-in load_skill tool that returns body and
-// bumps calls each time the judge invokes it — proving the skill toolset reaches
+// bumps calls each time the judge invokes it - proving the skill toolset reaches
 // the judge and is callable before submit_verdict.
 func newSpyLoadSkillTool(t *testing.T, body string, calls *int32) tool.Tool {
 	t.Helper()
@@ -220,8 +220,8 @@ func skillResponseContent(req *model.LLMRequest) (string, bool) {
 	return "", false
 }
 
-// skillJudge first loads a review skill, then — once it has the skill's
-// instructions back — submits a verdict whose score is DERIVED from them (pass
+// skillJudge first loads a review skill, then - once it has the skill's
+// instructions back - submits a verdict whose score is DERIVED from them (pass
 // iff the skill mandates a test). This proves the judge grounds its score in a
 // skill it loaded agentically, using the same skill library the worker had.
 type skillJudge struct{}
@@ -277,7 +277,7 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 	}
 }
 
-// oneShotJudge submits a verdict on the first turn without calling any tool —
+// oneShotJudge submits a verdict on the first turn without calling any tool -
 // the pure-research, no-read-tools path.
 type oneShotJudge struct{}
 
@@ -314,7 +314,7 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 		t.Errorf("read-tools behaviour missing its clause: %q", with)
 	}
 	// #502/#498: the judge must be told the clone root is its working root and
-	// never to use a leading-slash/absolute path — the worker gets this same
+	// never to use a leading-slash/absolute path - the worker gets this same
 	// grounding, and its absence sent a judge into a dead-end "/frontend" retry
 	// loop until the repeat-guard gave up (a silent gate bypass).
 	if !strings.Contains(with, "plain repo-relative paths") || !strings.Contains(with, "NEVER use a leading slash") {

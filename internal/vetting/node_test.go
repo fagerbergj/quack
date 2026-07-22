@@ -21,7 +21,7 @@ import (
 // It routes by request shape (no live endpoint): a request carrying the
 // submit_verdict tool is the judge; anything else is the worker. The judge scores
 // low until the answer is a revision; the worker produces a revision once it sees
-// reviewer feedback — so the refine loop converges in exactly one revise cycle.
+// reviewer feedback - so the refine loop converges in exactly one revise cycle.
 type stubModel struct {
 	workerCalls   int
 	judgeCalls    int
@@ -118,7 +118,7 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 
 // TestGateReattachesAdvisorMarkerOnRevise pins the workspace-scope fix: a revise
 // round builds a fresh prompt from cfg.Task and would drop the advisor-thread
-// marker that carries the worker's per-node clone/cwd scope — so the marker must
+// marker that carries the worker's per-node clone/cwd scope - so the marker must
 // be re-appended, or the revise re-clones into the bare user root.
 func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
 	const token = "planX/nodeY"
@@ -157,13 +157,13 @@ func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
 	}
 	revise := stub.workerPrompts[len(stub.workerPrompts)-1]
 	if !strings.Contains(revise, AdvisorThreadMarker(token)) {
-		t.Errorf("revise prompt dropped the advisor-thread marker — the worker's tools lose their node scope and re-clone:\n%s", revise)
+		t.Errorf("revise prompt dropped the advisor-thread marker - the worker's tools lose their node scope and re-clone:\n%s", revise)
 	}
 }
 
 // TestGatedWorkerNode_SingleRoundRevisesOnce asserts the loop semantics at
 // JudgeRounds=1: JudgeRounds counts REVISIONS, so one round judges the draft,
-// revises on the fail, and re-judges — 1 revision / 2 judgments. (Previously 1
+// revises on the fail, and re-judges - 1 revision / 2 judgments. (Previously 1
 // meant "judge once, never fix", which shipped failing drafts unvetted.)
 func TestGatedWorkerNode_SingleRoundRevisesOnce(t *testing.T) {
 	stub := &stubModel{}
@@ -363,7 +363,7 @@ func stubCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// newTestGatedNode wraps RunGatedRefine as a first-class dynamic node — the shape
+// newTestGatedNode wraps RunGatedRefine as a first-class dynamic node - the shape
 // dag.newGatedNode builds in production (test fixture; the old exported
 // NewGatedWorkerNode constructor was removed as dead code).
 func newTestGatedNode(name string, worker adkagent.Agent, workerModel model.LLM, judge JudgeFactory, cfg Config) (workflow.Node, error) {
@@ -400,7 +400,7 @@ func newTestGatedNodeCapture(name string, worker adkagent.Agent, workerModel mod
 }
 
 // erroringJudge always fails the underlying model call (standing in for a judge
-// request that 400s against the model's context window) — never a scored
+// request that 400s against the model's context window) - never a scored
 // verdict, never a tool call.
 type erroringJudge struct{}
 
@@ -414,7 +414,7 @@ func (erroringJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ b
 
 // TestGatedWorkerNode_JudgeErrorFailsClosed proves issue #291's critical
 // correctness fix: when every judge call errors (the model call itself fails,
-// not a low score), the gate must fail CLOSED — Passed=false — never surface
+// not a low score), the gate must fail CLOSED - Passed=false - never surface
 // the answer as vetted. Before the fix, an errored judge round could leave the
 // gate's verdict looking like an unscored pass instead of an explicit fail.
 func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
@@ -456,7 +456,7 @@ func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
 	}
 
 	if res.Passed {
-		t.Errorf("GateResult.Passed = true after every judge call errored — a judge failure must fail closed, never pass")
+		t.Errorf("GateResult.Passed = true after every judge call errored - a judge failure must fail closed, never pass")
 	}
 	if res.Score != 0 {
 		t.Errorf("GateResult.Score = %v, want 0 (no verdict was ever produced)", res.Score)

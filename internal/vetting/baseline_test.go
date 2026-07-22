@@ -24,7 +24,7 @@ func git(t *testing.T, dir string, args ...string) {
 }
 
 // clonedRepoConfig builds a Config whose Workdir is a real CLONE of a source
-// repo — the same shape the worker's git_clone leaves behind, so the baseline
+// repo - the same shape the worker's git_clone leaves behind, so the baseline
 // (the clone's original HEAD) is genuinely distinct from whatever the worker
 // commits on top. seed writes the source repo's committed content.
 func clonedRepoConfig(t *testing.T, checks []string, seed map[string]string) (Config, string) {
@@ -64,7 +64,7 @@ func clonedRepoConfig(t *testing.T, checks []string, seed map[string]string) (Co
 // base commit (pre-existing eslint errors in a game the worker never touched).
 // The worker's own code was clean, yet the gate failed it 5 rounds running on a
 // check it could not possibly win. A check that already fails at base is repo
-// debt, not a regression — it must not gate the node.
+// debt, not a regression - it must not gate the node.
 func TestChecksPassPreExistingFailureDoesNotGate(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"ls broken"}, map[string]string{"a.txt": "a"})
 	// The worker's own (unrelated) change.
@@ -76,12 +76,12 @@ func TestChecksPassPreExistingFailureDoesNotGate(t *testing.T) {
 		t.Fatal("checks_pass should apply")
 	}
 	if got.Score != 1 {
-		t.Errorf("Score = %v, want 1 (the check already failed at the base commit — pre-existing, not the node's fault): %s", got.Score, got.Reason)
+		t.Errorf("Score = %v, want 1 (the check already failed at the base commit - pre-existing, not the node's fault): %s", got.Score, got.Reason)
 	}
 }
 
 // The other half: a check that PASSED at base and fails now is a real
-// regression the worker caused — it must still fail the node. The worker even
+// regression the worker caused - it must still fail the node. The worker even
 // COMMITTED its change here, so the base can't be read off the current HEAD.
 func TestChecksPassRegressionStillGates(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"ls marker"}, map[string]string{"marker": "here"})
@@ -115,7 +115,7 @@ func TestChecksPassPassingCheckNeedsNoBaseline(t *testing.T) {
 
 // The dangerous failure mode: baselining must NEVER disturb the worker's tree.
 // Losing its uncommitted work would be catastrophic, so assert the tree is
-// byte-for-byte intact — and that git still sees the worker's changes — after
+// byte-for-byte intact - and that git still sees the worker's changes - after
 // the baseline ran.
 func TestChecksPassBaselineLeavesWorkerTreeIntact(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"ls broken"}, map[string]string{"a.txt": "a"})

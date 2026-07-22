@@ -37,7 +37,7 @@ describe('MyComponent', () => {
 | Level | Low-level: fires one DOM event | High-level: full browser event sequence |
 | Typing | Only the event passed | Per-character keyboard + input events |
 | Clicking | Only `click` | pointerdown → mousedown → focus → mouseup → click |
-| Async | Sync (void) | Async — `await` each interaction |
+| Async | Sync (void) | Async - `await` each interaction |
 | Best for | Custom `CustomEvent`, isolated handler, non-interactive nodes | Anything a real person does |
 
 ```tsx

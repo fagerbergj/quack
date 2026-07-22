@@ -21,7 +21,7 @@ import (
 )
 
 // Client talks to a quack server's REST + SSE API. The HTTP client has no
-// per-request timeout on purpose: a research run streams for minutes — request
+// per-request timeout on purpose: a research run streams for minutes - request
 // lifetime is bounded by the caller's context instead.
 type Client struct {
 	BaseURL string
@@ -67,7 +67,7 @@ func (c *Client) DeleteChat(ctx context.Context, id string) error {
 }
 
 // CancelRun cancels the chat's active run by response id (the id surfaced in
-// the run's opening response_created SSE event) — only legal while that
+// the run's opening response_created SSE event) - only legal while that
 // response is the active run; a stale/finished id 404s.
 func (c *Client) CancelRun(ctx context.Context, chatID, responseID string) error {
 	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status",
@@ -85,7 +85,7 @@ func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
 // accumulated work (resumable). No-op if no such node is active.
 //
 // ponytail note: pause is a real, working feature (not a stub), but resume is
-// a FRESH re-run (like retry), not a literal frozen-thread checkpoint — ADK
+// a FRESH re-run (like retry), not a literal frozen-thread checkpoint - ADK
 // v2's static workflow graph needs the node to return to unblock its
 // dependents, so there is no way to freeze it mid-tool-call the way an
 // ask_user HITL pause does. See dag.Executor.PauseNode's own note.
@@ -102,7 +102,7 @@ func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
 }
 
 // QueueNodeMessage appends a message to a running node's queue, delivered at
-// its next turn boundary (never mid-turn) — replaces the old interrupt-based
+// its next turn boundary (never mid-turn) - replaces the old interrupt-based
 // SteerNode. Returns the created queued message (its id, for later editing or
 // removal). 404 if the node isn't currently running.
 func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text string) (schema.QueuedMessage, error) {
@@ -135,7 +135,7 @@ func (c *Client) RemoveQueuedMessage(ctx context.Context, chatID, nodeID, messag
 }
 
 // EditNodeTask replaces a not-yet-started node's task text. Errors (surfaced
-// as a 409) once the node has started — its prompt is then immutable.
+// as a 409) once the node has started - its prompt is then immutable.
 func (c *Client) EditNodeTask(ctx context.Context, chatID, nodeID, task string) error {
 	b, _ := json.Marshal(schema.EditNodeTaskBody{Task: task})
 	return c.sendBody(ctx, http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID, b)
@@ -160,7 +160,7 @@ func (c *Client) sendBody(ctx context.Context, method, path string, body []byte)
 	return nil
 }
 
-// RetryNode re-queues a finished node (done, failed, or cancelled) — it and
+// RetryNode re-queues a finished node (done, failed, or cancelled) - it and
 // every node downstream re-run, reusing the stored outputs of all other nodes.
 // guidance is optional and folded into the node's task.
 func (c *Client) RetryNode(ctx context.Context, chatID, nodeID, guidance string) error {
@@ -171,7 +171,7 @@ func (c *Client) RetryNode(ctx context.Context, chatID, nodeID, guidance string)
 	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status", body)
 }
 
-// putStatus PUTs body (a *StatusUpdateBody schema type) to path — the shared
+// putStatus PUTs body (a *StatusUpdateBody schema type) to path - the shared
 // shape of the node/response status-transition endpoints.
 func (c *Client) putStatus(ctx context.Context, path string, body any) error {
 	b, _ := json.Marshal(body)
@@ -312,7 +312,7 @@ func RunAPI(ctx context.Context, out io.Writer, server, method, path string, bod
 type SSEEvent struct {
 	Name string
 	Data json.RawMessage
-	// ID is the SSE `id:` field, if any — the durable-log seq a reconnecting
+	// ID is the SSE `id:` field, if any - the durable-log seq a reconnecting
 	// subscriber resumes past via Last-Event-ID (set by subscribeSSE events
 	// only; the POST send path doesn't carry ids).
 	ID string
@@ -328,7 +328,7 @@ const (
 	sseReconnectMaxDelay    = 15 * time.Second
 )
 
-// sseReconnectDelay is a var (not a plain func) so tests can shrink it —
+// sseReconnectDelay is a var (not a plain func) so tests can shrink it -
 // production behavior is the capped exponential backoff below.
 var sseReconnectDelay = func(attempt int) time.Duration {
 	d := sseReconnectBaseDelay << attempt
@@ -349,7 +349,7 @@ func (c *Client) Stream(ctx context.Context, chatID, content string) <-chan SSEE
 }
 
 // Subscribe attaches to a chat's live (or just-finished) run via the standalone
-// GET stream endpoint — for resuming a run started elsewhere, or by this client
+// GET stream endpoint - for resuming a run started elsewhere, or by this client
 // before a reconnect. The hub replays the events so far, then tails live. Same
 // channel contract as Stream.
 func (c *Client) Subscribe(ctx context.Context, chatID string) <-chan SSEEvent {
@@ -386,8 +386,8 @@ func (c *Client) streamChan(ctx context.Context, run func(onEvent func(SSEEvent)
 
 // subscribeSSE GETs the chat's stream endpoint and dispatches each SSE event to
 // onEvent until the stream ends normally (a `done` event was seen) or ctx is
-// cancelled. A connection dropped mid-run — no `done` seen, whether the body
-// just closed or the request itself failed — is retried with capped
+// cancelled. A connection dropped mid-run - no `done` seen, whether the body
+// just closed or the request itself failed - is retried with capped
 // exponential backoff, resuming past the last event actually delivered via
 // Last-Event-ID (the server's durable event log, M8), so `chat show -f`
 // recovers from a transient break without the caller doing anything.
@@ -591,5 +591,5 @@ func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 }
 
 // PrintPrompt (`quack -p`) and RunChatSend (`quack chat send`) live in send.go,
-// built on SendMessage/SendMessageWithFiles below — they share one
+// built on SendMessage/SendMessageWithFiles below - they share one
 // classify-the-outcome path (streamState) so their pause/failure semantics agree.

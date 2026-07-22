@@ -11,7 +11,7 @@ import (
 // not totally ordered by depends_on: two such nodes that could run
 // concurrently would both write to the ONE shared working tree and corrupt
 // it. A plan with fewer than 2 repo-touching nodes is always fine; a
-// plan.Setup == nil plan is untouched — each repo-touching node still gets
+// plan.Setup == nil plan is untouched - each repo-touching node still gets
 // its own independent clone (setupQualifyingNodes), so concurrent ones don't
 // share anything to corrupt.
 func validateRepoChain(plan Plan) error {
@@ -28,16 +28,16 @@ func validateRepoChain(plan Plan) error {
 		anc := ancestors(plan.Nodes, a.ID)
 		for _, b := range repoNodes[i+1:] {
 			if anc[b.ID] || ancestors(plan.Nodes, b.ID)[a.ID] {
-				continue // one transitively depends on the other — ordered
+				continue // one transitively depends on the other - ordered
 			}
-			return fmt.Errorf("dag: plan declares setup (a shared clone+branch) but repo-touching nodes %q and %q are not chained by depends_on — concurrent repo-touching nodes would corrupt the one shared working tree; make one depend (directly or transitively) on the other, or drop one",
+			return fmt.Errorf("dag: plan declares setup (a shared clone+branch) but repo-touching nodes %q and %q are not chained by depends_on - concurrent repo-touching nodes would corrupt the one shared working tree; make one depend (directly or transitively) on the other, or drop one",
 				a.ID, b.ID)
 		}
 	}
 	return nil
 }
 
-// ancestors returns every node id that id transitively DEPENDS ON — the nodes
+// ancestors returns every node id that id transitively DEPENDS ON - the nodes
 // upstream of it. Sibling of descendants (planner.go), walking DependsOn
 // instead of the reverse (dependents) edge. Assumes an acyclic plan (callers
 // run this after topoLayers's cycle check).
@@ -65,7 +65,7 @@ func ancestors(nodes []Node, id string) map[string]bool {
 // workspace.NodeDir, vetting.Config.NodeID). A repo-touching node
 // (implementer/reviewer) in a plan.Setup chain resolves into the ONE shared
 // clone (workspace.SharedRepoScope) every other repo-touching node in the
-// chain also resolves into — validateRepoChain guarantees the chain runs one
+// chain also resolves into - validateRepoChain guarantees the chain runs one
 // node at a time, so sharing the directory is safe. Every other node keeps
 // its own dir (node.ID), unchanged from before this existed.
 func workspaceNodeID(plan Plan, node Node) string {
@@ -76,7 +76,7 @@ func workspaceNodeID(plan Plan, node Node) string {
 }
 
 // nonTerminalRepoChainNode reports whether node is a repo-touching node in a
-// plan.Setup chain that is NOT the chain's last node — its branch state isn't
+// plan.Setup chain that is NOT the chain's last node - its branch state isn't
 // final yet, so its delivery must never fire even if it stages one (see
 // buildGateNodes, vetting.commitDelivery).
 func nonTerminalRepoChainNode(plan Plan, node Node) bool {
@@ -88,7 +88,7 @@ func nonTerminalRepoChainNode(plan Plan, node Node) bool {
 			continue
 		}
 		if ancestors(plan.Nodes, n.ID)[node.ID] {
-			return true // n (also repo-touching) depends on node — node isn't terminal
+			return true // n (also repo-touching) depends on node - node isn't terminal
 		}
 	}
 	return false

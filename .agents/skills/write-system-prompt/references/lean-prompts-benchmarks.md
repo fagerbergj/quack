@@ -1,4 +1,4 @@
-# Lean Prompt Benchmarks — Community Research
+# Lean Prompt Benchmarks - Community Research
 
 ## The 4000→350 Word Experiment
 
@@ -11,7 +11,7 @@ A community member tested shortening two default OpenCode prompts and reported s
 | Metric | Codex (before) | Codex (after) | Gemini (before) | Gemini (after) |
 |--------|---------------|---------------|-----------------|----------------|
 | Word count | ~4,000 | 350 | ~2,250 | 340 |
-| Quality change | — | Improved ("crispiness") | — | Improved brainstorming/UI |
+| Quality change | - | Improved ("crispiness") | - | Improved brainstorming/UI |
 | Hallucinated defaults | Frequent | Eliminated | Periodic sycophancy | Reduced |
 | Plan mode adherence | Inconsistent | Reliable | Sometimes "trigger-happy" | Better |
 
@@ -51,7 +51,7 @@ Core Directive: execute tasks with surgical precision, enforce safety, and deliv
 
 ## Takeaway for System Prompt Writers
 
-1. **Start short** — Draft at 300 words; expand only if genuinely necessary
-2. **Kill duplicates** — If the same rule appears in two places, pick one and delete the other
-3. **Test with a real agent** — The metric is not "does it read well to a human?" but "does the agent execute without hesitation or contradiction?"
-4. **Use negative constraints** — Explicitly listing what NOT to do (no defaults, no shims, no hardcoding) prevents subtle bugs better than positive instructions alone
+1. **Start short** - Draft at 300 words; expand only if genuinely necessary
+2. **Kill duplicates** - If the same rule appears in two places, pick one and delete the other
+3. **Test with a real agent** - The metric is not "does it read well to a human?" but "does the agent execute without hesitation or contradiction?"
+4. **Use negative constraints** - Explicitly listing what NOT to do (no defaults, no shims, no hardcoding) prevents subtle bugs better than positive instructions alone

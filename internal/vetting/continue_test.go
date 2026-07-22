@@ -19,8 +19,8 @@ import (
 )
 
 // The continuation contract (live TC2 failures 2026-07-13): a worker that ends a
-// turn with no answer text is almost always MID-TASK — it spent its output budget
-// on reasoning — not done. The gate must CONTINUE it (tools intact, own session)
+// turn with no answer text is almost always MID-TASK - it spent its output budget
+// on reasoning - not done. The gate must CONTINUE it (tools intact, own session)
 // rather than hand a tool-less writer the job of summarizing half-finished work.
 // The same applies to a worker whose task demanded a commit/push it never made.
 
@@ -36,8 +36,8 @@ func (m *contStub) Name() string { return "contStub" }
 
 // GenerateContent routes by request shape: a submit_verdict tool ⇒ the judge; NO
 // tools at all ⇒ the tool-less finalize writer; otherwise the worker. The worker
-// returns an EMPTY draft first (the failure mode), then — once it sees the
-// continuation directive — calls its git_commit tool and writes up what it did.
+// returns an EMPTY draft first (the failure mode), then - once it sees the
+// continuation directive - calls its git_commit tool and writes up what it did.
 func (m *contStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		text := stubAllText(req)
@@ -64,7 +64,7 @@ func (m *contStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 	}
 }
 
-// stubHasResponse reports whether the request carries a tool RESULT for name —
+// stubHasResponse reports whether the request carries a tool RESULT for name -
 // how a stub model tells "my tool call already ran" from "I still have to make
 // it". (Getting this wrong loops the agent forever: ADK's llmagent has no
 // iteration cap, so a model that keeps re-calling the same tool never stops.)
@@ -156,7 +156,7 @@ const implTask = "Add a game to the repo, commit it, push the branch and open a 
 
 // TestEmptyDraft_ContinuesWorkerWithTools: the worker's first turn returns no
 // answer. The gate must re-invoke the WORKER (tools intact, own session) with an
-// explicit continuation directive delivered as a session event — not summarize
+// explicit continuation directive delivered as a session event - not summarize
 // its half-finished work with the tool-less writer.
 func TestEmptyDraft_ContinuesWorkerWithTools(t *testing.T) {
 	stub := &contStub{}
@@ -178,7 +178,7 @@ func TestEmptyDraft_ContinuesWorkerWithTools(t *testing.T) {
 	if !strings.Contains(strings.Join(stub.workerTexts[1:], "\n"), continuationMarker) {
 		t.Error("the continuation directive never reached the worker's model request")
 	}
-	// …and it must land as a session event — the only delivery path a remote A2A
+	// …and it must land as a session event - the only delivery path a remote A2A
 	// worker has (it rebuilds its request from session events).
 	var sawPromptEvent bool
 	for _, p := range prompts {
@@ -211,7 +211,7 @@ func (m *alwaysEmptyStub) GenerateContent(_ context.Context, req *model.LLMReque
 }
 
 // TestEmptyDraft_FallsBackToWriter: a genuinely stuck worker (empty on every
-// continuation) still falls back to the tool-less writer — the existing backstop
+// continuation) still falls back to the tool-less writer - the existing backstop
 // is preserved, just demoted to LAST resort.
 func TestEmptyDraft_FallsBackToWriter(t *testing.T) {
 	stub := &alwaysEmptyStub{}
@@ -251,7 +251,7 @@ func (m *nonEmptyStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 }
 
 // TestNonEmptyDraft_NoContinuation: a worker with a real draft on a task that
-// demands no delivery is untouched — one worker run, no continuation, no writer.
+// demands no delivery is untouched - one worker run, no continuation, no writer.
 func TestNonEmptyDraft_NoContinuation(t *testing.T) {
 	stub := &nonEmptyStub{}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10"}
@@ -261,7 +261,7 @@ func TestNonEmptyDraft_NoContinuation(t *testing.T) {
 		t.Errorf("answer = %q, want the worker's own draft", answer)
 	}
 	if stub.workerCalls != 1 {
-		t.Errorf("worker calls = %d, want 1 (draft only — a good draft is never continued)", stub.workerCalls)
+		t.Errorf("worker calls = %d, want 1 (draft only - a good draft is never continued)", stub.workerCalls)
 	}
 	if stub.writerCalls != 0 {
 		t.Errorf("writer calls = %d, want 0", stub.writerCalls)

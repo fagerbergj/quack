@@ -25,7 +25,7 @@ func TestStoresComposeEmbedded(t *testing.T) {
 		}
 	}
 	// Tool backends and the app are NOT managed here (config-driven / separate).
-	// Check service keys, not bare substrings — the header comment mentions the
+	// Check service keys, not bare substrings - the header comment mentions the
 	// backends by name, which is fine.
 	for _, notWant := range []string{"  searxng:", "  crawl4ai:", "  app:"} {
 		if strings.Contains(s, notWant) {

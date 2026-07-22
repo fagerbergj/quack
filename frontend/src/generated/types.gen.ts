@@ -5,7 +5,7 @@ export type ClientOptions = {
 };
 
 /**
- * A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny — the workspace.guards confirm tier — or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+ * A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
  *
  */
 export type ChatStatus = 'queued' | 'running' | 'needs_input' | 'failed' | 'idle';
@@ -64,7 +64,7 @@ export type NodeStatus = 'queued' | 'running' | 'needs_input' | 'paused' | 'done
 export type NodeStatusUpdateBody = {
     status: NodeStatus;
     /**
-     * Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) — it is delivered at the node's next turn boundary, not mid-turn.
+     * Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
      */
     guidance?: string;
 };
@@ -73,7 +73,7 @@ export type QueuedMessage = {
     id: string;
     text: string;
     /**
-     * True once handed to the node at a turn boundary — no longer editable or removable.
+     * True once handed to the node at a turn boundary - no longer editable or removable.
      */
     delivered: boolean;
     created_at: string;
@@ -92,7 +92,7 @@ export type UpdateChatBody = {
 };
 
 /**
- * The only supported target status for a response — cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
+ * The only supported target status for a response - cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
  */
 export type ResponseStatus = 'cancelled';
 

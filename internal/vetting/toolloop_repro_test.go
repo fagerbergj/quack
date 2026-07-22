@@ -67,7 +67,7 @@ func TestWorkerSeesToolError(t *testing.T) {
 	}
 	t.Logf("ERROR-variant: workerCalls=%d sawProbeResult=%v probeRole=%q", stub.workerCalls, stub.sawProbeResult, stub.probeRole)
 	if !stub.sawProbeResult {
-		t.Fatalf("REPRO: worker never saw the tool ERROR — a failed tool call is not forwarded, so the model can't adapt and re-issues it. workerCalls=%d", stub.workerCalls)
+		t.Fatalf("REPRO: worker never saw the tool ERROR - a failed tool call is not forwarded, so the model can't adapt and re-issues it. workerCalls=%d", stub.workerCalls)
 	}
 }
 
@@ -111,7 +111,7 @@ func (m *toolLoopStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 }
 
 // TestWorkerSeesItsOwnToolResult is the reproduction: a task-mode worker (built
-// exactly as production builds nodes — unset Mode, wrapped in a workflow node)
+// exactly as production builds nodes - unset Mode, wrapped in a workflow node)
 // makes one tool call; its follow-up model call MUST carry that tool's result,
 // or the worker has amnesia and re-issues the same call forever (the #252 loop).
 func TestWorkerSeesItsOwnToolResult(t *testing.T) {
@@ -154,7 +154,7 @@ func TestWorkerSeesItsOwnToolResult(t *testing.T) {
 	}
 	t.Logf("workerCalls=%d sawProbeResult=%v probeRole=%q", stub.workerCalls, stub.sawProbeResult, stub.probeRole)
 	if !stub.sawProbeResult {
-		t.Fatalf("REPRO: worker's follow-up model call did NOT carry the probe RESULT — tool results are not forwarded to the task-mode worker (amnesia loop). workerCalls=%d", stub.workerCalls)
+		t.Fatalf("REPRO: worker's follow-up model call did NOT carry the probe RESULT - tool results are not forwarded to the task-mode worker (amnesia loop). workerCalls=%d", stub.workerCalls)
 	}
 	if stub.probeRole != "user" {
 		t.Errorf("probe result role = %q, want \"user\"; role \"model\" mislabels the tool result as the assistant's own words", stub.probeRole)

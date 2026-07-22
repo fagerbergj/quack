@@ -75,7 +75,7 @@ export const Searchable: Story = {
 }
 
 // A mixed list: GitHub-originated rows carry a repo badge and an Issue/PR
-// badge — both link out to GitHub — plus (when not idle) a colored status dot
+// badge - both link out to GitHub - plus (when not idle) a colored status dot
 // next to the title. Filtering by Origin/Status/Repo/Type lives entirely in
 // the funnel popover.
 export const MixedOrigin: Story = {
@@ -83,8 +83,8 @@ export const MixedOrigin: Story = {
 }
 
 // Non-idle rows (running/failed/needs_input/queued) show a small colored dot
-// right before the title (blue/red/amber/gray); idle rows stay quiet — no dot
-// at all. queued (#417) is gray and non-pulsing — admitted but still waiting
+// right before the title (blue/red/amber/gray); idle rows stay quiet - no dot
+// at all. queued (#417) is gray and non-pulsing - admitted but still waiting
 // on the server's max_active_runs slot, distinct from the pulsing blue
 // running dot for the one chat actually executing.
 export const StatusDots: Story = {
@@ -100,7 +100,7 @@ export const StatusDots: Story = {
   },
 }
 
-// Opens the filter popover and selects the GitHub origin facet — only
+// Opens the filter popover and selects the GitHub origin facet - only
 // GitHub-originated rows remain, and the funnel shows an active-filter badge.
 export const FilteredToGithub: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
@@ -111,7 +111,7 @@ export const FilteredToGithub: Story = {
   },
 }
 
-// Selects the Repo facet for a single repo — narrows across both its issue
+// Selects the Repo facet for a single repo - narrows across both its issue
 // and PR rows, leaving the other repo's row out.
 export const FilteredToRepo: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },

@@ -15,12 +15,12 @@ func TestFindInvalidMermaid_ValidDiagramPasses(t *testing.T) {
 func TestFindInvalidMermaid_NoMermaidBlockPasses(t *testing.T) {
 	md := "No diagrams here, just prose and a ```go\nfmt.Println(1)\n``` block."
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
-		t.Fatalf("issues = %v, want none — no mermaid fence at all", issues)
+		t.Fatalf("issues = %v, want none - no mermaid fence at all", issues)
 	}
 }
 
 // A missing diagram-type header is a real parse error from mermaid-check
-// ("unknown or unsupported diagram type") — a known-bad diagram the library
+// ("unknown or unsupported diagram type") - a known-bad diagram the library
 // actually rejects, not a heuristic.
 func TestFindInvalidMermaid_MissingHeaderDetected(t *testing.T) {
 	md := "Before.\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nAfter."
@@ -38,7 +38,7 @@ func TestFindInvalidMermaid_MissingHeaderDetected(t *testing.T) {
 
 // The issue's own named quote-in-unquoted-label case (#448): mermaid-check
 // v0.0.4 parses AND strictly validates this clean (verified empirically),
-// but GitHub's real parser errors on it — the supplementary quotedLabelIssue
+// but GitHub's real parser errors on it - the supplementary quotedLabelIssue
 // check exists exactly to close this false-negative.
 func TestFindInvalidMermaid_QuoteInUnquotedLabelDetected(t *testing.T) {
 	md := "```mermaid\ngraph TD\n  A[bundle name<br/>e.g. \"code-reviewer\"] --> B[x]\n```"
@@ -52,16 +52,16 @@ func TestFindInvalidMermaid_QuoteInUnquotedLabelDetected(t *testing.T) {
 }
 
 // A fully-quoted label using mermaid's own escape form must NOT trip the
-// supplementary quote check — only a BARE quote inside an unquoted label is
+// supplementary quote check - only a BARE quote inside an unquoted label is
 // invalid.
 func TestFindInvalidMermaid_FullyQuotedLabelWithEscapedQuotesPasses(t *testing.T) {
 	md := "```mermaid\nflowchart TD\n  A[\"bundle name, e.g. \\\"code-reviewer\\\"\"] --> B[Done]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
-		t.Fatalf("issues = %v, want none — the whole label is quoted", issues)
+		t.Fatalf("issues = %v, want none - the whole label is quoted", issues)
 	}
 }
 
-// The issue's own named example — a bracket label with an unquoted paren —
+// The issue's own named example - a bracket label with an unquoted paren -
 // parses fine (mermaid-check is lenient at the AST level) but fails STRICT
 // validation (NoParenthesesInLabels).
 func TestFindInvalidMermaid_UnquotedParenLabelDetected(t *testing.T) {
@@ -92,7 +92,7 @@ func TestFindInvalidMermaid_NestedFenceIgnored(t *testing.T) {
 		"fmt.Println(\"done\")\n" +
 		"```\n\nEnd."
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
-		t.Fatalf("issues = %v, want none — the ```mermaid text is nested inside a ```go block, not a real fence", issues)
+		t.Fatalf("issues = %v, want none - the ```mermaid text is nested inside a ```go block, not a real fence", issues)
 	}
 }
 
@@ -102,11 +102,11 @@ func TestFindInvalidMermaid_NestedFenceIgnoredRealBlockStillDetected(t *testing.
 	md := "```go\n// ```mermaid\n// not a real diagram\n// ```\nfmt.Println(1)\n```\n\n" +
 		"```mermaid\nA[Start] --> B[Finish]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 1 {
-		t.Fatalf("issues = %v, want exactly 1 — the real top-level bad diagram, not the nested false-positive", issues)
+		t.Fatalf("issues = %v, want exactly 1 - the real top-level bad diagram, not the nested false-positive", issues)
 	}
 }
 
-// GitHub renders ```Mermaid / ```MERMAID the same as ```mermaid — the fence
+// GitHub renders ```Mermaid / ```MERMAID the same as ```mermaid - the fence
 // match must be case-insensitive.
 func TestFindInvalidMermaid_CaseInsensitiveFence(t *testing.T) {
 	md := "```MERMAID\nA[Start] --> B[Finish]\n```"
@@ -115,7 +115,7 @@ func TestFindInvalidMermaid_CaseInsensitiveFence(t *testing.T) {
 	}
 }
 
-// mermaidError must degrade to a reason rather than panic through — a young
+// mermaidError must degrade to a reason rather than panic through - a young
 // third-party parser on the gate's checks path.
 func TestMermaidError_RecoversFromPanic(t *testing.T) {
 	defer func() {
@@ -157,7 +157,7 @@ func TestMermaidError(t *testing.T) {
 // (ok=false) when nothing invalid is present anywhere.
 // TestDegradeInvalidMermaid_TwoBlocks verifies that with two invalid blocks in
 // one answer, both are degraded and the prose BETWEEN them is preserved (not
-// swallowed by a fence) — the `last` cursor advances correctly per block.
+// swallowed by a fence) - the `last` cursor advances correctly per block.
 func TestDegradeInvalidMermaid_TwoBlocks(t *testing.T) {
 	// Neither block declares a diagram type, so both fail validation (as in the
 	// single-block test above).
@@ -189,7 +189,7 @@ func TestDegradeInvalidMermaid_WarningOutsideFence(t *testing.T) {
 	for _, line := range lines {
 		if strings.HasPrefix(line, wantLine) {
 			if foundTextFence {
-				t.Fatal("warning appeared after the ```text fence — it must come before the fence opener")
+				t.Fatal("warning appeared after the ```text fence - it must come before the fence opener")
 			}
 			foundWarning = true
 		}
@@ -211,7 +211,7 @@ func TestMermaidCriterion_DetectsInvalidStagedBody(t *testing.T) {
 	}}
 	c, ok := mermaidCriterion("", act)
 	if !ok {
-		t.Fatal("want ok=true — the staged PR body has an invalid diagram")
+		t.Fatal("want ok=true - the staged PR body has an invalid diagram")
 	}
 	if c.Score != 0 {
 		t.Fatalf("Score = %v, want 0", c.Score)
@@ -226,6 +226,6 @@ func TestMermaidCriterion_ValidEverywherePasses(t *testing.T) {
 		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"},
 	}}
 	if _, ok := mermaidCriterion("no diagrams here", act); ok {
-		t.Fatal("want ok=false — nothing invalid anywhere")
+		t.Fatal("want ok=false - nothing invalid anywhere")
 	}
 }

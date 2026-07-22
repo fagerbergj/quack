@@ -34,7 +34,7 @@ func fnResp(id, name string, resp map[string]any) evtPart {
 }
 
 // newTestSession builds an in-memory session carrying one event per part, in
-// order — enough to exercise activityFromSession's event walk.
+// order - enough to exercise activityFromSession's event walk.
 func newTestSession(t *testing.T, parts ...evtPart) session.Session {
 	t.Helper()
 	svc := session.InMemoryService()
@@ -195,7 +195,7 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 		t.Errorf("judge prompt missing the read sample:\n%s", got)
 	}
 	// A web-research node (no workspace ops) leaves the judge prompt exactly
-	// as before — no empty header.
+	// as before - no empty header.
 	got = buildJudgePrompt("", "rubric text", "", questionContent("q"), "a", "", workerActivity{})
 	if strings.Contains(got, "Workspace activity") {
 		t.Errorf("judge prompt should carry no workspace section without ops:\n%s", got)
@@ -214,7 +214,7 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "repo/app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The worker wrote logic but NO page — the exact incomplete-deliverable the
+	// The worker wrote logic but NO page - the exact incomplete-deliverable the
 	// judge must be able to see rather than trust the answer's "it's done".
 	if err := os.WriteFile(filepath.Join(root, "repo/app/logic.ts"), []byte("export const GRAVITY = 0.5 // real on-disk content"), 0o644); err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 // TestBuildChangedFilesSectionUsesPerChatScope pins the coupling with per-chat
 // isolation: the worker writes into <root>/<user>/<chatID>/, so the judge must
 // re-read from the SAME per-chat dir. Reading from the per-user root (chatID
-// "") finds nothing — the exact silent no-op the chatID param prevents.
+// "") finds nothing - the exact silent no-op the chatID param prevents.
 func TestBuildChangedFilesSectionUsesPerChatScope(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -268,7 +268,7 @@ func TestBuildChangedFilesSectionUsesPerChatScope(t *testing.T) {
 	if got := buildChangedFilesSection(act, j, "u1", chatID); !strings.Contains(got, "per-chat content") {
 		t.Errorf("per-chat section missing the real file content:\n%s", got)
 	}
-	// WITHOUT it (per-user root), the file isn't there — the fix would no-op.
+	// WITHOUT it (per-user root), the file isn't there - the fix would no-op.
 	if got := buildChangedFilesSection(act, j, "u1", ""); got != "" {
 		t.Errorf("per-user root must NOT find the per-chat file, got:\n%s", got)
 	}
@@ -299,7 +299,7 @@ func TestActivityWrittenTracksCwd(t *testing.T) {
 
 // TestGitCloneCountsAsRetrieval reenacts the live routing-failure's second
 // half (2026-07-10): a node following the research-git-repos flow CLONES a
-// repo instead of web-fetching it, then cites the repo URL — citationScore
+// repo instead of web-fetching it, then cites the repo URL - citationScore
 // scored it 0.00 backing because git_clone landed in neither fetched nor
 // seen. A successful clone must enter act.clonedRepos/clonedDirs (full-backing
 // credit: the repo's whole contents are locally available), and the ledger
@@ -400,7 +400,7 @@ func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
 // TestJudgeRereadsFilesWrittenUnderTheNodeDir pins the judge's changed-file
 // re-read to the PER-NODE scope: a worker's relative write lands under
 // <chat>/<nodeID>/ (the node's default cwd), so the replay must start from the
-// node dir — otherwise the judge resolves against the chat root, reads nothing,
+// node dir - otherwise the judge resolves against the chat root, reads nothing,
 // and its "read the real files" behaviour silently degrades to a no-op.
 func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
@@ -421,7 +421,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 
 	// The worker cd'd into its clone and wrote. `cd` reports its new dir
 	// NODE-relative ("repo", not "<nodeID>/repo"): the node dir is an invisible
-	// root the model never sees, so the replay must re-apply it — otherwise the
+	// root the model never sees, so the replay must re-apply it - otherwise the
 	// judge resolves the write against the chat root, reads NOTHING, and silently
 	// degrades to trusting the answer's self-report.
 	sess := newTestSession(t,
@@ -441,7 +441,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 
 // TestWebFetchEntersWorkspaceLedger pins the grounding trace: a worker that web-fetches repo
 // files instead of reading the local clone must leave a visible ledger trace
-// (previously ZERO — the judge had nothing to catch it with), while still
+// (previously ZERO - the judge had nothing to catch it with), while still
 // feeding the existing citation-backing bookkeeping (recordFetch) unchanged.
 func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
 	const url = "https://raw.githubusercontent.com/example/repo/main/internal/tools/exa.go"
@@ -457,7 +457,7 @@ func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
 	if !strings.Contains(act.workspace[0].detail, url) {
 		t.Errorf("web_fetch ledger detail = %q, want it to contain the URL", act.workspace[0].detail)
 	}
-	// The fetched page body must NOT leak into the ledger — only the URL matters.
+	// The fetched page body must NOT leak into the ledger - only the URL matters.
 	if strings.Contains(act.workspace[0].detail, "exa.go contents") {
 		t.Errorf("web_fetch ledger detail leaked the response body: %q", act.workspace[0].detail)
 	}

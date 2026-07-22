@@ -230,7 +230,7 @@ func TestReviewToolsRegistered(t *testing.T) {
 
 // TestPullRequestAndSubmitReviewAreNotModelTools pins the staged-delivery
 // spine's core safety property: opening a PR and submitting a review make work
-// PUBLIC, so no agent tool call can do either anymore — only the harness's own
+// PUBLIC, so no agent tool call can do either anymore - only the harness's own
 // delivery step (internal/github/webhook.go), via createPullRequest/
 // createReview, does that, and only after a judge pass.
 func TestPullRequestAndSubmitReviewAreNotModelTools(t *testing.T) {

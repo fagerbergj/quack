@@ -18,7 +18,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-// Skip reasons for checksPassCriterion's ok=false returns — see skipChecks.
+// Skip reasons for checksPassCriterion's ok=false returns - see skipChecks.
 const (
 	skipReasonNotConfigured   = "not_configured"    // no cfg.Checks and DeriveChecks is off
 	skipReasonNoWorkspace     = "no_workspace"      // no workspace wired up and nothing to derive from
@@ -26,13 +26,13 @@ const (
 	skipReasonNoChecksDerived = "no_checks_derived" // a repo was found but nothing recognisable to check
 )
 
-// skipChecks records that the deterministic checks criterion did NOT apply —
+// skipChecks records that the deterministic checks criterion did NOT apply -
 // the case that matters for quack's phantom-success history (a fabricated
 // exploration once scored 0.9 with nothing behind it; a phantom delivery
 // shipped). ctx is checksPassCriterion's own ctx, which callers (see
 // checksPassCriterionTraced) already pass in span-carrying, so the reason
 // lands as an attribute on the gate.checks span AND a counter, both
-// queryable in Tempo/Grafana — "checks passed" and "checks never ran" can no
+// queryable in Tempo/Grafana - "checks passed" and "checks never ran" can no
 // longer look identical.
 func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
 	oteltrace.SpanFromContext(ctx).SetAttributes(attribute.String("skip_reason", reason))
@@ -41,7 +41,7 @@ func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
 }
 
 // maxCheckOutputChars bounds ONE failing check's output as folded into the
-// checks_pass Reason, which becomes revise-prompt feedback — unbounded build
+// checks_pass Reason, which becomes revise-prompt feedback - unbounded build
 // output re-accumulated each round once pushed the revise prompt past the model
 // window. A compiler's FIRST errors are the actionable ones; the 40th cascade
 // is noise. checksPassCriterion stops at the first failing check, so this also
@@ -49,13 +49,13 @@ func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
 const maxCheckOutputChars = 2_000
 
 // checksPassCriterion is the GATE side of §4 (deterministic gates): it runs the
-// node's checks — cfg.Checks when the planner set them (an explicit override,
+// node's checks - cfg.Checks when the planner set them (an explicit override,
 // already plan-time validated argv-safe), else the checks DERIVED from the repo
-// on disk (deriveChecks) — via workspace.RunPipeline, argv-only and never a
+// on disk (deriveChecks) - via workspace.RunPipeline, argv-only and never a
 // shell (pipes are native; everything else a shell would interpret stays
 // unexpressible). This is deliberately NOT run_command's runner: `checks` is an
 // operator allowlist (MatchesCheckPrefix), and a prefix allowlist means nothing
-// if the suffix can open a shell — run_command hands its line to a real shell
+// if the suffix can open a shell - run_command hands its line to a real shell
 // instead (RunShell, #277). Stops at the first failure.
 //
 // Why derive: the planner authors the DAG BEFORE anything has looked at the
@@ -64,12 +64,12 @@ const maxCheckOutputChars = 2_000
 // gate time, once the worker has cloned it.
 //
 // Called from foldDeterministic (node.go) exactly like grounded_in_retrieval: a
-// failing check folds in as criterion `checks_pass` with Score 0 (weakest-link —
+// failing check folds in as criterion `checks_pass` with Score 0 (weakest-link -
 // one failing check sinks the round on its own) and a Reason naming the command
 // plus a BOUNDED head of its output, so composeFeedback (node.go) carries the
 // actual compiler/test failure into the revise prompt without blowing its budget.
 // All checks passing scores 1. ok=false means the criterion does not apply at all
-// (no checks and nothing to derive them from) — the node is then untouched by it,
+// (no checks and nothing to derive them from) - the node is then untouched by it,
 // exactly as a research or synthesis node is.
 func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
 	if len(cfg.Checks) == 0 && !cfg.DeriveChecks {
@@ -77,13 +77,13 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 	}
 	if cfg.Workspace == nil {
 		if len(cfg.Checks) == 0 {
-			return skipChecks(ctx, skipReasonNoWorkspace) // nothing to derive from — not a failure
+			return skipChecks(ctx, skipReasonNoWorkspace) // nothing to derive from - not a failure
 		}
 		// A node with Checks set but no workspace wired up is a config/wiring
 		// bug (internal/serve's buildAgents didn't stamp Workspace onto the
-		// base Config), not a model or user error — fail closed rather than
+		// base Config), not a model or user error - fail closed rather than
 		// running unjailed.
-		return criterionScore{Score: 0, Reason: "deterministic: this node has checks configured but no workspace is wired up (internal error — contact the operator)"}, true
+		return criterionScore{Score: 0, Reason: "deterministic: this node has checks configured but no workspace is wired up (internal error - contact the operator)"}, true
 	}
 	dir, ok, err := checksDir(cfg)
 	if err != nil {
@@ -91,7 +91,7 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 	}
 	if !ok {
 		// The planner omitted `workdir` and the node's workspace holds no single
-		// repo to derive checks from. Skip the criterion rather than guess — a
+		// repo to derive checks from. Skip the criterion rather than guess - a
 		// node must never fail because the planner left a field out.
 		slog.Info("no single repo found to derive checks from; skipping checks", "component", "vetting", "node", cfg.NodeID)
 		return skipChecks(ctx, skipReasonNoRepo)
@@ -133,14 +133,14 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 }
 
 // preexistingNote is the context line naming the checks that were IGNORED
-// because they already fail at the repo's base commit — so a worker reading the
+// because they already fail at the repo's base commit - so a worker reading the
 // revise feedback isn't confused by a check it saw fail that nothing asked it to
 // fix, and an operator reading the verdict sees the repo has debt.
 func preexistingNote(checks []string) string {
 	if len(checks) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("\n(ignored, not your fault: %s — already failing on the repo's base commit, before your change)",
+	return fmt.Sprintf("\n(ignored, not your fault: %s - already failing on the repo's base commit, before your change)",
 		strings.Join(checks, ", "))
 }
 
@@ -153,7 +153,7 @@ func boundCheckOutput(out string) string {
 		return out
 	}
 	return boundExcerpt(out, maxCheckOutputChars) + fmt.Sprintf(
-		"\n[check output truncated: %d of %d bytes shown — fix the FIRST errors, the rest are usually cascades; re-run the check yourself to see them all]",
+		"\n[check output truncated: %d of %d bytes shown - fix the FIRST errors, the rest are usually cascades; re-run the check yourself to see them all]",
 		maxCheckOutputChars, len(out))
 }
 
@@ -161,8 +161,8 @@ func boundCheckOutput(out string) string {
 // so a sandboxed check child sees the workspace exactly where the worker's shell
 // and the fs tools see it: at workspace.SandboxWorkRoot, with the repo one level
 // under it. Without it the check's cwd would be mounted as the root, and a
-// compiler's absolute paths — which land verbatim in the revise feedback the
-// worker then reads — would name a THIRD spelling of the file it is being asked
+// compiler's absolute paths - which land verbatim in the revise feedback the
+// worker then reads - would name a THIRD spelling of the file it is being asked
 // to fix. One namespace means every child of a node speaks it.
 //
 // A node whose workspace dir does not exist (nothing was ever written) leaves
@@ -178,22 +178,22 @@ func checksCaps(cfg Config) workspace.Caps {
 }
 
 // checksDir returns the absolute directory a node's checks run in: the node's
-// Workdir when the planner set explicit Checks to run there, else — when checks
-// are being DERIVED — the ONE repo (a directory holding a .git) at or beneath the
+// Workdir when the planner set explicit Checks to run there, else - when checks
+// are being DERIVED - the ONE repo (a directory holding a .git) at or beneath the
 // node's Workdir (the workspace scope root when it set none). ok=false when no
 // single repo can be located: skip the checks rather than guess which of several
 // trees is "the" repo.
 //
 // The search matters: the planner may legitimately set no workdir, and the repo
-// usually sits one level down where git_clone put it — resolving a workdir is
+// usually sits one level down where git_clone put it - resolving a workdir is
 // not the same as FINDING the repo, so we find it (a scope-root fallback once
 // derived no checks at all and let non-compiling code pass).
 //
 // Workdir resolves against the node's OWN working dir first (<chat>/<node>/…,
-// where the node's git_clone landed its repo — exactly as the worker's own tools
+// where the node's git_clone landed its repo - exactly as the worker's own tools
 // resolve it), then against the chat scope root as a fallback (an un-gated node,
 // or a worker that used the "/" escape hatch to work at the root). Node-first is
-// what keeps a plan's CONCURRENT nodes from each seeing several repos — from the
+// what keeps a plan's CONCURRENT nodes from each seeing several repos - from the
 // chat root the search sees every node's clone, finds no single repo, and gates
 // nothing.
 func checksDir(cfg Config) (string, bool, error) {
@@ -207,7 +207,7 @@ func checksDir(cfg Config) (string, bool, error) {
 	}
 	if len(cfg.Checks) > 0 {
 		// Explicit planner-set checks keep their historical meaning: run exactly
-		// where the planner said. Fail closed — a workdir that exists nowhere is
+		// where the planner said. Fail closed - a workdir that exists nowhere is
 		// still returned, so the check errors rather than being silently skipped.
 		if nodeStart != chatStart && !isDir(nodeStart) && isDir(chatStart) {
 			return chatStart, true, nil
@@ -236,7 +236,7 @@ func fileExists(dir, name string) bool {
 }
 
 // npmCheckScripts are the package.json script names worth gating on, in run
-// order. ONLY scripts the repo actually declares are used — a repo whose
+// order. ONLY scripts the repo actually declares are used - a repo whose
 // typecheck is `next build` must never be handed an invented `npx tsc`.
 var npmCheckScripts = []string{"build", "typecheck", "type-check", "check-types", "lint", "test"}
 
@@ -247,12 +247,12 @@ var makeCheckTargets = []string{"build", "lint", "test"}
 // excluding variable assignments ("FOO := bar").
 var makeTargetRe = regexp.MustCompile(`(?m)^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 
-// deriveChecks reads dir — the repo the node worked in — and returns the repo's
+// deriveChecks reads dir - the repo the node worked in - and returns the repo's
 // OWN check commands, filtered by the configured workspace.check_commands
 // allowlist (the security boundary stays exactly where it was; an empty allowlist
 // means checks are disabled, so this returns nothing). UNION of every toolchain
 // present: package.json (its declared scripts) + go.mod + Makefile (its declared
-// targets), npm → go → make order — a repo with more than one stack gates on all
+// targets), npm → go → make order - a repo with more than one stack gates on all
 // of them, not just the first found. Returning none is normal, not a failure: an
 // unrecognised repo simply gets no deterministic gate.
 func deriveChecks(dir string, allow []string) []string {
@@ -286,7 +286,7 @@ func deriveChecks(dir string, allow []string) []string {
 }
 
 // toolchainPresent reports whether a derived check's binary exists on the
-// server (the ambient PATH — the same lookup RunArgv resolves argv[0] with).
+// server (the ambient PATH - the same lookup RunArgv resolves argv[0] with).
 // This is what makes a default-ON check_commands allowlist safe: a host
 // without go/npm derives no go/npm checks instead of failing every node with
 // exit 127s.

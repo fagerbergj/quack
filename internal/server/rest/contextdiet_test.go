@@ -31,8 +31,8 @@ func injectEvent(t *testing.T, h *Handler, chatID, author, branch string, conten
 }
 
 // TestOrchestratorContextDiet: after a heavy plan run, a follow-up turn's LLM
-// request must contain the CONVERSATION — the previous user message, the
-// orchestrator's own reply, and the delivered plan answer — and NONE of the
+// request must contain the CONVERSATION - the previous user message, the
+// orchestrator's own reply, and the delivered plan answer - and NONE of the
 // run's internals. Regression for the live context overflow (2026-07-11): the
 // ModeChat orchestrator rebuilt its request from session history, and one
 // coding run's worker events (file reads, command output), gate
@@ -56,7 +56,7 @@ func TestOrchestratorContextDiet(t *testing.T) {
 	workerPayload := "WORKER-PAYLOAD-A " + strings.Repeat("read_file result line\n", 500)
 	gatePrompt := "GATE-PROMPT-PAYLOAD-B " + strings.Repeat("node task prompt text\n", 500)
 	relayPayload := "RELAY-PAYLOAD-C " + strings.Repeat("relayed worker output\n", 500)
-	// Shape 1: worker event — agent-authored, sub-branched (the local
+	// Shape 1: worker event - agent-authored, sub-branched (the local
 	// llmagent/RunNode shape; also carries tool traffic in real runs).
 	injectEvent(t, h, chatID, "code-implementer", "n1@r1.code-implementer@worker-r0",
 		&genai.Content{Role: "model", Parts: []*genai.Part{{Text: workerPayload}}})
@@ -64,11 +64,11 @@ func TestOrchestratorContextDiet(t *testing.T) {
 		&genai.Content{Role: "model", Parts: []*genai.Part{{
 			FunctionCall: &genai.FunctionCall{ID: "fc1", Name: "read_file", Args: map[string]any{"path": "big.go"}},
 		}}})
-	// Shape 2: gate emitPrompt event — quack-gate author, BRANCHLESS
+	// Shape 2: gate emitPrompt event - quack-gate author, BRANCHLESS
 	// (session.NewEvent stamps no branch), user role.
 	injectEvent(t, h, chatID, "quack-gate", "",
 		&genai.Content{Role: "user", Parts: []*genai.Part{{Text: gatePrompt}}})
-	// Shape 3: agent-authored but branchless (the A2A-relay suspicion — either
+	// Shape 3: agent-authored but branchless (the A2A-relay suspicion - either
 	// way it must not reach the orchestrator).
 	injectEvent(t, h, chatID, "code-implementer", "",
 		&genai.Content{Role: "model", Parts: []*genai.Part{{Text: relayPayload}}})
@@ -77,7 +77,7 @@ func TestOrchestratorContextDiet(t *testing.T) {
 	injectEvent(t, h, chatID, "orchestrator", "",
 		&genai.Content{Role: "model", Parts: []*genai.Part{{Text: "DELIVERED-ANSWER: flappy bird added on branch feat/flappy."}}})
 
-	postMessage(t, h, chatID, "thanks — what branch was that on?")
+	postMessage(t, h, chatID, "thanks - what branch was that on?")
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -110,6 +110,6 @@ func TestOrchestratorContextDiet(t *testing.T) {
 	// Bounded: the request is the small conversation, not the ~34KB of
 	// injected run internals.
 	if len(second) > 2_000 {
-		t.Errorf("follow-up request is %d bytes — the run internals are back in the orchestrator's context", len(second))
+		t.Errorf("follow-up request is %d bytes - the run internals are back in the orchestrator's context", len(second))
 	}
 }

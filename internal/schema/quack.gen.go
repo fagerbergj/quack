@@ -225,7 +225,7 @@ type ChatDetail struct {
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
 
-	// Status A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny — the workspace.guards confirm tier — or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	// Status A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`
@@ -238,7 +238,7 @@ type ChatList struct {
 	Data []ChatSummary `json:"data"`
 }
 
-// ChatStatus A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny — the workspace.guards confirm tier — or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+// ChatStatus A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 type ChatStatus string
 
 // ChatSummary defines model for ChatSummary.
@@ -255,7 +255,7 @@ type ChatSummary struct {
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
 
-	// Status A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny — the workspace.guards confirm tier — or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	// Status A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`
@@ -362,7 +362,7 @@ type NodeStatus string
 
 // NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
 type NodeStatusUpdateBody struct {
-	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) — it is delivered at the node's next turn boundary, not mid-turn.
+	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
 	Guidance *string `json:"guidance,omitempty"`
 
 	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
@@ -400,7 +400,7 @@ type QueueMessageBody struct {
 type QueuedMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 
-	// Delivered True once handed to the node at a turn boundary — no longer editable or removable.
+	// Delivered True once handed to the node at a turn boundary - no longer editable or removable.
 	Delivered bool   `json:"delivered"`
 	Id        string `json:"id"`
 	Text      string `json:"text"`
@@ -415,12 +415,12 @@ type ReasoningPart struct {
 // ReasoningPartType defines model for ReasoningPart.Type.
 type ReasoningPartType string
 
-// ResponseStatus The only supported target status for a response — cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
+// ResponseStatus The only supported target status for a response - cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
 type ResponseStatus string
 
 // ResponseStatusUpdateBody defines model for ResponseStatusUpdateBody.
 type ResponseStatusUpdateBody struct {
-	// Status The only supported target status for a response — cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
+	// Status The only supported target status for a response - cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
 	Status ResponseStatus `json:"status"`
 }
 

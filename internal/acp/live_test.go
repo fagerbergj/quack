@@ -12,7 +12,7 @@ import (
 )
 
 // TestLive_OpencodeRound drives one REAL `opencode acp` round against a live
-// OpenAI-compatible endpoint — the smoke harness for the integration, not a CI
+// OpenAI-compatible endpoint - the smoke harness for the integration, not a CI
 // test. Run it by hand:
 //
 //	QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=http://host:port/v1 QUACK_CODER_MODEL=qwen3-coder-next \

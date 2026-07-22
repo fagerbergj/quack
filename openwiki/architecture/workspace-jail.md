@@ -1,19 +1,19 @@
 ---
 type: Architecture Document
 title: Workspace Isolation (Jail)
-description: The workspace jail — a per-user filesystem containment boundary that every file and git tool resolves through. Covers Jail struct, path resolution rules (userID/chatID scoping, ErrEscape/ErrInvalidUserID errors), the shared vs plan-judge reserved scopes, HomeDir fix, and NodeDir per-node isolation.
+description: The workspace jail - a per-user filesystem containment boundary that every file and git tool resolves through. Covers Jail struct, path resolution rules (userID/chatID scoping, ErrEscape/ErrInvalidUserID errors), the shared vs plan-judge reserved scopes, HomeDir fix, and NodeDir per-node isolation.
 tags: [workspace, jail, security, isolation, filesystem]
 resource: /internal/workspace/jail.go
 ---
 
 # Workspace Isolation (Jail)
 
-The workspace jail is the single filesystem containment boundary every file-read and git tool resolves through. It provides per-user scoping with strict path validation — no `..` escapes, no absolute paths, no symlink traversal outside the scope. The package is intentionally dependency-free (stdlib only: `os`, `path/filepath`).
+The workspace jail is the single filesystem containment boundary every file-read and git tool resolves through. It provides per-user scoping with strict path validation - no `..` escapes, no absolute paths, no symlink traversal outside the scope. The package is intentionally dependency-free (stdlib only: `os`, `path/filepath`).
 
 ## Design Goals
 
 - **User isolation**: `Resolve("alice", …)` and `Resolve("bob", …)` never see each other's files
-- **Path safety**: Every path — from user IDs, chat IDs, relative paths, or symlinks — is validated before resolution
+- **Path safety**: Every path - from user IDs, chat IDs, relative paths, or symlinks - is validated before resolution
 - **One error for escapes**: All escape attempts (`..`, absolute paths, out-of-bounds symlinks) return a single uniform `ErrEscape` so models learn one thing, not a taxonomy of jail failures
 - **Distinct error boundaries**: An invalid userID (`ErrInvalidUserID`) or chatID (`ErrInvalidChatID`) is a *caller* bug (identity source), not a model-chosen path. These errors help operators fix misconfiguration rather than confusing agents.
 
@@ -24,9 +24,9 @@ The workspace jail is the single filesystem containment boundary every file-read
 ├── <user_id>/            # per-user jail root
 │   ├── .quack-home/      # dedicated $HOME for spawned child processes
 │   ├── <chat_id>/        # per-chat scope
-│   │   ├── <node_id>/    # NodeDir — one node's working directory
-│   │   └── quack-shared-repo/  # SharedRepoScope — shared clone+branch across nodes
-│   └── quack-plan-judge/ # PlanJudgeScope — plan judge's read-only clone
+│   │   ├── <node_id>/    # NodeDir - one node's working directory
+│   │   └── quack-shared-repo/  # SharedRepoScope - shared clone+branch across nodes
+│   └── quack-plan-judge/ # PlanJudgeScope - plan judge's read-only clone
 └── <user_id2>/           # Another user's jail (completely isolated)
 ```
 
@@ -40,15 +40,15 @@ Creates or validates a Jail rooted at `root`. The root is canonicalized: made ab
 
 The **one** path-resolution function every filesystem and git tool uses:
 
-1. Validates `userID` — must be exactly ONE safe path component (no separators, no dots). Rejects with `ErrInvalidUserID`.
-2. Validates `chatID` — same rule if non-empty; empty is valid and resolves to per-user root. Rejects non-empty invalid IDs with `ErrInvalidChatID`.
+1. Validates `userID` - must be exactly ONE safe path component (no separators, no dots). Rejects with `ErrInvalidUserID`.
+2. Validates `chatID` - same rule if non-empty; empty is valid and resolves to per-user root. Rejects non-empty invalid IDs with `ErrInvalidChatID`.
 3. Joins `relPath` under the scope root (`<root>/<userID>/<chatID>` or `<root>/<userID>`).
 4. Cleans, resolves symlinks on the deepest existing ancestor, and verifies prefix containment in the scope root.
 5. Rejects absolute paths, `..` escapes, and out-of-scope symlinks as `ErrEscape`.
 
 ### `Jail.UserRoot(userID string)`
 
-Returns `<root>/<userID>` (unresolved for symlinks). Does not create the directory — callers that need it to exist create it themselves.
+Returns `<root>/<userID>` (unresolved for symlinks). Does not create the directory - callers that need it to exist create it themselves.
 
 ### `Jail.HomeDir(userID string) (string, error)`
 
@@ -56,11 +56,11 @@ Returns a dedicated `$HOME` for spawned child processes (`run_command`, checks, 
 
 ### `NodeDir(nodeID string) string`
 
-Returns the per-node working directory name — one safe component under `<root>/<userID>/<chatID>/`. If `nodeID` is not a safe path component (e.g., contains separators from planner-authored IDs), returns `""`, falling back to chat root. This was introduced to fix a live bug where concurrent nodes in one chat all cloned into the same directory, so an explorer studying OpenHands saw goose's source sitting there too.
+Returns the per-node working directory name - one safe component under `<root>/<userID>/<chatID>/`. If `nodeID` is not a safe path component (e.g., contains separators from planner-authored IDs), returns `""`, falling back to chat root. This was introduced to fix a live bug where concurrent nodes in one chat all cloned into the same directory, so an explorer studying OpenHands saw goose's source sitting there too.
 
 ### `SetupCloneDir(nodeID string) string`
 
-Returns `NodeDir(nodeID)` — the workspace-relative directory a plan's declared Setup PRE-step clones a repo into. The repo IS the node's own root, so relative paths resolve without a "repo/" prefix and without forcing absolute paths.
+Returns `NodeDir(nodeID)` - the workspace-relative directory a plan's declared Setup PRE-step clones a repo into. The repo IS the node's own root, so relative paths resolve without a "repo/" prefix and without forcing absolute paths.
 
 ## Reserved Scopes
 

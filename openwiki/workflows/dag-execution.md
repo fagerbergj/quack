@@ -8,7 +8,7 @@ resource: /internal/dag/planner.go
 
 # DAG Planning and Execution
 
-When a user submits a request, Quack's orchestrator decomposes it into a **DAG** of agent nodes — the work is parallelized according to dependencies, each node runs through the adversarial trust gate, and verified outputs propagate to dependents before final synthesis.
+When a user submits a request, Quack's orchestrator decomposes it into a **DAG** of agent nodes - the work is parallelized according to dependencies, each node runs through the adversarial trust gate, and verified outputs propagate to dependents before final synthesis.
 
 ## Orchestrator
 
@@ -22,11 +22,11 @@ User request → Orchestrator.Run → Planner.Validate → BuildWorkflow → dag
 
 [`internal/dag/planner.go`](/internal/dag/planner.go) implements the `Planner` struct that validates orchestrator-authored DAGs. The orchestrator itself authors the DAG (guided by the plan-work skill in `skills/plan-work/SKILL.md`); the Planner checks it:
 
-- **Known agents** — every node references a registered agent from the roster
-- **Unique IDs** — no duplicate node identifiers within a plan
-- **Acyclicity** — dependencies form a valid DAG
-- **Synthesizer hardening** — the synthesizer's dependencies are validated to ensure it has all required upstream inputs
-- **Check command safety** — only configured prefixes from `workspace.check_commands` are allowed
+- **Known agents** - every node references a registered agent from the roster
+- **Unique IDs** - no duplicate node identifiers within a plan
+- **Acyclicity** - dependencies form a valid DAG
+- **Synthesizer hardening** - the synthesizer's dependencies are validated to ensure it has all required upstream inputs
+- **Check command safety** - only configured prefixes from `workspace.check_commands` are allowed
 
 ### Plan Judge
 
@@ -38,7 +38,7 @@ The Planner optionally carries a `PlanJudge` instance (`vetting.PlanJudge`). The
 
 ### Review Churn Threshold
 
-[`internal/dag/planner.go`](/internal/dag/planner.go) defines `reviewChurnThreshold = 800` changed lines. Above this, a single code-reviewer node reliably chokes on the whole diff (compaction churn + slow re-diffing — a live incident with +1271 lines stalled for 30+ minutes). Above the threshold, the review must fan out into per-file-group explorers feeding one reviewer.
+[`internal/dag/planner.go`](/internal/dag/planner.go) defines `reviewChurnThreshold = 800` changed lines. Above this, a single code-reviewer node reliably chokes on the whole diff (compaction churn + slow re-diffing - a live incident with +1271 lines stalled for 30+ minutes). Above the threshold, the review must fan out into per-file-group explorers feeding one reviewer.
 
 ## Workflow Graph Construction
 
@@ -46,13 +46,13 @@ The Planner optionally carries a `PlanJudge` instance (`vetting.PlanJudge`). The
 
 [`internal/dag/nativegraph.go`](/internal/dag/nativegraph.go) constructs the ADK workflow graph:
 
-1. **Setup phase** — `runPlanSetup` provisions clones per the plan's declared Setup (repo URL, base ref). Nodes that share a repo chain resolve to `SharedRepoScope`; each independent node gets its own `NodeDir`.
-2. **BuildGateNodes** — wraps each node's worker in `vetting.RunGatedRefine`. This is where every agent output passes the trust gate before propagating downstream.
-3. **Topological execution** — the plan runs as ONE native ADK workflow graph under one runner with `WithMaxConcurrency`. All nodes share one workflow session (id = chatID), isolated by branch + isolation scope.
+1. **Setup phase** - `runPlanSetup` provisions clones per the plan's declared Setup (repo URL, base ref). Nodes that share a repo chain resolve to `SharedRepoScope`; each independent node gets its own `NodeDir`.
+2. **BuildGateNodes** - wraps each node's worker in `vetting.RunGatedRefine`. This is where every agent output passes the trust gate before propagating downstream.
+3. **Topological execution** - the plan runs as ONE native ADK workflow graph under one runner with `WithMaxConcurrency`. All nodes share one workflow session (id = chatID), isolated by branch + isolation scope.
 
 ### Continue-but-warn on Gate Failure
 
-When a gate-failed dependency is required by a downstream node, execution continues but warns — the dependent receives the unvetted output with a flag so it can account for quality uncertainty in its own work.
+When a gate-failed dependency is required by a downstream node, execution continues but warns - the dependent receives the unvetted output with a flag so it can account for quality uncertainty in its own work.
 
 ## Event Streaming
 
@@ -71,13 +71,13 @@ See also: [Streaming Vocabulary](/architecture/overview.md#streaming-vocabulary)
 | `delivered` | Work reached its destination (PR pushed, review posted) |
 | `draft` | Judge passed but a gate-failed dependency carried through; PR opened as draft |
 | `failed` | Delivery attempt failed (push rejected, API error) |
-| `none` | Phantom-success class — judge passed but no delivery attempt was recorded at all |
+| `none` | Phantom-success class - judge passed but no delivery attempt was recorded at all |
 
 The gate owns delivery (`commitDelivery` → GitHub extension). It fires exactly once per work item, and a gate-failed PR opens as a draft rather than being discarded. Ground-truth probes in [`internal/vetting/gitprobe.go`](/internal/vetting/gitprobe.go) (`augmentFromRepo`) read commits/changed files off the clone to synthesize staged PRs; [`internal/vetting/answerreview.go`](/internal/vetting/answerreview.go) (`augmentFromAnswer`) parses a reviewer's `VERDICT:`/`FINDINGS:` tail into staged reviews with inline comments.
 
 ## Human-in-the-Loop (HITL)
 
-Workers can pause execution by calling the `ask_user` tool. The gate detects this call, pauses the node via `workflow.ResumeOrRequestInput`, and routes the user's answer back when submitted. Uses a stable interrupt key `(invocation, nodeID, round)` — collision-free under ADK v2's resume scoping.
+Workers can pause execution by calling the `ask_user` tool. The gate detects this call, pauses the node via `workflow.ResumeOrRequestInput`, and routes the user's answer back when submitted. Uses a stable interrupt key `(invocation, nodeID, round)` - collision-free under ADK v2's resume scoping.
 
 ## Recent Changes
 

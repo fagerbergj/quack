@@ -14,7 +14,7 @@ import { ToolCallView } from './ToolCallView'
 import { CopyButton } from './CopyButton'
 import { StatusDot, type DotStatus } from './StatusDot'
 
-// Answer text is Markdown that may embed a little raw HTML — notably the
+// Answer text is Markdown that may embed a little raw HTML - notably the
 // collapsible `<details><summary>Sources</summary>…</details>` block the
 // researcher/synthesizer emit. react-markdown drops raw HTML by default, so we
 // enable rehype-raw to parse it; because the text is model-authored (and shaped
@@ -34,9 +34,9 @@ export * from './messageParts'
 const RECENT = 3
 
 // ACP_AGENTS mirrors config/quack.yaml's acp-bound bundles (code-implementer,
-// code-reviewer, code-explorer) — the only agents whose tool calls arrive over
+// code-reviewer, code-explorer) - the only agents whose tool calls arrive over
 // the Agent Client Protocol, remapped by internal/acp/translate.go rather than
-// invoked as a native quack tool. There's no per-call wire marker (#404) — the
+// invoked as a native quack tool. There's no per-call wire marker (#404) - the
 // agent name is already threaded onto every run and ACP/native bundles never
 // overlap, so it's a clean, no-backend-change signal for the "ACP" badge.
 const ACP_AGENTS = new Set(['code-implementer', 'code-reviewer', 'code-explorer'])
@@ -88,10 +88,10 @@ export function AssistantText({ text }: { text: string }) {
 
 // BubbleHeader is the compact author line atop an assistant bubble: who produced
 // it, what model, and how many tokens it cost. Shared by the answer bubble (a DAG
-// turn's terminal node, or the orchestrator's own plain reply) — real usage only,
+// turn's terminal node, or the orchestrator's own plain reply) - real usage only,
 // no estimate: model/tokens are simply omitted when not (yet) known. `status`
 // is optional (#416): the live orchestrator card passes it to show a StatusDot
-// to the left of the name, matching DagNode's header — omitted for completed
+// to the left of the name, matching DagNode's header - omitted for completed
 // turns and DAG-terminal-node attribution, which have no live status to show.
 export function BubbleHeader({ agent, model, tokens, status }: { agent: string; model?: string; tokens?: number; status?: DotStatus }) {
   return (
@@ -135,7 +135,7 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
 }
 
 // ThoughtIcon is a crisp inline SVG (currentColor, so it inherits the
-// muted text colour and stays legible in both themes) — replaces an earlier
+// muted text colour and stays legible in both themes) - replaces an earlier
 // emoji glyph that rendered pixelated/mismatched-colour on a dark background,
 // since emoji are drawn from the platform's colour-emoji font rather than the
 // surrounding text style.
@@ -152,7 +152,7 @@ function ThoughtIcon() {
 
 // ThinkBlock renders reasoning as a single-line, collapsed-by-default summary
 // (an icon + "Thought" + a truncated preview of the text) that expands to the
-// full chain-of-thought — Open WebUI's cleaner ethos (#385): scannable at a
+// full chain-of-thought - Open WebUI's cleaner ethos (#385): scannable at a
 // glance, full detail on demand rather than a standing wall of text. Long
 // reasoning is height-locked (Expandable) once expanded so it still can't wall
 // off the node. A thin left rail (not a boxed card) keeps it visually
@@ -177,12 +177,12 @@ function ThinkBlock({ text }: { text: string }) {
 // AcpBadge marks a tool call that arrived over the Agent Client Protocol
 // (an external code-implementer/-reviewer/-explorer subprocess, #404): its
 // payload shapes aren't fully ours to control, so ToolCallView renders it
-// best-effort — the badge sets that expectation, and the copy button (always
+// best-effort - the badge sets that expectation, and the copy button (always
 // present) is the escape hatch for whatever doesn't render nicely.
 export function AcpBadge() {
   return (
     <span
-      title="Run by an external ACP agent — rendered best-effort"
+      title="Run by an external ACP agent - rendered best-effort"
       className="shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
     >
       ACP
@@ -191,7 +191,7 @@ export function AcpBadge() {
 }
 
 // ToolBlock renders a tool call as a single-line, collapsed-by-default summary
-// — a status icon, the tool name, and a truncated representative arg — that
+// - a status icon, the tool name, and a truncated representative arg - that
 // expands to a per-tool rich view (ToolCallView): a diff for edit_file, a
 // formatted view for the other common tools, a tidy fallback otherwise.
 // Refined toward the same compact, low-noise ethos as ThinkBlock (#385): a
@@ -225,7 +225,7 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
 
 // ToolStatusIcon is the compact status marker heading a tool-call summary
 // line: the "working" dots while in flight, a check once it completed, a
-// cross when its result carried an error — status conveyed by icon+colour
+// cross when its result carried an error - status conveyed by icon+colour
 // together (WCAG 1.4.1), not colour alone.
 function ToolStatusIcon({ tool }: { tool: ToolCall }) {
   if (!tool.done) return <Dots variant="compact" size="w-1 h-1" />
@@ -237,9 +237,9 @@ function ToolStatusIcon({ tool }: { tool: ToolCall }) {
 // Dots is the "working" indicator. Two variants (#421): the chat-level answer
 // bubble's loading state ('chat', the default) keeps the three staggered
 // `animate-bounce` dots, gray to match the rest of the UI's muted status
-// chrome — count is deliberate there, confirmed elsewhere (#424) not to
+// chrome - count is deliberate there, confirmed elsewhere (#424) not to
 // shrink to one. The 'compact' variant (a single blue `animate-pulse` dot)
-// is for tight, high-multiplicity spots — a tool call's status icon, where a
+// is for tight, high-multiplicity spots - a tool call's status icon, where a
 // chat can have several of these mounted at once and three independent
 // bounce timelines apiece added up to real animation cost without the
 // horizontal room three dots need anyway. `size` is a Tailwind w/h class pair.

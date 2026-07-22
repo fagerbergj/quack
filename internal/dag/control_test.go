@@ -17,7 +17,7 @@ import (
 )
 
 // coopStub records worker + judge calls and blocks the FIRST worker call until the
-// test unblocks it — so the test can set a cancel/steer via the executor before
+// test unblocks it - so the test can set a cancel/steer via the executor before
 // the gate reaches its next stage boundary. The judge always passes.
 type coopStub struct {
 	mu          sync.Mutex
@@ -73,7 +73,7 @@ func drain(t *testing.T, ex *Executor, plan Plan) {
 }
 
 // TestExecute_TaskOverrideAppliesBeforeNodeStarts: SetNodeTaskOverride, called
-// before the node has started, actually drives the worker's prompt — a
+// before the node has started, actually drives the worker's prompt - a
 // regression test for the override having been dead code (getOverride was
 // never consulted; the node ran the plan's original node.Task regardless of
 // what the REST 200 implied was saved).
@@ -101,7 +101,7 @@ func TestExecute_TaskOverrideAppliesBeforeNodeStarts(t *testing.T) {
 }
 
 // TestExecute_TaskOverrideRejectedOnceNodeStarted: closes the TOCTOU between
-// "is this node started?" and "stash the override" — registerAndTakeOverride
+// "is this node started?" and "stash the override" - registerAndTakeOverride
 // registers the live control BEFORE the worker's first call, so an override
 // attempt that only lands once the worker is already running (as this test
 // forces via coopStub's start signal) must be rejected outright, never
@@ -129,7 +129,7 @@ func TestExecute_TaskOverrideRejectedOnceNodeStarted(t *testing.T) {
 }
 
 // TestExecute_CancelNodeStopsBeforeJudge: cancelling a running node makes the gate
-// stop at its next stage boundary — so the judge never runs.
+// stop at its next stage boundary - so the judge never runs.
 func TestExecute_CancelNodeStopsBeforeJudge(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -175,7 +175,7 @@ func nodeEnd(events []stream.SSEEvent, nodeID string) string {
 }
 
 // TestExecute_CancelFlagDoesNotLeakAcrossTurns: node IDs (n1, n2, …) repeat every
-// turn, and the user-cancelled flag survives its control's unregister — so without
+// turn, and the user-cancelled flag survives its control's unregister - so without
 // a per-turn reset a node cancelled last turn marks THIS turn's same-ID node
 // "stopped". ResetNodeCancels (called at the start of each Run) clears it.
 func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
@@ -239,7 +239,7 @@ func TestExecute_QueueNodeMessageReRunsWithGuidance(t *testing.T) {
 
 // TestExecute_PauseNodeStopsBeforeJudgeAndKeepsAnswer: pausing a running node
 // stops it at its next gate-stage boundary (like cancel) but the answer
-// propagates as a paused node, resumable — not cancelled.
+// propagates as a paused node, resumable - not cancelled.
 func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -264,7 +264,7 @@ func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
 }
 
 // TestExecute_CancelNodeReportsDelivery: CancelNode tells the truth about whether
-// it reached a live node — the API's 6x-"200 OK, node kept running" lie (live,
+// it reached a live node - the API's 6x-"200 OK, node kept running" lie (live,
 // 2026-07-13) started with the handler discarding this bool. NodeCancelled is the
 // same fact, queryable by the tool layer.
 func TestExecute_CancelNodeReportsDelivery(t *testing.T) {
@@ -291,7 +291,7 @@ func TestExecute_CancelNodeReportsDelivery(t *testing.T) {
 		t.Error("CancelNode returned false for a LIVE node")
 	}
 	if !seen {
-		t.Error("NodeCancelled false right after a delivered cancel — a cancelled node's tools would keep running")
+		t.Error("NodeCancelled false right after a delivered cancel - a cancelled node's tools would keep running")
 	}
 	if ex.CancelNode("chat", "nope") {
 		t.Error("CancelNode reported success for a node that isn't running")

@@ -10,7 +10,7 @@ import (
 // A server-wide run cap must make the (N+1)th concurrent run WAIT for a slot, not run.
 //
 // max_active_nodes bounds nodes within one plan; nothing bounded the number of plans,
-// so a burst of webhooks (or REST calls) fanned out unbounded onto one model — the exact
+// so a burst of webhooks (or REST calls) fanned out unbounded onto one model - the exact
 // thrash that made five concurrent PR reviews crawl.
 func TestMaxActiveRunsQueuesTheOverflow(t *testing.T) {
 	o := &Orchestrator{}
@@ -40,7 +40,7 @@ func TestMaxActiveRunsQueuesTheOverflow(t *testing.T) {
 	go func() { got <- acq() }()
 	select {
 	case <-got:
-		t.Fatal("the 3rd run acquired a slot while 2 were held — the cap is not enforced")
+		t.Fatal("the 3rd run acquired a slot while 2 were held - the cap is not enforced")
 	case <-time.After(100 * time.Millisecond):
 		// correctly blocked
 	}
@@ -51,16 +51,16 @@ func TestMaxActiveRunsQueuesTheOverflow(t *testing.T) {
 	case r3 := <-got:
 		r3()
 	case <-time.After(2 * time.Second):
-		t.Fatal("the 3rd run never acquired after a slot freed — it is stuck")
+		t.Fatal("the 3rd run never acquired after a slot freed - it is stuck")
 	}
 	r2()
 
 	if peak > 2 {
-		t.Fatalf("peak concurrency was %d, cap was 2 — more runs ran at once than allowed", peak)
+		t.Fatalf("peak concurrency was %d, cap was 2 - more runs ran at once than allowed", peak)
 	}
 }
 
-// Unlimited (n < 1) never blocks — a slot is always free.
+// Unlimited (n < 1) never blocks - a slot is always free.
 func TestMaxActiveRunsUnlimited(t *testing.T) {
 	o := &Orchestrator{} // no SetMaxActiveRuns → unlimited
 	for i := 0; i < 50; i++ {
@@ -100,7 +100,7 @@ func TestAcquireRunHonoursContextCancel(t *testing.T) {
 }
 
 // Queued must report true for exactly the window between admission and slot
-// acquisition — the same window Run() marks via queuedChats — and false both
+// acquisition - the same window Run() marks via queuedChats - and false both
 // before admission and once a slot is held. Backs the REST status handler's
 // queued-vs-running split (#417).
 func TestQueuedReportsAdmittedButNotAcquired(t *testing.T) {
@@ -112,7 +112,7 @@ func TestQueuedReportsAdmittedButNotAcquired(t *testing.T) {
 		t.Fatal("Queued reported true before admission")
 	}
 
-	// Fill the one slot with an unrelated run so chatID's own acquireRun blocks —
+	// Fill the one slot with an unrelated run so chatID's own acquireRun blocks -
 	// mirrors Run()'s admission-then-acquire sequence around the semaphore.
 	holderRelease, acquired := o.acquireRun(context.Background())
 	if !acquired {
@@ -157,7 +157,7 @@ func TestQueuedReportsAdmittedButNotAcquired(t *testing.T) {
 }
 
 // A run cancelled while queued (never acquiring a slot) must decrement runs.queued,
-// not runs.active — the bug this fix addresses (#417): a queued-but-not-executing
+// not runs.active - the bug this fix addresses (#417): a queued-but-not-executing
 // run inflated quack.runs.active.
 func TestAcquireRunContractDistinguishesQueuedFromAcquired(t *testing.T) {
 	o := &Orchestrator{}

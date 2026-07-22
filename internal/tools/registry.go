@@ -40,10 +40,10 @@ type Deps struct {
 	Advisor adkagent.Agent
 	// Sessions is the shared session.Service ask_advisor uses to persist each
 	// node's mentor conversation (same store as chat/plan sessions, a distinct
-	// AppName — see ask_advisor.go).
+	// AppName - see ask_advisor.go).
 	Sessions session.Service
 	// Workspace is the filesystem jail the fs.go read tools (read_file,
-	// list_dir, glob, grep — the judge's inspection surface) resolve every
+	// list_dir, glob, grep - the judge's inspection surface) resolve every
 	// path through. nil ⇒ those tools are never registered (build errors
 	// clearly if an agent's tools: list requests one anyway).
 	Workspace *workspace.Jail
@@ -60,13 +60,13 @@ type Deps struct {
 	// operations proceed unauthenticated (public repos only).
 	GitCredentials []GitCredential
 	// GitTokenSource is an optional dynamic per-host credential source consulted
-	// when no static GitCredentials entry matches — the extension seam (e.g. a
+	// when no static GitCredentials entry matches - the extension seam (e.g. a
 	// GitHub App installation token). nil ⇒ static credentials only.
 	GitTokenSource GitTokenSource
 	// Guards maps a tool name to its guard tier (workspace.guards: none |
 	// judge | confirm | judge+confirm). A tool with no entry is unguarded
-	// (Tier 0 walls — the fs/git path jail, the OS sandbox around child
-	// processes — still always apply).
+	// (Tier 0 walls - the fs/git path jail, the OS sandbox around child
+	// processes - still always apply).
 	Guards map[string]string
 	// SafetyJudge backs the guard ladder's judge tier: an independent model
 	// call that allows/denies a proposed operation. nil ⇒ a tool configured
@@ -80,8 +80,8 @@ type Deps struct {
 	// tool build, e.g. the judge's read tools).
 	NodeCancelled func(chatID, nodeID string) bool
 	// ExtTools are extension-supplied tools (e.g. the GitHub App's
-	// github_add_review_comment — internal/github.App.Tools()), keyed by name.
-	// An agent gets one ONLY if its config tools: list names it — same
+	// github_add_review_comment - internal/github.App.Tools()), keyed by name.
+	// An agent gets one ONLY if its config tools: list names it - same
 	// resolution path as every builtin, so an extension makes a tool AVAILABLE,
 	// never force-injects it (see registry lookup in Build). Empty/nil when no
 	// extension is configured.
@@ -99,7 +99,7 @@ var registry = map[string]constructor{
 	"stage_memory": newStageMemory,
 	"ask_user":     func(Deps) (tool.Tool, error) { return NewAskUserTool() },
 	"ask_advisor":  func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
-	// Filesystem tools (internal/tools/fs.go), all bound to (userID, jail) —
+	// Filesystem tools (internal/tools/fs.go), all bound to (userID, jail) -
 	// see fsBinding / newFSBinding.
 	"read_file": newReadFile,
 	"list_dir":  newListDir,
@@ -109,7 +109,7 @@ var registry = map[string]constructor{
 
 // Build resolves tool names to ADK tools, injecting d. A name resolves against
 // the static registry above first, then d.ExtTools (an extension's tools,
-// keyed by name — e.g. github_add_review_comment) — the SAME resolution path,
+// keyed by name - e.g. github_add_review_comment) - the SAME resolution path,
 // so an extension only reaches an agent that lists its tool by name; nothing
 // is force-injected. A name in neither is an error.
 func Build(names []string, d Deps) ([]tool.Tool, error) {
@@ -123,7 +123,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	// judged across ALL of the agent's tools within a session (see repeatguard.go).
 	repeats := newRepeatStates()
 	// Every tool is wrapped at the ONE construction point: host-path scrubbed
-	// innermost (hostpath.go — an error carrying a resolved path comes from
+	// innermost (hostpath.go - an error carrying a resolved path comes from
 	// os/git, not the tool, so every tool would leak it), then the guard ladder
 	// (guard.go), then the repeat/cancel guards.
 	scrub := workspaceScrub(d)

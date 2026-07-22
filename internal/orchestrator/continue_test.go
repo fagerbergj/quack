@@ -22,7 +22,7 @@ import (
 
 // The orchestrator's continuation contract (live symptom, 2026-07-13): the
 // orchestrator loads its skills, spends the rest of its output budget on
-// reasoning, and ends the invocation with EMPTY content — no plan call, no
+// reasoning, and ends the invocation with EMPTY content - no plan call, no
 // execute call, no text. ADK reports a clean finish, so the run just stops: no
 // DAG, no answer, no log line, chat back to idle. Same root cause as the
 // worker's empty draft (PR #186): "the model emitted text" is not a completion
@@ -72,7 +72,7 @@ func (s *orchStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 }
 
 // invocations counts the model calls made as the ORCHESTRATOR (one per
-// invocation of its llmagent turn — a tool call and its follow-up are two).
+// invocation of its llmagent turn - a tool call and its follow-up are two).
 func (s *orchStub) invocations() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,7 +156,7 @@ func executeCall(planID string) *model.LLMResponse {
 	return stubCall("execute", map[string]any{"plan_id": planID})
 }
 
-// planIDFromRequest finds the plan tool's response in the request — the plan_id
+// planIDFromRequest finds the plan tool's response in the request - the plan_id
 // the model must hand to execute.
 func planIDFromRequest(req *model.LLMRequest) (string, bool) {
 	for _, c := range req.Contents {
@@ -219,7 +219,7 @@ func hasEvent(evs []stream.SSEEvent, name string) bool {
 }
 
 // sessionHasContinuation reports whether the continuation directive was
-// delivered as a SESSION EVENT — the only delivery an llmagent actually reads
+// delivered as a SESSION EVENT - the only delivery an llmagent actually reads
 // (it rebuilds its request from Session().Events(); see [[adk-ignores-usercontent]]).
 func sessionHasContinuation(t *testing.T, o *Orchestrator) bool {
 	t.Helper()
@@ -237,14 +237,14 @@ func sessionHasContinuation(t *testing.T, o *Orchestrator) bool {
 }
 
 // TestOrchestrator_EmptyTurn_ContinuedAndRuns: the first invocation returns
-// EMPTY (the live symptom) — the orchestrator is re-invoked with the
+// EMPTY (the live symptom) - the orchestrator is re-invoked with the
 // continuation directive, and the plan it then authors runs to an answer.
 func TestOrchestrator_EmptyTurn_ContinuedAndRuns(t *testing.T) {
 	stub := &orchStub{replies: []*model.LLMResponse{
-		stubText(""), // turn 1: EMPTY — no plan, no execute, no text (the live symptom)
+		stubText(""), // turn 1: EMPTY - no plan, no execute, no text (the live symptom)
 		planCall(),   // turn 2, having seen the continuation: author the DAG
 		// turn 3 (execute) is not scripted: the stub commits the plan as soon as
-		// the plan tool's response — with its minted plan_id — is in the request.
+		// the plan tool's response - with its minted plan_id - is in the request.
 	}}
 	o := newTestOrch(t, stub)
 
@@ -260,15 +260,15 @@ func TestOrchestrator_EmptyTurn_ContinuedAndRuns(t *testing.T) {
 		t.Errorf("the continuation directive was not delivered as a session event")
 	}
 	if hasEvent(evs, stream.EventError) {
-		t.Errorf("the run recovered — it must not surface an error; events=%v", evs)
+		t.Errorf("the run recovered - it must not surface an error; events=%v", evs)
 	}
 	if answer := o.LatestAnswer(context.Background(), "u", "chat"); !strings.Contains(answer, "RESEARCH-RESULT") {
-		t.Errorf("plan answer = %q, want the node's output — the run did not proceed", answer)
+		t.Errorf("plan answer = %q, want the node's output - the run did not proceed", answer)
 	}
 }
 
 // TestOrchestrator_AlwaysEmpty_FailsLoud: an orchestrator that produces nothing
-// on EVERY attempt must not die silently — the retry budget is spent, an error
+// on EVERY attempt must not die silently - the retry budget is spent, an error
 // reaches the user, and the failure is logged at ERROR.
 func TestOrchestrator_AlwaysEmpty_FailsLoud(t *testing.T) {
 	var logs bytes.Buffer

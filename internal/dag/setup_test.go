@@ -79,8 +79,8 @@ func TestIsReviewOnlySetup(t *testing.T) {
 }
 
 // runPlanSetup must compute CheckoutExistingHead from the plan's qualifying
-// nodes and pass it to setupFn — review-only true, anything with an
-// implementer false — even though it is never planner-declared JSON.
+// nodes and pass it to setupFn - review-only true, anything with an
+// implementer false - even though it is never planner-declared JSON.
 func TestRunPlanSetup_ComputesCheckoutExistingHead(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -176,7 +176,7 @@ func TestRunPlanSetup_ProvisionsOneSharedDir(t *testing.T) {
 	}
 }
 
-// A chain of TWO qualifying nodes still gets exactly ONE clone — the whole
+// A chain of TWO qualifying nodes still gets exactly ONE clone - the whole
 // point of the shared-branch design (#310).
 func TestRunPlanSetup_ChainOfTwoStillProvisionsOnlyOnce(t *testing.T) {
 	var calls int32Counter
@@ -257,10 +257,10 @@ func TestRunPlanAsGraph_FailingSetupAbortsBeforeAnyNodeRuns(t *testing.T) {
 		t.Errorf("run error = %v, want it to wrap %v", err, wantErr)
 	}
 	if got := stub.callCount(); got != 0 {
-		t.Errorf("worker model called %d times, want 0 — the run must abort BEFORE any node executes", got)
+		t.Errorf("worker model called %d times, want 0 - the run must abort BEFORE any node executes", got)
 	}
 	if len(events) != 0 {
-		t.Errorf("events = %v, want none — nothing should have started", events)
+		t.Errorf("events = %v, want none - nothing should have started", events)
 	}
 }
 

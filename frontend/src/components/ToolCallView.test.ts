@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ToolCallView } from './ToolCallView'
 import type { ToolCall } from './messageParts'
 
-// Structural assertions on the static markup — no testing-library in this repo, so
+// Structural assertions on the static markup - no testing-library in this repo, so
 // we render each tool view to HTML and check the load-bearing shape (a diff for
 // edit_file, a formatted-not-raw fallback, etc.). Effects don't run under
 // renderToStaticMarkup, which is fine: these views have no measured state.
@@ -12,7 +12,7 @@ function html(tool: ToolCall): string {
   return renderToStaticMarkup(createElement(ToolCallView, { tool }))
 }
 
-describe('ToolCallView — edit_file diff (flagship)', () => {
+describe('ToolCallView - edit_file diff (flagship)', () => {
   const tool: ToolCall = {
     callId: 'c1', name: 'edit_file', done: true,
     args: { path: 'src/app.ts', old: 'const x = 1', new: 'const x = 2' },
@@ -34,7 +34,7 @@ describe('ToolCallView — edit_file diff (flagship)', () => {
   })
 })
 
-describe('ToolCallView — other common tools', () => {
+describe('ToolCallView - other common tools', () => {
   it('run_command shows the shell command and its exit code', () => {
     const out = html({
       callId: 'c', name: 'run_command', done: true,
@@ -78,13 +78,13 @@ describe('ToolCallView — other common tools', () => {
   })
 })
 
-describe('ToolCallView — fallback', () => {
+describe('ToolCallView - fallback', () => {
   it('renders an unknown tool with nested args as tidy pretty JSON, not a raw dump', () => {
     const out = html({
       callId: 'c', name: 'mystery_tool', done: true,
       args: { target: { region: 'eu', tags: ['a', 'b'] } }, result: { ok: true },
     })
-    // formatted args + result labels, pretty JSON (indented) — never a bare dump.
+    // formatted args + result labels, pretty JSON (indented) - never a bare dump.
     // Quotes are HTML-escaped in static markup (&quot;).
     expect(out).toContain('args')
     expect(out).toContain('result')
@@ -103,7 +103,7 @@ describe('ToolCallView — fallback', () => {
   })
 })
 
-describe('ToolCallView — new per-tool views (#404)', () => {
+describe('ToolCallView - new per-tool views (#404)', () => {
   it('web_search shows the query and result cards, not raw JSON', () => {
     const out = html({
       callId: 'c', name: 'web_search', done: true,

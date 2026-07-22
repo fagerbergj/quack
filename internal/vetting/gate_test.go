@@ -9,7 +9,7 @@ import (
 )
 
 // writeCiteFile writes content under dir/rel (creating parent dirs) and
-// returns the file's line count — a small helper the disk-verified citation
+// returns the file's line count - a small helper the disk-verified citation
 // tests use to build a real, on-disk "clone" instead of faking a ledger.
 func writeCiteFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
@@ -84,7 +84,7 @@ func TestCitationScoreLayers(t *testing.T) {
 
 func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 	// Cited URL differs from the fetched one only by a trailing slash and a #anchor
-	// and host casing — should still score a 1.0 exact-fetch match.
+	// and host casing - should still score a 1.0 exact-fetch match.
 	answer := "See [x](https://Ex.com/Page/#section)."
 	act := workerActivity{fetched: map[string]fetchRecord{"https://ex.com/Page": {}}}
 	score, _, ok := citationScore(answer, act, nil)
@@ -95,11 +95,11 @@ func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 
 // TestCitationScoreClonedRepoGrounding reenacts the live failure (2026-07-12):
 // an explore-repo node cloned a repo, read files inside it via read_file, and
-// cited (a) a blob URL under the cloned repo and (b) local file paths — honest,
+// cited (a) a blob URL under the cloned repo and (b) local file paths - honest,
 // fully-grounded citations that scored 0.25 mean backing and sank a node the
 // judge had passed. Cloned-repo grounding is full backing; fabrication
 // (un-cloned repos, untouched paths) still scores 0. Local paths are now
-// disk-verified against a real clone root, not the ledger — act.paths is left
+// disk-verified against a real clone root, not the ledger - act.paths is left
 // EMPTY on purpose to prove disk verification alone backs the real files.
 func TestCitationScoreClonedRepoGrounding(t *testing.T) {
 	root := t.TempDir()
@@ -150,7 +150,7 @@ func TestCitationScoreClonedRepoGrounding(t *testing.T) {
 }
 
 // TestCitationScoreSkipsAnchorsAndNonWebSchemes: in-document anchors and
-// mailto: targets are not citations — they must not enter the mean at all.
+// mailto: targets are not citations - they must not enter the mean at all.
 func TestCitationScoreSkipsAnchorsAndNonWebSchemes(t *testing.T) {
 	root := t.TempDir()
 	writeCiteFile(t, root, "repo/file.go", "package repo\n")
@@ -170,7 +170,7 @@ func TestCitationScoreNoCitations(t *testing.T) {
 
 func TestCitationScoreSkippedWithoutRetrieval(t *testing.T) {
 	// A non-web agent (synthesizer) does no fetch/search and has no clone root
-	// to disk-verify against, so its citation can't be graded — ok=false leaves
+	// to disk-verify against, so its citation can't be graded - ok=false leaves
 	// the model's cites_sources in place.
 	answer := "Per the research, [x](https://ex.com/a)."
 	if _, _, ok := citationScore(answer, workerActivity{}, nil); ok {
@@ -282,7 +282,7 @@ func TestCitationScoreDiskVerificationCatchesOutOfRangeLine(t *testing.T) {
 
 // TestCitationScoreEmptyLedgerWithCloneRootStillDiskVerifies covers (d), the
 // regression that matters: a setup-provisioned node whose ledger is
-// completely EMPTY (no act.paths, no act.clonedDirs — exactly what a
+// completely EMPTY (no act.paths, no act.clonedDirs - exactly what a
 // harness-provisioned clone or an external ACP agent leaves behind, #437)
 // still scores real citations 1.0 as long as a clone root is passed in.
 func TestCitationScoreEmptyLedgerWithCloneRootStillDiskVerifies(t *testing.T) {
@@ -292,7 +292,7 @@ func TestCitationScoreEmptyLedgerWithCloneRootStillDiskVerifies(t *testing.T) {
 	answer := "The entry point is [internal/foo.go](internal/foo.go)."
 	score, _, ok := citationScore(answer, workerActivity{}, []string{root})
 	if !ok {
-		t.Fatal("citationScore abstained despite a clone root — an empty ledger must not cause abstention")
+		t.Fatal("citationScore abstained despite a clone root - an empty ledger must not cause abstention")
 	}
 	if score != 1.0 {
 		t.Errorf("score = %.2f, want 1.0 (real file, empty ledger, clone root passed)", score)
@@ -304,7 +304,7 @@ func TestCitationScoreEmptyLedgerWithCloneRootStillDiskVerifies(t *testing.T) {
 // what actually exists at the resolved location outside the root.
 func TestCitationScoreRejectsPathEscape(t *testing.T) {
 	root := t.TempDir()
-	// A real /etc/passwd exists on the host — prove the escape is rejected
+	// A real /etc/passwd exists on the host - prove the escape is rejected
 	// on containment, not because the target happens to be missing.
 	answer := "[passwd](../../etc/passwd)"
 	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
@@ -312,7 +312,7 @@ func TestCitationScoreRejectsPathEscape(t *testing.T) {
 		t.Fatal("citationScore ok=false, want true (clone root present)")
 	}
 	if len(details) != 1 || score != 0.0 {
-		t.Errorf("score=%.2f details=%+v, want 0.0 — a path escape must never be backed", score, details)
+		t.Errorf("score=%.2f details=%+v, want 0.0 - a path escape must never be backed", score, details)
 	}
 }
 
@@ -473,7 +473,7 @@ func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
 }
 
 // TestFoldDeterministic_RequireRetrievalHardFail: a retrieval agent that did
-// ZERO web_search/web_fetch cannot pass the gate — regression for the live e2e
+// ZERO web_search/web_fetch cannot pass the gate - regression for the live e2e
 // 2026-07-05 hole where a worker wrote a question to the user as its answer
 // text (no tool calls at all), citationScore abstained (nothing to grade), and
 // the judge waved the "answer" through. Weakest-link must be 0, and the
@@ -494,7 +494,7 @@ func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 }
 
 // TestFoldDeterministic_NoRetrievalOKForSynthesizer: a tool-less agent
-// (RequireRetrieval=false) with no activity is NOT penalized — it legitimately
+// (RequireRetrieval=false) with no activity is NOT penalized - it legitimately
 // re-cites upstream URLs (the pre-existing citationScore abstention stands).
 func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
@@ -509,7 +509,7 @@ func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 
 // TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval: a coding node
 // that consulted the repo on disk (clone and/or reads) instead of the web is
-// grounded — grounded_in_retrieval must not fire on zero web activity alone.
+// grounded - grounded_in_retrieval must not fire on zero web activity alone.
 func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 	for name, act := range map[string]workerActivity{
 		"clone": {clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}},
@@ -536,7 +536,7 @@ func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 }
 
 // TestFoldDeterministic_ExplorationGroundedCatchesFabrication: the #289 live
-// failure — a code-explorer node clones a repo, performs ZERO read_file/grep
+// failure - a code-explorer node clones a repo, performs ZERO read_file/grep
 // calls, and still emits a confident, substantive "survey" of it. The clone
 // alone satisfies grounded_in_retrieval, so exploration_grounded is the
 // backstop that must sink the score to 0 (weakest-link) regardless of how
@@ -556,7 +556,7 @@ func TestFoldDeterministic_ExplorationGroundedCatchesFabrication(t *testing.T) {
 }
 
 // TestFoldDeterministic_ExplorationGroundedPassesWithReads: a code-explorer
-// that actually read (or grepped) the clone is not penalized — acceptance
+// that actually read (or grepped) the clone is not penalized - acceptance
 // case from #289.
 func TestFoldDeterministic_ExplorationGroundedPassesWithReads(t *testing.T) {
 	cfg := Config{ExternalWorker: true, ReadOnly: true}
@@ -573,7 +573,7 @@ func TestFoldDeterministic_ExplorationGroundedPassesWithReads(t *testing.T) {
 }
 
 // TestFoldDeterministic_ExplorationGroundedScopedToExternalReadOnly: the
-// check must not fire outside its scope — a node with no clone at all
+// check must not fire outside its scope - a node with no clone at all
 // (legitimately read-nothing) and a non-ReadOnly / non-ExternalWorker agent
 // (e.g. a native synthesizer with a bare clone in its activity, which cannot
 // happen in practice but must still be inert) are both untouched.

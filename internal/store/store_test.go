@@ -215,7 +215,7 @@ func TestGithubReviewBaselineRoundTrip(t *testing.T) {
 		t.Fatalf("GetGithubReviewBaseline after update: got=%q ok=%v err=%v", got, ok, err)
 	}
 
-	// Independent of GithubSnapshot — setting one must not create/affect the other.
+	// Independent of GithubSnapshot - setting one must not create/affect the other.
 	if _, ok, err := st.GetGithubSnapshot(ctx, id); err != nil || ok {
 		t.Fatalf("GetGithubSnapshot should be untouched by SetGithubReviewBaseline: ok=%v err=%v", ok, err)
 	}
@@ -244,7 +244,7 @@ func asstEvent(parts ...*genai.Part) *session.Event {
 // orchestratorAgentNodeEvent is the orchestrator's OWN reply as ADK actually
 // stamps it in production: the orchestrator llmagent is wrapped in a
 // workflow.AgentNode too (Start → agentNode), so its real events carry NodeInfo
-// just like a gate-internal node's — "author, not NodeInfo" is what distinguishes
+// just like a gate-internal node's - "author, not NodeInfo" is what distinguishes
 // them. Regression fixture for the bug where a plain `NodeInfo != nil` exclusion
 // filter dropped the orchestrator's own conversational (no-DAG) answer entirely.
 func orchestratorAgentNodeEvent(text string) *session.Event {
@@ -315,7 +315,7 @@ func TestGroupSessionEvents(t *testing.T) {
 }
 
 // nodeEvent is a gate-internal event (a worker draft, an advisor consult, a
-// revision) — tagged with NodeInfo, unlike the orchestrator's own top-level
+// revision) - tagged with NodeInfo, unlike the orchestrator's own top-level
 // events (asstEvent, persistAnswer). Never the user-facing message.
 func nodeEvent(path string, parts ...*genai.Part) *session.Event {
 	ev := session.NewEvent(context.Background(), "test")
@@ -328,7 +328,7 @@ func nodeEvent(path string, parts ...*genai.Part) *session.Event {
 // TestGroupSessionEvents_NodeActivityExcluded guards the leak that made a node's
 // internal deliberation (advisor guidance, a worker's raw draft) show up as the
 // turn's message: gate-internal events (NodeInfo set) must contribute NEITHER
-// asstText NOR toolCalls — only the orchestrator's own top-level events do.
+// asstText NOR toolCalls - only the orchestrator's own top-level events do.
 func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 	events := []*session.Event{
 		userEvent("research X"),
@@ -360,7 +360,7 @@ func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 }
 
 // TestGroupSessionEvents_UsageAccumulation covers Turn.usage's data source: the
-// orchestrator's own model events carry UsageMetadata, summed per turn — while a
+// orchestrator's own model events carry UsageMetadata, summed per turn - while a
 // gate-internal node event's usage (already surfaced separately via DagNodeState)
 // must NOT leak into it, mirroring the asstText/toolCalls exclusion above.
 func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
@@ -391,11 +391,11 @@ func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 }
 
 // TestDeleteChat_ReapsSession pins #352 bug 2: deleting a chat must not
-// strand its turns, DAG plan/node state, durable event log, or ADK session —
+// strand its turns, DAG plan/node state, durable event log, or ADK session -
 // all of it lives in tables/services keyed off the chat id, and the "chats"
 // row was the only thing DeleteChat used to touch. Also covers a
 // GitHub-dispatched chat (id prefix github-), whose ADK session was written
-// under user "github" rather than "local" — the reap must find it there.
+// under user "github" rather than "local" - the reap must find it there.
 func TestDeleteChat_ReapsSession(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -452,7 +452,7 @@ func TestDeleteChat_ReapsSession(t *testing.T) {
 
 // TestGroupSessionEvents_OrchestratorOwnReplyKept guards the regression: the
 // orchestrator's own conversational (no-DAG) reply carries NodeInfo (it's
-// AgentNode-wrapped too) but must still be captured — only gate-internal
+// AgentNode-wrapped too) but must still be captured - only gate-internal
 // (different-author) events are excluded.
 func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 	events := []*session.Event{

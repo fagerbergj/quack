@@ -48,7 +48,7 @@ func TestParseGuardTier(t *testing.T) {
 // ── unit: the judge tier (deny short-circuits, allow executes, missing judge
 //    fails closed) ────────────────────────────────────────────────────────────
 
-// fakeRunnable is a hand-rolled runnableTool that records executions — used
+// fakeRunnable is a hand-rolled runnableTool that records executions - used
 // instead of a functiontool so unit tests need no agent.Context plumbing.
 type fakeRunnable struct {
 	mu   sync.Mutex
@@ -94,7 +94,7 @@ func TestGuardJudgeDenyReturnsRefusalWithoutExecuting(t *testing.T) {
 		t.Errorf("reason = %q, want the judge's reason", reason)
 	}
 	if inner.runCount() != 0 {
-		t.Errorf("inner ran %d times, want 0 — a denied tool must never execute", inner.runCount())
+		t.Errorf("inner ran %d times, want 0 - a denied tool must never execute", inner.runCount())
 	}
 }
 
@@ -219,7 +219,7 @@ func reqHasTool(req *model.LLMRequest, name string) bool {
 }
 
 // reqHasResolvedResponse reports whether the request's history carries a
-// FunctionResponse for name marked with vetting.GuardResolvedKey — i.e. the
+// FunctionResponse for name marked with vetting.GuardResolvedKey - i.e. the
 // guarded tool already executed for real this round.
 func reqHasResolvedResponse(req *model.LLMRequest, name string) bool {
 	for _, c := range req.Contents {
@@ -239,7 +239,7 @@ func reqHasResolvedResponse(req *model.LLMRequest, name string) bool {
 }
 
 // newConfirmHarness builds a one-node plan whose worker carries a REAL
-// confirm-guarded tool (built by this package), run by the REAL dag executor —
+// confirm-guarded tool (built by this package), run by the REAL dag executor -
 // so the pause rides the production plumbing end to end.
 func newConfirmHarness(t *testing.T) (*dag.Executor, dag.Plan, session.Service, *fakeRunnable) {
 	t.Helper()
@@ -331,7 +331,7 @@ func TestGuardConfirmTier_PauseApproveResume(t *testing.T) {
 		t.Fatalf("run1: inner ran %d times before approval, want 0", inner.runCount())
 	}
 	if !sessionHasConfirmationCall(t, sessions, "quack", "u", "s") {
-		t.Error("run1: no adk_request_confirmation FunctionCall in the session — the ADK-native marker is missing")
+		t.Error("run1: no adk_request_confirmation FunctionCall in the session - the ADK-native marker is missing")
 	}
 
 	// Run 2: the human approves → the node resumes, the worker re-issues the
@@ -365,13 +365,13 @@ func TestGuardConfirmTier_PauseDenyResume(t *testing.T) {
 		t.Errorf("run2: out = %q, want the without-the-operation answer", out2["n1"])
 	}
 	if inner.runCount() != 0 {
-		t.Errorf("run2: inner ran %d times after denial, want 0 — a denied operation must never execute", inner.runCount())
+		t.Errorf("run2: inner ran %d times after denial, want 0 - a denied operation must never execute", inner.runCount())
 	}
 }
 
 // pinStub drives the args-pinning scenario: it proposes risky_op(target:x),
 // and after the human APPROVES it re-issues the call with DIFFERENT args
-// (target:EVIL) — modeling a steered/injected model swapping the operation
+// (target:EVIL) - modeling a steered/injected model swapping the operation
 // after approval. After the swapped call's own confirmation is DENIED, it
 // re-issues the ORIGINAL approved call (target:x), which must still consume
 // the original approval.
@@ -395,7 +395,7 @@ func (s *pinStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 			// Round 3: the swapped-args op was denied; retry the ORIGINAL one.
 			yield(atCall("risky_op", map[string]any{"target": "x"}), nil)
 		case strings.Contains(txt, "APPROVED"):
-			// Round 2: approval in hand — but swap the arguments.
+			// Round 2: approval in hand - but swap the arguments.
 			yield(atCall("risky_op", map[string]any{"target": "EVIL"}), nil)
 		default:
 			yield(atCall("risky_op", map[string]any{"target": "x"}), nil)
@@ -405,8 +405,8 @@ func (s *pinStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 
 // TestGuardConfirmTier_ApprovalPinnedToArgs: an approval is pinned to the
 // exact operation the human saw. A re-issued call with different arguments
-// must NOT consume it (and must not execute) — it becomes a fresh proposal
-// whose confirmation warns it DIFFERS — while the original approval stays
+// must NOT consume it (and must not execute) - it becomes a fresh proposal
+// whose confirmation warns it DIFFERS - while the original approval stays
 // available for a later same-args call.
 func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	sessions := session.InMemoryService()
@@ -435,7 +435,7 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 		t.Fatalf("run1: want pause confirm-n1-r1, got paused=%v id=%q", paused, pauseID)
 	}
 
-	// Run 2: human APPROVES target:x — the worker re-issues with target:EVIL.
+	// Run 2: human APPROVES target:x - the worker re-issues with target:EVIL.
 	// The swapped call must NOT execute and must raise a FRESH confirmation
 	// whose message says it DIFFERS.
 	out2, paused2, pauseID2, pauseMsg2 := runConfirmTurn(t, ex, plan, confirmAnswer(pauseID, "approve"), []string{"n1"})
@@ -443,7 +443,7 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 		t.Fatalf("run2: want a second pause confirm-n1-r2, got paused=%v id=%q out=%q", paused2, pauseID2, out2["n1"])
 	}
 	if inner.runCount() != 0 {
-		t.Fatalf("run2: inner ran %d times on swapped args, want 0 — the approval must be pinned", inner.runCount())
+		t.Fatalf("run2: inner ran %d times on swapped args, want 0 - the approval must be pinned", inner.runCount())
 	}
 	if !strings.Contains(pauseMsg2, "DIFFERS") {
 		t.Errorf("run2: pause message %q does not warn the operation DIFFERS from the approved one", pauseMsg2)
@@ -453,7 +453,7 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	}
 
 	// Run 3: human DENIES the swapped op. The worker retries the ORIGINAL
-	// target:x call — the round-1 approval is still unconsumed and pinned to
+	// target:x call - the round-1 approval is still unconsumed and pinned to
 	// exactly those args, so it executes now, exactly once.
 	out3, paused3, _, _ := runConfirmTurn(t, ex, plan, confirmAnswer(pauseID2, "deny"), []string{"n1"})
 	if paused3 {

@@ -4,7 +4,7 @@ import { agentLabel } from './messageParts'
 // QuestionBubble is the single, attributed question-prompt UI shared by every
 // place the app needs a human answer mid-conversation:
 //  - the orchestrator's get_user_choice clarification (options + freeform)
-//  - a paused node's mid-node HITL question (freeform only — options is empty)
+//  - a paused node's mid-node HITL question (freeform only - options is empty)
 // Both render identically at the conversation level, credited to whoever asked
 // (agent). Clicking an option or submitting the box calls onSelect with that
 // text; the caller sends it as the next chat message, which the backend resumes

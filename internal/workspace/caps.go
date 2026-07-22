@@ -4,7 +4,7 @@ import "time"
 
 // Caps bounds every workspace tool call. A cap is never a hard failure for a
 // read-shaped result (read_file/list_dir/glob/grep all carry a `truncated`
-// bool and truncate loudly instead) — see each tool's doc comment for exactly
+// bool and truncate loudly instead) - see each tool's doc comment for exactly
 // how its cap applies.
 type Caps struct {
 	// MaxReadBytes caps how much of a file read_file returns per call.
@@ -18,29 +18,29 @@ type Caps struct {
 	// Timeout bounds a single git/check/run_command invocation.
 	Timeout time.Duration
 	// MaxOutputBytes caps how much combined stdout/stderr RunArgv returns per
-	// call — consumed by run_command and the trust gate's per-node
+	// call - consumed by run_command and the trust gate's per-node
 	// deterministic checks (both go through RunArgv). Distinct from git's own
 	// dedicated maxGitOutputBytes (internal/tools/git.go), which predates this
 	// and stays git-specific.
 	MaxOutputBytes int64
 	// ExtraPath is appended to the hermetic child PATH (execEnvPath) for
-	// RunArgv/RunPipeline children AND git children — the operator's knob for
+	// RunArgv/RunPipeline children AND git children - the operator's knob for
 	// host toolchains living outside the fixed directories (nvm, asdf, custom
 	// prefixes). Configured via workspace.exec_path. Empty = the fixed PATH
 	// alone, exactly as before.
 	ExtraPath []string
-	// HomeDir is the $HOME every RunArgv/RunPipeline/git child sees, when set —
+	// HomeDir is the $HOME every RunArgv/RunPipeline/git child sees, when set -
 	// a per-user directory OUTSIDE any cloned/target repo tree (see
 	// workspace.Jail.HomeDir), so a toolchain's own cache/config writes (npm's
 	// _cacache, pip's cache, ~/.gitconfig) land there instead of inside a git
 	// working tree. Empty falls back to the child's own cwd (the LIVE bug this
 	// closes: `npm ci` with HOME=cwd wrote its cache straight into a cloned
 	// repo, and git_commit's `add_all` swept up 1,261 cache files alongside 8
-	// real ones — see internal/tools/git.go's bulk-commit sanity wall for the
+	// real ones - see internal/tools/git.go's bulk-commit sanity wall for the
 	// other half of this fix). Wired once from internal/serve's buildAgents;
-	// nothing here computes it — Caps only carries the resolved value.
+	// nothing here computes it - Caps only carries the resolved value.
 	HomeDir string
-	// WorkRoot is the calling node's OWN directory (<root>/<user>/<chat>/<node>/) —
+	// WorkRoot is the calling node's OWN directory (<root>/<user>/<chat>/<node>/) -
 	// the writable subtree a sandboxed child gets, mounted inside the namespace at
 	// the fixed SandboxWorkRoot. It CONTAINS the child's cwd; the cwd alone is not
 	// enough, because a private /tmp (see sandbox.go tmpArgs) hides a workspace that
@@ -48,7 +48,7 @@ type Caps struct {
 	// silently evaporated.
 	//
 	// It is also the child's NAMESPACE root: the node dir is what the fs tools call
-	// "/" (the invisible root — internal/tools/cwd.go), so mounting it at one fixed
+	// "/" (the invisible root - internal/tools/cwd.go), so mounting it at one fixed
 	// path is what makes a shell's `pwd` and a tool's `cwd` name one place. Every
 	// caller whose child's output the MODEL will read must set it: run_command
 	// (internal/tools) and the gate's deterministic checks (internal/vetting), whose
@@ -56,14 +56,14 @@ type Caps struct {
 	// mounted as the root instead.
 	WorkRoot string
 	// Sandbox is the OS boundary every RunArgv/RunPipeline child runs inside
-	// (SandboxBwrap | SandboxNone — see sandbox.go). The ZERO value is NO
+	// (SandboxBwrap | SandboxNone - see sandbox.go). The ZERO value is NO
 	// boundary, which is why exactly one place in the server resolves it
-	// (internal/serve, via workspace.ResolveSandbox — which refuses to start when
+	// (internal/serve, via workspace.ResolveSandbox - which refuses to start when
 	// the configured sandbox isn't usable, and WARNs loudly when it is off).
 	// Configured via workspace.sandbox. The jail is a path check on the TOOLS;
 	// this is the wall around their children.
 	Sandbox SandboxMode
-	// Limits are the per-child resource limits (RLIMIT_AS/NPROC/FSIZE — see
+	// Limits are the per-child resource limits (RLIMIT_AS/NPROC/FSIZE - see
 	// Limits). Configured via workspace.limits. Zero = inherit the server's.
 	Limits Limits
 }

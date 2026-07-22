@@ -19,7 +19,7 @@ import (
 // testToolCtx is a functional agent.Context for driving a tool's Run handler
 // directly in a test: adkagent.ContextMock covers everything the tool doesn't
 // use (panicking if it's ever called), and the embedded real context.Context
-// backs Deadline/Done/Err/Value — needed because the handler wraps ctx in
+// backs Deadline/Done/Err/Value - needed because the handler wraps ctx in
 // context.WithTimeout.
 type testToolCtx struct {
 	*adkagent.ContextMock
@@ -73,7 +73,7 @@ func TestFalsePositiveCandidate_ScopesToTheWiredPR(t *testing.T) {
 		t.Fatalf("falsePositiveCandidate: %v", err)
 	}
 	// Same key format as workspace.RepoIdentity ("github.com/owner/repo",
-	// lowercased) — the exact bucket the gate's memoryScope resolves for a
+	// lowercased) - the exact bucket the gate's memoryScope resolves for a
 	// coding node working in this repo.
 	if sc.Repo != "github.com/acme/games" {
 		t.Fatalf("scope repo = %q, want github.com/acme/games", sc.Repo)
@@ -102,13 +102,13 @@ func TestNewCorrectReviewFindingTool(t *testing.T) {
 }
 
 // runnable is the subset of functiontool's generated Tool this test drives
-// directly — the real handler, not just construction.
+// directly - the real handler, not just construction.
 type runnable interface {
 	Run(ctx adkagent.Context, args any) (map[string]any, error)
 }
 
 // fakeEmbedder returns a fixed unit vector for every text, so any recall query
-// matches any stored point (cosine = 1) — enough to exercise Commit + Recall
+// matches any stored point (cosine = 1) - enough to exercise Commit + Recall
 // without a real embedding model.
 type fakeEmbedder struct{}
 
@@ -121,7 +121,7 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 }
 
 // addOneConsolidator ADDs each "- <content>" staged-candidate line it's given,
-// verbatim — the consolidation reply memory.Store.Commit expects. Mirrors
+// verbatim - the consolidation reply memory.Store.Commit expects. Mirrors
 // internal/memory's echoModel test double, but marshals with encoding/json
 // instead of string-concatenating into a JSON literal: the correction text
 // contains quotes and colons that would otherwise break the literal.
@@ -207,7 +207,7 @@ func TestCorrectReviewFindingTool_WritesOnlyTheWiredPR(t *testing.T) {
 
 // TestCorrectReviewFindingTool_ForgedRepoArgsRefused is the cross-repo-write
 // regression test: a hostile/confused call tries to redirect the write to a
-// DIFFERENT repo/PR by stuffing owner/repo/pr_number into the args — fields
+// DIFFERENT repo/PR by stuffing owner/repo/pr_number into the args - fields
 // the schema no longer declares (owner/repo/pr_number come ONLY from the
 // verified GitHubPR the tool was constructed with, never the model). The
 // generated JSON schema rejects unknown properties outright, so the call is
@@ -233,7 +233,7 @@ func TestCorrectReviewFindingTool_ForgedRepoArgsRefused(t *testing.T) {
 		t.Fatal("Run with forged owner/repo/pr_number should be refused, got no error")
 	}
 
-	// Nothing was written anywhere — neither the real repo nor the forged one.
+	// Nothing was written anywhere - neither the real repo nor the forged one.
 	if got := store.Recall(ctx, memory.Scope{Repo: "github.com/acme/games", Role: memory.RoleCoding}, "does an empty Comment.Body break dispatch"); got != "" {
 		t.Fatalf("a refused call must write nothing, got %q", got)
 	}
@@ -243,7 +243,7 @@ func TestCorrectReviewFindingTool_ForgedRepoArgsRefused(t *testing.T) {
 }
 
 // TestCorrectReviewFindingTool_MissingFieldsRejected proves the handler
-// refuses to write when the model omits the required correction fields —
+// refuses to write when the model omits the required correction fields -
 // the ONE thing it still trusts the model for, and even that is validated.
 func TestCorrectReviewFindingTool_MissingFieldsRejected(t *testing.T) {
 	ctx := context.Background()

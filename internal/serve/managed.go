@@ -17,7 +17,7 @@ import (
 // Managed stores orchestration for `quack server` when server.topology: managed.
 // A stores-only compose (Postgres + Qdrant) is embedded, written to the state
 // dir, and driven via `docker compose -p quack-stores`. Tool backends
-// (SearXNG/crawl4ai) are NOT managed here — they're config-driven (kind: exa for
+// (SearXNG/crawl4ai) are NOT managed here - they're config-driven (kind: exa for
 // keyless search, kind: direct for fetch) and orthogonal to stateful stores.
 // ponytail: shells to docker compose rather than reimplementing container
 // orchestration; one stack per machine via the fixed project name.

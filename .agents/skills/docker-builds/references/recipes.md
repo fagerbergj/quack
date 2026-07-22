@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /
 COPY --from=backend /quack /quack
-COPY config/ /config/      # includes constitution.md — NOT ignorable
+COPY config/ /config/      # includes constitution.md - NOT ignorable
 COPY agents/ /agents/      # includes prompt.md / agent-card.json per bundle
 COPY skills/ /skills/      # includes SKILL.md per bundle
 ENV QUACK_CONFIG=/config/quack.yaml
@@ -43,7 +43,7 @@ Build flags: `-s` drops the symbol table, `-w` the DWARF debug info, `-trimpath`
 ## 2. Safe `.dockerignore`
 
 ```text
-# Do NOT add *.md / docs/ / config/ — the runtime stage COPYs prompt.md, SKILL.md,
+# Do NOT add *.md / docs/ / config/ - the runtime stage COPYs prompt.md, SKILL.md,
 # rubric.md, and config/constitution.md from the context.
 .git
 .github
@@ -74,11 +74,11 @@ Applied to every long-running service (`db`, `searxng`, `crawl4ai`, `app`).
 
 ---
 
-## Deferred compose patterns — add when the trigger fires
+## Deferred compose patterns - add when the trigger fires
 
 These are intentionally NOT in quack's compose today (single-host dev stack). Each block notes when it earns its place.
 
-### Readiness gating — *add when first requests flakily fail because a backend isn't ready*
+### Readiness gating - *add when first requests flakily fail because a backend isn't ready*
 
 `depends_on: condition: service_started` only waits for the container to *start*. For real readiness, give the dependency a healthcheck and depend on `service_healthy`:
 
@@ -96,7 +96,7 @@ These are intentionally NOT in quack's compose today (single-host dev stack). Ea
         condition: service_healthy
 ```
 
-### Network segmentation — *add when an untrusted service shares the network with the DB*
+### Network segmentation - *add when an untrusted service shares the network with the DB*
 
 ```yaml
   app:
@@ -109,7 +109,7 @@ networks:
     internal: true   # no outbound internet for anything on this network
 ```
 
-### Resource limits — *add when a container starves the host*
+### Resource limits - *add when a container starves the host*
 
 ```yaml
   app:
@@ -119,7 +119,7 @@ networks:
         reservations: { cpus: "0.25", memory: 128M }
 ```
 
-### Compose secrets — *add when a real secret must not sit in the env/compose file*
+### Compose secrets - *add when a real secret must not sit in the env/compose file*
 
 The local Postgres password is `quack/quack` by design (throwaway). For a real secret:
 
@@ -131,14 +131,14 @@ secrets:
     file: ./secrets/db.pass       # or: external: true
 ```
 
-### Profiles — *add when some services should be opt-in* (`docker compose --profile monitoring up`)
+### Profiles - *add when some services should be opt-in* (`docker compose --profile monitoring up`)
 
 ```yaml
   prometheus:
     profiles: ["monitoring"]
 ```
 
-### `x-*` anchors — *add when ≥3 services share a config block worth DRYing*
+### `x-*` anchors - *add when ≥3 services share a config block worth DRYing*
 
 ```yaml
 x-app-defaults: &app-defaults
@@ -150,7 +150,7 @@ services:
 
 ---
 
-## 4. Digest pinning — *add when an image is published, or to freeze a flaky `:latest`*
+## 4. Digest pinning - *add when an image is published, or to freeze a flaky `:latest`*
 
 Resolve the current digest, then pin it:
 
@@ -163,17 +163,17 @@ sha256:abc123…
 FROM searxng/searxng:latest@sha256:abc123…
 ```
 
-## 5. CI/CD build (live) — `.github/workflows/ci.yaml` + `cd.yaml`
+## 5. CI/CD build (live) - `.github/workflows/ci.yaml` + `cd.yaml`
 
 CI builds the image on every PR (no push); CD publishes to GHCR on a `v*.*.*` tag. Both use the GitHub Actions BuildKit cache (`type=gha`), which is wiped-per-run-proof and zero-config:
 
 ```yaml
-# ci.yaml — validate the build, don't push
+# ci.yaml - validate the build, don't push
 - uses: docker/setup-buildx-action@v3
 - uses: docker/build-push-action@v6
   with: { context: ., push: false, cache-from: type=gha, cache-to: "type=gha,mode=max" }
 
-# cd.yaml — tag-derived publish with attestations
+# cd.yaml - tag-derived publish with attestations
 - uses: docker/metadata-action@v5
   id: meta
   with:
@@ -198,9 +198,9 @@ Cut a release: `git tag v1.2.3 && git push origin v1.2.3`. `latest` moves only o
 
 For a non-GitHub runner, `type=registry` cache is the portable equivalent: `--cache-to type=registry,ref=<reg>/quack-cache:build --cache-from type=registry,ref=<reg>/quack-cache:build`.
 
-## 6. Build secrets — *add when a build step needs a credential*
+## 6. Build secrets - *add when a build step needs a credential*
 
-Never `ARG SECRET` (it lands in image history). Mount it instead — not committed, not cached:
+Never `ARG SECRET` (it lands in image history). Mount it instead - not committed, not cached:
 
 ```dockerfile
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci

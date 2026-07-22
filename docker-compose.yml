@@ -60,7 +60,7 @@ services:
     build: .
     restart: unless-stopped
     # Run the server. Without args the entrypoint (/quack) opens the interactive
-    # chat TUI, which needs a /dev/tty the container has no access to — it would
+    # chat TUI, which needs a /dev/tty the container has no access to - it would
     # crash-loop ("could not open a new TTY"). --config is found via QUACK_CONFIG.
     command: ["server", "run"]
     depends_on:
@@ -107,7 +107,7 @@ services:
       # User memory is enabled by binding commit_memory to the orchestrator in
       # config/quack.yaml (no env toggle).
       # Filesystem/git tools' jail (workspace: section in quack.yaml). NOT a
-      # bind mount to the host — a named volume, so it survives `docker compose
+      # bind mount to the host - a named volume, so it survives `docker compose
       # up --build` (an image rebuild must never wipe agent-written user code;
       # we rebuild the image constantly during e2e, so this would bite
       # immediately). Not yet bound to any agent's tools: list.

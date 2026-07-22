@@ -9,7 +9,7 @@ import (
 )
 
 // runDAGSubset runs only the nodes in `run` (the retry set), leaving every other
-// node at its `seeded` output (node ID → reused text from a prior run) — the
+// node at its `seeded` output (node ID → reused text from a prior run) - the
 // RETRY path's scheduler (RetryPlanInNode). The main path runs plans as native
 // first-class ADK graphs (RunPlanAsGraph); this manual RunNode scheduler remains
 // only because a retry re-runs a SUBSET against seeded outputs, which the native
@@ -53,8 +53,8 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				// Feed this node its dependencies' outputs (dep ID → text) — a mix of
-				// freshly-run and seeded — the shape upstreamFromInput/buildTask expect.
+				// Feed this node its dependencies' outputs (dep ID → text) - a mix of
+				// freshly-run and seeded - the shape upstreamFromInput/buildTask expect.
 				in := map[string]any{}
 				mu.Lock()
 				for _, d := range nodeByID[nid].DependsOn {
@@ -64,7 +64,7 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 
 				// WithUseSubBranch gives each retried gate node its own branch (the
 				// native graph's scheduler does the same for plan nodes) so that
-				// concurrently re-run nodes' events stay branch-distinguishable — the
+				// concurrently re-run nodes' events stay branch-distinguishable - the
 				// A2A worker's outbound-message branch filter (internal/agent/a2a.go)
 				// depends on it to keep one node's traffic out of a sibling's request.
 				out, rerr := workflow.RunNode[string](ctx, gateNodes[nid], in, workflow.WithUseSubBranch())
@@ -87,7 +87,7 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 	return outputs, nil
 }
 
-// retrySet returns nodeID plus every node that (transitively) depends on it — the
+// retrySet returns nodeID plus every node that (transitively) depends on it - the
 // subgraph a retry must re-run because the target's output feeds them.
 func retrySet(plan Plan, nodeID string) map[string]bool {
 	dependents := map[string][]string{}

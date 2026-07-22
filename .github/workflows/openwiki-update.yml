@@ -3,7 +3,7 @@ name: OpenWiki Update
 on:
   workflow_dispatch:
   schedule:
-    # 3am US Eastern (EDT, UTC-4) every other day. GitHub cron is fixed UTC —
+    # 3am US Eastern (EDT, UTC-4) every other day. GitHub cron is fixed UTC -
     # doesn't shift for DST, so this drifts to 2am once EST (UTC-5) kicks in.
     - cron: "0 7 */2 * *"
 
@@ -38,7 +38,7 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # OpenWiki owns openwiki/ only. AGENTS.md/CLAUDE.md are hand-maintained
-          # (they carry a single pointer into openwiki/) — keep the generator out.
+          # (they carry a single pointer into openwiki/) - keep the generator out.
           add-paths: |
             openwiki
           branch: openwiki/update

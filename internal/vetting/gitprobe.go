@@ -1,4 +1,4 @@
-// The disk-truth probe: an EXTERNAL worker (an ACP coding agent — internal/acp)
+// The disk-truth probe: an EXTERNAL worker (an ACP coding agent - internal/acp)
 // commits with its own git, so the session ledger never sees a git_commit call
 // and the gate would read a delivered task as undone (continuation rounds, then
 // a deterministic delivery fail). For a setup-provisioned node the clone itself
@@ -17,13 +17,13 @@ import (
 )
 
 // augmentFromRepo folds the clone's git state into a session-derived activity:
-// commits since the clone's base (baseCommit — the oldest HEAD reflog entry),
+// commits since the clone's base (baseCommit - the oldest HEAD reflog entry),
 // the changed paths (the judge's changed-file re-read + citation grounding),
-// the current branch, and — when the task demands a PR/push the worker had no
-// stage_pr tool to hand off — a synthesized staged PR from the commits
+// the current branch, and - when the task demands a PR/push the worker had no
+// stage_pr tool to hand off - a synthesized staged PR from the commits
 // themselves, so commitDelivery still posts exactly once, gate-owned.
 //
-// ponytail: runs a few git subprocesses per activity() call (no caching) — the
+// ponytail: runs a few git subprocesses per activity() call (no caching) - the
 // probe fires only on setup-provisioned nodes with an empty ledger; memoise per
 // HEAD sha if it ever shows up in a profile.
 func augmentFromRepo(act *workerActivity, cfg Config) {
@@ -67,8 +67,8 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 		short(head), len(changed))})
 
 	// Delivery handoff for a worker with no stage_pr tool: this node is the
-	// plan's TERMINAL delivery node (cfg.Deliver non-nil — mid-chain nodes get
-	// nil), it is setup-provisioned, and the commits exist — stage the PR from
+	// plan's TERMINAL delivery node (cfg.Deliver non-nil - mid-chain nodes get
+	// nil), it is setup-provisioned, and the commits exist - stage the PR from
 	// them so the gate delivers exactly once. Deliberately STRUCTURAL, not
 	// task-wording-based: a live run whose task text (post-ACP instruction
 	// style) never said "open a PR" staged nothing, delivered nothing, and the
@@ -81,7 +81,7 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 			title := gitLine(dir, caps, "log", "-1", "--format=%s")
 			body := strings.Join(gitLines(dir, caps, "log", "--reverse", "--format=- %s", base+".."+head), "\n")
 			// Map KEY "pr" (the staging slot hasStagedPR checks); Kind is the
-			// DELIVERY discriminator deliverOne switches on — "pull_request",
+			// DELIVERY discriminator deliverOne switches on - "pull_request",
 			// never the slot name (a live delivery failed on kind "pr").
 			act.stagedDelivery["pr"] = StagedDelivery{
 				Kind:   "pull_request",
@@ -129,12 +129,12 @@ func buildReviewDiffSection(cfg Config) string {
 		diff = diff[:changedFilesBudget] + reviewDiffTruncatedMarker
 	}
 	return fmt.Sprintf(
-		"DIFF UNDER REVIEW (%s..%s, the actual change this review is OF — verify each finding against this diff, not the review's own description of it):\n\n%s",
+		"DIFF UNDER REVIEW (%s..%s, the actual change this review is OF - verify each finding against this diff, not the review's own description of it):\n\n%s",
 		short(base), short(head), diff)
 }
 
 // gitLine runs one git command in dir and returns its first output line ("" on
-// any failure — the probe is best-effort by construction).
+// any failure - the probe is best-effort by construction).
 func gitLine(dir string, caps workspace.Caps, args ...string) string {
 	lines := gitLines(dir, caps, args...)
 	if len(lines) == 0 {

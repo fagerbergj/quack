@@ -14,7 +14,7 @@ Default PR body template. Used only when the target repo has no .github/pull_req
 ## How
 
 <!-- The approach, and the one or two decisions that touch architecture, existing
-     behaviour, or downstream systems — with their tradeoffs. Skip the obvious. -->
+     behaviour, or downstream systems - with their tradeoffs. Skip the obvious. -->
 
 ## Verification
 

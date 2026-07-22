@@ -64,7 +64,7 @@ func TestRunChatShow(t *testing.T) {
 }
 
 // chatShowReasoningLeakJSON pins #419: a message item whose content mixes a
-// reasoning part ahead of the output_text part — ReasoningPart and
+// reasoning part ahead of the output_text part - ReasoningPart and
 // OutputTextPart share the same {text,type} JSON shape, so a naive "does it
 // unmarshal" check on AsOutputTextPart() would let the raw thinking through.
 const chatShowReasoningLeakJSON = `{
@@ -129,7 +129,7 @@ func TestRunChatShowGithubLink(t *testing.T) {
 }
 
 // TestRunChatShowNoGithubLink pins the negative case: a direct (non-github)
-// chat shows nothing extra — no "github:" line at all.
+// chat shows nothing extra - no "github:" line at all.
 func TestRunChatShowNoGithubLink(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -241,10 +241,10 @@ func TestRunChatShowFollowLive(t *testing.T) {
 
 // TestRunChatShowFollowToolsAndThinking pins #385's CLI half: `chat show -f`
 // used to have no case at all for agent_thinking/agent_tool_call/
-// agent_tool_result — tool calls and reasoning were invisible in the
+// agent_tool_result - tool calls and reasoning were invisible in the
 // terminal. It now renders a terse, one-line-per-event trace: "thinking…"
 // once per reasoning block (not once per streamed delta), and a "tool: …" /
-// "→ …" pair per call — never a raw JSON dump.
+// "→ …" pair per call - never a raw JSON dump.
 func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	mux := http.NewServeMux()
@@ -253,7 +253,7 @@ func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
 	})
 	mux.HandleFunc("/api/v1/chats/c1/stream", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		// Reasoning streams as several small deltas — must collapse to ONE line.
+		// Reasoning streams as several small deltas - must collapse to ONE line.
 		io.WriteString(w, "event: agent_thinking\ndata: {\"node_id\":\"n1\",\"run_id\":\"r1\",\"text\":\"I should \"}\n\n")
 		io.WriteString(w, "event: agent_thinking\ndata: {\"node_id\":\"n1\",\"run_id\":\"r1\",\"text\":\"check the tests\"}\n\n")
 		io.WriteString(w, "event: agent_tool_call\ndata: {\"node_id\":\"n1\",\"run_id\":\"r1\",\"call_id\":\"c1\",\"name\":\"run_command\",\"args\":{\"command\":\"go test ./...\"}}\n\n")

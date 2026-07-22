@@ -17,12 +17,12 @@ type HistoryTurn struct {
 }
 
 // Plan is a DAG of agent tasks for one user request. UserMessage is the user's
-// request verbatim and History the prior conversation — both flow to every
+// request verbatim and History the prior conversation - both flow to every
 // node so specialists see the full context, not just the planner's compressed
 // task description. Attachments carries media parts (images, audio) from the
 // current turn; they are threaded to nodes whose agents declare image/audio inputs.
 //
-// Setup and Delivery are the orchestrator's DECLARED pre/post steps — the
+// Setup and Delivery are the orchestrator's DECLARED pre/post steps - the
 // harness EXECUTES them, deterministically and App-authed; no node runs git,
 // push, or GitHub-mutating calls itself. Both are optional: a plan with no
 // GitHub repo involved (plain research/chat) sets neither.
@@ -47,16 +47,16 @@ type Setup struct {
 
 	// CheckoutExistingHead is computed by runPlanSetup (never planner-declared,
 	// hence json:"-") from the plan's qualifying nodes: true when WorkBranch
-	// names an EXISTING remote branch to check out as-is (a review — its
+	// names an EXISTING remote branch to check out as-is (a review - its
 	// commits must be fetched, not created), false when it names a NEW branch
 	// to create off BaseRef (an implement).
 	CheckoutExistingHead bool `json:"-"`
 }
 
 // Delivery is the plan's declared POST-step: how the gated result reaches
-// GitHub, run AFTER the trust gate passes — once, at the run level, never by
+// GitHub, run AFTER the trust gate passes - once, at the run level, never by
 // a node mid-run. The orchestrator declares only the KIND ("pull_request",
-// "review", or "comment"; see validateDelivery) — the implementer authors
+// "review", or "comment"; see validateDelivery) - the implementer authors
 // the PR title+body itself via stage_pr.
 type Delivery struct {
 	Kind string `json:"kind"`
@@ -72,7 +72,7 @@ type Node struct {
 	DependsOn []string // IDs of predecessor nodes
 	// Checks are orchestrator-set deterministic gate commands (see
 	// .quack/plan-pr5-tool-schemas.md §4) the trust gate runs against this
-	// node's output — plan-time validated (Planner.Build / assemble) against
+	// node's output - plan-time validated (Planner.Build / assemble) against
 	// workspace.check_commands; empty for every node that doesn't opt in
 	// (research, synthesis).
 	Checks []string
@@ -81,7 +81,7 @@ type Node struct {
 	Workdir string
 }
 
-// terminalIDs returns the IDs of nodes no other node depends on — the plan's
+// terminalIDs returns the IDs of nodes no other node depends on - the plan's
 // terminal (output-producing) nodes. A runnable native graph has exactly one
 // (see buildPlanGraph); the planner uses this to append a synthesizer fan-in
 // when the model omitted it.

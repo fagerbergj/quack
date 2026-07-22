@@ -22,7 +22,7 @@ import (
 )
 
 // The staged-delivery spine: a worker STAGES a pull request
-// (stage_pr) instead of opening one — commitDelivery posts the FINAL
+// (stage_pr) instead of opening one - commitDelivery posts the FINAL
 // staged set exactly once, and only when the gate's judge round passes.
 
 func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
@@ -45,7 +45,7 @@ func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
 }
 
 // A comment staged then unstaged before the gate ever reads the set must never
-// be handed to Deliver — commitDelivery only ever sees the FINAL map.
+// be handed to Deliver - commitDelivery only ever sees the FINAL map.
 func TestStagedThenUnstagedItemNeverReachesDeliver(t *testing.T) {
 	act := activityFromSession(newTestSession(t,
 		fnCall("1", "stage_comment", map[string]any{"slot": "progress", "body": "halfway"}),
@@ -57,7 +57,7 @@ func TestStagedThenUnstagedItemNeverReachesDeliver(t *testing.T) {
 		return nil, nil
 	}}, "n1", act, GateResult{Passed: true})
 	if got := atomic.LoadInt32(&called); got != 0 {
-		t.Fatalf("Deliver called %d times, want 0 — every staged item was unstaged", got)
+		t.Fatalf("Deliver called %d times, want 0 - every staged item was unstaged", got)
 	}
 }
 
@@ -74,7 +74,7 @@ func TestCommitDeliveryOnPassNilSafe(t *testing.T) {
 	}}, "n2", workerActivity{}, GateResult{Passed: true})
 	time.Sleep(50 * time.Millisecond)
 	if got := atomic.LoadInt32(&called); got != 0 {
-		t.Fatalf("Deliver called %d times, want 0 — nothing was staged", got)
+		t.Fatalf("Deliver called %d times, want 0 - nothing was staged", got)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestCommitDeliveryOnPassCarriesCloneCoordinates(t *testing.T) {
 }
 
 // A setup-provisioned node (cfg.Setup set) must deliver on the plan's declared
-// work_branch — never the worker's own git-tracking ledger, which a
+// work_branch - never the worker's own git-tracking ledger, which a
 // setup-provisioned worker is told not to touch (internal/github/webhook.go).
 // This is the regression #308 fixes: before, a setup-provisioned worker never
 // called git_checkout/git_clone itself, so act.currentBranch/clonedDirs stayed
@@ -115,7 +115,7 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The clone setup would have made, at the SAME path workspace.SetupCloneDir
-	// computes — so CloneDir resolves to a real, existing directory.
+	// computes - so CloneDir resolves to a real, existing directory.
 	cloneDir, err := j.EnsureDir("u1", "chat1", workspace.SetupCloneDir("impl"))
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 		},
 		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
 		// The workspace-directory scope commitDelivery resolves
-		// SetupCloneDir against — dag.buildGateNodes stamps this (node.ID
+		// SetupCloneDir against - dag.buildGateNodes stamps this (node.ID
 		// normally); the caller below passes the SAME "impl" as the nodeID
 		// argument, matching production wiring for a single, unshared node.
 		NodeID:          "impl",
@@ -138,7 +138,7 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 		ChatID:          "chat1",
 	}
 	// The worker never cloned or checked out anything itself (setup-provisioned
-	// runs are told not to) — the ledger fields commitDelivery would
+	// runs are told not to) - the ledger fields commitDelivery would
 	// otherwise fall back to are empty on purpose.
 	commitDelivery(context.Background(), nil, cfg, "impl", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "Add flappy bird"}},
@@ -183,7 +183,7 @@ func stagePRTestTool(t *testing.T) tool.Tool {
 }
 
 // deliveryStub drives a worker through commit → stage_pr → done, then lets the
-// judge score whatever judgeScore says — so a test can force a pass or a
+// judge score whatever judgeScore says - so a test can force a pass or a
 // permanent fail and observe whether commitDelivery fires.
 type deliveryStub struct {
 	judgeScore float64
@@ -198,7 +198,7 @@ func (m *deliveryStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 			// A named criterion, not a flat score: aggregateVerdict recomputes the
 			// overall score as the weakest-link MIN across v.Criteria whenever
 			// foldDeterministic has added any (delivery_complete, here, once the
-			// worker has committed+staged) — a bare "score" would be silently
+			// worker has committed+staged) - a bare "score" would be silently
 			// discarded by that recomputation.
 			yield(stubCall(submitVerdictTool, map[string]any{
 				"criteria": map[string]any{"task_completeness": map[string]any{"score": m.judgeScore, "reason": "judged"}},
@@ -274,7 +274,7 @@ func TestGate_DeliversStagedPROnceOnJudgePass(t *testing.T) {
 	}
 }
 
-// A gate that never clears the judge threshold still DELIVERS — graceful
+// A gate that never clears the judge threshold still DELIVERS - graceful
 // degradation: the work is done, so it ships with GatePassed=false so the
 // extension attaches a caveat (App.Deliver's gateCaveat), rather than the work
 // being silently dropped.
@@ -293,10 +293,10 @@ func TestGate_DeliversWithCaveatOnJudgeFail(t *testing.T) {
 	select {
 	case dc := <-got:
 		if dc.GatePassed {
-			t.Error("GatePassed = true, want false — the judge never cleared the threshold")
+			t.Error("GatePassed = true, want false - the judge never cleared the threshold")
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("Deliver never fired on a judge fail — delivery must be graceful (with caveat), not dropped")
+		t.Fatal("Deliver never fired on a judge fail - delivery must be graceful (with caveat), not dropped")
 	}
 }
 
@@ -318,12 +318,12 @@ func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
 	select {
 	case dc := <-done:
 		if dc.GatePassed {
-			t.Error("GatePassed = true, want false — the judge failed")
+			t.Error("GatePassed = true, want false - the judge failed")
 		}
 		if dc.GateFeedback != "tests are missing for the error path" {
 			t.Errorf("GateFeedback = %q, want the judge's feedback carried through", dc.GateFeedback)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("Deliver never fired on a judge fail — delivery must be graceful, not gated")
+		t.Fatal("Deliver never fired on a judge fail - delivery must be graceful, not gated")
 	}
 }

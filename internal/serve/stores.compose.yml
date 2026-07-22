@@ -1,4 +1,4 @@
-# Quack managed stores — brought up by `quack server` when
+# Quack managed stores - brought up by `quack server` when
 # server.topology: managed. Postgres (sessions/DAG/chat) + Qdrant (semantic
 # memory) only: tool backends (SearXNG/crawl4ai) are config-driven and stay
 # external (use kind: exa for keyless search, kind: direct for fetch). Run with

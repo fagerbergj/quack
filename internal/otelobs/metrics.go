@@ -1,5 +1,5 @@
 // Package otelobs is Quack's OTel wiring: tracer/meter provider setup
-// (emission-only — Tempo/Grafana own trace/metric viewing, quack keeps no
+// (emission-only - Tempo/Grafana own trace/metric viewing, quack keeps no
 // local store or read API of its own), a slog↔trace correlation bridge, and
 // the metric instruments the trust gate / delivery / memory pipeline records
 // against.
@@ -17,8 +17,8 @@ import (
 )
 
 // metrics holds every instrument Quack records against. A package-level
-// singleton (mirroring OTel's own global-provider idiom): the alternative —
-// threading a *Metrics handle through every gate/delivery/memory call site —
+// singleton (mirroring OTel's own global-provider idiom): the alternative -
+// threading a *Metrics handle through every gate/delivery/memory call site -
 // would touch dozens of signatures across packages that don't otherwise share
 // a dependency-injection seam. Nil-safe: every Record*/*Started/*Finished
 // function below is a no-op until Init has run (otel.enabled: false, or
@@ -32,18 +32,18 @@ type metrics struct {
 	roundDur         metric.Float64Histogram // attrs: agent, model, stage (worker rounds: draft/continuation/revise/hitl/confirm)
 	judgeScore       metric.Float64Histogram // attrs: agent
 	judgeVerdict     metric.Int64Counter     // attrs: agent, passed
-	judgeUnavailable metric.Int64Counter     // attrs: agent — judge round errored before a verdict; see RecordJudgeUnavailable
+	judgeUnavailable metric.Int64Counter     // attrs: agent - judge round errored before a verdict; see RecordJudgeUnavailable
 	delivery         metric.Int64Counter     // attrs: outcome (delivered|draft|failed|none)
 	modelCallDur     metric.Float64Histogram // attrs: model
 	permAsk          metric.Int64Counter     // attrs: agent
 	memRecall        metric.Int64Counter     // attrs: hit
-	checksSkipped    metric.Int64Counter     // attrs: reason — deterministic checks did NOT run at all (see RecordChecksSkipped)
-	memCommitFail    metric.Int64Counter     // attrs: reason, agent — fire-and-forget memory commit that errored (see RecordMemoryCommitFailure)
+	checksSkipped    metric.Int64Counter     // attrs: reason - deterministic checks did NOT run at all (see RecordChecksSkipped)
+	memCommitFail    metric.Int64Counter     // attrs: reason, agent - fire-and-forget memory commit that errored (see RecordMemoryCommitFailure)
 }
 
 // initMetrics builds every instrument from meter and installs it as the
 // package singleton. Returns an error if any instrument fails to build (an
-// OTel SDK bug, not an operator error) — callers should log and continue with
+// OTel SDK bug, not an operator error) - callers should log and continue with
 // metrics disabled rather than fail startup over an observability seam.
 func initMetrics(meter metric.Meter) error {
 	m2 := &metrics{}
@@ -61,7 +61,7 @@ func initMetrics(meter metric.Meter) error {
 		return err
 	}
 	if m2.roundDur, err = meter.Float64Histogram("quack.worker.round.duration",
-		metric.WithDescription("worker round wall time (draft/continuation/revise/hitl/confirm) — derived from the round's own span window, see StartTimedSpan"), metric.WithUnit("s"),
+		metric.WithDescription("worker round wall time (draft/continuation/revise/hitl/confirm) - derived from the round's own span window, see StartTimedSpan"), metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(1, 2, 5, 10, 30, 60, 120, 300, 600)); err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func initMetrics(meter metric.Meter) error {
 		return err
 	}
 	if m2.judgeUnavailable, err = meter.Int64Counter("quack.judge.unavailable",
-		metric.WithDescription("judge rounds that errored before producing a verdict (no score/verdict recorded for that round) — a gap here on one agent's series explains missing/sparse quack.judge.score|verdict for it")); err != nil {
+		metric.WithDescription("judge rounds that errored before producing a verdict (no score/verdict recorded for that round) - a gap here on one agent's series explains missing/sparse quack.judge.score|verdict for it")); err != nil {
 		return err
 	}
 	if m2.delivery, err = meter.Int64Counter("quack.delivery.outcome",
@@ -96,20 +96,20 @@ func initMetrics(meter metric.Meter) error {
 		return err
 	}
 	if m2.checksSkipped, err = meter.Int64Counter("quack.gate.checks.skipped",
-		metric.WithDescription("nodes where the deterministic checks criterion did NOT run at all (no backstop), by reason — query this to find nodes that gated on judge score alone")); err != nil {
+		metric.WithDescription("nodes where the deterministic checks criterion did NOT run at all (no backstop), by reason - query this to find nodes that gated on judge score alone")); err != nil {
 		return err
 	}
 	if m2.memCommitFail, err = meter.Int64Counter("quack.memory.commit.failures",
-		metric.WithDescription("fire-and-forget memory commits that errored (consolidation/embed timeout etc — see RecordMemoryCommitFailure), by reason and agent — the only queryable signal for the M6 commit goroutine, which never fails a node")); err != nil {
+		metric.WithDescription("fire-and-forget memory commits that errored (consolidation/embed timeout etc - see RecordMemoryCommitFailure), by reason and agent - the only queryable signal for the M6 commit goroutine, which never fails a node")); err != nil {
 		return err
 	}
 	m = m2
 	return nil
 }
 
-// RunStarted/RunFinished track quack.runs.active — a run that has ACQUIRED its
+// RunStarted/RunFinished track quack.runs.active - a run that has ACQUIRED its
 // concurrency slot and is actually executing. RunQueued/RunUnqueued track
-// quack.runs.queued — a run admitted (its "run" span open) but still waiting
+// quack.runs.queued - a run admitted (its "run" span open) but still waiting
 // on max_active_runs. A run transits queued → active exactly once (or queued
 // → unqueued with no active, if cancelled before it acquires); the caller
 // (Orchestrator.Run) is responsible for calling exactly one matched pair from
@@ -118,7 +118,7 @@ func initMetrics(meter metric.Meter) error {
 // Neither pair can survive a hard process kill (container restart) mid-run:
 // the process that incremented the gauge never runs its decrement, and the
 // counter is orphaned high until the NEXT process starts fresh at 0. That is
-// inherent to an up/down counter across a restart, not a code bug — treat
+// inherent to an up/down counter across a restart, not a code bug - treat
 // quack.runs.active/quack.runs.queued/quack.nodes.active as advisory around a
 // deploy; the durable event log and Tempo traces are the source of truth for
 // what was actually in flight.
@@ -133,7 +133,7 @@ func RunFinished() {
 	}
 }
 
-// RunQueued/RunUnqueued track quack.runs.queued — see RunStarted's doc.
+// RunQueued/RunUnqueued track quack.runs.queued - see RunStarted's doc.
 func RunQueued() {
 	if m != nil {
 		m.runsQueued.Add(context.Background(), 1)
@@ -174,7 +174,7 @@ func EndNode(span oteltrace.Span, err error) {
 
 // TimedSpan pairs a span with the wall-clock instant it was started, so a
 // duration recorded at End is drawn from the EXACT same window the span
-// itself covers — a separately-tracked t0 in the caller can drift from the
+// itself covers - a separately-tracked t0 in the caller can drift from the
 // span (e.g. code inserted between the two, or the span's own attribute
 // setup taking measurable time on a slow path); this makes that impossible
 // by construction.
@@ -191,7 +191,7 @@ func StartTimedSpan(ctx context.Context, name string, attrs ...attribute.KeyValu
 }
 
 // End ends the span (recording err) and returns the wall-clock duration
-// since StartTimedSpan — the value a caller should feed straight into a
+// since StartTimedSpan - the value a caller should feed straight into a
 // duration metric so it can never disagree with the span's own window.
 func (ts *TimedSpan) End(err error) time.Duration {
 	d := time.Since(ts.start)
@@ -219,7 +219,7 @@ func RecordJudgeVerdict(agent string, score float64, passed bool) {
 }
 
 // RecordJudgeUnavailable records a judge round that errored before it could
-// produce a verdict (runJudgeAgent returned an error) — the ONE judge outcome
+// produce a verdict (runJudgeAgent returned an error) - the ONE judge outcome
 // RecordJudgeVerdict cannot cover, since there is no score to record. Called
 // on the same shared per-agent judge path as RecordJudgeVerdict (node.go's
 // judge loop) so an agent whose judge calls disproportionately error still
@@ -240,7 +240,7 @@ const (
 	DeliveryDraft     DeliveryOutcome = "draft"
 	DeliveryFailed    DeliveryOutcome = "failed"
 	// DeliveryNone marks a judge-passed work-request that recorded NO
-	// delivery — the phantom-success class this metric exists to catch.
+	// delivery - the phantom-success class this metric exists to catch.
 	DeliveryNone DeliveryOutcome = "none"
 )
 
@@ -261,7 +261,7 @@ func RecordModelCallDuration(model string, d time.Duration) {
 }
 
 // RecordPermissionAsk records an ACP subprocess permission ask reaching the
-// safety judge — expected to stay near zero (every known ask class is
+// safety judge - expected to stay near zero (every known ask class is
 // answered in config; only novel asks reach here).
 func RecordPermissionAsk(agent string) {
 	if m == nil {
@@ -279,12 +279,12 @@ func RecordMemoryRecall(hit bool) {
 }
 
 // RecordChecksSkipped records one node whose deterministic checks criterion
-// did NOT run at all — the gate then relied on judge score alone, with no
+// did NOT run at all - the gate then relied on judge score alone, with no
 // build/vet/test backstop behind it. reason is a short machine-readable code
 // (see checksPassCriterion's skip sites in internal/vetting/checks.go), e.g.
 // "no_repo", "no_checks_derived", "not_configured", "no_workspace". This is
 // the queryable signal for quack's phantom-success history (a fabricated
-// exploration once scored 0.9; a phantom delivery shipped) — "checks passed"
+// exploration once scored 0.9; a phantom delivery shipped) - "checks passed"
 // and "checks did not run" must never look the same in Tempo/Grafana.
 func RecordChecksSkipped(reason string) {
 	if m == nil {
@@ -296,7 +296,7 @@ func RecordChecksSkipped(reason string) {
 // RecordMemoryCommitFailure records a fire-and-forget memory commit that
 // errored (consolidation-model timeout, qdrant embed-write/neighbour timeout,
 // or other). reason should be one of the short machine-readable buckets
-// classified by the caller — see ClassifyMemoryCommitError.
+// classified by the caller - see ClassifyMemoryCommitError.
 func RecordMemoryCommitFailure(agent, reason string) {
 	if m == nil {
 		return
@@ -331,7 +331,7 @@ func attrStage(v string) attribute.KeyValue          { return attribute.String("
 func attrBool(key string, v bool) attribute.KeyValue { return attribute.Bool(key, v) }
 
 // logf is a tiny startup-diagnostics helper so Init's non-fatal failures are
-// still visible (metrics/tracing wiring is best-effort — never a startup error).
+// still visible (metrics/tracing wiring is best-effort - never a startup error).
 func logf(msg string, args ...any) {
 	slog.Warn(msg, append([]any{"component", "otelobs"}, args...)...)
 }

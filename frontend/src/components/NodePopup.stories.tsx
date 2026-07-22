@@ -19,7 +19,7 @@ const node: DagNodeDef = {
 }
 
 // The prompt renders through the same BubbleHeader + AssistantText markdown
-// treatment as a chat bubble — no controls (a completed/historical turn).
+// treatment as a chat bubble - no controls (a completed/historical turn).
 export const ReadOnly: Story = {
   args: {
     node,
@@ -57,7 +57,7 @@ export const RunningWithQueue: Story = {
   },
 }
 
-// A paused node — resume/cancel live in the ⋮ menu; the popup shows only the
+// A paused node - resume/cancel live in the ⋮ menu; the popup shows only the
 // prompt.
 export const PausedResumable: Story = {
   args: {
@@ -68,7 +68,7 @@ export const PausedResumable: Story = {
 }
 
 // #401 HITL follow-up: a needs_input node surfaces its pending question as its
-// own chat-style bubble, with the SAME input widget the queue uses — now
+// own chat-style bubble, with the SAME input widget the queue uses - now
 // wired to answer (resumes the node) instead of queue.
 export const NeedsInputAnswerable: Story = {
   args: {
@@ -80,7 +80,7 @@ export const NeedsInputAnswerable: Story = {
 }
 
 // If the resume wiring isn't available (e.g. a historical/reloaded turn), the
-// question still surfaces, read-only — never blocked on backend work.
+// question still surfaces, read-only - never blocked on backend work.
 export const NeedsInputReadOnly: Story = {
   args: {
     node,

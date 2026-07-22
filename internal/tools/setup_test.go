@@ -12,7 +12,7 @@ import (
 )
 
 // setupCloneAndBranch is dag.Plan's declared Setup PRE-step, past URL
-// validation — the deterministic twin of a worker's own git_clone +
+// validation - the deterministic twin of a worker's own git_clone +
 // git_checkout -b, run once by the harness before any node.
 
 func TestSetupCloneAndBranchClonesAndChecksOutNewBranch(t *testing.T) {
@@ -34,7 +34,7 @@ func TestSetupCloneAndBranchClonesAndChecksOutNewBranch(t *testing.T) {
 	if got := strings.TrimSpace(branchOut); got != "quack/work" {
 		t.Errorf("checked-out branch = %q, want quack/work", got)
 	}
-	// Landed exactly where jail.Resolve(userID, chatID, dir) says — the same
+	// Landed exactly where jail.Resolve(userID, chatID, dir) says - the same
 	// place a worker's own git_clone(dir="n1/repo") would resolve to.
 	want, err := b.jail.Resolve(b.userID, "", "n1/repo")
 	if err != nil {
@@ -73,7 +73,7 @@ func TestSetupCloneRejectsNonHTTPS(t *testing.T) {
 }
 
 // A worker addressing a setup-provisioned clone with a PLAIN relative path
-// (no "repo/" prefix, no absolute path) must resolve — the whole point of
+// (no "repo/" prefix, no absolute path) must resolve - the whole point of
 // workspace.SetupCloneDir landing the clone AT the node's own root rather
 // than a subdirectory of it. Before this, a worker had to either guess the
 // "repo/" prefix or `cd` first; observed in production, it did neither and
@@ -98,7 +98,7 @@ func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
 	fb := fsBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
 	res, err := fb.withCwd(ctx).readFile(readFileArgs{Path: "README.md"})
 	if err != nil {
-		t.Fatalf("read_file(\"README.md\") with no prefix: %v — want it to resolve directly into the setup clone", err)
+		t.Fatalf("read_file(\"README.md\") with no prefix: %v - want it to resolve directly into the setup clone", err)
 	}
 	if res.Content != "hello\n" {
 		t.Errorf("Content = %q, want %q", res.Content, "hello\n")
@@ -109,11 +109,11 @@ func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
 // TestReadFileResolvesSetupCloneLeadingSlash pins #502/#498: the trust-gate
 // judge (same fs tools as the worker, see NewJudgeFactory) tried
 // list_dir("/frontend") against a setup-provisioned clone and got "no such
-// file" — jailPath's "/" branch still applies the node's own dir (nodeDir),
+// file" - jailPath's "/" branch still applies the node's own dir (nodeDir),
 // but a call whose advisor-thread registration doesn't carry a WorkspaceNodeID
 // must resolve identically either way. Registers exactly as dag/graph.go does
-// for a repo-touching (implementer/reviewer) chain node — WorkspaceNodeID =
-// workspace.SharedRepoScope, distinct from NodeID — the shape a judge's own
+// for a repo-touching (implementer/reviewer) chain node - WorkspaceNodeID =
+// workspace.SharedRepoScope, distinct from NodeID - the shape a judge's own
 // invocation carries too (same token, same registration).
 func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
@@ -146,7 +146,7 @@ func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 	}
 	abs, err := fb.withCwd(ctx).listDir(listDirArgs{Path: "/frontend"})
 	if err != nil {
-		t.Fatalf("list_dir(\"/frontend\"): %v — a leading slash must resolve inside the clone, not the chat root", err)
+		t.Fatalf("list_dir(\"/frontend\"): %v - a leading slash must resolve inside the clone, not the chat root", err)
 	}
 	if len(abs.Entries) != len(rel.Entries) || len(abs.Entries) == 0 {
 		t.Errorf("list_dir(\"/frontend\") entries = %v, want the same as the relative path %v", abs.Entries, rel.Entries)
@@ -189,7 +189,7 @@ func TestSetupCloneAndBranchConfiguresCommitterIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	// A plain `git commit` (no -c identity flags) must succeed — proving the
+	// A plain `git commit` (no -c identity flags) must succeed - proving the
 	// identity is configured in the clone.
 	if err := os.WriteFile(filepath.Join(target, "new.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestSetupCloneAndBranchConfiguresCommitterIdentity(t *testing.T) {
 }
 
 // addBranchFixture pushes a new branch to bare, off its current main, with one
-// extra commit — simulating a PR head that exists on the remote but was never
+// extra commit - simulating a PR head that exists on the remote but was never
 // created by this clone.
 func addBranchFixture(t *testing.T, bare, branch string) {
 	t.Helper()
@@ -235,7 +235,7 @@ func TestSetupCloneAndBranchReviewChecksOutRealHeadCommits(t *testing.T) {
 		t.Fatalf("setupCloneAndBranch (review): %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(target, "pr.txt")); err != nil {
-		t.Errorf("checked-out HEAD is missing the PR head's own commit (pr.txt): %v — got a shadow branch off base instead", err)
+		t.Errorf("checked-out HEAD is missing the PR head's own commit (pr.txt): %v - got a shadow branch off base instead", err)
 	}
 	branchOut, _, err := runGit(context.Background(), target, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
 	if err != nil {
@@ -244,7 +244,7 @@ func TestSetupCloneAndBranchReviewChecksOutRealHeadCommits(t *testing.T) {
 	if got := strings.TrimSpace(branchOut); got != "pr/head" {
 		t.Errorf("checked-out branch = %q, want pr/head", got)
 	}
-	// The PR diff must be computable — three-dot needs a merge-base, which
+	// The PR diff must be computable - three-dot needs a merge-base, which
 	// needs base's full history (the initial clone is shallow, base-only).
 	diffOut, _, err := runGit(context.Background(), target, []string{"diff", "main...HEAD"}, b.caps, nil)
 	if err != nil {
@@ -271,7 +271,7 @@ func TestSetupCloneAndBranchImplementStillCreatesFreshBranch(t *testing.T) {
 		t.Fatalf("setupCloneAndBranch (implement): %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(target, "pr.txt")); err == nil {
-		t.Fatal("implement checkout picked up the stale remote branch's commit — want a fresh branch off base instead")
+		t.Fatal("implement checkout picked up the stale remote branch's commit - want a fresh branch off base instead")
 	}
 	branchOut, _, err := runGit(context.Background(), target, []string{"rev-parse", "--abbrev-ref", "HEAD"}, b.caps, nil)
 	if err != nil {

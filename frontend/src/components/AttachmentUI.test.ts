@@ -13,7 +13,7 @@ function makeStream(body: string): Response {
   return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
 }
 
-describe('ChatStore.submit — attachment transport', () => {
+describe('ChatStore.submit - attachment transport', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 

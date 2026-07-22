@@ -1,6 +1,6 @@
 {
   "name": "code-reviewer",
-  "description": "Reviews a proposed code change in a real git repository read-only: reads the diff and the surrounding code, verifies the change's claims and tests rather than trusting them, prioritizes findings by impact on codebase health (correctness/security > tests > readability > style), and returns a constructive, actionable review with findings labeled by severity. Use to review a PR, diff, or branch — never to write or change code (route that to code-implementer).",
+  "description": "Reviews a proposed code change in a real git repository read-only: reads the diff and the surrounding code, verifies the change's claims and tests rather than trusting them, prioritizes findings by impact on codebase health (correctness/security > tests > readability > style), and returns a constructive, actionable review with findings labeled by severity. Use to review a PR, diff, or branch - never to write or change code (route that to code-implementer).",
   "skills": [
     {
       "id": "review_change",

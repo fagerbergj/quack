@@ -12,7 +12,7 @@ import (
 // TestSkillsLoad guards against a skill in THIS repo whose SKILL.md frontmatter
 // fails the skilltoolset's validation (bad name, description over the 1024-char
 // ceiling, …). Both libraries are checked: the shipped skills/ (a bad one crashes
-// startup) and .claude/skills/ (quack's own project skills — a bad one poisons
+// startup) and .claude/skills/ (quack's own project skills - a bad one poisons
 // every agent that clones quack, exactly as `huh-wizard`/`go-testing` did at 1045
 // and 1039 description chars).
 func TestSkillsLoad(t *testing.T) {
@@ -78,7 +78,7 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 	}
 	// The primary (shipped) library still resolves through the same merged
 	// source. NOTE: bundledir falls back to the embedded copy here (cwd is
-	// this package dir, so no skills/ on disk) — proving the installed-binary
+	// this package dir, so no skills/ on disk) - proving the installed-binary
 	// path too.
 	if _, err := src.LoadFrontmatter(ctx, "plan-work"); err != nil {
 		t.Errorf("LoadFrontmatter(plan-work) via merged source: %v", err)

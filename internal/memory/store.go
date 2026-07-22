@@ -3,11 +3,11 @@
 // All the embed / bucket / recall / mem0-style consolidation logic lives on Store;
 // the backend is just storage, behind the index interface.
 //
-// Memory is SHARED and bucketed by SUBJECT (repo / role / user — see scope.go), not
+// Memory is SHARED and bucketed by SUBJECT (repo / role / user - see scope.go), not
 // siloed per agent. A caller reads and writes through a View: a Store bound to its
 // Scope, implementing ADK's memory.Service so the native preload_memory /
 // load_memory tools route through it via the runner's MemoryService. Whole-session
-// auto-write (AddSessionToMemory) is a deliberate no-op — writes go through the
+// auto-write (AddSessionToMemory) is a deliberate no-op - writes go through the
 // explicit, gated commit path, never ADK's automatic ingestion.
 package memory
 
@@ -29,7 +29,7 @@ import (
 
 // index is the vector-storage backend behind a Store. Qdrant and SQLite implement
 // it; Store holds the shared embed/scope/consolidation logic, so a backend is just
-// storage. Points are partitioned by a BUCKET key (repo / role / user — see
+// storage. Points are partitioned by a BUCKET key (repo / role / user - see
 // scope.go), set on upsert and filtered on query.
 type index interface {
 	// ensure makes the backing collection/table ready. probeDim returns the
@@ -69,13 +69,13 @@ const (
 	// document) so one oversized input can't become a minutes-long CPU embed.
 	maxRecallRunes = 2000
 	// recallEmbedTimeout bounds how long recall waits on the embedder before
-	// degrading to no-recall — recall is best-effort and must not block a node.
+	// degrading to no-recall - recall is best-effort and must not block a node.
 	recallEmbedTimeout = 30 * time.Second
 )
 
 // Store serves one memory collection (e.g. "task_memory") over a vector index. It
 // is SHARED by every agent: callers read and write through a View bound to their
-// Scope (the buckets they are entitled to — see scope.go). The consolidator (a
+// Scope (the buckets they are entitled to - see scope.go). The consolidator (a
 // gemma-class LLM) drives the gated commit path's extract/vet/consolidate step; it
 // may be nil for a read-only store (Commit then errors).
 type Store struct {
@@ -125,7 +125,7 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 func (s *Store) AddSessionToMemory(ctx context.Context, _ session.Session) error { return nil }
 
 // recall embeds the query and returns the top-K nearest memories across buckets
-// (the union of what the caller is entitled to — see Scope). Callers reach it
+// (the union of what the caller is entitled to - see Scope). Callers reach it
 // through a View, which is what binds a caller to its buckets.
 func (s *Store) recall(ctx context.Context, buckets []string, query string) (*adkmemory.SearchResponse, error) {
 	if len(buckets) == 0 || strings.TrimSpace(query) == "" {
@@ -133,7 +133,7 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 	}
 	// Cap the query before embedding: a recall query is a topic, not a document.
 	// Without this an agent whose input is huge (e.g. a combiner fed all upstream
-	// findings) would embed tens of KB on the CPU embedder — a 10-min job that
+	// findings) would embed tens of KB on the CPU embedder - a 10-min job that
 	// head-of-line-blocks llama.cpp and stalls the DAG.
 	if r := []rune(query); len(r) > maxRecallRunes {
 		query = string(r[:maxRecallRunes])
@@ -198,14 +198,14 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 }
 
 // embed wraps the embedder with hot-path timing (Debug): which call site (path),
-// how many inputs, total input chars, and how long the call took — so a slow
+// how many inputs, total input chars, and how long the call took - so a slow
 // embed in the llm-swap logs can be attributed to recall vs commit and to input
 // size. Enable with QUACK_LOG_LEVEL=debug.
 func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]float32, error) {
 	// Single-input calls (recall, neighbour probe) are memoized: preload_memory
 	// re-embeds the same node-task query on every model turn, and that embed is
 	// synchronous + CPU-bound, so caching collapses the repeats (and the resulting
-	// cross-node contention). Batch writes are unique facts — not worth caching.
+	// cross-node contention). Batch writes are unique facts - not worth caching.
 	if len(texts) == 1 && s.embCache != nil {
 		if v, ok := s.embCache.get(texts[0]); ok {
 			s.log.Debug("embed", "path", path, "inputs", 1, "chars", len(texts[0]), "cached", true)
@@ -227,7 +227,7 @@ func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]flo
 
 // embedCache memoizes text→embedding. Embeddings are deterministic for a fixed
 // model (stable for the process lifetime), so no TTL is needed; it's bounded by a
-// size cap. ponytail: clear-on-full, not LRU — distinct queries per request are
+// size cap. ponytail: clear-on-full, not LRU - distinct queries per request are
 // few, so a 512-entry cap rarely fills; switch to an LRU only if real churn shows.
 type embedCache struct {
 	mu  sync.Mutex

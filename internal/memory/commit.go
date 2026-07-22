@@ -16,7 +16,7 @@ import (
 
 // Candidate is a memory the agent staged (or that the orchestrator wants written
 // directly). Metadata is free-form (e.g. {"kind": "source"}); the schema carries
-// no use-case vocabulary. Metadata["bucket"] (repo|role|user — stage_memory's
+// no use-case vocabulary. Metadata["bucket"] (repo|role|user - stage_memory's
 // `bucket` argument) routes the write; anything else takes Scope's default.
 type Candidate struct {
 	Content  string
@@ -40,7 +40,7 @@ var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
 // Each bucket is consolidated separately (its own neighbours, its own reconcile
 // pass), because a memory only ever competes with others about the SAME subject.
 //
-// ponytail: per-(bucket, collection) commits can race — two parallel commits of
+// ponytail: per-(bucket, collection) commits can race - two parallel commits of
 // the same fact both ADD. Best-effort: the next commit's consolidation reconciles
 // the dup. Add a per-key lock only if duplicate churn proves real.
 func (s *Store) Commit(ctx context.Context, sc Scope, author string, staged []Candidate, sourceText string) (int, error) {
@@ -104,7 +104,7 @@ func (s *Store) commitTo(ctx context.Context, bucket, author string, staged []Ca
 		return 0, nil
 	}
 
-	// Only honour an UPDATE/DELETE id the consolidator was actually shown — a
+	// Only honour an UPDATE/DELETE id the consolidator was actually shown - a
 	// hallucinated id would otherwise upsert an orphan point at an arbitrary id.
 	valid := make(map[string]bool, len(neighbours))
 	for _, n := range neighbours {
@@ -143,7 +143,7 @@ type op struct {
 }
 
 // maxProbeRunes caps the text embedded to find dedup neighbours. The probe only
-// needs to be representative of the work, not complete — a research answer can be
+// needs to be representative of the work, not complete - a research answer can be
 // 10k+ chars, and embedding all of it on a CPU model costs seconds for no extra
 // dedup value. The memories actually written are short atomic facts embedded in
 // full.
@@ -328,7 +328,7 @@ func (s *Store) apply(ctx context.Context, bucket, author string, ops []op, vali
 // reconcile mechanics (ADD/UPDATE/DELETE/NOOP + JSON shape) are identical; only
 // the "what's worth keeping" framing differs by scope.
 var consolidatePrompts = map[string]string{
-	"task": "You maintain a team of agents' SHARED long-term memory about one subject — either a " +
+	"task": "You maintain a team of agents' SHARED long-term memory about one subject - either a " +
 		"repository (its conventions, build/test/lint commands, layout, where things are registered, " +
 		"pre-existing failures) or a role's durable tradecraft (which sources proved authoritative and " +
 		"for what, which were junk, tactics that worked, dead-ends). You are given STAGED candidates, the " +
@@ -336,23 +336,23 @@ var consolidatePrompts = map[string]string{
 		"Produce a set of operations. First VET: keep only durable knowledge worth recalling in future " +
 		"unrelated tasks on this subject; drop anything volatile, request-specific, speculative, or not " +
 		"clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
-		"- ADD: genuinely new — provide content (one atomic sentence) and a kind (e.g. convention|command|layout|source|search|fetch|deadend).\n" +
-		"- UPDATE: refines/supersedes an existing memory — provide its id plus the new content and kind.\n" +
-		"- DELETE: an existing memory is now contradicted or obsolete — provide its id.\n" +
-		"- NOOP: already covered — skip it.\n\n" +
+		"- ADD: genuinely new - provide content (one atomic sentence) and a kind (e.g. convention|command|layout|source|search|fetch|deadend).\n" +
+		"- UPDATE: refines/supersedes an existing memory - provide its id plus the new content and kind.\n" +
+		"- DELETE: an existing memory is now contradicted or obsolete - provide its id.\n" +
+		"- NOOP: already covered - skip it.\n\n" +
 		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
 		"Empty ops list if nothing is worth keeping.",
 
-	"user": "You maintain durable facts ABOUT THE USER — who they are, their preferences, relationships, " +
-		"possessions, goals, and hard limits — so the assistant can personalize. You are given STAGED " +
+	"user": "You maintain durable facts ABOUT THE USER - who they are, their preferences, relationships, " +
+		"possessions, goals, and hard limits - so the assistant can personalize. You are given STAGED " +
 		"candidates (things the user revealed about themselves) and the most similar EXISTING MEMORIES.\n\n" +
 		"Produce a set of operations. First VET: keep only durable facts the user actually stated about " +
 		"themselves; drop transient/request-specific details and anything sensitive they did not ask to be " +
 		"kept. Then RECONCILE each kept fact against the existing ones:\n" +
-		"- ADD: genuinely new — provide content (one atomic sentence) and a kind (identity|preference|relationship|possession|goal|limit).\n" +
-		"- UPDATE: the fact changed (moved, switched jobs, new preference) — provide the existing id plus new content and kind.\n" +
-		"- DELETE: an existing fact is now contradicted — provide its id.\n" +
-		"- NOOP: already known — skip it.\n\n" +
+		"- ADD: genuinely new - provide content (one atomic sentence) and a kind (identity|preference|relationship|possession|goal|limit).\n" +
+		"- UPDATE: the fact changed (moved, switched jobs, new preference) - provide the existing id plus new content and kind.\n" +
+		"- DELETE: an existing fact is now contradicted - provide its id.\n" +
+		"- NOOP: already known - skip it.\n\n" +
 		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
 		"Empty ops list if nothing is worth keeping.",
 }

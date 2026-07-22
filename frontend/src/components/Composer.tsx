@@ -9,14 +9,14 @@ export interface AttachmentPreview {
 }
 
 export interface ComposerProps {
-  // No active chat — input is disabled.
+  // No active chat - input is disabled.
   disabled: boolean
-  // A turn is streaming — input stays live and Send queues instead of running
+  // A turn is streaming - input stays live and Send queues instead of running
   // a second turn; Stop appears alongside it to cancel the active run.
   streaming: boolean
   onSubmit: (text: string, files: File[], previews: AttachmentPreview[]) => void
   onStop: () => void
-  // Follow-ups queued while streaming, in send order — rendered as pending
+  // Follow-ups queued while streaming, in send order - rendered as pending
   // rows above the input; empty/omitted when nothing is queued.
   queue?: QueuedTurn[]
   onRemoveQueued?: (id: string) => void
@@ -24,7 +24,7 @@ export interface ComposerProps {
 
 // Composer owns the draft `input` + `attachments` locally so typing only re-renders
 // this small component, not the whole chat (the turn list / DAG trees). It hands the
-// finished message up via onSubmit — the caller decides whether that's an immediate
+// finished message up via onSubmit - the caller decides whether that's an immediate
 // send or (while streaming) queuing it for after the current run.
 export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued }: ComposerProps) {
   const [input, setInput] = useState('')
@@ -35,7 +35,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   // Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
   // Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
   // capped at MAX_HEIGHT_PX (matches max-h-48). #425: overflow-y is toggled in JS
-  // rather than left as a permanent Tailwind class — an always-on `overflow-y-auto`
+  // rather than left as a permanent Tailwind class - an always-on `overflow-y-auto`
   // renders a vertical scrollbar even on a single empty line in Chromium, since the
   // scrollbar reserves its track regardless of whether content actually overflows.
   const MAX_HEIGHT_PX = 192
@@ -71,7 +71,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
         <div className="flex flex-col gap-2 mb-3" aria-label="Queued messages">
           {queue.map(item => (
             // Looks like the user's own message bubble, just grayed out with a
-            // "queued" hint — not a separate pill design.
+            // "queued" hint - not a separate pill design.
             <div key={item.id} className="group flex justify-end">
               <div className="max-w-2xl ml-auto">
                 <div className="bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">

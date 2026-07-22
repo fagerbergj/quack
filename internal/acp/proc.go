@@ -43,7 +43,7 @@ func (a *Agent) start(cwd string) (*procHandle, error) {
 		"NO_COLOR=1",
 	}, a.opts.Env...)
 	// Own process group + group kill + WaitDelay: the exact hang class from the
-	// v0.5.2 run_command incident — a grandchild holding our stdout pipe keeps
+	// v0.5.2 run_command incident - a grandchild holding our stdout pipe keeps
 	// Wait blocked forever unless the whole group dies and the pipe is
 	// force-closed (mirrors workspace.newChildCmd).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -89,7 +89,7 @@ func (h *procHandle) stderrTail() string {
 }
 
 // clientHandler implements the ACP client side. quack advertises no fs/terminal
-// capabilities, so those methods only fire on a misbehaving agent — they refuse.
+// capabilities, so those methods only fire on a misbehaving agent - they refuse.
 type clientHandler struct {
 	h     *procHandle
 	judge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
@@ -107,7 +107,7 @@ func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) e
 }
 
 // RequestPermission routes the ask to the safety judge (Options.
-// PermissionJudge) — the ACP twin of the native guard ladder's judge tier.
+// PermissionJudge) - the ACP twin of the native guard ladder's judge tier.
 // The generated permission config already allows everything a round
 // legitimately needs, so an ask is by construction the exceptional case
 // (a directory escape, a .env read, opencode's doom_loop detector); the
@@ -173,7 +173,7 @@ func (c *clientHandler) WaitForTerminalExit(ctx contextT, p sdk.WaitForTerminalE
 	return sdk.WaitForTerminalExitResponse{}, fmt.Errorf("terminal not supported")
 }
 
-// tailBuffer keeps the LAST max bytes written — a crashing agent's useful
+// tailBuffer keeps the LAST max bytes written - a crashing agent's useful
 // stderr is at the end, and an unbounded buffer on a chatty agent is a leak.
 type tailBuffer struct {
 	mu  sync.Mutex

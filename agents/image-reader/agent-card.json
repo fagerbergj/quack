@@ -13,7 +13,7 @@
     {
       "id": "transcribe-handwriting",
       "name": "Handwriting transcription",
-      "description": "Transcribes handwritten text from an attached image — cursive, printed, mixed, or messy handwriting. Preserves structure and layout as Markdown. Triggers on requests to read or transcribe a handwritten note, letter, journal, form, or annotation.",
+      "description": "Transcribes handwritten text from an attached image - cursive, printed, mixed, or messy handwriting. Preserves structure and layout as Markdown. Triggers on requests to read or transcribe a handwritten note, letter, journal, form, or annotation.",
       "tags": ["handwriting", "ocr", "transcription", "image"],
       "examples": [
         "Transcribe this handwritten note",
@@ -28,7 +28,7 @@
     {
       "id": "dense-ocr",
       "name": "Dense document OCR",
-      "description": "Extracts all text from images with dense or complex layouts — multi-column documents, forms with many fields, receipts, invoices, technical diagrams with labels, or images with small print. Preserves structure as Markdown. Triggers on requests to extract, read, or transcribe text from a complex or information-dense document image.",
+      "description": "Extracts all text from images with dense or complex layouts - multi-column documents, forms with many fields, receipts, invoices, technical diagrams with labels, or images with small print. Preserves structure as Markdown. Triggers on requests to extract, read, or transcribe text from a complex or information-dense document image.",
       "tags": ["ocr", "document", "image", "extraction"],
       "examples": [
         "Extract all text from this document scan",

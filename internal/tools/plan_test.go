@@ -22,7 +22,7 @@ func TestNewPlanToolMetadata(t *testing.T) {
 		t.Errorf("Description() = %q, want mention of DAG", tl.Description())
 	}
 	// Every plan must declare setup + delivery, and the model must never run
-	// git/push/PR itself — see github-delivery-architecture.
+	// git/push/PR itself - see github-delivery-architecture.
 	for _, want := range []string{"setup", "delivery", "you never run git, push, or open a PR yourself"} {
 		if !strings.Contains(tl.Description(), want) {
 			t.Errorf("Description() = %q, want it to mention %q", tl.Description(), want)
@@ -30,7 +30,7 @@ func TestNewPlanToolMetadata(t *testing.T) {
 	}
 }
 
-// summarizePlan is the summary the model sees back after calling plan — it
+// summarizePlan is the summary the model sees back after calling plan - it
 // must surface the declared setup/delivery so the model can catch its own
 // mistake before calling execute.
 func TestSummarizePlanIncludesSetupAndDelivery(t *testing.T) {

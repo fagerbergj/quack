@@ -61,7 +61,7 @@ export const Basic: Story = { args: { turn: ANSWER } }
 // A research turn: collapsed "Steps" DAG above the synthesized answer.
 export const WithResearch: Story = { args: { turn: RESEARCH } }
 
-// #434 — a label/webhook-triggered plan turn has no typed user message, just
+// #434 - a label/webhook-triggered plan turn has no typed user message, just
 // a synthesized task (visible inside the DAG bubble's "Steps"). The empty
 // user bubble that used to float above it is now skipped entirely.
 export const LabelTriggeredNoUserBubble: Story = {

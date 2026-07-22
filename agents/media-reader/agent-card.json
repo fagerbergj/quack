@@ -40,7 +40,7 @@
     {
       "id": "extract-structured-data",
       "name": "Structured data extraction",
-      "description": "Parses structured content from an attached image — forms, tables, receipts, session logs, notes — and outputs it as Markdown sections. Use when the user wants data extracted, parsed, or summarised from a document image.",
+      "description": "Parses structured content from an attached image - forms, tables, receipts, session logs, notes - and outputs it as Markdown sections. Use when the user wants data extracted, parsed, or summarised from a document image.",
       "tags": ["extraction", "document", "image", "parsing"],
       "examples": [
         "Parse this form and list all the fields",

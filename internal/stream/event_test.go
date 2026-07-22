@@ -154,7 +154,7 @@ func TestTranslatorNilSafe(t *testing.T) {
 
 // A failing judge legitimately scores 0.0/passed=false. Those must survive JSON
 // serialization (omitempty would drop them), or the UI shows no score badge for
-// failing judges — only passing ones.
+// failing judges - only passing ones.
 func TestAgentCompleteJudgeZeroScoreSerializes(t *testing.T) {
 	b, err := json.Marshal(AgentCompleteData{RunID: "r1", Stage: StageJudge, Round: 1, Score: 0, Passed: false, Feedback: "failed clean_output"})
 	if err != nil {

@@ -1,6 +1,6 @@
 // Package dag_test holds ask_advisor integration tests that need BOTH the
 // real dag.Executor/gate machinery AND the real internal/tools.NewAskAdvisorTool
-// — internal/tools already imports internal/dag (for dag.Plan/Node and
+// - internal/tools already imports internal/dag (for dag.Plan/Node and
 // dag.NodeTaskStateKey/NodeRubricStateKey), so a same-package (`package dag`)
 // test file can't import internal/tools back without a cycle (see
 // hitl_test.go's newAskTool comment for the same constraint on ask_user).
@@ -34,7 +34,7 @@ import (
 )
 
 // ── local stub-model helpers (mirrors dag's own gCall/gText/gSysText/gUserText/
-// gHasTool — duplicated because those are unexported in `package dag` and this
+// gHasTool - duplicated because those are unexported in `package dag` and this
 // is an external test package) ──────────────────────────────────────────────
 
 func atText(s string) *model.LLMResponse {
@@ -89,7 +89,7 @@ func atAllText(req *model.LLMRequest) string {
 }
 
 // recordingAdvisor answers every consult with a fixed reply per call number,
-// recording the full prompt (including prior session history) it saw —
+// recording the full prompt (including prior session history) it saw -
 // the assertion surface for native cross-round/cross-resume session memory.
 type recordingAdvisor struct {
 	mu      sync.Mutex
@@ -116,7 +116,7 @@ func newAdvisorTool(t *testing.T, advisorModel model.LLM, sessions session.Servi
 		Name: "advisor", Model: advisorModel, Description: "advisor", Instruction: "Advise.",
 		// ModeChat pinned, as production does via agent.BuildChat: the runner
 		// would otherwise force-set it with an unsynchronized write on this
-		// SHARED instance — a data race under concurrent consults.
+		// SHARED instance - a data race under concurrent consults.
 		Mode: llmagent.ModeChat,
 	})
 	if err != nil {
@@ -133,21 +133,21 @@ func newAdvisorTool(t *testing.T, advisorModel model.LLM, sessions session.Servi
 // ALSO the per-chat WORKSPACE scope the run's tools resolve paths through
 // (<root>/<user>/<runGraphChatID>/…, derived by tools.chatScopeFromContext), so
 // a test seeding a jail fixture for those tools must write it under this SAME
-// id — hence one named constant instead of a literal at each site.
+// id - hence one named constant instead of a literal at each site.
 const runGraphChatID = "s"
 
 // runGraphNodeID is the id of the single node every runGraph test plan uses. Since
 // #198 a node's tools DEFAULT their cwd to the node's OWN dir (<chat>/<node>/), so a
-// fixture those tools must act on has to be seeded there — not at the chat root. A
+// fixture those tools must act on has to be seeded there - not at the chat root. A
 // fixture at the chat root leaves the tool resolving a path that does not exist, and
 // a guarded delete then never completes: that is exactly how TestGuardConfirm_OverA2A
 // hung for the full 10-minute CI timeout.
 const runGraphNodeID = "n1"
 
-// runGraph runs plan via the REAL dag.Executor (RunPlanAsGraph — the native
+// runGraph runs plan via the REAL dag.Executor (RunPlanAsGraph - the native
 // graph path production uses), collecting the SSE events and node outputs.
 // sessions is shared by BOTH the executor's own runner AND the ask_advisor
-// tool baked into worker — exactly how internal/serve wires it (st.Sessions
+// tool baked into worker - exactly how internal/serve wires it (st.Sessions
 // passed to both dag.NewExecutor's session.Service and tools.Deps.Sessions).
 func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, sessions session.Service, plan dag.Plan, content *genai.Content, resumeNodes []string) (paused bool, outputs map[string]string, events []stream.SSEEvent) {
 	t.Helper()
@@ -211,7 +211,7 @@ func (s *draftReviseStub) GenerateContent(_ context.Context, req *model.LLMReque
 }
 
 // TestAskAdvisor_MemoryAcrossGateRounds: a consult during a judge-fail
-// revision must see the DRAFT round's own consultation (request + reply) —
+// revision must see the DRAFT round's own consultation (request + reply) -
 // native session memory persisting across the gate's draft → revise loop
 // within one node invocation, replacing the dropped
 // TestAdvisor_RevisionConsultSeesItsOwnPriorAdvice (the gate no longer
@@ -256,7 +256,7 @@ func TestAskAdvisor_MemoryAcrossGateRounds(t *testing.T) {
 
 // TestAskAdvisor_StreamsAsToolCall (test case 7): a consultation surfaces as
 // an ordinary agent_tool_call/agent_tool_result pair within the worker's own
-// run — NOT a separate stage — with the request visible in Args, and the
+// run - NOT a separate stage - with the request visible in Args, and the
 // advice visible in the result.
 func TestAskAdvisor_StreamsAsToolCall(t *testing.T) {
 	stub := &draftReviseStub{}
@@ -293,12 +293,12 @@ func TestAskAdvisor_StreamsAsToolCall(t *testing.T) {
 		// ask_advisor must never be a separate agent_start stage.
 		if ev.Name == stream.EventAgentStart {
 			if d, ok := ev.Data.(stream.AgentStartData); ok && d.Agent == "ask_advisor" {
-				t.Errorf("ask_advisor surfaced as its own agent_start run (stage=%q) — it must be ordinary tool activity", d.Stage)
+				t.Errorf("ask_advisor surfaced as its own agent_start run (stage=%q) - it must be ordinary tool activity", d.Stage)
 			}
 		}
 	}
 	if !sawDraftRequest {
-		t.Error("no agent_tool_call for ask_advisor carrying the worker's request text — consultation not visible in the stream")
+		t.Error("no agent_tool_call for ask_advisor carrying the worker's request text - consultation not visible in the stream")
 	}
 	if !sawResult {
 		t.Error("no agent_tool_result for ask_advisor")
@@ -341,7 +341,7 @@ func (s *hitlAdvisorStub) GenerateContent(_ context.Context, req *model.LLMReque
 }
 
 // newAskUserTool mirrors tools.NewAskUserTool inline (same tools→dag import-
-// cycle constraint as hitl_test.go's newAskTool — but here it's actually
+// cycle constraint as hitl_test.go's newAskTool - but here it's actually
 // avoidable since this file is package dag_test and COULD import
 // internal/tools; kept inline anyway for symmetry with the rest of this
 // package's HITL tests and to keep this test's tool surface minimal/explicit).
@@ -366,9 +366,9 @@ func newAskUserTool(t *testing.T) tool.Tool {
 }
 
 // TestAskAdvisor_MemoryAcrossHITLPauseResume: a post-resume consult must see
-// the PRE-PAUSE consultation (same session key — the per-node advisor session
+// the PRE-PAUSE consultation (same session key - the per-node advisor session
 // is keyed by invocation + node, and ADK reuses the paused invocation's ID on
-// resume — see NewAskAdvisorTool's doc comment).
+// resume - see NewAskAdvisorTool's doc comment).
 func TestAskAdvisor_MemoryAcrossHITLPauseResume(t *testing.T) {
 	stub := &hitlAdvisorStub{}
 	advisor := &recordingAdvisor{}
@@ -433,7 +433,7 @@ func TestAskAdvisor_MemoryAcrossHITLPauseResume(t *testing.T) {
 // TestAskAdvisor_OverA2A reproduces the LIVE failure (2026-07-09 22:29): in
 // production the worker is an A2A remote agent (internal/agent.Serve →
 // srv.Client()), so ask_advisor's handler executes inside the A2A SERVER's
-// runner — a different session (the A2A context session, AppName = the agent
+// runner - a different session (the A2A context session, AppName = the agent
 // name), whose events carry no NodeInfo and whose state has no gate-seeded
 // keys. Any identity mechanism that reads the calling runner's session/state/
 // path fails there deterministically. This test runs the full production
@@ -444,7 +444,7 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 	stub := &draftReviseStub{}
 	advisor := &recordingAdvisor{}
 	// The REAL database-backed session service (sqlite dialect of the same ADK
-	// service Postgres uses in production) — so this covers the full production
+	// service Postgres uses in production) - so this covers the full production
 	// shape: durable DB sessions + the A2A hop. The 2026-07-09 live failure
 	// only reproduced with both.
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -502,7 +502,7 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 	advisor.mu.Lock()
 	defer advisor.mu.Unlock()
 	if len(advisor.prompts) != 2 {
-		t.Fatalf("advisor called %d times over A2A, want 2 (draft + revision) — node identity failed on the A2A server side?", len(advisor.prompts))
+		t.Fatalf("advisor called %d times over A2A, want 2 (draft + revision) - node identity failed on the A2A server side?", len(advisor.prompts))
 	}
 	if !strings.Contains(advisor.prompts[0], "do it") {
 		t.Errorf("A2A: advisor's 1st request missing the node task seed; got:\n%s", advisor.prompts[0])
@@ -515,7 +515,7 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 // ── concurrency: same agent, two nodes, isolated mentor threads ─────────────
 
 // concConsultStub is one node's worker model: it consults ask_advisor twice
-// (distinct per-node request markers), then answers. One INSTANCE per node —
+// (distinct per-node request markers), then answers. One INSTANCE per node -
 // identifying the node from request TEXT is unreliable under concurrency
 // (co-located single-turn workers share the session, and ADK anchors their
 // "current turn" at the latest user-ROLE event, which a concurrent node's
@@ -553,18 +553,18 @@ func (s *concConsultStub) GenerateContent(_ context.Context, req *model.LLMReque
 // TestAskAdvisor_ConcurrentNodesIsolatedThreads: two nodes of the SAME agent
 // run concurrently (maxActive=2) and each consults its mentor twice. Each
 // node's SECOND consult must see its OWN first request and never the other
-// node's — i.e. the two mentor conversations are distinct advisor sessions
+// node's - i.e. the two mentor conversations are distinct advisor sessions
 // (the per-node thread token keys them; a shared or misrouted session would
 // leak REQ-A-* into B's prompt or vice versa).
 func TestAskAdvisor_ConcurrentNodesIsolatedThreads(t *testing.T) {
 	advisor := &recordingAdvisor{}
 	sessions := session.InMemoryService()
-	// ONE advisor + ONE tool instance shared by both workers — the advisor-
+	// ONE advisor + ONE tool instance shared by both workers - the advisor-
 	// session isolation under concurrency is exactly what's under test. The
 	// workers themselves are separate llmagent instances per node: ADK's
 	// RunLLMAgentAsNode mutates unsynchronized per-agent state (Mode/
 	// IncludeContents, llm_agent_wrapper.go), so a SHARED local llmagent
-	// across concurrent nodes races in ADK itself — a test-only hazard;
+	// across concurrent nodes races in ADK itself - a test-only hazard;
 	// production workers are A2A remote agents with no such state.
 	tl := newAdvisorTool(t, advisor, sessions)
 	mk := func(name string, m model.LLM) adkagent.Agent {
@@ -607,7 +607,7 @@ func TestAskAdvisor_ConcurrentNodesIsolatedThreads(t *testing.T) {
 	defer advisor.mu.Unlock()
 	// 2 consults per researcher node (the synth's task contains both letters and
 	// routes as "B"; its calls land in B's counter AFTER B answered, so it never
-	// consults — calls 3+ answer immediately).
+	// consults - calls 3+ answer immediately).
 	var secondA, secondB string
 	for _, pr := range advisor.prompts {
 		if strings.Contains(pr, "REQ-A-2") {

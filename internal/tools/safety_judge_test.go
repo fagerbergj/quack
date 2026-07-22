@@ -10,7 +10,7 @@ import (
 )
 
 // safetyStub is a model.LLM that answers a safety-judge run by calling
-// submit_safety_verdict with a fixed verdict — or with plain text (never
+// submit_safety_verdict with a fixed verdict - or with plain text (never
 // calling the tool) when submit is false, to prove the no-verdict error path.
 type safetyStub struct {
 	allow  bool
@@ -78,20 +78,20 @@ func TestSafetyJudgeNoVerdictIsError(t *testing.T) {
 // CHILD process (its arguments are path-checked by nothing; `sh -c "…"` trips no
 // metachar), so the one automated gate we have was calibrated to stand down on
 // exactly the class of operation it exists to catch. Those claims must never
-// come back — hence the must-NOT-contain half.
+// come back - hence the must-NOT-contain half.
 //
 // The anti-over-denial calibration (live usage 2026-07-10: the judge denied
 // anything destructive-LOOKING) is kept, but only for what IS genuinely
 // confined: the task's own artifacts inside its own repo.
 func TestSafetyJudgeInstructionCalibration(t *testing.T) {
 	for _, want := range []string{
-		// What actually holds — stated as narrowly as it is true.
+		// What actually holds - stated as narrowly as it is true.
 		"resolve every path inside the agent's workspace jail",
 		"run_command is DIFFERENT",
 		"real operating-system process",
 		`"No shell" is a habit guard, not a wall`,
 		// run_command is ALWAYS a REAL SHELL now (workspace.RunShell, sandboxed or
-		// not — #277): a judge told punctuation is filtered stands down on the
+		// not - #277): a judge told punctuation is filtered stands down on the
 		// shell it is the only check on.
 		"REAL SHELL",
 		"no metacharacter filter stands in the way",

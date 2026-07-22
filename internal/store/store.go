@@ -49,13 +49,13 @@ type ChatTurn struct {
 	// Model is the model that produced the orchestrator's own plain reply this
 	// turn, stamped from the live stream at run end (ADK's event storage drops
 	// ModelVersion on read, so it can't be recovered from session events later).
-	// Empty for DAG turns — their models live per-node on DagNode.
+	// Empty for DAG turns - their models live per-node on DagNode.
 	Model string `json:"model,omitempty"`
 }
 
 // GithubSnapshot stores the full GitHub state fetched at a github-origin
 // chat's last dispatch (internal/github/snapshot.go), keyed by ChatID
-// (github-<owner>-<repo>-<number>) — the ground truth a resume diffs against
+// (github-<owner>-<repo>-<number>) - the ground truth a resume diffs against
 // to compute the turn's delta. JSON is the whole snapshot, opaque to this
 // package (mirrors DagPlan.PlanJSON below).
 type GithubSnapshot struct {
@@ -65,7 +65,7 @@ type GithubSnapshot struct {
 }
 
 // GithubReviewBaseline stores the patch-ids of the PR commits quack has
-// actually REVIEWED for one PR chat — separate from GithubSnapshot, which
+// actually REVIEWED for one PR chat - separate from GithubSnapshot, which
 // advances on EVERY dispatch (review or not). Only a dispatch that actually
 // DELIVERS a review advances this row (internal/github's
 // advanceReviewBaseline), so a conversational dispatch between two reviews
@@ -137,7 +137,7 @@ type TurnContent struct {
 	Plan      *DagPlan
 	Nodes     []DagNode
 	// Usage is the orchestrator's own token usage for this turn (its conversational
-	// session — a DAG turn's per-node tokens are separate, surfaced via Nodes).
+	// session - a DAG turn's per-node tokens are separate, surfaced via Nodes).
 	PromptTokens, CompletionTokens, ReasoningTokens int32
 	// Model is the orchestrator's own model for a plain-reply turn (from the
 	// ChatTurn row, stamped at run end); empty for DAG turns.
@@ -178,7 +178,7 @@ const (
 
 // orchestratorAuthor mirrors orchestrator.orchestratorName: the Author stamped on
 // BOTH the orchestrator llmagent's own events (it's wrapped in a workflow.AgentNode
-// too, so it carries NodeInfo like everything else — NodeInfo alone can't
+// too, so it carries NodeInfo like everything else - NodeInfo alone can't
 // distinguish it) and the delivered-answer event persistAnswer appends. Everything
 // else authored differently (a plan node's worker/advisor/judge-adjacent activity,
 // or the plan-graph wrapper's own structural events) is gate-internal and never
@@ -190,7 +190,7 @@ type turnGroup struct {
 	userText, asstText, asstThink string
 	toolCalls                     []ToolCallRecord
 	// Usage accumulated from the orchestrator's OWN model events in this turn
-	// (gate-internal node runs are excluded, same as asstText/toolCalls below —
+	// (gate-internal node runs are excluded, same as asstText/toolCalls below -
 	// their tokens are already surfaced per-node via DagNodeState).
 	promptTokens, completionTokens, reasoningTokens int32
 }
@@ -241,7 +241,7 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 		}
 		// Gate-internal activity (worker drafts, advisor consults, revisions) is
 		// authored by something other than the orchestrator and is never the
-		// user-facing message — skip it so it can't get glued into asstText or
+		// user-facing message - skip it so it can't get glued into asstText or
 		// listed as top-level activity. NodeInfo alone can't distinguish this: the
 		// orchestrator's own replies carry NodeInfo too.
 		if ev.Author != orchestratorAuthor {
@@ -329,14 +329,14 @@ func New(kind, url string) (*Store, error) {
 }
 
 // dialectorFor returns a factory that yields a GORM dialector for kind+url. The
-// dialector is consumed twice — once for the app handle, once for ADK's session
+// dialector is consumed twice - once for the app handle, once for ADK's session
 // service. For postgres each call opens its own pool (postgres handles concurrent
 // writers). For sqlite both calls SHARE one *sql.DB capped to a single
 // connection: SQLite allows only one writer, so serializing every app +
 // ADK-session write through one connection is what prevents SQLITE_BUSY under the
-// concurrent DAG / gate / memory writers (busy_timeout alone wasn't enough — two
+// concurrent DAG / gate / memory writers (busy_timeout alone wasn't enough - two
 // pools could still collide). WAL + busy_timeout stay (durability + reads).
-// ponytail: single local file, single instance — no-docker only.
+// ponytail: single local file, single instance - no-docker only.
 func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 	switch kind {
 	case "", "postgres":
@@ -394,13 +394,13 @@ func (s *Store) GetChat(ctx context.Context, id string) (*Chat, error) {
 	return &c, nil
 }
 
-// chatAppName mirrors orchestrator.AppName as a literal — store is a
+// chatAppName mirrors orchestrator.AppName as a literal - store is a
 // dependency of the orchestrator package, so it can't import it back.
 const chatAppName = "quack"
 
 // chatSessionUser mirrors internal/server/rest.sessionUser and
 // internal/github.runUserID: a GitHub-dispatched chat's ADK session was
-// written under user "github", not "local" — deleting it needs the same
+// written under user "github", not "local" - deleting it needs the same
 // user the run wrote it under. Duplicated rather than shared because each
 // copy is a one-line prefix check on the chat id.
 func chatSessionUser(chatID string) string {
@@ -414,7 +414,7 @@ func chatSessionUser(chatID string) string {
 // DeleteChat removes a chat and everything #352 found it otherwise strands:
 // the chats row is the only REST-visible record, but its turns, DAG
 // plan/node state, durable SSE event log, and ADK session (turns/events)
-// live in their own tables/service and outlive it. Runs in one transaction —
+// live in their own tables/service and outlive it. Runs in one transaction -
 // a partial cascade would leave the same orphans this fixes, just fewer of
 // them. The ADK session delete is a best-effort append AFTER the transaction
 // commits: it lives in a separate service (possibly a separate database) that
@@ -471,7 +471,7 @@ func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url string) error {
 
 // GetGithubSnapshot returns the stored snapshot JSON for a github-origin
 // chat, or ("", false, nil) when none exists yet (first dispatch on this
-// session — the caller seeds instead of diffing).
+// session - the caller seeds instead of diffing).
 func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, bool, error) {
 	var row GithubSnapshot
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -485,7 +485,7 @@ func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, b
 }
 
 // SetGithubSnapshot upserts the current snapshot JSON for a github-origin
-// chat — called after every dispatch diffs against the prior one, so the
+// chat - called after every dispatch diffs against the prior one, so the
 // NEXT resume compares against what GitHub looked like this time.
 func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) error {
 	row := &GithubSnapshot{ChatID: chatID, JSON: json, UpdatedAt: time.Now().UTC()}
@@ -510,7 +510,7 @@ func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (str
 	return row.PatchIDs, true, nil
 }
 
-// SetGithubReviewBaseline upserts the JSON patch-id list for a PR chat —
+// SetGithubReviewBaseline upserts the JSON patch-id list for a PR chat -
 // called ONLY when a dispatch actually delivered a review this run, never on
 // every dispatch (that's GithubSnapshot's job).
 func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSON string) error {
@@ -538,7 +538,7 @@ func (s *Store) SaveTurn(ctx context.Context, chatID, turnID string) error {
 
 // SetTurnModel stamps the model that produced the orchestrator's own reply on
 // the turn row. Called at run end from the live stream's accumulated
-// ModelVersion — the only place it exists, since ADK's event storage drops it.
+// ModelVersion - the only place it exists, since ADK's event storage drops it.
 func (s *Store) SetTurnModel(ctx context.Context, chatID, turnID, model string) error {
 	return s.db.WithContext(ctx).Model(&ChatTurn{}).
 		Where("id = ? AND chat_id = ?", turnID, chatID).
@@ -604,7 +604,7 @@ func (s *Store) DeleteChatEvents(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&ChatEvent{}).Error
 }
 
-// TrimChatEvents drops a chat's events at or below upToSeq — used to window a very
+// TrimChatEvents drops a chat's events at or below upToSeq - used to window a very
 // long run to the durable replay ceiling, mirroring the hub's bounded buffer.
 func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64) error {
 	return s.db.WithContext(ctx).Where("chat_id = ? AND seq <= ?", chatID, upToSeq).Delete(&ChatEvent{}).Error
@@ -612,7 +612,7 @@ func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64
 
 // FailStaleDagNodes marks any node still queued/running as failed. Called at
 // server startup: a fresh process has no in-flight runs, so such rows are
-// orphans from a previous process killed mid-run — without this they show as
+// orphans from a previous process killed mid-run - without this they show as
 // running forever in the UI. queued→failed and running→failed are both legal
 // per dag.CanTransition; a bulk SQL UPDATE can't invoke it per row, so the
 // source/target statuses are named via the dag constants instead of literals

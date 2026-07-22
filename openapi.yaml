@@ -5,7 +5,7 @@ info:
   description: |
     Quack's HTTP API, modelled after the OpenResponses specification.
     Each chat turn is a Response containing typed OutputItems. The DAG is a
-    first-class output item type (quack:dag) — a custom extension alongside
+    first-class output item type (quack:dag) - a custom extension alongside
     the standard message item. The send endpoint streams over Server-Sent Events;
     its vocabulary is documented in prose and via the x-sse-events extension.
 servers:
@@ -80,7 +80,7 @@ paths:
       summary: Update a chat's mutable fields
       description: |
         Partial update of a chat's mutable metadata. Today the only settable
-        field is `title` (a manual rename — overwrites whatever title, auto-
+        field is `title` (a manual rename - overwrites whatever title, auto-
         generated or previously set, the chat had before); the body shape
         leaves room to grow without a new endpoint.
       parameters:
@@ -111,12 +111,12 @@ paths:
 
         The model is flat and agent-centric: the DAG (dag_plan + node_* events) is
         the static structure, and within each node the trust gate runs a SEQUENCE
-        of agent invocations ("runs") — the worker draft, each judge round, and
+        of agent invocations ("runs") - the worker draft, each judge round, and
         each revision. Every run is delimited by `agent_start` / `agent_complete`
         and carries a `run_id` + `stage` (`worker` | `judge` | `revise`); its
         activity references that `run_id`. Clients group runs by `node_id` and
         pair tools by `call_id`. A worker's advisor consultations (`ask_advisor`)
-        are NOT a separate stage — they surface as ordinary tool activity
+        are NOT a separate stage - they surface as ordinary tool activity
         (`agent_tool_call` / `agent_tool_result`) within the worker's own run.
 
         Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round"})
@@ -124,9 +124,9 @@ paths:
         `agent_tool_call` ({"node_id","run_id","call_id","name","args"}) and
         `agent_tool_result` ({"node_id","run_id","call_id","name","result"}) are
         tool activity; `agent_token` ({"node_id","run_id","text"}) is answer text
-        (the final vetted answer is emitted with an empty `run_id` — it belongs to
+        (the final vetted answer is emitted with an empty `run_id` - it belongs to
         the node); `agent_complete` ({"node_id","run_id","stage",...}) closes a run
-        with its stage-specific result — judge runs carry `score`/`passed`/
+        with its stage-specific result - judge runs carry `score`/`passed`/
         `feedback` (or `status:"unavailable"`+`reason` when the judge couldn't
         run), model runs carry `finish_reason` + token usage.
 
@@ -139,15 +139,15 @@ paths:
         delivered at its next turn boundary and it re-runs with them folded
         in. A node's pending queue itself (add/edit/remove) is tracked
         client-side from the POST/PATCH/DELETE `.../queue` responses, not a
-        separate SSE event — those calls are synchronous and already tell the
+        separate SSE event - those calls are synchronous and already tell the
         caller what changed.
 
         `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
         reports one staged item's ACTUAL outward-boundary outcome (push +
-        PR/review/comment), as the delivering extension observed it — never the
+        PR/review/comment), as the delivering extension observed it - never the
         worker's self-report. `outcome` is one of `delivered`, `draft` (a
         gate-failed PR opens as a draft), `failed`, or `none` (a judge-passed
-        work-request that recorded no delivery attempt at all — the phantom-
+        work-request that recorded no delivery attempt at all - the phantom-
         success class this event exists to make visible). Emitted for both
         success and failure, durably, independent of the judge verdict.
 
@@ -220,7 +220,7 @@ paths:
       summary: Subscribe to a chat's live response stream
       description: |
         Connect to the SSE stream of a chat's in-progress (or just-completed) run
-        — so a turn started on one device can be watched from another. Replays the
+        - so a turn started on one device can be watched from another. Replays the
         events so far, then streams live events until the run ends. If no run is
         active, replays the most recent completed run. Reconnect-safe via the
         replay buffer.
@@ -260,31 +260,31 @@ paths:
       operationId: updateNodeStatus
       summary: Transition a DAG node's status (cancel, pause/resume, or retry)
       description: |
-        A single resource-oriented endpoint — the request body names the
+        A single resource-oriented endpoint - the request body names the
         TARGET status:
 
-        - `{"status":"cancelled"}` — cancel the node (legal from `queued`,
+        - `{"status":"cancelled"}` - cancel the node (legal from `queued`,
           `running`, `paused`, or `needs_input`). Kills the in-flight
           model/tool call via context; no resume. No-op (200, unchanged
           state) if the node isn't currently live.
-        - `{"status":"paused"}` — suspend a RUNNING node at its next safe
+        - `{"status":"paused"}` - suspend a RUNNING node at its next safe
           point, keeping its accumulated work. Only legal from `running`.
-        - `{"status":"running"}` — resume a `paused` node: a fresh re-run
+        - `{"status":"running"}` - resume a `paused` node: a fresh re-run
           (like retry) that reuses the rest of the plan's stored outputs.
           Only legal from `paused`.
-        - `{"status":"queued","guidance":"..."}` — retry: re-run a finished
+        - `{"status":"queued","guidance":"..."}` - retry: re-run a finished
           node (and every node downstream of it) reusing the stored outputs
           of all other nodes. Only legal from `done`, `failed`, or
           `cancelled`. `guidance` is optional and folded into the node's task.
 
         To steer a running node with a message, POST to
-        `.../nodes/{node_id}/queue` instead — it is delivered at the node's
+        `.../nodes/{node_id}/queue` instead - it is delivered at the node's
         next turn boundary, never mid-turn (replaces the old interrupt-based
         steer).
 
         An illegal transition (e.g. `done` → `running`) returns 409 naming the
         allowed target statuses. The re-run (resume/retry) streams over the
-        chat's existing SSE connection — this endpoint does not open a new one.
+        chat's existing SSE connection - this endpoint does not open a new one.
       parameters:
         - $ref: "#/components/parameters/ChatID"
         - $ref: "#/components/parameters/NodeID"
@@ -320,9 +320,9 @@ paths:
       description: |
         Replaces a pending node's task text before it starts running. Legal
         only while the node has no live/persisted "started" state (still
-        `queued`, and not yet dispatched — e.g. a downstream node waiting on
+        `queued`, and not yet dispatched - e.g. a downstream node waiting on
         its dependencies in an already-streaming turn). Once a node has
-        started, its prompt is immutable — 409.
+        started, its prompt is immutable - 409.
       parameters:
         - $ref: "#/components/parameters/ChatID"
         - $ref: "#/components/parameters/NodeID"
@@ -345,7 +345,7 @@ paths:
       operationId: queueNodeMessage
       summary: Queue a message for a running node, delivered at its next turn boundary
       description: |
-        Appends to the node's message queue — the replacement for the old
+        Appends to the node's message queue - the replacement for the old
         interrupt-based steer. The node drains its queue (in order) at its
         next turn boundary; never mid-turn. Only legal while the node is
         `running` (404 if no live control).
@@ -410,7 +410,7 @@ paths:
       summary: Cancel the chat's active run by response id
       description: |
         `{"status":"cancelled"}` cancels the active orchestrator run for this
-        chat — only legal when response_id names the CURRENTLY active run (the
+        chat - only legal when response_id names the CURRENTLY active run (the
         id surfaced in the stream's opening `response_created` event). 404 if
         this response isn't the active run (already finished, or never was).
       parameters:
@@ -473,7 +473,7 @@ components:
         waiting on the server's max_active_runs slot, `running` while a turn
         holds its slot and is actively streaming, `needs_input` when the last
         turn paused on an unanswered question (a mid-node ask, a guarded
-        operation awaiting approve/deny — the workspace.guards confirm tier —
+        operation awaiting approve/deny - the workspace.guards confirm tier -
         or a top-level clarification), `failed` when the last turn's DAG has a
         failed node and no answer text followed, else `idle`.
       enum: [queued, running, needs_input, failed, idle]
@@ -564,7 +564,7 @@ components:
           description: Optional and folded into the node's task when status is
             "queued" (retry, or resuming a paused node via a fresh re-run).
             Unused for "cancelled" and "paused". To steer a RUNNING node,
-            queue a message instead (POST .../nodes/{node_id}/queue) — it is
+            queue a message instead (POST .../nodes/{node_id}/queue) - it is
             delivered at the node's next turn boundary, not mid-turn.
 
     QueuedMessage:
@@ -577,7 +577,7 @@ components:
           type: string
         delivered:
           type: boolean
-          description: True once handed to the node at a turn boundary — no
+          description: True once handed to the node at a turn boundary - no
             longer editable or removable.
         created_at:
           type: string
@@ -605,7 +605,7 @@ components:
 
     ResponseStatus:
       type: string
-      description: The only supported target status for a response — cancelling
+      description: The only supported target status for a response - cancelling
         the active run. (A separate enum from NodeStatus, which has states with
         no meaning at the response/run level.)
       enum: [cancelled]
@@ -676,7 +676,7 @@ components:
           type: integer
 
     # -------------------------------------------------------------------------
-    # Output items — discriminated by `type`
+    # Output items - discriminated by `type`
     # Standard: "message". Quack extension: "quack:dag".
     # -------------------------------------------------------------------------
 
@@ -743,7 +743,7 @@ components:
           type: string
 
     # -------------------------------------------------------------------------
-    # quack:activity output item — the orchestrator's own tool calls, recovered
+    # quack:activity output item - the orchestrator's own tool calls, recovered
     # from session events so chat history (incl. a pending clarification) survives
     # a reload. Discriminated by type "quack:activity".
     # -------------------------------------------------------------------------
@@ -780,7 +780,7 @@ components:
           additionalProperties: true
 
     # -------------------------------------------------------------------------
-    # quack:dag output item — DAG execution as a first-class output type
+    # quack:dag output item - DAG execution as a first-class output type
     # -------------------------------------------------------------------------
 
     DagOutputItem:

@@ -44,7 +44,7 @@ func collect(t *testing.T, reader *metric.ManualReader, name string) metricdata.
 	return metricdata.Metrics{}
 }
 
-// sumTotal returns an int64 Sum instrument's current net value — the reading
+// sumTotal returns an int64 Sum instrument's current net value - the reading
 // an UpDownCounter-backed gauge like quack.runs.active/quack.nodes.active
 // exposes with cumulative temporality (the default here).
 func sumTotal(t *testing.T, reader *metric.ManualReader, name string) int64 {
@@ -105,7 +105,7 @@ func histogramSumCount(t *testing.T, reader *metric.ManualReader, name string) (
 
 // TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns is #354's
 // core regression guard: quack.runs.active must net back to 0 once every
-// RunStarted has a matching RunFinished, on EVERY exit shape — a plain error,
+// RunStarted has a matching RunFinished, on EVERY exit shape - a plain error,
 // a context-cancellation, and a clean return.
 func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) {
 	reader := newTestMeter(t)
@@ -129,7 +129,7 @@ func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) 
 
 // TestRunQueuedGauge_TracksAdmittedButNotYetExecuting is #417's regression
 // guard: a run admitted (queued) but not yet holding its concurrency slot
-// must show up in quack.runs.queued, NOT quack.runs.active — and the
+// must show up in quack.runs.queued, NOT quack.runs.active - and the
 // queued→active transition must net runs.queued back to 0 as it does so.
 func TestRunQueuedGauge_TracksAdmittedButNotYetExecuting(t *testing.T) {
 	reader := newTestMeter(t)
@@ -233,7 +233,7 @@ func TestRoundDuration_MatchesTimedSpanWindow(t *testing.T) {
 	RecordRoundDuration("web-researcher", "qwen3", "draft", d)
 
 	if d > time.Second {
-		t.Fatalf("TimedSpan window = %v for a 20ms sleep — inflated exactly like #354's reported 31min/4-12min mismatch", d)
+		t.Fatalf("TimedSpan window = %v for a 20ms sleep - inflated exactly like #354's reported 31min/4-12min mismatch", d)
 	}
 
 	sum, count := histogramSumCount(t, reader, "quack.worker.round.duration")
@@ -247,7 +247,7 @@ func TestRoundDuration_MatchesTimedSpanWindow(t *testing.T) {
 
 // TestRecordMemoryCommitFailure guards #436: a fire-and-forget memory-commit
 // error must leave a queryable counter series (reason + agent), not just a
-// WARN log — the gap the owner flagged after ~every node's commit timed out
+// WARN log - the gap the owner flagged after ~every node's commit timed out
 // under burst load.
 func TestRecordMemoryCommitFailure(t *testing.T) {
 	reader := newTestMeter(t)

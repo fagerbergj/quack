@@ -12,7 +12,7 @@ import (
 const repoSearchDepth = 2
 
 // FindRepos returns the git repositories at root or beneath it, to
-// repoSearchDepth. Vendored/ignored trees (node_modules, vendor, and dot-dirs —
+// repoSearchDepth. Vendored/ignored trees (node_modules, vendor, and dot-dirs -
 // notably .git itself) are skipped: a dependency carrying its own .git must not
 // masquerade as the node's repo, nor make the real one look ambiguous. Once a
 // directory IS a repo, the walk stops there (a submodule is not a second repo).
@@ -37,7 +37,7 @@ func FindRepos(root string) []string {
 			sub := filepath.Join(dir, e.Name())
 			if isRepo(sub) {
 				out = append(out, sub)
-				continue // don't descend into a repo — submodules aren't candidates
+				continue // don't descend into a repo - submodules aren't candidates
 			}
 			walk(sub, depth+1)
 		}
@@ -49,7 +49,7 @@ func FindRepos(root string) []string {
 // skipDir names the directories a repo search must never descend into.
 func skipDir(name string) bool { return SkipDir(name) }
 
-// SkipDir reports whether a directory is vendored or generated — a tree no search
+// SkipDir reports whether a directory is vendored or generated - a tree no search
 // should descend into. It covers dot-dirs (.git, .next, .venv), dependency trees
 // (node_modules, vendor) and the conventional build outputs.
 //
@@ -71,15 +71,15 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// RepoKey identifies the repository a chat is working in — the key of its shared
+// RepoKey identifies the repository a chat is working in - the key of its shared
 // memory bucket (memory.Scope.Repo), so what one coding agent learns about a repo
 // is recalled by the next one working in the SAME repo.
 //
 // It is derived, not guessed: the chat's jail scope (<root>/<user>/<chat>/) is
 // searched for git repos and the single one found is identified by its `origin`
-// remote ("github.com/owner/repo" — host + path, normalized across ssh/https and a
+// remote ("github.com/owner/repo" - host + path, normalized across ssh/https and a
 // .git suffix, so the same repo cloned either way is the same bucket). It returns ""
-// — no repo bucket, memories fall back to the role bucket — when there is no repo,
+// - no repo bucket, memories fall back to the role bucket - when there is no repo,
 // when there is more than one (ambiguous: don't guess), or when the single repo has
 // no origin remote (a local-only repo has no shareable identity).
 func (j *Jail) RepoKey(userID, chatID string) string {
@@ -101,7 +101,7 @@ func (j *Jail) RepoKey(userID, chatID string) string {
 func RepoIdentity(dir string) string {
 	f, err := os.Open(filepath.Join(dir, ".git", "config"))
 	if err != nil {
-		return "" // not a repo, or a worktree/submodule .git file — no identity
+		return "" // not a repo, or a worktree/submodule .git file - no identity
 	}
 	defer f.Close()
 
@@ -125,9 +125,9 @@ func RepoIdentity(dir string) string {
 	return ""
 }
 
-// normalizeRepoURL collapses the ways one repo can be addressed —
+// normalizeRepoURL collapses the ways one repo can be addressed -
 // git@github.com:owner/repo.git, https://user@github.com/owner/repo.git,
-// ssh://git@github.com/owner/repo — to one key: "github.com/owner/repo".
+// ssh://git@github.com/owner/repo - to one key: "github.com/owner/repo".
 func normalizeRepoURL(raw string) string {
 	u := strings.TrimSpace(raw)
 	if u == "" {

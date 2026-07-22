@@ -25,7 +25,7 @@ const CwdKey = "workspace.cwd"
 
 // cwdFromState reads the session working directory (CwdKey) from ctx's state.
 // It NEVER errors: an absent key, a nil context/state, or a non-string value
-// all fall back to "" — the node's own root, which is exactly where a worker
+// all fall back to "" - the node's own root, which is exactly where a worker
 // that has not cd'd anywhere should be.
 func cwdFromState(ctx agent.Context) string {
 	if ctx == nil {
@@ -46,12 +46,12 @@ func cwdFromState(ctx agent.Context) string {
 // scopeFromContext derives both workspace scopes a call runs under: the per-chat
 // scope (two chats never share a working tree) and the calling node's directory
 // within it (two CONCURRENT nodes of one plan never share one). Both ride the
-// advisor-thread marker stamped into the worker's prompt — the one identity
+// advisor-thread marker stamped into the worker's prompt - the one identity
 // channel that survives the A2A hop (a tool's ctx.SessionID() names the A2A
 // context session, not the chat).
 //
 // Returns "", "" outside any gated node; the jail then resolves against the
-// per-user root — a safe fallback that never fails the call.
+// per-user root - a safe fallback that never fails the call.
 func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 	if ctx == nil {
 		return "", ""
@@ -72,19 +72,19 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 }
 
 // jailPath turns a path the MODEL wrote (node-relative, or "/"-prefixed) into the
-// chat-relative path Jail.Resolve takes. It is the ONE place the node dir — the
-// invisible root — is applied, which is what keeps it out of every tool argument
+// chat-relative path Jail.Resolve takes. It is the ONE place the node dir - the
+// invisible root - is applied, which is what keeps it out of every tool argument
 // and every tool result. Precedence (predictable and jail-safe):
 //
 //   - a path beginning with "/" is absolute WITHIN THE NODE'S OWN WORKSPACE: the cwd
-//     is ignored, the node dir is still applied. (It used to mean the CHAT root —
+//     is ignored, the node dir is still applied. (It used to mean the CHAT root -
 //     the last way one node could reach a sibling's clone, and it made a reported
 //     absolute cwd un-echoable. One root, one namespace.)
 //   - every other path is node-relative: applied to the cwd (joinCwd), then rooted
 //     at the node dir.
 //
 // The result still flows through Jail.Resolve, which re-verifies containment (and
-// resolves symlinks), so NO nodeDir + cwd + path combination can escape the jail —
+// resolves symlinks), so NO nodeDir + cwd + path combination can escape the jail -
 // a `..` that climbs above the chat scope is caught there, escape hatch or not.
 func jailPath(nodeDir, cwd, p string) string {
 	p = stripSandboxRoot(p)
@@ -99,7 +99,7 @@ func jailPath(nodeDir, cwd, p string) string {
 // stripSandboxRoot turns the SHELL's spelling of the workspace root into the
 // model's own: "/workspace/quack/main.go" → "/quack/main.go", so a path out of a
 // shell result (`pwd`) feeds back into any fs tool. (The sandbox closes the other
-// direction — see rootAliasArgs.) Only the ABSOLUTE alias is rewritten, so a
+// direction - see rootAliasArgs.) Only the ABSOLUTE alias is rewritten, so a
 // relative "workspace/x" still means an entry actually named workspace; a
 // top-level entry named "workspace" is shadowed in the absolute spelling only.
 func stripSandboxRoot(p string) string {
@@ -114,7 +114,7 @@ func stripSandboxRoot(p string) string {
 
 // displayCwd renders the session working directory for a tool RESULT: the
 // ABSOLUTE path of where you are standing ("/" at the root, "/goose" inside a
-// clone). Absolute on purpose — a relative "." tells the model nothing about
+// clone). Absolute on purpose - a relative "." tells the model nothing about
 // where it is, and it wastes turns re-deriving its position.
 func displayCwd(cwd string) string {
 	if cwd == "" || cwd == "." {
@@ -131,7 +131,7 @@ func joinCwd(cwd, p string) string {
 		return p
 	}
 	// Idempotent: a path that ALREADY starts with the cwd is taken as-is, never
-	// joined onto it again — tools echo paths and the model feeds them back, and
+	// joined onto it again - tools echo paths and the model feeds them back, and
 	// doubling the cwd is never what anyone means.
 	if p == cwd || strings.HasPrefix(p, cwd+"/") {
 		return p
@@ -139,7 +139,7 @@ func joinCwd(cwd, p string) string {
 	return filepath.Join(cwd, p)
 }
 
-// workRoot is the absolute path of the calling node's OWN directory — the writable
+// workRoot is the absolute path of the calling node's OWN directory - the writable
 // subtree a sandboxed child gets (workspace.Caps.WorkRoot). It is the invisible root
 // every model-supplied path already resolves under (jailPath), so a child that can
 // write anywhere the fs tools can write is not a widening: it is the SAME workspace.

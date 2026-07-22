@@ -9,7 +9,7 @@ import (
 // TestResolveCiteCloneRootsSetupProvisioned mirrors
 // TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared's wiring: a
 // setup-provisioned node (cfg.Setup set) never git_clone's anything itself, so
-// act.clonedDirs is empty — resolveCiteCloneRoots must still resolve the
+// act.clonedDirs is empty - resolveCiteCloneRoots must still resolve the
 // harness-provisioned SetupCloneDir so citationScore has a real root to
 // disk-verify against (the #437 fix's actual wiring point).
 func TestResolveCiteCloneRootsSetupProvisioned(t *testing.T) {
@@ -55,7 +55,7 @@ func TestResolveCiteCloneRootsIncludesWorkerClones(t *testing.T) {
 }
 
 // TestResolveCiteCloneRootsNoWorkspaceIsEmpty: no workspace wired up (a
-// research/synthesis node) resolves to no clone roots — citationScore then
+// research/synthesis node) resolves to no clone roots - citationScore then
 // falls back to pure web-URL ledger scoring, unchanged.
 func TestResolveCiteCloneRootsNoWorkspaceIsEmpty(t *testing.T) {
 	if roots := resolveCiteCloneRoots(Config{}, workerActivity{}); roots != nil {

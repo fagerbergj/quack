@@ -9,7 +9,7 @@ import (
 // A plan that was created but never executed is PENDING: the turn did no work.
 //
 // The live failure this pins: the orchestrator called `plan`, read the tool's
-// "review before executing" summary, replied "The plan is solid — 4 parallel
+// "review before executing" summary, replied "The plan is solid - 4 parallel
 // code-explorer nodes researching each project's actual source code…" and then
 // finished the turn WITHOUT calling `execute`. It described running the work
 // instead of running it. Because it had emitted text, the turn looked "produced",

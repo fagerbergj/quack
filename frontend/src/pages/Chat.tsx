@@ -14,7 +14,7 @@ import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
-// This IS the DAG turn's answer — never mix in the orchestrator's own top-level
+// This IS the DAG turn's answer - never mix in the orchestrator's own top-level
 // text (that's planning/narration chatter, not the reply; see liveText below).
 export function liveDagFinalText(dag: DagTurnState): string {
   const finalId = terminalNodeId(dag.nodes)
@@ -23,14 +23,14 @@ export function liveDagFinalText(dag: DagTurnState): string {
 
 // shouldQueueSubmit is the Composer send decision: queue while a run is
 // streaming (drained automatically once it finishes), send immediately
-// otherwise — the same immediate path as before this feature existed.
+// otherwise - the same immediate path as before this feature existed.
 export function shouldQueueSubmit(streaming: boolean): boolean {
   return streaming
 }
 
 // chatGitHubLink (#382) extracts the header's back-link target from a chat's
 // summary: present only for a GitHub-originated chat (github_url set by the
-// webhook at dispatch time), null for a direct chat — so the header renders
+// webhook at dispatch time), null for a direct chat - so the header renders
 // nothing extra for local chats.
 export function chatGitHubLink(chat: ChatSummary | undefined): { url: string; repo?: string } | null {
   if (!chat?.github_url) return null
@@ -46,7 +46,7 @@ export interface EditableChatTitleProps {
 // EditableChatTitle is the header's click-to-edit title: a click (when
 // `editable`, i.e. a chat is active) swaps the heading for a text input;
 // Enter/blur commits, Escape cancels. `onRename` fires only for an actual
-// change — a blank or unchanged draft is a silent no-op, not a rename to ''.
+// change - a blank or unchanged draft is a silent no-op, not a rename to ''.
 export function EditableChatTitle({ title, editable, onRename }: EditableChatTitleProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -154,10 +154,10 @@ export default function Chat() {
       store.seed(activeChatId, detail.turns)
       // Reconnect to a run still in progress (e.g. this browser after a refresh):
       // the POST body stream is gone, so subscribe to the hub. attach no-ops if
-      // this client already streams (it posted the run) — no double-subscribe.
+      // this client already streams (it posted the run) - no double-subscribe.
       // detail.status is the hub's authoritative "a run is live" signal and is
       // true through EVERY phase (queued behind max_active_runs, planning,
-      // queued nodes, streaming) — the DAG check alone missed pre-DAG phases (no
+      // queued nodes, streaming) - the DAG check alone missed pre-DAG phases (no
       // quack:dag item persisted yet), so a refresh during planning never
       // reconnected. queued is included: the run's hub topic is already live
       // (response_created publishes at admission, before the run slot is
@@ -182,7 +182,7 @@ export default function Chat() {
       try {
         const result = await api.listChats()
         if (!cancelled) setChats(result.data)
-      } catch { /* transient — next poll will retry */ }
+      } catch { /* transient - next poll will retry */ }
     }
     loadChats().then(data => { if (!cancelled) setChats(data) })
     const id = setInterval(() => { void doPoll() }, PollingIntervalMs)
@@ -195,10 +195,10 @@ export default function Chat() {
   // #463: when a run goes active on an already-open chat (e.g. GitHub webhook
   // dispatched while the user views this chat), re-fire attach so the SSE
   // subscribe stream opens and live events start flowing.  Without it, only
-  // ChatList's Running badge lights up — the chat box stays blank because
+  // ChatList's Running badge lights up - the chat box stays blank because
   // the /stream subscription never started for this client.  attach no-ops if
   // this client already streams (it posted the run) or has an existing
-  // EventSource — no double-subscribe.
+  // EventSource - no double-subscribe.
   useEffect(() => {
     if (!activeChatId || !activeChat?.status) return
     const s = activeChat.status
@@ -300,7 +300,7 @@ export default function Chat() {
   }, [activeChatId, store])
 
   // handleAnswerNode answers a paused node's question (mid-node HITL) by sending
-  // the answer as the next message — the backend delivers it to the paused node.
+  // the answer as the next message - the backend delivers it to the paused node.
   const handleAnswerNode = useCallback((_nodeId: string, answer: string) => {
     if (!activeChatId) return
     void store.submit(activeChatId, answer, undefined, title => {
@@ -349,12 +349,12 @@ export default function Chat() {
 
   // Per-turn props for the completed turns. Memoized on [turns, live.userText] so it
   // is NOT recomputed on every streaming token (state.turns keeps a stable ref while
-  // only `live` changes) — the key to not re-parsing every turn's markdown mid-stream.
+  // only `live` changes) - the key to not re-parsing every turn's markdown mid-stream.
   const liveUserText = live?.userText
   const turnViews = useMemo(() => state.turns.map((turn, idx, arr) => {
     const turnChoice = pendingChoice(activityFromTurn(turn))
-    // The answer to a clarification is the next turn's input, or — for the last
-    // turn — the live turn's input. Undefined means it's still answerable.
+    // The answer to a clarification is the next turn's input, or - for the last
+    // turn - the live turn's input. Undefined means it's still answerable.
     const next = arr[idx + 1]
     const choiceAnswer = turnChoice ? (next ? next.input.content : liveUserText) : undefined
     // This turn's input is itself the answer to the previous turn's clarification.
@@ -443,10 +443,10 @@ export default function Chat() {
             const liveDone = !streaming
             // Which text is the user-facing answer:
             //  - a DAG ran: the terminal node's answer IS the response (execute always
-            //    delivers from the node now — there's no orchestrator-composed
+            //    delivers from the node now - there's no orchestrator-composed
             //    "synthesize" mode to prefer instead). liveTopText is the
             //    orchestrator's OWN narration (planning chatter, reasoning about the
-            //    request) — never the answer when a DAG exists; falling back to it
+            //    request) - never the answer when a DAG exists; falling back to it
             //    only masks a missing/incomplete terminal answer with unrelated text.
             //  - no DAG: the orchestrator answered directly, so its text IS the reply.
             const liveText = liveDag ? liveDagFinalText(liveDag) : liveTopText
@@ -456,11 +456,11 @@ export default function Chat() {
             // A get_user_choice clarification awaiting an answer on the (paused) live turn.
             const choice = liveDone ? pendingChoice(liveTopRuns) : null
             // A paused node's mid-node HITL question (only possible once the run has
-            // ended — the plan pauses the whole turn, so liveDone is implied).
+            // ended - the plan pauses the whole turn, so liveDone is implied).
             const nodeQuestion = liveDag ? pendingNodeQuestion(liveDag) : undefined
             // Show spinner while streaming until something VISIBLE arrives (DAG,
             // answer text, or visible activity). Keyed on orchActivity, not run
-            // count — the orchestrator's top-level run is created empty on the
+            // count - the orchestrator's top-level run is created empty on the
             // first event, so a run-count check blanks the dots before the plan.
             const showSpinner = showLiveSpinner({
               streaming,
@@ -483,7 +483,7 @@ export default function Chat() {
               // role="log" + aria-live: screen readers announce streamed tokens as they
               // arrive (aria-atomic=false → only the new text, not the whole region).
               <div key="live" role="log" aria-live="polite" aria-atomic="false">
-                {/* User message — hidden when it's a clarification answer, or when the
+                {/* User message - hidden when it's a clarification answer, or when the
                     turn has no user text/attachments at all (#434): a label/webhook-
                     triggered plan turn has no typed message, just its synthesized task
                     (rendered in the DAG bubble below), so there's nothing for this
@@ -569,7 +569,7 @@ export default function Chat() {
                             <ActivityList activity={orchActivity} />
                           )}
                           {/* Running is conveyed by the header's pulsing StatusDot
-                              (#416) — no separate spinner dot while text streams in. */}
+                              (#416) - no separate spinner dot while text streams in. */}
                           {liveTopText && <AssistantText text={liveTopText} />}
                         </div>
                       )}

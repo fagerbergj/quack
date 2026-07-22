@@ -8,7 +8,7 @@ import (
 )
 
 // boundExcerpt leaves within-cap input untouched and, over the cap, returns a
-// head+tail excerpt with the truncation marker — both ends of the original are
+// head+tail excerpt with the truncation marker - both ends of the original are
 // preserved so nothing salient (opening framing, closing detail) is lost wholesale.
 func TestBoundExcerpt(t *testing.T) {
 	small := "a short section"
@@ -54,10 +54,10 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 	got := contentPlainText(buildRevisionContent("principles", question, answer, feedback, act, false))
 
 	// Fixed scaffolding (directive + principles + labels) plus the four capped
-	// sections plus the markers — comfortably under a documented ceiling.
+	// sections plus the markers - comfortably under a documented ceiling.
 	const ceiling = maxOriginalQuestionChars + maxPreviousAnswerChars + maxActivitySectionChars + maxFeedbackChars + 8_000
 	if len(got) > ceiling {
-		t.Fatalf("revise prompt is %d chars, over the %d ceiling — contents[0] would risk overflow", len(got), ceiling)
+		t.Fatalf("revise prompt is %d chars, over the %d ceiling - contents[0] would risk overflow", len(got), ceiling)
 	}
 	if n := strings.Count(got, "truncated to fit the context window"); n < 4 {
 		t.Fatalf("expected all four oversized sections truncated, saw %d markers", n)

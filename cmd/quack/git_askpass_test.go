@@ -13,7 +13,7 @@ import (
 
 // TestMain mirrors main()'s argv[0] dispatch so the askpass-exec test below
 // can run the REAL mechanism: it symlinks the test binary under the askpass
-// link name and execs it exactly the way git execs $GIT_ASKPASS — direct
+// link name and execs it exactly the way git execs $GIT_ASKPASS - direct
 // program path, prompt as the single argument, no shell. Without this, tests
 // could only call the answer function in-process and would never catch an
 // unexecutable GIT_ASKPASS value (the exact live failure this guards:
@@ -46,7 +46,7 @@ func execAskpass(t *testing.T, link, prompt string, env map[string]string) strin
 
 // TestGitAskpassSymlinkExecsBothPrompts is the test that would have caught
 // the live bug: it execs the GIT_ASKPASS value directly (no shell, prompt as
-// argv[1] — precisely git's invocation) through a symlink named
+// argv[1] - precisely git's invocation) through a symlink named
 // tools.GitAskpassLinkName, and asserts BOTH halves of git's two-call
 // protocol: the Username prompt answers with the configured username, the
 // Password prompt with the token.

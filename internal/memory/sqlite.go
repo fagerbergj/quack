@@ -19,7 +19,7 @@ import (
 )
 
 // OpenSQLite returns a memory Store backed by an embedded SQLite file at url (a
-// path) — the no-docker path, no Qdrant container. Similarity is brute-force
+// path) - the no-docker path, no Qdrant container. Similarity is brute-force
 // cosine in Go (no native vector extension, which would force cgo); fine for the
 // hundreds–thousands of memories a single user accumulates. Multiple scopes
 // (task/user) can share one file: rows are partitioned by collection + scope.
@@ -87,7 +87,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			Score:     cosine(vec, bytesToVec(r.Vector)),
 		})
 	}
-	// Highest cosine first; cap to k. ponytail: O(n) scan + sort — fine at memory
+	// Highest cosine first; cap to k. ponytail: O(n) scan + sort - fine at memory
 	// scale (hundreds–thousands); revisit a native index only if a corpus outgrows it.
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if k > 0 && len(out) > k {

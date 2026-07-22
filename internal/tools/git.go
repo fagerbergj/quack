@@ -15,7 +15,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// maxGitOutputBytes caps how much of git's stdout/stderr any tool returns —
+// maxGitOutputBytes caps how much of git's stdout/stderr any tool returns -
 // the isolation model's generic "output caps" for the git tools (fs tools have
 // their own dedicated read/write caps; git's text output shares this one).
 const maxGitOutputBytes = 64 * 1024
@@ -26,7 +26,7 @@ const defaultCloneDepth = 1
 // GitAskpassTokenEnv / GitAskpassUserEnv are the env vars quack sets ONLY on a
 // git child process that needs to authenticate: askpass mode reads them to
 // answer git's credential prompts. Never set on the quack server process
-// itself — only injected per git exec.Command invocation (see gitEnv) — so
+// itself - only injected per git exec.Command invocation (see gitEnv) - so
 // they never appear in `ps` output for the long-lived quack process, only for
 // the short-lived git child.
 const (
@@ -36,20 +36,20 @@ const (
 
 // GitAskpassLinkName is the basename of the symlink the git tools maintain at
 // the workspace root, pointing at the quack binary itself. GIT_ASKPASS must be
-// a SINGLE executable path — git execs it directly with the prompt as one
+// a SINGLE executable path - git execs it directly with the prompt as one
 // argument, with NO shell splitting of the value (setting it to
 // "<binary> git-askpass" makes git look for a file literally named
 // "quack git-askpass"; this exact failure shipped once). The symlink gives the
 // binary a second name, and cmd/quack's main dispatches on
 // filepath.Base(os.Args[0]) == GitAskpassLinkName BEFORE cobra (the busybox
-// argv[0] pattern) — a real executable path, no shell, no secret on disk.
+// argv[0] pattern) - a real executable path, no shell, no secret on disk.
 const GitAskpassLinkName = ".quack-askpass"
 
 // GitAskpassAnswer answers one git credential prompt (git's two-call
 // protocol: it invokes askpass once with a "Username for '<url>':" prompt and
 // once with "Password for '<url>':") from the child-process-only env vars.
 // Username prompts get the configured username (default x-access-token);
-// anything else — password prompts, or a prompt-less probe — gets the token.
+// anything else - password prompts, or a prompt-less probe - gets the token.
 // Shared by the argv[0]-dispatch askpass mode and the hidden cobra
 // subcommand (cmd/quack/git_askpass.go).
 func GitAskpassAnswer(prompt string) string {
@@ -60,8 +60,8 @@ func GitAskpassAnswer(prompt string) string {
 }
 
 // ensureAskpassLink guarantees <root>/.quack-askpass is a symlink to the
-// current quack binary, creating or repairing it as needed (a stale link —
-// e.g. after the binary moved between deployments — is replaced). Returns the
+// current quack binary, creating or repairing it as needed (a stale link -
+// e.g. after the binary moved between deployments - is replaced). Returns the
 // absolute link path for GIT_ASKPASS. Tolerates concurrent creation: if
 // another goroutine wins the Symlink race, the winner's link is verified and
 // used.
@@ -74,7 +74,7 @@ func ensureAskpassLink(root string) (string, error) {
 	if dest, err := os.Readlink(link); err == nil && dest == self {
 		return link, nil
 	}
-	_ = os.Remove(link) // stale target, or not a symlink — replace
+	_ = os.Remove(link) // stale target, or not a symlink - replace
 	if err := os.Symlink(self, link); err != nil {
 		// A concurrent creator may have won; accept its link if it's correct.
 		if dest, rerr := os.Readlink(link); rerr == nil && dest == self {
@@ -93,7 +93,7 @@ type gitAuth struct {
 }
 
 // GitTokenSource dynamically mints a per-host git credential for a clone/remote
-// URL — e.g. a GitHub App installation token, resolved from the URL's
+// URL - e.g. a GitHub App installation token, resolved from the URL's
 // owner/repo and cached until shortly before expiry (see internal/github). It
 // is consulted by authFor ONLY when no static workspace.git_credentials entry
 // matches, so the static-PAT path stays backward compatible and wins. Returning
@@ -102,9 +102,9 @@ type GitTokenSource interface {
 	GitCredential(ctx context.Context, rawURL string) (*GitCredential, error)
 }
 
-// authFor resolves the credential for rawURL's host — a static
+// authFor resolves the credential for rawURL's host - a static
 // workspace.git_credentials entry first (credentialFor), else a dynamic
-// GitTokenSource (the extension seam, e.g. a GitHub App installation token) —
+// GitTokenSource (the extension seam, e.g. a GitHub App installation token) -
 // and, when one exists, ensures the askpass symlink so the returned auth is
 // directly injectable. nil (no error) when no credential resolves for the host:
 // the operation proceeds unauthenticated. A symlink failure is an error, not a
@@ -131,9 +131,9 @@ func (b gitBinding) authFor(rawURL string) (*gitAuth, error) {
 }
 
 // GitCredential is one deployment-level per-host HTTPS credential
-// (workspace.git_credentials in quack.yaml — see internal/config). Matching is
+// (workspace.git_credentials in quack.yaml - see internal/config). Matching is
 // by exact host (case-insensitive); Token is always an interpolated env value,
-// never a literal secret in the YAML (config.Load enforces this — see
+// never a literal secret in the YAML (config.Load enforces this - see
 // validateNoLiteralTokens).
 type GitCredential struct {
 	Host     string
@@ -142,7 +142,7 @@ type GitCredential struct {
 }
 
 // gitBinding is the (userID, jail, caps, credentials, push-enabled) tuple every
-// git tool closes over at construction — mirrors fsBinding's "no identity
+// git tool closes over at construction - mirrors fsBinding's "no identity
 // parsing inside tool handlers" rule (see fs.go).
 type gitBinding struct {
 	userID      string
@@ -151,16 +151,16 @@ type gitBinding struct {
 	credentials []GitCredential
 	tokenSource GitTokenSource // optional dynamic credential source (extension seam)
 	allowPush   bool
-	// cwd is the session working directory (NODE-relative) a per-call copy carries —
+	// cwd is the session working directory (NODE-relative) a per-call copy carries -
 	// set by withCwd from ctx state, mirroring fsBinding. A relative `dir`/`path` a
 	// git tool takes resolves against it (resolve).
 	cwd string
 	// chatID is the per-chat scope (the workflow/chat session id) this call's
-	// paths resolve under — set by withCwd from the advisor-thread marker in ctx
+	// paths resolve under - set by withCwd from the advisor-thread marker in ctx
 	// (scopeFromContext), mirroring fsBinding. "" resolves the per-user root.
 	chatID string
 	// nodeDir is the calling node's invisible root within that chat scope, applied
-	// only at resolve time (jailPath) — which is what lands git_clone's default
+	// only at resolve time (jailPath) - which is what lands git_clone's default
 	// target inside the NODE's dir instead of the shared chat root, without the dir
 	// ever appearing in the reported path. Mirrors fsBinding.
 	nodeDir string
@@ -175,7 +175,7 @@ func (b gitBinding) resolve(p string) (string, error) {
 }
 
 // credentialFor returns the configured credential matching rawURL's host
-// (exact host match, case-insensitive), or nil when none is configured — the
+// (exact host match, case-insensitive), or nil when none is configured - the
 // operation proceeds unauthenticated (public repos keep working with zero
 // config; see the design doc's "Git auth" section).
 func (b gitBinding) credentialFor(rawURL string) *GitCredential {
@@ -197,7 +197,7 @@ func (b gitBinding) credentialFor(rawURL string) *GitCredential {
 // ---------------------------------------------------------------------------
 
 // gitBinaryPath resolves the `git` executable via PATH once. A missing git
-// binary is a deployment error (add it to the runtime image — see the
+// binary is a deployment error (add it to the runtime image - see the
 // Dockerfile), surfaced clearly the first time any git tool runs rather than
 // probed at startup (git tools may never be registered for a given agent set).
 func gitBinaryPath() (string, error) {
@@ -210,19 +210,19 @@ func gitBinaryPath() (string, error) {
 
 // gitEnv builds the scrubbed environment for a git child process: no
 // terminal-prompt fallback (a hung askpass prompt would otherwise block the
-// server), no system/global gitconfig (hermetic — behavior never depends on
+// server), no system/global gitconfig (hermetic - behavior never depends on
 // what's on the host), a minimal PATH (just enough to find git's own helper
 // binaries, e.g. git-remote-https), and HOME pinned to caps.HomeDir when set
-// (the isolated per-user home OUTSIDE any cloned repo — see workspace.Jail.
+// (the isolated per-user home OUTSIDE any cloned repo - see workspace.Jail.
 // HomeDir), falling back to the repo dir itself only when unset. Pinning HOME
 // to the repo dir unconditionally was the live bug this closes: a global git
 // config/credential write (or a git hook shelling out to npm/pip) would land
 // straight inside the repo tree, right where `git add -A` could sweep it up.
 // When auth is non-nil, GIT_ASKPASS points at the workspace-root symlink back
-// to THIS quack binary (see GitAskpassLinkName — git execs the value DIRECTLY
+// to THIS quack binary (see GitAskpassLinkName - git execs the value DIRECTLY
 // as a single program path, so it must be a real executable, never
 // "<binary> <subcommand>"), and the username/token travel ONLY as env vars on
-// this one child process — never written to disk, never in a URL, never in
+// this one child process - never written to disk, never in a URL, never in
 // `ps` output for the long-lived server process.
 // gitChildPath mirrors workspace's childPath for git children: the fixed
 // minimal PATH plus the operator's workspace.exec_path extras (a git hook or
@@ -257,7 +257,7 @@ func gitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
 }
 
 // capOutput truncates s to max bytes, the git tools' shared "output caps"
-// (loud truncation, never an error — mirrors the fs tools' truncated-result
+// (loud truncation, never an error - mirrors the fs tools' truncated-result
 // convention, just folded into the text itself here since git's own textual
 // output has no natural place for a separate `truncated` bool per call).
 func capOutput(s string, max int) string {
@@ -268,7 +268,7 @@ func capOutput(s string, max int) string {
 }
 
 // runGit executes git as a subprocess: exec.Command argv arrays ONLY, never a
-// shell (see the design doc's "never a shell" rule — this is what makes a
+// shell (see the design doc's "never a shell" rule - this is what makes a
 // force-push or an arbitrary --upload-pack unexpressible, not merely
 // filtered), cwd pinned to dir (which callers resolve through the jail before
 // calling this), env scrubbed (gitEnv), a per-call timeout from caps, and
@@ -325,13 +325,13 @@ type gitCloneResult struct {
 	Dir           string `json:"dir"`
 	Head          string `json:"head"`
 	DefaultBranch string `json:"default_branch"`
-	// Cwd is where you are standing. NOTE: `dir` is relative to it — the clone
+	// Cwd is where you are standing. NOTE: `dir` is relative to it - the clone
 	// landed at <cwd>/<dir>, and `cd` into it with exactly that `dir`.
 	Cwd string `json:"cwd"`
 }
 
 // validateCloneURL enforces https-only and rejects any URL carrying
-// credentials (user:pass@ or user@) — a token in a clone URL would persist
+// credentials (user:pass@ or user@) - a token in a clone URL would persist
 // into .git/config and every log line forever. See the design doc's "Git
 // auth" section.
 func validateCloneURL(raw string) (*url.URL, error) {
@@ -434,7 +434,7 @@ func gitHeadInfo(dir string, caps workspace.Caps) (head, branch string, err erro
 // validateRef rejects a ref that would be read by git as an OPTION rather than
 // a ref (anything leading with "-", e.g. "--upload-pack=…"). argv-only exec
 // means a ref can never become a shell command, but it could still smuggle a
-// git flag into the argv — this is the other half of that guard.
+// git flag into the argv - this is the other half of that guard.
 func validateRef(ref, tool string) error {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -459,7 +459,7 @@ func validateRef(ref, tool string) error {
 // ---------------------------------------------------------------------------
 
 // gitLogFieldSep/gitLogRecordSep are unit/record separators (ASCII 0x1f/0x1e)
-// used to delimit git log's %h/%an <%ae>/%aI/%s fields — subjects and author
+// used to delimit git log's %h/%an <%ae>/%aI/%s fields - subjects and author
 // names can contain almost anything else, so a printable delimiter (comma,
 // pipe) would be ambiguous.
 const (
@@ -472,7 +472,7 @@ const (
 // ---------------------------------------------------------------------------
 
 // gitCommitAuthorName/Email fix every quack commit's author AND committer to
-// a system identity — commits are attributable to the system, not
+// a system identity - commits are attributable to the system, not
 // impersonating the user (see the design doc).
 const (
 	gitCommitAuthorName  = "quack"
@@ -486,9 +486,9 @@ const (
 // cwd (the target repo), so `npm ci` wrote its cache directly into the repo
 // tree, and `git add -A` then staged 1,261 cache files alongside 8 real ones
 // in a single commit (see internal/workspace's HomeDir fix for the other half
-// of this — this wall is the deterministic backstop for whatever still slips
+// of this - this wall is the deterministic backstop for whatever still slips
 // through, or a repo dirtied by something other than this run). Deliberately
-// a plain count, not judge/LLM guidance — the user's own framing draws this
+// a plain count, not judge/LLM guidance - the user's own framing draws this
 // line: commit NAME/message quality is judge territory (see agents/
 // code-implementer/rubric.md's commit_hygiene), but "did we just stage a
 // thousand files nobody asked for" is a fact a threshold answers directly.
@@ -502,12 +502,12 @@ const maxAddAllFiles = 100
 // git_push
 // ---------------------------------------------------------------------------
 
-// protectedBranches can NEVER be pushed to by an agent — humans merge into
+// protectedBranches can NEVER be pushed to by an agent - humans merge into
 // them. Force-push is unexpressible (no argv path ever adds --force); this is
 // the other half of "the one outward-facing, non-undoable operation" guard.
 var protectedBranches = map[string]bool{"main": true, "master": true}
 
-// gitRemoteURL reads the "origin" remote's URL — used both to pick a matching
+// gitRemoteURL reads the "origin" remote's URL - used both to pick a matching
 // credential and, implicitly, to confirm a remote is even configured.
 func gitRemoteURL(dir string, caps workspace.Caps) (string, error) {
 	out, _, err := runGit(context.Background(), dir, []string{"remote", "get-url", "origin"}, caps, nil)
@@ -519,14 +519,14 @@ func gitRemoteURL(dir string, caps workspace.Caps) (string, error) {
 
 // PushBranch pushes branch from the local clone at dir to "origin", credential
 // injected via the SAME askpass mechanism the git tools use (never a URL, never
-// written to disk) — the delivery step's own transient, App-authed push
+// written to disk) - the delivery step's own transient, App-authed push
 // (internal/github), run OUTSIDE any agent's tool call and after judge pass, so
 // it never races or duplicates a worker's own git activity. Mirrors git_push's
 // safety rules: never force-pushes, rejects a protected branch outright.
 // jailRoot anchors the askpass symlink (workspace.Jail.Root()).
 func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCredential, caps workspace.Caps) (sha string, err error) {
 	if protectedBranches[branch] {
-		return "", fmt.Errorf("git: pushing to %q is rejected — a human merges", branch)
+		return "", fmt.Errorf("git: pushing to %q is rejected - a human merges", branch)
 	}
 	link, err := ensureAskpassLink(jailRoot)
 	if err != nil {
@@ -534,7 +534,7 @@ func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCrede
 	}
 	auth := &gitAuth{cred: cred, askpass: link}
 	// --force: the work branch is quack's own attempt branch and a re-run
-	// SUPERSEDES the prior attempt — each run starts from a fresh setup clone,
+	// SUPERSEDES the prior attempt - each run starts from a fresh setup clone,
 	// so a leftover remote branch (a delivery that pushed then failed later,
 	// a re-triggered label run) is never a fast-forward. Never main/master
 	// (refused above); plain --force because a fresh clone holds no
@@ -555,5 +555,5 @@ func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCrede
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// git_pull / git_rebase — auto-abort-on-conflict + report
+// git_pull / git_rebase - auto-abort-on-conflict + report
 // ---------------------------------------------------------------------------

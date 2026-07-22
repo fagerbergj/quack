@@ -22,7 +22,7 @@ import (
 // fabricationStub reenacts the live-e2e defect (2026-07-10): the worker reads
 // one file, then ANSWERS claiming a commit it never made and quoting README
 // content it never read. The judge side captures the full prompt it receives,
-// so the test can assert the workspace ledger reached it — the fix under
+// so the test can assert the workspace ledger reached it - the fix under
 // test. The judge passes (0.9): what's being proven is the judge now HAS the
 // evidence, not any particular verdict.
 type fabricationStub struct {
@@ -51,7 +51,7 @@ func (s *fabricationStub) GenerateContent(_ context.Context, req *model.LLMReque
 			yield(stubCall("read_file", map[string]any{"path": "README.md"}), nil)
 			return
 		}
-		// Second turn (the tool result is now in context) — fabricate: claim a
+		// Second turn (the tool result is now in context) - fabricate: claim a
 		// commit that never happened and quote content the README does not
 		// contain.
 		yield(stubText("I committed the change as abc123. The README says \"run pytest in a virtualenv\"."), nil)
@@ -81,7 +81,7 @@ func newStubReadFileTool(t *testing.T) tool.Tool {
 // TestJudgeSeesWorkspaceLedger drives the REAL gate loop (RunGatedRefine on
 // the ADK workflow engine) with a worker that performs one read_file and then
 // fabricates a commit claim. Asserts the judge's incoming prompt carries the
-// workspace ledger — the read_file entry WITH its content sample — and no
+// workspace ledger - the read_file entry WITH its content sample - and no
 // git_commit entry, giving claims_match_activity everything it needs to fail
 // the fabrication.
 func TestJudgeSeesWorkspaceLedger(t *testing.T) {

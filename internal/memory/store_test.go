@@ -22,7 +22,7 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 	return out, nil
 }
 
-// newSQLiteStore builds a Store backed by an embedded sqlite file in a temp dir —
+// newSQLiteStore builds a Store backed by an embedded sqlite file in a temp dir -
 // the always-on backend for unit tests (no container). The shared Store logic
 // (scope, recall, consolidation) is identical to the qdrant backend.
 func newSQLiteStore(t *testing.T, domain string, consolidator model.LLM) *Store {
@@ -37,7 +37,7 @@ func newSQLiteStore(t *testing.T, domain string, consolidator model.LLM) *Store 
 
 // upsertScoped writes one fixed-vector point under the given bucket, so the
 // fakeEmbedder makes any query match and only the bucket filter decides. Used to
-// plant LEGACY (pre-bucket, agent-name-scoped) points too — see scope_test.go.
+// plant LEGACY (pre-bucket, agent-name-scoped) points too - see scope_test.go.
 func upsertScoped(t *testing.T, s *Store, id, scope, content string) {
 	t.Helper()
 	if err := s.idx.upsert(context.Background(), []point{{

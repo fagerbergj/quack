@@ -1,7 +1,7 @@
 package tools
 
 // Shared test doubles for agent.Context (originally beside the cd tool's
-// tests; the consumers — repeatguard/nodescope/namespace/setup tests — remain).
+// tests; the consumers - repeatguard/nodescope/namespace/setup tests - remain).
 
 import (
 	"context"

@@ -34,7 +34,7 @@ func TestCommandTree(t *testing.T) {
 	}
 
 	// `chat node stop|pause|resume|queue|queue-edit|queue-remove|edit|retry`
-	// are the deepest leaves — prove 3-level nesting resolves and the full
+	// are the deepest leaves - prove 3-level nesting resolves and the full
 	// updateNodeStatus + queue + edit surface is wired (#265).
 	for _, sub := range []string{"stop", "pause", "resume", "queue", "queue-edit", "queue-remove", "edit", "retry"} {
 		if c, _, err := root.Find([]string{"chat", "node", sub}); err != nil || c.Name() != sub {
@@ -44,7 +44,7 @@ func TestCommandTree(t *testing.T) {
 
 	// `chat resume` was removed with the TUI (superseded by `chat show` + `chat send`).
 	if c, _, _ := root.Find([]string{"chat", "resume"}); c != nil && c.Name() == "resume" {
-		t.Error("chat resume should not be registered — the TUI (and its resume verb) is gone")
+		t.Error("chat resume should not be registered - the TUI (and its resume verb) is gone")
 	}
 
 	// version prints the stamp and does not error.
@@ -60,7 +60,7 @@ func TestCommandTree(t *testing.T) {
 }
 
 // TestBareCommandPrintsHelp: `quack` with no args and no -p prints the root
-// help text (pointing at -p / chat send / chat show) and does not error — no
+// help text (pointing at -p / chat send / chat show) and does not error - no
 // TUI to launch.
 func TestBareCommandPrintsHelp(t *testing.T) {
 	root := newRootCmd()

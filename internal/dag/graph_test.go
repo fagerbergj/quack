@@ -12,7 +12,7 @@ import (
 // stubG is a deterministic model.LLM routing by agent role (system-instruction
 // marker) and by the presence of the judge's submit_verdict tool. Researchers
 // return distinct findings; the judge always passes; the synthesizer echoes the
-// prompt it received — so a passing test proves both researcher outputs reached
+// prompt it received - so a passing test proves both researcher outputs reached
 // the synthesizer via JoinNode fan-in + buildTask assembly keyed by node ID.
 type stubG struct{}
 

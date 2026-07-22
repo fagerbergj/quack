@@ -6,7 +6,7 @@ import "testing"
 //
 // The model is handed paths constantly and feeds them straight back: `cd` reports
 // its new dir ("openhands"), git_clone reports where it landed, list_dir echoes
-// entry paths. All of them now speak ONE namespace — node-relative — so
+// entry paths. All of them now speak ONE namespace - node-relative - so
 // read_file("openhands/README.md") after `cd openhands` is unambiguous and must
 // WORK. Doubling the cwd into openhands/openhands/README.md is never what anyone
 // means: a live explorer node made 34 REPEATED calls out of 69 flailing through

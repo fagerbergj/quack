@@ -44,7 +44,7 @@ func TestBuildHistory(t *testing.T) {
 
 	// Turn 1: complete exchange. Turn 2: user-only (half-finished).
 	appendEvent(t, svc, sess, "user", "which Springfield?", false)
-	appendEvent(t, svc, sess, "orchestrator", "let me think", true) // thinking — dropped
+	appendEvent(t, svc, sess, "orchestrator", "let me think", true) // thinking - dropped
 	appendEvent(t, svc, sess, "orchestrator", "Illinois or Missouri?", false)
 	appendEvent(t, svc, sess, "user", "Illinois", false)
 
@@ -88,7 +88,7 @@ func appendPartsEvent(t *testing.T, svc session.Service, sess session.Session, l
 
 // TestPendingChoice verifies a pending get_user_choice call (and its question
 // text) is detected while unanswered and clears once a real answer (carrying
-// the answer key) follows — so the orchestrator resumes the right turn exactly
+// the answer key) follows - so the orchestrator resumes the right turn exactly
 // once.
 func TestPendingChoice(t *testing.T) {
 	svc := session.InMemoryService()

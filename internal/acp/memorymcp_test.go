@@ -22,7 +22,7 @@ import (
 // requires: an SSE server with type "sse" and a non-null headers array. The
 // original Http variant (type unset, headers nil) serialized to
 // {"type":"","headers":null,...}, which opencode rejected with -32602 and
-// killed the ACP subprocess — breaking every code node. Guard against regress.
+// killed the ACP subprocess - breaking every code node. Guard against regress.
 func TestMemoryMCPServers_SSEWireShape(t *testing.T) {
 	caps := sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}}
 
@@ -61,7 +61,7 @@ func TestMemoryMCPServers_SSEWireShape(t *testing.T) {
 }
 
 // fakeMCPEmbedder returns a fixed unit vector for every text, so a recall
-// query matches any stored point (cosine = 1) — the round-trip below is
+// query matches any stored point (cosine = 1) - the round-trip below is
 // exercised through the SCOPE filter, not embedding similarity.
 type fakeMCPEmbedder struct{}
 
@@ -74,7 +74,7 @@ func (fakeMCPEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 }
 
 // verbatimConsolidator replies with a single ADD op that writes sourceText
-// verbatim — just enough to seed a bucket through the real Store.Commit path.
+// verbatim - just enough to seed a bucket through the real Store.Commit path.
 type verbatimConsolidator struct{}
 
 func (verbatimConsolidator) Name() string { return "verbatim-consolidator" }
@@ -126,7 +126,7 @@ func connectMCP(t *testing.T, ts *httptest.Server, path string) *mcp.ClientSessi
 }
 
 // TestMemoryMCP_LoadMemory_ScopedRecall proves load_memory resolves ONLY the
-// buckets the registered node is entitled to — never a bucket named by the tool
+// buckets the registered node is entitled to - never a bucket named by the tool
 // call itself, satisfying #344's "scope from registration, not args" rule.
 func TestMemoryMCP_LoadMemory_ScopedRecall(t *testing.T) {
 	ctx := context.Background()
@@ -165,7 +165,7 @@ func TestMemoryMCP_LoadMemory_ScopedRecall(t *testing.T) {
 }
 
 // TestMemoryMCP_StageMemory_LandsInBuffer proves stage_memory writes into the
-// NODE's own MemStage — the buffer the gate drains into commitMemoryOnPass —
+// NODE's own MemStage - the buffer the gate drains into commitMemoryOnPass -
 // resolved from the URL's secret, never a tool argument.
 func TestMemoryMCP_StageMemory_LandsInBuffer(t *testing.T) {
 	ctx := context.Background()
@@ -206,7 +206,7 @@ func TestMemoryMCP_StageMemory_LandsInBuffer(t *testing.T) {
 // TestMemoryMCP_CrossNodeIsolation is the negative test for #344's security
 // fix: two concurrent nodes of the SAME plan get two DISTINCT, unguessable
 // secrets. Node A's client must not be able to read or write node B's memory
-// — not via B's real secret misused by A's assumptions, and NOT by deriving
+// - not via B's real secret misused by A's assumptions, and NOT by deriving
 // anything from the plan/node IDs both nodes' prompts disclose (the advisor-
 // thread token, planID+"/"+nodeID, is exactly that derivation, and a sibling's
 // node ID is visible in a worker's own prompt via the running-siblings list).
@@ -233,11 +233,11 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 	vetting.RegisterMemSession(secretB, vetting.MemSession{Memory: store, Scope: scopeB, Staged: stageB})
 	defer vetting.UnregisterMemSession(secretB)
 
-	// Same plan, two sibling nodes — the OLD (vulnerable) credential would have
+	// Same plan, two sibling nodes - the OLD (vulnerable) credential would have
 	// been these two advisor-thread tokens, each derivable from the other by
 	// any agent that knows its own node ID and its plan ID (both disclosed in
 	// its own prompt) plus a sibling's node ID (disclosed via the running-
-	// siblings list — see internal/dag/executor.go siblingIDs).
+	// siblings list - see internal/dag/executor.go siblingIDs).
 	planID := "plan-shared"
 	tokenA := vetting.AdvisorThreadToken(planID, "node-a")
 	tokenB := vetting.AdvisorThreadToken(planID, "node-b")
@@ -264,7 +264,7 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 	}
 
 	// 2) An attacker who only knows the DERIVABLE advisor-thread tokens (never
-	// the real secrets) gets NOTHING — the tool isn't even registered for that
+	// the real secrets) gets NOTHING - the tool isn't even registered for that
 	// path, so the call fails loudly with a protocol-level error.
 	for _, guess := range []string{tokenA, tokenB, planID + "/node-b", "node-b", ""} {
 		csGuess := connectMCP(t, ts, guess)
@@ -293,7 +293,7 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 
 // TestMemoryMCP_UnregisteredSecret_FailsLoudly pins the lifecycle guarantee: a
 // straggler call after a node's session has been unregistered (the gate
-// drains-and-unregisters the moment it reads the staging buffer — see
+// drains-and-unregisters the moment it reads the staging buffer - see
 // RunGatedRefine) gets an explicit protocol error, never a silent write into
 // an orphaned buffer nobody will read again.
 func TestMemoryMCP_UnregisteredSecret_FailsLoudly(t *testing.T) {
