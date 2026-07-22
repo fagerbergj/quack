@@ -1,0 +1,178 @@
+# Remote, full-featured: a shared, always-on deployment. Same shape as the
+# repo's own config/quack.yaml (the canonical full-featured config — every
+# agent, the trust gate, memory) with the optional pieces that ship commented
+# out there turned ON: the GitHub App extension, and OTel actually exporting
+# somewhere. See ../deployment.md.
+
+providers:
+  default:
+    kind: openai
+    endpoint: ${QUACK_LLM_ENDPOINT}
+    api_key: ${QUACK_LLM_API_KEY}
+
+stores:
+  default_postgres:
+    kind: postgres
+    url: ${QUACK_DATABASE_URL}   # an instance that outlives any one `quack` process
+  default_vector:
+    kind: qdrant
+    url: ${QUACK_QDRANT_URL}
+    embedder:
+      provider: default
+      model: ${QUACK_EMBED_MODEL}
+    consolidation:
+      provider: default
+      model: ${QUACK_JUDGE_MODEL}
+    top_k: 5
+    min_score: 0.5
+
+session:
+  store: default_postgres
+  compaction:
+    enabled: ${QUACK_COMPACTION_ENABLED}
+    provider: default
+    model: ${QUACK_COMPACTION_MODEL}
+
+orchestrator:
+  skills: [plan-work, format-markdown, present-coding-plan, contribute]
+  provider: default
+  model: ${QUACK_ORCH_MODEL}
+  tools: [commit_memory]   # user memory on: recall + commit of personal facts
+
+agents:
+  web-researcher:
+    bundle: agents/web-researcher
+    skills: [format-markdown, research-git-repos]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 65536
+    memory:
+      bucket: research
+    judge_rounds: 1
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor]
+  code-implementer:
+    bundle: agents/code-implementer
+    provider: default
+    model: ${QUACK_CODER_MODEL}
+    context_window: 65536
+    memory:
+      bucket: coding
+    judge_rounds: 1
+    acp:
+      command: ["opencode", "acp"]
+      mcp_servers:
+        - https://mcp.context7.com/mcp
+  code-reviewer:
+    bundle: agents/code-reviewer
+    provider: default
+    model: ${QUACK_CODER_MODEL}
+    context_window: 65536
+    memory:
+      bucket: coding
+    judge_rounds: 1
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
+  code-explorer:
+    bundle: agents/code-explorer
+    provider: default
+    model: ${QUACK_CODER_MODEL}
+    context_window: 65536
+    memory:
+      bucket: coding
+    judge_rounds: 2
+    acp:
+      command: ["opencode", "acp"]
+      mcp_servers:
+        - https://mcp.context7.com/mcp
+      read_only: true
+  synthesizer:
+    bundle: agents/synthesizer
+    skills: [format-markdown, present-coding-plan, pr-authoring]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 65536
+    judge_rounds: 1
+    tools: []
+  media-reader:
+    bundle: agents/media-reader
+    skills: [format-markdown]
+    provider: default
+    model: ${QUACK_MEDIA_MODEL}
+    context_window: 32768
+    tools: []
+    inputs: [text, image, audio]
+    judge: false
+  image-reader:
+    bundle: agents/image-reader
+    skills: [format-markdown]
+    provider: default
+    model: ${QUACK_IMAGE_MODEL}
+    context_window: 32768
+    tools: []
+    inputs: [text, image]
+    judge: false
+
+tools:
+  web_search:
+    kind: exa
+    url: ${QUACK_SEARXNG_URL}
+    auth:
+      kind: api_key
+      api_key: ${QUACK_EXA_API_KEY}   # unlocks Exa's REST API instead of the keyless, rate-limited MCP path
+  web_fetch:
+    kind: crawl4ai
+    url: ${QUACK_CRAWL4AI_URL}
+  stage_memory:
+    store: default_vector
+    collection: task_memory
+  commit_memory:
+    store: default_vector
+    collection: user_memory
+
+gates:
+  constitution_path: config/constitution.md
+  rubric_path: config/rubric.md
+  deterministic_checks:
+    max_rounds: 4
+  judge:
+    provider: default
+    model: ${QUACK_JUDGE_MODEL}
+    max_rounds: 1
+    threshold: 0.7
+    max_iterations: 6
+    context_window: 65536
+    skeptics: 0
+
+dag:
+  max_active_runs: 3
+  max_active_nodes: 2
+
+server:
+  addr: ":8080"
+  topology: external   # Postgres/qdrant are instances this deployment owns separately
+
+otel:
+  enabled: true
+  otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT}   # e.g. http://otel-collector:4318 — actually ships spans/metrics
+  sample: 1.0
+
+workspace:
+  root: ${QUACK_WORKSPACE_ROOT}
+  sandbox: bwrap   # a bare-metal/VM deploy: real OS sandbox for run_command/check children
+  check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
+  git_credentials:
+    - host: github.com
+      username: x-access-token
+      token: ${QUACK_GITHUB_TOKEN}
+
+# The GitHub App extension: webhook receiver, App-authed git credentials, the
+# label workflow + @quack mentions. See ../../extensions/github.md.
+extensions:
+  github:
+    client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
+    private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY}
+    webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
+    mention: "@quack"
+    allowed_users: [fagerbergj]   # empty denies every human-invoked trigger — seed your own login(s)
+    triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]

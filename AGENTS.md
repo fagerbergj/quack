@@ -2,13 +2,13 @@
 
 This file provides guidance to AI coding agents working in this repository.
 
-> **Auto-generated code reference:** [`openwiki/`](openwiki/) is an LLM-generated wiki of the codebase — architecture, workflows, operations — refreshed from the code. Start there for a map of how a subsystem actually works; this file stays focused on the rules and the day-to-day commands.
+> **Auto-generated code reference:** [`openwiki/`](openwiki/) is an LLM-generated wiki of the codebase - architecture, workflows, operations - refreshed from the code. Start there for a map of how a subsystem actually works; this file stays focused on the rules and the day-to-day commands.
 
 ## Hard Rules
 
 Never:
 
-- Edit `internal/schema/quack.gen.go` or anything under `frontend/src/generated/` — these are generated; changes will be overwritten and CI will fail.
+- Edit `internal/schema/quack.gen.go` or anything under `frontend/src/generated/` - these are generated; changes will be overwritten and CI will fail.
 - Add an unrecognised file to an `agents/<name>/` bundle. Each bundle contains exactly `agent-card.json` and `prompt.md`, plus the optional `rubric.md` (judge rubric) and `memory.md` ("what to remember" guidance, M6).
 - Edit `openapi.yaml` without running `make generate` and committing the regenerated files.
 
@@ -65,12 +65,12 @@ CI checks: `go vet`, `go test ./...`, `gofmt -l`, `tsc --noEmit`, `eslint`, `npm
 
 `openapi.yaml` is the single source of truth for the API contract. `make generate` (via `scripts/generate.sh`) derives two artifacts from it:
 
-- **`internal/schema/quack.gen.go`** — Go chi-server stubs + request/response types (oapi-codegen, config: `internal/schema/cfg.yaml`)
-- **`frontend/src/generated/`** — TypeScript client (openapi-ts, config: `frontend/openapi-ts.config.ts`)
+- **`internal/schema/quack.gen.go`** - Go chi-server stubs + request/response types (oapi-codegen, config: `internal/schema/cfg.yaml`)
+- **`frontend/src/generated/`** - TypeScript client (openapi-ts, config: `frontend/openapi-ts.config.ts`)
 
 ### Go module
 
-Module path: `github.com/fagerbergj/quack`. The binary entrypoint is `cmd/server/main.go`.
+Module path: `github.com/fagerbergj/quack`. The binary entrypoint is `cmd/quack/main.go`.
 
 ### Request lifecycle
 
@@ -80,31 +80,31 @@ HTTP request
   → internal/server/rest/       (REST handler; dispatches to orchestrator)
   → internal/orchestrator/      (Orchestrator.Run: one workflow/runner; plan → native ADK graph)
   → internal/dag/planner.go     (Planner: LLM plan → DAG) + nativegraph.go (RunPlanAsGraph)
-  → each node → vetting.RunGatedRefine (internal/vetting/node.go — worker rounds + gate)
+  → each node → vetting.RunGatedRefine (internal/vetting/node.go - worker rounds + gate)
   → internal/vetting/judge.go   (independent judge model scores output)
   → internal/dag/executor.go    (dagStream: ADK session events → SSE vocabulary)
 ```
 
 ### DAG execution (`internal/dag/`)
 
-- `plan.go` — `Plan` and `Node` structs; `Node.DependsOn` encodes edges; `Plan.Setup` (repo/base/branch) declares the pre-provisioned clone.
-- `planner.go` — one LLM call decomposes a request into a `Plan`, with a per-node acceptance rubric.
-- `nativegraph.go`/`graph.go` — the plan runs as ONE native ADK workflow graph under one runner (`WithMaxConcurrency`); all nodes share one workflow session (id = chatID), isolated by branch + isolation scope. `buildGateNodes` wraps each node's worker in `vetting.RunGatedRefine`. Continue-but-warn on gate-failed dependencies.
-- `executor.go` — `dagStream` translates raw ADK session events (by `NodeInfo.Path` + `worker-rN` run ids) into the SSE vocabulary.
+- `plan.go` - `Plan` and `Node` structs; `Node.DependsOn` encodes edges; `Plan.Setup` (repo/base/branch) declares the pre-provisioned clone.
+- `planner.go` - one LLM call decomposes a request into a `Plan`, with a per-node acceptance rubric.
+- `nativegraph.go`/`graph.go` - the plan runs as ONE native ADK workflow graph under one runner (`WithMaxConcurrency`); all nodes share one workflow session (id = chatID), isolated by branch + isolation scope. `buildGateNodes` wraps each node's worker in `vetting.RunGatedRefine`. Continue-but-warn on gate-failed dependencies.
+- `executor.go` - `dagStream` translates raw ADK session events (by `NodeInfo.Path` + `worker-rN` run ids) into the SSE vocabulary.
 
 ### Trust gate (`internal/vetting/`)
 
 `RunGatedRefine` (node.go) runs the worker, then loops cheapest-first before the DAG propagates its output:
 
-1. **Continuation** — mechanical completion signals (empty answer, undelivered commit, unposted review) hand the worker another tool-bearing round, up to 4.
-2. **Deterministic checks** — citation backing, length, delivery/review/behaviour criteria, and `checksPassCriterion` (checks.go): the repo's own build/vet/test commands derived from the clone and run via `workspace.RunPipeline` (allowlist `workspace.check_commands`, default ON, toolchain-gated).
-3. **Independent judge** (judge.go) — a separate model scores G-Eval style; weakest-link (lowest criterion), threshold default `0.7`. Judge/revise rounds re-prompt the worker with self-contained feedback.
+1. **Continuation** - mechanical completion signals (empty answer, undelivered commit, unposted review) hand the worker another tool-bearing round, up to 4.
+2. **Deterministic checks** - citation backing, length, delivery/review/behaviour criteria, and `checksPassCriterion` (checks.go): the repo's own build/vet/test commands derived from the clone and run via `workspace.RunPipeline` (allowlist `workspace.check_commands`, default ON, toolchain-gated).
+3. **Independent judge** (judge.go) - a separate model scores G-Eval style; weakest-link (lowest criterion), threshold default `0.7`. Judge/revise rounds re-prompt the worker with self-contained feedback.
 
 Ground-truth probes for external (ACP) workers: `augmentFromRepo` (gitprobe.go) reads commits/changed files off the clone and synthesizes the staged PR; `augmentFromAnswer` (answerreview.go) parses a reviewer's `VERDICT:`/`FINDINGS:` tail into the staged review with inline comments. Delivery is gate-owned (`commitDelivery` → the GitHub extension), fires exactly once, and a gate-failed PR opens as a draft.
 
 ### Agents: external ACP subprocesses + native bundles (`internal/acp/`, `internal/agent/`, `agents/`)
 
-ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`) — `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
+ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`) - `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
 
 Native (llmagent) bundles remain for the non-code agents (web-researcher, synthesizer, media/image readers, advisor, orchestrator):
 
@@ -137,29 +137,29 @@ dag_plan → node_queued → node_start
 done
 ```
 
-`stream.Translator` converts raw ADK session events into this vocabulary. The `stage` field on `agent_start`/`agent_complete` (`worker`, `judge`, `revise`) lets the frontend group runs inside a node. A worker's `ask_advisor` consults (internal/tools/ask_advisor.go) are NOT a separate stage — they surface as ordinary `agent_tool_call`/`agent_tool_result` activity within the worker's own run.
+`stream.Translator` converts raw ADK session events into this vocabulary. The `stage` field on `agent_start`/`agent_complete` (`worker`, `judge`, `revise`) lets the frontend group runs inside a node. A worker's `ask_advisor` consults (internal/tools/ask_advisor.go) are NOT a separate stage - they surface as ordinary `agent_tool_call`/`agent_tool_result` activity within the worker's own run.
 
 ### HTTP server (`internal/server/`)
 
-- `router.go` — mounts MCP at `/api/v1/mcp`, registers generated chi routes, serves the embedded SPA for everything else.
-- `rest/` — concrete HTTP handler that implements the generated `StrictServerInterface`.
-- `mcp/` — MCP Streamable-HTTP server.
-- The SPA (`frontend/dist`) is embedded into `cmd/server/web/dist` at build time (`make frontend-build`).
+- `router.go` - mounts MCP at `/api/v1/mcp`, registers generated chi routes, serves the embedded SPA for everything else.
+- `rest/` - concrete HTTP handler that implements the generated `StrictServerInterface`.
+- `mcp/` - MCP Streamable-HTTP server.
+- The SPA (`frontend/dist`) is embedded into `internal/serve/web/dist` at build time (`make frontend-build`).
 
 ### Frontend (`frontend/`)
 
 React 19 + Vite + Tailwind CSS 4 + TanStack Query. State is in `src/state/`:
 
-- `chatStore.ts` — Zustand-like store for chat sessions and messages.
-- `agentStream.ts` — parses the SSE event stream and updates the store.
-- `ChatStoreProvider.tsx` — context provider.
+- `chatStore.ts` - Zustand-like store for chat sessions and messages.
+- `agentStream.ts` - parses the SSE event stream and updates the store.
+- `ChatStoreProvider.tsx` - context provider.
 
 Components under `src/components/` have co-located Storybook stories (`.stories.tsx`) and vitest tests (`.test.ts`). MSW (`msw`) mocks the API in tests and Storybook.
 
 ### Stores
 
-- **Postgres** (GORM, `gorm.io/driver/postgres`) — ADK sessions + events, DAG plan/node state, chat metadata. Connection via env `QUACK_DATABASE_URL`.
-- **qdrant** — semantic memory / RAG vectors. Connection via env `QUACK_QDRANT_URL`.
+- **Postgres** (GORM, `gorm.io/driver/postgres`) - ADK sessions + events, DAG plan/node state, chat metadata. Connection via env `QUACK_DATABASE_URL`.
+- **qdrant** - semantic memory / RAG vectors. Connection via env `QUACK_QDRANT_URL`.
 
 ### Key env vars
 
@@ -167,7 +167,7 @@ Components under `src/components/` have co-located Storybook stories (`.stories.
 |-----|---------|
 | `QUACK_LLM_ENDPOINT` | OpenAI-compatible LLM endpoint (e.g. `http://jason-server:11436/v1`); interpolated into `providers.default.endpoint` |
 | `QUACK_LLM_API_KEY` | API key |
-| `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (coder/media/image fall back to `QUACK_RESEARCHER_MODEL` if unset) |
+| `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (`QUACK_CODER_MODEL` falls back to `QUACK_RESEARCHER_MODEL` if unset — the only chained fallback; every other agent's model, and the judge, is a hard startup error if unset while the agent/judge is enabled) |
 | `QUACK_EMBED_MODEL` | Embedding model for the vector store |
 | `QUACK_COMPACTION_ENABLED` / `QUACK_COMPACTION_MODEL` | Toggle + model for history compaction |
 | `QUACK_DATABASE_URL` | Postgres DSN |
@@ -179,21 +179,21 @@ Components under `src/components/` have co-located Storybook stories (`.stories.
 
 ## Comments
 
-Comments say what the CODE CANNOT — the incident belongs in the commit message and PR body, not the source.
+Comments say what the CODE CANNOT - the incident belongs in the commit message and PR body, not the source.
 
 - Keep: non-obvious constraints and invariants, the ceiling of a deliberate shortcut, warnings that stop the next person breaking something, `ponytail:` markers.
 - Cut: incident narratives (dates, node ids, token counts, quoted model output), what the code plainly does, how we got here, rejected alternatives.
-- A load-bearing war story is ONE clause (`// (a live grep returned 48 MB — bound the bytes, not just the count)`), never a retelling.
-- If one line of code needs 3+ lines of comment, the comment is too long. Test files may keep a short failure narrative (they pin regressions) — a few lines, not twenty.
+- A load-bearing war story is ONE clause (`// (a live grep returned 48 MB - bound the bytes, not just the count)`), never a retelling.
+- If one line of code needs 3+ lines of comment, the comment is too long. Test files may keep a short failure narrative (they pin regressions) - a few lines, not twenty.
 
 ## Spec-Driven Development
 
 Before implementing a non-trivial feature, write a brief spec covering:
 
-- **Scope** — what is in and explicitly out of scope
-- **Forbidden actions** — what the implementation must never do
-- **Available tools / interfaces** — what it can call or depend on
-- **Output contract** — shape and format of what it produces
-- **Test cases** — at least 2–3 concrete input/output examples
+- **Scope** - what is in and explicitly out of scope
+- **Forbidden actions** - what the implementation must never do
+- **Available tools / interfaces** - what it can call or depend on
+- **Output contract** - shape and format of what it produces
+- **Test cases** - at least 2–3 concrete input/output examples
 
 Keep the spec in the PR description or a `docs/` file. Any behavioral drift from the spec becomes a failing test rather than a production incident.
