@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,7 +26,25 @@ type ClientConfig struct {
 
 // ServerRef is one registered server the CLI can talk to.
 type ServerRef struct {
-	URL string `yaml:"url"`
+	URL  string      `yaml:"url"`
+	Auth *ServerAuth `yaml:"auth,omitempty"` // set by `quack server login`; nil if the server needs no auth
+}
+
+// ServerAuth is a server's stored OIDC session (from `quack server login`'s
+// device flow): enough for NewClient to attach a bearer token and silently
+// refresh it via the token endpoint when it's near expiry, without
+// re-running the browser/device flow. ClientID+Scopes+TokenURL are cached
+// from login so a refresh needs no re-discovery. There is no client secret
+// field - the login flow only supports public OIDC clients (device grant,
+// no secret), so there is never one to persist.
+type ServerAuth struct {
+	Issuer       string    `yaml:"issuer"`
+	ClientID     string    `yaml:"client_id"`
+	Scopes       []string  `yaml:"scopes,omitempty"`
+	TokenURL     string    `yaml:"token_url"`
+	AccessToken  string    `yaml:"access_token"`
+	RefreshToken string    `yaml:"refresh_token,omitempty"`
+	Expiry       time.Time `yaml:"expiry,omitempty"`
 }
 
 // configPath is the registry location: ~/.quack/servers.yaml ($QUACK_HOME).
@@ -49,16 +69,19 @@ func LoadClient() (*ClientConfig, error) {
 	return &c, nil
 }
 
-// Save writes the registry, creating the config dir as needed.
+// Save writes the registry, creating the config dir as needed. Both are
+// private (0700/0600) - the registry can hold OIDC access/refresh tokens
+// (ServerAuth) once `quack server login` has run, and this is the cheap way
+// to avoid leaving them in a world-readable file.
 func (c *ClientConfig) Save() error {
-	if err := os.MkdirAll(filepath.Dir(configPath()), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath()), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("marshal client config: %w", err)
 	}
-	return os.WriteFile(configPath(), b, 0o644)
+	return os.WriteFile(configPath(), b, 0o600)
 }
 
 // AddServer registers name→url, erroring on a duplicate name (use Remove first).
@@ -106,4 +129,32 @@ func (c *ClientConfig) ActiveURL(override string) string {
 		}
 	}
 	return ""
+}
+
+// findByURL returns the registered server (name + ref) whose URL matches url
+// (trailing-slash-insensitive) - how NewClient discovers a stored OIDC
+// session for the server it's about to talk to, whether url came from the
+// active registry entry or a literal --server override that happens to name
+// a registered server.
+func (c *ClientConfig) findByURL(url string) (string, ServerRef, bool) {
+	url = strings.TrimRight(url, "/")
+	for name, ref := range c.Servers {
+		if strings.TrimRight(ref.URL, "/") == url {
+			return name, ref, true
+		}
+	}
+	return "", ServerRef{}, false
+}
+
+// SetAuth attaches (or replaces) the stored OIDC session on a registered
+// server. Errors if name isn't registered - `server login` requires `server
+// add` first, same as `server use`.
+func (c *ClientConfig) SetAuth(name string, auth *ServerAuth) error {
+	ref, ok := c.Servers[name]
+	if !ok {
+		return fmt.Errorf("server %q is not registered (add it first)", name)
+	}
+	ref.Auth = auth
+	c.Servers[name] = ref
+	return nil
 }

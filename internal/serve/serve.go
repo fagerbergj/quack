@@ -36,6 +36,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/auth"
 	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
@@ -192,9 +193,16 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		addr = fmt.Sprintf(":%d", port)
 	}
 
-	// OTel tracing/metrics (internal/otelobs), emission-only — Tempo/Grafana (the
+	// Fails loudly on a bad issuer/unreachable discovery - the whole point is
+	// never silently running open when auth was meant to be enforced.
+	authMW, err := auth.New(cfg.Auth)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("auth init failed: %w", err)
+	}
+
+	// OTel tracing/metrics (internal/otelobs), emission-only - Tempo/Grafana (the
 	// home-server monitoring stack) own trace/metric viewing, not quack itself.
-	// Set up FIRST — before any agent/session wiring — so every quack-authored
+	// Set up FIRST - before any agent/session wiring - so every quack-authored
 	// span from here on is captured (ADK's OWN internal spans are NOT covered;
 	// see the KNOWN LIMITATION on otelobs.Providers). Disabled (otel.enabled:
 	// false) yields a no-op Providers; every otelobs call site stays safe to
@@ -512,6 +520,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		MCP:        mcpserver.Handler(orch),
 		SPA:        spa,
 		Extensions: extensions,
+		Auth:       authMW,
 	})
 	return handler, runCleanups, addr, nil
 }

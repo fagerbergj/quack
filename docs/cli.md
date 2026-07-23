@@ -11,6 +11,9 @@ Every command has its own `--help`; this page is the map.
 | `quack init` | Onboarding wizard: run a server locally (writes `quack.yaml`, then registers `localhost`) or register a remote one someone else runs. |
 | `quack server init` | Just the config wizard - LLM provider, endpoint, model roles, optional features, stores. Writes `quack.yaml` without touching the client registry. |
 | `quack server use <name>` / `add <name> <url>` / `list` / `remove <name>` | Manage the set of servers this CLI knows about and which one is active. |
+| `quack server login <name> --issuer <url> --client-id <id>` | Log in to a registered server that requires [OIDC auth](configuration/auth.md#cli-login-quack-server-login), via the device authorization grant. |
+
+Once logged in, `quack chat`/`quack api`/`-p` attach the stored access token to every request against that server automatically (refreshed silently as it nears expiry) - nothing else to pass on the command line.
 
 ## Running the server
 

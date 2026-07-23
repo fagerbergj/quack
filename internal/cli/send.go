@@ -220,7 +220,7 @@ func exitCode(status string) int {
 // pipeline trace to errOut; asJSON emits one SendResult object instead of the
 // human-readable lines. Returns the process exit code (see Report).
 func RunChatSend(ctx context.Context, out, errOut io.Writer, server, id, content string, attachPaths []string, showEvents, asJSON bool) int {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
@@ -238,7 +238,7 @@ func RunChatSend(ctx context.Context, out, errOut io.Writer, server, id, content
 // printed to errOut (`chat: <id>`) so stdout stays answer-only for pipes.
 // Returns the process exit code (see Report).
 func PrintPrompt(ctx context.Context, out, errOut, events io.Writer, server, prompt string, attachPaths []string, asJSON bool) int {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1

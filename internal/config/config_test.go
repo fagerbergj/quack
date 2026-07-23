@@ -347,6 +347,94 @@ agents:
 	}
 }
 
+func TestLoadAuthDisabledWhenSectionAbsent(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Auth != nil {
+		t.Errorf("Auth = %+v, want nil (section absent)", c.Auth)
+	}
+}
+
+func TestLoadAuthOIDC(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+auth:
+  oidc:
+    issuer: https://idp.example.com
+    audience: quack
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Auth == nil || c.Auth.OIDC == nil {
+		t.Fatal("expected Auth.OIDC to be set")
+	}
+	if c.Auth.OIDC.Issuer != "https://idp.example.com" || c.Auth.OIDC.Audience != "quack" {
+		t.Errorf("OIDC = %+v", c.Auth.OIDC)
+	}
+}
+
+func TestLoadAuthTrustedHeaders(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+auth:
+  trusted_headers:
+    user: X-authentik-username
+    groups: X-authentik-groups
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Auth == nil || c.Auth.TrustedHeaders == nil {
+		t.Fatal("expected Auth.TrustedHeaders to be set")
+	}
+	if c.Auth.TrustedHeaders.User != "X-authentik-username" || c.Auth.TrustedHeaders.Groups != "X-authentik-groups" {
+		t.Errorf("TrustedHeaders = %+v", c.Auth.TrustedHeaders)
+	}
+}
+
+func TestLoadRejectsAuthWithNeitherSubBlock(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+auth: {}
+`))
+	if err == nil {
+		t.Fatal("expected error for auth section with neither oidc nor trusted_headers")
+	}
+}
+
+func TestLoadRejectsAuthOIDCMissingIssuer(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+auth:
+  oidc:
+    audience: quack
+`))
+	if err == nil {
+		t.Fatal("expected error for oidc block missing issuer")
+	}
+}
+
+func TestLoadRejectsAuthOIDCMissingAudience(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+auth:
+  oidc:
+    issuer: https://idp.example.com
+`))
+	if err == nil {
+		t.Fatal("expected error for oidc block missing audience")
+	}
+}
+
+func TestLoadRejectsAuthTrustedHeadersMissingUser(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+auth:
+  trusted_headers:
+    groups: X-authentik-groups
+`))
+	if err == nil {
+		t.Fatal("expected error for trusted_headers block missing user")
+	}
+}
+
 // baseConfig is a minimal valid config that adversarial tests append to.
 const baseConfig = `
 providers:
@@ -380,7 +468,7 @@ func TestRealConfigLoads(t *testing.T) {
 
 // TestRealConfigWorkersHaveNoDirectGitHubMutation pins the staged-delivery
 // spine's core safety property: git_push and github_pull_request/
-// github_submit_review (the latter isn't even a registered tool anymore — see
+// github_submit_review (the latter isn't even a registered tool anymore - see
 // internal/github/tools.go) must never appear in a worker's tools: list. A
 // worker commits locally and stages; only the trust gate, post judge-pass,
 // pushes and posts.
@@ -400,12 +488,12 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	for name, ac := range c.Agents {
 		for _, tl := range ac.Tools {
 			if forbidden[tl] {
-				t.Errorf("agent %q lists forbidden delivery tool %q — commit locally and stage_pr/stage_review instead", name, tl)
+				t.Errorf("agent %q lists forbidden delivery tool %q - commit locally and stage_pr/stage_review instead", name, tl)
 			}
 		}
 	}
 	// The code agents are external ACP subprocesses (0.6.0): no quack tools at
-	// all, and the reviewer/explorer are read_only — delivery is entirely
+	// all, and the reviewer/explorer are read_only - delivery is entirely
 	// gate-owned (disk probe + answer probe).
 	for _, name := range []string{"code-implementer", "code-reviewer", "code-explorer"} {
 		ac, ok := c.Agents[name]
@@ -528,7 +616,7 @@ workspace:
 // TestWorkspaceParsesOverrides proves every workspace: field round-trips
 // (the yaml gotcha this guards against: yaml.Unmarshal silently ignores
 // unknown/misspelled keys, so a wrong field name would parse clean but leave
-// the default in place — this test would catch that).
+// the default in place - this test would catch that).
 func TestWorkspaceParsesOverrides(t *testing.T) {
 	t.Setenv("QUACK_WORKSPACE_ROOT", "/data/workspace")
 	c, err := Load(writeTemp(t, baseConfig+`
@@ -641,7 +729,7 @@ workspace:
 
 // TestGitCredentialTokenRejectsLiteralValue is the mechanical raw-YAML check:
 // a token: value that isn't an ${VAR} reference is a startup error, not a
-// silent leak — checked BEFORE ${VAR} expansion (see validateNoLiteralTokens).
+// silent leak - checked BEFORE ${VAR} expansion (see validateNoLiteralTokens).
 func TestGitCredentialTokenRejectsLiteralValue(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
@@ -876,7 +964,7 @@ gates: { rubric: r, deterministic_checks: { max_rounds: -1 }, judge: { provider:
 
 // TestCoderModelFallsBackToResearcherModel proves agents.code-implementer's
 // model (${QUACK_CODER_MODEL}) resolves to QUACK_RESEARCHER_MODEL's value
-// when QUACK_CODER_MODEL is unset — the documented (config/quack.yaml) but,
+// when QUACK_CODER_MODEL is unset - the documented (config/quack.yaml) but,
 // before this, unenforced fallback; see expandEnv.
 func TestCoderModelFallsBackToResearcherModel(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
@@ -912,7 +1000,7 @@ agents:
 
 // TestCoderModelEmptyWithNoResearcherModelEither proves the fallback chain's
 // end state (both env vars unset) is a normal "empty model" validation
-// error, not a panic or a silent pass — expandEnv has no third fallback.
+// error, not a panic or a silent pass - expandEnv has no third fallback.
 func TestCoderModelEmptyWithNoResearcherModelEither(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 agents:
@@ -924,7 +1012,7 @@ agents:
 }
 
 // An UNSET check_commands defaults to the shipped allowlist (derived checks
-// are further gated on the toolchain existing — vetting.toolchainPresent);
+// are further gated on the toolchain existing - vetting.toolchainPresent);
 // an EXPLICIT empty list still means "checks disabled".
 func TestWorkspaceDefaults_CheckCommands(t *testing.T) {
 	unset := WorkspaceConfig{}

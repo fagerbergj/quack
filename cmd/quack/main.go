@@ -443,7 +443,40 @@ func newServerCmd() *cobra.Command {
 		newServerAddCmd(),
 		newServerListCmd(),
 		newServerRemoveCmd(),
+		newServerLoginCmd(),
 	)
+	return c
+}
+
+// newServerLoginCmd: `quack server login <name>` - OIDC device-flow login
+// against a registered server's IdP. Separate from `server add` (which just
+// records name→url) so a server that needs no auth never has to know about
+// issuer/client-id, and re-login (token lost, revoked, or issuer rotated) is
+// just re-running this one command.
+func newServerLoginCmd() *cobra.Command {
+	var scopes []string
+	c := &cobra.Command{
+		Use:   "login <name> --issuer <url> --client-id <id>",
+		Short: "Log in to a registered server via OIDC (device authorization grant)",
+		Long: "Log in to a registered server's OIDC identity provider using the device\n" +
+			"authorization grant (RFC 8628): prints a URL and a short code, waits for you\n" +
+			"to approve it in any browser, then stores the access/refresh token on the\n" +
+			"registered server so `quack chat`/`quack api`/`-p` attach it automatically.\n\n" +
+			"Only public OIDC clients are supported (no client secret) - register a\n" +
+			"device-flow-capable public client with your IdP for the quack CLI.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			issuer, _ := cmd.Flags().GetString("issuer")
+			clientID, _ := cmd.Flags().GetString("client-id")
+			if issuer == "" || clientID == "" {
+				return fmt.Errorf("--issuer and --client-id are required")
+			}
+			return cli.Login(cmd.Context(), cmd.OutOrStdout(), args[0], issuer, clientID, scopes)
+		},
+	}
+	c.Flags().String("issuer", "", "OIDC issuer URL (required)")
+	c.Flags().String("client-id", "", "OIDC public client id registered for the device authorization grant (required)")
+	c.Flags().StringSliceVar(&scopes, "scopes", nil, "OAuth2 scopes to request (default: openid, profile, offline_access)")
 	return c
 }
 
