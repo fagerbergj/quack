@@ -58,6 +58,27 @@ func isReviewOnlySetup(plan Plan) bool {
 	return true
 }
 
+// OverrideReviewWorkBranch forces a review-only plan's Setup.WorkBranch to the
+// PR's real head branch (headRef). WorkBranch is otherwise planner-authored
+// JSON, and for a review the planner sometimes invents a name instead of
+// echoing the real head (e.g. "quack-auto-review/review-pr-520", derived from
+// the auto-review commenter identity) - isReviewOnlySetup then checks it out
+// as an EXISTING remote ref, which fatals with "couldn't find remote ref" for
+// an invented name (#520). No-op for a plan with no Setup or one that isn't
+// review-only (the implement path keeps its planner-chosen new-branch name).
+// Errors rather than silently keeping the invented name when headRef is
+// unknown, so the run fails loudly instead of fetching a bogus ref.
+func OverrideReviewWorkBranch(p *Plan, headRef string) error {
+	if p == nil || p.Setup == nil || !isReviewOnlySetup(*p) {
+		return nil
+	}
+	if headRef == "" {
+		return fmt.Errorf("dag: review setup needs the PR's real head branch but none was provided")
+	}
+	p.Setup.WorkBranch = headRef
+	return nil
+}
+
 // runPlanSetup executes the plan's declared PRE-step exactly once, before any
 // node runs: clone Setup.Repo at Setup.BaseRef, then checkout -b
 // Setup.WorkBranch, into ONE shared workspace location (workspace.
