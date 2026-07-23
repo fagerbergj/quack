@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,10 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 )
+
+// oidcProbeBackoff shrunk for the whole package: these tests care about
+// retry *behavior*, not real backoff timing.
+func init() { oidcProbeBackoff = time.Millisecond }
 
 // testIdP is a fake OIDC provider: serves discovery + JWKS over httptest, and
 // signs tokens with the key it advertises.
@@ -94,6 +99,124 @@ func TestNewOIDCVerifierBadIssuerFailsLoudly(t *testing.T) {
 	_, err := newOIDCVerifier(&config.OIDCConfig{Issuer: "http://127.0.0.1:1", Audience: "quack"})
 	if err == nil {
 		t.Fatal("expected error for unreachable issuer")
+	}
+}
+
+// jwksServer serves a JWKS whose raw key objects are exactly keys (bypassing
+// jose.JSONWebKeySet's own marshaling, so a test can hand it a structurally
+// broken key) plus a matching discovery document.
+func jwksServer(t *testing.T, keys []map[string]any) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":   srv.URL,
+			"jwks_uri": srv.URL + "/jwks.json",
+		})
+	})
+	mux.HandleFunc("/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestProbeJWKSRejectsKeyMissingKty pins review suggestion #1: a JWKS that
+// decodes fine but whose key has no "kty" is a structurally broken IdP
+// response, and must fail the startup probe rather than pass it silently.
+func TestProbeJWKSRejectsKeyMissingKty(t *testing.T) {
+	srv := jwksServer(t, []map[string]any{{"kid": "k1", "alg": "RS256"}})
+	_, err := newOIDCVerifier(&config.OIDCConfig{Issuer: srv.URL, Audience: "quack"})
+	if err == nil {
+		t.Fatal("expected error for a key missing kty")
+	}
+}
+
+// TestProbeJWKSRejectsKeyMissingKidAndAlg: a key with a kty but neither kid
+// nor alg can't be matched to a token's header - also structurally broken.
+func TestProbeJWKSRejectsKeyMissingKidAndAlg(t *testing.T) {
+	srv := jwksServer(t, []map[string]any{{"kty": "RSA"}})
+	_, err := newOIDCVerifier(&config.OIDCConfig{Issuer: srv.URL, Audience: "quack"})
+	if err == nil {
+		t.Fatal("expected error for a key missing both kid and alg")
+	}
+}
+
+// TestProbeJWKSAcceptsKidOnly: kid alone (no alg) is a legal, common JWKS
+// shape and must still pass.
+func TestProbeJWKSAcceptsKidOnly(t *testing.T) {
+	srv := jwksServer(t, []map[string]any{{"kty": "RSA", "kid": "k1"}})
+	if _, err := newOIDCVerifier(&config.OIDCConfig{Issuer: srv.URL, Audience: "quack"}); err != nil {
+		t.Fatalf("newOIDCVerifier: %v", err)
+	}
+}
+
+// TestNewOIDCVerifierRetriesTransientFailure pins review suggestion #2: the
+// first couple of probe attempts hitting a 500 (a rolling-deploy blip) don't
+// fail startup outright - a later attempt that succeeds does.
+func TestNewOIDCVerifierRetriesTransientFailure(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	var failures atomic.Int32
+	failures.Store(2) // fail the first 2 attempts, succeed on the 3rd (oidcProbeAttempts)
+
+	var flaky *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		if failures.Add(-1) >= 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":   flaky.URL,
+			"jwks_uri": flaky.URL + "/jwks.json",
+		})
+	})
+	mux.HandleFunc("/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+		set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+			Key: key.Public(), KeyID: "k1", Algorithm: string(jose.RS256), Use: "sig",
+		}}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(set)
+	})
+	flaky = httptest.NewServer(mux)
+	t.Cleanup(flaky.Close)
+
+	v, err := newOIDCVerifier(&config.OIDCConfig{Issuer: flaky.URL, Audience: "quack"})
+	if err != nil {
+		t.Fatalf("newOIDCVerifier: %v, want it to succeed after retrying past the transient failures", err)
+	}
+	if v.issuer != flaky.URL {
+		t.Errorf("issuer = %q, want %q", v.issuer, flaky.URL)
+	}
+}
+
+// TestNewOIDCVerifierFailsAfterExhaustingRetries confirms the fail-fast
+// contract survives the retry: an IdP that never recovers still fails
+// startup, it just takes oidcProbeAttempts tries to say so.
+func TestNewOIDCVerifierFailsAfterExhaustingRetries(t *testing.T) {
+	mux := http.NewServeMux()
+	var hits atomic.Int32
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	dead := httptest.NewServer(mux)
+	t.Cleanup(dead.Close)
+
+	_, err := newOIDCVerifier(&config.OIDCConfig{Issuer: dead.URL, Audience: "quack"})
+	if err == nil {
+		t.Fatal("expected an error once retries are exhausted")
+	}
+	if got := hits.Load(); got != oidcProbeAttempts {
+		t.Errorf("discovery endpoint hit %d times, want exactly oidcProbeAttempts (%d)", got, oidcProbeAttempts)
 	}
 }
 

@@ -14,9 +14,19 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// discoveryTimeout bounds the one-shot startup fetch of the discovery
+// discoveryTimeout bounds a single attempt at fetching the discovery
 // document and JWKS - a hung IdP must not hang server boot indefinitely.
 const discoveryTimeout = 10 * time.Second
+
+// oidcProbeAttempts + oidcProbeBackoff: a transient IdP blip (a rolling
+// deploy landing mid-startup-probe, say) gets a couple of retries instead of
+// hard-failing on the first bad request. This only widens the window - once
+// oidcProbeAttempts is exhausted, a genuinely unreachable or misconfigured
+// issuer still fails startup; it never falls back to running open.
+// oidcProbeBackoff is a var so tests don't have to wait out real backoff.
+const oidcProbeAttempts = 3
+
+var oidcProbeBackoff = time.Second
 
 // oidcVerifier verifies a bearer token's signature, issuer, audience, and
 // expiry via zitadel/oidc's rp.IDTokenVerifier. rp.NewIDTokenVerifier and
@@ -33,30 +43,28 @@ type oidcVerifier struct {
 // newOIDCVerifier resolves the signing-key source - jwks_url if the config
 // overrides discovery, else <issuer>/.well-known/openid-configuration's
 // jwks_uri (via client.Discover, which also rejects a discovery doc whose own
-// "issuer" doesn't match cfg.Issuer) - and probes it once synchronously.
-// rp.NewRemoteKeySet itself fetches lazily on first use with its own
-// background-refreshed cache; the synchronous probe here exists only to
-// preserve the fail-fast startup contract: a bad/unreachable issuer or JWKS
-// is a startup error, not a silent 401 factory discovered on the first
-// request.
+// "issuer" doesn't match cfg.Issuer) - and probes it, retrying up to
+// oidcProbeAttempts times on failure. rp.NewRemoteKeySet itself fetches
+// lazily on first use with its own background-refreshed cache; the
+// synchronous probe here exists only to preserve the fail-fast startup
+// contract: a bad/unreachable issuer or JWKS is a startup error, not a
+// silent 401 factory discovered on the first request.
 func newOIDCVerifier(cfg *config.OIDCConfig) (*oidcVerifier, error) {
 	httpClient := &http.Client{Timeout: discoveryTimeout}
-	ctx, cancel := context.WithTimeout(context.Background(), discoveryTimeout)
-	defer cancel()
 
-	jwksURL := cfg.JWKSURL
-	if jwksURL == "" {
-		doc, err := client.Discover(ctx, cfg.Issuer, httpClient)
-		if err != nil {
-			return nil, fmt.Errorf("oidc discovery for issuer %q: %w", cfg.Issuer, err)
+	var jwksURL string
+	var err error
+	for attempt := 1; attempt <= oidcProbeAttempts; attempt++ {
+		jwksURL, err = discoverAndProbeJWKS(cfg, httpClient)
+		if err == nil {
+			break
 		}
-		if doc.JwksURI == "" {
-			return nil, fmt.Errorf("oidc discovery for issuer %q: response has no jwks_uri", cfg.Issuer)
+		if attempt < oidcProbeAttempts {
+			time.Sleep(oidcProbeBackoff * time.Duration(attempt))
 		}
-		jwksURL = doc.JwksURI
 	}
-	if err := probeJWKS(ctx, httpClient, jwksURL); err != nil {
-		return nil, fmt.Errorf("fetch jwks from %q: %w", jwksURL, err)
+	if err != nil {
+		return nil, err
 	}
 
 	keySet := rp.NewRemoteKeySet(httpClient, jwksURL)
@@ -64,10 +72,36 @@ func newOIDCVerifier(cfg *config.OIDCConfig) (*oidcVerifier, error) {
 	return &oidcVerifier{issuer: cfg.Issuer, audience: cfg.Audience, verifier: v}, nil
 }
 
+// discoverAndProbeJWKS is one attempt at resolving + probing the JWKS
+// source; see newOIDCVerifier for the retry loop around it.
+func discoverAndProbeJWKS(cfg *config.OIDCConfig, httpClient *http.Client) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), discoveryTimeout)
+	defer cancel()
+
+	jwksURL := cfg.JWKSURL
+	if jwksURL == "" {
+		doc, err := client.Discover(ctx, cfg.Issuer, httpClient)
+		if err != nil {
+			return "", fmt.Errorf("oidc discovery for issuer %q: %w", cfg.Issuer, err)
+		}
+		if doc.JwksURI == "" {
+			return "", fmt.Errorf("oidc discovery for issuer %q: response has no jwks_uri", cfg.Issuer)
+		}
+		jwksURL = doc.JwksURI
+	}
+	if err := probeJWKS(ctx, httpClient, jwksURL); err != nil {
+		return "", fmt.Errorf("fetch jwks from %q: %w", jwksURL, err)
+	}
+	return jwksURL, nil
+}
+
 // probeJWKS performs one synchronous GET of jwksURL, confirming it's
-// reachable and publishes at least one key. The result is discarded - actual
-// key resolution at verify time goes through rp.NewRemoteKeySet's own lazy,
-// cached fetch; this only exists to fail fast at boot.
+// reachable and that every published key carries the fields a verifier
+// actually needs: kty always (RFC 7517), plus kid or alg to pick the right
+// key/algorithm for a token's header. A JWKS that decodes but is missing
+// these would otherwise pass this probe and only fail later, on the first
+// real request. The result is otherwise discarded - actual key resolution at
+// verify time goes through rp.NewRemoteKeySet's own lazy, cached fetch.
 func probeJWKS(ctx context.Context, httpClient *http.Client, jwksURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
 	if err != nil {
@@ -82,13 +116,25 @@ func probeJWKS(ctx context.Context, httpClient *http.Client, jwksURL string) err
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 	var doc struct {
-		Keys []json.RawMessage `json:"keys"`
+		Keys []struct {
+			Kty string `json:"kty"`
+			Kid string `json:"kid"`
+			Alg string `json:"alg"`
+		} `json:"keys"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return fmt.Errorf("decode: %w", err)
 	}
 	if len(doc.Keys) == 0 {
 		return fmt.Errorf("no keys published")
+	}
+	for i, k := range doc.Keys {
+		if k.Kty == "" {
+			return fmt.Errorf("key %d: missing required field kty", i)
+		}
+		if k.Kid == "" && k.Alg == "" {
+			return fmt.Errorf("key %d (kty %s): missing both kid and alg - can't be matched to a token's key/algorithm", i, k.Kty)
+		}
 	}
 	return nil
 }

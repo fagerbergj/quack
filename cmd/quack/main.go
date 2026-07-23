@@ -448,22 +448,25 @@ func newServerCmd() *cobra.Command {
 	return c
 }
 
-// newServerLoginCmd: `quack server login <name>` - OIDC device-flow login
-// against a registered server's IdP. Separate from `server add` (which just
-// records name→url) so a server that needs no auth never has to know about
+// newServerLoginCmd: `quack server login <name>` - OIDC login against a
+// registered server's IdP. Separate from `server add` (which just records
+// name→url) so a server that needs no auth never has to know about
 // issuer/client-id, and re-login (token lost, revoked, or issuer rotated) is
 // just re-running this one command.
 func newServerLoginCmd() *cobra.Command {
 	var scopes []string
 	c := &cobra.Command{
 		Use:   "login <name> --issuer <url> --client-id <id>",
-		Short: "Log in to a registered server via OIDC (device authorization grant)",
-		Long: "Log in to a registered server's OIDC identity provider using the device\n" +
-			"authorization grant (RFC 8628): prints a URL and a short code, waits for you\n" +
-			"to approve it in any browser, then stores the access/refresh token on the\n" +
+		Short: "Log in to a registered server via OIDC (authorization code + PKCE)",
+		Long: "Log in to a registered server's OIDC identity provider using the\n" +
+			"authorization code flow with PKCE (RFC 6749 + RFC 7636): opens the\n" +
+			"authorize URL in a browser (also printed, as a fallback) against a loopback\n" +
+			"listener on an ephemeral port, then stores the access/refresh token on the\n" +
 			"registered server so `quack chat`/`quack api`/`-p` attach it automatically.\n\n" +
+			"Needs a browser reachable at 127.0.0.1 on this machine - it will not work\n" +
+			"over a headless SSH session with no local browser or forwarded port.\n\n" +
 			"Only public OIDC clients are supported (no client secret) - register a\n" +
-			"device-flow-capable public client with your IdP for the quack CLI.",
+			"PKCE-capable public client with your IdP for the quack CLI.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			issuer, _ := cmd.Flags().GetString("issuer")
