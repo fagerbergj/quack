@@ -11,11 +11,20 @@ otel:
 
 `enabled: false` swaps in the SDK's no-op providers, so every `otelobs.Start`/`Record*` call in the code stays a cheap no-op with no `if enabled` branch at any call site. `otlp_endpoint` unset means spans are still recorded and metrics still accumulate in-process — they're just never shipped anywhere. Set it to actually export (e.g. `http://otel-collector:4318`).
 
-**Known limitation:** ADK's own internal spans do NOT flow through this provider. ADK v2 captures its tracer at package-init time, before quack's `Init` runs, and exposes no production API to rebind it — every span below is quack's own explicit instrumentation, not "free" ADK auto-instrumentation.
+**ADK's own spans come along for free.** ADK v2 takes its tracer from the *global* provider at package-init time (`otel.GetTracerProvider().Tracer("gcp.vertex.agent", …)`), and OpenTelemetry's global package exists precisely to survive that ordering: `otel.SetTracerProvider` walks every tracer handed out earlier and rebinds it to the real provider. So ADK's instrumentation lands in the same OTLP stream as quack's, correlated inside the same trace — a single run carries both:
+
+```text
+scope=github.com/fagerbergj/quack   quack.run
+scope=gcp.vertex.agent              invoke_workflow orchestrator-workflow
+                                    invoke_agent orchestrator
+                                    generate_content qwen3.6-35b
+```
+
+ADK's spans carry GenAI semantic-convention attributes (model, token usage), so they're worth querying by their `gcp.vertex.agent` scope rather than filtering to `quack.*` only. ADK emits **spans only** — it registers no metric instruments, so every metric below is quack's own. (ADK also ships a `telemetry/setup_otel.go` helper that builds its *own* SDK provider; quack does not use it, which is what keeps everything on one provider.)
 
 ## Traces
 
-Every span is named `quack.<name>`. The vocabulary:
+Quack's own spans are named `quack.<name>` (ADK's, above, are not). The vocabulary:
 
 | Span | Covers |
 | --- | --- |
