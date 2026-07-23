@@ -45,6 +45,45 @@ func TestChangedFilesSection_ImplementNodeUnchanged(t *testing.T) {
 	}
 }
 
+// TestChangedFilesSection_CarriesStagedVerdict pins #520: the judge must see
+// the reviewer's STRUCTURED verdict (stage_review's event / the answer's
+// VERDICT: tail, already resolved into act.stagedDelivery["review"]) as a
+// fact, not have to infer it from summary prose the reviewer is told never to
+// restate it in.
+func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
+	for _, event := range []string{"approve", "request_changes"} {
+		t.Run(event, func(t *testing.T) {
+			cfg := probeRepo(t, true)
+			cfg.IsReviewer = true
+			act := workerActivity{stagedDelivery: map[string]StagedDelivery{
+				"review": {Kind: "review", Event: event, Body: "looks good"},
+			}}
+
+			got := changedFilesSection(cfg, act)
+			want := "Staged review verdict: " + event
+			if !strings.Contains(got, want) {
+				t.Fatalf("missing %q in:\n%s", want, got)
+			}
+
+			prompt := buildJudgePrompt("", "rubric text", "", questionContent("review this"), "looks good", got, act)
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("judge prompt missing %q:\n%s", want, prompt)
+			}
+		})
+	}
+
+	// No staged review yet (e.g. a fallback comment with no VERDICT: tail) ⇒
+	// no fabricated verdict line.
+	t.Run("unstaged", func(t *testing.T) {
+		cfg := probeRepo(t, true)
+		cfg.IsReviewer = true
+		got := changedFilesSection(cfg, workerActivity{})
+		if strings.Contains(got, "Staged review verdict:") {
+			t.Fatalf("must not fabricate a verdict line when none is staged:\n%s", got)
+		}
+	})
+}
+
 // TestBuildReviewDiffSection_NoClone pins the fallback: no Setup/Workspace or
 // no .git in the resolved dir must return "" rather than error, so a judge
 // round never fails over a missing clone.

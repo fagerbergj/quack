@@ -261,13 +261,28 @@ const (
 
 // changedFilesSection picks the judge prompt's changedFiles source: a review
 // node's act.written is always empty (read-only), so it sources the actual PR
-// diff off the clone instead (#498 step 1); every other node keeps today's
+// diff off the clone instead (#498 step 1), prefixed with the reviewer's
+// resolved structured verdict (#520); every other node keeps today's
 // act.written-based behaviour.
 func changedFilesSection(cfg Config, act workerActivity) string {
 	if cfg.IsReviewer {
-		return buildReviewDiffSection(cfg)
+		return reviewVerdictLine(act) + buildReviewDiffSection(cfg)
 	}
 	return buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
+}
+
+// reviewVerdictLine surfaces the reviewer's STRUCTURED verdict - the staged
+// stage_review event, or the answer's VERDICT: tail, already parsed into
+// act.stagedDelivery["review"] by augmentFromReviewStage/augmentFromAnswer -
+// as a fact for the judge, so `structured_verdict` scores the resolved event
+// rather than requiring it restated in the summary prose (#520: the reviewer
+// is told NOT to restate the verdict there). "" when nothing is staged yet.
+func reviewVerdictLine(act workerActivity) string {
+	sd, ok := act.stagedDelivery["review"]
+	if !ok || sd.Event == "" {
+		return ""
+	}
+	return "Staged review verdict: " + sd.Event + "\n\n"
 }
 
 // buildChangedFilesSection re-reads the files the worker actually wrote/edited
