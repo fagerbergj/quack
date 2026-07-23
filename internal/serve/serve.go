@@ -796,16 +796,20 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 
 		// External ACP coding agent (internal/acp): the bundle still supplies
-		// identity (card) and guidance (prompt.md, delivered as a per-round
-		// preamble — the subprocess owns its own system prompt); everything else
-		// about the native path (tools, memory, skills, compaction, A2A serving)
-		// doesn't apply. It joins clientMap directly — the executor only needs
-		// an adkagent.Agent, and this one implements RunNode so the gate drives
-		// it like a local worker.
+		// identity (card) and guidance (prompt.md + memory.md, both delivered as
+		// a per-round preamble — the subprocess owns its own system prompt);
+		// everything else about the native path (tools, skills, compaction, A2A
+		// serving) doesn't apply. It joins clientMap directly — the executor
+		// only needs an adkagent.Agent, and this one implements RunNode so the
+		// gate drives it like a local worker.
 		if ac.Acp != nil {
 			bundle, err := agent.LoadBundle(ac.Bundle)
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "bundle: %v", err)
+			}
+			preamble, err := acpPreamble(bundle, ac.Bundle, taskStore != nil)
+			if err != nil {
+				return nil, nil, servers, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
 			}
 			env := opencodeEnv(prov, ac, acpSkillPaths())
 			for _, k := range slices.Sorted(maps.Keys(ac.Acp.Env)) {
@@ -841,7 +845,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Command:         ac.Acp.Command,
 				Env:             env,
 				Home:            workspaceCaps.HomeDir,
-				Preamble:        bundle.Prompt,
+				Preamble:        preamble,
 				Jail:            jail,
 				UserID:          localUserID,
 				PermissionJudge: permJudge,
@@ -850,10 +854,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "acp: %v", err)
 			}
 			if cfg.Gates.Enabled() && ac.IsGated() {
-				// An ACP agent's memory participation is keyed by memory_role (it
-				// has no memory.md/tools): the gate injects recall into its prompt
-				// (vetting.memoryRecall) and mines its PASSED answer for durable
-				// facts (memory.Commit's answer-extraction — staging tool not needed).
+				// An ACP agent's memory participation is keyed by memory_role, not
+				// memGuidance (it has no llmagent tools): the gate injects recall
+				// into its prompt (vetting.memoryRecall) and mines its PASSED answer
+				// for durable facts (memory.Commit's answer-extraction — staging
+				// tool not needed). memory.md still reaches it, via the preamble.
 				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && ac.MemoryRole != "")
 				if err != nil {
 					return nil, nil, servers, nil, nil, nil, fmtErr(name, "rubric: %v", err)
@@ -973,6 +978,24 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL, "tools", ac.Tools)
 	}
 	return clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, nil
+}
+
+// acpPreamble builds an ACP agent's per-round preamble: prompt.md, plus the
+// bundle's memory.md (if any) appended so the subprocess — which has no
+// llmagent instruction to fold memGuidance into — still gets the "what to
+// remember" guidance that drives its stage_memory tool.
+func acpPreamble(bundle *agent.Bundle, bundleDir string, memoryEnabled bool) (string, error) {
+	if !memoryEnabled {
+		return bundle.Prompt, nil
+	}
+	memGuidance, err := agent.LoadBundleMemory(bundleDir)
+	if err != nil {
+		return "", err
+	}
+	if memGuidance == "" {
+		return bundle.Prompt, nil
+	}
+	return bundle.Prompt + "\n\n" + memGuidance, nil
 }
 
 // perAgentGateCfg specializes the base trust-gate config for one agent:

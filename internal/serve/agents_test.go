@@ -73,3 +73,37 @@ func TestCodeImplementerBundle(t *testing.T) {
 		}
 	}
 }
+
+// TestAcpPreamble guards the ACP memory-guidance wiring (#454/#518): a
+// memory.md alongside prompt.md must reach the subprocess's preamble — the
+// ACP path has no llmagent instruction to fold it into like the native path
+// does (internal/agent/build.go), so the preamble is the only channel.
+func TestAcpPreamble(t *testing.T) {
+	b, err := agent.LoadBundle("../../agents/code-implementer")
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+
+	t.Run("memory enabled", func(t *testing.T) {
+		got, err := acpPreamble(b, "../../agents/code-implementer", true)
+		if err != nil {
+			t.Fatalf("acpPreamble: %v", err)
+		}
+		if !strings.Contains(got, b.Prompt) {
+			t.Error("preamble dropped prompt.md")
+		}
+		if !strings.Contains(got, "## What to remember") {
+			t.Error("preamble is missing memory.md guidance — the bundle's stage_memory instructions never reach the ACP subprocess")
+		}
+	})
+
+	t.Run("memory disabled", func(t *testing.T) {
+		got, err := acpPreamble(b, "../../agents/code-implementer", false)
+		if err != nil {
+			t.Fatalf("acpPreamble: %v", err)
+		}
+		if got != b.Prompt {
+			t.Errorf("preamble = %q, want exactly prompt.md when memory is off", got)
+		}
+	})
+}
