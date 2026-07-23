@@ -19,41 +19,55 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// TestSessionUser: the ADK session identity derives from the chat id shape -
-// github-<owner>-<repo>-<number> (store.SetChatGitHub) resolves to the
-// webhook's runUserID ("github", internal/github.extension.go), any other id
-// to the first-party local user.
+// TestSessionUser: the ADK session identity resolves from the chat's recorded
+// store.Chat.SessionUser (#512: the commenter's login for a GitHub-dispatched
+// chat) when present, falling back to the id-shape default (github-prefixed
+// -> "github", legacy fallback constant; anything else -> the first-party
+// local user) for chats that predate that column.
 func TestSessionUser(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	if err := h.store.SetChatGitHub(ctx, "github-acme-widget-app-7", "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "alice"); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+	if err := h.store.SetChatGitHub(ctx, "github-acme-widget-app-8", "acme/widget-app", "https://github.com/acme/widget-app/pull/8", ""); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+
 	cases := map[string]string{
-		"github-acme-widget-app-7": githubSessionUser,
-		"abc123":                   userID,
-		"github":                   userID, // no trailing "-": not the dispatched shape
+		"github-acme-widget-app-7": "alice",           // recorded per-chat login
+		"github-acme-widget-app-8": githubSessionUser, // no login recorded: id-shape fallback
+		"abc123":                   userID,            // unknown chat: id-shape fallback
+		"github":                   userID,            // no trailing "-": not the dispatched shape
 	}
 	for chatID, want := range cases {
-		if got := sessionUser(chatID); got != want {
+		if got := h.sessionUser(ctx, chatID); got != want {
 			t.Errorf("sessionUser(%q) = %q, want %q", chatID, got, want)
 		}
 	}
 }
 
-// TestGetChat_GithubSessionUser pins the bug in #352: a GitHub-dispatched
-// chat's turns are written to its ADK session under user "github" (the
-// webhook's runUserID), not "local". GetChat must resolve turns under the
-// SAME user the webhook wrote them under, or the chat renders with no
-// content even though the run completed and the events exist.
+// TestGetChat_GithubSessionUser pins the bug in #352 (and its #512
+// read/write-asymmetry follow-up): a GitHub-dispatched chat's turns are
+// written to its ADK session under the commenter's own login, not a
+// hardcoded constant. GetChat must resolve turns under the SAME user the
+// webhook wrote them under, or the chat renders with no content even though
+// the run completed and the events exist.
 func TestGetChat_GithubSessionUser(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
 
 	const chatID = "github-acme-widget-app-7"
-	if err := h.store.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/7"); err != nil {
+	const login = "alice"
+	if err := h.store.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/7", login); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	if err := h.store.SaveTurn(ctx, chatID, "t1"); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 
-	resp, err := h.store.Sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: githubSessionUser, SessionID: chatID})
+	resp, err := h.store.Sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: login, SessionID: chatID})
 	if err != nil {
 		t.Fatalf("session Create: %v", err)
 	}
@@ -128,7 +142,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	ctx := context.Background()
 
 	id := "github-acme-widget-app-7"
-	if err := h.store.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/7"); err != nil {
+	if err := h.store.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "alice"); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	c, err := h.store.GetChat(ctx, id)

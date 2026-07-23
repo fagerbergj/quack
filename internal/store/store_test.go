@@ -119,7 +119,10 @@ func TestChatEventLog(t *testing.T) {
 }
 
 // TestSetChatGitHub covers both the create-if-missing path (webhook dispatch
-// can fire before the chat row exists) and updating an existing row.
+// can fire before the chat row exists) and updating an existing row. Also
+// pins #512's read/write asymmetry fix: SessionUser is recorded on create and
+// must NOT move on a later dispatch by a different commenter, since existing
+// session history was already written under the original login.
 func TestSetChatGitHub(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -128,7 +131,7 @@ func TestSetChatGitHub(t *testing.T) {
 	ctx := context.Background()
 
 	id := "github-acme-widget-app-42"
-	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/issues/42"); err != nil {
+	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/issues/42", "alice"); err != nil {
 		t.Fatalf("SetChatGitHub (create): %v", err)
 	}
 	got, err := st.GetChat(ctx, id)
@@ -138,14 +141,22 @@ func TestSetChatGitHub(t *testing.T) {
 	if got.GithubRepo != "acme/widget-app" || got.GithubURL != "https://github.com/acme/widget-app/issues/42" {
 		t.Fatalf("unexpected github fields: %+v", got)
 	}
+	if got.SessionUser != "alice" {
+		t.Fatalf("SessionUser = %q, want %q", got.SessionUser, "alice")
+	}
 
-	// Second call (row now exists) must update in place, not error/duplicate.
-	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/42"); err != nil {
+	// Second call (row now exists, different commenter) must update the
+	// github fields in place, not error/duplicate - and must NOT move
+	// SessionUser off the login the existing session was written under.
+	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/42", "bob"); err != nil {
 		t.Fatalf("SetChatGitHub (update): %v", err)
 	}
 	got, err = st.GetChat(ctx, id)
 	if err != nil || got.GithubURL != "https://github.com/acme/widget-app/pull/42" {
 		t.Fatalf("update did not take: %+v err=%v", got, err)
+	}
+	if got.SessionUser != "alice" {
+		t.Fatalf("SessionUser after update = %q, want unchanged %q", got.SessionUser, "alice")
 	}
 	if chats, err := st.ListChats(ctx); err != nil || len(chats) != 1 {
 		t.Fatalf("ListChats: %d err=%v (update must not create a duplicate row)", len(chats), err)
@@ -394,8 +405,10 @@ func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 // strand its turns, DAG plan/node state, durable event log, or ADK session -
 // all of it lives in tables/services keyed off the chat id, and the "chats"
 // row was the only thing DeleteChat used to touch. Also covers a
-// GitHub-dispatched chat (id prefix github-), whose ADK session was written
-// under user "github" rather than "local" - the reap must find it there.
+// GitHub-dispatched chat that predates #512's SessionUser column (id prefix
+// github-, no recorded SessionUser): its ADK session was written under
+// fallback user "github" - the reap must find it there, not the row (already
+// deleted by the time the ADK cleanup runs).
 func TestDeleteChat_ReapsSession(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -405,7 +418,7 @@ func TestDeleteChat_ReapsSession(t *testing.T) {
 	ctx := context.Background()
 
 	const chatID = "github-acme-widget-app-9"
-	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/9"); err != nil {
+	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/9", ""); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	if err := st.SaveTurn(ctx, chatID, "t1"); err != nil {
@@ -447,6 +460,58 @@ func TestDeleteChat_ReapsSession(t *testing.T) {
 
 	if resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: chatAppName, UserID: "github", SessionID: chatID}); err == nil && resp != nil && resp.Session != nil {
 		t.Errorf("ADK session still present after DeleteChat, want reaped: %+v", resp.Session)
+	}
+}
+
+// TestSessionUserForChat_RoundTrip pins the #512 read/write asymmetry fix: a
+// GitHub chat created for commenter "alice" resolves "alice" (not the old
+// hardcoded "github") via both SessionUserFor and SessionUserForChat, and
+// DeleteChat reaps the ADK session under that SAME identity. An
+// older/unrecorded GitHub chat (empty SessionUser) still falls back to
+// "github"; a non-GitHub chat falls back to "local".
+func TestSessionUserForChat_RoundTrip(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	const chatID = "github-acme-widget-app-11"
+	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/11", "alice"); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+	if got := st.SessionUserForChat(ctx, chatID); got != "alice" {
+		t.Errorf("SessionUserForChat(alice-chat) = %q, want %q", got, "alice")
+	}
+
+	// The write side (an ADK session created under "alice") must be exactly
+	// what DeleteChat reaps.
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "alice", SessionID: chatID})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, session.NewEvent(ctx, "test")); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	if err := st.DeleteChat(ctx, chatID); err != nil {
+		t.Fatalf("DeleteChat: %v", err)
+	}
+	if resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: chatAppName, UserID: "alice", SessionID: chatID}); err == nil && resp != nil && resp.Session != nil {
+		t.Errorf("ADK session still present under alice after DeleteChat, want reaped: %+v", resp.Session)
+	}
+
+	// Older chat, no recorded SessionUser: falls back to id-shape default.
+	const oldChatID = "github-acme-widget-app-12"
+	if err := st.SetChatGitHub(ctx, oldChatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/12", ""); err != nil {
+		t.Fatalf("SetChatGitHub: %v", err)
+	}
+	if got := st.SessionUserForChat(ctx, oldChatID); got != "github" {
+		t.Errorf("SessionUserForChat(unrecorded github chat) = %q, want fallback %q", got, "github")
+	}
+
+	// Non-GitHub chat, id-shape fallback.
+	if got := st.SessionUserForChat(ctx, "not-a-chat-id"); got != "local" {
+		t.Errorf("SessionUserForChat(unknown chat) = %q, want fallback %q", got, "local")
 	}
 }
 

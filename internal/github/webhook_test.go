@@ -481,7 +481,7 @@ func TestHandleWebhookPersistsTurnAndEventsForUI(t *testing.T) {
 	var turns []store.TurnContent
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		turns, err = st.GetTurnsWithContent(context.Background(), "quack", runUserID, sessionID)
+		turns, err = st.GetTurnsWithContent(context.Background(), "quack", "alice", sessionID)
 		if err != nil {
 			t.Fatalf("GetTurnsWithContent: %v", err)
 		}
@@ -2527,7 +2527,7 @@ func TestDispatchDoesNotOverwriteExistingTitle(t *testing.T) {
 		t.Fatalf("store.New: %v", err)
 	}
 	sessionID := "github-acme-widgets-7"
-	if err := st.SetChatGitHub(context.Background(), sessionID, "acme/widgets", "https://github.com/acme/widgets/pull/7"); err != nil {
+	if err := st.SetChatGitHub(context.Background(), sessionID, "acme/widgets", "https://github.com/acme/widgets/pull/7", "alice"); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	if err := st.UpdateTitle(context.Background(), sessionID, "Existing title"); err != nil {
