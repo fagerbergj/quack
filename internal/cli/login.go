@@ -21,6 +21,11 @@ var DefaultLoginScopes = []string{"openid", "profile", "offline_access"}
 // so a request in flight doesn't race a token that's about to lapse.
 const expirySkew = 30 * time.Second
 
+// refreshTimeout bounds a token refresh detached from the caller's own
+// context (see ensureFreshToken) - long enough for a slow IdP, short enough
+// that a dead token endpoint doesn't hang the caller indefinitely.
+const refreshTimeout = 15 * time.Second
+
 // deviceAuthPollFloor is the device-flow poll interval used when the
 // provider's device authorization response omits one (interval <= 0) - a var
 // (not a constant) so tests can shrink it, matching client.go's
@@ -127,7 +132,14 @@ func ensureFreshToken(ctx context.Context, cc *ClientConfig, name string, ref Se
 		Endpoint: oauth2.Endpoint{TokenURL: a.TokenURL},
 		Scopes:   a.Scopes,
 	}
-	newTok, err := cfg.TokenSource(ctx, &oauth2.Token{
+	// Detached from the caller's cancellation/deadline: a token refresh must
+	// complete (or time out on its own terms) even if the request that
+	// triggered it was aborted - otherwise a short-lived caller ctx can poison
+	// a refresh that every other in-flight caller also depends on. Values
+	// (e.g. request-scoped tracing) still flow through via WithoutCancel.
+	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	defer cancel()
+	newTok, err := cfg.TokenSource(refreshCtx, &oauth2.Token{
 		RefreshToken: a.RefreshToken,
 		Expiry:       a.Expiry,
 	}).Token()

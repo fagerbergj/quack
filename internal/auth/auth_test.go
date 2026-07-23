@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,6 +167,48 @@ func TestMiddlewareOIDCBearer(t *testing.T) {
 			handler.ServeHTTP(rec, req)
 			if rec.Code != tt.wantCode {
 				t.Errorf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+// TestMiddlewareOIDCRejectionBodyIsGeneric pins the fix for the finding that
+// a rejected bearer token's verifier error (issuer/JWKS/validation detail)
+// must never reach the HTTP response - only a generic body, with the real
+// error going to the log instead.
+func TestMiddlewareOIDCRejectionBodyIsGeneric(t *testing.T) {
+	idp := newTestIdP(t)
+	a, err := New(&config.InboundAuthConfig{
+		OIDC: &config.OIDCConfig{Issuer: idp.srv.URL, Audience: "quack"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	handler := a.Middleware(echoIdentityHandler())
+
+	tests := []struct {
+		name       string
+		authHeader string
+	}{
+		{name: "expired token", authHeader: "Bearer " + idp.token(t, "quack", -time.Hour, nil)},
+		{name: "wrong audience", authHeader: "Bearer " + idp.token(t, "wrong-aud", time.Hour, nil)},
+		{name: "malformed token", authHeader: "Bearer not-a-jwt"},
+		{name: "missing Authorization header", authHeader: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
+			}
+			body := strings.TrimSpace(rec.Body.String())
+			if body != "unauthorized" {
+				t.Errorf("body = %q, want exactly %q (no verifier detail leaked)", body, "unauthorized")
 			}
 		})
 	}

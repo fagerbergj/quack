@@ -42,6 +42,37 @@ func TestRouterHealthAlwaysPublic(t *testing.T) {
 	}
 }
 
+// TestRouterHealthNonGetNeverReaches200Unauthenticated is the composed-stack
+// companion to TestRequireAuthExceptHealthMethodRestricted (package server):
+// with only GET registered for /health, a non-GET request never reaches an
+// authenticated 200 without credentials - chi's own method-not-allowed
+// handling covers it, but this pins the observable contract regardless of
+// which layer produces the rejection.
+func TestRouterHealthNonGetNeverReaches200Unauthenticated(t *testing.T) {
+	a, err := auth.New(&config.InboundAuthConfig{
+		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},
+	})
+	if err != nil {
+		t.Fatalf("auth.New: %v", err)
+	}
+	h := server.New(server.Options{
+		REST: &rest.Handler{},
+		MCP:  stubHandler("mcp"),
+		Auth: a,
+	})
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/health", nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code == http.StatusOK {
+				t.Errorf("%s /health with no identity = 200, want a rejection", method)
+			}
+		})
+	}
+}
+
 func TestRouterMCPGatedWhenAuthConfigured(t *testing.T) {
 	a, err := auth.New(&config.InboundAuthConfig{
 		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},

@@ -94,14 +94,16 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// requireAuthExceptHealth wraps a's middleware but always lets /health through
-// unauthenticated - it's a liveness probe (docker-compose healthcheck), not
-// part of the API surface auth protects.
+// requireAuthExceptHealth wraps a's middleware but always lets a GET/HEAD
+// /health through unauthenticated - it's a liveness probe (docker-compose
+// healthcheck), not part of the API surface auth protects. Restricted to
+// the read-only methods a probe actually uses, so a POST/PUT/DELETE to
+// /health can't use the path as an unauthenticated backdoor.
 func requireAuthExceptHealth(a *auth.Auth) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		protected := a.Middleware(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/health" {
+			if r.URL.Path == "/health" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 				next.ServeHTTP(w, r)
 				return
 			}

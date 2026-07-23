@@ -7,6 +7,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -82,7 +83,12 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		if a.verifier != nil {
 			id, err := a.verifier.verifyRequest(r)
 			if err != nil {
-				http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+				// Bearer verification failure is an expected client-side condition
+				// (expired/malformed/wrong-audience token) - detail goes to the log,
+				// never the response, so an unauthenticated caller doesn't learn
+				// anything about the verifier's internals.
+				slog.Warn("bearer token rejected", "component", "auth", "err", err)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), id)))

@@ -230,6 +230,53 @@ func TestEnsureFreshTokenRefreshesNearExpiry(t *testing.T) {
 	}
 }
 
+// TestEnsureFreshTokenRefreshSurvivesCallerCancellation pins the fix for the
+// finding that a refresh must not be bound to the caller's own context: the
+// ctx passed in is already cancelled (as if the request that triggered the
+// refresh was aborted), but the refresh - detached via context.WithoutCancel
+// - still completes and persists.
+func TestEnsureFreshTokenRefreshSurvivesCallerCancellation(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	op := newFakeOP(t)
+	cc, err := LoadClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cc.AddServer("s", "https://example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cc.Save(); err != nil {
+		t.Fatal(err)
+	}
+	ref := ServerRef{URL: "https://example.com", Auth: &ServerAuth{
+		ClientID:     "c",
+		TokenURL:     op.srv.URL + "/token",
+		AccessToken:  "about-to-expire",
+		RefreshToken: "refresh-0",
+		Expiry:       time.Now().Add(time.Second),
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // caller's context is already cancelled before ensureFreshToken runs
+
+	tok, err := ensureFreshToken(ctx, cc, "s", ref)
+	if err != nil {
+		t.Fatalf("ensureFreshToken with a cancelled caller ctx: %v", err)
+	}
+	if tok != "access-token-1" {
+		t.Errorf("token = %q, want the refreshed access-token-1", tok)
+	}
+
+	reloaded, err := LoadClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := reloaded.Servers["s"].Auth
+	if got == nil || got.AccessToken != "access-token-1" {
+		t.Errorf("persisted auth = %+v, want the refreshed token", got)
+	}
+}
+
 // TestEnsureFreshTokenNoRefreshTokenReturnsAsIs: an expired token with no
 // refresh token to use is handed back unchanged - the server 401s it, which
 // is the caller's signal to `server login` again.
