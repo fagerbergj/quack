@@ -194,25 +194,34 @@ actually fail if the code were broken, instead of rubber-stamping.
 ### `structured_verdict`
 
 The review is delivered in a usable shape - a summary, then findings grouped
-by severity (blocking → suggestions → nits → praise) - and ends with a clear
-verdict (request changes / approve) with non-blocking items marked as such.
+by severity (blocking → suggestions → nits → praise) - and carries a clear,
+consistent verdict. The verdict is STRUCTURED DATA, not prose: the reviewer
+stages it via `stage_review`'s `event` (or the answer's `VERDICT:` tail), and
+your prompt surfaces the resolved value as "Staged review verdict: <event>"
+when one is staged. Score presence and consistency of THAT, never whether the
+summary restates it in words - the reviewer is deliberately told the summary
+is a fifteen-second takeaway that does NOT repeat the verdict.
 
 **Evaluation steps.**
 1. Check the review opens with a high-level summary and groups findings by
    severity rather than scattering them.
-2. Check it states an explicit verdict, and that the verdict is consistent with
-   its findings (blocking issues ⇒ request changes; none ⇒ approve, nits okay).
-3. A clean change (no `blocking:` findings) must get an explicit `approve` -
-   not a bare `comment` used as a way to avoid committing to a verdict.
+2. Read the staged verdict provided to you and check it is present, and
+   consistent with the findings (blocking issues ⇒ `request_changes`; none ⇒
+   `approve`, nits okay).
+3. A clean change (no `blocking:` findings) must resolve to `approve` - not a
+   bare `comment` used as a way to avoid committing to a verdict. No staged
+   verdict at all is the actual failure here, not a summary that omits the
+   word "verdict".
 
 **Scoring bands.**
-- **7–10** - clear summary, severity-grouped findings, explicit and consistent
-  verdict (including an explicit approve on a clean change).
-- **4–6** - mostly structured but missing the summary or a clear verdict, or
-  the verdict slightly mismatches the findings.
-- **0–3** - an unstructured wall of comments with no verdict, a verdict that
-  contradicts the findings (approves over an unresolved blocking issue), or a
-  clean review left at `comment` instead of `approve`.
+- **7–10** - clear summary, severity-grouped findings, a present and
+  consistent staged verdict (including an explicit approve on a clean change).
+- **4–6** - mostly structured but missing the summary, or the staged verdict
+  slightly mismatches the findings.
+- **0–3** - an unstructured wall of comments with no summary, no staged
+  verdict at all, a staged verdict that contradicts the findings (approves
+  over an unresolved blocking issue), or a clean review resolved to `comment`
+  instead of `approve`.
 
 ---
 
