@@ -41,7 +41,9 @@ type Chat struct {
 	// were written under, recorded once at creation (SetChatGitHub: the GitHub
 	// commenter's login, #512). Empty for chats that predate this column or
 	// were never GitHub-dispatched - SessionUserFor falls back to id shape.
-	SessionUser string `json:"session_user,omitempty"`
+	// Column is adk_session_user, not session_user (#525): unquoted,
+	// session_user collides with Postgres' built-in SESSION_USER function.
+	SessionUser string `gorm:"column:adk_session_user" json:"session_user,omitempty"`
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id exposed
