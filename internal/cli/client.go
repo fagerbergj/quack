@@ -28,17 +28,32 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-// NewClient resolves the server URL (override → active registry → localhost) and
-// returns a ready client. override is the --server flag value ("" to use the
-// active server from ~/.quack/servers.yaml).
-func NewClient(override string) (*Client, error) {
+// NewClient resolves the server URL (override → active registry → localhost)
+// and returns a ready client. override is the --server flag value ("" to use
+// the active server from ~/.quack/servers.yaml). If the resolved URL matches
+// a registered server that has a stored OIDC session (`quack server login`),
+// every request attaches its access token as a Bearer credential - refreshed
+// first if it's at or near expiry. ctx bounds that refresh call only; it does
+// not outlive NewClient.
+func NewClient(ctx context.Context, override string) (*Client, error) {
 	cc, err := LoadClient()
 	if err != nil {
 		return nil, err
 	}
+	url := strings.TrimRight(cc.ActiveURL(override), "/")
+	httpClient := &http.Client{}
+	if name, ref, ok := cc.findByURL(url); ok && ref.Auth != nil {
+		token, err := ensureFreshToken(ctx, cc, name, ref)
+		if err != nil {
+			return nil, err
+		}
+		if token != "" {
+			httpClient.Transport = &bearerTransport{token: token}
+		}
+	}
 	return &Client{
-		BaseURL: strings.TrimRight(cc.ActiveURL(override), "/"),
-		HTTP:    &http.Client{},
+		BaseURL: url,
+		HTTP:    httpClient,
 	}, nil
 }
 
@@ -290,7 +305,7 @@ func (c *Client) Request(ctx context.Context, method, path string, body io.Reade
 // response body to out and returns a non-nil error on a 4xx/5xx so the command
 // exits non-zero. body is the request body (nil for none).
 func RunAPI(ctx context.Context, out io.Writer, server, method, path string, body io.Reader) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}

@@ -148,7 +148,7 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 	if err := filters.validate(); err != nil {
 		return err
 	}
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 // create-only, no TUI, no first-message send (that's `chat send`/`-p`'s job,
 // one send path).
 func RunChatNew(ctx context.Context, out io.Writer, server string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func RunChatNew(ctx context.Context, out io.Writer, server string) error {
 // with --json. The transcript pairs each turn's user input with the assistant's
 // message text (DAG/activity items are omitted - use --json for the full record).
 func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON
 // Cancelling by response id is the server's only cancel path now, so this
 // looks up the chat's latest turn (the in-progress run, if any) first.
 func RunChatStop(ctx context.Context, out io.Writer, server, id string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func RunChatStop(ctx context.Context, out io.Writer, server, id string) error {
 // RunNodeStop is `quack chat node stop <chat-id> <node-id>`: cancel one running
 // node; the rest of the run continues. No-op if no such node is active.
 func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 // RunNodePause is `quack chat node pause <chat-id> <node-id>`: suspend one
 // RUNNING node at its next turn boundary, keeping its accumulated work.
 func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -289,7 +289,7 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 // PAUSED node - a fresh re-run (like retry), reusing the rest of the plan's
 // stored outputs. Watch it with `chat show -f`.
 func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -304,7 +304,7 @@ func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID st
 // append a message to a RUNNING node's queue, delivered at its next turn
 // boundary (never mid-turn) - replaces the old interrupt-based steer.
 func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, message string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, me
 // RunNodeQueueEdit is `quack chat node queue-edit <chat-id> <node-id> <message-id> <text>`:
 // rewrite a not-yet-delivered queued message.
 func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID, text string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -333,7 +333,7 @@ func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID
 // RunNodeQueueRemove is `quack chat node queue-remove <chat-id> <node-id> <message-id>`:
 // drop a not-yet-delivered queued message.
 func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, nodeID, messageID string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -348,7 +348,7 @@ func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, node
 // replace a not-yet-started node's prompt. Errors (409) once the node has
 // started - its prompt is then immutable.
 func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID, task string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID,
 // re-queue a finished node (done/failed/cancelled); it and everything
 // downstream re-run, reusing the stored outputs of all other nodes.
 func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, guidance string) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
@@ -377,7 +377,7 @@ func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, gu
 // RunChatDelete is `quack chat delete <id>`. Deletion is irreversible, so it
 // confirms first unless yes is set (the --yes flag, or a non-interactive stdin).
 func RunChatDelete(ctx context.Context, out io.Writer, in io.Reader, server, id string, yes bool) error {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}

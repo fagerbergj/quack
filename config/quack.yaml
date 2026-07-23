@@ -369,3 +369,28 @@ workspace:
 #     #   review: "quack-auto-review"
 #     #   merge: "quack:merge"
 #     #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
+
+# Inbound request auth (internal/auth), gating the REST + MCP surface (never
+# /health or the SPA). Absent entirely - as here - auth is disabled and every
+# request is open, today's default. Uncomment ONE of the two blocks below (or
+# both: trusted_headers then takes priority per-request over oidc, since it's
+# the gateway-fronted path). A present-but-misconfigured block (missing
+# issuer/audience/user) fails to boot, so keep this commented until real
+# values are set.
+# auth:
+#   # oidc verifies a bearer token against an IdP (Authentik, Keycloak, Auth0,
+#   # any OIDC-compliant issuer): fetches <issuer>/.well-known/openid-configuration
+#   # for its jwks_uri at startup (a bad/unreachable issuer is a startup error,
+#   # not a silent open-auth fallback), then verifies signature + iss + aud + exp
+#   # per request. jwks_url overrides discovery - set it only when discovery
+#   # itself is unavailable or network-blocked.
+#   oidc:
+#     issuer: ${QUACK_OIDC_ISSUER}
+#     audience: ${QUACK_OIDC_AUDIENCE}
+#     # jwks_url: ${QUACK_OIDC_JWKS_URL}  # optional: skips discovery when set
+#   # trusted_headers names the headers a forward-auth gateway (e.g. Traefik +
+#   # Authentik) injects after authenticating the request itself; quack trusts
+#   # them as-is rather than re-verifying. groups is optional.
+#   # trusted_headers:
+#   #   user: X-authentik-username
+#   #   groups: X-authentik-groups

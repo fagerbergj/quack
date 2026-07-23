@@ -20,9 +20,9 @@ Present, `auth:` needs at least one of the two sub-blocks below - `config.Load` 
 `auth.oidc` verifies a bearer token against any OIDC-compliant issuer (Authentik, Keycloak, Auth0, …):
 
 - `issuer` and `audience` are required - a config with `oidc:` present but either empty fails to load.
-- On startup, `internal/auth.New` fetches `<issuer>/.well-known/openid-configuration` and reads its `jwks_uri` - **discovery is the default path**. This happens once, synchronously: an unreachable or malformed issuer is a startup error, not a silent fallback to open auth.
-- `jwks_url` is an optional override that skips discovery entirely when set - use it only when discovery itself is unavailable or network-blocked.
-- Signing keys are fetched and cached by [`github.com/MicahParks/keyfunc/v3`](https://github.com/MicahParks/keyfunc), which refreshes the JWKS in the background and selects the verification key by the token's `kid`. Verification itself (`golang-jwt/jwt/v5`, already a dependency for the GitHub App's own JWT) checks signature, `iss`, `aud`, and `exp`.
+- On startup, `internal/auth.New` fetches `<issuer>/.well-known/openid-configuration` (via [`github.com/zitadel/oidc/v3`](https://github.com/zitadel/oidc)'s `client.Discover`) and reads its `jwks_uri` - **discovery is the default path**. Discovery also rejects a response whose own `issuer` field doesn't match the configured one. This happens once, synchronously, followed by one reachability probe of the JWKS itself: an unreachable or malformed issuer or JWKS is a startup error, not a silent fallback to open auth.
+- `jwks_url` is an optional override that skips discovery entirely when set - use it only when discovery itself is unavailable or network-blocked. It still means exactly what it did before: the JWKS endpoint quack fetches signing keys from.
+- Signing-key resolution and caching is `rp.NewRemoteKeySet` (zitadel/oidc's relying-party package, used here purely as a JWKS-backed `oidc.KeySet` - no browser/redirect flow, no `RelyingParty` object beyond the verifier itself), which refreshes the JWKS lazily and selects the verification key by the token's `kid`. Verification (`rp.VerifyIDToken` against an `*oidc.IDTokenClaims`) checks signature, `iss`, `aud`, `exp`, and `iat`.
 - The caller identity is read from the token's claims: `preferred_username` (falling back to `sub`) for the user, and an optional `groups` claim.
 
 A request with no bearer token, an expired one, a bad signature, or a mismatched issuer/audience gets `401 Unauthorized`.
@@ -53,10 +53,24 @@ The verified identity (`auth.Identity{User, Groups}`) is attached to the request
 
 ## Implementation
 
-- `internal/config/config.go` - `InboundAuthConfig`/`OIDCConfig`/`TrustedHeadersConfig` and their `config.Load`-time validation.
+- `internal/config/config.go` - `InboundAuthConfig`/`OIDCConfig`/`TrustedHeadersConfig` and their `config.Load`-time validation. Unchanged by the zitadel/oidc rebuild - same YAML fields, same validation, same precedence.
 - `internal/auth/auth.go` - the `*Auth` type, its chi middleware, and the trusted-headers-priority logic. A `nil *Auth` (config absent) is a no-op passthrough.
-- `internal/auth/oidc.go` - discovery, JWKS, and token verification.
+- `internal/auth/oidc.go` - discovery, JWKS, and token verification, built on `github.com/zitadel/oidc/v3`'s `pkg/client` (discovery), `pkg/client/rp` (`NewIDTokenVerifier` + `NewRemoteKeySet` - the JWKS-verifier primitives, not the browser-flow `RelyingParty`), and `pkg/oidc` (`IDTokenClaims`, the verification checks these two build on).
 - `internal/server/router.go` - mounts the middleware on a chi `Group` scoped to the MCP mount and the generated REST routes, explicitly excluding `/health`; extension webhook routes (e.g. the GitHub App's, verified by their own HMAC signature) and the SPA sit outside that group entirely.
+
+### Why zitadel/oidc over golang-jwt/jwt + MicahParks/keyfunc
+
+The original implementation hand-rolled the discovery fetch and used `golang-jwt/jwt/v5` + `MicahParks/keyfunc/v3` for JWKS-by-`kid` resolution and verification. `github.com/zitadel/oidc/v3` replaces both: `pkg/client.Discover` for discovery (and it validates the discovery document's own `issuer`, which the hand-rolled fetch didn't), and `pkg/client/rp`'s `NewIDTokenVerifier`/`NewRemoteKeySet`/`VerifyIDToken` for everything from there - signature, `iss`, `aud`, `exp`, `iat`. Despite living in the `rp` (relying-party) package, these are self-contained primitives that need only issuer + audience + a JWKS source; they don't require constructing a full `RelyingParty` or running any part of the browser/redirect authorization-code flow, which is exactly the fit a bearer-token-verifying resource server needs. `golang-jwt/jwt/v5` stays a dependency (the GitHub App's own JWT signing in `internal/github/app.go` is unrelated); `MicahParks/keyfunc` and `MicahParks/jwkset` are gone.
+
+One deliberate addition on top of the library: `rp.NewRemoteKeySet` fetches the JWKS lazily on first use, whereas the original fetched it eagerly at boot so a bad `jwks_url` failed server startup rather than surfacing as a run of 401s. `internal/auth/oidc.go` restores that by probing the JWKS once synchronously during `auth.New` (result discarded - the real, cached fetch remains `rp.NewRemoteKeySet`'s own).
+
+## CLI login (`quack server login`)
+
+The CLI is also a zitadel/oidc client - but as an actual relying party this time, since it's a real user logging in against a browser-facing IdP. `quack server login <name> --issuer <url> --client-id <id>` runs the OAuth 2.0 **device authorization grant** (RFC 8628) via `pkg/client/rp`'s `NewRelyingPartyOIDC`, `DeviceAuthorization`, and `DeviceAccessToken`: it prints a verification URL and a short code, the user approves it in any browser on any device, and the CLI polls (the library already handles `authorization_pending`/`slow_down` backoff) until it gets an access + refresh token pair.
+
+Device grant was chosen over the loopback-redirect alternative (a local HTTP listener + auto-opened browser catching the OAuth redirect) because it needs no port bound on the machine running `quack` - it works the same over SSH or a headless session as it does locally, which is the common case for a server CLI. Only public OIDC clients are supported (no client secret): device grant is meant for exactly that client shape, and it means the CLI never has a secret to protect.
+
+Tokens are stored per registered server in the same registry `quack server add` already writes to (`~/.quack/servers.yaml`, `$QUACK_HOME`): issuer, client ID, granted scopes, the token endpoint URL (cached from discovery so a later refresh needs no re-discovery), and the access/refresh tokens with the access token's expiry. That file (and its directory) is always written `0600`/`0700`, since it can hold live credentials once any server has logged in. `quack chat`/`quack api`/`-p` attach the stored access token as `Authorization: Bearer <token>` automatically for a server resolved from the registry (active server, or a `--server` value that matches a registered URL), refreshing it first via the token endpoint's `refresh_token` grant (`golang.org/x/oauth2`'s `Config.TokenSource`) whenever it's within 30 seconds of expiry. A server with no stored session behaves exactly as before - no header is attached.
 
 ## Gateway / deployment
 

@@ -28,6 +28,36 @@ type Config struct {
 	Workspace    WorkspaceConfig           `yaml:"workspace"`  // agents' working disk (filesystem/git tools)
 	Extensions   ExtensionsConfig          `yaml:"extensions"` // bundled inbound+outbound integrations (e.g. GitHub App)
 	Otel         OtelConfig                `yaml:"otel"`       // OpenTelemetry tracing/metrics (emission-only)
+	Auth         *InboundAuthConfig        `yaml:"auth"`       // inbound request auth; nil (section absent) = disabled, open
+}
+
+// InboundAuthConfig gates the API surface (REST + MCP). Absent entirely (nil),
+// auth is disabled — today's behavior. Present, it needs at least one of its
+// two sub-blocks: trusted_headers takes priority per-request over oidc when
+// both are configured, since it's the gateway-fronted path. Named distinctly
+// from the tool-level AuthConfig (ToolConfig.Auth, e.g. web_search's Exa key) —
+// unrelated schemes that happen to share a domain name.
+type InboundAuthConfig struct {
+	OIDC           *OIDCConfig           `yaml:"oidc"`
+	TrustedHeaders *TrustedHeadersConfig `yaml:"trusted_headers"`
+}
+
+// OIDCConfig verifies a bearer token against an OIDC issuer. JWKSURL is an
+// optional override of the jwks_uri that discovery (<issuer>/.well-known/
+// openid-configuration) would otherwise resolve — set it only when discovery
+// is unavailable or blocked.
+type OIDCConfig struct {
+	Issuer   string `yaml:"issuer"`
+	Audience string `yaml:"audience"`
+	JWKSURL  string `yaml:"jwks_url"`
+}
+
+// TrustedHeadersConfig names the headers a forward-auth gateway (e.g. Traefik +
+// Authentik) injects after authenticating the request itself; quack trusts
+// them as-is rather than re-verifying. Groups is optional.
+type TrustedHeadersConfig struct {
+	User   string `yaml:"user"`
+	Groups string `yaml:"groups"`
 }
 
 // OtelConfig configures OTel tracing/metrics — emission-only: quack keeps no
@@ -853,6 +883,32 @@ func (c *Config) validate() error {
 	}
 	if err := c.Otel.applyDefaults(); err != nil {
 		return err
+	}
+	if err := c.Auth.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validate checks an auth: section for internal consistency. A nil receiver
+// (section absent) is a no-op — auth stays disabled.
+func (a *InboundAuthConfig) validate() error {
+	if a == nil {
+		return nil
+	}
+	if a.OIDC == nil && a.TrustedHeaders == nil {
+		return fmt.Errorf("config: auth section is present but has neither oidc nor trusted_headers configured")
+	}
+	if a.OIDC != nil {
+		if a.OIDC.Issuer == "" {
+			return fmt.Errorf("config: auth.oidc.issuer is empty")
+		}
+		if a.OIDC.Audience == "" {
+			return fmt.Errorf("config: auth.oidc.audience is empty")
+		}
+	}
+	if a.TrustedHeaders != nil && a.TrustedHeaders.User == "" {
+		return fmt.Errorf("config: auth.trusted_headers.user is empty")
 	}
 	return nil
 }

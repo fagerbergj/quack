@@ -19,7 +19,7 @@ import (
 // pause/failure exit-code semantics as `chat send` (see Report). Returns the
 // process exit code.
 func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, asJSON, follow bool) int {
-	c, err := NewClient(server)
+	c, err := NewClient(ctx, server)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
