@@ -1138,6 +1138,19 @@ func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
 			}
 		})
 	}
+
+	// The override is review-intent-gated: an implement task ("fix the review
+	// feedback and push") on a PR with a prior review must NOT be told to stage
+	// a review instead of implementing.
+	implTask := "fix the review feedback and push"
+	implMsg := ext.runMessage(pr, implTask, seedGC(Snapshot{IsPR: true, Reviews: []snapshotReview{
+		{User: "fagerbergj", State: "REQUEST_CHANGES", Body: "fix the auth bug"},
+	}}, 0))
+	for _, absent := range []string{"fresh review", "REQUEST FOR A REVIEW"} {
+		if strings.Contains(implMsg, absent) {
+			t.Errorf("implement task with a prior review present must not carry the review override (%q):\n%s", absent, implMsg)
+		}
+	}
 }
 
 // A conversational follow-up on a PR is answered from the session — the message

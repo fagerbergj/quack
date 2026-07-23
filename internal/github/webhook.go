@@ -1310,13 +1310,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		if s := changedFilesSummary(snap.Files); s != "" {
 			b.WriteString("\n" + s)
 		}
-		if len(snap.Reviews) > 0 {
+		if reviewOnly && len(snap.Reviews) > 0 {
 			// #506: framing the discussion below as "do NOT repeat it" reads, on its
 			// own, as "already answered" once a prior review (quack's own or a
 			// human's) is in it — the orchestrator then skips planning a reviewer
 			// node and the run completes with nothing delivered. State the override
 			// BEFORE the discussion, not after, so it isn't lost in whatever has
-			// accumulated there.
+			// accumulated there. reviewOnly-gated: an implement request ("address the
+			// review feedback and push a fix") must NOT be told to stage a review.
 			b.WriteString("\nThis is a REQUEST FOR A REVIEW RIGHT NOW. Any prior review below — however many, yours or anyone else's — is background on what's already been said, never a reason to skip: you must still read the CURRENT diff and post a fresh review with stage_review. ")
 		}
 		if gh.text != "" {
