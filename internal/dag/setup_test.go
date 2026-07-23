@@ -78,6 +78,62 @@ func TestIsReviewOnlySetup(t *testing.T) {
 	}
 }
 
+// TestOverrideReviewWorkBranch pins #520: a review of a PR with head
+// "feat/oidc-auth" must end up with Setup.WorkBranch == "feat/oidc-auth", not
+// whatever the planner invented (e.g. "quack-auto-review/review-pr-520",
+// which doesn't exist as a remote ref and fatals the setup fetch).
+func TestOverrideReviewWorkBranch(t *testing.T) {
+	reviewPlan := func(workBranch string) *Plan {
+		return &Plan{
+			Nodes: []Node{{ID: "review", AgentName: reviewerAgent}},
+			Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: workBranch},
+		}
+	}
+	implementPlan := func(workBranch string) *Plan {
+		return &Plan{
+			Nodes: []Node{{ID: "impl", AgentName: implementerAgent}},
+			Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: workBranch},
+		}
+	}
+
+	t.Run("review plan: forces the real head, overriding the planner's invented name", func(t *testing.T) {
+		p := reviewPlan("quack-auto-review/review-pr-520")
+		if err := OverrideReviewWorkBranch(p, "feat/oidc-auth"); err != nil {
+			t.Fatalf("OverrideReviewWorkBranch: %v", err)
+		}
+		if p.Setup.WorkBranch != "feat/oidc-auth" {
+			t.Errorf("Setup.WorkBranch = %q, want %q", p.Setup.WorkBranch, "feat/oidc-auth")
+		}
+	})
+
+	t.Run("review plan: errors rather than keeping an invented name when headRef is unknown", func(t *testing.T) {
+		p := reviewPlan("quack-auto-review/review-pr-520")
+		if err := OverrideReviewWorkBranch(p, ""); err == nil {
+			t.Fatal("want an error when no head ref is available, got nil")
+		}
+		if p.Setup.WorkBranch != "quack-auto-review/review-pr-520" {
+			t.Errorf("Setup.WorkBranch changed to %q on error, want it untouched", p.Setup.WorkBranch)
+		}
+	})
+
+	t.Run("implement plan: untouched, keeps the planner's new-branch name", func(t *testing.T) {
+		p := implementPlan("quack/new-feature")
+		if err := OverrideReviewWorkBranch(p, "feat/oidc-auth"); err != nil {
+			t.Fatalf("OverrideReviewWorkBranch: %v", err)
+		}
+		if p.Setup.WorkBranch != "quack/new-feature" {
+			t.Errorf("Setup.WorkBranch = %q, want unchanged %q", p.Setup.WorkBranch, "quack/new-feature")
+		}
+	})
+
+	t.Run("no setup: no-op", func(t *testing.T) {
+		p := &Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent}}}
+		if err := OverrideReviewWorkBranch(p, "feat/oidc-auth"); err != nil {
+			t.Fatalf("OverrideReviewWorkBranch: %v", err)
+		}
+	})
+}
+
 // runPlanSetup must compute CheckoutExistingHead from the plan's qualifying
 // nodes and pass it to setupFn - review-only true, anything with an
 // implementer false - even though it is never planner-declared JSON.

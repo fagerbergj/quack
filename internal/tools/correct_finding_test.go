@@ -39,8 +39,8 @@ func TestGitHubPRContext_RoundTrips(t *testing.T) {
 	if _, ok := GitHubPRFromContext(context.Background()); ok {
 		t.Fatal("bare context should carry no GitHubPR")
 	}
-	want := GitHubPR{Owner: "acme", Repo: "games", Number: 246}
-	ctx := WithGitHubPR(context.Background(), want.Owner, want.Repo, want.Number)
+	want := GitHubPR{Owner: "acme", Repo: "games", Number: 246, HeadRef: "feat/x"}
+	ctx := WithGitHubPR(context.Background(), want.Owner, want.Repo, want.Number, want.HeadRef)
 	got, ok := GitHubPRFromContext(ctx)
 	if !ok || got != want {
 		t.Fatalf("GitHubPRFromContext = %+v, %v; want %+v, true", got, ok, want)

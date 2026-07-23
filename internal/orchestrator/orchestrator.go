@@ -313,7 +313,10 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// Threaded to the planner so a re-plan after a clarifying exchange (or any
 		// follow-up) resolves references against what was already said.
 		history := buildHistory(prior)
-		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message)
+		// Read ONCE, at the top, per GitHubPRFromContext's contract - reused below
+		// for both the plan tool's review-head override and correct_review_finding.
+		githubPR, hasGitHubPR := tools.GitHubPRFromContext(ctx)
+		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubPR.HeadRef)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
@@ -361,15 +364,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// (stamped by the webhook, never by model input) - a plain REST/MCP turn
 		// with no PR context never even sees this tool, closing the "any turn can
 		// write to any repo" hole a security review flagged in the first cut.
-		if o.taskMem != nil {
-			if pr, ok := tools.GitHubPRFromContext(ctx); ok {
-				correctTool, err := tools.NewCorrectReviewFindingTool(o.taskMem, pr)
-				if err != nil {
-					yield(stream.Errorf("orchestrator: correct_review_finding tool: "+err.Error()), nil)
-					return
-				}
-				toolList = append(toolList, correctTool)
+		if o.taskMem != nil && hasGitHubPR {
+			correctTool, err := tools.NewCorrectReviewFindingTool(o.taskMem, githubPR)
+			if err != nil {
+				yield(stream.Errorf("orchestrator: correct_review_finding tool: "+err.Error()), nil)
+				return
 			}
+			toolList = append(toolList, correctTool)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{

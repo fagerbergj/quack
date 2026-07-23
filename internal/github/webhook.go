@@ -681,10 +681,12 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	// Stamp the AUTHORITATIVE repo/PR this run is on - the only source
 	// correct_review_finding trusts for where a conversational correction may
-	// write (never the model's own say-so; see tools.WithGitHubPR). Only for a
-	// PR (not a plain issue): there is no finding to correct on an issue thread.
+	// write, and the only source the plan tool trusts for a review's real head
+	// branch (never the model's own say-so; see tools.WithGitHubPR). Only for a
+	// PR (not a plain issue): there is no finding to correct, or head branch to
+	// override, on an issue thread.
 	if p.Issue.PullRequest != nil {
-		runCtx = tools.WithGitHubPR(runCtx, owner, repo, number)
+		runCtx = tools.WithGitHubPR(runCtx, owner, repo, number, gh.snap.HeadRef)
 	}
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run

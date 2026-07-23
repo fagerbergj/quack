@@ -37,8 +37,11 @@ type planResult struct {
 // attachments are the current turn's media parts and history the prior turns;
 // both are stamped on the plan so every node sees them. message is the verbatim
 // user request, stamped so nodes get the full ask (not the orchestrator's
-// paraphrase).
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string) (tool.Tool, error) {
+// paraphrase). reviewHeadRef is the VERIFIED PR head branch (from
+// tools.GitHubPRFromContext, resolved once by Orchestrator.Run - never model
+// output) - a review-only plan's Setup.WorkBranch is forced to it, overriding
+// whatever the planner invented (#520).
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, reviewHeadRef string) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -71,6 +74,9 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 		func(tc agent.Context, a planArgs) (planResult, error) {
 			p, err := planner.Build(tc, a.Nodes, a.Setup, a.Delivery, history, message, attachments)
 			if err != nil {
+				return planResult{}, fmt.Errorf("plan: %w", err)
+			}
+			if err := dag.OverrideReviewWorkBranch(p, reviewHeadRef); err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
 

@@ -18,6 +18,10 @@ type GitHubPR struct {
 	Owner  string
 	Repo   string
 	Number int
+	// HeadRef is the PR's actual head branch (e.g. "feat/oidc-auth"), used to
+	// override a review plan's planner-authored Setup.WorkBranch - see
+	// dag.OverrideReviewWorkBranch. Empty for a plain issue (no head branch).
+	HeadRef string
 }
 
 type githubPRContextKey struct{}
@@ -30,8 +34,8 @@ type githubPRContextKey struct{}
 // touching. Call ONLY from the boundary that actually knows this - the GitHub
 // webhook, before it dispatches the orchestrator - never from anything fed by
 // model output.
-func WithGitHubPR(ctx context.Context, owner, repo string, number int) context.Context {
-	return context.WithValue(ctx, githubPRContextKey{}, GitHubPR{Owner: owner, Repo: repo, Number: number})
+func WithGitHubPR(ctx context.Context, owner, repo string, number int, headRef string) context.Context {
+	return context.WithValue(ctx, githubPRContextKey{}, GitHubPR{Owner: owner, Repo: repo, Number: number, HeadRef: headRef})
 }
 
 // GitHubPRFromContext reads back the PR WithGitHubPR attached, if any. Read
