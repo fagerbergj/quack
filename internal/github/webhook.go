@@ -1346,6 +1346,13 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 					len(gh.newCommits), strings.Join(shas, ", "))
 			}
 		}
+		if len(snap.Reviews) > 0 {
+			// #506: "Existing discussion — do NOT repeat it" plus a prior review already
+			// on the thread (quack's own, or a human's) reads as "already answered" and
+			// the orchestrator skips planning a reviewer node entirely. State the
+			// override explicitly rather than relying on the model to infer it.
+			b.WriteString("A prior review is already on this thread — that is background, not a reason to skip: this request still needs a fresh review of the CURRENT diff, posted with stage_review, regardless of what was said before. ")
+		}
 		lead := "If the request is to REVIEW this PR: read its changes"
 		if reviewOnly {
 			lead = "Review it: read its changes"
