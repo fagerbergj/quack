@@ -1106,6 +1106,53 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 	}
 }
 
+// #506: a review request whose discussion already contains a prior review
+// (quack's own, or — the broader trigger reported in dogfooding — a human's)
+// must still tell the orchestrator to post a FRESH review. Without an explicit
+// override, "Existing discussion — do NOT repeat it" plus a prior review already
+// answering the PR reads as "already handled" and the run produces no reviewer
+// node at all (empty answer).
+func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		snap Snapshot
+	}{
+		{"prior human review", Snapshot{IsPR: true, Reviews: []snapshotReview{
+			{User: "fagerbergj", State: "APPROVED", Body: "LGTM"},
+		}}},
+		{"prior quack review", Snapshot{IsPR: true, Reviews: []snapshotReview{
+			{User: "quack-jason[bot]", State: "COMMENTED", Body: "Two blockers in the auth path."},
+		}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg := ext.runMessage(pr, "review this", seedGC(c.snap, 0))
+			if !strings.Contains(msg, "fresh review") && !strings.Contains(msg, "not a reason to skip") {
+				t.Errorf("review message with a prior review present must explicitly require a fresh review regardless:\n%s", msg)
+			}
+		})
+	}
+
+	// The override is review-intent-gated: an implement task ("fix the review
+	// feedback and push") on a PR with a prior review must NOT be told to stage
+	// a review instead of implementing.
+	implTask := "fix the review feedback and push"
+	implMsg := ext.runMessage(pr, implTask, seedGC(Snapshot{IsPR: true, Reviews: []snapshotReview{
+		{User: "fagerbergj", State: "REQUEST_CHANGES", Body: "fix the auth bug"},
+	}}, 0))
+	for _, absent := range []string{"fresh review", "REQUEST FOR A REVIEW"} {
+		if strings.Contains(implMsg, absent) {
+			t.Errorf("implement task with a prior review present must not carry the review override (%q):\n%s", absent, implMsg)
+		}
+	}
+}
+
 // A conversational follow-up on a PR is answered from the session — the message
 // must NOT hand over the clone-and-review playbook, or the orchestrator re-reviews
 // instead of answering.
