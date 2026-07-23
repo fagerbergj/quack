@@ -1,9 +1,3 @@
----
-type: Documentation Index
-title: "Architecture"
-description: "Files and subdirectories in Architecture."
----
-
 # Files
 
 - [Quack System Architecture](overview.md) - High-level system architecture of Quack - monorepo layout, request lifecycle through the HTTP gateway to DAG execution and adversarial vetting, OpenAPI-driven code generation, native vs ACP agent types, SSE streaming vocabulary, model factory, and data stores (Postgres + qdrant).
