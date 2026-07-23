@@ -1310,6 +1310,15 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 		if s := changedFilesSummary(snap.Files); s != "" {
 			b.WriteString("\n" + s)
 		}
+		if len(snap.Reviews) > 0 {
+			// #506: framing the discussion below as "do NOT repeat it" reads, on its
+			// own, as "already answered" once a prior review (quack's own or a
+			// human's) is in it — the orchestrator then skips planning a reviewer
+			// node and the run completes with nothing delivered. State the override
+			// BEFORE the discussion, not after, so it isn't lost in whatever has
+			// accumulated there.
+			b.WriteString("\nThis is a REQUEST FOR A REVIEW RIGHT NOW. Any prior review below — however many, yours or anyone else's — is background on what's already been said, never a reason to skip: you must still read the CURRENT diff and post a fresh review with stage_review. ")
+		}
 		if gh.text != "" {
 			label := "Existing discussion — take it into account, do NOT repeat it:\n"
 			if !gh.firstLoad {
@@ -1345,13 +1354,6 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 				fmt.Fprintf(&b, "Focus your review on what's NEW since you last looked — %d commit(s) not seen before (by content, robust to any rebase/force-push): %s. Use `git show <sha>` for each rather than re-reviewing the whole PR, and take the existing review discussion into account — do NOT repeat findings you already made. ",
 					len(gh.newCommits), strings.Join(shas, ", "))
 			}
-		}
-		if len(snap.Reviews) > 0 {
-			// #506: "Existing discussion — do NOT repeat it" plus a prior review already
-			// on the thread (quack's own, or a human's) reads as "already answered" and
-			// the orchestrator skips planning a reviewer node entirely. State the
-			// override explicitly rather than relying on the model to infer it.
-			b.WriteString("A prior review is already on this thread — that is background, not a reason to skip: this request still needs a fresh review of the CURRENT diff, posted with stage_review, regardless of what was said before. ")
 		}
 		lead := "If the request is to REVIEW this PR: read its changes"
 		if reviewOnly {
