@@ -1,5 +1,5 @@
 // Package runlog is the "run and persist" machinery shared by every driver of
-// a chat run — the REST handler and the GitHub webhook dispatcher alike: fan
+// a chat run - the REST handler and the GitHub webhook dispatcher alike: fan
 // each event to live hub subscribers, durably persist it (so a reconnecting
 // client or a cold-restart replay sees the same history), and mirror DAG
 // plan/node state into the store for the chat detail view (getChat).
@@ -21,7 +21,7 @@ import (
 // event's per-chat seq (so the live tail and the durable log share one
 // numbering) and hands rows here; a single goroutine drains them in order, off
 // the run loop's hot path. A full queue drops-and-logs rather than wedging the
-// run — the live hub still carried the event; only its durability is lost.
+// run - the live hub still carried the event; only its durability is lost.
 type EventLog struct {
 	store *store.Store
 	ch    chan store.ChatEvent
@@ -102,7 +102,7 @@ func UnmarshalEvent(s string) (stream.SSEEvent, error) {
 
 // Publisher fans one chat run's events to live hub subscribers and the durable
 // event log under a single monotonic per-chat seq. Not safe for concurrent use
-// — a run has exactly one publisher, matching the "sole publisher" invariant
+// - a run has exactly one publisher, matching the "sole publisher" invariant
 // that keeps seq monotonic without locking.
 type Publisher struct {
 	hub    *stream.Hub
@@ -125,7 +125,7 @@ func (p *Publisher) Publish(ev stream.SSEEvent) {
 // event (running / done / failed / needs_input / cancelled). Ignores non-node
 // events. Every write routes through dag.CanTransition: an illegal transition
 // from the node's current persisted status is a logged bug, not a silent
-// write — the write proceeds regardless, since the SSE event is ground truth
+// write - the write proceeds regardless, since the SSE event is ground truth
 // for what the executor actually did.
 func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
@@ -156,7 +156,7 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 		nodeID, to = d.NodeID, dag.StatusNeedsInput
 		n.NodeID, n.Status = d.NodeID, string(to)
 	case stream.NodePausedData:
-		// No FinishedAt: a paused node is suspended, not finished — it stays
+		// No FinishedAt: a paused node is suspended, not finished - it stays
 		// resumable (see dag.Executor.PauseNode).
 		nodeID, to = d.NodeID, dag.StatusPaused
 		n.NodeID, n.Status = d.NodeID, string(to)
@@ -184,7 +184,7 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 }
 
 // SaveDagPlan persists the plan row behind a dag_plan event, off the run's hot
-// path — the same JSON shape the REST handler stores.
+// path - the same JSON shape the REST handler stores.
 func SaveDagPlan(st *store.Store, chatID, turnID string, d stream.DagPlanData) {
 	planJSON, err := json.Marshal(d)
 	if err != nil {

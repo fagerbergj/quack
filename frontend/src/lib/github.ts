@@ -16,7 +16,7 @@ export interface GithubRef {
 const GITHUB_URL_RE = /\/(issues|pull)\/(\d+)/
 
 // parseGithubRef extracts the {repo, kind, number} the row's Issue/PR badge and
-// the Repo/Type facets need, straight off github_url — the same field
+// the Repo/Type facets need, straight off github_url - the same field
 // isGithubChat trusts. Undefined for a non-GitHub chat or an unrecognized URL shape.
 export function parseGithubRef(c: ChatSummary): GithubRef | undefined {
   if (!c.github_url) return undefined

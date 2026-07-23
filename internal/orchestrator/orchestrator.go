@@ -56,7 +56,7 @@ type Orchestrator struct {
 	skillTS   tool.Toolset  // optional; nil = no skill tools
 	userMem   *memory.Store // optional user-memory store (M6); nil = user memory off
 	// taskMem is the SAME store the trust gate reads/writes coding (and research)
-	// tradecraft (internal/vetting's cfg.Memory) — nil = task memory off. The
+	// tradecraft (internal/vetting's cfg.Memory) - nil = task memory off. The
 	// orchestrator's ONLY write into it is correct_review_finding (#249): a
 	// conversational GitHub-PR correction, narrowly scoped and attributable,
 	// never an always-on path for arbitrary content.
@@ -67,7 +67,7 @@ type Orchestrator struct {
 	runSem chan struct{}
 	// queuedChats holds the chatIDs currently admitted but still waiting on runSem
 	// (Run() called RunQueued but hasn't acquired a slot yet). Backs Queued, which
-	// the REST status handler checks BEFORE hub.Active — the hub's topic goes
+	// the REST status handler checks BEFORE hub.Active - the hub's topic goes
 	// "started" at response_created, published before the semaphore is acquired, so
 	// hub.Active alone can't tell a queued run from an executing one.
 	queuedChats sync.Map // chatID -> struct{}
@@ -119,7 +119,7 @@ func (o *Orchestrator) PauseNode(chatID, nodeID string) bool {
 }
 
 // QueueNodeMessage appends a message to a running node's queue, delivered at
-// its next turn boundary (never mid-turn — replaces the old interrupt-based
+// its next turn boundary (never mid-turn - replaces the old interrupt-based
 // steer). Returns false if no such live node.
 func (o *Orchestrator) QueueNodeMessage(chatID, nodeID, text string) (dag.QueuedMessage, bool) {
 	return o.executor.QueueNodeMessage(chatID, nodeID, text)
@@ -152,7 +152,7 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 // so cancel/steer reach the re-running nodes.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
-		// Load the real dag.Plan the execute tool stashed in session state — the
+		// Load the real dag.Plan the execute tool stashed in session state - the
 		// DagPlan store holds the dag_plan EVENT shape (agent, not agent_name), not
 		// this struct.
 		plan, ok := o.stashedPlan(ctx, userID, chatID)
@@ -195,7 +195,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 		// Session is the derived runSess (where this re-run's verdicts land), but
-		// node controls stay registered under chatID — so cancel-rendering keys on it.
+		// node controls stay registered under chatID - so cancel-rendering keys on it.
 		ds := o.executor.NewDagStream(ctx, plan, AppName, userID, runSess, chatID, safeYield, nodeOutputs)
 		ds.ScopeToRetry(nodeID)
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry " + nodeID}}}
@@ -256,7 +256,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
 		// queued tracks which gauge (runs.queued vs runs.active) this run currently
 		// occupies, so the deferred cleanup below decrements the right one on EVERY
-		// exit path — including cancelled-while-queued, which never reaches acquired.
+		// exit path - including cancelled-while-queued, which never reaches acquired.
 		otelobs.RunQueued()
 		queued := true
 		o.queuedChats.Store(sessionID, struct{}{})
@@ -295,11 +295,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()
 		// Persisted session, read BEFORE the runner appends this turn's user
-		// message — so it holds only earlier turns. Used for both the planner's
+		// message - so it holds only earlier turns. Used for both the planner's
 		// history and pending-clarification detection below.
 		prior := o.PriorEvents(ctx, userID, sessionID)
 		// Mid-node HITL: if the previous turn parked a plan node waiting on the
-		// user, THIS message is the answer to that node's question — deliver it to
+		// user, THIS message is the answer to that node's question - deliver it to
 		// the paused plan run and skip the orchestrator llmagent entirely. The same
 		// scan (LatestPendingQuestion) backs the REST status handler's needs_input
 		// computation, so both agree on what "pending" means.
@@ -354,11 +354,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		}
 
 		// Task memory (#249): the orchestrator's narrow, attributable write path
-		// into the shared coding bucket — a conversational correction that a
+		// into the shared coding bucket - a conversational correction that a
 		// review finding was a false positive. No recall here (the orchestrator
 		// doesn't review code); only the coding agents' gate-side recall reads
 		// what this writes. Registered ONLY when ctx carries a VERIFIED GitHubPR
-		// (stamped by the webhook, never by model input) — a plain REST/MCP turn
+		// (stamped by the webhook, never by model input) - a plain REST/MCP turn
 		// with no PR context never even sees this tool, closing the "any turn can
 		// write to any repo" hole a security review flagged in the first cut.
 		if o.taskMem != nil {
@@ -374,12 +374,12 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 
 		ag, err := llmagent.New(llmagent.Config{
 			Name:        orchestratorName,
-			Description: "Routes requests to the right specialist agents — web research, code implementation, media reading — and answers conversational queries directly.",
+			Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
 			Model:       o.model,
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
 			Toolsets:    toolsets,
-			// The orchestrator is a CONVERSATION, not a task node — but it runs
+			// The orchestrator is a CONVERSATION, not a task node - but it runs
 			// wrapped in a workflow AgentNode, and AgentNode forces an unset mode
 			// to ModeSingleTurn (agent_node.go), which discards ALL session history
 			// from the request. That made every follow-up turn amnesiac: "I don't
@@ -416,7 +416,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			// The CONVERSATION view, not the raw session: the plan graph runs in
 			// this same session, and with Mode: ModeChat the llmagent would
 			// otherwise rebuild its request from every worker/gate event a heavy
-			// run left behind (110K-token follow-up requests — see
+			// run left behind (110K-token follow-up requests - see
 			// sessionfilter.go). Writes pass through unfiltered; only this
 			// runner's reads are dieted. The plan/retry/resume runners and all
 			// direct o.sessions reads stay raw.
@@ -447,9 +447,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// answer (a FunctionResponse with the matching call ID) rather than a fresh
 		// user turn. The model then continues from where it paused with the choice
 		// resolved, instead of re-reading an open question. (The orchestrator runs
-		// as a direct llmagent — not over A2A — so there is no adka2a layer to do
+		// as a direct llmagent - not over A2A - so there is no adka2a layer to do
 		// this; we hand-roll it here. See ChoiceToolName's TODO.) Any attachments on
-		// a clarification-answer turn are dropped — answering a choice with a file is
+		// a clarification-answer turn are dropped - answering a choice with a file is
 		// not a supported flow.
 		if hasPending && pending.choiceCallID != "" {
 			content = &genai.Content{Role: "user", Parts: []*genai.Part{{
@@ -482,7 +482,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// invoke runs the orchestrator llmagent once and streams its events.
 		// produced reports whether the turn left the run something to stand on:
 		// answer text, a clarifying question, or a committed plan. stop means the
-		// stream is over (an error, or the client hung up) — Run must return.
+		// stream is over (an error, or the client hung up) - Run must return.
 		invoke := func(content *genai.Content) (produced, stop bool) {
 			for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
 				if err != nil {
@@ -507,8 +507,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			// A plan that was CREATED but never EXECUTED means the turn did NO WORK,
 			// no matter how much text the model emitted about it. Live failure: the
 			// orchestrator called `plan`, read the tool's "review before executing"
-			// summary, answered "The plan is solid — 4 parallel code-explorer nodes…"
-			// and finished — never calling `execute`. It described running the work
+			// summary, answered "The plan is solid - 4 parallel code-explorer nodes…"
+			// and finished - never calling `execute`. It described running the work
 			// instead of running it, the text made the turn look produced, and the run
 			// ended having done nothing. Force a continuation so it actually executes.
 			if _, pending := planCache.Pending(); pending {
@@ -517,10 +517,10 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			return produced, false
 		}
 
-		// The orchestrator's own empty-turn recovery — the WORKER's (vetting's
+		// The orchestrator's own empty-turn recovery - the WORKER's (vetting's
 		// continuation loop, PR #186) one level up, and the same root cause: a
 		// reasoning model can spend its whole output budget thinking and end the
-		// invocation with EMPTY content — no plan call, no execute call, no text.
+		// invocation with EMPTY content - no plan call, no execute call, no text.
 		// ADK reports a clean finish, so quack took that for "the orchestrator is
 		// done" and the run simply stopped: no DAG, no answer, no log line, chat
 		// back to idle. "The model emitted text" is not a completion signal.
@@ -528,7 +528,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// So: re-invoke it with a firm continuation directive, bounded by
 		// maxOrchestratorContinues. Each r.Run appends the directive to the chat
 		// session as a user event before the agent runs (Runner.appendMessageToSession),
-		// which is the ONLY delivery an llmagent reads — it rebuilds its request
+		// which is the ONLY delivery an llmagent reads - it rebuilds its request
 		// from Session().Events() and drops fresh UserContent handed to a node
 		// (see vetting.emitPrompt / [[adk-ignores-usercontent]]).
 		produced, stop := invoke(content)
@@ -549,7 +549,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 
 		// Still nothing after the whole continuation budget: FAIL LOUDLY. A run
 		// that ends with no answer, no error and no log line is the worst outcome
-		// there is — the user cannot even tell that something broke.
+		// there is - the user cannot even tell that something broke.
 		if !produced {
 			slog.Error("orchestrator produced no plan and no answer; giving up",
 				"component", "orchestrator", "chat", sessionID, "attempts", maxOrchestratorContinues+1)
@@ -558,7 +558,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			return
 		}
 
-		// Phase 2: the llmagent committed a plan (execute tool) — run it as a
+		// Phase 2: the llmagent committed a plan (execute tool) - run it as a
 		// native graph. Node events stream through the DagStream inside
 		// RunPlanAsGraph; a node may PAUSE to ask the user (node_needs_input), in
 		// which case the turn ends here and the next user message resumes it (the
@@ -590,18 +590,18 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 // fails loudly.
 const maxOrchestratorContinues = 3
 
-// continuationMarker opens the continuation directive — the model's signal that
+// continuationMarker opens the continuation directive - the model's signal that
 // its last turn produced nothing, and the tests' handle on "the directive
 // actually landed".
-const continuationMarker = "CONTINUE — your last turn produced no plan and no answer."
+const continuationMarker = "CONTINUE - your last turn produced no plan and no answer."
 
 // continuationContent is the directive delivered to an orchestrator that ended
 // an invocation with nothing. Short and firm on purpose: it has already loaded
 // its skills (that is where the output budget went), so the only useful
-// instruction left is ACT — call plan, or answer.
+// instruction left is ACT - call plan, or answer.
 func continuationContent() *genai.Content {
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: continuationMarker + "\n\n" +
-		"Nothing ran and the user is still waiting. You have already loaded the skills you need — do not load " +
+		"Nothing ran and the user is still waiting. You have already loaded the skills you need - do not load " +
 		"more, and do not think silently. Do ONE of these now:\n If you have already called `plan` and it returned a plan_id, you have NOT done the work: call `execute` with that plan_id NOW. Describing the plan, or saying it looks good, is not executing it." +
 		"- Call the `plan` tool with the nodes, then call `execute` with the plan_id it returns.\n" +
 		"- Or, if no plan is needed, answer the user directly in text.\n\n" +
@@ -611,7 +611,7 @@ func continuationContent() *genai.Content {
 // turnProduced reports whether an orchestrator event carries something that
 // legitimately ENDS the turn: answer text for the user, or a get_user_choice
 // clarification awaiting their reply. Thinking, tool calls and tool results are
-// not answers — a turn made of nothing but those is the silent death this
+// not answers - a turn made of nothing but those is the silent death this
 // guards against. (A committed plan is the third way, checked on the plan cache
 // once the invocation drains: the execute tool ends the turn structurally.)
 func turnProduced(ev *session.Event) bool {
@@ -659,7 +659,7 @@ type pendingInterrupt struct {
 
 // hitlIDRe parses the gate's round-stable interrupt IDs: "hitl-" for a free-
 // text ask_user question (vetting.hitlInterruptID) and "confirm-" for the
-// guard ladder's approve/deny pause (vetting.confirmInterruptID) — both ride
+// guard ladder's approve/deny pause (vetting.confirmInterruptID) - both ride
 // the identical workflow.ResumeOrRequestInput/adk_request_input pause/resume
 // mechanism, so resumeNodeRun's delivery needs no confirm-specific branch;
 // only this pattern (and, for display, the node's own message text) differs.
@@ -780,9 +780,9 @@ func (o *Orchestrator) PriorEvents(ctx context.Context, userID, sessionID string
 // buildHistory converts prior session events into dag.HistoryTurn values for the
 // planner. The current message reaches the planner separately as the plan query.
 //
-// It tolerates a half-finished turn: a user turn with no assistant reply yet —
+// It tolerates a half-finished turn: a user turn with no assistant reply yet -
 // e.g. an upfront clarifying question still awaiting an answer, or a DAG paused
-// mid-run (M5 pause/resume) — contributes its user text and simply no model
+// mid-run (M5 pause/resume) - contributes its user text and simply no model
 // text, so the planner still sees the open question. Thinking and tool
 // call/response parts are dropped (the planner is a raw text LLM call).
 func buildHistory(events []*session.Event) []dag.HistoryTurn {
@@ -836,7 +836,7 @@ func buildHistory(events []*session.Event) []dag.HistoryTurn {
 // clears it once a real answer (a FunctionResponse carrying
 // tools.ChoiceAnswerKey) follows. The framework auto-emits a "pending"
 // placeholder FunctionResponse for every long-running call, so presence of a
-// response alone does not mean answered — only one carrying the answer key does.
+// response alone does not mean answered - only one carrying the answer key does.
 func pendingChoice(events []*session.Event) (callID, question string) {
 	var pendingID, pendingQuestion string
 	for _, ev := range events {
@@ -867,7 +867,7 @@ func pendingChoice(events []*session.Event) (callID, question string) {
 // PendingQuestion is an unanswered question blocking a chat's next turn: either a
 // paused plan node's mid-node ask (HITL) or the orchestrator's own top-level
 // get_user_choice clarification. This is the ONE place that scans a chat's
-// session events for "is a question pending, and what does it ask" — Run's
+// session events for "is a question pending, and what does it ask" - Run's
 // resume dispatch and the REST status handler's needs_input computation both
 // call LatestPendingQuestion instead of re-implementing the scan (see AGENTS.md).
 type PendingQuestion struct {
@@ -888,7 +888,7 @@ func (p PendingQuestion) NodeInterrupt() (pendingInterrupt, bool) { return p.nod
 
 // LatestPendingQuestion scans a chat's prior session events for the most recent
 // unanswered question a run is blocked on. A mid-node interrupt is checked
-// first — matching Run's dispatch order, where a paused node's answer always
+// first - matching Run's dispatch order, where a paused node's answer always
 // resumes the graph directly rather than the orchestrator llmagent.
 func LatestPendingQuestion(events []*session.Event) (PendingQuestion, bool) {
 	if pend, ok := latestPendingNodeInterrupt(events); ok {
@@ -901,7 +901,7 @@ func LatestPendingQuestion(events []*session.Event) (PendingQuestion, bool) {
 }
 
 // LatestAnswer returns the final assistant (model) text persisted for a session
-// — the answer of the last completed run. Both a plain reply (the llmagent's own
+// - the answer of the last completed run. Both a plain reply (the llmagent's own
 // message) and a DAG run (persistAnswer's appended terminal answer) are authored
 // by the orchestrator, so the most recent orchestrator-authored text is the
 // answer. Used by out-of-band drivers (the GitHub extension's webhook) that call

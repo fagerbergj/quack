@@ -23,7 +23,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// ── shared stub-model helpers (mirrors internal/dag's gCall/gText/gSysText —
+// ── shared stub-model helpers (mirrors internal/dag's gCall/gText/gSysText -
 // duplicated here because internal/tools already imports internal/dag, so a
 // dag-package test file can't import tools back without a cycle) ───────────
 
@@ -47,7 +47,7 @@ func atCall(name string, args map[string]any) *model.LLMResponse {
 
 // atAllText concatenates every non-thought text part across the request's
 // contents (the running conversation, INCLUDING tool call/response parts'
-// adjacent text) — used to assert what a stub model actually saw.
+// adjacent text) - used to assert what a stub model actually saw.
 func atAllText(req *model.LLMRequest) string {
 	var b strings.Builder
 	for _, c := range req.Contents {
@@ -82,7 +82,7 @@ func runAdvisorHarness(t *testing.T, workerModel, advisorModel model.LLM, sessio
 		Name: "advisor", Model: advisorModel, Description: "advisor", Instruction: "Advise.",
 		// ModeChat pinned, as production does via agent.BuildChat: the runner
 		// would otherwise force-set it with an unsynchronized write on this
-		// SHARED instance — a data race under concurrent consults.
+		// SHARED instance - a data race under concurrent consults.
 		Mode: llmagent.ModeChat,
 	})
 	if err != nil {
@@ -148,7 +148,7 @@ func runAdvisorHarness(t *testing.T, workerModel, advisorModel model.LLM, sessio
 // ── Test 1: mentor memory within one draft ──────────────────────────────────
 
 // twoConsultWorker calls ask_advisor twice (distinct requests) before writing
-// its final answer — proving the worker CAN consult repeatedly in one draft.
+// its final answer - proving the worker CAN consult repeatedly in one draft.
 type twoConsultWorker struct {
 	mu    sync.Mutex
 	calls int
@@ -175,7 +175,7 @@ func (s *twoConsultWorker) GenerateContent(_ context.Context, req *model.LLMRequ
 
 // recordingAdvisor answers every consult with a fixed reply per call number,
 // recording the full prompt text (INCLUDING prior session history) it saw on
-// each call — the assertion surface for native session memory.
+// each call - the assertion surface for native session memory.
 type recordingAdvisor struct {
 	mu       sync.Mutex
 	prompts  []string
@@ -200,9 +200,9 @@ func (s *recordingAdvisor) GenerateContent(_ context.Context, req *model.LLMRequ
 
 // TestAskAdvisor_MentorMemoryWithinOneDraft: a worker consults ask_advisor
 // twice in one draft. The advisor's SECOND LLM request must carry both the
-// first request text AND the advisor's own first reply — native ADK session
+// first request text AND the advisor's own first reply - native ADK session
 // memory (a persistent session + a plain runner.Run, unlike agenttool's
-// cold-session-per-call — see NewAskAdvisorTool's doc comment).
+// cold-session-per-call - see NewAskAdvisorTool's doc comment).
 func TestAskAdvisor_MentorMemoryWithinOneDraft(t *testing.T) {
 	advisor := &recordingAdvisor{replyFor: func(n int) string {
 		if n == 1 {
@@ -259,8 +259,8 @@ func (s *oneConsultWorker) GenerateContent(_ context.Context, req *model.LLMRequ
 
 // TestAskAdvisor_SeededWithTaskAndRubric: the advisor's FIRST LLM request
 // (on a brand-new per-node session) must contain the node's task + acceptance
-// rubric — seeded from session state written by dag.newGatedNode (mirrored
-// here by the harness) via dag.NodeTaskStateKey/NodeRubricStateKey — so the
+// rubric - seeded from session state written by dag.newGatedNode (mirrored
+// here by the harness) via dag.NodeTaskStateKey/NodeRubricStateKey - so the
 // mentor knows the desired outcome from its very first reply.
 func TestAskAdvisor_SeededWithTaskAndRubric(t *testing.T) {
 	advisor := &recordingAdvisor{}
@@ -285,7 +285,7 @@ func TestAskAdvisor_SeededWithTaskAndRubric(t *testing.T) {
 // ── Test 5: advisor error → empty advice, worker completes normally ────────
 
 // brokenAdvisorSessions wraps a real session.Service but fails every
-// Get/Create scoped to the advisor's own AppName — simulating a broken
+// Get/Create scoped to the advisor's own AppName - simulating a broken
 // advisor session store while the MAIN workflow session (a different
 // AppName) keeps working normally, so this exercises consultAdvisor's OWN
 // error handling (runner.Run failing against the store) rather than
@@ -309,7 +309,7 @@ func (b brokenAdvisorSessions) Create(ctx context.Context, req *session.CreateRe
 }
 
 // adviceCapturingWorker calls ask_advisor once, records the advice it got
-// back (empty on a failed consult), then answers unconditionally — proving
+// back (empty on a failed consult), then answers unconditionally - proving
 // the worker is never blocked by an advisor failure.
 type adviceCapturingWorker struct {
 	mu     sync.Mutex
@@ -331,7 +331,7 @@ func (s *adviceCapturingWorker) GenerateContent(_ context.Context, req *model.LL
 			return
 		}
 		// Round 2: the tool's FunctionResponse (with the "advice" field) is now
-		// in the request history — extract it so the test can assert it's empty.
+		// in the request history - extract it so the test can assert it's empty.
 		for _, c := range req.Contents {
 			if c == nil {
 				continue
@@ -353,7 +353,7 @@ func (s *adviceCapturingWorker) GenerateContent(_ context.Context, req *model.LL
 
 // TestAskAdvisor_RunnerErrorYieldsEmptyAdvice: a broken session store makes
 // consultAdvisor's isolated runner error. The tool must swallow that error
-// (best-effort), return empty advice, log a warning, and — critically — never
+// (best-effort), return empty advice, log a warning, and - critically - never
 // fail or block the calling worker.
 func TestAskAdvisor_RunnerErrorYieldsEmptyAdvice(t *testing.T) {
 	var logBuf bytes.Buffer

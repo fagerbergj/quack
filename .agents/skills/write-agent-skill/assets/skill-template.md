@@ -3,7 +3,7 @@ name: <skill-name-here>
 # ≤64 chars; lowercase a-z, 0-9, hyphens only; no leading/trailing '-'; no '--'; must match folder name exactly
 description: |
   <What this skill does AND when to use it. Include specific trigger keywords and user-request phrases.
-  Target: 2–4 sentences. Max 1,024 characters. Be explicit — agents undertrigger on vague descriptions.>
+  Target: 2–4 sentences. Max 1,024 characters. Be explicit - agents undertrigger on vague descriptions.>
 license: MIT
 # compatibility: <omit unless the skill has real environment requirements; ≤500 chars>
 metadata:
@@ -27,7 +27,7 @@ metadata:
 
 ## When NOT to Use
 
-<Explicit misfire prevention — scenarios where this skill should not be invoked.>
+<Explicit misfire prevention - scenarios where this skill should not be invoked.>
 
 - Example: "Do not use when the user wants to generate a new PDF; this skill only reads and extracts."
 
@@ -37,13 +37,13 @@ metadata:
 
 - [ ] Step 1: <Action with explicit file paths and expected inputs>
 - [ ] Step 2: <Tool or command to run>
-- [ ] Step 3: <Validation — what to check, when to fail over>
+- [ ] Step 3: <Validation - what to check, when to fail over>
 
 > For fragile operations: "Run exactly `<command>`. Do not modify the command or add additional flags."
 
 ## Gotchas
 
-<Environment-specific facts that defy reasonable assumptions. This is the highest-value section — add entries whenever an agent makes a mistake during iteration.>
+<Environment-specific facts that defy reasonable assumptions. This is the highest-value section - add entries whenever an agent makes a mistake during iteration.>
 
 - <Example: "The API uses camelCase in URLs but snake_case in request bodies.">
 

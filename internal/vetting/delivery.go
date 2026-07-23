@@ -20,10 +20,10 @@ import (
 // imperative code verb ("add a game", "implement X", "fix the bug"); deliveryRe
 // a version-control term that means the ask is to SHIP the code, not merely
 // describe it. Both must match for text to read as implement-AND-deliver
-// (ImplementationIntent) — which keeps pure-research asks ("how does X work")
+// (ImplementationIntent) - which keeps pure-research asks ("how does X work")
 // from ever tripping this deterministic delivery check. The dag package's plan
 // routing check is now the rubric-judged PlanJudge (plan_judge.go), not this
-// vocabulary — ImplementationIntent is scoped to gating a NODE's own delivery
+// vocabulary - ImplementationIntent is scoped to gating a NODE's own delivery
 // now, not to plan-time routing.
 var (
 	implVerbs  = `add|implement|create|write|fix|refactor|build|port|migrate|scaffold|generate`
@@ -31,7 +31,7 @@ var (
 	deliveryRe = regexp.MustCompile(`(?i)(pull[ -]?request|\bpr\b|\bcommit\b|\bpush\b|\bbranch\b|\bmerge\b)`)
 
 	// identRe matches a URL, a path, or a hyphen/underscore-joined identifier. A
-	// verb inside one of those is part of a NAME, not an instruction — reviewing
+	// verb inside one of those is part of a NAME, not an instruction - reviewing
 	// branch `add-flappy-bird-openhands` is not asking anyone to add anything. \b
 	// is no help here: it sits on the hyphen, so `\badd\b` matches inside the
 	// branch name. Identifiers are dropped before any verb is looked for.
@@ -57,14 +57,14 @@ var (
 )
 
 // ImplementationIntent reports whether text asks for code to be implemented AND
-// delivered — an imperative code verb plus a version-control term. Conservative
+// delivered - an imperative code verb plus a version-control term. Conservative
 // by construction (both must match, and the two guards below only ever say NO).
 // Shared with internal/dag's planner backstop so there is ONE delivery
 // vocabulary, not two that drift.
 //
-// Verbs are looked for in prose only — identifiers and URLs are dropped (a
+// Verbs are looked for in prose only - identifiers and URLs are dropped (a
 // delivery verb inside a branch name once forced a code-implementer node onto a
-// read-only review) — and a request whose instruction is to REVIEW is not a
+// read-only review) - and a request whose instruction is to REVIEW is not a
 // request to change.
 func ImplementationIntent(text string) bool {
 	if !deliveryRe.MatchString(text) {
@@ -74,18 +74,18 @@ func ImplementationIntent(text string) bool {
 	if !implVerbRe.MatchString(prose) {
 		return false
 	}
-	// A review/audit ask is read-only — unless it ALSO directs a change ("review
+	// A review/audit ask is read-only - unless it ALSO directs a change ("review
 	// PR #4 and fix the bugs", "review the branch and implement the changes").
 	return !reviewRe.MatchString(prose) || implDirectedRe.MatchString(prose)
 }
 
 // deliveryDemand is what a node's task requires be delivered. The implications
 // are mechanical: opening a PR requires a pushed branch, and pushing requires a
-// commit — so a task that says only "open a PR" still demands all three.
+// commit - so a task that says only "open a PR" still demands all three.
 type deliveryDemand struct{ commit, push, pr bool }
 
 // A node's task demands delivery when it reads as implement-and-deliver, or when
-// it simply DIRECTS a commit/push ("Commit on branch add-foo and open a PR") —
+// it simply DIRECTS a commit/push ("Commit on branch add-foo and open a PR") -
 // the latter is an instruction to ship in its own right, while a research task
 // that merely mentions "the commits on main" directs nothing and is left alone.
 func demandedDelivery(task string) deliveryDemand {
@@ -100,7 +100,7 @@ func demandedDelivery(task string) deliveryDemand {
 
 // deliveryCriterion scores `delivery_complete` for a node: 0 when the task
 // demands the work be committed/pushed and the worker's ledger holds no such
-// SUCCESSFUL call (act.committed/act.pushed — see activityFromSession), 1 when it
+// SUCCESSFUL call (act.committed/act.pushed - see activityFromSession), 1 when it
 // does. ok=false ⇒ the criterion does not apply at all (the task asks for no
 // delivery: research, analysis, synthesis), leaving those nodes untouched.
 //
@@ -108,14 +108,14 @@ func demandedDelivery(task string) deliveryDemand {
 // mechanically universal (every code-implementer has the git tools). Opening
 // the PR itself goes through
 // github_pull_request, an OPTIONAL extension tool (a deployment without the
-// GitHub App installed has no way to call it) — hard-requiring it would deadlock
+// GitHub App installed has no way to call it) - hard-requiring it would deadlock
 // such a node in revise rounds it can never satisfy. It is recorded
 // (act.prOpened) and named in the feedback, and the ledger shows the judge
 // whether it happened.
 // hasStagedPR reports whether the worker has a live stage_pr call (handed the
-// PR intent off to the gate — see StagedDelivery/commitDelivery). A
+// PR intent off to the gate - see StagedDelivery/commitDelivery). A
 // worker that CAN still push/open a PR directly (act.pushed/act.prOpened,
-// legacy toolset) satisfies delivery either way — staging is the new path,
+// legacy toolset) satisfies delivery either way - staging is the new path,
 // not a replacement requirement.
 func hasStagedPR(act workerActivity) bool {
 	_, ok := act.stagedDelivery["pr"]
@@ -137,20 +137,20 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 	if len(missing) == 0 {
 		return criterionScore{Score: 1, Reason: "deterministic: the work was committed and pushed (or staged for delivery)"}, true
 	}
-	want := "commit your work, then call `stage_pr(title, body)` to hand off delivery — the gate pushes it after your answer passes"
+	want := "commit your work, then call `stage_pr(title, body)` to hand off delivery - the gate pushes it after your answer passes"
 	if d.pr {
-		want = "commit your work on the branch the task names, then call `stage_pr(title, body)` — the gate pushes the branch and opens the pull request after your answer passes (or push it and open the pull request with `github_pull_request` yourself, if you have that tool)"
+		want = "commit your work on the branch the task names, then call `stage_pr(title, body)` - the gate pushes the branch and opens the pull request after your answer passes (or push it and open the pull request with `github_pull_request` yourself, if you have that tool)"
 	}
 	return criterionScore{Score: 0, Reason: fmt.Sprintf(
 		"deterministic: your task requires the work be delivered (%s), but the workspace ledger contains %s. "+
-			"You have not delivered your work — %s, then report what you actually did. "+
+			"You have not delivered your work - %s, then report what you actually did. "+
 			"Printing file contents in your answer is NOT writing them, and describing a commit is NOT making one: "+
 			"every file must be WRITTEN to disk with write_file/edit_file before you commit.",
 		deliveryWording(d), strings.Join(missing, " and "), want)}, true
 }
 
 // reviewCriterion scores `review_posted` for a node: 0 when the node IS a
-// code-reviewer (isReviewer — a review-delivery node by construction, see
+// code-reviewer (isReviewer - a review-delivery node by construction, see
 // Config.IsReviewer) and the worker's ledger shows no SUCCESSFUL
 // github_submit_review, 1 when it does. ok=false ⇒ the criterion does not apply
 // (not a reviewer node), leaving every other node untouched.
@@ -160,7 +160,7 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 // mechanically, exactly like a commit/push.
 //
 // The submit is the whole requirement: github_add_review_comment only accumulates
-// a process-local DRAFT (see internal/github) — nothing is on the PR until
+// a process-local DRAFT (see internal/github) - nothing is on the PR until
 // github_submit_review succeeds.
 // hasStagedReview reports whether the worker has a live stage_review call
 // (handed the submit intent off to the gate). A worker that can still submit
@@ -179,36 +179,36 @@ func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterio
 	}
 	drafted := "the ledger shows no successful `github_add_review_comment` either"
 	if act.reviewCommented {
-		drafted = "your inline comments are still only a draft — `github_add_review_comment` posts nothing on its own"
+		drafted = "your inline comments are still only a draft - `github_add_review_comment` posts nothing on its own"
 	}
 	return criterionScore{Score: 0, Reason: fmt.Sprintf(
 		"deterministic: your task requires posting a review on the pull request, but the workspace ledger contains "+
 			"no successful `github_submit_review` and no `stage_review` call (%s). Describing your findings in your "+
 			"answer is NOT posting them: record each finding with `github_add_review_comment`, then call "+
-			"`stage_review(event, body)` with your summary and verdict — the gate submits it after your answer passes "+
-			"(or call `github_submit_review` yourself, if you have that tool) — then report what you actually did.", drafted)}, true
+			"`stage_review(event, body)` with your summary and verdict - the gate submits it after your answer passes "+
+			"(or call `github_submit_review` yourself, if you have that tool) - then report what you actually did.", drafted)}, true
 }
 
-// workIncomplete reports whether the worker's turn left the WORK unfinished — the
+// workIncomplete reports whether the worker's turn left the WORK unfinished - the
 // gate's continuation condition (RunGatedRefine). Three mechanical signals, no LLM
 // judgment:
 //
 // - an EMPTY answer: a reasoning model that spends its whole output budget on
 // thinking returns no content. ADK ends the run there, and "the model emitted
-// no text" is indistinguishable from "the model is done" — except that it
+// no text" is indistinguishable from "the model is done" - except that it
 // almost always means the opposite (mid-task, out of road).
 // - an UNDELIVERED implement-and-deliver task: the task demanded a commit/push
 // and the ledger holds none, so whatever the worker wrote is a description of
 // work it never shipped.
 // - an UNPOSTED review task: the task demanded a review be posted on a PR and
 // the ledger holds no submit, so the "review" exists only as prose in the
-// answer — the reviewer's exact analogue of the undelivered commit.
+// answer - the reviewer's exact analogue of the undelivered commit.
 // - an UNVERIFIED review task: the task was to review a code change and the
 // ledger holds no successful run_command, so the reviewer never executed the
 // thing it is passing judgment on (behaviourCriterion).
 //
 // Everything else (research, analysis, synthesis; a delivered coding task) is
-// complete as far as the gate is concerned — the judge takes it from here.
+// complete as far as the gate is concerned - the judge takes it from here.
 func workIncomplete(answer, task string, act workerActivity, readOnly, isReviewer bool) bool {
 	if strings.TrimSpace(answer) == "" {
 		return true
@@ -226,7 +226,7 @@ func workIncomplete(answer, task string, act workerActivity, readOnly, isReviewe
 var proseExts = map[string]bool{".md": true, ".markdown": true, ".rst": true, ".txt": true, ".yaml": true, ".yml": true}
 
 // noRunnableSurface reports whether every file the reviewer actually touched is
-// prose/config — a docs-only change. Cheap and ledger-based (act.paths holds the
+// prose/config - a docs-only change. Cheap and ledger-based (act.paths holds the
 // paths of successful fs ops). A reviewer that touched NO files is not exempt:
 // it has not even looked, let alone run anything.
 func noRunnableSurface(act workerActivity) bool {
@@ -243,7 +243,7 @@ func noRunnableSurface(act workerActivity) bool {
 
 // behaviourCriterion scores `behaviour_verified` for a node: 0 when the node IS
 // a code-reviewer (isReviewer) and the worker's ledger holds no SUCCESSFUL
-// run_command — no test run, no build, no probe — 1 when it does. ok=false ⇒ the
+// run_command - no test run, no build, no probe - 1 when it does. ok=false ⇒ the
 // criterion does not apply (not a reviewer node, or nothing runnable in the
 // change), leaving every other node untouched.
 //
@@ -263,20 +263,20 @@ func behaviourCriterion(task string, act workerActivity, isReviewer bool) (crite
 	if act.ranCommand {
 		return criterionScore{Score: 1, Reason: "deterministic: the reviewer executed the code (successful `run_command`)"}, true
 	}
-	return criterionScore{Score: 0, Reason: "deterministic: your review has not EXECUTED the change — the ledger shows no successful `run_command`. " +
+	return criterionScore{Score: 0, Reason: "deterministic: your review has not EXECUTED the change - the ledger shows no successful `run_command`. " +
 		"Reading cannot detect bugs of absence (a `step()` that updates velocity but never assigns the new position reads exactly like working physics, " +
 		"and the tests pass because they assert the same absent behaviour). Install the dependencies, run the test suite, and write a throwaway harness " +
 		"that drives the core loop and prints the state over time; then post what you find."}, true
 }
 
 // incompleteCriteria returns the deterministic completion criteria that APPLY to
-// this task — the one definition of "the work is actually done", shared by
+// this task - the one definition of "the work is actually done", shared by
 // workIncomplete, foldDeterministic and the continuation prompt so they can
 // never drift apart.
 func incompleteCriteria(task string, act workerActivity, readOnly, isReviewer bool) map[string]criterionScore {
 	out := map[string]criterionScore{}
 	// A read-only agent (code-reviewer / code-explorer) has no commit/push tools, so
-	// a delivery demand read off its task is unsatisfiable — skip it. Its completion
+	// a delivery demand read off its task is unsatisfiable - skip it. Its completion
 	// is review_posted / exploration, never delivery.
 	if !readOnly {
 		if c, ok := deliveryCriterion(task, act); ok {

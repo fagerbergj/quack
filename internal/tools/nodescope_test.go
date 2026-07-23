@@ -13,7 +13,7 @@ import (
 )
 
 // gatedCtx is a worker's tool-call context INSIDE a gated DAG node: a durable
-// session state (the `cd` cwd) plus the advisor-thread marker in the prompt —
+// session state (the `cd` cwd) plus the advisor-thread marker in the prompt -
 // the one identity channel the workspace tools recover the chat scope AND the
 // node scope from (see scopeFromContext).
 type gatedCtx struct {
@@ -38,7 +38,7 @@ func newGatedCtx(t *testing.T, planID, nodeID, chatID string) *gatedCtx {
 // TestConcurrentNodesEachSeeOnlyTheirOwnClone is the bug: two nodes of the SAME
 // plan run concurrently in the SAME chat, each clones a DIFFERENT repo, and each
 // must see ONLY its own clone. Before per-node scoping both clones landed in the
-// one per-chat dir, so `list_dir .` showed both — and a research node happily
+// one per-chat dir, so `list_dir .` showed both - and a research node happily
 // read the other node's repo (live: the OpenHands explorer grepping goose's src).
 func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
@@ -50,7 +50,7 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	gooseCtx := newGatedCtx(t, "plan-1", "goose_research", "chat-1")
 	ohCtx := newGatedCtx(t, "plan-1", "openhands_research", "chat-1")
 
-	// Each node gets its own tree under its OWN scope dir — what a clone made by
+	// Each node gets its own tree under its OWN scope dir - what a clone made by
 	// the node's external (ACP) worker looks like to the surviving read tools.
 	if err := seedNodeFile(fb, gooseCtx, "goose/README.md", "# goose"); err != nil {
 		t.Fatalf("goose clone: %v", err)
@@ -89,7 +89,7 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 			t.Errorf("list_dir . = %v, want it to contain the node's own clone %q", names, tc.want)
 		}
 		if sawDeny {
-			t.Errorf("list_dir . = %v: node can see ANOTHER node's clone %q — this is the correctness bug", names, tc.deny)
+			t.Errorf("list_dir . = %v: node can see ANOTHER node's clone %q - this is the correctness bug", names, tc.deny)
 		}
 	}
 
@@ -104,7 +104,7 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 
 	// "/" is the node's OWN root, not the chat root: it is NOT a way out into a
 	// sibling's tree. (It used to be. Nothing used it, and it was the last path by
-	// which one node could read another's clone — see the sandbox's OS boundary,
+	// which one node could read another's clone - see the sandbox's OS boundary,
 	// which stops a run_command child doing the same thing.)
 	if _, err := fb.withCwd(gooseCtx).readFile(readFileArgs{Path: "/openhands_research/openhands/README.md"}); err == nil {
 		t.Error("a \"/\"-prefixed path reached a SIBLING node's clone; \"/\" must mean the node's own root")
@@ -126,7 +126,7 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 }
 
 // seedNodeFile writes content under the node scope the ctx's advisor-thread
-// marker names — standing in for the clone the node's external worker makes.
+// marker names - standing in for the clone the node's external worker makes.
 func seedNodeFile(b fsBinding, ctx *gatedCtx, rel, content string) error {
 	scoped := b.withCwd(ctx)
 	real, err := scoped.resolve(rel)
@@ -140,7 +140,7 @@ func seedNodeFile(b fsBinding, ctx *gatedCtx, rel, content string) error {
 }
 
 // firstComponent returns the first path segment of a slash path ("" for the
-// root) — the immediate-child dir a listing entry sits in. (Was cd.go's helper;
+// root) - the immediate-child dir a listing entry sits in. (Was cd.go's helper;
 // the cd tool is gone, the test invariant is not.)
 func firstComponent(rel string) string {
 	if rel == "" || rel == "." {

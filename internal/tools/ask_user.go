@@ -21,7 +21,7 @@ type askUserResult struct {
 
 // NewAskUserTool returns the mid-node HITL tool (vetting.AskToolName): a worker
 // agent calls it when its task is blocked on information only the user has. The
-// tool takes no action itself — it records the question (in its call args) and
+// tool takes no action itself - it records the question (in its call args) and
 // ends the worker's turn (SkipSummarization); the trust GATE detects the call,
 // pauses the NODE via workflow.ResumeOrRequestInput under a round-stable
 // interrupt ID, and the user's next message resumes the node with the answer

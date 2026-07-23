@@ -1,4 +1,4 @@
-# Quack CLI/TUI — implementation recipes
+# Quack CLI/TUI - implementation recipes
 
 Copy-ready skeletons for the decisions in `SKILL.md`. Read the matching section when you implement that piece. These are scaffolds to adapt, not drop-in final code.
 
@@ -6,7 +6,7 @@ Copy-ready skeletons for the decisions in `SKILL.md`. Read the matching section 
 
 ## 1. The Bubble Tea model (Init / Update / View)
 
-`internal/tui/chat.go`. `Update` is a pure reducer — every branch returns a new model and maybe a `tea.Cmd`. No I/O in the body.
+`internal/tui/chat.go`. `Update` is a pure reducer - every branch returns a new model and maybe a `tea.Cmd`. No I/O in the body.
 
 ```go
 package tui
@@ -14,7 +14,7 @@ package tui
 import tea "github.com/charmbracelet/bubbletea"
 
 type Model struct {
-	client   *cli.Client      // from internal/cli — never the other way around
+	client   *cli.Client      // from internal/cli - never the other way around
 	chatID   string
 	events   []stream.Event   // accumulated SSE events (the same union the React app renders)
 	input    textinput.Model  // bubbles component
@@ -37,7 +37,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			text := m.input.Value()
 			m.input.Reset()
 			m.streaming = true
-			return m, m.submit(text)        // returns a tea.Cmd — the POST happens there, not here
+			return m, m.submit(text)        // returns a tea.Cmd - the POST happens there, not here
 		}
 	case sseMsg:                            // one server event (principle 2)
 		m.events = append(m.events, msg.ev)
@@ -62,7 +62,7 @@ Run it from the command layer: `tea.NewProgram(New(client, id), tea.WithAltScree
 
 ---
 
-## 2. The SSE pump — a self-re-issuing tea.Cmd (principle 2)
+## 2. The SSE pump - a self-re-issuing tea.Cmd (principle 2)
 
 One event per message; `Update` re-issues to get the next. `m.sub` is a channel the client fills from the HTTP/SSE response body.
 
@@ -85,7 +85,7 @@ The client (`internal/cli`) owns the actual `http.Client` + SSE parse, decoding 
 
 ---
 
-## 3. Tier-1 reducer test (no framework — the workhorse)
+## 3. Tier-1 reducer test (no framework - the workhorse)
 
 `internal/tui/chat_test.go`. Pure `Update`, so just feed msgs and assert.
 
@@ -110,11 +110,11 @@ func TestUpdate_NodeEventReissuesPump(t *testing.T) {
 }
 ```
 
-Assert on the returned `cmd`'s presence/type, not by executing it (executing it would block on the channel — that's tier 2's job).
+Assert on the returned `cmd`'s presence/type, not by executing it (executing it would block on the channel - that's tier 2's job).
 
 ---
 
-## 4. Tier-2 golden render test (teatest — keep few)
+## 4. Tier-2 golden render test (teatest - keep few)
 
 `internal/tui/chat_golden_test.go`. Fixed term size or the golden is nondeterministic.
 
@@ -133,11 +133,11 @@ func TestTUI_RendersRun(t *testing.T) {
 }
 ```
 
-Regenerate after an intended visual change: `go test -run TUI -update ./internal/tui/...`, then eyeball the `.golden` diff (a Lipgloss tweak rewrites all of them — confirm it's what you meant).
+Regenerate after an intended visual change: `go test -run TUI -update ./internal/tui/...`, then eyeball the `.golden` diff (a Lipgloss tweak rewrites all of them - confirm it's what you meant).
 
 ---
 
-## 5. The `server init` wizard (Huh) — test the YAML, not the keystrokes (principle 5)
+## 5. The `server init` wizard (Huh) - test the YAML, not the keystrokes (principle 5)
 
 `internal/cli/init.go`. Huh owns the form; your code maps answers → config.
 
@@ -149,9 +149,9 @@ func RunInit() (*config.File, error) {
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().Title("Stores topology").
 			Options(
-				huh.NewOption("Embedded — SQLite, no containers", "embedded"),
-				huh.NewOption("Managed — compose Postgres + Qdrant", "managed"),
-				huh.NewOption("External — BYO via QUACK_DATABASE_URL/QUACK_QDRANT_URL", "external"),
+				huh.NewOption("Embedded - SQLite, no containers", "embedded"),
+				huh.NewOption("Managed - compose Postgres + Qdrant", "managed"),
+				huh.NewOption("External - BYO via QUACK_DATABASE_URL/QUACK_QDRANT_URL", "external"),
 			).Value(&topology),
 	))
 	if err := form.Run(); err != nil {
@@ -178,7 +178,7 @@ func TestConfigFor_Embedded(t *testing.T) {
 
 ---
 
-## 6. Print mode — no TUI, no ANSI when piped (principle 4)
+## 6. Print mode - no TUI, no ANSI when piped (principle 4)
 
 `internal/cli/print.go`. Plain stdout; never starts a `tea.Program`.
 
@@ -191,7 +191,7 @@ func Print(ctx context.Context, c *Client, prompt string) error {
 	for ev := range sub {
 		switch ev.Type {
 		case "agent_token":
-			fmt.Print(ev.Text)        // raw text — pipes into jq/CI cleanly
+			fmt.Print(ev.Text)        // raw text - pipes into jq/CI cleanly
 		case "node_start":
 			fmt.Fprintf(os.Stderr, "▶ %s\n", ev.NodeID) // status to stderr, content to stdout
 		}
@@ -200,11 +200,11 @@ func Print(ctx context.Context, c *Client, prompt string) error {
 }
 ```
 
-Color: rely on Lipgloss/`NO_COLOR` auto-detect for any styled bits, but the validation loop's `quack -p … | cat` check is the real gate — stdout must be escape-free when not a tty.
+Color: rely on Lipgloss/`NO_COLOR` auto-detect for any styled bits, but the validation loop's `quack -p … | cat` check is the real gate - stdout must be escape-free when not a tty.
 
 ---
 
-## 7. cobra wiring — thin commands (principle 6, gotcha 7)
+## 7. cobra wiring - thin commands (principle 6, gotcha 7)
 
 `cmd/quack/main.go`. Commands parse + dispatch; logic lives in `internal/cli`/`internal/tui`.
 
@@ -239,4 +239,4 @@ go get github.com/charmbracelet/bubbletea github.com/charmbracelet/bubbles \
        github.com/charmbracelet/x/exp/teatest github.com/spf13/cobra
 ```
 
-Keep the build pure-Go (`CGO_ENABLED=0`) — none of these need cgo, which keeps M10 cross-compile trivial.
+Keep the build pure-Go (`CGO_ENABLED=0`) - none of these need cgo, which keeps M10 cross-compile trivial.

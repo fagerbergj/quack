@@ -9,18 +9,18 @@ import (
 // of it belongs to its siblings.
 //
 // The live failure (code-mode dogfood, 2026-07-13): every node is handed the user's
-// full request as context. The request spelled out three phases — research OpenHands,
+// full request as context. The request spelled out three phases - research OpenHands,
 // goose and quack; synthesize a design for quack; implement it. The `goose` explorer
 // finished reading goose, then read the brief it had been given "for context", saw
-// "PHASE 2 — SYNTHESIZE A PLAN FOR QUACK … quack is Go, its tools are in internal/tools",
-// and went off and cloned quack — which was the concurrently-running `quack-repo` node's
+// "PHASE 2 - SYNTHESIZE A PLAN FOR QUACK … quack is Go, its tools are in internal/tools",
+// and went off and cloned quack - which was the concurrently-running `quack-repo` node's
 // entire job. Two nodes, one job; the duplicate work is discarded.
 //
 // Nothing in the prompt marked the request as background, and nothing told the node its
 // siblings existed. It was being helpful.
 func TestBuildTaskMarksTheRequestAsBackgroundAndNamesTheSiblings(t *testing.T) {
 	plan := Plan{
-		UserMessage: "Research OpenHands, goose and quack. PHASE 2 — synthesize a plan for quack. PHASE 3 — implement it.",
+		UserMessage: "Research OpenHands, goose and quack. PHASE 2 - synthesize a plan for quack. PHASE 3 - implement it.",
 		Nodes: []Node{
 			{ID: "goose", AgentName: "code-explorer", Task: "Clone goose and read how it exposes tools."},
 			{ID: "quack-repo", AgentName: "code-explorer", Task: "Clone quack and read internal/tools."},
@@ -47,7 +47,7 @@ func TestBuildTaskMarksTheRequestAsBackgroundAndNamesTheSiblings(t *testing.T) {
 	}
 }
 
-// A lone node has no siblings to warn about — it must not be told to avoid work that
+// A lone node has no siblings to warn about - it must not be told to avoid work that
 // nobody else is doing.
 func TestBuildTaskSingleNodeHasNoSiblingWarning(t *testing.T) {
 	plan := Plan{
@@ -56,7 +56,7 @@ func TestBuildTaskSingleNodeHasNoSiblingWarning(t *testing.T) {
 	}
 	got := buildTask(plan, plan.Nodes[0], nil, nil)
 	if strings.Contains(got, "ALREADY ASSIGNED") {
-		t.Error("a lone node was warned off work that no sibling is doing — it may now refuse part of its own task")
+		t.Error("a lone node was warned off work that no sibling is doing - it may now refuse part of its own task")
 	}
 	if !strings.Contains(got, "Do the whole thing.") {
 		t.Error("the lone node lost its task")

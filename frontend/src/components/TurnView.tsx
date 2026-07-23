@@ -6,7 +6,7 @@ import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plai
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn, DagOutputItem } from '../generated'
 
-// visibleActivity hides get_user_choice tool calls from the activity log — they are
+// visibleActivity hides get_user_choice tool calls from the activity log - they are
 // surfaced separately as a QuestionBubble button group, so showing the raw tool block
 // too would be redundant. Shared by TurnView (completed turns) and Chat (live turn).
 export function visibleActivity(activity: Activity[]): Activity[] {
@@ -67,7 +67,7 @@ export interface TurnViewProps {
 
 // TurnView renders one completed turn. Memoized: completed turns are immutable, so
 // this stops re-rendering (and re-parsing markdown/DAG) on every streaming token of
-// a later turn — the props only change for the one turn being copied/answered.
+// a later turn - the props only change for the one turn being copied/answered.
 export const TurnView = memo(function TurnView({
   turn, idx, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, onChoice, onCopy, onDownload,
 }: TurnViewProps) {
@@ -80,7 +80,7 @@ export const TurnView = memo(function TurnView({
   // Attribution for the answer bubble: a DAG turn credits its terminal node
   // (agent + that node's own model/tokens); a plain reply credits the
   // orchestrator, with the model persisted on the turn row (turn.model) and
-  // tokens from Turn.usage — history attribution matches the live stream.
+  // tokens from Turn.usage - history attribution matches the live stream.
   const attribution = dagState ? dagAnswerAttribution(dagState) : plainReplyAttribution(turn)
   // Skip the answer bubble when the turn produced no visible content for it
   // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
@@ -88,7 +88,7 @@ export const TurnView = memo(function TurnView({
   const copyKey = `turn-${turn.id}`
   return (
     <div>
-      {/* User message — hidden when it's a clarification answer, or when the
+      {/* User message - hidden when it's a clarification answer, or when the
           turn has no user text at all (#434): a label/webhook-triggered plan
           turn has no typed message, just its synthesized task (rendered in
           the DAG bubble below), so there's nothing for this bubble to show. */}

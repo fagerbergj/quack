@@ -9,13 +9,13 @@ import (
 
 // TestFalsePositiveCorrectionRecalledByReviewer is the acceptance path for
 // #249: a conversational correction, committed exactly the way
-// tools.NewCorrectReviewFindingTool scopes it (repo bucket + coding role — see
+// tools.NewCorrectReviewFindingTool scopes it (repo bucket + coding role - see
 // falsePositiveCandidate in internal/tools/correct_finding.go), is recalled
 // through the SAME bucket the gate's Recall reads for a later review of that
 // repo (memoryScope in internal/vetting/node.go; codingView above mirrors it).
 func TestFalsePositiveCorrectionRecalledByReviewer(t *testing.T) {
 	ctx := context.Background()
-	const correction = `False positive on acme/games PR #246: "empty Comment.Body breaks dispatch via triggerTask" was flagged in review but is NOT a real issue — dispatch takes the task string directly, it never calls triggerTask`
+	const correction = `False positive on acme/games PR #246: "empty Comment.Body breaks dispatch via triggerTask" was flagged in review but is NOT a real issue - dispatch takes the task string directly, it never calls triggerTask`
 	// addOp naively string-embeds its content into a JSON literal; the
 	// correction's own quotes/colons would break that, so build the reply with
 	// a real encoder instead.

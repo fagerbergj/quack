@@ -6,11 +6,11 @@ did the review catch the change's real problems, weight them by impact, stay
 constructive and actionable, keep nits from blocking, and verify claims rather
 than assert them.
 
-Score the **review the worker produced** — its findings, their severity
+Score the **review the worker produced** - its findings, their severity
 labels, and its verdict. When you have read-only workspace tools (read_file,
 list_dir, glob, grep) and the reviewed change is in the workspace, OPEN the
 files the review discusses and check its findings against what the code
-actually contains — do not take the review's word for the code's behavior. A
+actually contains - do not take the review's word for the code's behavior. A
 review of a small, clean change that correctly finds little and approves is
 not "shallow"; a short accurate review is the target outcome.
 
@@ -20,25 +20,25 @@ Work through the criteria **in order**. For each one:
 
 1. Read its definition and **evaluation steps**.
 2. Reason in one or two sentences about how the review performs against those
-   steps — cite the specific finding (or missing finding) that drives your
+   steps - cite the specific finding (or missing finding) that drives your
    score, not a general impression.
 3. Assign an **integer from 0 to 10** using the scale below and the
    criterion's own scoring bands.
 
 ### The 0–10 scale
 
-- **10** — flawless on this criterion; nothing to fault.
-- **9** — met; only a trivial nitpick.
-- **8** — met; one minor gap that does not weaken the review.
-- **7** — met, but barely; a real if small shortcoming. *Lowest passing score
-  — the gate's threshold sits here.*
-- **6** — partially met; a noticeable weakness that should be fixed.
-- **5** — partially met; as much wrong as right.
-- **4** — mostly unmet.
-- **3** — largely failed.
-- **2** — failed; essentially not satisfied.
-- **1** — failed badly; actively wrong on this dimension.
-- **0** — total failure, or what this criterion asks for is entirely absent.
+- **10** - flawless on this criterion; nothing to fault.
+- **9** - met; only a trivial nitpick.
+- **8** - met; one minor gap that does not weaken the review.
+- **7** - met, but barely; a real if small shortcoming. *Lowest passing score
+  - the gate's threshold sits here.*
+- **6** - partially met; a noticeable weakness that should be fixed.
+- **5** - partially met; as much wrong as right.
+- **4** - mostly unmet.
+- **3** - largely failed.
+- **2** - failed; essentially not satisfied.
+- **1** - failed badly; actively wrong on this dimension.
+- **0** - total failure, or what this criterion asks for is entirely absent.
 
 **Choosing within a band:** pick the higher number when the criterion is met
 more completely; the lower when it only just clears the band. Do not default
@@ -46,7 +46,7 @@ to 0, 5, or 10.
 
 **The workspace activity ledger.** Your prompt contains a "Workspace activity"
 section: the read-only fs/git operations the reviewer ACTUALLY performed,
-reconstructed from its session by code — not from its narration. It is ground
+reconstructed from its session by code - not from its narration. It is ground
 truth. `read_file`/`git_diff` entries carry a content sample; use them to
 spot-check whether a finding refers to code the reviewer actually looked at.
 
@@ -55,7 +55,7 @@ spot-check whether a finding refers to code the reviewer actually looked at.
 ### `claims_grounded`
 
 Every finding the review makes is grounded in code the reviewer actually read
-— it points at a real file/line/behavior, not an invented defect. This is the
+- it points at a real file/line/behavior, not an invented defect. This is the
 fabrication check for a review: asserting "this function swallows the error"
 about code the reviewer never opened is as disqualifying as an invented
 citation.
@@ -67,22 +67,22 @@ citation.
    the file itself: does the cited code actually behave the way the finding
    says?
 3. A finding about code contradicted by the file, or asserting behavior in a
-   file the reviewer never read, is fabrication — score in the 0–2 band.
+   file the reviewer never read, is fabrication - score in the 0–2 band.
 
 **Scoring bands.**
-- **7–10** — every finding refers to code that exists and behaves as claimed;
+- **7–10** - every finding refers to code that exists and behaves as claimed;
   findings cite where they live.
-- **4–6** — findings are directionally right but loosely grounded (a vague
+- **4–6** - findings are directionally right but loosely grounded (a vague
   "error handling looks off somewhere" without a location).
-- **0–2** — a finding describes behavior the code does not have, or critiques
+- **0–2** - a finding describes behavior the code does not have, or critiques
   a file the ledger shows the reviewer never opened. Automatic band.
 
 ---
 
 ### `catches_real_issues`
 
-The review surfaces the change's actual defects — the correctness, security,
-and missing-test problems that matter — rather than only cosmetic ones. Judge
+The review surfaces the change's actual defects - the correctness, security,
+and missing-test problems that matter - rather than only cosmetic ones. Judge
 against what the change actually contains, not against an imagined ideal
 review.
 
@@ -93,19 +93,19 @@ review.
    spending its attention on trivia.
 
 **Scoring bands.**
-- **7–10** — the review catches the change's real, impactful issues (or
+- **7–10** - the review catches the change's real, impactful issues (or
   correctly finds few, because the change is clean).
-- **4–6** — it catches some but misses one material issue, or buries it among
+- **4–6** - it catches some but misses one material issue, or buries it among
   minor points.
-- **0–3** — it misses the change's central defect, or reports only cosmetic
+- **0–3** - it misses the change's central defect, or reports only cosmetic
   findings while a real bug/security/test gap goes unmentioned.
 
 ---
 
 ### `correct_prioritization`
 
-Findings are weighted by impact on codebase health — correctness, security,
-and tests above readability, and readability above style/naming — and each
+Findings are weighted by impact on codebase health - correctness, security,
+and tests above readability, and readability above style/naming - and each
 finding's severity label (`blocking:` / `suggestion:` / `nit:`) matches its
 true severity.
 
@@ -116,10 +116,10 @@ true severity.
    and is a preference/typo labeled `nit:` or `suggestion:`?
 
 **Scoring bands.**
-- **7–10** — impactful findings are foregrounded and labeled by true severity.
-- **4–6** — mostly right, but one finding is mis-weighted (a real issue soft-
+- **7–10** - impactful findings are foregrounded and labeled by true severity.
+- **4–6** - mostly right, but one finding is mis-weighted (a real issue soft-
   pedaled, or a minor one over-weighted).
-- **0–3** — priorities are inverted: style dominates while correctness/security
+- **0–3** - priorities are inverted: style dominates while correctness/security
   is buried or unlabeled.
 
 ---
@@ -137,10 +137,10 @@ flaws); style and preference are never a blocking verdict.
    author could reasonably decline.
 
 **Scoring bands.**
-- **7–10** — only real defects block; nits and preferences are explicitly
+- **7–10** - only real defects block; nits and preferences are explicitly
   non-blocking.
-- **4–6** — one borderline-preference item is treated as blocking.
-- **0–3** — the review blocks the merge on style, naming, or personal
+- **4–6** - one borderline-preference item is treated as blocking.
+- **0–3** - the review blocks the merge on style, naming, or personal
   preference (bikeshedding as a gate).
 
 ---
@@ -149,7 +149,7 @@ flaws); style and preference are never a blocking verdict.
 
 The review critiques the work, not the developer; explains the *why* behind
 each finding so it's actionable; and includes at least one sincere piece of
-praise. Language is plain and respectful — no sarcasm, hyperbole, or
+praise. Language is plain and respectful - no sarcasm, hyperbole, or
 diminishing words.
 
 **Evaluation steps.**
@@ -160,18 +160,18 @@ diminishing words.
 3. Check for at least one genuine `praise:`.
 
 **Scoring bands.**
-- **7–10** — respectful, every finding explains its why, and there is sincere
+- **7–10** - respectful, every finding explains its why, and there is sincere
   praise.
-- **4–6** — actionable but terse (some findings state what without why), or
+- **4–6** - actionable but terse (some findings state what without why), or
   praise is missing/perfunctory.
-- **0–3** — comments target the person, are dismissive, or are unactionable
+- **0–3** - comments target the person, are dismissive, or are unactionable
   ("this is bad") with no reasoning.
 
 ---
 
 ### `verification_over_assertion`
 
-The review verified the change's claims rather than trusting them — it checked
+The review verified the change's claims rather than trusting them - it checked
 whether the code does what its description says and whether the tests would
 actually fail if the code were broken, instead of rubber-stamping.
 
@@ -182,19 +182,19 @@ actually fail if the code were broken, instead of rubber-stamping.
    new behavior / failure modes) rather than just noting tests exist.
 
 **Scoring bands.**
-- **7–10** — the review verifies the change's claims and interrogates the
+- **7–10** - the review verifies the change's claims and interrogates the
   tests' substance.
-- **4–6** — it verifies the code but takes the tests at face value (or vice
+- **4–6** - it verifies the code but takes the tests at face value (or vice
   versa).
-- **0–3** — it rubber-stamps: accepts the description and the presence of tests
+- **0–3** - it rubber-stamps: accepts the description and the presence of tests
   without checking either.
 
 ---
 
 ### `structured_verdict`
 
-The review is delivered in a usable shape — a summary, then findings grouped
-by severity (blocking → suggestions → nits → praise) — and ends with a clear
+The review is delivered in a usable shape - a summary, then findings grouped
+by severity (blocking → suggestions → nits → praise) - and ends with a clear
 verdict (request changes / approve) with non-blocking items marked as such.
 
 **Evaluation steps.**
@@ -202,15 +202,15 @@ verdict (request changes / approve) with non-blocking items marked as such.
    severity rather than scattering them.
 2. Check it states an explicit verdict, and that the verdict is consistent with
    its findings (blocking issues ⇒ request changes; none ⇒ approve, nits okay).
-3. A clean change (no `blocking:` findings) must get an explicit `approve` —
+3. A clean change (no `blocking:` findings) must get an explicit `approve` -
    not a bare `comment` used as a way to avoid committing to a verdict.
 
 **Scoring bands.**
-- **7–10** — clear summary, severity-grouped findings, explicit and consistent
+- **7–10** - clear summary, severity-grouped findings, explicit and consistent
   verdict (including an explicit approve on a clean change).
-- **4–6** — mostly structured but missing the summary or a clear verdict, or
+- **4–6** - mostly structured but missing the summary or a clear verdict, or
   the verdict slightly mismatches the findings.
-- **0–3** — an unstructured wall of comments with no verdict, a verdict that
+- **0–3** - an unstructured wall of comments with no verdict, a verdict that
   contradicts the findings (approves over an unresolved blocking issue), or a
   clean review left at `comment` instead of `approve`.
 
@@ -219,12 +219,12 @@ verdict (request changes / approve) with non-blocking items marked as such.
 ### `signal_over_noise`
 
 The review reads as findings for a human deciding whether to merge, not a
-transcript of the reviewer's own process — and it never turns an
+transcript of the reviewer's own process - and it never turns an
 environment-specific failure into a code-quality concern.
 
 **Evaluation steps.**
 1. Check the visible body (outside any collapsed `<details>` block) for
-   process narration — a "What I ran"/"What I checked" list of commands
+   process narration - a "What I ran"/"What I checked" list of commands
    (`git diff`, `go test`, `gofmt`, `go vet`, install steps) presented as
    review content rather than tucked away for debugging.
 2. Check every reported test/build failure or "pre-existing issue": is it
@@ -234,12 +234,12 @@ environment-specific failure into a code-quality concern.
    a legitimate finding.
 
 **Scoring bands.**
-- **7–10** — the body is findings and verdict only (process notes, if any,
+- **7–10** - the body is findings and verdict only (process notes, if any,
   are in a collapsed block), and no environmental-only failure is reported
   as a concern.
-- **4–6** — a process-narration section precedes the findings, or one
+- **4–6** - a process-narration section precedes the findings, or one
   reported failure is questionable but not clearly environmental.
-- **0–3** — the review leads with "what I ran" as its substance, or reports a
+- **0–3** - the review leads with "what I ran" as its substance, or reports a
   sandbox/environment failure as a code concern on a PR whose CI is green.
 
 ---
@@ -247,12 +247,12 @@ environment-specific failure into a code-quality concern.
 ## Aggregation
 
 Each criterion is an **independent requirement**, scored 0–10 and normalised
-to 0.0–1.0 (divide by 10). The overall score is the **lowest** criterion — the
+to 0.0–1.0 (divide by 10). The overall score is the **lowest** criterion - the
 binding constraint (weakest-link gating). There is **no averaging and no
 caps**: one fatal failure (a fabricated finding, a missed central bug, blocking
 the merge on a nit) sinks the review on its own. The gate passes only when
 **every** criterion clears the threshold.
 
 `feedback` must name the lowest-scoring criterion/criteria and what concretely
-would fix them — point at the specific finding (or the missing one), not a
-restatement of the criterion — so the next revision can act on it directly.
+would fix them - point at the specific finding (or the missing one), not a
+restatement of the criterion - so the next revision can act on it directly.

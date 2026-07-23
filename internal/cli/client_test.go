@@ -20,7 +20,7 @@ import (
 
 // TestPrintPrompt drives the full print-mode path against a fake server: create
 // a chat, stream SSE, and prove only top-level agent_token text (no node_id) is
-// printed — node-scoped tokens are intermediate research output and excluded.
+// printed - node-scoped tokens are intermediate research output and excluded.
 func TestPrintPrompt(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir()) // isolate from the real registry
 
@@ -109,7 +109,7 @@ func TestRunAPI(t *testing.T) {
 	}
 }
 
-// TestPrintPromptServerError: an `error` SSE event is a failure — exit 1, the
+// TestPrintPromptServerError: an `error` SSE event is a failure - exit 1, the
 // message on stderr, nothing on stdout (test case 6 in the PR spec).
 func TestPrintPromptServerError(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
@@ -138,7 +138,7 @@ func TestPrintPromptServerError(t *testing.T) {
 }
 
 // TestPrintPromptNeedsInput: a paused run (node_needs_input) prints `question:
-// <text>` on stdout, a hint on stderr, and exits 2 — --json mode reports the
+// <text>` on stdout, a hint on stderr, and exits 2 - --json mode reports the
 // same status/exit code via one JSON object.
 func TestPrintPromptNeedsInput(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
@@ -322,7 +322,7 @@ func TestSendMessageWithFiles(t *testing.T) {
 	}
 }
 
-// TestSubscribeSSEReconnectsWithLastEventID: issue #383 — a dropped
+// TestSubscribeSSEReconnectsWithLastEventID: issue #383 - a dropped
 // subscribe stream (the body closes mid-run, no `done` seen) is retried
 // automatically, resuming past the last event actually delivered via
 // Last-Event-ID, without losing or duplicating any event.
@@ -348,7 +348,7 @@ func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
 			if flusher != nil {
 				flusher.Flush()
 			}
-			return // connection drops mid-run — no `done` event
+			return // connection drops mid-run - no `done` event
 		}
 		if got := r.Header.Get("Last-Event-ID"); got != "2" {
 			t.Errorf("reconnect: Last-Event-ID = %q, want 2 (the last event actually delivered)", got)
@@ -378,7 +378,7 @@ func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
 }
 
 // TestSubscribeSSEGivesUpAfterRepeatedDrops: a permanently dead server
-// doesn't retry forever — it surfaces an error after the bounded attempt cap.
+// doesn't retry forever - it surfaces an error after the bounded attempt cap.
 func TestSubscribeSSEGivesUpAfterRepeatedDrops(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	orig := sseReconnectDelay
@@ -390,7 +390,7 @@ func TestSubscribeSSEGivesUpAfterRepeatedDrops(t *testing.T) {
 		atomic.AddInt32(&attempts, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		// Every attempt drops immediately — no events, no `done`.
+		// Every attempt drops immediately - no events, no `done`.
 	}))
 	defer srv.Close()
 

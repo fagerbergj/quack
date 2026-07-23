@@ -13,12 +13,12 @@ import (
 )
 
 // baselineCache memoises "does this check ALSO fail at the base commit?" per
-// (repo dir, base sha, check) — the answer can't change while the node runs
+// (repo dir, base sha, check) - the answer can't change while the node runs
 // (the base tree is immutable), so the node pays for a baseline at most once
 // per check no matter how many revise rounds it burns.
 var baselineCache sync.Map // key: dir\x00sha\x00check → bool
 
-// failsAtBase reports whether check ALSO fails against the repo's BASE tree —
+// failsAtBase reports whether check ALSO fails against the repo's BASE tree -
 // the pristine commit the worker cloned, before it touched anything.
 //
 // Why: a repo's derived checks can already fail on clean main (pre-existing
@@ -29,12 +29,12 @@ var baselineCache sync.Map // key: dir\x00sha\x00check → bool
 // The check is re-run in a DETACHED GIT WORKTREE of the base commit, never in
 // the worker's tree: no stash, no checkout, nothing that could lose the worker's
 // uncommitted work (the one catastrophic failure mode here). The worker's
-// node_modules is symlinked in so the re-run doesn't need a reinstall — and
+// node_modules is symlinked in so the re-run doesn't need a reinstall - and
 // doesn't fail with a missing-dependency 127 that would look like a
 // "pre-existing" failure.
 //
 // Conservative on error: if the base can't be determined or the check can't be
-// run there, we report false — the check keeps gating, exactly as before this fix.
+// run there, we report false - the check keeps gating, exactly as before this fix.
 func failsAtBase(dir, check string, caps workspace.Caps) bool {
 	base, err := baseCommit(dir, caps)
 	if err != nil {
@@ -56,8 +56,8 @@ func failsAtBase(dir, check string, caps workspace.Caps) bool {
 
 // baseCommit is the commit the worker STARTED from: the clone's original HEAD,
 // read from the oldest HEAD reflog entry (git clone writes exactly one, "clone:
-// from <url>"). Deliberately not the current HEAD — by gate time the worker may
-// have committed — and deliberately not a remote-tracking ref, which the worker's
+// from <url>"). Deliberately not the current HEAD - by gate time the worker may
+// have committed - and deliberately not a remote-tracking ref, which the worker's
 // own push can move.
 func baseCommit(dir string, caps workspace.Caps) (string, error) {
 	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "reflog", "show", "--format=%H", "HEAD"}, caps)

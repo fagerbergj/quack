@@ -105,7 +105,7 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 	reviewerCfg := Config{ExternalWorker: true, ReadOnly: true, IsReviewer: true,
 		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"}, Task: reviewTask}
 
-	// Native workers stage via the tool — the probe must not fire.
+	// Native workers stage via the tool - the probe must not fire.
 	act := workerActivity{}
 	cfg := reviewerCfg
 	cfg.ExternalWorker = false
@@ -123,7 +123,7 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 	}
 
 	// #471: a NON-read-only implementer whose task merely TALKS about reviews must
-	// NOT stage a review — that review would ride alongside its PR and 404
+	// NOT stage a review - that review would ride alongside its PR and 404
 	// against the trigger issue number. Now guaranteed structurally: an
 	// implementer node is never IsReviewer, whatever its task says.
 	act = workerActivity{}
@@ -141,7 +141,7 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 	}
 
 	// #482: a read-only reviewer node with NO Setup (a code-explorer investigating
-	// the review path on an ISSUE, not a PR) must NOT stage a review — delivery
+	// the review path on an ISSUE, not a PR) must NOT stage a review - delivery
 	// would then fail with "'' is not a github.com clone URL".
 	act = workerActivity{}
 	cfg = reviewerCfg

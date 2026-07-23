@@ -87,7 +87,7 @@ func (o *OpenAIModel) Embed(ctx context.Context, texts []string) ([][]float32, e
 	if len(resp.Data) != len(texts) {
 		return nil, fmt.Errorf("openaimodel: embeddings returned %d vectors for %d inputs", len(resp.Data), len(texts))
 	}
-	// Place each vector by its declared index — the API need not return them in order.
+	// Place each vector by its declared index - the API need not return them in order.
 	out := make([][]float32, len(texts))
 	for _, e := range resp.Data {
 		if e.Index < 0 || int(e.Index) >= len(out) {
@@ -168,7 +168,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 				modelVersion = chunk.Model
 			}
 
-			// Capture usage — present on the final usage-only chunk when IncludeUsage is set.
+			// Capture usage - present on the final usage-only chunk when IncludeUsage is set.
 			if chunk.Usage.TotalTokens > 0 {
 				usageMetadata = &genai.GenerateContentResponseUsageMetadata{
 					PromptTokenCount:        int32(chunk.Usage.PromptTokens),
@@ -207,7 +207,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 
 			// Surface reasoning_content as a Thought part so the UI can render thinking.
 			// openai-go marks untyped ExtraFields as status "invalid" (no typed extras
-			// decoder is registered for this struct), so Valid() is always false here —
+			// decoder is registered for this struct), so Valid() is always false here -
 			// gate on the raw bytes instead, the way an omitted/null field already does.
 			if rc := choice.Delta.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
 				if raw := rc.Raw(); raw != "" && raw != "null" {
@@ -228,7 +228,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 				}
 			}
 
-			// Handle tool calls in delta — aggregate across chunks keyed by index.
+			// Handle tool calls in delta - aggregate across chunks keyed by index.
 			for _, toolCall := range choice.Delta.ToolCalls {
 				idx := toolCall.Index
 				builder, exists := toolCallsMap[idx]
@@ -252,7 +252,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 
 		if err := stream.Err(); err != nil {
 			// The streaming path is what the agents use, so this is where a model
-			// 400 (context/tool/format) actually surfaces — log status+body here.
+			// 400 (context/tool/format) actually surfaces - log status+body here.
 			yield(nil, o.apiErr(ctx, "generate_stream", err))
 			return
 		}
@@ -290,7 +290,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			}
 			if calls, cleaned := reasoningToolCalls(rb.String()); len(calls) > 0 {
 				// A leaked block can span several streamed thought parts, so per-part
-				// regex stripping leaves residue — re-emit the cleaned reasoning as
+				// regex stripping leaves residue - re-emit the cleaned reasoning as
 				// one thought part in place of the originals.
 				rebuilt := make([]*genai.Part, 0, len(aggregatedContent.Parts)+len(calls))
 				thoughtReplaced := false
@@ -318,7 +318,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 
 		// #427: the same leak can land in the plain answer text instead of
 		// reasoning_content (ask_advisor leaked as literal "<function=…>" in
-		// content) — scan that too when nothing proper or recovered above.
+		// content) - scan that too when nothing proper or recovered above.
 		if len(toolCallsMap) == 0 && !recoveredFromThought {
 			var cb strings.Builder
 			for _, p := range aggregatedContent.Parts {
@@ -355,8 +355,8 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		}
 		// Reasoning-model failure mode: a turn with neither answer text nor a tool
 		// call (the model often spends its whole output budget thinking and hits the
-		// length limit). Otherwise invisible — it surfaces downstream only as a
-		// mysteriously empty node — so log finish_reason + whether it was thinking.
+		// length limit). Otherwise invisible - it surfaces downstream only as a
+		// mysteriously empty node - so log finish_reason + whether it was thinking.
 		hasAnswer, hadThinking := false, false
 		for _, p := range aggregatedContent.Parts {
 			switch {
@@ -369,7 +369,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		if !hasAnswer {
 			// Content-side of #22684: the model wrote its answer inside an unclosed
 			// <think>, so it landed in reasoning_content and content came back empty.
-			// Promote the thinking to the answer rather than emit an empty turn — a
+			// Promote the thinking to the answer rather than emit an empty turn - a
 			// reasoning-only turn is terminal anyway (nothing for the agent to act on),
 			// and the judge/revise gates its quality. Only tool-less answer turns reach
 			// here; tool calls were already recovered above.
@@ -411,8 +411,8 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 // logRequestTail logs, at Debug, the shape of the request the model actually
 // receives: content count and the last 12 entries as role/kind (CALL:name /
 // RESP:name(bytes) / text). This is the ground truth for loop and compaction
-// diagnosis — "is the tool result the model should act on actually IN the
-// request?" — which the #252 investigation could otherwise only answer by
+// diagnosis - "is the tool result the model should act on actually IN the
+// request?" - which the #252 investigation could otherwise only answer by
 // shipping a temporary instrumented image. QUACK_LOG_LEVEL=debug turns it on.
 func logRequestTail(req *model.LLMRequest, modelName string) {
 	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
@@ -547,7 +547,7 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 		return toolRespMessages, nil
 	}
 
-	// Simple case: single text part — use string variant of the message constructor.
+	// Simple case: single text part - use string variant of the message constructor.
 	if len(parts) == 1 && parts[0].Text != "" {
 		role := convertRoleToOpenAI(content.Role)
 		var msg openai.ChatCompletionMessageParamUnion
@@ -659,7 +659,7 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 
 	// Surface reasoning_content as a Thought part (reasoning precedes the answer).
 	// openai-go marks untyped ExtraFields as status "invalid" (no typed extras
-	// decoder is registered for this struct), so Valid() is always false here —
+	// decoder is registered for this struct), so Valid() is always false here -
 	// gate on the raw bytes instead, the way an omitted/null field already does.
 	var reasoningText string
 	if rc := choice.Message.JSON.ExtraFields["reasoning_content"]; rc.Raw() != "" {
@@ -689,7 +689,7 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 
 	// #427: the same leak can land in the plain answer content instead of
 	// reasoning_content (ask_advisor leaked as literal "<function=…>" text in
-	// the answer) — scan it too when no proper/recovered tool call exists yet.
+	// the answer) - scan it too when no proper/recovered tool call exists yet.
 	answerText := choice.Message.Content
 	var recoveredFromContent []*genai.FunctionCall
 	if len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 && strings.TrimSpace(answerText) != "" {
@@ -706,7 +706,7 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 	} else if reasoningText != "" && len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 && len(recoveredFromContent) == 0 {
 		// Content-side of #22684 (non-streaming path): the synthesized answer
 		// sometimes lands entirely inside reasoning_content, leaving content
-		// empty. Promote the reasoning to the answer instead of dropping it — a
+		// empty. Promote the reasoning to the answer instead of dropping it - a
 		// reasoning-only turn is terminal anyway, and the judge/revise gate still
 		// evaluates its quality. Skip when tool calls arrived; those already make
 		// the turn non-terminal.
@@ -787,7 +787,7 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionPar
 				params = shared.FunctionParameters(m)
 			}
 			if params == nil {
-				// Tool has no declared parameters — use an empty object schema.
+				// Tool has no declared parameters - use an empty object schema.
 				params = shared.FunctionParameters{
 					"type":       "object",
 					"properties": map[string]any{},
@@ -938,11 +938,11 @@ var toolCallRe = regexp.MustCompile(`(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>`
 var toolCallXMLRe = regexp.MustCompile(`(?s)<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>`)
 
 // bareFunctionRe matches the same qwen <function=…> shape WITHOUT the
-// <tool_call> wrapper — seen when a call leaks straight into the assistant's
+// <tool_call> wrapper - seen when a call leaks straight into the assistant's
 // content instead of reasoning_content (#427: ask_advisor leaked as literal
 // "<function=ask_advisor>…" text in the answer). Matched blocks are only
 // treated as real calls once their body passes the parameter-block guard in
-// reasoningToolCalls — this regex alone is not enough to avoid misfiring on
+// reasoningToolCalls - this regex alone is not enough to avoid misfiring on
 // prose that merely mentions "<function=" in passing.
 var bareFunctionRe = regexp.MustCompile(`(?s)<function=([^>]+)>(.*?)</function>`)
 
@@ -968,13 +968,13 @@ func parseXMLParams(body string) map[string]any {
 }
 
 // reasoningToolCalls recovers tool calls that a model leaked as literal XML
-// instead of proper delta.tool_calls — Qwen3.x's <tool_call> wrapper
-// (llama.cpp#22684, closed not-planned — so the client must parse them) plus
+// instead of proper delta.tool_calls - Qwen3.x's <tool_call> wrapper
+// (llama.cpp#22684, closed not-planned - so the client must parse them) plus
 // the bare <function=…> form seen leaking straight into content (#427,
 // recurrence of #402). Handles, in order: Hermes JSON
 // (<tool_call>{...}</tool_call>), qwen's wrapped <function>/<parameter> form,
 // and the same form without the <tool_call> wrapper. Without this the agent
-// sees no tool call — either an empty answer (stalls the node) or the raw XML
+// sees no tool call - either an empty answer (stalls the node) or the raw XML
 // shown to the user. Returns the parsed calls and the text with matched
 // blocks removed.
 func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
@@ -1017,7 +1017,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 		body := bm[2]
 		// Guard against prose that merely mentions "<function=…>" in passing:
 		// the body must be fully accounted for by <parameter=…> blocks (or
-		// empty) — natural-language text between the tags fails this check
+		// empty) - natural-language text between the tags fails this check
 		// and the block is left untouched as ordinary text.
 		if name == "" || strings.TrimSpace(paramRe.ReplaceAllString(body, "")) != "" {
 			return block

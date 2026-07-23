@@ -40,7 +40,7 @@ const turnViews = useMemo(() => state.turns.map((turn, idx, arr) => {
 
 **d. `useCallback` every handler** passed to a memoized child (`handleCopy`, `handleDownload`, `handleChoice`, `handleStop`, the submit callback) so identity is stable.
 
-Net effect: the live (streaming) turn re-renders per token; everything else is frozen. This is why `react-virtuoso` stays deferred — node count is rarely the real bottleneck.
+Net effect: the live (streaming) turn re-renders per token; everything else is frozen. This is why `react-virtuoso` stays deferred - node count is rarely the real bottleneck.
 
 ---
 
@@ -72,19 +72,19 @@ Override the built-in scale once; every existing `bg-gray-…`/`border-…`/`bg-
 
 ```css
 @theme {
-  --color-gray-50:  #f7f7f6;   /* … through 950 — soften, don't invert extremes */
+  --color-gray-50:  #f7f7f6;   /* … through 950 - soften, don't invert extremes */
   --color-blue-600: #4a5bd4;   /* muted accent */
 }
 ```
 
-Gotcha: **never write `*/` inside the comment** (e.g. `bg-gray-*/border-*`) — it closes the comment early and leaks stray CSS (build warning). Spell globs out in prose.
+Gotcha: **never write `*/` inside the comment** (e.g. `bg-gray-*/border-*`) - it closes the comment early and leaks stray CSS (build warning). Spell globs out in prose.
 
 **Rules when picking the scale values:**
-- Dark page background: tinted near-black (e.g. `#131312`), never `#000` — pure black is eye-searing and makes accents vibrate. Dark surfaces lift via *lightness*, not shadow.
+- Dark page background: tinted near-black (e.g. `#131312`), never `#000` - pure black is eye-searing and makes accents vibrate. Dark surfaces lift via *lightness*, not shadow.
 - Dark-mode accents: desaturate ~10–20% vs light; primary text is off-white (e.g. `#f5f5f5`), not `#fff`.
-- Don't migrate to semantic tokens (`--color-bg-default`…) just to theme an existing app — that's a full component rewrite. The scale override is the lazy lever. Semantic tokens earn their keep only greenfield or once components need to diverge from the scale.
+- Don't migrate to semantic tokens (`--color-bg-default`…) just to theme an existing app - that's a full component rewrite. The scale override is the lazy lever. Semantic tokens earn their keep only greenfield or once components need to diverge from the scale.
 
-**Verify WCAG AA after any `@theme` change** — muted greys silently fail. Run this on the real pairings (4.5:1 normal text, 3:1 large/UI; decorative metadata ~3:1 is acceptable):
+**Verify WCAG AA after any `@theme` change** - muted greys silently fail. Run this on the real pairings (4.5:1 normal text, 3:1 large/UI; decorative metadata ~3:1 is acceptable):
 
 ```python
 def lin(c):
@@ -98,7 +98,7 @@ def ratio(a,b):
 # check e.g. ratio('#6b6b63', '#f7f7f6') for secondary text on the page bg → want ≥4.5
 ```
 
-A warm/light `gray-500` on a light page bg can land ~4.1:1 (under AA) — nudge the shade darker until it clears, keeping the hue. Verified values for the current warm scale: `gray-500 #6b6b63` (≥4.5:1), `gray-400 #909089` (≥3:1, decorative). Status colours are never the only cue — pair with icon/label/motion.
+A warm/light `gray-500` on a light page bg can land ~4.1:1 (under AA) - nudge the shade darker until it clears, keeping the hue. Verified values for the current warm scale: `gray-500 #6b6b63` (≥4.5:1), `gray-400 #909089` (≥3:1, decorative). Status colours are never the only cue - pair with icon/label/motion.
 
 ---
 
@@ -117,7 +117,7 @@ import 'highlight.js/styles/github-dark.css'
 >{text}</ReactMarkdown>
 ```
 
-`CopyablePre` is a `<pre>` wrapper with a hover Copy button that reads `ref.current?.textContent` and calls `navigator.clipboard.writeText`. Don't fight the sanitizer — order the plugins so its `hljs` classes survive (the `language-*` class survives sanitize either way).
+`CopyablePre` is a `<pre>` wrapper with a hover Copy button that reads `ref.current?.textContent` and calls `navigator.clipboard.writeText`. Don't fight the sanitizer - order the plugins so its `hljs` classes survive (the `language-*` class survives sanitize either way).
 
 ---
 

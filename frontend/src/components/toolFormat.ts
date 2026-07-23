@@ -11,7 +11,7 @@ export function summarizeArgs(args: Record<string, unknown>): string {
   return ''
 }
 
-// previewLine collapses text to a single-line, length-capped preview — the
+// previewLine collapses text to a single-line, length-capped preview - the
 // collapsed-state summary for a thinking block (#385: a scannable one-liner
 // beside the "Thought" label, not a wall of reasoning, until expanded).
 export function previewLine(text: string, max = 80): string {
@@ -19,7 +19,7 @@ export function previewLine(text: string, max = 80): string {
   return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine
 }
 
-// toolFailed reports whether a completed tool call's result carries an error —
+// toolFailed reports whether a completed tool call's result carries an error -
 // the compact summary line's status icon (✗ vs ✓, #385) keys off this rather
 // than any particular tool's own result shape.
 export function toolFailed(result: unknown): boolean {
@@ -35,7 +35,7 @@ export function prettyJSON(v: unknown): string {
   }
 }
 
-// copyPayload is what a tool call's copy button (#404) puts on the clipboard —
+// copyPayload is what a tool call's copy button (#404) puts on the clipboard -
 // the raw input/output JSON, for debugging a view that's best-effort (an ACP
 // call) or just incomplete. `output` is `null` (not omitted) while a call is
 // still in flight, so the shape is stable either way.
@@ -78,7 +78,7 @@ export interface DiffLine { type: DiffType; text: string }
 // lineDiff computes a minimal line-level diff of old → new via an LCS walk. It's
 // the flagship of edit_file rendering: the tool's `old`/`new` strings become a
 // before→after diff (removed lines red, added lines green). Deterministic and
-// dependency-free — no diff library. Empty inputs yield no lines.
+// dependency-free - no diff library. Empty inputs yield no lines.
 export function lineDiff(oldStr: string, newStr: string): DiffLine[] {
   if (oldStr === '' && newStr === '') return []
   const a = oldStr.split('\n')

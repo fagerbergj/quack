@@ -19,7 +19,7 @@ import (
 // Executor runs a Plan as an ADK v2 graph workflow (BuildWorkflow): one
 // first-class gated-worker node per plan node, fanned out per DependsOn. It is
 // the v2 replacement for the legacy TopoSort + semaphore + per-node-runner
-// executor — ADK's scheduler owns concurrency, ordering, and (on a durable
+// executor - ADK's scheduler owns concurrency, ordering, and (on a durable
 // session store) restart-durable completed-node skipping.
 type Executor struct {
 	sessions    session.Service
@@ -34,8 +34,8 @@ type Executor struct {
 
 	// gateResults holds each node's trust-gate outcome in memory, keyed
 	// "<chatID>\x00<nodeID>". The gated node also writes it to session state, but
-	// that delta only lands when an event carrying it is appended — after
-	// node_done is built — so the in-process copy is the one node_done can see.
+	// that delta only lands when an event carrying it is appended - after
+	// node_done is built - so the in-process copy is the one node_done can see.
 	gateResults sync.Map
 }
 
@@ -72,7 +72,7 @@ type DagStream struct {
 func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, nodeID) }
 
 // ScopeToResume restricts the sweep to the resumed (previously paused) nodes and
-// their descendants — on a resume run, completed siblings are durably skipped by
+// their descendants - on a resume run, completed siblings are durably skipped by
 // ADK and emit nothing, so sweeping them would false-fail finished work.
 func (s *DagStream) ScopeToResume(nodeIDs []string) {
 	s.only = map[string]bool{}
@@ -86,7 +86,7 @@ func (s *DagStream) ScopeToResume(nodeIDs []string) {
 // NewDagStream builds a router for one plan's gate-node events. nodeOutputs is
 // filled (node ID → vetted answer) for the caller's TerminalOutput.
 // appName/userID/sessionID identify the session the gate nodes write their judge
-// results into — in the single-runner model that's the orchestrator's own session,
+// results into - in the single-runner model that's the orchestrator's own session,
 // not a separate DAG session. cancelKey is the key the node controls are registered
 // under (== chatID); it differs from sessionID on the retry path, which runs on a
 // derived session but registers/cancels its nodes under the real chatID.
@@ -117,7 +117,7 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 		return false
 	}
 	if ev.NodeInfo == nil || planNodeInPath(ev.NodeInfo.Path, s.agentByID) == "" {
-		return false // not a gate-node event — the orchestrator's own
+		return false // not a gate-node event - the orchestrator's own
 	}
 	s.ds.handle(ev)
 	return true
@@ -131,7 +131,7 @@ func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 func (s *DagStream) Finish() {
 	s.ds.flush()
 	// A paused run is incomplete by design: don't fabricate a terminal output
-	// from the last finished node — the real terminal runs after the resume.
+	// from the last finished node - the real terminal runs after the resume.
 	if len(s.ds.needsInput) == 0 {
 		ensureTerminal(s.plan, s.ds.outputs, s.ds.last)
 	}
@@ -142,7 +142,7 @@ func (s *DagStream) Finish() {
 		if s.only != nil && !s.only[n.ID] {
 			continue // retry/resume: leave the seeded (not-re-run) nodes as they were
 		}
-		// A node paused for user input is WAITING, not failed — node_needs_input
+		// A node paused for user input is WAITING, not failed - node_needs_input
 		// already surfaced it. Nodes that never started while a pause is open are
 		// blocked behind it (join/synth downstream of the asker): also waiting.
 		if s.ds.needsInput[n.ID] {
@@ -151,7 +151,7 @@ func (s *DagStream) Finish() {
 		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
 			continue
 		}
-		// A user-paused node keeps its accumulated work and is resumable — surfaced
+		// A user-paused node keeps its accumulated work and is resumable - surfaced
 		// distinctly from cancel (not "stopped").
 		if s.ds.userPaused != nil && s.ds.userPaused(n.ID) {
 			s.yield(stream.NodePaused(n.ID), nil)
@@ -172,7 +172,7 @@ func (s *DagStream) Finish() {
 }
 
 // RetryPlanInNode re-runs the target node and its descendants, reusing the seeded
-// outputs (node ID → prior text) for every other node — a retry of a failed/done
+// outputs (node ID → prior text) for every other node - a retry of a failed/done
 // node whose upstream is unchanged. Returns the full node-output map (seeded +
 // freshly re-run). Per-node guidance should already be folded into the plan's node
 // Task by the caller.
@@ -188,7 +188,7 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 }
 
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
-// (no longer pre-wrapped in the gate — the graph wraps each node in the refine
+// (no longer pre-wrapped in the gate - the graph wraps each node in the refine
 // loop). cfgFor supplies the per-agent trust-gate config.
 func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
 	return &Executor{sessions: sessions, agents: agents, models: models, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
@@ -365,8 +365,8 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	runID := segRun(last)
 	// worker-rN = the gated worker's draft/revision (run via RunNode on this
 	// stream). Anything else (e.g. a worker's own sub-agent tool run) isn't a
-	// node-level run — skip it. An ask_advisor consult is just an ordinary tool
-	// call WITHIN this run — it doesn't get its own runID/prefix.
+	// node-level run - skip it. An ask_advisor consult is just an ordinary tool
+	// call WITHIN this run - it doesn't get its own runID/prefix.
 	if !strings.HasPrefix(runID, "worker") {
 		return true
 	}
@@ -378,8 +378,8 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		s.usage[node] = &runUsage{}
 		// A -sN run suffix means the user steered the node and the gate restarted
 		// it (vetting's steer pickup). Announce each new generation exactly once as
-		// node_steered — the UI freezes the interrupted runs, re-queues the node,
-		// and records the guidance — before the re-run's agent_start.
+		// node_steered - the UI freezes the interrupted runs, re-queues the node,
+		// and records the guidance - before the re-run's agent_start.
 		if gen := steerGen(runID); gen > s.steerSeen[node] {
 			s.steerSeen[node] = gen
 			guidance := ""
@@ -510,7 +510,7 @@ func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 // ── path + value helpers ─────────────────────────────────────────────────────
 
 // planNodeInPath returns the first NodeInfo.Path segment naming a plan node
-// (a key of agentByID), or "" if none — worker/join/root segments are ignored.
+// (a key of agentByID), or "" if none - worker/join/root segments are ignored.
 // A worker event's path is "…/<planNode>@<rid>/<worker>@worker-rN", so the plan
 // node is found before the deeper worker segment.
 func planNodeInPath(path string, agentByID map[string]string) string {
@@ -608,10 +608,10 @@ func toInt(v any) int {
 func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
 	var sb strings.Builder
 	if plan.UserMessage != "" {
-		// The verbatim request is BACKGROUND, and must say so — handed over bare, a
+		// The verbatim request is BACKGROUND, and must say so - handed over bare, a
 		// node reads the whole brief as its own to-do list and does its siblings'
 		// work, which is discarded and paid for twice.
-		sb.WriteString("BACKGROUND — the user's full request, verbatim. This is CONTEXT ONLY, so you " +
+		sb.WriteString("BACKGROUND - the user's full request, verbatim. This is CONTEXT ONLY, so you " +
 			"understand what the overall job is and how your piece fits. MOST OF IT IS NOT YOURS TO DO.\n\n")
 		sb.WriteString(plan.UserMessage)
 		sb.WriteString("\n\n---\n\n")
@@ -632,13 +632,13 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 			// Empty dep: the upstream node produced NO answer. Tell the synthesizer
 			// explicitly so it calls out the gap instead of silently dropping the topic
 			// (or inventing content to fill it).
-			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer — it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
+			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer - it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
 		}
 	}
 	if sb.Len() == 0 {
 		return node.Task
 	}
-	sb.WriteString("YOUR TASK — do this, and ONLY this:\n")
+	sb.WriteString("YOUR TASK - do this, and ONLY this:\n")
 	sb.WriteString(node.Task)
 	return sb.String()
 }

@@ -17,13 +17,13 @@ import (
 // Context compaction runs as an ADK BeforeModelCallback (the only hook that sees
 // the assembled request), ported to ADK's own durable-event design (ADK Go
 // v2.0.0 ships no compaction itself; this follows adk-python's apps/compaction.py
-// + flows/llm_flows/contents.go, cross-checked against adk-js — see
+// + flows/llm_flows/contents.go, cross-checked against adk-js - see
 // docs/compaction-adk-port-plan.md).
 //
 // When a request would overflow the window, the callback summarises the older
 // turns ONCE and appends the summary as a normal, durably-persisted session
-// event (author "model", a sentinel-prefixed text part). Every later request —
-// this one and every future turn, for every agent sharing the session — is
+// event (author "model", a sentinel-prefixed text part). Every later request -
+// this one and every future turn, for every agent sharing the session - is
 // then handled by cheap VIEW-TIME FILTERING: drop everything between the task
 // (contents[0], always kept verbatim) and the LAST sentinel content. Raw
 // session events are NEVER deleted or mutated; only the per-request view
@@ -31,11 +31,11 @@ import (
 // unlike a per-request rewrite.
 //
 // Invariant: after compaction the model never sees a tool call whose result was
-// replaced by a placeholder — a turn is gone (folded into the summary) or intact.
+// replaced by a placeholder - a turn is gone (folded into the summary) or intact.
 // (A hollowed-out result reads as deleted work, and the model just redoes the call.)
 //
 // Token counts are estimated as bytes/charsPerToken, then calibrated against the
-// provider's measured count from the previous turn — the raw estimate undercounts
+// provider's measured count from the previous turn - the raw estimate undercounts
 // code-dense content and can't see the system prompt + tool schemas.
 const (
 	charsPerToken = 4
@@ -51,7 +51,7 @@ const (
 	// default: contents guaranteed to stay verbatim beneath the summary, regardless
 	// of how far over threshold the request is. We deliberately do NOT port ADK's
 	// sliding-window knobs alongside it (their unit is "invocation"; our runs are
-	// single long invocations) — YAGNI.
+	// single long invocations) - YAGNI.
 	defaultEventRetentionSize = 20
 
 	measuredInputKey = "quack.compaction.measured_input" // last provider-reported prompt tokens
@@ -94,7 +94,7 @@ type Compaction struct {
 
 // ResolveSummarizer picks which model runs compaction: the active run/node's
 // own worker model when one is available (compacting that run's own session
-// with a model that's already resident — swap-free by construction), falling
+// with a model that's already resident - swap-free by construction), falling
 // back to the configured session.compaction.model otherwise (e.g. a
 // standalone compaction with no active worker).
 func ResolveSummarizer(active, fallback model.LLM) model.LLM {
@@ -130,7 +130,7 @@ func (c Compaction) retention() int {
 // compactionCallback returns a BeforeModelCallback enforcing the budget. It is a
 // no-op whenever the request already fits, which is the common case. The trigger
 // prefers the provider's measured prompt-token count from the previous turn
-// (recorded by recordUsage) — the chars/4 estimate undercounts dense content and
+// (recorded by recordUsage) - the chars/4 estimate undercounts dense content and
 // miscounts media, so it's only a first-turn fallback before any measurement.
 func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 	threshold, retention := c.threshold(), c.retention()
@@ -162,7 +162,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, threshold, retention int,
 	// new compaction. A durable summary event appended on a previous turn flows
 	// into req.Contents by itself (ADK includes every session event); this drops
 	// everything between the task and the LAST such sentinel, at zero summariser
-	// cost — the reuse path.
+	// cost - the reuse path.
 	view := applyView(req.Contents)
 	filtered := len(view) != len(req.Contents)
 	req.Contents = view
@@ -180,7 +180,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, threshold, retention int,
 			}
 		}
 		// else: no self-contained prefix within the retention window (every
-		// candidate split lands on an open function call) — skip this round
+		// candidate split lands on an open function call) - skip this round
 		// rather than cut a call away from its response (a port of ADK's
 		// test_token_threshold_excludes_pending_function_call_events).
 	}
@@ -203,7 +203,7 @@ func fits(ctx adkagent.Context, threshold int, contents []*genai.Content) bool {
 // ("event_appended") from the zero-cost reuse of an already-durable summary
 // ("filtered_existing").
 func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens int, contents []*genai.Content, threshold int) {
-	// event_appended is the EXPENSIVE path (a summariser LLM call) — one Info
+	// event_appended is the EXPENSIVE path (a summariser LLM call) - one Info
 	// line per real compaction. filtered_existing is the FREE view-filter that
 	// runs on EVERY request once a durable summary exists; at Info it emits a
 	// line per model call (771 in one run) and reads as thrash when it is a
@@ -221,8 +221,8 @@ func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens i
 // backstop runs the last-resort safety net, unchanged in spirit from the
 // pre-port implementation: it exists because EventRetentionSize is a count,
 // not a token budget, so the retained tail can itself still overflow
-// (oversized contents[0], or a tail of colossal tool results — a live grep
-// once returned 48 MB). A truncated/clamped result is recoverable — the model
+// (oversized contents[0], or a tail of colossal tool results - a live grep
+// once returned 48 MB). A truncated/clamped result is recoverable - the model
 // re-runs the tool narrower; a 400 is not.
 func backstop(ctx adkagent.Context, req *model.LLMRequest, threshold int) {
 	if len(req.Contents) == 0 {
@@ -284,7 +284,7 @@ func clampToolResults(contents []*genai.Content, maxChars int) int {
 					"truncated": true,
 					"result":    truncateMiddle(responseText(p.FunctionResponse), maxChars),
 					"note": "This result was too large for the context window and its middle was elided. " +
-						"Do NOT retry it verbatim — re-run the tool with a narrower query (a more specific path or pattern, " +
+						"Do NOT retry it verbatim - re-run the tool with a narrower query (a more specific path or pattern, " +
 						"or exclude build/vendor directories).",
 				},
 			}
@@ -343,7 +343,7 @@ func truncateMiddle(s string, maxChars int) string {
 	if len(s) <= maxChars || maxChars <= 0 {
 		return s
 	}
-	const marker = "\n\n…[middle elided to fit the context window — re-read the source files/tools if you need the full detail]…\n\n"
+	const marker = "\n\n…[middle elided to fit the context window - re-read the source files/tools if you need the full detail]…\n\n"
 	keep := maxChars - len(marker)
 	if keep <= 0 {
 		return strings.ToValidUTF8(s[:maxChars], "")
@@ -359,7 +359,7 @@ func isSentinel(c *genai.Content) bool {
 }
 
 // applyView drops every content strictly between the task (contents[0],
-// always kept verbatim — the ADK system-instruction equivalent) and the LAST
+// always kept verbatim - the ADK system-instruction equivalent) and the LAST
 // sentinel-marked content in contents. No sentinel found ⇒ contents
 // unchanged. This is the whole reuse path: once a summary is durably
 // appended, every later request needs no summariser call, only this filter.
@@ -401,13 +401,13 @@ func boundary(contents []*genai.Content, retention int) (headEnd int, ok bool) {
 }
 
 // longestSelfContainedPrefix returns the length of the longest prefix of
-// contents whose FunctionCall/FunctionResponse pairs are fully balanced —
+// contents whose FunctionCall/FunctionResponse pairs are fully balanced -
 // every call opened within the prefix is closed within it (matched by ID).
 // Within one content, responses are applied before calls (a call and its own
 // immediate response can share a content). Port of ADK's
 // _longest_self_contained_prefix: cutting a call away from its response 400s
 // the very next turn, so the compacted range must end where the open set is
-// empty — tracked as the last balanced index seen.
+// empty - tracked as the last balanced index seen.
 func longestSelfContainedPrefix(contents []*genai.Content) int {
 	open := map[string]bool{}
 	lastBalanced := 0
@@ -436,7 +436,7 @@ func longestSelfContainedPrefix(contents []*genai.Content) int {
 // sentinel content, seeding a rolling summary) into ONE new sentinel content,
 // durably appends it to the session, and returns the rebuilt view
 // [task, sentinel, ...tail]. Returns ok=false (contents unchanged) when there
-// is no summariser configured or the summariser call fails — compaction never
+// is no summariser configured or the summariser call fails - compaction never
 // blocks the model call on a failed summarise.
 func compact(ctx adkagent.Context, c Compaction, contents []*genai.Content, headEnd int) ([]*genai.Content, bool) {
 	if c.Summarizer == nil {
@@ -462,7 +462,7 @@ func compact(ctx adkagent.Context, c Compaction, contents []*genai.Content, head
 
 // extractSentinel pulls the (at most one, since applyView already collapsed
 // earlier ones) sentinel content out of contents, returning its summary text
-// — the rolling-summary seed for buildPrompt's <previous-summary> — and the
+// - the rolling-summary seed for buildPrompt's <previous-summary> - and the
 // remaining contents in order. No sentinel present ⇒ ("", contents).
 func extractSentinel(contents []*genai.Content) (string, []*genai.Content) {
 	for i, c := range contents {
@@ -477,14 +477,14 @@ func extractSentinel(contents []*genai.Content) (string, []*genai.Content) {
 }
 
 // appendSummaryEvent durably persists content as a normal model-authored
-// session event, so every future request — this session's, for every agent
-// sharing it, on every backend — sees the summary without a per-request
+// session event, so every future request - this session's, for every agent
+// sharing it, on every backend - sees the summary without a per-request
 // rewrite (the point of the ADK port: a stable prompt-cache prefix). Fetches
 // the session fresh via sessions rather than trusting a cached handle: the
 // concrete session services type-assert the exact object THEY vended (see
 // e.g. session/database's *localSession assertion), so Get-then-AppendEvent
 // on the same service is the only safe sequence. sessions == nil (no session
-// backing wired) is a no-op — filtering-only compaction, never a panic.
+// backing wired) is a no-op - filtering-only compaction, never a panic.
 func appendSummaryEvent(ctx adkagent.Context, sessions session.Service, content *genai.Content) {
 	if sessions == nil {
 		return
@@ -510,7 +510,7 @@ func appendSummaryEvent(ctx adkagent.Context, sessions session.Service, content 
 // serializeHead renders the head messages to a plain-text block for the
 // summariser: each tool call/result is truncated to toolOutputMaxChars (ADK
 // _MAX_TOOL_CONTENT_CHARS / opencode TOOL_OUTPUT_MAX_CHARS), and media parts
-// render as a placeholder line rather than vanishing — the summariser must
+// render as a placeholder line rather than vanishing - the summariser must
 // know media was there, even though it cannot see it.
 func serializeHead(head []*genai.Content) string {
 	var sb strings.Builder
@@ -611,7 +611,7 @@ func summarizeHead(ctx context.Context, summarizer model.LLM, prompt string) (st
 // recordUsage is an AfterModelCallback that stashes the provider's measured
 // prompt-token count so the next BeforeModelCallback can trigger on real usage
 // rather than the chars/4 estimate (the OpenCode approach: measure, then compact
-// before the next turn). The model itself is unchanged — we return (nil, nil).
+// before the next turn). The model itself is unchanged - we return (nil, nil).
 func recordUsage() llmagent.AfterModelCallback {
 	return func(ctx adkagent.Context, resp *model.LLMResponse, err error) (*model.LLMResponse, error) {
 		if err != nil || resp == nil || resp.UsageMetadata == nil || resp.UsageMetadata.PromptTokenCount <= 0 {
@@ -622,7 +622,7 @@ func recordUsage() llmagent.AfterModelCallback {
 			slog.Warn("compaction: record usage", "component", "agent", "err", e)
 		}
 		// Calibrate: solve measured ≈ overhead + density×estimate for the
-		// OVERHEAD, holding density at its default — the overhead is the part
+		// OVERHEAD, holding density at its default - the overhead is the part
 		// that is actually fixed, so it generalises to the next turn.
 		if est := intState(ctx, estimateKey); est > 0 {
 			overhead := measured - int(float64(est)*defaultCalibrationRatio)
@@ -667,7 +667,7 @@ func clampRatio(r float64) float64 {
 //	measured ≈ overhead + density × estimate(req.Contents)
 //
 // The overhead (system instruction + tool schemas) is FIXED and invisible to
-// estimateTokens, so it must be additive — folding it into a multiplier blows up
+// estimateTokens, so it must be additive - folding it into a multiplier blows up
 // exactly when the content is small.
 func calibrated(estimate int, density float64, overhead int) int {
 	return overhead + int(float64(estimate)*density)

@@ -29,5 +29,5 @@ frontend/dist
 # Storybook build output
 storybook-static
 
-# Local working docs (spec/spike notes) — not part of the repo
+# Local working docs (spec/spike notes) - not part of the repo
 .quack/

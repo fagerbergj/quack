@@ -1,5 +1,5 @@
 // Shared event vocabulary and dispatch for the agent SSE stream. Both
-// transports — fetched ReadableStream (chat) and EventSource (job live log) —
+// transports - fetched ReadableStream (chat) and EventSource (job live log) -
 // route events through dispatchAgentEvent so the per-event JSON shape lives
 // in one place.
 
@@ -74,7 +74,7 @@ export interface DagPlanPayload {
 }
 
 // DeliveryResultPayload is one staged item's ACTUAL outward-boundary outcome
-// (push + PR/review/comment), as the delivering extension observed it — never
+// (push + PR/review/comment), as the delivering extension observed it - never
 // the worker's self-report. "none" is the phantom-success class: a
 // judge-passed work-request that recorded no delivery attempt at all.
 export interface DeliveryResultPayload {
@@ -108,13 +108,13 @@ export interface AgentStreamHandlers {
   onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
-  // The node was stopped by the user (PUT node status {"status":"cancelled"}) —
+  // The node was stopped by the user (PUT node status {"status":"cancelled"}) -
   // rendered neutrally ("stopped"), distinct from a real gate failure.
   onNodeCancelled?: (nodeId: string) => void
-  // The node was suspended by the user (PUT node status {"status":"paused"}) —
+  // The node was suspended by the user (PUT node status {"status":"paused"}) -
   // keeps its accumulated work; resumable via {"status":"running"}.
   onNodePaused?: (nodeId: string) => void
-  // One staged item's actual delivery outcome — not yet rendered in the UI;
+  // One staged item's actual delivery outcome - not yet rendered in the UI;
   // wired so the event is parsed rather than silently dropped (see M13/OTel
   // observability: this is the phantom-success visibility signal).
   onDeliveryResult?: (d: DeliveryResultPayload) => void
@@ -323,7 +323,7 @@ export function dispatchAgentEvent(
 
 // readAgentStream parses a fetched SSE ReadableStream (used by the chat send
 // flow, which posts a request body and reads the response stream). Returns
-// whether a `done` event was actually seen before the body ended — the POST
+// whether a `done` event was actually seen before the body ended - the POST
 // body carries no Last-Event-ID, so the caller's only signal that the stream
 // ended cleanly (vs. a dropped connection worth reconnecting over) is this.
 // A read error (anything but an intentional abort) is treated the same as the

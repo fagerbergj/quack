@@ -2,8 +2,8 @@
 // REST + MCP API and the embedded SPA; the other verbs (`chat`, `api`, `server`)
 // drive a running server over HTTP + SSE. There is no TUI: `-p`, `chat send`,
 // and `chat show` are the interface, and their pause/failure exit codes
-// (0/1/2 — see internal/cli's Report) make them pipeable and scriptable. This
-// file is the cobra wiring only — command funcs stay thin and dispatch into
+// (0/1/2 - see internal/cli's Report) make them pipeable and scriptable. This
+// file is the cobra wiring only - command funcs stay thin and dispatch into
 // internal/cli (see the quack-cli skill).
 package main
 
@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fagerbergj/quack/internal/cli"
+	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/serve"
 	"github.com/fagerbergj/quack/internal/wizard"
 )
@@ -35,7 +36,7 @@ var version = "dev"
 func main() {
 	// GIT_ASKPASS mode, dispatched on argv[0] BEFORE cobra: when this binary
 	// is exec'd through the workspace askpass symlink (git runs $GIT_ASKPASS
-	// directly as one program path — see cmd/quack/git_askpass.go), answer
+	// directly as one program path - see cmd/quack/git_askpass.go), answer
 	// git's credential prompt and exit.
 	if isGitAskpassInvocation() {
 		gitAskpassMain(os.Args, os.Stdout)
@@ -50,10 +51,10 @@ func newRootCmd() *cobra.Command {
 	var printPrompt string
 	root := &cobra.Command{
 		Use:   "quack",
-		Short: "Quack — specialist AI agents, one binary",
-		Long: "Quack is a one-binary CLI and server for agent-driven work — web research,\n" +
+		Short: "Quack - specialist AI agents, one binary",
+		Long: "Quack is a one-binary CLI and server for agent-driven work - web research,\n" +
 			"coding, and more. There is no TUI:\n" +
-			"-p, `chat send`, and `chat show` ARE the interface — pipeable, scriptable exit\n" +
+			"-p, `chat send`, and `chat show` ARE the interface - pipeable, scriptable exit\n" +
 			"codes (0 answered, 1 failed, 2 paused on a question).\n\n" +
 			"  quack init                       get configured (run locally or connect to a server)\n" +
 			"  quack server run                 run the API + SPA server (foreground)\n" +
@@ -90,14 +91,14 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().String("server", "", "quack server URL (default: active server from config, else http://localhost:8080)")
 	root.Flags().StringVarP(&printPrompt, "print", "p", "", "one-shot prompt; print the result and exit (no TUI)")
 	root.Flags().Bool("events", false, "with -p: also print the pipeline event trace (plan, node lifecycle) to stderr")
-	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) — image/audio — to the prompt (repeatable)")
+	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) - image/audio - to the prompt (repeatable)")
 	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
 	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd())
 	return root
 }
 
-// exitIfNonZero calls os.Exit(code) for a non-zero code — used by the
+// exitIfNonZero calls os.Exit(code) for a non-zero code - used by the
 // bulletproof-CLI commands (-p, chat send, chat show) whose exit codes (0
 // answered / 1 failed / 2 paused) don't fit cobra's error-only exit(1) model.
 // A zero code returns normally so deferred cleanup (e.g. an in-process
@@ -108,12 +109,12 @@ func exitIfNonZero(code int) {
 	}
 }
 
-// newInitCmd: `quack init` — onboarding. Local (run quack here → server wizard
+// newInitCmd: `quack init` - onboarding. Local (run quack here → server wizard
 // + register localhost) or Remote (register a server someone else runs).
 func newInitCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "init",
-		Short: "Get quack configured — run locally or connect to a hosted server",
+		Short: "Get quack configured - run locally or connect to a hosted server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out, _ := cmd.Flags().GetString("output")
 			force, _ := cmd.Flags().GetBool("force")
@@ -152,7 +153,7 @@ func newChatCmd() *cobra.Command {
 func newChatNewCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "new",
-		Short: "Create a chat and print its id (create-only — send the first message with `chat send`)",
+		Short: "Create a chat and print its id (create-only - send the first message with `chat send`)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withTarget(cmd, func(t string) error {
@@ -162,7 +163,7 @@ func newChatNewCmd() *cobra.Command {
 	}
 }
 
-// newChatSendCmd: `chat send <id> "<msg>"` — the non-interactive way to answer
+// newChatSendCmd: `chat send <id> "<msg>"` - the non-interactive way to answer
 // a needs_input question or ask a follow-up (see internal/cli's Report for the
 // 0/1/2 exit-code semantics).
 func newChatSendCmd() *cobra.Command {
@@ -182,11 +183,11 @@ func newChatSendCmd() *cobra.Command {
 	}
 	asJSONFlag(c, &asJSON)
 	c.Flags().BoolVar(&showEvents, "events", false, "also print the pipeline event trace (plan, node lifecycle) to stderr")
-	c.Flags().StringSliceVar(&attach, "attach", nil, "attach file(s) — image/audio — to the message (repeatable)")
+	c.Flags().StringSliceVar(&attach, "attach", nil, "attach file(s) - image/audio - to the message (repeatable)")
 	return c
 }
 
-// newChatShowCmd: `chat show <id>` — a status snapshot (id/title/status/pending
+// newChatShowCmd: `chat show <id>` - a status snapshot (id/title/status/pending
 // question, the last turn's per-node table, then its answer), or the full
 // ChatDetail with --json. -f/--follow attaches to the live stream after the
 // snapshot (replaces the TUI's live view).
@@ -306,7 +307,7 @@ func newNodeStopCmd() *cobra.Command {
 	}
 }
 
-// newNodePauseCmd: `chat node pause` — suspend a RUNNING node at its next
+// newNodePauseCmd: `chat node pause` - suspend a RUNNING node at its next
 // turn boundary, keeping its accumulated work (updateNodeStatus status=paused).
 func newNodePauseCmd() *cobra.Command {
 	return &cobra.Command{
@@ -321,7 +322,7 @@ func newNodePauseCmd() *cobra.Command {
 	}
 }
 
-// newNodeResumeCmd: `chat node resume` — resume a PAUSED node with a fresh
+// newNodeResumeCmd: `chat node resume` - resume a PAUSED node with a fresh
 // re-run (updateNodeStatus status=running).
 func newNodeResumeCmd() *cobra.Command {
 	return &cobra.Command{
@@ -336,7 +337,7 @@ func newNodeResumeCmd() *cobra.Command {
 	}
 }
 
-// newNodeQueueCmd: `chat node queue` — append a message to a RUNNING node's
+// newNodeQueueCmd: `chat node queue` - append a message to a RUNNING node's
 // queue, delivered at its next turn boundary (never mid-turn). Replaces the
 // old interrupt-based `chat node steer`.
 func newNodeQueueCmd() *cobra.Command {
@@ -352,7 +353,7 @@ func newNodeQueueCmd() *cobra.Command {
 	}
 }
 
-// newNodeQueueEditCmd: `chat node queue-edit` — rewrite a not-yet-delivered
+// newNodeQueueEditCmd: `chat node queue-edit` - rewrite a not-yet-delivered
 // queued message.
 func newNodeQueueEditCmd() *cobra.Command {
 	return &cobra.Command{
@@ -367,7 +368,7 @@ func newNodeQueueEditCmd() *cobra.Command {
 	}
 }
 
-// newNodeQueueRemoveCmd: `chat node queue-remove` — drop a not-yet-delivered
+// newNodeQueueRemoveCmd: `chat node queue-remove` - drop a not-yet-delivered
 // queued message.
 func newNodeQueueRemoveCmd() *cobra.Command {
 	return &cobra.Command{
@@ -382,7 +383,7 @@ func newNodeQueueRemoveCmd() *cobra.Command {
 	}
 }
 
-// newNodeEditCmd: `chat node edit` — replace a not-yet-started node's prompt
+// newNodeEditCmd: `chat node edit` - replace a not-yet-started node's prompt
 // (immutable once the node has started).
 func newNodeEditCmd() *cobra.Command {
 	return &cobra.Command{
@@ -397,7 +398,7 @@ func newNodeEditCmd() *cobra.Command {
 	}
 }
 
-// newNodeRetryCmd: `chat node retry` — re-queue a finished node (and its
+// newNodeRetryCmd: `chat node retry` - re-queue a finished node (and its
 // downstream) with optional guidance (updateNodeStatus status=queued).
 func newNodeRetryCmd() *cobra.Command {
 	var guidance string
@@ -437,6 +438,7 @@ func newServerCmd() *cobra.Command {
 	c.AddCommand(
 		runCmd,
 		newServerInitCmd(),
+		newServerValidateCmd(),
 		newServerUseCmd(),
 		newServerAddCmd(),
 		newServerListCmd(),
@@ -445,7 +447,29 @@ func newServerCmd() *cobra.Command {
 	return c
 }
 
-// newServerInitCmd: `quack server init` — the server-config wizard (LLM
+// newServerValidateCmd: `quack server validate [path]` - loads and validates a
+// quack.yaml (config.Load: parse, ${VAR} expand, validate) without starting the
+// server. Same default-path resolution as `server run`'s --config.
+func newServerValidateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "validate [path]",
+		Short: "Load and validate a quack.yaml without starting the server",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := defaultConfigPath()
+			if len(args) == 1 {
+				path = args[0]
+			}
+			if _, err := config.Load(path); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: OK\n", path)
+			return nil
+		},
+	}
+}
+
+// newServerInitCmd: `quack server init` - the server-config wizard (LLM
 // provider, models, stores). Writes quack.yaml.
 func newServerInitCmd() *cobra.Command {
 	c := &cobra.Command{
@@ -519,7 +543,7 @@ func newServerListCmd() *cobra.Command {
 				return err
 			}
 			if len(c.Servers) == 0 {
-				fmt.Println("no servers registered — run `quack init` or `quack server add`")
+				fmt.Println("no servers registered - run `quack init` or `quack server add`")
 				return nil
 			}
 			for name, s := range c.Servers {
@@ -624,7 +648,7 @@ func newVersionCmd() *cobra.Command {
 }
 
 // defaultConfigPath resolves the server config: $QUACK_CONFIG if set, else
-// ./quack.yaml in cwd — matching what `quack init` writes, so init→run just
+// ./quack.yaml in cwd - matching what `quack init` writes, so init→run just
 // works in a fresh dir. The repo's example config at config/quack.yaml is
 // reached via --config (the Makefile's run target does this) or QUACK_CONFIG.
 func defaultConfigPath() string {
@@ -637,7 +661,7 @@ func defaultConfigPath() string {
 // resolveTarget returns the server base URL a client command should talk to, plus
 // a stop func to call when done. If a remote is configured (--server override or
 // an active registry entry) it's used as-is and stop is a no-op. Otherwise the
-// duck is started in-process on a loopback port and stop tears it down — so the
+// duck is started in-process on a loopback port and stop tears it down - so the
 // CLI works locally with no separate `quack server run`.
 func resolveTarget(ctx context.Context, override string) (string, func(), error) {
 	noop := func() {}
@@ -650,7 +674,7 @@ func resolveTarget(ctx context.Context, override string) (string, func(), error)
 	}
 	cfg := defaultConfigPath()
 	if _, err := os.Stat(cfg); err != nil {
-		return "", noop, fmt.Errorf("no %s found — run `quack init` first (or pass --server <url>)", cfg)
+		return "", noop, fmt.Errorf("no %s found - run `quack init` first (or pass --server <url>)", cfg)
 	}
 	base, stop, err := serve.InProcess(ctx, cfg)
 	if err != nil {

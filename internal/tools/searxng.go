@@ -77,7 +77,7 @@ func searchWeb(ctx context.Context, client *http.Client, base, query string) ([]
 	// seeing a silently empty list.
 	if down := formatUnresponsiveEngines(parsed.UnresponsiveEngines); down != "" {
 		if len(results) == 0 {
-			return nil, "", fmt.Errorf("web_search: no results — every search backend failed: %s (likely rate-limited; back off and retry shortly)", down)
+			return nil, "", fmt.Errorf("web_search: no results - every search backend failed: %s (likely rate-limited; back off and retry shortly)", down)
 		}
 		return results, fmt.Sprintf("partial results: some search backends failed: %s", down), nil
 	}

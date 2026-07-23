@@ -53,7 +53,7 @@ func TestAgentLayers(t *testing.T) {
 }
 
 // TestWritingLayerAlways verifies the shared prose ruleset is injected even for
-// a bare agent (no tools, no behaviour) — it applies to every assembled prompt.
+// a bare agent (no tools, no behaviour) - it applies to every assembled prompt.
 func TestWritingLayerAlways(t *testing.T) {
 	for _, out := range []string{
 		promptbuilder.Agent("helper", "helps", nil, ""),
@@ -84,12 +84,12 @@ func TestAgentNoBehaviour(t *testing.T) {
 }
 
 // toolLine is how promptbuilder renders a tool in the ## Tools section
-// ("- `name` — desc"). Asserting this exact prefix proves the tool is in the
+// ("- `name` - desc"). Asserting this exact prefix proves the tool is in the
 // Tools list, distinct from a tool name merely mentioned in the behaviour/guidance.
-func toolLine(name string) string { return "- `" + name + "` —" }
+func toolLine(name string) string { return "- `" + name + "` -" }
 
 // TestAgentMemoryToolsAndGuidance verifies the M6 memory tools AND the memory.md
-// guidance both reach the assembled prompt — the way agent.Build wires them
+// guidance both reach the assembled prompt - the way agent.Build wires them
 // (memory tools in the tool list; memory.md appended to the behaviour).
 func TestAgentMemoryToolsAndGuidance(t *testing.T) {
 	memTools := []tool.Tool{
@@ -113,7 +113,7 @@ func TestAgentMemoryToolsAndGuidance(t *testing.T) {
 }
 
 // TestAgentMemoryRealBundle is an end-to-end check that the REAL web-researcher
-// memory.md and the REAL memory tools both render in its prompt — using the same
+// memory.md and the REAL memory tools both render in its prompt - using the same
 // loader (agent.LoadBundleMemory) and tools (stage_memory builtin + ADK
 // load/preload) that buildAgents wires when memory is enabled.
 func TestAgentMemoryRealBundle(t *testing.T) {
@@ -127,7 +127,7 @@ func TestAgentMemoryRealBundle(t *testing.T) {
 		t.Fatalf("LoadBundleMemory: %v", err)
 	}
 	if strings.TrimSpace(mem) == "" {
-		t.Fatal("web-researcher has no memory.md — memory guidance would never load")
+		t.Fatal("web-researcher has no memory.md - memory guidance would never load")
 	}
 
 	builtins, err := tools.Build([]string{"stage_memory"}, tools.Deps{})
@@ -156,7 +156,7 @@ func TestOrchestratorLayers(t *testing.T) {
 	frontmatters := []*skill.Frontmatter{
 		{Name: "format-markdown", Description: "reformats markdown"},
 	}
-	roster := "- `web-researcher` — searches the web\n"
+	roster := "- `web-researcher` - searches the web\n"
 	out := promptbuilder.Orchestrator(roster, frontmatters, "## Steps\n1. Understand.")
 
 	cases := []struct {

@@ -51,7 +51,7 @@ interface Props {
   onAnswerNodeQuestion?: (nodeId: string, answer: string) => void
 }
 
-// DagBubbleHeader is the DAG bubble's compact header — its own attribution line,
+// DagBubbleHeader is the DAG bubble's compact header - its own attribution line,
 // separate from the answer bubble's (which credits the terminal node instead).
 export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
   const tokens = dagTotalTokens(dag)

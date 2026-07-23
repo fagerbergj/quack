@@ -10,7 +10,7 @@ import (
 )
 
 // TestAgentBundlesLoad guards that every agent bundle referenced by the shipped
-// config (plus the orchestrator) loads — a malformed agent-card.json or missing
+// config (plus the orchestrator) loads - a malformed agent-card.json or missing
 // prompt.md fails here instead of at startup.
 func TestAgentBundlesLoad(t *testing.T) {
 	for _, kv := range [][2]string{
@@ -37,7 +37,7 @@ func TestAgentBundlesLoad(t *testing.T) {
 
 // TestCodeImplementerBundle pins the new bundle's specifics beyond the generic
 // sweep above: the card's name matches its config key (buildAgents keys gate
-// configs by that name), and its rubric.md override loads non-empty — the
+// configs by that name), and its rubric.md override loads non-empty - the
 // exact path buildAgents takes (vetting.LoadBundleRubric) to replace the
 // default config/rubric.md with the code-quality one for this agent.
 func TestCodeImplementerBundle(t *testing.T) {
@@ -53,7 +53,7 @@ func TestCodeImplementerBundle(t *testing.T) {
 		t.Fatalf("LoadBundleRubric: %v", err)
 	}
 	if rubric == "" {
-		t.Fatal("rubric override is empty — buildAgents would silently fall back to the default rubric")
+		t.Fatal("rubric override is empty - buildAgents would silently fall back to the default rubric")
 	}
 	// Spot-check the rubric carries all three parts of its contract: the
 	// research criteria, the first-class ponytail section, and the

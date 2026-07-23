@@ -13,7 +13,7 @@ func TestFirstStep(t *testing.T) {
 		return &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: text}}}
 	}
 	modelCall := &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "calling web_search"}}}
-	// Function responses are role=user but textless — must not count as the user turn.
+	// Function responses are role=user but textless - must not count as the user turn.
 	funcResp := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{Name: "web_search"}}}}
 	const q = "research native plants"
 
@@ -40,7 +40,7 @@ func TestFirstStep(t *testing.T) {
 }
 
 // Recall is the gate-side preload twin for external workers: formatted block
-// on a hit, "" on empty/nil — and a nil store must be safe (memory disabled).
+// on a hit, "" on empty/nil - and a nil store must be safe (memory disabled).
 func TestStoreRecall(t *testing.T) {
 	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"build with make dev, not npm run build","kind":"convention"}]}`}
 	s := newSQLiteStore(t, "task", consolidator)

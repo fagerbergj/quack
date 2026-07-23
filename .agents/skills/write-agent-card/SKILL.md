@@ -10,7 +10,7 @@ description: |
 license: MIT
 ---
 
-# Write Agent Card — A2A Agent Discovery Metadata
+# Write Agent Card - A2A Agent Discovery Metadata
 
 ## Checklist (validate before shipping)
 
@@ -26,7 +26,7 @@ license: MIT
 
 ---
 
-## Phase 1 — Gather Inputs
+## Phase 1 - Gather Inputs
 
 Before writing:
 
@@ -39,14 +39,14 @@ Before writing:
 
 ---
 
-## Phase 2 — JSON Card Structure
+## Phase 2 - JSON Card Structure
 
 Save at `/.well-known/agent-card.json` (also supported: `/.well-known/agent.json` for backward compatibility).
 
 ```json
 {
-  "name": "[Product Name — not a technical identifier]",
-  "description": "[What it does, task categories, integrations, output formats — written for both humans and semantic routing algorithms]",
+  "name": "[Product Name - not a technical identifier]",
+  "description": "[What it does, task categories, integrations, output formats - written for both humans and semantic routing algorithms]",
   "version": "[MAJOR.MINOR.PATCH]",
   "provider": {
     "organization": "[Org Name]",
@@ -94,21 +94,21 @@ Save at `/.well-known/agent-card.json` (also supported: `/.well-known/agent.json
 
 ---
 
-## Phase 3 — Field Quality Rules
+## Phase 3 - Field Quality Rules
 
 **`description` (top-level):** Write for both humans and semantic routing. Include what it does, categories of tasks, integrations (GitHub, Postgres, etc.), and output formats. One paragraph.
 
 **`skills[].description`:** The most routing-critical field. Must state (1) what the skill does and (2) what user requests trigger it. "Analyzes pull requests for security vulnerabilities. Triggers on requests involving code review, security audit, or vulnerability scanning."
 
-**`skills[].examples`:** These are matched against user requests by the client LLM — not keyword search, semantic matching. Include diverse phrasings: direct commands, indirect questions, jargon and plain language variants. Minimum 2; aim for 3–5.
+**`skills[].examples`:** These are matched against user requests by the client LLM - not keyword search, semantic matching. Include diverse phrasings: direct commands, indirect questions, jargon and plain language variants. Minimum 2; aim for 3–5.
 
-**`skills[].tags`:** Enable filtering in agent registries. Use descriptive category terms, not implementation details. `["security", "code-review", "sdlc"]` — not `["python", "ast-parsing"]`.
+**`skills[].tags`:** Enable filtering in agent registries. Use descriptive category terms, not implementation details. `["security", "code-review", "sdlc"]` - not `["python", "ast-parsing"]`.
 
 **`capabilities`:** Only set `streaming: true` if you actually implement SSE. False positives break client retry logic.
 
 ---
 
-## Phase 4 — Alignment Guide
+## Phase 4 - Alignment Guide
 
 Each card field has a direct counterpart in the agent's runtime SKILL.md. Misalignment means the agent is discoverable for tasks it can't actually perform.
 

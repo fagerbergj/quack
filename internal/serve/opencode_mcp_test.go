@@ -9,7 +9,7 @@ import (
 )
 
 // opencodeEnv must emit an acp mcp_servers URL in opencode's KEYED mcp map shape
-// — {name:{type:"remote",url,enabled}}, the form opencode.json uses — not
+// - {name:{type:"remote",url,enabled}}, the form opencode.json uses - not
 // {"servers":[...]}, which opencode silently ignores (the server would never
 // load, so the tools never reach the agent). Regression for #250: the first
 // implementation compiled and passed the gate but used the ignored shape.

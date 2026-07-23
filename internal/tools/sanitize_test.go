@@ -1,12 +1,13 @@
 package tools
 
-import "strings"
-
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStripInlineMediaDropsDataURI(t *testing.T) {
 	// A base64 inline image (the "garbage in context" case) is valid UTF-8, so the
-	// binary check misses it — stripInlineMedia must remove it.
+	// binary check misses it - stripInlineMedia must remove it.
 	blob := strings.Repeat("AAAA", 5000) // ~20KB of base64
 	in := "Real article text.\n![logo](data:image/png;base64," + blob + ")\nMore text."
 	out := stripInlineMedia(in)

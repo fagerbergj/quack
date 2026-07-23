@@ -5,11 +5,11 @@
 //
 // The model is flat and agent-centric: the DAG (dag_plan + node_* events) is the
 // static structure, and within each node the gate runs a SEQUENCE of agent
-// invocations ("runs") — the worker draft, optional self-refine, each judge
+// invocations ("runs") - the worker draft, optional self-refine, each judge
 // round, each revision. Every run is delimited by agent_start / agent_complete
 // and carries a run_id + stage; its activity (agent_thinking, agent_tool_call,
 // agent_tool_result, agent_token) references that run_id. The client groups runs
-// by node and pairs tools by call_id — no nesting heuristics.
+// by node and pairs tools by call_id - no nesting heuristics.
 //
 // Translation is stateful: the gate yields agent_start/agent_complete marker
 // FunctionResponse parts to delimit runs, and a per-node Translator tracks the
@@ -72,7 +72,7 @@ const (
 	EventNodeSteered    = "node_steered"
 
 	// EventDeliveryResult reports one staged item's outward-boundary outcome
-	// (push + PR/review/comment) — durable, independent of the judge verdict,
+	// (push + PR/review/comment) - durable, independent of the judge verdict,
 	// so a phantom "the gate passed" success is distinguishable from an actual
 	// delivery failure. See DeliveryResultData.
 	EventDeliveryResult = "delivery_result"
@@ -170,7 +170,7 @@ type AgentCompleteData struct {
 // passed=false; the omitempty tags above would drop those, so the UI could not
 // tell a real 0% score from an absent one and rendered no score badge at all
 // (only passing, non-zero judges showed a score). Non-judge stages keep the
-// omitempty behaviour — they carry no judge result.
+// omitempty behaviour - they carry no judge result.
 func (d AgentCompleteData) MarshalJSON() ([]byte, error) {
 	type alias AgentCompleteData // shed the MarshalJSON method to avoid recursion
 	b, err := json.Marshal(alias(d))
@@ -283,7 +283,7 @@ func NodeCancelled(nodeID string) SSEEvent {
 
 // NodeSteeredData is the `node_steered` event payload: the node's queued
 // message(s) were delivered at its next turn boundary and it is about to
-// re-run with them folded in (its prior session — tool calls and results —
+// re-run with them folded in (its prior session - tool calls and results -
 // is retained). A fresh node_start … node_done follows.
 type NodeSteeredData struct {
 	NodeID   string `json:"node_id"`
@@ -309,7 +309,7 @@ func NodePaused(nodeID string) SSEEvent {
 
 // DeliveryResultData is the `delivery_result` event payload: one staged
 // item's ACTUAL outward-boundary outcome, as the delivering extension
-// observed it (a real PR/review URL, or a real per-item error) — never the
+// observed it (a real PR/review URL, or a real per-item error) - never the
 // worker's self-report. Emitted for BOTH success and failure so a phantom
 // "delivered" (judge passed, nothing actually posted) is visible in the
 // durable event log, not just inferred from a missing log line.
@@ -320,7 +320,7 @@ type DeliveryResultData struct {
 	URL     string `json:"url,omitempty"`
 	Error   string `json:"error,omitempty"`
 	// TraceID cross-references this event into the OTel trace (Tempo/Grafana)
-	// covering the same delivery — "" when otel is disabled or no span was active.
+	// covering the same delivery - "" when otel is disabled or no span was active.
 	TraceID string `json:"trace_id,omitempty"`
 }
 
@@ -445,7 +445,7 @@ type Translator struct {
 // NewTranslator returns a Translator for one node stream.
 func NewTranslator() *Translator { return &Translator{} }
 
-// Usage returns the model/usage/finish-reason accumulated so far — either since
+// Usage returns the model/usage/finish-reason accumulated so far - either since
 // the currently-open run started, or (for a caller with no run/marker protocol,
 // e.g. the orchestrator's own un-gated direct-answer session) since the last time
 // a run opened and reset the counters, i.e. the whole stream fed to this
@@ -462,8 +462,8 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 
 	// Accumulate this event's usage/model/finish. Reported on the run's
 	// agent_complete when a marker-delimited run is open; a caller with no run
-	// concept at all — the orchestrator's own un-gated direct-answer session,
-	// which never emits agent_start/agent_complete markers — reads the running
+	// concept at all - the orchestrator's own un-gated direct-answer session,
+	// which never emits agent_start/agent_complete markers - reads the running
 	// total straight off Usage() instead. Either way the counters reset to zero
 	// when a new run opens (below), so this is never double-counted.
 	if ev.UsageMetadata != nil {

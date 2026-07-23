@@ -17,8 +17,8 @@ import {
 // are wrapped in Expandable so a big file / diff / output can't wall off the node.
 // Every native quack tool (internal/tools/*) and every name internal/acp/
 // translate.go remaps an ACP call onto (edit_file/write_file/read_file/
-// run_command/web_fetch) has a case here; anything else — an ACP tool kind we
-// don't specially map, or a tool added after this file was last updated —
+// run_command/web_fetch) has a case here; anything else - an ACP tool kind we
+// don't specially map, or a tool added after this file was last updated -
 // falls to GenericView, which is still formatted (key→value / pretty JSON),
 // never a raw blob.
 export function ToolCallView({ tool }: { tool: ToolCall }) {
@@ -104,14 +104,14 @@ function lineClass(t: DiffLine['type']): string {
 }
 
 // isFlatRecord reports whether v is a plain object whose values are all
-// primitives (or absent) — the shape KeyValueBlock can render as a scannable
+// primitives (or absent) - the shape KeyValueBlock can render as a scannable
 // key→value list instead of a pretty-printed JSON block.
 function isFlatRecord(v: unknown): v is Record<string, unknown> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false
   return Object.values(v as Record<string, unknown>).every(x => x == null || typeof x !== 'object')
 }
 
-// KeyValueBlock renders a flat object as a compact key→value list — the
+// KeyValueBlock renders a flat object as a compact key→value list - the
 // fallback's preferred shape (#404) when every field is a primitive, e.g. an
 // ACP tool call whose args are just `{title: "..."}`.
 function KeyValueBlock({ data }: { data: Record<string, unknown> }) {
@@ -131,7 +131,7 @@ function KeyValueBlock({ data }: { data: Record<string, unknown> }) {
 
 // FormattedValue is the fallback's per-value renderer: a compact key→value
 // list for a flat object, else a pretty-printed (never raw single-line) JSON
-// block — either way, never a raw dump (#404).
+// block - either way, never a raw dump (#404).
 function FormattedValue({ value }: { value: unknown }) {
   if (isFlatRecord(value)) return <KeyValueBlock data={value} />
   return <Code text={prettyJSON(value)} cap={160} />
@@ -150,7 +150,7 @@ function ResultJSON({ result }: { result: unknown }) {
 
 // ── per-tool views ─────────────────────────────────────────────────────────────
 
-// EditFileView — the flagship: renders the targeted replacement as a before→after
+// EditFileView - the flagship: renders the targeted replacement as a before→after
 // diff (old lines red, new lines green), headed by the file path. `replace_all`
 // and the applied-replacements count (from the result) surface as badges.
 function EditFileView({ tool }: { tool: ToolCall }) {
@@ -175,7 +175,7 @@ function EditFileView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// WriteFileView — path header + collapsible content; result reports created/overwrote.
+// WriteFileView - path header + collapsible content; result reports created/overwrote.
 function WriteFileView({ tool }: { tool: ToolCall }) {
   const path = str(tool.args, 'path') ?? '(unknown path)'
   const content = str(tool.args, 'content') ?? ''
@@ -188,7 +188,7 @@ function WriteFileView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// ReadFileView — path (+ line window) header + a snippet of the file content.
+// ReadFileView - path (+ line window) header + a snippet of the file content.
 function ReadFileView({ tool }: { tool: ToolCall }) {
   const path = str(tool.args, 'path') ?? '(unknown path)'
   const offset = num(tool.args, 'offset')
@@ -206,7 +206,7 @@ function ReadFileView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// RunCommandView — the command as a shell line + its combined output; exit code badge.
+// RunCommandView - the command as a shell line + its combined output; exit code badge.
 function RunCommandView({ tool }: { tool: ToolCall }) {
   const command = str(tool.args, 'command') ?? ''
   const exit = tool.done ? num(tool.result, 'exit_code') : undefined
@@ -228,7 +228,7 @@ function RunCommandView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GitCommitView — commit message + files-changed count + short SHA.
+// GitCommitView - commit message + files-changed count + short SHA.
 function GitCommitView({ tool }: { tool: ToolCall }) {
   const message = str(tool.args, 'message') ?? ''
   const sha = tool.done ? str(tool.result, 'sha') : undefined
@@ -244,7 +244,7 @@ function GitCommitView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GitDiffView — the unified-diff result rendered coloured, headed by its target.
+// GitDiffView - the unified-diff result rendered coloured, headed by its target.
 function GitDiffView({ tool }: { tool: ToolCall }) {
   const ref = str(tool.args, 'ref')
   const path = str(tool.args, 'path')
@@ -261,7 +261,7 @@ function GitDiffView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GitLogView — a compact commit list (short SHA · subject · author · date).
+// GitLogView - a compact commit list (short SHA · subject · author · date).
 function GitLogView({ tool }: { tool: ToolCall }) {
   const commits = tool.done && tool.result && typeof tool.result === 'object'
     ? (tool.result as { commits?: unknown }).commits
@@ -284,7 +284,7 @@ function GitLogView({ tool }: { tool: ToolCall }) {
 
 // ── unmapped ACP / native tools ─────────────────────────────────────────────────
 
-// ListDirView — the directory's entries (name, dir/file marker, size), capped
+// ListDirView - the directory's entries (name, dir/file marker, size), capped
 // like the other list views; a `truncated` result note surfaces alongside cwd.
 function ListDirView({ tool }: { tool: ToolCall }) {
   const path = str(tool.args, 'path') || '.'
@@ -310,7 +310,7 @@ function ListDirView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GlobView — the matched paths as a plain list, headed by the pattern.
+// GlobView - the matched paths as a plain list, headed by the pattern.
 function GlobView({ tool }: { tool: ToolCall }) {
   const pattern = str(tool.args, 'pattern') ?? ''
   const paths = tool.done && tool.result && typeof tool.result === 'object'
@@ -330,7 +330,7 @@ function GlobView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GrepView — matches as `path:line  text`, headed by the pattern (+ glob filter).
+// GrepView - matches as `path:line  text`, headed by the pattern (+ glob filter).
 function GrepView({ tool }: { tool: ToolCall }) {
   const pattern = str(tool.args, 'pattern') ?? ''
   const glob = str(tool.args, 'glob')
@@ -356,7 +356,7 @@ function GrepView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// WebSearchView — each result as a title/url/snippet card.
+// WebSearchView - each result as a title/url/snippet card.
 function WebSearchView({ tool }: { tool: ToolCall }) {
   const query = str(tool.args, 'query') ?? ''
   const results = tool.done && tool.result && typeof tool.result === 'object'
@@ -382,7 +382,7 @@ function WebSearchView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// WebFetchView — url header + the fetched page text (a plain string result).
+// WebFetchView - url header + the fetched page text (a plain string result).
 function WebFetchView({ tool }: { tool: ToolCall }) {
   const url = str(tool.args, 'url') ?? ''
   const pattern = str(tool.args, 'pattern')
@@ -399,7 +399,7 @@ function WebFetchView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// AskAdvisorView — the worker's request followed by the advisor's reply, both
+// AskAdvisorView - the worker's request followed by the advisor's reply, both
 // prose (not code), since neither is source text.
 function AskAdvisorView({ tool }: { tool: ToolCall }) {
   const request = str(tool.args, 'request') ?? ''
@@ -422,7 +422,7 @@ function AskAdvisorView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// StageMemoryView — the staged fact + its bucket; the result is a short status
+// StageMemoryView - the staged fact + its bucket; the result is a short status
 // string ("kept only if the answer passes vetting"), not worth its own label.
 function StageMemoryView({ tool }: { tool: ToolCall }) {
   const content = str(tool.args, 'content') ?? ''
@@ -438,9 +438,9 @@ function StageMemoryView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// LoadMemoryView — recalled memory entries as short prose snippets. ADK's
+// LoadMemoryView - recalled memory entries as short prose snippets. ADK's
 // native result shape (`memories: [{content: {parts: [{text}]}, author}]`) is
-// read defensively — memoryText tries a few known shapes and falls back to
+// read defensively - memoryText tries a few known shapes and falls back to
 // FormattedValue rather than assume the exact schema.
 function memoryText(entry: unknown): string {
   const content = entry && typeof entry === 'object' ? (entry as Record<string, unknown>).content : undefined
@@ -484,7 +484,7 @@ function LoadMemoryView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GetUserChoiceView — the question + its options; the chosen one (once
+// GetUserChoiceView - the question + its options; the chosen one (once
 // answered) is highlighted, and a still-open call shows the pending badge.
 function GetUserChoiceView({ tool }: { tool: ToolCall }) {
   const question = str(tool.args, 'question') ?? ''
@@ -510,7 +510,7 @@ function GetUserChoiceView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// AskUserView — the mid-node clarifying question; a pause/resume marker.
+// AskUserView - the mid-node clarifying question; a pause/resume marker.
 function AskUserView({ tool }: { tool: ToolCall }) {
   const question = str(tool.args, 'question') ?? ''
   const status = tool.done ? str(tool.result, 'status') : undefined
@@ -522,14 +522,14 @@ function AskUserView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// DeletePathView — the removed path + whether it existed.
+// DeletePathView - the removed path + whether it existed.
 function DeletePathView({ tool }: { tool: ToolCall }) {
   const path = str(tool.args, 'path') ?? '(unknown path)'
   const deleted = tool.done ? bool(tool.result, 'deleted') : undefined
   return <PathHeader path={path} note={deleted == null ? undefined : deleted ? 'deleted' : 'not found'} />
 }
 
-// GitStatusView / GitBranchView / GitPushView — the remaining ledger-known git
+// GitStatusView / GitBranchView / GitPushView - the remaining ledger-known git
 // ops (git.go / vetting/ledger.go): compact one-line summaries, not a blob.
 function GitStatusView({ tool }: { tool: ToolCall }) {
   const branch = tool.done ? str(tool.result, 'branch') : undefined
@@ -563,8 +563,8 @@ function GitPushView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GenericView — the tidy fallback for tools without a custom view: a compact
-// key→value list when args/result are flat, else pretty (never raw-blob) JSON —
+// GenericView - the tidy fallback for tools without a custom view: a compact
+// key→value list when args/result are flat, else pretty (never raw-blob) JSON -
 // either way height-locked so an unfamiliar tool can't wall off the node.
 function GenericView({ tool }: { tool: ToolCall }) {
   return (

@@ -32,7 +32,7 @@ export const ToolRunning: Story = {
   },
 }
 
-// A failed tool call's collapsed summary shows a cross, not a check (#385) —
+// A failed tool call's collapsed summary shows a cross, not a check (#385) -
 // status conveyed by icon+colour together, never colour alone.
 export const ToolFailed: Story = {
   args: {
@@ -42,13 +42,13 @@ export const ToolFailed: Story = {
   },
 }
 
-// #388 — an ACP code-implementer's file edit now maps to edit_file (not
+// #388 - an ACP code-implementer's file edit now maps to edit_file (not
 // write_file) and renders the SAME before→after diff view a native edit gets.
 // A new file (no prior content) shows every line as added.
 export const AcpEditFileDiff: Story = {
   args: {
     activity: [
-      { kind: 'thinking', text: 'The bug is in the debounce timer — it never clears on unmount.' },
+      { kind: 'thinking', text: 'The bug is in the debounce timer - it never clears on unmount.' },
       {
         kind: 'tool',
         tool: {
@@ -61,7 +61,7 @@ export const AcpEditFileDiff: Story = {
   },
 }
 
-// The native code-implementer's own edit_file call — same tool name, same
+// The native code-implementer's own edit_file call - same tool name, same
 // diff view, rendered identically to the ACP one above (#388's acceptance:
 // ACP and native edits are visually indistinguishable).
 export const NativeEditFileDiff: Story = {
@@ -80,7 +80,7 @@ export const NativeEditFileDiff: Story = {
 }
 
 // The "Thought" icon is a crisp currentColor SVG (not an emoji, which used to
-// render pixelated/off-colour on a dark background) — toggle the Storybook
+// render pixelated/off-colour on a dark background) - toggle the Storybook
 // toolbar's dark-mode control to check it renders cleanly in both themes.
 export const ThinkBlockIcon: Story = {
   args: {
@@ -91,7 +91,7 @@ export const ThinkBlockIcon: Story = {
 }
 
 // Every tool call carries a small copy-JSON button (✎ → ✓ on click) in its
-// collapsed summary line — the escape hatch for whatever a rendered view
+// collapsed summary line - the escape hatch for whatever a rendered view
 // doesn't show nicely. Click it here (clipboard writes are inert in a
 // sandboxed Storybook iframe, but the ✓ flash still confirms the click fired).
 export const CopyButtonOnToolCall: Story = {
@@ -102,7 +102,7 @@ export const CopyButtonOnToolCall: Story = {
   },
 }
 
-// #435 — the copy button sits in a sibling row over the summary's corner,
+// #435 - the copy button sits in a sibling row over the summary's corner,
 // not nested inside the `<summary>` (invalid HTML, breaks keyboard use):
 // clicking it copies without toggling the collapsed tool block open.
 export const CopyButtonDoesNotToggleSummary: Story = {
@@ -134,7 +134,7 @@ export const Windowed: Story = {
   },
 }
 
-// #379: a run with many tool-call events — the case the streaming-update
+// #379: a run with many tool-call events - the case the streaming-update
 // perf fix targets. ActivityList itself already windows to the most recent
 // RECENT items, so this stays cheap to render regardless of count; it's here
 // to make that windowing (and the underlying store fix) visible/verifiable.
@@ -167,18 +167,18 @@ export const WithCodeBlock: Story = {
   render: () => <AssistantText text={CODE_ANSWER} />,
 }
 
-// #387 — preamble/reasoning tokens are never the answer. The activity list
+// #387 - preamble/reasoning tokens are never the answer. The activity list
 // (collapsed "Thought" + tool calls) is visually distinct FROM and sits ABOVE
 // the answer bubble; narration a worker emitted before its tool call ("Let me
-// check the config first…") never reaches the answer at all — the store
+// check the config first…") never reaches the answer at all - the store
 // resets that accumulator on each tool call (chatStore.ts), so only the text
 // after the last tool call ever renders as "the answer" below.
 const preambleActivity: Activity[] = [
-  { kind: 'thinking', text: 'The user wants the timeout value — I should read the config rather than guess.' },
+  { kind: 'thinking', text: 'The user wants the timeout value - I should read the config rather than guess.' },
   { kind: 'tool', tool: { callId: 'c1', name: 'read_file', args: { path: 'config.yaml' }, result: { content: 'timeout: 30s' }, done: true } },
 ]
 
-// #416 — the top-level orchestrator card's BubbleHeader carries a StatusDot to
+// #416 - the top-level orchestrator card's BubbleHeader carries a StatusDot to
 // the left of the name while the turn is live, matching DagNode's header
 // (dot-then-name); a completed turn passes no `status` and shows no dot.
 export const OrchestratorCardRunning: Story = {
@@ -205,7 +205,7 @@ export const PreambleVsAnswer: Story = {
       <div className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">activity (reasoning + tool calls)</div>
       <ActivityList activity={preambleActivity} />
       <div className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 pt-2 border-t border-gray-100 dark:border-gray-700">
-        answer — narration before the tool call above never lands here
+        answer - narration before the tool call above never lands here
       </div>
       <AssistantText text="The configured timeout is 30 seconds." />
     </div>

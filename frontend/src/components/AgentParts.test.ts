@@ -66,7 +66,7 @@ describe('run-model reducers', () => {
     runs = startRun(runs, { runId: 'r1', agent: 'w', stage: 'worker', startedAt: 0 })
     runs = completeRun(runs, 'r1', {}, 5_000) // worker finished cleanly
     runs = startRun(runs, { runId: 'r2', agent: 'w', stage: 'revise', round: 1, startedAt: 6_000 })
-    // r2's agent_complete never arrives (dropped/missing) — it's still counting.
+    // r2's agent_complete never arrives (dropped/missing) - it's still counting.
     expect(run(runs, 'r2').done).toBe(false)
 
     runs = freezeOpenRuns(runs, 20_000) // node finishes
@@ -109,13 +109,13 @@ describe('run-model reducers', () => {
   })
 
   // #379: appendRunToolCall/fillRunToolResult/appendRunThinking used to spread
-  // `run.activity` on every single event — O(run length) work per event, O(N²)
+  // `run.activity` on every single event - O(run length) work per event, O(N²)
   // over a run of N events. They now mutate the array in place, so the same
   // array instance is reused across every append/fill rather than a fresh copy
   // being allocated each time. Pin that directly: the activity array reference
   // never changes across N events, which is only possible if events are O(1)
   // amortized (a per-event copy would produce a new array reference each time).
-  it('appends/fills activity in place — no per-event copy of prior entries', () => {
+  it('appends/fills activity in place - no per-event copy of prior entries', () => {
     let runs: AgentRun[] = startRun([], { runId: 'r1', agent: 'w', stage: 'worker' })
     const activityRef = run(runs, 'r1').activity
     const N = 500
@@ -125,18 +125,18 @@ describe('run-model reducers', () => {
       runs = appendRunThinking(runs, 'r1', `.`)
     }
     const finalRun = run(runs, 'r1')
-    expect(finalRun.activity).toBe(activityRef) // same array throughout — never re-copied
+    expect(finalRun.activity).toBe(activityRef) // same array throughout - never re-copied
     // Each thinking append is preceded by a tool call, so nothing coalesces:
     // N tool-call entries + N separate thinking entries.
     expect(finalRun.activity).toHaveLength(N * 2)
   })
 })
 
-// #435 — Chrome DevTools flagged 177 instances of an interactive element
+// #435 - Chrome DevTools flagged 177 instances of an interactive element
 // nested inside a `<summary>` on a live chat page; every collapsed tool
 // call's copy button was the source. The button now sits outside the
 // `<summary>`, as a sibling positioned over its corner.
-describe('ToolBlock — copy button is not nested inside <summary> (#435)', () => {
+describe('ToolBlock - copy button is not nested inside <summary> (#435)', () => {
   const tool: ToolCall = { callId: 'c1', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true }
 
   it('renders the copy button as a sibling of <details>, never inside <summary>', () => {

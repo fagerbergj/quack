@@ -1,7 +1,7 @@
 // Package cli is the TUI-free surface of the quack client: the server-context
 // registry (which server chat/api/-p talk to), the /models discovery used by
 // `server init`, and the quack.yaml emitter. It imports no bubbletea and no huh
-// — the wizard (internal/wizard) wraps these in forms; print mode and api shell
+// - the wizard (internal/wizard) wraps these in forms; print mode and api shell
 // out here directly. Keeping this package terminal-free is what lets the pipe
 // paths stay ANSI-clean and unit-testable with httptest.
 package cli
@@ -15,7 +15,7 @@ import (
 )
 
 // ClientConfig is the CLI's client-side state: which servers exist and which is
-// active. Lives at ~/.quack/servers.yaml ($QUACK_HOME) — distinct from a
+// active. Lives at ~/.quack/servers.yaml ($QUACK_HOME) - distinct from a
 // server's quack.yaml (its runtime config, in cwd). Two files, two concerns.
 type ClientConfig struct {
 	Active  string               `yaml:"active,omitempty"`
@@ -94,7 +94,7 @@ func (c *ClientConfig) Use(name string) error {
 }
 
 // ActiveURL resolves the remote server to talk to: the --server override, else
-// the active server's URL. Returns "" when no remote is configured — the signal
+// the active server's URL. Returns "" when no remote is configured - the signal
 // that the command should run the duck locally in-process (no separate server).
 func (c *ClientConfig) ActiveURL(override string) string {
 	if override != "" {

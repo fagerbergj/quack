@@ -1,5 +1,5 @@
 // Package bundledir embeds the shipped agent bundles and skills into the
-// binary so `quack server run` works from any directory — not just a repo
+// binary so `quack server run` works from any directory - not just a repo
 // checkout. Without this, a standalone binary in a fresh project can't load
 // its own agents (agent-card.json / prompt.md) or skills, which breaks the
 // whole `quack init` → `quack server run` onboarding flow.

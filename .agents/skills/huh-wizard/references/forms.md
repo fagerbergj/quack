@@ -1,4 +1,4 @@
-# huh-wizard — form recipes
+# huh-wizard - form recipes
 
 Copy-ready form skeletons for the decisions in `SKILL.md`. v1 (`github.com/charmbracelet/huh v1.0.0`). Adapt, don't drop in blind. For the rubber-duck theme + `runForm` wrapper, see `theme.md`.
 
@@ -6,7 +6,7 @@ Copy-ready form skeletons for the decisions in `SKILL.md`. v1 (`github.com/charm
 
 ## The two-form shape (one I/O break, everything else merged)
 
-`server init` is **two** forms: the provider (which yields the endpoint), then — after the `/models` fetch — one big form for models + features + stores + review. The fetch is the only reason to split; see SKILL idiom #1.
+`server init` is **two** forms: the provider (which yields the endpoint), then - after the `/models` fetch - one big form for models + features + stores + review. The fetch is the only reason to split; see SKILL idiom #1.
 
 ```go
 func ServerInit(ctx context.Context, outPath string, force bool) error {
@@ -26,7 +26,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 
 	a.WebSearch = slices.Contains(feats, "search")
 	a.WebFetch = slices.Contains(feats, "fetch")
-	if !ok { fmt.Println("Aborted — nothing written."); return nil } // HONOR the confirm
+	if !ok { fmt.Println("Aborted - nothing written."); return nil } // HONOR the confirm
 	// ... write file ...
 }
 ```
@@ -34,7 +34,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 Title + description go on the **first group** of a section (Form has no `.Title()` in v1).
 
 ```go
-// askProvider — one group, three fields, navigable together. API key masked.
+// askProvider - one group, three fields, navigable together. API key masked.
 func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	var kind string
 	return runForm(huh.NewForm(huh.NewGroup(
@@ -46,23 +46,23 @@ func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	).Title("LLM provider").Description("How quack reaches its model server")))
 }
 
-// modelGroups — ONE role per group (its own screen). A blurred huh select still
+// modelGroups - ONE role per group (its own screen). A blurred huh select still
 // renders its full option list, so stacking several overflows the screen and the
 // group viewport scrolls. The group title is the header → the field has no title.
 func modelGroups(a *cli.InitAnswers, models []string, manual bool) []*huh.Group {
-	none := huh.NewOption("None — disable", "")
+	none := huh.NewOption("None - disable", "")
 	return []*huh.Group{
 		huh.NewGroup(selectOrInput(manual, modelOptions(models), &a.MainModel)).
 			Title("Main model").Description("The model quack reasons and plans with"),
 		huh.NewGroup(specialistSelect(models, &a.JudgeModel, none)).
-			Title("Judge model").Description("Trust gate — None disables it"),
+			Title("Judge model").Description("Trust gate - None disables it"),
 		huh.NewGroup(specialistSelect(models, &a.EmbedModel, none)).
-			Title("Embedding model").Description("Semantic memory — None disables it"),
+			Title("Embedding model").Description("Semantic memory - None disables it"),
 		// ...vision, audio, same shape
 	}
 }
 
-// selectOrInput / specialistSelect — no field title (group title is the header),
+// selectOrInput / specialistSelect - no field title (group title is the header),
 // no .Height (the option list stays static; the cursor moves through it).
 func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Field {
 	if manual || len(opts) == 0 {
@@ -74,9 +74,9 @@ func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Fiel
 
 ## Conditional store groups (`WithHideFunc`, same form)
 
-Sections gated on an earlier answer stay in the form and hide themselves — no second form, back-nav intact. Gate the *emit* on the same flags so a hidden group's default never lands in the output.
+Sections gated on an earlier answer stay in the form and hide themselves - no second form, back-nav intact. Gate the *emit* on the same flags so a hidden group's default never lands in the output.
 
-Give **every** group a `.Title()` — it's the section header. A conditional group with only field titles reads as headerless next to the ones that have a header. `storeGroup` sets the group title to the store name and uses generic field titles ("Backend"/"URL") so the name isn't printed twice.
+Give **every** group a `.Title()` - it's the section header. A conditional group with only field titles reads as headerless next to the ones that have a header. `storeGroup` sets the group title to the store name and uses generic field titles ("Backend"/"URL") so the name isn't printed twice.
 
 ```go
 func storeGroups(a *cli.InitAnswers, feats *[]string) []*huh.Group {
@@ -107,7 +107,7 @@ func storeGroup(title string, kinds []string, kind, url *string, defKind string)
 
 ## The final review/confirm gate (one screen, live summary, honored confirm)
 
-Note + Confirm in **one group** → the summary and the Yes/No render together (separate groups = two screens). The `Note` is non-interactive so navigation skips to the confirm. `Note.DescriptionFunc` recomputes after a back-up-and-edit; the static `Description(string)` would show stale values. And `ok` must be **checked** by the caller — `Confirm` only records it.
+Note + Confirm in **one group** → the summary and the Yes/No render together (separate groups = two screens). The `Note` is non-interactive so navigation skips to the confirm. `Note.DescriptionFunc` recomputes after a back-up-and-edit; the static `Description(string)` would show stale values. And `ok` must be **checked** by the caller - `Confirm` only records it.
 
 ```go
 func reviewGroup(a *cli.InitAnswers, feats *[]string, outPath string, ok *bool) *huh.Group {
@@ -131,13 +131,13 @@ func specialistSelect(models []string, val *string, none huh.Option[string]) huh
 	if *val != "" && !slices.Contains(models, *val) {
 		opts = append(opts, huh.NewOption(*val, *val)) // stale env → still pre-selects
 	}
-	return huh.NewSelect[string]().Options(opts...).Value(val) // no title/Height — see modelGroups
+	return huh.NewSelect[string]().Options(opts...).Value(val) // no title/Height - see modelGroups
 }
 ```
 
 ## Default a multi-select ON
 
-Pre-seed the bound slice with the option values — not a bool:
+Pre-seed the bound slice with the option values - not a bool:
 
 ```go
 feats := []string{}
@@ -153,10 +153,10 @@ huh.NewMultiSelect[string]().
 | On | Method | Notes |
 |---|---|---|
 | `Input` | `.Title .Value .Placeholder .EchoMode .Suggestions .Key` | `EchoModePassword` masks secrets |
-| `Select[T]` | `.Title .Options .Value .Key .Filtering(b) .Height(n) .OptionsFunc(f,bind)` | `Filtering`/`Height` are situational (filter box grabs focus; Height makes options a scrolling window) — omit unless the list is huge; `OptionsFunc` computes options from a binding |
+| `Select[T]` | `.Title .Options .Value .Key .Filtering(b) .Height(n) .OptionsFunc(f,bind)` | `Filtering`/`Height` are situational (filter box grabs focus; Height makes options a scrolling window) - omit unless the list is huge; `OptionsFunc` computes options from a binding |
 | `MultiSelect[T]` | `.Title .Options .Value` | pre-selected via the bound slice |
-| `Confirm` | `.Title .Value` | bool pointer — **caller must check it; it doesn't abort** |
+| `Confirm` | `.Title .Value` | bool pointer - **caller must check it; it doesn't abort** |
 | `Note` | `.Title .Description .TitleFunc(f,bind) .DescriptionFunc(f,bind)` | `*Func` recompute live (stale-summary fix) |
 | `Option[T]` | `.Selected(bool)` | pre-select a MultiSelect option directly |
 | `Group` | `.Title .Description .WithHeight(n) .WithHideFunc(func() bool)` | section header + **live conditional visibility** (group-level only) |
-| `Form` | `.WithTheme .Run` | **no `.Title()` in v1** — use the first group |
+| `Form` | `.WithTheme .Run` | **no `.Title()` in v1** - use the first group |

@@ -5,7 +5,7 @@ import "testing"
 // TestAugmentFromReviewStage_ToolStagedWins proves the gate reads a tool-staged
 // review (the #451 review MCP surface, resolved via advisor token → MemSecret →
 // MemSession.Review) into act.stagedDelivery["review"], and that the answer-tail
-// fallback (augmentFromAnswer) does NOT overwrite it — the two never conflict.
+// fallback (augmentFromAnswer) does NOT overwrite it - the two never conflict.
 func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 	secret, err := NewMemSecret()
 	if err != nil {
@@ -41,7 +41,7 @@ func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 }
 
 // TestReviewStage_SnapshotVerdictless proves comments without an explicit
-// verdict still produce a deliverable review, defaulting to a comment event —
+// verdict still produce a deliverable review, defaulting to a comment event -
 // mirroring augmentFromAnswer's verdict-less fallback so a reviewer that only
 // stages inline findings never deadlocks the node.
 func TestReviewStage_SnapshotVerdictless(t *testing.T) {

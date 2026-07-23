@@ -122,7 +122,7 @@ func TestResolveTwoUsersAreIndependent(t *testing.T) {
 // identities (an OIDC subject is external text): a userID containing a
 // separator or dot-traversal would relocate the jail root itself, making the
 // containment check verify against the WRONG root. Both entry points
-// (UserRoot and Resolve) must reject identically with ErrInvalidUserID — a
+// (UserRoot and Resolve) must reject identically with ErrInvalidUserID - a
 // distinct error from ErrEscape, since this is a caller/config bug, not a
 // model-chosen path. Real OIDC-shaped ids (pipes, emails) must PASS: the rule
 // is separator/dot-traversal based, not an alphanumeric allowlist.
@@ -137,7 +137,7 @@ func TestUserIDValidation(t *testing.T) {
 		{".", false},
 		{"..", false},
 		{"../bob", false},
-		{"..%2Fbob", true}, // encoded separators are literal text at this layer — a legal (odd) dirname
+		{"..%2Fbob", true}, // encoded separators are literal text at this layer - a legal (odd) dirname
 		{"a/b", false},
 		{"/etc", false},
 		{"/", false},
@@ -240,7 +240,7 @@ func TestResolvePerChatScope(t *testing.T) {
 }
 
 // TestChatIDValidation guards the per-chat segment: a chat id is a
-// system-generated UUID but treated as untrusted here — a separator or
+// system-generated UUID but treated as untrusted here - a separator or
 // dot-traversal must never relocate the scope root and let a path escape the
 // user jail. A malicious id is rejected with ErrInvalidChatID (distinct from
 // ErrInvalidUserID and ErrEscape); an empty id is NOT an error (it is the
@@ -321,7 +321,7 @@ func TestRemoveChatScope(t *testing.T) {
 		t.Errorf("RemoveChatScope on missing dir = %v, want nil (no-op)", err)
 	}
 
-	// An empty chatID is rejected — must never remove the whole user root.
+	// An empty chatID is rejected - must never remove the whole user root.
 	if err := j.RemoveChatScope("alice", ""); !errors.Is(err, ErrInvalidChatID) {
 		t.Errorf("RemoveChatScope(empty) = %v, want ErrInvalidChatID", err)
 	}
@@ -351,7 +351,7 @@ func TestJailHomeDirIsSiblingNotNestedInARepo(t *testing.T) {
 		t.Fatalf("HomeDir: %v", err)
 	}
 	if strings.HasPrefix(home, repoDir+string(filepath.Separator)) || home == repoDir {
-		t.Fatalf("HomeDir %q is nested inside the cloned repo %q — must be a sibling", home, repoDir)
+		t.Fatalf("HomeDir %q is nested inside the cloned repo %q - must be a sibling", home, repoDir)
 	}
 	userRoot, err := j.UserRoot("alice")
 	if err != nil {

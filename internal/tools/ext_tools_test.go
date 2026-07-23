@@ -9,7 +9,7 @@ import (
 )
 
 // stubExtTool builds a minimal tool.Tool standing in for an extension tool
-// (e.g. internal/github.App.Tools()'s github_add_review_comment) — Build must
+// (e.g. internal/github.App.Tools()'s github_add_review_comment) - Build must
 // treat it exactly like a registry entry, resolved ONLY by name.
 func stubExtTool(t *testing.T, name string) tool.Tool {
 	t.Helper()
@@ -34,7 +34,7 @@ func hasTool(tools []tool.Tool, name string) bool {
 
 // TestBuildExtToolsOptIn guards the fix for the force-injection design bug: an
 // extension tool (Deps.ExtTools) reaches an agent ONLY when that agent's own
-// config tools: list names it — same resolution path as any builtin — never
+// config tools: list names it - same resolution path as any builtin - never
 // because the extension happens to be configured at all.
 func TestBuildExtToolsOptIn(t *testing.T) {
 	ext := map[string]tool.Tool{
@@ -47,7 +47,7 @@ func TestBuildExtToolsOptIn(t *testing.T) {
 		t.Fatalf("Build without the ext tool named: %v", err)
 	}
 	if hasTool(got, "github_add_review_comment") {
-		t.Error("ext tool present even though tools: never named it — force-injection regressed")
+		t.Error("ext tool present even though tools: never named it - force-injection regressed")
 	}
 
 	// A tools: list that names the ext tool must receive it, through the same

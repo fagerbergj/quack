@@ -58,17 +58,17 @@ import (
 )
 
 // localUserID is the identity every filesystem/git tool's jail resolves
-// against — Quack is single-user today (mirrors the same constant in
+// against - Quack is single-user today (mirrors the same constant in
 // internal/server/rest and internal/server/mcp); the OIDC subject replaces it
 // the day multi-user lands, with no change to the jail's path resolution.
 const localUserID = "local"
 
-// vendorSkillsDir is the vendored ponytail skill library — a git submodule
+// vendorSkillsDir is the vendored ponytail skill library - a git submodule
 // (github.com/DietrichGebert/ponytail, pinned by .gitmodules) whose skills/
 // dir holds SKILL.md skills in exactly the layout the shipped skills/ library
 // uses. Merged into the skill toolset as a second, lower-priority source when
 // present on disk (newSkillSource); absent (submodule not initialized, or an
-// installed binary outside the repo) the primary source alone serves — no
+// installed binary outside the repo) the primary source alone serves - no
 // error, the ponytail skills are just unavailable. Run
 // `git submodule update --init` (or clone with --recursive) to populate it.
 const vendorSkillsDir = ".agents/vendor/ponytail/skills"
@@ -102,7 +102,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 	defer cleanup()
 
 	// Optional pprof endpoint for diagnosing hangs/leaks: OFF unless QUACK_PPROF_ADDR
-	// is set (bind it to a loopback-published port, never the public listener — it
+	// is set (bind it to a loopback-published port, never the public listener - it
 	// exposes internals). Serves http.DefaultServeMux, where net/http/pprof registered.
 	if pprofAddr := os.Getenv("QUACK_PPROF_ADDR"); pprofAddr != "" {
 		go func() {
@@ -136,7 +136,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 
 // InProcess builds the server and serves it on an ephemeral loopback port,
 // returning its base URL and a stop func. This is how `quack` runs the duck
-// locally — co-hosted in the CLI process, no separate `quack server run`. Logs go
+// locally - co-hosted in the CLI process, no separate `quack server run`. Logs go
 // to stderr (default warn) so the client's stdout stays clean (e.g. `quack -p`).
 func InProcess(ctx context.Context, configPath string) (baseURL string, stop func() error, err error) {
 	setupLoggingTo(os.Stderr, slog.LevelWarn)
@@ -217,9 +217,9 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Workspace (filesystem/git tools' isolation boundary): one jail per server
 	// process, rooted at workspace.root (config.Load already defaulted it to
-	// ./workspace). Built unconditionally — cheap, and it means wiring is ready
+	// ./workspace). Built unconditionally - cheap, and it means wiring is ready
 	// the moment an agent's tools: list requests read_file etc. (not yet done by
-	// any shipped agent — see .quack/plan-pr5-tool-schemas.md).
+	// any shipped agent - see .quack/plan-pr5-tool-schemas.md).
 	jail, err := workspace.NewJail(cfg.Workspace.Root)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("workspace init failed: %w", err)
@@ -227,7 +227,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Managed topology: bring up the Postgres + Qdrant stores via docker compose
 	// before opening them. embedded/external just run against pre-configured
-	// stores. Stores are left running on exit (persistent infra — restart the app
+	// stores. Stores are left running on exit (persistent infra - restart the app
 	// freely); tear them down with `docker compose -p quack-stores down`.
 	if cfg.Server.Managed() {
 		if err = upStores(ctx); err != nil {
@@ -262,7 +262,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// BEFORE the agents, so its App can serve as the dynamic git-credential
 	// source and its Tools() are AVAILABLE for buildAgents to resolve by name
 	// into whichever agent's config tools: list actually asks for one (see
-	// extToolsByName in buildAgents) — never force-injected onto every agent.
+	// extToolsByName in buildAgents) - never force-injected onto every agent.
 	// The webhook Runner is bound after the orchestrator exists (below).
 	var githubApp *github.App
 	var extTools []tool.Tool
@@ -283,9 +283,9 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Load skills once at startup. Skills resolve from disk in cwd first (live
 	// repo edits) then the embedded copy, so an installed binary works from any
-	// directory; the vendored ponytail library (a git submodule — see
+	// directory; the vendored ponytail library (a git submodule - see
 	// vendorSkillsDir) merges in when present. builtinSkillSrc is the raw
-	// built-in library (shipped + vendored) with no per-agent restriction — each
+	// built-in library (shipped + vendored) with no per-agent restriction - each
 	// agent gets its OWN load_skill/list_skills toolset scoped to its declared
 	// config.AgentConfig.Skills / OrchestratorConfig.Skills (buildAgents, and
 	// the orchestrator toolset built below), so an agent only sees the skills
@@ -297,7 +297,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	//
 	// skillSrc/skillTS (unscoped, full library) stay around for: the judge
 	// (it reasons about principles across the whole library, not one worker's
-	// slice — see buildAgents) and the orchestrator's static frontmatter loads
+	// slice - see buildAgents) and the orchestrator's static frontmatter loads
 	// just below (those list a skill's description in the prompt; they don't
 	// grant load_skill access on their own).
 	builtinSkillSrc := newSkillSource(vendorSkillsDir)
@@ -312,7 +312,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	}
 
 	// Semantic memory (M6): a memory tool bound to a vector store (with QUACK_QDRANT_URL
-	// set) turns it on — config composes it, no dedicated block. Task memory
+	// set) turns it on - config composes it, no dedicated block. Task memory
 	// follows `stage_memory` (researchers' recall + the trust gate's vetted
 	// commit); user memory follows `commit_memory` bound to the orchestrator. A
 	// store with no URL self-disables, so qdrant-less runs keep working.
@@ -360,8 +360,8 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// Advisor: the worker's ask_advisor mentor tool, built once here (judge's
 	// model + the agents/advisor bundle, tool-less) so buildAgents can wire it
 	// into worker bundles that list ask_advisor. nil (tool absent) when gating
-	// is off or the build fails — never fails startup. Not added to the
-	// plannable roster — it's a tool, not a DAG node.
+	// is off or the build fails - never fails startup. Not added to the
+	// plannable roster - it's a tool, not a DAG node.
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
 		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
@@ -380,7 +380,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// The DAG executor is built below (it needs the agents this call produces),
 	// but the workers' TOOLS need to ask it "was my node cancelled?" on every
-	// call — so hand buildAgents a predicate that reads the executor through a
+	// call - so hand buildAgents a predicate that reads the executor through a
 	// holder, published once startup has built it. Nothing calls a tool before
 	// the server is listening, and the atomic keeps the publish race-free.
 	var executorRef atomic.Pointer[dag.Executor]
@@ -392,10 +392,10 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// Build each declarative agent, expose it over A2A, and collect a client the
 	// DAG executor can dispatch to. Servers run for the process lifetime.
 	// The staged-delivery spine: the trust gate posts a node's staged
-	// delivery set exactly once, on judge pass — the ONE place, this whole
+	// delivery set exactly once, on judge pass - the ONE place, this whole
 	// extension, that pushes a branch or posts anything to a triggering repo.
 	// nil (no GitHub App configured) leaves gateCfg.Deliver nil, which is
-	// safe — commitDelivery simply drops whatever a worker staged.
+	// safe - commitDelivery simply drops whatever a worker staged.
 	var deliver vetting.DeliverFunc
 	if githubApp != nil {
 		deliver = func(ctx context.Context, dc vetting.DeliveryContext) ([]vetting.DeliveryItemOutcome, error) {
@@ -403,7 +403,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		}
 	}
 	// setupFn is populated by buildAgents once the git credentials/caps it needs
-	// are resolved — the deterministic twin of `deliver` above, wired onto the
+	// are resolved - the deterministic twin of `deliver` above, wired onto the
 	// executor once it exists (see executor.SetSetup below).
 	var setupFn dag.SetupFunc
 	clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, err := buildAgents(cfg, st.Sessions, skillTS, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn)
@@ -436,7 +436,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	sort.Slice(agentInfos, func(i, j int) bool { return agentInfos[i].Name < agentInfos[j].Name })
 	var rosterSB strings.Builder
 	for _, a := range agentInfos {
-		fmt.Fprintf(&rosterSB, "- `%s` — %s\n", a.Name, a.Description)
+		fmt.Fprintf(&rosterSB, "- `%s` - %s\n", a.Name, a.Description)
 	}
 
 	// Load orchestrator bundle for its system prompt.
@@ -457,7 +457,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		return nil, nil, "", fmt.Errorf("plan-work skill load failed: %w", err)
 	}
 	// When user memory is on, append the orchestrator's memory.md guidance (its
-	// "what to remember about the user" section) to its behaviour — gated the same
+	// "what to remember about the user" section) to its behaviour - gated the same
 	// way agent bundles are.
 	orchBehaviour := orchBundle.Prompt
 	if userStore != nil {
@@ -471,8 +471,8 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	}
 	orchSysPrompt := promptbuilder.Orchestrator(rosterSB.String(), []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
 
-	// The orchestrator's own load_skill scope — declarative, config/quack.yaml's
-	// orchestrator.skills — not the full library (see newScopedSkillTS above).
+	// The orchestrator's own load_skill scope - declarative, config/quack.yaml's
+	// orchestrator.skills - not the full library (see newScopedSkillTS above).
 	orchSkillTS, err := newScopedSkillTS(cfg.Orchestrator.Skills)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("orchestrator skills toolset init failed: %w", err)
@@ -495,8 +495,8 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
 	}
 
-	// Shared by every driver of a chat run — the REST handler and the GitHub
-	// webhook dispatcher — so a run started by either is visible to live
+	// Shared by every driver of a chat run - the REST handler and the GitHub
+	// webhook dispatcher - so a run started by either is visible to live
 	// subscribers of that chat, regardless of which one started it.
 	runHub := stream.NewHub()
 
@@ -542,9 +542,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
-	// per-invocation "A2A_USER_<ctxid>"), so we reuse the ONE channel that does —
+	// per-invocation "A2A_USER_<ctxid>"), so we reuse the ONE channel that does -
 	// the advisor-thread marker the gate stamps into the worker's prompt (the same
-	// channel guard.go and the workspace tools' chat scope use) — and derive the repo
+	// channel guard.go and the workspace tools' chat scope use) - and derive the repo
 	// from the chat's jail (the single clone in it; "" when there is none or several,
 	// so memory falls back to the role bucket rather than guessing).
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -590,9 +590,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		},
 	}
 	// The OS boundary every run_command / gate-check child process runs inside.
-	// Resolved HERE, once, at startup — and it either holds or the server does
+	// Resolved HERE, once, at startup - and it either holds or the server does
 	// not start: a configured-but-unusable sandbox is a hard error (the jail is
-	// a path check on the TOOLS; without this, a child — including any `sh -c` —
+	// a path check on the TOOLS; without this, a child - including any `sh -c` -
 	// had the server user's whole filesystem). `none` returns cleanly, with a
 	// WARN that says exactly what the deployment is accepting.
 	sandbox, err := workspace.ResolveSandbox(workspace.SandboxMode(cfg.Workspace.Sandbox))
@@ -601,8 +601,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	}
 	workspaceCaps.Sandbox = sandbox
 	// A dedicated $HOME for run_command/checks/git children, OUTSIDE the
-	// user's cloned repos (a sibling under their jail root — see Jail.
-	// HomeDir) — never the task's own cwd. Fixes a live bug: HOME pinned to a
+	// user's cloned repos (a sibling under their jail root - see Jail.
+	// HomeDir) - never the task's own cwd. Fixes a live bug: HOME pinned to a
 	// coding task's cwd (the target repo itself) meant `npm ci` wrote its
 	// cache directly into the repo tree, and git_commit's add_all then swept
 	// the cache up alongside the real change (1,261 garbage files in one
@@ -619,7 +619,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	var gateCfg vetting.Config
 	// safetyJudge backs the guard ladder's judge tier (internal/tools/guard.go):
 	// an independent single-shot allow/deny call reusing the SAME judge
-	// model/provider as the trust gate's judge stage (gates.judge) — see the
+	// model/provider as the trust gate's judge stage (gates.judge) - see the
 	// design doc §4b. nil when the judge stage is off; a tool configured for a
 	// judge tier then fails closed at call time (guardedTool.Run), not silently.
 	var safetyJudge tools.SafetyJudge
@@ -629,20 +629,20 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, nil, nil, nil, nil, err
 		}
 		// The trust gate commits vetted tradecraft on a judge pass (M6). nil
-		// *memory.Store when memory is off — the gate's nil check handles it.
+		// *memory.Store when memory is off - the gate's nil check handles it.
 		gateCfg.Memory = taskStore
 		// §4's per-node deterministic checks execute through the SAME jail,
-		// identity, and caps every fs/git/run_command tool call already uses —
+		// identity, and caps every fs/git/run_command tool call already uses -
 		// wired onto the BASE Config here so every gated agent's per-node copy
 		// (dag.buildGateNodes) inherits it; only Checks/Workdir vary per node.
 		gateCfg.Workspace = jail
 		gateCfg.WorkspaceUserID = localUserID
 		gateCfg.WorkspaceCaps = workspaceCaps
-		// Staged delivery: nil-safe, like Memory above — an agent whose
+		// Staged delivery: nil-safe, like Memory above - an agent whose
 		// tools never include stage_pr/stage_review/stage_comment simply never
 		// stages anything, so this is inert for every non-GitHub agent.
 		gateCfg.Deliver = deliver
-		// The allowlist every check must prefix-match — the security boundary for
+		// The allowlist every check must prefix-match - the security boundary for
 		// BOTH planner-set checks (validated at plan time) and the checks the gate
 		// derives from the repo (vetting.deriveChecks). Empty ⇒ checks disabled.
 		gateCfg.CheckCommands = cfg.Workspace.CheckCommands
@@ -653,7 +653,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// four read-only workspace tools when a jail is configured, so a coding
 		// node's judge can OPEN the files the worker wrote/changed and score code
 		// quality from the real source instead of blindly trusting the answer's
-		// self-report. Read-only by construction — never write_file/edit_file/
+		// self-report. Read-only by construction - never write_file/edit_file/
 		// delete_path/git_*/run_command; the judge must not mutate or run anything.
 		if cfg.Gates.JudgeEnabled() {
 			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
@@ -687,7 +687,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
 			// Adversarial verify (#370) reuses the SAME judge model + read tools
-			// as the primary judge — a skeptic checking a repo claim must reach
+			// as the primary judge - a skeptic checking a repo claim must reach
 			// the worker's real clone too, exactly like the primary judge (#359).
 			// gateCfg.SkepticRounds (from FromConfig) gates whether the stage
 			// actually fires; 0 leaves it a harmless unused factory.
@@ -695,7 +695,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				gateCfg.Skeptic = vetting.NewSkepticFactory(judge, judgeReadTools)
 			}
 			safetyJudge = tools.NewSafetyJudge(judge)
-			// The plan judge reuses the SAME judge model — one extra tool-less,
+			// The plan judge reuses the SAME judge model - one extra tool-less,
 			// cheap call per plan submission, piggybacked on the model already
 			// resident for node judging (see plan_judge.go).
 			planJudge = vetting.NewPlanJudge(judge)
@@ -712,13 +712,13 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	for i, gc := range cfg.Workspace.GitCredentials {
 		gitCredentials[i] = tools.GitCredential{Host: gc.Host, Username: gc.Username, Token: gc.Token}
 	}
-	// The deterministic setup executor (dag.Plan.Setup — see internal/dag/setup.go):
+	// The deterministic setup executor (dag.Plan.Setup - see internal/dag/setup.go):
 	// clone + checkout -b over the SAME jail/credentials/gitTokenSource path
 	// git_clone/PushBranch use, so its placement (workspace.SetupCloneDir) lands
 	// exactly where those tools' own paths resolve.
 	if setupOut != nil {
-		// Clone under localUserID — the SAME workspace scope every fs/git tool and
-		// commitDelivery resolve under (localUserID, lines above) — NOT the
+		// Clone under localUserID - the SAME workspace scope every fs/git tool and
+		// commitDelivery resolve under (localUserID, lines above) - NOT the
 		// run's userID. A GitHub run's userID is "github"; cloning setup under it
 		// left the clone in a different jail than the worker, so the worker saw an
 		// empty workspace, re-cloned into a subdir, and delivery then pushed from
@@ -748,7 +748,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	} else if compCfg.Enabled {
 		slog.Info("context compaction enabled", "component", "startup", "summariser", "active worker model (no fallback configured)")
 	}
-	// workerModel is the agent's OWN model, already resolved by the caller — using
+	// workerModel is the agent's OWN model, already resolved by the caller - using
 	// it as the summariser means compaction never evicts a resident model just to
 	// summarise that model's own session.
 	compactionFor := func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction {
@@ -774,7 +774,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	gateCfgs := make(map[string]vetting.Config, len(cfg.Agents)) // agent name → per-agent gate cfg (gated agents only)
 	var servers []*agent.A2AServer
 
-	// Extension tools (e.g. github_add_review_comment), keyed by name — made
+	// Extension tools (e.g. github_add_review_comment), keyed by name - made
 	// AVAILABLE to tools.Build's normal name resolution, never force-injected.
 	// An agent gets one only if its own config tools: list names it (see the
 	// loop below); empty when no extension is configured.
@@ -797,9 +797,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 
 		// External ACP coding agent (internal/acp): the bundle still supplies
 		// identity (card) and guidance (prompt.md, delivered as a per-round
-		// preamble — the subprocess owns its own system prompt); everything else
+		// preamble - the subprocess owns its own system prompt); everything else
 		// about the native path (tools, memory, skills, compaction, A2A serving)
-		// doesn't apply. It joins clientMap directly — the executor only needs
+		// doesn't apply. It joins clientMap directly - the executor only needs
 		// an adkagent.Agent, and this one implements RunNode so the gate drives
 		// it like a local worker.
 		if ac.Acp != nil {
@@ -821,7 +821,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				agentName := name
 				permJudge = func(ctx context.Context, toolName, title string, input map[string]any) (bool, string) {
 					// Every KNOWN ask class is answered deterministically in the
-					// generated opencode config (see opencodeEnv) — an ask reaching
+					// generated opencode config (see opencodeEnv) - an ask reaching
 					// here is a NOVEL one, expected to stay near zero; see quack.acp.permission_ask.
 					otelobs.RecordPermissionAsk(agentName)
 					allow, reason, err := sj(ctx,
@@ -850,11 +850,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "acp: %v", err)
 			}
 			if cfg.Gates.Enabled() && ac.IsGated() {
-				// An ACP agent's memory participation is keyed by memory_role (it
+				// An ACP agent's memory participation is keyed by memory.bucket (it
 				// has no memory.md/tools): the gate injects recall into its prompt
 				// (vetting.memoryRecall) and mines its PASSED answer for durable
-				// facts (memory.Commit's answer-extraction — staging tool not needed).
-				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && ac.MemoryRole != "")
+				// facts (memory.Commit's answer-extraction - staging tool not needed).
+				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && ac.Memory.Bucket != "")
 				if err != nil {
 					return nil, nil, servers, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 				}
@@ -902,7 +902,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, servers, nil, nil, nil, fmtErr(name, "bundle: %v", err)
 		}
 		// Memory guidance (M6): the bundle's optional memory.md. Its presence marks the
-		// agent as a memory participant — ONLY such agents get recall (preload/load_memory).
+		// agent as a memory participant - ONLY such agents get recall (preload/load_memory).
 		// Tool-less combiners (synthesizer) and media/image readers have no memory.md, so
 		// they never touch the embedder. That matters: the synthesizer's input is all
 		// upstream findings concatenated (tens of KB), and embedding that on the CPU
@@ -915,20 +915,20 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 		}
 		// The agent's recall service: a VIEW of the shared store bound to this agent's
-		// buckets — its role family + the per-node repo/user (nodeScope) — plus its own
+		// buckets - its role family + the per-node repo/user (nodeScope) - plus its own
 		// agent name as the legacy read key, so memories written under the old
 		// per-agent-silo scheme still load. nil (not a typed-nil interface) when this
 		// agent is not a memory participant.
 		var memSvc adkmemory.Service
 		if taskStore != nil && memGuidance != "" {
-			memSvc = taskStore.View(memory.Scope{Role: ac.MemoryRole, Legacy: name}, nodeScope)
+			memSvc = taskStore.View(memory.Scope{Role: ac.Memory.Bucket, Legacy: name}, nodeScope)
 			builtins = append(builtins, memory.NewPreload())
 			if wantLoadMemory {
 				builtins = append(builtins, loadmemorytool.New())
 			}
 		}
-		// Each agent gets its OWN load_skill/list_skills scope — config's
-		// agents.<name>.skills — not the full library (see newScopedSkillTS /
+		// Each agent gets its OWN load_skill/list_skills scope - config's
+		// agents.<name>.skills - not the full library (see newScopedSkillTS /
 		// internal/skillsource.Scoped): a researcher shouldn't see code-review
 		// skills, an implementer shouldn't see the planner's, etc.
 		agentSkillTS, err := newScopedSkillTS(ac.Skills)
@@ -941,7 +941,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, servers, nil, nil, nil, fmtErr(name, "build: %v", err)
 		}
 
-		// The agent is served PLAIN — the trust gate is applied per-node by the graph
+		// The agent is served PLAIN - the trust gate is applied per-node by the graph
 		// (dag.BuildWorkflow → vetting.RunGatedRefine), not wrapped around the agent.
 		// Here we only collect the per-agent gate config (base + this bundle's rubric
 		// override + memory participation) for the executor's cfgFor.
@@ -968,7 +968,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		clientMap[name] = client
 		modelMap[name] = m
-		// tools listed here is the definitive record of what the agent can call —
+		// tools listed here is the definitive record of what the agent can call -
 		// when a worker "didn't use its tool", check this line first.
 		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL, "tools", ac.Tools)
 	}
@@ -985,9 +985,9 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 	// answer-extraction still runs.
 	c.CommitMemory = memParticipant
 	// The role bucket this agent reads and writes (memory is shared, bucketed
-	// by subject — see internal/memory/scope.go).
-	c.MemoryRole = ac.MemoryRole
-	// A retrieval agent (web tools in its list) must actually retrieve — a
+	// by subject - see internal/memory/scope.go).
+	c.MemoryRole = ac.Memory.Bucket
+	// A retrieval agent (web tools in its list) must actually retrieve - a
 	// zero-activity answer hard-fails the deterministic fold instead of sailing
 	// to the judge ungraded (see vetting.Config.RequireRetrieval).
 	for _, tn := range ac.Tools {
@@ -996,7 +996,7 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 			break
 		}
 	}
-	// A read-only agent (no git_push in its tool list — a code-reviewer or
+	// A read-only agent (no git_push in its tool list - a code-reviewer or
 	// code-explorer) can never deliver, so the gate must not demand a
 	// commit/push off a task polluted with a PR's "Add …/open a PR" wording.
 	c.ReadOnly = true
@@ -1008,7 +1008,7 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 	}
 	// An external ACP agent has NO quack tools: it retrieves nothing (no web
 	// tools ⇒ RequireRetrieval stays false); whether it delivers code comes
-	// from its own config (acp.read_only — a reviewer/explorer never commits,
+	// from its own config (acp.read_only - a reviewer/explorer never commits,
 	// an implementer does). ExternalWorker turns on the gate's ground-truth
 	// probes (the git disk probe + the answer-derived staged review).
 	if ac.Acp != nil {
@@ -1030,7 +1030,7 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 	}
 	// judge: false forces JudgeRounds to 0, so the gate skips the independent
 	// judge entirely (RunGatedRefine's round loop is round <= JudgeRounds). Used
-	// where the judge model cannot evaluate the output at all — a text judge
+	// where the judge model cannot evaluate the output at all - a text judge
 	// scoring a media transcription it never saw is noise, not a check.
 	if ac.Judge != nil && !*ac.Judge {
 		c.JudgeRounds = 0
@@ -1041,7 +1041,7 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 
 // opencodeEnv generates OPENCODE_CONFIG_CONTENT for an ACP agent: its bound
 // provider/model as an opencode OpenAI-compatible provider, plus the headless
-// permission policy — everything allowed EXCEPT `git push` (delivery is
+// permission policy - everything allowed EXCEPT `git push` (delivery is
 // gate-owned: vetting.commitDelivery pushes and posts exactly once). Inert for
 // a non-opencode agent; an operator's acp.env entries are appended after this,
 // so an explicit override wins.
@@ -1064,14 +1064,14 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		}},
 		"model": "quack/" + ac.Model,
 		// Every KNOWN ask class gets a deterministic config-side answer, so
-		// no ask crosses ACP in the common path — an ask would route to the
+		// no ask crosses ACP in the common path - an ask would route to the
 		// safety judge (acp.Options.PermissionJudge), and on a 1-GPU deploy
 		// a mid-round judge call evicts the coder model (the per-step swap
 		// thrash class). The judge stays as the fallback for NOVEL asks only.
-		//   external_directory: the node's cwd is the boundary — a sibling
+		//   external_directory: the node's cwd is the boundary - a sibling
 		//     node's workspace is never legitimate; foreign repos get cloned
 		//     into cwd (deep-merged, so skills.paths allowances survive).
-		//   doom_loop: opencode's own stuck-detector asking "continue?" — no
+		//   doom_loop: opencode's own stuck-detector asking "continue?" - no
 		//     is the loop-breaker semantics; the gate judges what came back.
 		//   .env reads: secrets hygiene.
 		"permission": m{
@@ -1082,15 +1082,15 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		},
 	}
 	// quack's own skill library, discovered by opencode's skills.paths glob
-	// (**/SKILL.md — the same layout). The whole library, not the per-agent
+	// (**/SKILL.md - the same layout). The whole library, not the per-agent
 	// scoped subset: opencode loads skills agentically, and code agents seeing
 	// the full set is the acceptable ponytail trade for zero sync machinery.
 	if len(skillPaths) > 0 {
 		cfg["skills"] = m{"paths": skillPaths}
 	}
 	// ACP agent MCP servers (e.g. context7): each URL becomes one entry in
-	// opencode's native "mcp" map, keyed by a derived name — {name: {type:
-	// "remote", url, enabled}} — the shape opencode.json uses. NOT {"servers":
+	// opencode's native "mcp" map, keyed by a derived name - {name: {type:
+	// "remote", url, enabled}} - the shape opencode.json uses. NOT {"servers":
 	// [...]}, which opencode silently ignores (so the servers would never load).
 	if len(ac.Acp.McpServers) > 0 {
 		servers := m{}
@@ -1107,8 +1107,8 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 }
 
 // mcpServerName derives opencode's per-server config key from an MCP server URL
-// — the registrable domain label (e.g. "context7" from https://mcp.context7.com/mcp)
-// — falling back to mcp-<i> when the URL can't be parsed.
+// - the registrable domain label (e.g. "context7" from https://mcp.context7.com/mcp)
+// - falling back to mcp-<i> when the URL can't be parsed.
 func mcpServerName(raw string, i int) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" {
@@ -1122,7 +1122,7 @@ func mcpServerName(raw string, i int) string {
 }
 
 // acpSkillPaths are the on-disk skill roots handed to an ACP agent's
-// skills.paths — the shipped skills/ dir and the vendored ponytail library,
+// skills.paths - the shipped skills/ dir and the vendored ponytail library,
 // absolute (the subprocess cwd is the node dir, not the server's). A root
 // missing on disk (embedded-only deploys) is simply skipped; opencode also
 // warns-and-continues on a missing path, so this can never fail a run.
@@ -1165,7 +1165,7 @@ func fmtErr(agentName, format string, args ...any) error {
 // Two names are gated on runtime availability rather than erroring when their
 // dependency is off, so one config file describes every topology:
 // - stage_memory needs a task-memory store (taskMemAvailable).
-// - ask_advisor needs the advisor agent to consult (advisorAvailable) —
+// - ask_advisor needs the advisor agent to consult (advisorAvailable) -
 // built only when gates.judge is enabled (see build's advisorAgent).
 func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bool) (names []string, wantLoadMemory bool) {
 	names = make([]string, 0, len(configured))

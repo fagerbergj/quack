@@ -312,6 +312,6 @@ func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
 		}
 	}
 	if !gotImage {
-		t.Fatal("describeEvent dropped the image part — the vision model never sees it")
+		t.Fatal("describeEvent dropped the image part - the vision model never sees it")
 	}
 }

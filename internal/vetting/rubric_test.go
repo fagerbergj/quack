@@ -10,7 +10,7 @@ import (
 // TestCleanOutputRubricCatchesDeliberation pins issue #301: every clean_output
 // criterion must fail visible deliberation (self-correction, an abandoned
 // draft, a snippet rewritten more than once), not just preamble/trailing
-// narration — the gap that let the #252 plan comment (three rewrites of the
+// narration - the gap that let the #252 plan comment (three rewrites of the
 // same webhook.go snippet, narrated with "let me reconsider") pass unscored.
 // The judge itself is a live LLM call and can't run here, so this pins the
 // deterministic rubric text across the default rubric AND every bundle
@@ -35,13 +35,13 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 
 		i := strings.Index(rubric, "`clean_output`")
 		if i < 0 {
-			continue // rubric doesn't define clean_output — nothing to pin.
+			continue // rubric doesn't define clean_output - nothing to pin.
 		}
 		checked++
 
 		t.Run(path, func(t *testing.T) {
 			// Isolate the clean_output section so markers can't match a
-			// different criterion, then collapse whitespace — the prose wraps
+			// different criterion, then collapse whitespace - the prose wraps
 			// mid-phrase, so multi-word markers must match across line breaks.
 			section := rubric[i:]
 			if j := strings.Index(section[1:], "\n### `"); j >= 0 {

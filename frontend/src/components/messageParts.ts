@@ -1,9 +1,9 @@
 // The data model for an assistant message under the flat, agent-centric event
 // model. The DAG (nodes) is the static structure; within each node the gate runs
-// a SEQUENCE of agent invocations ("runs") — the worker draft, optional
+// a SEQUENCE of agent invocations ("runs") - the worker draft, optional
 // self-refine, each judge round, each revision. Every run is delimited by
 // agent_start / agent_complete and carries a run_id + stage; its activity
-// references that run_id. We key everything by run_id and pair tools by call_id —
+// references that run_id. We key everything by run_id and pair tools by call_id -
 // no open-container heuristics. No JSX here so this stays trivially testable;
 // rendering lives in AgentParts.tsx / DagNode.tsx.
 
@@ -90,7 +90,7 @@ export function startRun(runs: AgentRun[], r: { runId: string; agent: string; st
 
 // appendRunThinking adds reasoning to a run, coalescing with a trailing thinking item.
 // Mutates run.activity in place (push / index-assign) rather than spreading the
-// whole array — an event's cost is O(1) amortized, not O(run length), so a run
+// whole array - an event's cost is O(1) amortized, not O(run length), so a run
 // with N events stays O(N) total instead of O(N²) (#379). The run itself still
 // gets a new object identity (below) so callers keep seeing a fresh reference.
 export function appendRunThinking(runs: AgentRun[], runId: string, text: string): AgentRun[] {
@@ -115,7 +115,7 @@ export function appendRunToolCall(runs: AgentRun[], runId: string, callId: strin
 
 // fillRunToolResult attaches a result to the matching pending tool call (by
 // call_id, falling back to the most recent pending call of the same name).
-// Mutated in place (see appendRunThinking) — only the matched slot is replaced.
+// Mutated in place (see appendRunThinking) - only the matched slot is replaced.
 export function fillRunToolResult(runs: AgentRun[], runId: string, callId: string, name: string, result: unknown): AgentRun[] {
   return mapRun(runs, runId, run => {
     let idx = -1
@@ -167,7 +167,7 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
 
 // showLiveSpinner decides whether the live (streaming) turn shows the "thinking"
 // dots: it's streaming and nothing visible has arrived yet. Keyed on VISIBLE
-// content (DAG, answer text, or visible activity) — NOT run count: the
+// content (DAG, answer text, or visible activity) - NOT run count: the
 // orchestrator's top-level run is created empty on the first stream event (to
 // hold its plan/execute tool calls), so a run-count check hides the dots during
 // the gap before the plan appears (regression fixed 2026-06).

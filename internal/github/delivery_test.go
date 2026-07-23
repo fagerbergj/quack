@@ -104,7 +104,7 @@ func runGitTest(t *testing.T, dir string, args ...string) string {
 }
 
 // TestDeliverVerifiesPushAgainstGitHub pins a `git push` that exits 0
-// is not proof the branch landed — Deliver must confirm the branch's head
+// is not proof the branch landed - Deliver must confirm the branch's head
 // against GitHub's OWN state before opening/updating anything, and fail
 // closed (no PR, no summary claiming success) when it doesn't match.
 func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
@@ -156,7 +156,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 			t.Errorf("error = %v; want it to explain the head mismatch", err)
 		}
 		if prOpened {
-			t.Error("a PR was opened despite failed push verification — must fail closed, never claim delivery")
+			t.Error("a PR was opened despite failed push verification - must fail closed, never claim delivery")
 		}
 		d, ok := takeDeliveryDetail("chat-push-fail")
 		if !ok || d.err == nil {
@@ -294,7 +294,7 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 }
 
 // A review on a PR quack authored can't carry an approve/request_changes
-// verdict (GitHub 422s an author approving their own PR) — but a COMMENT-event
+// verdict (GitHub 422s an author approving their own PR) - but a COMMENT-event
 // review IS allowed, and #513 pins that it must still carry the findings as
 // real inline comments[], not flattened text.
 func TestDeliverReviewOnOwnPRIsCommentNoVerdict(t *testing.T) {
@@ -355,7 +355,7 @@ func TestDeliverReviewOnOwnPRIsCommentNoVerdict(t *testing.T) {
 
 // TestDeliverReviewOnOwnPRStripsVerdictTail pins #482: the raw ACP reviewer
 // answer carries a machine-parseable VERDICT/FINDINGS tail (for
-// augmentFromAnswer) and sometimes a fallback-format preamble — neither
+// augmentFromAnswer) and sometimes a fallback-format preamble - neither
 // belongs in the human-facing own-PR review body.
 func TestDeliverReviewOnOwnPRStripsVerdictTail(t *testing.T) {
 	var reviewBody []byte
@@ -420,7 +420,7 @@ func TestDeliverReviewOnOwnPRStripsVerdictTail(t *testing.T) {
 }
 
 // An external (ACP) reviewer's staged review carries gate-parsed inline
-// comments and no ledger PR number — delivery posts the comments and recovers
+// comments and no ledger PR number - delivery posts the comments and recovers
 // the PR from the GitHub-dispatched chat id.
 func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 	var reviewBody []byte
@@ -445,7 +445,7 @@ func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 
 	dc := vetting.DeliveryContext{
 		GatePassed: true,
-		ChatID:     "github-acme-widgets-7", // the webhook dispatch session id — the PR number source
+		ChatID:     "github-acme-widgets-7", // the webhook dispatch session id - the PR number source
 		CloneURL:   "https://github.com/acme/widgets.git",
 		Items: []vetting.StagedDelivery{{
 			Kind: "review", Event: "request_changes", Body: "two blockers",
@@ -472,7 +472,7 @@ func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 
 // TestDeliverReviewNeverPushesBranch pins #452: a review-only delivery whose
 // context carries a Branch + CloneDir (a setup-provisioned reviewer node always
-// does) must NOT push — a review lands on the existing PR via the API. Before
+// does) must NOT push - a review lands on the existing PR via the API. Before
 // the stagesPush guard, Deliver force-pushed the reviewer's (base-HEAD) branch,
 // resetting the reviewed PR and wiping its commits. CloneDir here is a non-git
 // dir: the OLD code would try to push it and error; the fix skips push entirely.
@@ -490,7 +490,7 @@ func TestDeliverReviewNeverPushesBranch(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
 			io.WriteString(w, `{"id":9,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-9"}`)
 		case strings.Contains(r.URL.Path, "/git/ref/"):
-			// The push-verify endpoint — reaching it means a push was attempted.
+			// The push-verify endpoint - reaching it means a push was attempted.
 			t.Errorf("review delivery must never push/verify a branch, got %s %s", r.Method, r.URL.Path)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -500,7 +500,7 @@ func TestDeliverReviewNeverPushesBranch(t *testing.T) {
 		GatePassed: true,
 		ChatID:     "github-acme-widgets-7",
 		CloneURL:   "https://github.com/acme/widgets.git",
-		CloneDir:   t.TempDir(), // set, as a real reviewer node's is — must still not push
+		CloneDir:   t.TempDir(), // set, as a real reviewer node's is - must still not push
 		Branch:     "some-pr-branch",
 		Items:      []vetting.StagedDelivery{{Kind: "review", Event: "approve", Body: "looks good"}},
 	}

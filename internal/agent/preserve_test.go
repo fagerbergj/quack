@@ -51,7 +51,7 @@ func TestRetentionHoldsSeveralFilesNotJustOne(t *testing.T) {
 		}
 	}
 	if held < 3 {
-		t.Fatalf("tail holds %d full source files; want at least 3 — an implementer must hold the file it is "+
+		t.Fatalf("tail holds %d full source files; want at least 3 - an implementer must hold the file it is "+
 			"editing, the file it is calling, and its test at the same time", held)
 	}
 }

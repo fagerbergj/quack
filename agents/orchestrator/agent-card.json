@@ -19,7 +19,7 @@
     {
       "id": "format_markdown",
       "name": "Format Markdown",
-      "description": "Reformats a Markdown document for clean visual rendering — consistent whitespace, heading hierarchy, scannability, and formatting consistency. Applied to direct-answer responses before returning them to the user.",
+      "description": "Reformats a Markdown document for clean visual rendering - consistent whitespace, heading hierarchy, scannability, and formatting consistency. Applied to direct-answer responses before returning them to the user.",
       "tags": ["formatting", "markdown"],
       "examples": [
         "Clean up this markdown output",

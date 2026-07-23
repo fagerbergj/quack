@@ -21,7 +21,7 @@ import (
 // WebhookPath is where the inbound webhook receiver is mounted.
 const WebhookPath = "/api/v1/github/webhook"
 
-// runUserID is the identity webhook-driven runs persist under — distinct from
+// runUserID is the identity webhook-driven runs persist under - distinct from
 // the local UI's "local" user, so App runs keep their own sessions.
 const runUserID = "github"
 
@@ -31,7 +31,7 @@ const runUserID = "github"
 const defaultRunTimeout = 2 * time.Hour
 
 // reactionTimeout bounds the deterministic 👀 acknowledgment reaction on a
-// mention — a quick, best-effort POST that must not linger.
+// mention - a quick, best-effort POST that must not linger.
 const reactionTimeout = 10 * time.Second
 
 // Runner is the subset of the orchestrator the webhook needs: dispatch a run
@@ -43,7 +43,7 @@ type Runner interface {
 	// after a run drains.
 	LatestAnswer(ctx context.Context, userID, sessionID string) string
 	// ResetSession deletes sessionID's stored history so the next Run starts a
-	// fresh segment — dispatch calls this for a LABEL-driven work request
+	// fresh segment - dispatch calls this for a LABEL-driven work request
 	// (quack:implement/quack:review/quack:plan), never for a conversational
 	// @mention, which needs full history for continuity (T4 session hygiene).
 	ResetSession(ctx context.Context, userID, sessionID string) error
@@ -61,7 +61,7 @@ type Extension struct {
 	// allowedUsers is the invoker allowlist (github.allowed_users), lower-cased
 	// for case-insensitive matching. Empty = deny every human-invoked trigger
 	// (config.applyDefaults already warned at startup). Never consulted for the
-	// synthetic pr_opened/label auto-review — see isInvokerAllowed's callers.
+	// synthetic pr_opened/label auto-review - see isInvokerAllowed's callers.
 	allowedUsers map[string]bool
 	runner       Runner
 	store        *store.Store     // nil in tests that don't need URL persistence
@@ -69,7 +69,7 @@ type Extension struct {
 	eventLog     *runlog.EventLog // nil when store is nil (no durable persistence to do)
 	// runLocks serialises dispatches per PR session: a follow-up (or a rapid
 	// re-label) that arrives while a run on the same PR is in flight WAITS instead
-	// of running concurrently on the same session — concurrent runs on one session
+	// of running concurrently on the same session - concurrent runs on one session
 	// corrupt each other (garbled answers, cross-run tool events). sessionID →
 	// *sync.Mutex.
 	runLocks sync.Map
@@ -92,7 +92,7 @@ func (e *Extension) sessionLock(sessionID string) *sync.Mutex {
 // NewExtension wraps an already-built App (serve constructs the App early so it
 // can also serve as the git-credential source before the orchestrator exists)
 // with the webhook config and a Runner. hub is the *stream.Hub shared with the
-// REST handler (nil gets a private one) — so a webhook-dispatched run's events
+// REST handler (nil gets a private one) - so a webhook-dispatched run's events
 // reach a browser watching that chat, same as any UI-initiated run's would.
 func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st *store.Store, hub *stream.Hub) *Extension {
 	cfgTriggers := cfg.Triggers
@@ -155,7 +155,7 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 }
 
 // isInvokerAllowed reports whether login is in the configured allowlist
-// (case-insensitive). An empty allowlist denies everyone — the secure default;
+// (case-insensitive). An empty allowlist denies everyone - the secure default;
 // config.applyDefaults already warned about it at startup. Only human-invoked
 // triggers (a mention comment, a workflow label applied by a person) call this;
 // the synthetic pr_opened/label auto-review has no human invoker and must
@@ -165,7 +165,7 @@ func (e *Extension) isInvokerAllowed(login string) bool {
 }
 
 // App exposes the underlying auth so the caller can wire it as the git-credential
-// source (tools.GitTokenSource) — the App itself implements GitCredential.
+// source (tools.GitTokenSource) - the App itself implements GitCredential.
 func (e *Extension) App() *App { return e.app }
 
 func (e *Extension) Name() string       { return "github" }

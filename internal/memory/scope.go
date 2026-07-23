@@ -12,11 +12,11 @@ import (
 // to a bucket describing WHAT IT IS ABOUT; an agent reads the union of the buckets
 // it is entitled to:
 //
-//	repo:<repo>   the repository being worked on — conventions, build/test/lint
+//	repo:<repo>   the repository being worked on - conventions, build/test/lint
 //	              commands, reference features, registration points, pre-existing
 //	              failures. Read AND written by every coding agent (explorer,
 //	              implementer, reviewer): what one learns, the next one gets.
-//	role:<family> a role family's durable tradecraft ("coding" | "research") —
+//	role:<family> a role family's durable tradecraft ("coding" | "research") -
 //	              how to do the job, independent of any one repo.
 //	user:<id>     facts about the user. Read by everyone acting for that user.
 //
@@ -38,17 +38,17 @@ const (
 // buckets its writes may land in. The zero value entitles nothing.
 type Scope struct {
 	// Repo identifies the repository the node is working in ("github.com/acme/games").
-	// Empty when the deployment/node has no repo context — writes then fall back to
+	// Empty when the deployment/node has no repo context - writes then fall back to
 	// the role bucket rather than guessing a key.
 	Repo string
 	// Role is the caller's role family (RoleCoding | RoleResearch); empty = none.
 	Role string
 	// User is the real user id; empty = unknown (behind A2A the per-invocation
-	// "A2A_USER_<ctxid>" is NOT a user id — resolve the real one or leave it empty).
+	// "A2A_USER_<ctxid>" is NOT a user id - resolve the real one or leave it empty).
 	User string
 	// Legacy is the pre-bucket scope key this caller owned: the agent name (task
 	// memory) or the raw user id (user memory). Read-only, so memories written
-	// before the bucket model still load. No migration, nothing lost — and nothing
+	// before the bucket model still load. No migration, nothing lost - and nothing
 	// new is ever written here.
 	Legacy string
 }
@@ -71,7 +71,7 @@ func (s Scope) Buckets() []string {
 
 // writeBucket returns the bucket key a memory tagged `kind` (repo|role|user, or ""
 // for the default) is WRITTEN to. A bucket the caller has no key for degrades to
-// the next-broadest one it does — repo → role → user — so a deployment with no repo
+// the next-broadest one it does - repo → role → user - so a deployment with no repo
 // context still remembers instead of dropping the write. Never writes to Legacy.
 func (s Scope) writeBucket(kind string) string {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
@@ -107,12 +107,12 @@ func prefixed(kind, key string) string {
 
 // View is one caller's read view of a Store: a Store bound to a Scope, implementing
 // adkmemory.Service so ADK's preload_memory / load_memory resolve through it. The
-// Store itself is shared by every agent — the View is what makes a caller see only
+// Store itself is shared by every agent - the View is what makes a caller see only
 // its own buckets.
 //
 // base carries what is known at build time (the agent's role family + its legacy
-// agent-name scope). resolve, when set, supplies what is only knowable per call —
-// the repo the node is working in and the real user id — from the invocation's
+// agent-name scope). resolve, when set, supplies what is only knowable per call -
+// the repo the node is working in and the real user id - from the invocation's
 // context (see internal/serve). It may return the zero Scope: a caller with no repo
 // context still reads its role and legacy buckets.
 type View struct {

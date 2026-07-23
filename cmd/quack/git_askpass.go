@@ -16,14 +16,14 @@ import (
 // <workspace root>/.quack-askpass -> the quack binary and set
 // GIT_ASKPASS=<that symlink>; main() sees isGitAskpassInvocation() and lands
 // here BEFORE cobra. This is required because git execs $GIT_ASKPASS
-// DIRECTLY as one program path with the prompt as its single argument —
+// DIRECTLY as one program path with the prompt as its single argument -
 // there is no shell splitting, so a "<binary> <subcommand>" value is
 // unexecutable (a live failure once shipped exactly that way: git looked for
 // a file literally named "quack git-askpass").
 //
 // Git's two-call protocol: it invokes askpass once with a
 // "Username for '<url>':" prompt and once with "Password for '<url>':". The
-// prompt argument tells us which — username prompts get the configured
+// prompt argument tells us which - username prompts get the configured
 // username, everything else gets the token (tools.GitAskpassAnswer). Both
 // values arrive via env vars quack sets ONLY on the git child process (never
 // the long-lived server), so no secret ever touches disk or the server's own

@@ -18,7 +18,7 @@ function dag(nodeAnswer: Record<string, string>): DagTurnState {
   }
 }
 
-describe('shouldQueueSubmit — Composer send decision', () => {
+describe('shouldQueueSubmit - Composer send decision', () => {
   it('queues while the chat is streaming', () => {
     expect(shouldQueueSubmit(true)).toBe(true)
   })
@@ -31,9 +31,9 @@ describe('shouldQueueSubmit — Composer send decision', () => {
 // Regression: the answer bubble briefly showed the orchestrator's mid-processing
 // narration (top-level `live.text`) before flipping to the terminal node's real
 // answer once it arrived. The fix is that a DAG turn's answer text is ALWAYS the
-// terminal node's nodeAnswer — orchestrator narration must never occupy it, even
+// terminal node's nodeAnswer - orchestrator narration must never occupy it, even
 // as a fallback while the node answer is still empty.
-describe('liveDagFinalText — no mid-stream flip to orchestrator narration', () => {
+describe('liveDagFinalText - no mid-stream flip to orchestrator narration', () => {
   it("is empty while the terminal node's answer hasn't arrived yet, even with orchestrator narration present", () => {
     const d = dag({})
     expect(liveDagFinalText(d)).toBe('')
@@ -46,7 +46,7 @@ describe('liveDagFinalText — no mid-stream flip to orchestrator narration', ()
 })
 
 // This mirrors the `liveText` selection in Chat.tsx: for a DAG turn it must be
-// exactly liveDagFinalText(dag) — never `|| liveTopText`, which is what caused
+// exactly liveDagFinalText(dag) - never `|| liveTopText`, which is what caused
 // the flicker (narration shown, then replaced by the real answer).
 describe('liveText selection (Chat.tsx local formula)', () => {
   function liveText(liveDag: DagTurnState | undefined, liveTopText: string): string {
@@ -98,7 +98,7 @@ describe('chatGitHubLink', () => {
 // EditableChatTitle drives the header's click-to-edit rename affordance
 // (0.9.0): clicking the title swaps in an input; Enter/blur commits a real
 // change via onRename (the caller wires this to api.renameChat + a store
-// update), Escape cancels, and a blank/unchanged draft is a silent no-op —
+// update), Escape cancels, and a blank/unchanged draft is a silent no-op -
 // never a rename to an empty title.
 describe('EditableChatTitle', () => {
   let root: ReturnType<typeof createRoot> | undefined
@@ -112,7 +112,7 @@ describe('EditableChatTitle', () => {
   })
 
   // setInputValue goes through the native setter (bypassing React's value
-  // tracker) so the subsequent 'input' event is seen as a real change —
+  // tracker) so the subsequent 'input' event is seen as a real change -
   // setting .value directly is a no-op from React's perspective.
   function setInputValue(input: HTMLInputElement, value: string) {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!

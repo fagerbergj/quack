@@ -68,7 +68,7 @@ func newFailingPathTool(t *testing.T, calls *int, fail func(pathArgs) bool) runn
 
 // Semantic churn: consecutive calls against the same path, each with a
 // different `note` (never byte-identical args, so the exact-match guard never
-// trips), all fail — once pathFailThreshold (3) of them have run and failed,
+// trips), all fail - once pathFailThreshold (3) of them have run and failed,
 // the next attempt is refused before the tool even runs.
 func TestRepeatGuardCatchesSemanticChurn(t *testing.T) {
 	calls := 0
@@ -100,7 +100,7 @@ func TestRepeatGuardCatchesSemanticChurn(t *testing.T) {
 	}
 }
 
-// Genuinely different calls — different resources, or a call that succeeds —
+// Genuinely different calls - different resources, or a call that succeeds -
 // are never caught: failures against different paths don't share a streak,
 // and a success resets the streak for its own path.
 func TestRepeatGuardResourceFailAllowsGenuineDifference(t *testing.T) {
@@ -191,7 +191,7 @@ func TestRepeatGuardRefusesThirdIdenticalCall(t *testing.T) {
 }
 
 // Different args, a different tool in between, or a different session all
-// reset consecutiveness — A,B,A is not a repeat.
+// reset consecutiveness - A,B,A is not a repeat.
 func TestRepeatGuardResets(t *testing.T) {
 	calls := 0
 	states := newRepeatStates()
@@ -199,7 +199,7 @@ func TestRepeatGuardResets(t *testing.T) {
 	rg := g.(*repeatGuard)
 	ctx := newRepeatCtx("s1")
 
-	// A, A, B, A, A: never three consecutive identical — all run.
+	// A, A, B, A, A: never three consecutive identical - all run.
 	seq := []map[string]any{
 		{"q": "a"}, {"q": "a"}, {"q": "b"}, {"q": "a"}, {"q": "a"},
 	}

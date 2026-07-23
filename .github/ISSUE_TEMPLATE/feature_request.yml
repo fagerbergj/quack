@@ -1,5 +1,5 @@
 name: Feature / change request
-description: A new capability or behavioural change — spec-shaped so it can be planned.
+description: A new capability or behavioural change - spec-shaped so it can be planned.
 labels: ["feature-request"]
 body:
   - type: markdown
@@ -10,7 +10,7 @@ body:
     id: problem
     attributes:
       label: Problem
-      description: The concrete motivation — what's missing or wrong today, and why it matters. Not a solution yet.
+      description: The concrete motivation - what's missing or wrong today, and why it matters. Not a solution yet.
       placeholder: "Code agents can't carry a repo's conventions across PRs because …"
     validations:
       required: true
@@ -18,7 +18,7 @@ body:
     id: scope
     attributes:
       label: In scope
-      description: What this change should do. Prefer **reuse or extend** an existing seam over adding new machinery — name the code it should build on.
+      description: What this change should do. Prefer **reuse or extend** an existing seam over adding new machinery - name the code it should build on.
       placeholder: |
         - Add …
         - Rides on the existing `MemoryScope` / `repo:` bucket (internal/memory/scope.go)
@@ -28,7 +28,7 @@ body:
     id: out-of-scope
     attributes:
       label: Out of scope
-      description: What this explicitly does NOT cover — keeps the change bounded and the review honest.
+      description: What this explicitly does NOT cover - keeps the change bounded and the review honest.
       placeholder: "- Cross-repo memory\n- Changing the vector backend"
     validations:
       required: false
@@ -44,7 +44,7 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria / test cases
-      description: How we'll know it's done — 2–3 concrete input → output cases. These become the tests; behavioural drift is a failing test, not an incident.
+      description: How we'll know it's done - 2–3 concrete input → output cases. These become the tests; behavioural drift is a failing test, not an incident.
       placeholder: |
         1. Stage a convention in chat A → recall it in chat B on the same repo.
         2. Different repo → does NOT see it.
@@ -68,21 +68,21 @@ body:
     attributes:
       label: Priority
       options:
-        - "high — do next"
-        - "medium — soon"
-        - "low — nice to have"
+        - "high - do next"
+        - "medium - soon"
+        - "low - nice to have"
     validations:
       required: false
   - type: dropdown
     id: complexity
     attributes:
       label: Complexity / design
-      description: Design-heavy work should be human-led — a maintainer will add `needs-design` and NOT `quack:implement` it blindly.
+      description: Design-heavy work should be human-led - a maintainer will add `needs-design` and NOT `quack:implement` it blindly.
       options:
-        - "low — small, contained"
-        - "medium — several files / moderate design"
-        - "high — cross-cutting / large surface"
-        - "design-heavy — needs a human-led design pass first"
+        - "low - small, contained"
+        - "medium - several files / moderate design"
+        - "high - cross-cutting / large surface"
+        - "design-heavy - needs a human-led design pass first"
     validations:
       required: false
   - type: checkboxes

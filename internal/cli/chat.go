@@ -141,8 +141,8 @@ func (f chatListFilters) keep(c schema.ChatSummary) bool {
 // origin, ref, updated), or raw JSON with --json. STATUS is one of the five
 // ChatStatus values (queued/running/needs_input/failed/idle) so the row is
 // grep-able (`grep needs_input`); the pending question itself is `chat
-// show`/--json's job — this table stays narrow. filters narrows by origin,
-// status, github repo, and issue/PR type — a chat must pass every active one
+// show`/--json's job - this table stays narrow. filters narrows by origin,
+// status, github repo, and issue/PR type - a chat must pass every active one
 // (mirrors the web sidebar's facet filtering). Empty list points at the next step.
 func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool, filters chatListFilters) error {
 	if err := filters.validate(); err != nil {
@@ -172,7 +172,7 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 			fmt.Fprintln(out, "No chats match the given filters.")
 			return nil
 		}
-		fmt.Fprintln(out, "No chats yet — start one with `quack chat new`.")
+		fmt.Fprintln(out, "No chats yet - start one with `quack chat new`.")
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
@@ -187,7 +187,7 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 	return tw.Flush()
 }
 
-// RunChatNew is `quack chat new`: create a chat and print its id to stdout —
+// RunChatNew is `quack chat new`: create a chat and print its id to stdout -
 // create-only, no TUI, no first-message send (that's `chat send`/`-p`'s job,
 // one send path).
 func RunChatNew(ctx context.Context, out io.Writer, server string) error {
@@ -205,7 +205,7 @@ func RunChatNew(ctx context.Context, out io.Writer, server string) error {
 
 // RunChatExport is `quack chat export <id>`: a readable transcript, or raw JSON
 // with --json. The transcript pairs each turn's user input with the assistant's
-// message text (DAG/activity items are omitted — use --json for the full record).
+// message text (DAG/activity items are omitted - use --json for the full record).
 func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
 	c, err := NewClient(server)
 	if err != nil {
@@ -281,12 +281,12 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 	if err := c.PauseNode(ctx, chatID, nodeID); err != nil {
 		return notFoundAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Paused node %s (chat %s) — resume it with `quack chat node resume %s %s`.\n", nodeID, chatID, chatID, nodeID)
+	fmt.Fprintf(out, "Paused node %s (chat %s) - resume it with `quack chat node resume %s %s`.\n", nodeID, chatID, chatID, nodeID)
 	return nil
 }
 
 // RunNodeResume is `quack chat node resume <chat-id> <node-id>`: resume a
-// PAUSED node — a fresh re-run (like retry), reusing the rest of the plan's
+// PAUSED node - a fresh re-run (like retry), reusing the rest of the plan's
 // stored outputs. Watch it with `chat show -f`.
 func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
 	c, err := NewClient(server)
@@ -296,13 +296,13 @@ func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID st
 	if err := c.ResumeNode(ctx, chatID, nodeID); err != nil {
 		return notFoundAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Resuming node %s (chat %s) — watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
+	fmt.Fprintf(out, "Resuming node %s (chat %s) - watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
 	return nil
 }
 
 // RunNodeQueue is `quack chat node queue <chat-id> <node-id> <message>`:
 // append a message to a RUNNING node's queue, delivered at its next turn
-// boundary (never mid-turn) — replaces the old interrupt-based steer.
+// boundary (never mid-turn) - replaces the old interrupt-based steer.
 func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, message string) error {
 	c, err := NewClient(server)
 	if err != nil {
@@ -312,7 +312,7 @@ func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, me
 	if err != nil {
 		return notFoundAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Queued message %s for node %s (chat %s) — delivered at its next turn boundary.\n", m.Id, nodeID, chatID)
+	fmt.Fprintf(out, "Queued message %s for node %s (chat %s) - delivered at its next turn boundary.\n", m.Id, nodeID, chatID)
 	return nil
 }
 
@@ -346,7 +346,7 @@ func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, node
 
 // RunNodeEditTask is `quack chat node edit <chat-id> <node-id> <task>`:
 // replace a not-yet-started node's prompt. Errors (409) once the node has
-// started — its prompt is then immutable.
+// started - its prompt is then immutable.
 func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID, task string) error {
 	c, err := NewClient(server)
 	if err != nil {
@@ -370,7 +370,7 @@ func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, gu
 	if err := c.RetryNode(ctx, chatID, nodeID, guidance); err != nil {
 		return notFoundAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Retrying node %s (chat %s) — watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
+	fmt.Fprintf(out, "Retrying node %s (chat %s) - watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
 	return nil
 }
 
@@ -418,7 +418,7 @@ func AssistantText(items []schema.OutputItem) string {
 		for _, part := range m.Content {
 			// OutputTextPart and ReasoningPart share the same {text, type}
 			// shape, so AsOutputTextPart() unmarshals a reasoning part
-			// without error too — check the discriminator first, or the
+			// without error too - check the discriminator first, or the
 			// orchestrator's raw chain-of-thought leaks in as if it were
 			// the answer (#419).
 			disc, err := part.Discriminator()
@@ -453,7 +453,7 @@ func confirm(out io.Writer, in io.Reader, prompt string) (bool, error) {
 	fmt.Fprintf(out, "%s [y/N] ", prompt)
 	var answer string
 	if _, err := fmt.Fscanln(in, &answer); err != nil {
-		// Fscanln errors on a blank line / EOF — treat as "no", not a failure.
+		// Fscanln errors on a blank line / EOF - treat as "no", not a failure.
 		return false, nil
 	}
 	answer = strings.ToLower(strings.TrimSpace(answer))

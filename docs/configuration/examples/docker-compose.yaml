@@ -1,0 +1,146 @@
+# Local, full stack via `docker compose up --build` (../../../docker-compose.yml
+# + .env.example at the repo root). Values below are shown RESOLVED — the actual
+# shipped config/quack.yaml keeps every one of these as an ${ENV_VAR} reference
+# and docker-compose.yml's `environment:` block fills them in; this file just
+# shows what that resolves to, for readability. See ../deployment.md.
+
+providers:
+  default:
+    kind: openai
+    endpoint: http://host.docker.internal:11436/v1   # reaches an LLM server on the host from inside the container
+    api_key: unused
+
+stores:
+  default_postgres:
+    kind: postgres
+    url: postgres://quack:quack@db:5432/quack?sslmode=disable   # the `db` service in docker-compose.yml
+  default_vector:
+    kind: qdrant
+    url: qdrant:6334                                  # the `qdrant` service; gRPC port
+    embedder:
+      provider: default
+      model: qwen3-embed
+    consolidation:
+      provider: default
+      model: gemma4-26b-a4b                            # reuse the always-warm judge model
+    top_k: 5
+    min_score: 0.5
+
+session:
+  store: default_postgres
+  compaction:
+    enabled: true
+    provider: default
+    model: gemma4-26b-a4b
+
+orchestrator:
+  skills: [plan-work, format-markdown, present-coding-plan, contribute]
+  provider: default
+  model: qwen3.6-35b
+
+agents:
+  web-researcher:
+    bundle: agents/web-researcher
+    skills: [format-markdown, research-git-repos]
+    provider: default
+    model: qwen3.6-35b
+    context_window: 65536
+    memory:
+      bucket: research
+    judge_rounds: 1
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor]
+  code-implementer:
+    bundle: agents/code-implementer
+    provider: default
+    model: qwen3.6-35b   # falls back to the researcher model when QUACK_CODER_MODEL is unset
+    context_window: 65536
+    memory:
+      bucket: coding
+    judge_rounds: 1
+    acp:
+      command: ["opencode", "acp"]
+  code-reviewer:
+    bundle: agents/code-reviewer
+    provider: default
+    model: qwen3.6-35b
+    context_window: 65536
+    memory:
+      bucket: coding
+    judge_rounds: 1
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
+  code-explorer:
+    bundle: agents/code-explorer
+    provider: default
+    model: qwen3.6-35b
+    context_window: 65536
+    memory:
+      bucket: coding
+    judge_rounds: 2
+    acp:
+      command: ["opencode", "acp"]
+      read_only: true
+  synthesizer:
+    bundle: agents/synthesizer
+    skills: [format-markdown, present-coding-plan, pr-authoring]
+    provider: default
+    model: qwen3.6-35b
+    context_window: 65536
+    judge_rounds: 1
+    tools: []
+  media-reader:
+    bundle: agents/media-reader
+    skills: [format-markdown]
+    provider: default
+    model: qwen3-omni-30b
+    context_window: 32768
+    tools: []
+    inputs: [text, image, audio]
+    judge: false
+  image-reader:
+    bundle: agents/image-reader
+    skills: [format-markdown]
+    provider: default
+    model: qwen3-vl-32b
+    context_window: 32768
+    tools: []
+    inputs: [text, image]
+    judge: false
+
+tools:
+  web_search:
+    kind: exa
+    url: http://searxng:8080   # the `searxng` service; unused by kind: exa
+  web_fetch:
+    kind: crawl4ai
+    url: http://crawl4ai:11235   # the `crawl4ai` service
+  stage_memory:
+    store: default_vector
+    collection: task_memory
+
+gates:
+  constitution_path: config/constitution.md
+  rubric_path: config/rubric.md
+  deterministic_checks:
+    max_rounds: 4
+  judge:
+    provider: default
+    model: gemma4-26b-a4b
+    max_rounds: 1
+    threshold: 0.7
+    max_iterations: 6
+    context_window: 65536
+
+dag:
+  max_active_runs: 3
+  max_active_nodes: 2
+
+server:
+  addr: ":8080"
+  topology: external   # docker-compose brings up Postgres/qdrant itself; quack just points at them
+
+workspace:
+  root: /workspace   # the `quack-workspace` named volume in docker-compose.yml
+  sandbox: none      # the container itself is the isolation boundary for this deploy
+  check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]

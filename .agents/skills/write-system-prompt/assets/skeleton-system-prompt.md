@@ -8,9 +8,9 @@
 
 ## Mandatory Rules
 
-1. [Rule 1 — e.g., "All files must stay under 300 lines."]
-2. [Rule 2 — e.g., "Never hardcode values; use environment variables or config."]
-3. [Rule 3 — e.g., "Do not implement silent defaults — fail loudly on missing config."]
+1. [Rule 1 - e.g., "All files must stay under 300 lines."]
+2. [Rule 2 - e.g., "Never hardcode values; use environment variables or config."]
+3. [Rule 3 - e.g., "Do not implement silent defaults - fail loudly on missing config."]
 
 ## Safety & Guardrails
 
@@ -26,7 +26,7 @@
 ## Task Scope
 
 - **New development:** Be ambitious and creative within defined architecture.
-- **Code maintenance:** Be surgical — preserve style, formatting, and naming unless refactoring is the task.
+- **Code maintenance:** Be surgical - preserve style, formatting, and naming unless refactoring is the task.
 
 ## Communication Style
 

@@ -32,7 +32,7 @@ func TestPlanCacheDelivered(t *testing.T) {
 }
 
 func TestTerminalOutput(t *testing.T) {
-	// Single node — returns its output.
+	// Single node - returns its output.
 	single := dag.Plan{
 		Nodes: []dag.Node{{ID: "n1"}},
 	}
@@ -51,7 +51,7 @@ func TestTerminalOutput(t *testing.T) {
 		t.Errorf("sequential: got %q, want %q", got, "final")
 	}
 
-	// Empty outputs — returns empty string (callers check for this).
+	// Empty outputs - returns empty string (callers check for this).
 	if got := TerminalOutput(single, map[string]string{}); got != "" {
 		t.Errorf("empty outputs: got %q, want empty", got)
 	}

@@ -9,7 +9,7 @@ import (
 
 // Portability seam for tools backed by external software. Each such tool depends
 // on a small interface (a "port"), and a kind-based factory selects the concrete
-// adapter from config — so swapping the backend (a different search engine, a
+// adapter from config - so swapping the backend (a different search engine, a
 // different render service) is a config change plus one new adapter, never a
 // rewrite of the tool. Mirrors the inference.NewModel provider-kind factory.
 //
@@ -64,7 +64,7 @@ func newWebSearcher(kind, base, key string, client *http.Client) (WebSearcher, e
 		return &searxngSearcher{client: client, base: strings.TrimRight(base, "/")}, nil
 	case backendExa:
 		// key set ⇒ Exa REST (JSON); empty ⇒ keyless hosted MCP. base (url) is
-		// unused — Exa's endpoints are fixed.
+		// unused - Exa's endpoints are fixed.
 		return newExaSearcher(key, client), nil
 	default:
 		return nil, fmt.Errorf("web_search: unknown backend kind %q", kind)

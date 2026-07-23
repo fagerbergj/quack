@@ -22,7 +22,7 @@ import (
 
 // advisorAppName namespaces the advisor's own persistent sessions in the
 // shared session.Service, distinct from the "quack" app the chat/plan
-// sessions use — so an advisor SessionID can never collide with a chat's.
+// sessions use - so an advisor SessionID can never collide with a chat's.
 const advisorAppName = "quack-advisor"
 
 // advisorUserID is the fixed user for all advisor sessions. The thread token
@@ -33,47 +33,47 @@ const advisorAppName = "quack-advisor"
 // and the one that revises.
 const advisorUserID = "advisor"
 
-// askAdvisorDescription is the relationship contract — the main lever for
+// askAdvisorDescription is the relationship contract - the main lever for
 // healthy consultation frequency. Written from the mentorship research in
 // .quack/advisor-mentor-research.md (UC Berkeley/Harvard/NIH advising
 // guidance): availability + honest, direct feedback + a real memory of the
 // relationship (no re-briefing), when a good advisee consults, and what a
 // good request looks like.
 const askAdvisorDescription = "Consult your advisor: a mentor who already knows this task's goal " +
-	"and its acceptance rubric, and is always available to help you reach it — without doing the work for " +
+	"and its acceptance rubric, and is always available to help you reach it - without doing the work for " +
 	"you. The relationship works like a good academic advising relationship: honest and direct feedback " +
-	"(it will tell you plainly when an approach is off track, too broad, too narrow, or missing something — " +
+	"(it will tell you plainly when an approach is off track, too broad, too narrow, or missing something - " +
 	"not soften a real problem into vague encouragement), and a real memory of everything you've discussed " +
-	"together on this task — you never need to re-explain earlier context or re-ask a settled question.\n\n" +
+	"together on this task - you never need to re-explain earlier context or re-ask a settled question.\n\n" +
 	"Consult at these moments:\n" +
-	"- BEFORE committing to an approach — sanity-check your plan while it's still cheap to change.\n" +
+	"- BEFORE committing to an approach - sanity-check your plan while it's still cheap to change.\n" +
 	"- When the task's scope or intent is ambiguous and a second opinion would resolve it.\n" +
 	"- When you're stuck, or your searches/fetches aren't converging on an answer.\n" +
-	"- After you receive critical feedback (e.g. a failed review) — consult before revising, so your next " +
+	"- After you receive critical feedback (e.g. a failed review) - consult before revising, so your next " +
 	"attempt actually fixes the gap instead of guessing again.\n\n" +
 	"A good request is SPECIFIC: say what you're about to do (or where you're stuck) and why, not just " +
-	"\"is this good?\" — e.g. \"I'm planning to answer this by comparing three vendors' pricing pages; am I " +
+	"\"is this good?\" - e.g. \"I'm planning to answer this by comparing three vendors' pricing pages; am I " +
 	"missing an angle?\" beats \"help\".\n\n" +
-	"The advisor will not write your answer, run searches for you, or make the call for you — expect " +
+	"The advisor will not write your answer, run searches for you, or make the call for you - expect " +
 	"guidance and pointed questions back, not a finished draft. Use its advice to inform your own work; it " +
 	"is not a substitute for doing the task yourself."
 
 type askAdvisorArgs struct {
-	// Request is what you want advice on — what you're about to do (or where
+	// Request is what you want advice on - what you're about to do (or where
 	// you're stuck) and why. Be specific; see the tool description.
 	Request string `json:"request"`
 }
 
 type askAdvisorResult struct {
 	// Advice is the mentor's reply. Empty when the advisor is unavailable or
-	// the consult failed — best-effort, so the worker is never blocked on it.
+	// the consult failed - best-effort, so the worker is never blocked on it.
 	Advice string `json:"advice"`
 }
 
 // NewAskAdvisorTool returns ask_advisor: a worker consults its advisor at
 // its own discretion, as many times as it likes. Construction
 // takes the advisor agent and the shared session.Service; a nil advisor is
-// tolerated defensively (production never registers the tool in that case —
+// tolerated defensively (production never registers the tool in that case -
 // see resolveToolNames in internal/serve) and always yields empty advice.
 //
 // The handler derives the calling node's identity from the advisor-thread
@@ -81,24 +81,24 @@ type askAdvisorResult struct {
 // vetting.AdvisorThreadMarker), read back out of tc.UserContent(). That is
 // the ONLY channel that survives the production A2A hop: the tool executes
 // inside the worker's A2A server runner (internal/agent.Serve), where the
-// calling runner's session, state, NodeInfo, and branch are all invisible —
+// calling runner's session, state, NodeInfo, and branch are all invisible -
 // but the prompt IS the inbound A2A message, and UserContent is fixed before
 // the model ever runs, so the read is deterministic and race-free. The token keys a
 // persistent PER-NODE advisor session (`<plan>/<node>:advisor`), so the
 // mentor's memory survives gate rounds (draft → revision), steered re-runs,
-// and HITL pause/resume — the gate re-derives the same token from plan+node
-// every round — but never interleaves between concurrent nodes or across
+// and HITL pause/resume - the gate re-derives the same token from plan+node
+// every round - but never interleaves between concurrent nodes or across
 // plans. On a thread's first consult the session opens with the node's task +
-// acceptance rubric (from the registry dag.newGatedNode fills — see
+// acceptance rubric (from the registry dag.newGatedNode fills - see
 // vetting/advisor_thread.go), so the mentor knows the desired outcome from
 // its very first reply.
 //
 // A prompt WITHOUT a marker (the agent invoked directly, outside any gated
 // node) falls back to a per-conversation thread keyed by the calling app +
-// session — the mentor still works, it just isn't task-seeded.
+// session - the mentor still works, it just isn't task-seeded.
 //
 // Errors (a broken session store, an advisor model failure) return empty
-// advice with a logged warning — best-effort, never fails the calling worker.
+// advice with a logged warning - best-effort, never fails the calling worker.
 func NewAskAdvisorTool(advisor adkagent.Agent, sessions session.Service) (tool.Tool, error) {
 	return functiontool.New[askAdvisorArgs, askAdvisorResult](
 		functiontool.Config{
@@ -154,7 +154,7 @@ func contentText(c *genai.Content) string {
 // advisorThreadLocks serializes consults PER THREAD TOKEN. ADK executes a
 // model turn's function calls in concurrent goroutines (llminternal/
 // base_flow.go handleFunctionCalls), so one worker turn can fire two
-// ask_advisor calls at once — two runner lifecycles (Get/Create → append)
+// ask_advisor calls at once - two runner lifecycles (Get/Create → append)
 // each holding its own localSession snapshot of the SAME advisor session row.
 // Under the database service's optimistic locking the loser's append dies
 // with "stale session error", the create race dies
@@ -221,15 +221,15 @@ func consultAdvisor(ctx context.Context, advisor adkagent.Agent, sessions sessio
 }
 
 // consultOnce is a single consult attempt: check/seed the thread, run the
-// advisor in its own isolated runner (mirrors how the judge runs isolated —
+// advisor in its own isolated runner (mirrors how the judge runs isolated -
 // internal/vetting/judge.go) over a session PERSISTED in the shared store
-// (unlike the judge's throwaway in-memory one — the whole point here is that
+// (unlike the judge's throwaway in-memory one - the whole point here is that
 // the mentor remembers). Identity comes from token; seed is prepended to the
 // first prompt of a brand-new thread.
 func consultOnce(ctx context.Context, advisor adkagent.Agent, sessions session.Service, token, seed, request string) (string, error) {
 	sessID := token + ":advisor"
 
-	// A successful Get means the thread already exists — its history carries
+	// A successful Get means the thread already exists - its history carries
 	// the seed from the first consult, so don't repeat it. AutoCreateSession
 	// on the runner below does the actual Create for a new thread.
 	seedThis := seed
@@ -269,10 +269,10 @@ func consultOnce(ctx context.Context, advisor adkagent.Agent, sessions session.S
 
 // seedText builds the mentor's opening context for a brand-new advisor
 // thread: the node's task + acceptance rubric (registered by dag.newGatedNode
-// before the worker runs — the tool is built once per agent bundle at startup
+// before the worker runs - the tool is built once per agent bundle at startup
 // and shared across every node, so Task/Rubric can't be closed over at
 // construction; the registry is how the per-run value reaches it). Empty when
-// neither field is set — the advisor still runs, it just doesn't know the
+// neither field is set - the advisor still runs, it just doesn't know the
 // desired outcome up front.
 func seedText(t vetting.AdvisorTask) string {
 	if t.Task == "" && t.Rubric == "" {

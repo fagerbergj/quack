@@ -21,7 +21,7 @@ const planWrapperName = "quack-plan-graph"
 
 // buildPlanGraph wires a plan's gated nodes as a native first-class ADK graph:
 // leaves fan out from Start, single-dep nodes chain, and a node with ≥2
-// dependencies gets a JoinNode barrier ("join-<id>") in front of it — including
+// dependencies gets a JoinNode barrier ("join-<id>") in front of it - including
 // the synthesizer, whose planner-hardened depends-on-everything edge set makes it
 // the single terminal (satisfying ADK's one-terminal-output rule).
 func buildPlanGraph(plan Plan, nodesByID map[string]workflow.Node) ([]workflow.Edge, error) {
@@ -66,7 +66,7 @@ func buildPlanGraph(plan Plan, nodesByID map[string]workflow.Node) ([]workflow.E
 		}
 	}
 	if terminals > 1 {
-		return nil, fmt.Errorf("dag: plan graph: %d terminal nodes (want 1) — plan lacks a synthesizer fan-in", terminals)
+		return nil, fmt.Errorf("dag: plan graph: %d terminal nodes (want 1) - plan lacks a synthesizer fan-in", terminals)
 	}
 	return eb.Build(), nil
 }
@@ -160,7 +160,7 @@ func patchCompletedSiblings(state *workflow.RunState, sess session.Session, invo
 
 // graphNodeNameFromPath finds the graph-node name in a NodeInfo path like
 // "quack-plan-graph@1/n1@1/worker-r0@1" (segments are name@run; dynamic children
-// fold into their static ancestor — first known segment wins).
+// fold into their static ancestor - first known segment wins).
 func graphNodeNameFromPath(path string, known map[string]bool) string {
 	for _, seg := range strings.Split(path, "/") {
 		if i := strings.IndexByte(seg, '@'); i >= 0 {
@@ -176,7 +176,7 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 // RunPlanAsGraph runs a plan as a native first-class-node ADK graph under its own
 // runner: gated workers (and the synthesizer) are graph nodes, so ADK owns
 // concurrency, durable completed-node skip, and HITL parking. content is the
-// turn's trigger — the user message on a fresh run, or the adk_request_input
+// turn's trigger - the user message on a fresh run, or the adk_request_input
 // FunctionResponse on a resume (ADK reuses the paused invocation and re-enters
 // only the paused node; completed siblings skip). Node events stream through a
 // DagStream onto yield; nodeOutputs collects node ID → vetted answer.
@@ -185,7 +185,7 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 // and must not be swept as failed).
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
 	// An empty resumeNodes is exactly the fresh-run signal (every caller agrees:
-	// a resume always names the node(s) it's re-entering) — setup must run
+	// a resume always names the node(s) it's re-entering) - setup must run
 	// exactly ONCE, before the graph's first node, never again on a resume of
 	// an already-provisioned plan.
 	if len(resumeNodes) == 0 {

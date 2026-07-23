@@ -13,7 +13,7 @@ import (
 //
 // The live failure this pins: a code-explorer asked to read OpenHands, goose and
 // cloudflare/agents got 404 on EVERY clone. All three are public and clone fine with
-// no auth — but we attached an installation token scoped to the operator's own
+// no auth - but we attached an installation token scoped to the operator's own
 // account, and GitHub answers 404 for a repo that token cannot see. The tool then
 // failed hard, the agent burned turns flailing, and ended up asking the user for a PAT.
 func TestGitCredential_PublicRepoWithoutInstallation_ClonesAnonymously(t *testing.T) {

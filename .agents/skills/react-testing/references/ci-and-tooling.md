@@ -56,7 +56,7 @@ coverageThreshold: { global: { branches: 80, functions: 80, lines: 85, statement
 
 ```ts
 import '@testing-library/jest-dom';        // toBeInTheDocument, etc.
-// Jest + React 18 only — silence act() warnings:
+// Jest + React 18 only - silence act() warnings:
 global.IS_REACT_ACT_ENVIRONMENT = true;
 ```
 
@@ -68,8 +68,8 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 ## Parallelism
 
 **Vitest pools:**
-- `pool: 'threads'` (default) — worker threads share module caches; fastest, but can leak state via module singletons.
-- `pool: 'forks'` — process per file; full isolation, cold-start cost.
+- `pool: 'threads'` (default) - worker threads share module caches; fastest, but can leak state via module singletons.
+- `pool: 'forks'` - process per file; full isolation, cold-start cost.
 - `isolate: true` (default) gives each file a fresh module graph. `isolate: false` ≈ 30% faster but out-of-order failures from leaked mutations.
 
 ```ts

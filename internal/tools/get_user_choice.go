@@ -44,15 +44,15 @@ type getUserChoiceResult struct {
 //	    return None
 //	get_user_choice_tool = LongRunningFunctionTool(func=get_user_choice)
 //
-// Go ADK has no native equivalent (it ships RequireConfirmation — a typed
-// approve/deny gate — but no free-form/choice ask tool).
+// Go ADK has no native equivalent (it ships RequireConfirmation - a typed
+// approve/deny gate - but no free-form/choice ask tool).
 // TODO: replace this port with the Go-native get_user_choice once ADK
 // implements it, and drop the orchestrator's hand-rolled resume plumbing.
 //
 // The handler returns a "pending" placeholder rather than None (Go has no
 // nil for a value return); SkipSummarization ends the turn so the model does
 // not narrate over the question. The actual choice arrives on the next turn as
-// a FunctionResponse with the same call ID — the framework does NOT re-invoke
+// a FunctionResponse with the same call ID - the framework does NOT re-invoke
 // this handler on resume.
 func NewGetUserChoiceTool() (tool.Tool, error) {
 	return functiontool.New[getUserChoiceArgs, getUserChoiceResult](
@@ -60,7 +60,7 @@ func NewGetUserChoiceTool() (tool.Tool, error) {
 			Name: ChoiceToolName,
 			Description: "Asks the user a clarifying question with a set of options to choose from. " +
 				"Use when a request is genuinely ambiguous and the resolution is one of a few discrete choices " +
-				"(e.g. which 'Springfield', which interpretation) — the answer must materially change the work. " +
+				"(e.g. which 'Springfield', which interpretation) - the answer must materially change the work. " +
 				"Pass the `question` (so the options have context) and the candidate `options`; " +
 				"the user's selection is returned to you and you continue. " +
 				"Do NOT use when a sensible default exists or the task is already clear.",

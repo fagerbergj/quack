@@ -65,9 +65,9 @@ func (s *graphStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 // TestRunPlanAsGraph_HITLPauseResume is THE goal proof: a plan run as a native
 // first-class ADK graph where one researcher pauses to ask the user. Run 1: the
 // sibling completes (node_done), the asker parks (node_needs_input), the
-// synthesizer waits — nothing false-fails. Run 2 (the answer as an
+// synthesizer waits - nothing false-fails. Run 2 (the answer as an
 // adk_request_input FunctionResponse on the same session): ADK re-enters ONLY the
-// asker (the sibling durably skips — its worker never re-runs), the join settles
+// asker (the sibling durably skips - its worker never re-runs), the join settles
 // via the wrapper's state patch, and the synthesizer produces the terminal answer
 // from both outputs.
 func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
@@ -80,7 +80,7 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 	// sibling's tail event evicted this worker's own seeded prompt from its
 	// request (the stub then saw an EMPTY request and fell through to its
 	// ask_user default). Fixed for real by the per-run isolation scope in
-	// vetting.runWorkerNode — see the comment there.
+	// vetting.runWorkerNode - see the comment there.
 	mk := func(name string) adkagent.Agent {
 		a, err := llmagent.New(llmagent.Config{
 			Name: name, Model: stub, Description: name, Instruction: "ROLE:" + name + " Answer.",
@@ -130,7 +130,7 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 		return false
 	}
 
-	// ---- Run 1: fresh — parks at n1 ----
+	// ---- Run 1: fresh - parks at n1 ----
 	outputs := map[string]string{}
 	start := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}
 	paused, err := ex.RunPlanAsGraph(context.Background(), plan, "quack", "u", "chat", start, record, outputs, nil)
@@ -156,7 +156,7 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 		t.Fatalf("run1: n2 worker ran %d times, want 1", got)
 	}
 
-	// ---- Run 2: deliver the answer — only n1 + downstream re-run ----
+	// ---- Run 2: deliver the answer - only n1 + downstream re-run ----
 	mu.Lock()
 	events = nil
 	mu.Unlock()
@@ -175,7 +175,7 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 		t.Fatal("run2: should complete, not pause again")
 	}
 	if stub.plainRuns != 1 {
-		t.Errorf("run2: sibling n2 re-ran (%d total) — durable skip broken", stub.plainRuns)
+		t.Errorf("run2: sibling n2 re-ran (%d total) - durable skip broken", stub.plainRuns)
 	}
 	if stub.sawAnswer != "north" {
 		t.Errorf("run2: asker never received the user's answer (saw %q)", stub.sawAnswer)

@@ -12,7 +12,7 @@ import { fmtMs, LiveTimer } from '../utils/timer'
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/resume/cancel
 // (no popup round-trip), with "queue a message…" / "edit prompt" / "answer
 // question…" opening the popup only when they need its input/editor. Hidden
-// entirely on a terminal node (done/failed/cancelled) — nothing left to do.
+// entirely on a terminal node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
   nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup,
 }: {
@@ -99,21 +99,21 @@ function NodeMenu({
   )
 }
 
-// QueuedBadge indicates one or more not-yet-delivered queued messages —
+// QueuedBadge indicates one or more not-yet-delivered queued messages -
 // visible at a glance on the card, edited/removed in the popup.
 function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
     <span
       className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
-      title={`${count} queued message${count === 1 ? '' : 's'} — delivered at the node's next turn boundary`}
+      title={`${count} queued message${count === 1 ? '' : 's'} - delivered at the node's next turn boundary`}
     >
       ✉ {count}
     </span>
   )
 }
 
-// (Per-run "spinner" dots were removed — redundant with the node header's
+// (Per-run "spinner" dots were removed - redundant with the node header's
 // pulsing status dot, they read as a stray extra dot in run-card summaries.)
 
 // RunTimer shows a per-run elapsed timer: live while the run is open, frozen on
@@ -141,8 +141,8 @@ function RunModel({ run }: { run: AgentRun }) {
 
 // ContentPopup shows one block of prose (a judge verdict, a node's vetted
 // answer) full-size, as an extension of the main chat rather than a bespoke
-// modal — the same structure NodePopup uses (#384/#406): a light overlay, a
-// close ✕ on its own row (never overlapping the content — the maintainer just
+// modal - the same structure NodePopup uses (#384/#406): a light overlay, a
+// close ✕ on its own row (never overlapping the content - the maintainer just
 // fixed exactly that overlap on NodePopup), Escape-to-close, click-outside-to-
 // close, and the content in a chat-style bubble via AssistantText so it reads
 // as formatted markdown.
@@ -184,8 +184,8 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
   )
 }
 
-// CollapsedPreview is the one-line "label + truncated preview" affordance —
-// the same compact-collapse ethos as ThinkBlock/ToolBlock (#385/#399) — but
+// CollapsedPreview is the one-line "label + truncated preview" affordance -
+// the same compact-collapse ethos as ThinkBlock/ToolBlock (#385/#399) - but
 // clicking it opens the full content in a ContentPopup instead of expanding
 // inline: a judge verdict or a node's vetted answer reads better full-size
 // (it's often the thing the reader most wants to inspect) than height-locked
@@ -210,20 +210,20 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
 
 // ── per-run stage cards ──────────────────────────────────────────────────────
 
-// WorkerCard renders the worker stage's activity as ONE continuous feed —
+// WorkerCard renders the worker stage's activity as ONE continuous feed -
 // including any ask_advisor consults, which show up as ordinary tool calls.
 // `runs` is one or more consecutive same-stage worker runs (see groupWorkerRuns):
 // a mechanical continuation round (e.g. a deterministic-check retry, #399
 // follow-up) hands the worker another tool-bearing turn as a NEW run, but that's
-// not a meaningful stage boundary the way a judge-triggered revise is — so
+// not a meaningful stage boundary the way a judge-triggered revise is - so
 // their activity is concatenated into this one card rather than opening a
 // second boxed block. The node's vetted answer is rendered separately at the
 // foot of the node (NodeAnswer), so it sits below the judge rather than inside
 // the worker card. Like every other stage card it carries its own labeled
-// header — without one, its activity rows visually attach to whatever labeled
+// header - without one, its activity rows visually attach to whatever labeled
 // card rendered above it.
 // Memoized so an event on one run (a new run object, per messageParts' mapRun)
-// only re-renders that run's own group — sibling groups keep the same `runs`
+// only re-renders that run's own group - sibling groups keep the same `runs`
 // reference and bail out of the shallow prop compare, instead of every card in
 // the node re-rendering on every tool-call/thinking event (#379).
 const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[]; running: boolean }) {
@@ -241,7 +241,7 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
           {/* Step count (grows live); "running" is already the node header's
-              pulsing status dot + the timer — no separate spinner dot here. */}
+              pulsing status dot + the timer - no separate spinner dot here. */}
           <span className="text-xs text-gray-400 dark:text-gray-500">
             {`${activity.length} step${activity.length === 1 ? '' : 's'}`}
           </span>
@@ -258,7 +258,7 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
 
 // groupWorkerRuns folds consecutive 'worker'-stage runs into one render group
 // so a mechanical continuation round (e.g. a deterministic-check retry) merges
-// into its predecessor's activity feed instead of opening a new boxed block —
+// into its predecessor's activity feed instead of opening a new boxed block -
 // judge and revise runs stay their own group (they mark a meaningful stage).
 type RunGroup = { stage: AgentRun['stage']; runs: AgentRun[]; activeIdx: number }
 
@@ -277,11 +277,11 @@ function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
 }
 
 // NodeAnswer renders a node's vetted output as a one-line preview at the foot
-// of the node — the same collapse-to-one-line ethos as ThinkBlock/ToolBlock
+// of the node - the same collapse-to-one-line ethos as ThinkBlock/ToolBlock
 // (#385/#399), extended to the answer (0.9.0 feedback): a truncated preview by
 // default, the full answer in a popup on click (maintainer call: the answer
 // reads better full-size than height-locked inline). Shown for every node so
-// each specialist's answer is inspectable — not just the final one (whose
+// each specialist's answer is inspectable - not just the final one (whose
 // answer also appears in the main message bubble).
 function NodeAnswer({ answer }: { answer: string }) {
   const [open, setOpen] = useState(false)
@@ -309,7 +309,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           ⚠ Judge unavailable · round {run.round}
         </span>
         <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
-          Answer surfaced without quality vetting — {run.reason}
+          Answer surfaced without quality vetting - {run.reason}
         </div>
       </div>
     )
@@ -333,7 +333,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
         )}
       </details>
-      {/* Verdict collapses to one line, like ThinkBlock — full reasoning opens
+      {/* Verdict collapses to one line, like ThinkBlock - full reasoning opens
           in a popup, rendered as markdown (0.9.0 feedback). */}
       {run.done && run.feedback && run.feedback !== 'None' && (
         <div className="px-4 pt-0 pb-2">
@@ -389,7 +389,7 @@ function RetryControl({ nodeId, onRetry }: {
             if (e.key === 'Enter') { e.preventDefault(); send() }
             if (e.key === 'Escape') { setGuiding(false); setText('') }
           }}
-          placeholder="Retry with guidance (optional) — re-runs this node + downstream…"
+          placeholder="Retry with guidance (optional) - re-runs this node + downstream…"
           className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
         />
         <button onClick={send} className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline">retry</button>
@@ -432,7 +432,7 @@ interface Props {
 
 // Memoized (#421): DagView re-renders on every SSE event for the whole DAG (any
 // node's token/tool-call/state change), and an unmemoized DagNode re-ran its full
-// body — popup state, timers, activity grouping — for every OTHER node too. The
+// body - popup state, timers, activity grouping - for every OTHER node too. The
 // callback props are stable (Chat.tsx wraps them in useCallback), so a shallow
 // compare bails out for every node except the one that actually changed.
 export const DagNode = memo(function DagNode({
@@ -442,7 +442,7 @@ export const DagNode = memo(function DagNode({
 }: Props) {
   const running = state.status === 'running'
   const notStarted = state.status === 'queued'
-  // Retry (→ queued) is legal from done, failed, or cancelled — see dag.CanTransition.
+  // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
   const finished = state.status === 'done' || state.status === 'failed' || state.status === 'cancelled'
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
@@ -485,7 +485,7 @@ export const DagNode = memo(function DagNode({
           {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
             <span
               className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
-              title={`Judge rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} — surfaced unvetted`}
+              title={`Judge rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - surfaced unvetted`}
             >
               ⚠ unvetted
             </span>
@@ -516,11 +516,11 @@ export const DagNode = memo(function DagNode({
         </div>
       </div>
 
-      {/* Node summary — click to open the popup (#384): the full prompt
+      {/* Node summary - click to open the popup (#384): the full prompt
           rendered as a chat-native turn, plus (on a live turn) the message
-          queue / prompt editor / pending-question answer — one-click
+          queue / prompt editor / pending-question answer - one-click
           pause/resume/cancel live in the ⋮ menu above instead. Optimized for
-          clean presentation, not information density — the full prompt is
+          clean presentation, not information density - the full prompt is
           always recoverable from the trace. */}
       <button
         onClick={() => setPopupOpen(true)}
@@ -547,7 +547,7 @@ export const DagNode = memo(function DagNode({
         <RetryControl nodeId={node.id} onRetry={onRetry} />
       )}
 
-      {/* Per-run stage cards — consecutive worker runs (e.g. a deterministic-
+      {/* Per-run stage cards - consecutive worker runs (e.g. a deterministic-
           check retry continuation) merge into one activity feed rather than a
           new boxed block; a judge-triggered revise keeps its own labeled card. */}
       {groupWorkerRuns(runs, activeIdx).map(group => {
@@ -569,7 +569,7 @@ export const DagNode = memo(function DagNode({
         </div>
       )}
 
-      {/* Stopped by the user (node_cancelled) — rendered neutrally, not as an error */}
+      {/* Stopped by the user (node_cancelled) - rendered neutrally, not as an error */}
       {state.status === 'cancelled' && (
         <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40">
           Stopped by you

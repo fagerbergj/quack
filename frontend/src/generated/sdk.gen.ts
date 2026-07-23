@@ -54,7 +54,7 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  * Update a chat's mutable fields
  *
  * Partial update of a chat's mutable metadata. Today the only settable
- * field is `title` (a manual rename — overwrites whatever title, auto-
+ * field is `title` (a manual rename - overwrites whatever title, auto-
  * generated or previously set, the chat had before); the body shape
  * leaves room to grow without a new endpoint.
  *
@@ -76,12 +76,12 @@ export const updateChat = <ThrowOnError extends boolean = false>(options: Option
  *
  * The model is flat and agent-centric: the DAG (dag_plan + node_* events) is
  * the static structure, and within each node the trust gate runs a SEQUENCE
- * of agent invocations ("runs") — the worker draft, each judge round, and
+ * of agent invocations ("runs") - the worker draft, each judge round, and
  * each revision. Every run is delimited by `agent_start` / `agent_complete`
  * and carries a `run_id` + `stage` (`worker` | `judge` | `revise`); its
  * activity references that `run_id`. Clients group runs by `node_id` and
  * pair tools by `call_id`. A worker's advisor consultations (`ask_advisor`)
- * are NOT a separate stage — they surface as ordinary tool activity
+ * are NOT a separate stage - they surface as ordinary tool activity
  * (`agent_tool_call` / `agent_tool_result`) within the worker's own run.
  *
  * Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round"})
@@ -89,9 +89,9 @@ export const updateChat = <ThrowOnError extends boolean = false>(options: Option
  * `agent_tool_call` ({"node_id","run_id","call_id","name","args"}) and
  * `agent_tool_result` ({"node_id","run_id","call_id","name","result"}) are
  * tool activity; `agent_token` ({"node_id","run_id","text"}) is answer text
- * (the final vetted answer is emitted with an empty `run_id` — it belongs to
+ * (the final vetted answer is emitted with an empty `run_id` - it belongs to
  * the node); `agent_complete` ({"node_id","run_id","stage",...}) closes a run
- * with its stage-specific result — judge runs carry `score`/`passed`/
+ * with its stage-specific result - judge runs carry `score`/`passed`/
  * `feedback` (or `status:"unavailable"`+`reason` when the judge couldn't
  * run), model runs carry `finish_reason` + token usage.
  *
@@ -104,15 +104,15 @@ export const updateChat = <ThrowOnError extends boolean = false>(options: Option
  * delivered at its next turn boundary and it re-runs with them folded
  * in. A node's pending queue itself (add/edit/remove) is tracked
  * client-side from the POST/PATCH/DELETE `.../queue` responses, not a
- * separate SSE event — those calls are synchronous and already tell the
+ * separate SSE event - those calls are synchronous and already tell the
  * caller what changed.
  *
  * `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
  * reports one staged item's ACTUAL outward-boundary outcome (push +
- * PR/review/comment), as the delivering extension observed it — never the
+ * PR/review/comment), as the delivering extension observed it - never the
  * worker's self-report. `outcome` is one of `delivered`, `draft` (a
  * gate-failed PR opens as a draft), `failed`, or `none` (a judge-passed
- * work-request that recorded no delivery attempt at all — the phantom-
+ * work-request that recorded no delivery attempt at all - the phantom-
  * success class this event exists to make visible). Emitted for both
  * success and failure, durably, independent of the judge verdict.
  *
@@ -146,7 +146,7 @@ export const getResponse = <ThrowOnError extends boolean = false>(options: Optio
  * Subscribe to a chat's live response stream
  *
  * Connect to the SSE stream of a chat's in-progress (or just-completed) run
- * — so a turn started on one device can be watched from another. Replays the
+ * - so a turn started on one device can be watched from another. Replays the
  * events so far, then streams live events until the run ends. If no run is
  * active, replays the most recent completed run. Reconnect-safe via the
  * replay buffer.
@@ -157,31 +157,31 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
 /**
  * Transition a DAG node's status (cancel, pause/resume, or retry)
  *
- * A single resource-oriented endpoint — the request body names the
+ * A single resource-oriented endpoint - the request body names the
  * TARGET status:
  *
- * - `{"status":"cancelled"}` — cancel the node (legal from `queued`,
+ * - `{"status":"cancelled"}` - cancel the node (legal from `queued`,
  * `running`, `paused`, or `needs_input`). Kills the in-flight
  * model/tool call via context; no resume. No-op (200, unchanged
  * state) if the node isn't currently live.
- * - `{"status":"paused"}` — suspend a RUNNING node at its next safe
+ * - `{"status":"paused"}` - suspend a RUNNING node at its next safe
  * point, keeping its accumulated work. Only legal from `running`.
- * - `{"status":"running"}` — resume a `paused` node: a fresh re-run
+ * - `{"status":"running"}` - resume a `paused` node: a fresh re-run
  * (like retry) that reuses the rest of the plan's stored outputs.
  * Only legal from `paused`.
- * - `{"status":"queued","guidance":"..."}` — retry: re-run a finished
+ * - `{"status":"queued","guidance":"..."}` - retry: re-run a finished
  * node (and every node downstream of it) reusing the stored outputs
  * of all other nodes. Only legal from `done`, `failed`, or
  * `cancelled`. `guidance` is optional and folded into the node's task.
  *
  * To steer a running node with a message, POST to
- * `.../nodes/{node_id}/queue` instead — it is delivered at the node's
+ * `.../nodes/{node_id}/queue` instead - it is delivered at the node's
  * next turn boundary, never mid-turn (replaces the old interrupt-based
  * steer).
  *
  * An illegal transition (e.g. `done` → `running`) returns 409 naming the
  * allowed target statuses. The re-run (resume/retry) streams over the
- * chat's existing SSE connection — this endpoint does not open a new one.
+ * chat's existing SSE connection - this endpoint does not open a new one.
  *
  */
 export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: Options<UpdateNodeStatusData, ThrowOnError>): RequestResult<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError> => (options.client ?? client).put<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError>({
@@ -198,9 +198,9 @@ export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: 
  *
  * Replaces a pending node's task text before it starts running. Legal
  * only while the node has no live/persisted "started" state (still
- * `queued`, and not yet dispatched — e.g. a downstream node waiting on
+ * `queued`, and not yet dispatched - e.g. a downstream node waiting on
  * its dependencies in an already-streaming turn). Once a node has
- * started, its prompt is immutable — 409.
+ * started, its prompt is immutable - 409.
  *
  */
 export const editNodeTask = <ThrowOnError extends boolean = false>(options: Options<EditNodeTaskData, ThrowOnError>): RequestResult<EditNodeTaskResponses, EditNodeTaskErrors, ThrowOnError> => (options.client ?? client).patch<EditNodeTaskResponses, EditNodeTaskErrors, ThrowOnError>({
@@ -215,7 +215,7 @@ export const editNodeTask = <ThrowOnError extends boolean = false>(options: Opti
 /**
  * Queue a message for a running node, delivered at its next turn boundary
  *
- * Appends to the node's message queue — the replacement for the old
+ * Appends to the node's message queue - the replacement for the old
  * interrupt-based steer. The node drains its queue (in order) at its
  * next turn boundary; never mid-turn. Only legal while the node is
  * `running` (404 if no live control).
@@ -251,7 +251,7 @@ export const editQueuedMessage = <ThrowOnError extends boolean = false>(options:
  * Cancel the chat's active run by response id
  *
  * `{"status":"cancelled"}` cancels the active orchestrator run for this
- * chat — only legal when response_id names the CURRENTLY active run (the
+ * chat - only legal when response_id names the CURRENTLY active run (the
  * id surfaced in the stream's opening `response_created` event). 404 if
  * this response isn't the active run (already finished, or never was).
  *

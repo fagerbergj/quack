@@ -176,8 +176,8 @@ export const Grep: Story = render({
 
 export const AskAdvisor: Story = render({
   callId: 'c', name: 'ask_advisor', done: true,
-  args: { request: "I'm about to fix the debounce timer leak — should I clear it in a cleanup or add a guard flag?" },
-  result: { advice: 'A cleanup function is the idiomatic React pattern — a guard flag is easy to forget on every new effect.' },
+  args: { request: "I'm about to fix the debounce timer leak - should I clear it in a cleanup or add a guard flag?" },
+  result: { advice: 'A cleanup function is the idiomatic React pattern - a guard flag is easy to forget on every new effect.' },
 })
 
 export const StageMemory: Story = render({

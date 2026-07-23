@@ -29,7 +29,7 @@ func TestChangedFilesSection_ReviewNodeGetsDiff(t *testing.T) {
 }
 
 // TestChangedFilesSection_ImplementNodeUnchanged pins that a non-review node
-// keeps sourcing changedFiles from act.written — the review-diff path must
+// keeps sourcing changedFiles from act.written - the review-diff path must
 // never fire for it, even when a setup clone is present.
 func TestChangedFilesSection_ImplementNodeUnchanged(t *testing.T) {
 	cfg := probeRepo(t, true)
@@ -63,7 +63,7 @@ func TestBuildReviewDiffSection_NoClone(t *testing.T) {
 }
 
 // TestBuildReviewDiffSection_GitError pins the fallback when the resolved dir
-// exists but isn't a git repo (or the base commit can't be determined) — a
+// exists but isn't a git repo (or the base commit can't be determined) - a
 // git error must degrade to "", never fail the judge round.
 func TestBuildReviewDiffSection_GitError(t *testing.T) {
 	cfg := probeRepo(t, true)
@@ -85,7 +85,7 @@ func TestBuildReviewDiffSection_GitError(t *testing.T) {
 // changedFilesBudget bytes must be cut down to size with the truncation
 // marker, never handed to the judge whole.
 func TestBuildReviewDiffSection_Truncates(t *testing.T) {
-	cfg := probeRepo(t, false) // no commit yet — we add a big one ourselves
+	cfg := probeRepo(t, false) // no commit yet - we add a big one ourselves
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestBuildReviewDiffSection_Truncates(t *testing.T) {
 	if !strings.Contains(got, reviewDiffTruncatedMarker) {
 		t.Fatalf("large diff must carry the truncation marker:\n%s", got[:200])
 	}
-	// changedFilesBudget bytes of diff, plus the header/marker overhead — bound
+	// changedFilesBudget bytes of diff, plus the header/marker overhead - bound
 	// it generously rather than exactly, since the header text isn't budgeted.
 	if len(got) > changedFilesBudget+1024 {
 		t.Fatalf("diff section not bounded: %d bytes", len(got))

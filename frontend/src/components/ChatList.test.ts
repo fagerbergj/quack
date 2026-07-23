@@ -3,7 +3,7 @@ import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
 import type { ChatSummary } from '../api'
 
-// No @testing-library/react in this repo — ChatList's filter/facet logic
+// No @testing-library/react in this repo - ChatList's filter/facet logic
 // lives in ../lib/chatFilters and ../lib/github (see their own test files for
 // the bulk of the coverage); this file covers the origin-filter wiring
 // ChatList's badge/facet row depends on directly.

@@ -17,7 +17,7 @@ import (
 // M0 implements only kind "openai" (any OpenAI-compatible endpoint, via the
 // vendored openaimodel adapter; the endpoint picks the actual server). Wrapped
 // in tracedModel (traced.go) so quack.model.call.duration is recorded for
-// every model built anywhere in the system — the one factory, the one place
+// every model built anywhere in the system - the one factory, the one place
 // to hook it.
 func NewModel(p config.ProviderConfig, modelName string) (model.LLM, error) {
 	switch p.Kind {
@@ -36,7 +36,7 @@ type Embedder interface {
 }
 
 // NewEmbedder constructs an Embedder for the given provider and embedding model.
-// It reuses NewModel's provider switch — the openai adapter serves /embeddings
+// It reuses NewModel's provider switch - the openai adapter serves /embeddings
 // too, so the same model.LLM doubles as an Embedder.
 func NewEmbedder(p config.ProviderConfig, modelName string) (Embedder, error) {
 	m, err := NewModel(p, modelName)

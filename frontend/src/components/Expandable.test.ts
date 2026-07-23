@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { Expandable } from './Expandable'
 
 // renderToStaticMarkup doesn't run layout effects, so the measured `overflows`
-// state is false — the initial (server) render shows the children uncapped with
+// state is false - the initial (server) render shows the children uncapped with
 // NO toggle and NO clamp. This pins the fits-content path; the overflow path
 // (fade + Show more) is measured-DOM behaviour, covered visually in the stories.
 describe('Expandable', () => {
@@ -22,14 +22,14 @@ describe('Expandable', () => {
 
 // Regression: the collapse decision must not depend on the collapse itself.
 //
-// Collapsing changes the box's own layout — `overflow-hidden` + `max-height`
+// Collapsing changes the box's own layout - `overflow-hidden` + `max-height`
 // makes it a block formatting context and drops its full height from the
-// scrolling ancestor — so a clamped box does not necessarily measure the same
+// scrolling ancestor - so a clamped box does not necessarily measure the same
 // as an unclamped one. If the component measures the box it clamps, the
 // decision feeds back into its own input: measure tall → clamp → measure short
 // → unclamp → measure tall → … Re-measuring on every commit (a layout effect
 // with no dependency array) turns that into an unbounded chain of nested
-// updates, and a streaming turn — hundreds of token renders — walks straight
+// updates, and a streaming turn - hundreds of token renders - walks straight
 // into React's guard: "Maximum update depth exceeded" (#185), after which the
 // chat tree renders nothing at all.
 //

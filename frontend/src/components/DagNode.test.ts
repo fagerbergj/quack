@@ -8,10 +8,10 @@ import type { DagNodeDef } from '../state/agentStream'
 import type { NodeState } from '../state/chatStore'
 import type { AgentRun, Activity } from './messageParts'
 
-// Structural assertions on the static markup — no testing-library in this repo
+// Structural assertions on the static markup - no testing-library in this repo
 // (see ToolCallView.test.ts), so we render to HTML and check the load-bearing
 // shape: collapsed-by-default one-line previews (the popup itself only opens
-// on click, which needs a DOM — that's a Storybook play-function concern, see
+// on click, which needs a DOM - that's a Storybook play-function concern, see
 // DagNode.stories.tsx's *Popup stories), and the deterministic-retry merge.
 
 const node: DagNodeDef = { id: 'r1', agent: 'web-researcher', task: 'Research Dublin.', depends_on: [] }
@@ -24,7 +24,7 @@ const activity: Activity[] = [
   { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'x' }, result: {}, done: true } },
 ]
 
-describe('DagNode — judge verdict collapses to a one-line preview (#385/#399 ethos)', () => {
+describe('DagNode - judge verdict collapses to a one-line preview (#385/#399 ethos)', () => {
   const verdict = '**Mostly solid**, but add a source for the rainfall claim.'
   const out = html(
     { status: 'done', startedAt: 0, finishedAt: 1000 },
@@ -46,7 +46,7 @@ describe('DagNode — judge verdict collapses to a one-line preview (#385/#399 e
   })
 })
 
-describe('DagNode — answer collapses to a one-line preview (#385/#399 ethos)', () => {
+describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', () => {
   const answer = '## Heading\n\nVisit in **May**.\n\n- one\n- two'
   const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [
     { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity },
@@ -63,7 +63,7 @@ describe('DagNode — answer collapses to a one-line preview (#385/#399 ethos)',
   })
 })
 
-describe('DagNode — deterministic-retry continuation merges into one feed', () => {
+describe('DagNode - deterministic-retry continuation merges into one feed', () => {
   const retryActivity: Activity[] = [
     { kind: 'tool', tool: { callId: 'c9', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true } },
   ]
@@ -88,10 +88,10 @@ describe('DagNode — deterministic-retry continuation merges into one feed', ()
   })
 })
 
-// #426 — the judge verdict's popup CopyButton writes the full verdict text to
+// #426 - the judge verdict's popup CopyButton writes the full verdict text to
 // the clipboard. Needs a real DOM (click-through), unlike the static-markup
 // tests above.
-describe('DagNode — judge verdict popup copy button (#426)', () => {
+describe('DagNode - judge verdict popup copy button (#426)', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined
 

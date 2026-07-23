@@ -1,6 +1,6 @@
 // Package wizard is the interactive `quack init` / `quack server init` surface:
 // Huh forms that collect answers and hand them to internal/cli to emit config
-// or update the client registry. The forms are thin — all logic (model
+// or update the client registry. The forms are thin - all logic (model
 // discovery, YAML emit, registry save) lives in cli so it's testable without a
 // terminal. Per the quack-cli skill, you test the emitted YAML, not the
 // keystrokes.
@@ -30,12 +30,12 @@ var ErrAborted = errors.New("init cancelled")
 // It's `quack server init` (and the local branch of `quack init`): LLM provider
 // → endpoint → /models → model roles → optional features → stores. When outPath
 // already exists (and --force wasn't passed) it asks up front whether to keep,
-// overwrite, or write elsewhere — before any wizard questions.
+// overwrite, or write elsewhere - before any wizard questions.
 func ServerInit(ctx context.Context, outPath string, force bool) error {
 	if !force && fileExists(outPath) {
 		switch askExisting(outPath) {
 		case existingUse:
-			fmt.Printf("Using existing %s — no changes.\n", outPath)
+			fmt.Printf("Using existing %s - no changes.\n", outPath)
 			return nil
 		case existingNewPath:
 			p := askPath(outPath)
@@ -46,7 +46,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 		case existingOverwrite:
 			// fall through: run the wizard and overwrite outPath.
 		default: // cancel or escape
-			fmt.Println("Cancelled — nothing changed.")
+			fmt.Println("Cancelled - nothing changed.")
 			return ErrAborted
 		}
 	}
@@ -58,7 +58,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	cli.PrefillFromEnv(&a) // don't re-ask what the environment already answers
 
 	// Form 1 stands alone because the model list is fetched from the endpoint
-	// before the rest of the wizard can offer it as choices — a natural break,
+	// before the rest of the wizard can offer it as choices - a natural break,
 	// not a back-nav wall.
 	if err := askProvider(ctx, &a); err != nil {
 		return err
@@ -81,7 +81,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	a.WebFetch = slices.Contains(feats, "fetch")
 	a.Coding = slices.Contains(feats, "coding")
 	if !ok {
-		fmt.Println("Aborted — nothing written.")
+		fmt.Println("Aborted - nothing written.")
 		return nil
 	}
 
@@ -122,7 +122,7 @@ func askExisting(outPath string) string {
 		huh.NewSelect[string]().
 			Options(
 				huh.NewOption("Use it as-is", existingUse),
-				huh.NewOption("Reconfigure — overwrite "+outPath, existingOverwrite),
+				huh.NewOption("Reconfigure - overwrite "+outPath, existingOverwrite),
 				huh.NewOption("Write a new config to a different path", existingNewPath),
 				huh.NewOption("Cancel", existingCancel),
 			).
@@ -206,8 +206,8 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 		huh.NewSelect[string]().
 			Title("How will you use quack?").
 			Options(
-				huh.NewOption("Local  — run quack on this machine", "local"),
-				huh.NewOption("Remote — connect to a server someone else runs", "remote"),
+				huh.NewOption("Local  - run quack on this machine", "local"),
+				huh.NewOption("Remote - connect to a server someone else runs", "remote"),
 			).
 			Value(&mode),
 	).Title("Welcome"))); err != nil {
@@ -227,14 +227,14 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 		}
 		// Migrate older setups: a registered `local → localhost:8080` entry used to
 		// be how local worked. Now local means in-process, so drop it (and clear it
-		// as active) — otherwise resolution would dial a server that isn't running.
+		// as active) - otherwise resolution would dial a server that isn't running.
 		if c, err := cli.LoadClient(); err == nil {
 			if _, ok := c.Servers["local"]; ok {
 				c.RemoveServer("local")
 				_ = c.Save()
 			}
 		}
-		fmt.Println("\nLocal duck ready — run `quack` to chat (it starts in-process).")
+		fmt.Println("\nLocal duck ready - run `quack` to chat (it starts in-process).")
 		return nil
 	case "remote":
 		return registerRemote()
@@ -269,7 +269,7 @@ func registerRemote() error {
 }
 
 // askProvider: the LLM provider (single-option, OpenAI-compatible today),
-// endpoint, and API key — one group so the three are navigable together. The
+// endpoint, and API key - one group so the three are navigable together. The
 // API key is masked (EchoModePassword); endpoint has a placeholder hint.
 func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	var kind string
@@ -296,7 +296,7 @@ func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 func discoverModels(ctx context.Context, a *cli.InitAnswers) (models []string, manual bool) {
 	models, err := cli.ListModels(ctx, a.Endpoint, a.APIKey)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "couldn't reach %s/models (%v) — entering model names manually.\n", a.Endpoint, err)
+		fmt.Fprintf(os.Stderr, "couldn't reach %s/models (%v) - entering model names manually.\n", a.Endpoint, err)
 		return nil, true
 	}
 
@@ -304,7 +304,7 @@ func discoverModels(ctx context.Context, a *cli.InitAnswers) (models []string, m
 		a.MainModel = suggestMain(models)
 	}
 	// Heuristic pre-selections for specialist roles (overridable; None disables).
-	// The OpenAI /models response gives IDs only — no capability field — so we
+	// The OpenAI /models response gives IDs only - no capability field - so we
 	// guess from the name. Fast in the common case, easy to change when wrong.
 	if a.JudgeModel == "" {
 		a.JudgeModel = suggestModel(models, "judge")
@@ -323,20 +323,20 @@ func discoverModels(ctx context.Context, a *cli.InitAnswers) (models []string, m
 
 // modelGroups: one model role per group (its own screen). A blurred huh select
 // still renders its full option list, so stacking several in one group overflows
-// the screen and the group viewport scrolls — options vanish with no indicator.
+// the screen and the group viewport scrolls - options vanish with no indicator.
 func modelGroups(a *cli.InitAnswers, models []string, manual bool) []*huh.Group {
-	none := huh.NewOption("None — disable", "")
+	none := huh.NewOption("None - disable", "")
 	return []*huh.Group{
 		huh.NewGroup(selectOrInput(manual, modelOptions(models), &a.MainModel)).
 			Title("Main model").Description("The model quack reasons and plans with"),
 		huh.NewGroup(specialistSelect(models, &a.JudgeModel, none)).
-			Title("Judge model").Description("Trust gate — scores every node's output"),
+			Title("Judge model").Description("Trust gate - scores every node's output"),
 		huh.NewGroup(specialistSelect(models, &a.EmbedModel, none)).
-			Title("Embedding model").Description("Semantic memory — None disables it"),
+			Title("Embedding model").Description("Semantic memory - None disables it"),
 		huh.NewGroup(specialistSelect(models, &a.VisionModel, none)).
-			Title("Vision model").Description("Image-reader — None disables it"),
+			Title("Vision model").Description("Image-reader - None disables it"),
 		huh.NewGroup(specialistSelect(models, &a.AudioModel, none)).
-			Title("Audio model").Description("Media-reader — None disables it"),
+			Title("Audio model").Description("Media-reader - None disables it"),
 	}
 }
 
@@ -389,8 +389,8 @@ func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.G
 	sandbox := huh.NewGroup(
 		huh.NewSelect[string]().
 			Options(
-				huh.NewOption("bwrap — OS sandbox for run_command/run_code children (needs bubblewrap)", "bwrap"),
-				huh.NewOption("none  — no OS boundary (guards still apply)", "none"),
+				huh.NewOption("bwrap - OS sandbox for run_command/run_code children (needs bubblewrap)", "bwrap"),
+				huh.NewOption("none  - no OS boundary (guards still apply)", "none"),
 			).
 			Value(&a.Sandbox),
 	).Title("Workspace sandbox").Description("The OS boundary agent-run commands execute inside").
@@ -414,7 +414,7 @@ func storeGroups(a *cli.InitAnswers, feats *[]string) []*huh.Group {
 	return []*huh.Group{session, memory, search, fetch}
 }
 
-// storeGroup builds one group — its title is the store name (the section header),
+// storeGroup builds one group - its title is the store name (the section header),
 // with a backend select + a url input. The url is left blank: its placeholder
 // tracks the selected kind's default (cli.DefaultBackendURL), and the emitter
 // fills that same default when the field is left empty. So accepting the default
@@ -452,7 +452,7 @@ func modelOptions(models []string) []huh.Option[string] {
 }
 
 // selectOrInput returns a Select field when models were discovered, else an
-// Input field for manual entry. No field title — the group title is the header,
+// Input field for manual entry. No field title - the group title is the header,
 // and no .Height so the whole option list stays static (the cursor moves through
 // it instead of the list scrolling under a window).
 func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Field {
@@ -462,7 +462,7 @@ func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Fiel
 	return huh.NewSelect[string]().Options(opts...).Value(val)
 }
 
-// specialistSelect is a model role pick with a "None — disable" option (so the
+// specialistSelect is a model role pick with a "None - disable" option (so the
 // user can skip judge/memory/vision/audio). Falls back to Input when no models
 // were discovered.
 func specialistSelect(models []string, val *string, none huh.Option[string]) huh.Field {

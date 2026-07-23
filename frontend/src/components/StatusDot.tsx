@@ -2,8 +2,8 @@ import type { ChatStatus, NodeStatus } from '../generated'
 
 // StatusDot is the app's single "state at a glance" indicator: a bare colored
 // dot, shared by the chat list (ChatList) and DAG nodes (DagNode). Quiet states
-// (idle, done) render nothing — per the same "the common case stays quiet"
-// principle the chat-list dot already followed — so the dot only draws the eye
+// (idle, done) render nothing - per the same "the common case stays quiet"
+// principle the chat-list dot already followed - so the dot only draws the eye
 // when something needs attention or is in flight.
 export type DotStatus = ChatStatus | NodeStatus
 
@@ -38,7 +38,7 @@ export function StatusDot({ status, className = '', variant = 'node' }: {
   const color = status === 'queued' && variant === 'chat' ? 'bg-gray-400 dark:bg-gray-500' : COLOR[status]
   if (!color) return null
   const label = LABEL[status] ?? status
-  // Running pulses so the single dot conveys "live" on its own — the same
+  // Running pulses so the single dot conveys "live" on its own - the same
   // meaning everywhere it appears (chat list + DAG nodes), replacing the
   // node-only bouncing spinner. Queued never pulses: it isn't actively running.
   const pulse = status === 'running' ? 'animate-pulse' : ''

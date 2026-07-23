@@ -15,11 +15,11 @@ import (
 
 type planArgs struct {
 	Nodes []dag.RawNode `json:"nodes"`
-	// Setup is the plan's PRE-step, executed before any node runs — see the
+	// Setup is the plan's PRE-step, executed before any node runs - see the
 	// tool description. Omit only for a plan with no GitHub repo involved.
 	Setup *dag.Setup `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {repo, base_ref, work_branch}"`
 	// Delivery is the plan's POST-step, executed once after the trust gate
-	// passes — see the tool description.
+	// passes - see the tool description.
 	Delivery *dag.Delivery `json:"delivery,omitempty" jsonschema:"how the gated result reaches GitHub, run after the trust gate: {kind: pull_request|review|comment}"`
 }
 
@@ -32,16 +32,16 @@ type planResult struct {
 // submit it as `nodes`; this tool validates it (known agents, unique ids,
 // acyclic, synthesizer hardened), caches it under a plan ID, and emits a dag_plan
 // SSE event so the frontend can render the graph before execution. The execute
-// tool then runs it by ID — the plan JSON is never copied between calls.
+// tool then runs it by ID - the plan JSON is never copied between calls.
 //
 // attachments are the current turn's media parts and history the prior turns;
 // both are stamped on the plan so every node sees them. message is the verbatim
 // user request, stamped so nodes get the full ask (not the orchestrator's
 // paraphrase).
 func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string) (tool.Tool, error) {
-	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) — omit `checks`."
+	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
-		checksDesc = fmt.Sprintf("`checks` are OPTIONAL — you have NOT seen the repo yet, so do NOT guess its "+
+		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
 			"commands: the trust gate DERIVES a code node's checks from the repo itself (its own package.json "+
 			"scripts / go.mod / Makefile) after the node clones it. Set `checks` (plus `workdir`, the "+
 			"workspace-relative repo dir they run in) ONLY when the user named the exact commands to run; each "+
@@ -51,20 +51,20 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 		functiontool.Config{
 			Name: "plan",
 			Description: "Tool to run a DAG of specialist agents. Load the plan-work skill first, then YOU author " +
-				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained — the " +
+				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained - the " +
 				"agent sees only this text), depends_on: [ids it needs output from]}. Optionally a `rubric`. " +
 				checksDesc + " " +
 				"Every plan MUST declare setup (the working clone + branch) and delivery (how the gated result " +
-				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate — you declare " +
+				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate - you declare " +
 				"intent, you never run git, push, or open a PR yourself. Pass `setup: {repo, base_ref, work_branch}` " +
-				"naming the clone URL, the base ref, and the branch the work happens on — the harness clones and " +
+				"naming the clone URL, the base ref, and the branch the work happens on - the harness clones and " +
 				"checks it out before any node runs, at the ROOT of each repo-touching node's working directory; " +
 				"that node's task says the repo is already there and never instructs cloning it. A node examining " +
 				"a DIFFERENT repository (a comparison target) should be told to clone that repo into its own " +
-				"working directory itself. And `delivery: {kind}` — exactly one of \"pull_request\" " +
+				"working directory itself. And `delivery: {kind}` - exactly one of \"pull_request\" " +
 				"(implement-and-deliver requests), \"review\" (PR/diff review requests), or \"comment\" (plan-only/" +
 				"research requests that post a summary back); the harness authors and posts the PR/review from the " +
-				"node's own work — you never write PR prose. Omit both only for a plan with no GitHub repo involved. " +
+				"node's own work - you never write PR prose. Omit both only for a plan with no GitHub repo involved. " +
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
 				"directly. If validation fails, fix the nodes and call again.",
 		},
@@ -115,10 +115,10 @@ func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
 // node's id, agent, dependencies, AND its full task text, so the model can judge
 // the decomposition (Is any node overloaded? Is shared work duplicated
 // instead of extracted into an upstream node? Are the dependencies right?) and
-// re-plan if it isn't good. Informational only — execution uses the cached plan.
+// re-plan if it isn't good. Informational only - execution uses the cached plan.
 func summarizePlan(p *dag.Plan) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Planned DAG (%d node(s)) — review before executing:", len(p.Nodes))
+	fmt.Fprintf(&sb, "Planned DAG (%d node(s)) - review before executing:", len(p.Nodes))
 	for _, n := range p.Nodes {
 		fmt.Fprintf(&sb, "\n- %s (%s)", n.ID, n.AgentName)
 		if len(n.DependsOn) > 0 {

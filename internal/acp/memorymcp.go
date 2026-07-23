@@ -16,18 +16,18 @@ import (
 )
 
 // Package doc (see acp.go): the memory MCP surface (#344) is a SEPARATE, narrow
-// per-run server from quack's orchestrator MCP mount (/api/v1/mcp) — it exists
+// per-run server from quack's orchestrator MCP mount (/api/v1/mcp) - it exists
 // only to give an ACP subprocess an AGENTIC memory channel (query mid-task, stage
 // a candidate the moment it's learned) alongside the existing gate-side recall
 // (Store.Recall, front-loaded into the round-0 prompt) and answer-mined commit.
 //
 // Scoping is entirely server-side: session/new hands the round ONE url whose path
 // IS an unguessable per-node secret (vetting.NewMemSecret, minted fresh by
-// dag.newGatedNode — NOT the advisor-thread token: that token is derivable
+// dag.newGatedNode - NOT the advisor-thread token: that token is derivable
 // (planID+nodeID) and a worker's own prompt discloses its running siblings' node
 // IDs, so it could let one node reach another's memory bucket). Every tool call
 // resolves the node's Store/Scope/staging buffer from that secret via
-// vetting.LookupMemSession — a registry SEPARATE from the advisor-thread one.
+// vetting.LookupMemSession - a registry SEPARATE from the advisor-thread one.
 // Nothing about scope ever rides a tool argument.
 
 // loadMemoryInput is the load_memory tool's input.
@@ -42,10 +42,10 @@ type stageMemoryInput struct {
 }
 
 // memoryMCP is the process-local loopback HTTP MCP server, started lazily on
-// first use and kept alive for the process lifetime — one server for every
+// first use and kept alive for the process lifetime - one server for every
 // node/round, not one per round: the URL path (the node's secret) is what
 // scopes each session, so the server itself carries no per-node state. Bound
-// to 127.0.0.1 only — never reachable off-host.
+// to 127.0.0.1 only - never reachable off-host.
 var memoryMCP struct {
 	once sync.Once
 	url  string // "" if the server never started (best-effort: a round just runs without it)
@@ -67,12 +67,12 @@ func memoryMCPURL() string {
 }
 
 // memoryMCPHandler builds a fresh *mcp.Server per incoming session, deriving
-// its tools' scope from the URL path's SECRET — resolved via
+// its tools' scope from the URL path's SECRET - resolved via
 // vetting.LookupMemSession, a registry keyed by an unguessable per-node value,
 // never by the advisor-thread token (see the package doc above). An unknown or
 // unregistered secret (agent run outside a gated node, wrong/stale/guessed
 // value, or the node already finished and drained its buffer) gets a server
-// with NO tools registered — a load_memory/stage_memory call against it fails
+// with NO tools registered - a load_memory/stage_memory call against it fails
 // loudly with an explicit MCP "tool not found" error, not a silent no-op.
 func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
@@ -118,13 +118,13 @@ func memoryMCPHandler() http.Handler {
 	}, nil)
 }
 
-// memoryMCPServers returns the ACP mcpServers list to hand session/new — empty
+// memoryMCPServers returns the ACP mcpServers list to hand session/new - empty
 // when there's no secret (the node isn't a memory participant), the agent
 // didn't advertise http MCP support, or the loopback server failed to start.
 // caps is the agent's negotiated capabilities from Initialize.
 func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer {
 	// NewSessionRequest.McpServers is a required field on the wire (an omitted/
-	// null array 400s) — always return a non-nil slice, even when empty.
+	// null array 400s) - always return a non-nil slice, even when empty.
 	if secret == "" || !(caps.McpCapabilities.Http || caps.McpCapabilities.Sse) {
 		return []sdk.McpServer{}
 	}

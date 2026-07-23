@@ -44,7 +44,7 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 		t.Errorf("cancelled node: error %q must tell the model, unmistakably, that the node was CANCELLED", err)
 	}
 	if inner.runCount() != 1 {
-		t.Errorf("cancelled node: the tool EXECUTED (%d runs) — the guard must refuse before running it", inner.runCount())
+		t.Errorf("cancelled node: the tool EXECUTED (%d runs) - the guard must refuse before running it", inner.runCount())
 	}
 
 	// A CONCURRENT sibling node of the same chat/plan keeps working: cancel is
@@ -60,7 +60,7 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 
 // TestCancelGuardIgnoresUngatedCalls: a call with no advisor-thread marker (a
 // direct/un-gated invocation, an MCP call, the judge's own read tools) can't be
-// attributed to a node, so the guard must never block it — even with a predicate
+// attributed to a node, so the guard must never block it - even with a predicate
 // that says "cancelled" to everything.
 func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	inner := &fakeRunnable{}
@@ -77,7 +77,7 @@ func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 }
 
 // TestBuildWrapsEveryToolInTheCancelGuard: the guard is applied at REGISTRATION,
-// once, to every tool a worker holds — not sprinkled through the handlers, where
+// once, to every tool a worker holds - not sprinkled through the handlers, where
 // the next tool added would silently miss it. Without Deps.NodeCancelled (an
 // un-gated build, e.g. the judge's read tools) nothing is wrapped.
 func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {

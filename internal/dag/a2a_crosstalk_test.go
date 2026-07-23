@@ -4,7 +4,7 @@ package dag_test
 // the A2A hop.
 //
 // The live bug: a plan with five concurrent code-explorer nodes (one repo each)
-// had the OpenHands node run `git_clone https://github.com/block/goose` — the
+// had the OpenHands node run `git_clone https://github.com/block/goose` - the
 // goose node's task. Cause (ADK v2.0.0
 // agent/remoteagent/v2/utils.go:93, toMissingRemoteSessionParts): the remote
 // agent picks which remote A2A session to continue by scanning the ADK session
@@ -12,7 +12,7 @@ package dag_test
 // THAT event's A2A contextID. Every node running the same agent authors its
 // events with the same plain agent name, and all plan nodes share ONE workflow
 // session, so a node's scan matches a SIBLING's event and adopts the sibling's
-// remote session — inheriting its task and history (and truncating its own
+// remote session - inheriting its task and history (and truncating its own
 // prompt out of the outbound message).
 
 import (
@@ -84,13 +84,13 @@ func (synthStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool)
 
 // TestConcurrentNodes_SameAgentOverA2A_KeepTheirOwnTask: two CONCURRENT nodes of
 // the SAME A2A agent, each with a different task. Each remote dispatch must
-// carry exactly its own node's task — no sibling's repo, and never an empty
+// carry exactly its own node's task - no sibling's repo, and never an empty
 // task ("Which repository would you like me to explore?" in the live run).
 func TestConcurrentNodes_SameAgentOverA2A_KeepTheirOwnTask(t *testing.T) {
 	sessions := session.InMemoryService()
 	stub := &repoStub{}
 
-	// ONE agent, ONE A2A server, ONE client — exactly the production shape
+	// ONE agent, ONE A2A server, ONE client - exactly the production shape
 	// (internal/serve builds one client per agent name and hands it to the DAG).
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "explorer", Model: stub, Description: "explorer", Instruction: "ROLE:explorer Explore the repo you were given.",
@@ -138,16 +138,16 @@ func TestConcurrentNodes_SameAgentOverA2A_KeepTheirOwnTask(t *testing.T) {
 	// as "BETA" under n1, "ALPHA+BETA" (both nodes in one remote session), or an
 	// empty list (this node's prompt truncated out of the outbound message).
 	if got := outputs["n1"]; !strings.Contains(got, "ALPHA") || strings.Contains(got, "BETA") {
-		t.Errorf("n1 (ALPHA) output = %q — the remote worker did not get n1's own task", got)
+		t.Errorf("n1 (ALPHA) output = %q - the remote worker did not get n1's own task", got)
 	}
 	if got := outputs["n2"]; !strings.Contains(got, "BETA") || strings.Contains(got, "ALPHA") {
-		t.Errorf("n2 (BETA) output = %q — the remote worker did not get n2's own task", got)
+		t.Errorf("n2 (BETA) output = %q - the remote worker did not get n2's own task", got)
 	}
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
 	for i, seen := range stub.seen {
 		if len(seen) != 1 {
-			t.Errorf("remote worker request %d saw repos %v — want exactly one (its own node's task)", i, seen)
+			t.Errorf("remote worker request %d saw repos %v - want exactly one (its own node's task)", i, seen)
 		}
 	}
 }
@@ -156,7 +156,7 @@ func TestConcurrentNodes_SameAgentOverA2A_KeepTheirOwnTask(t *testing.T) {
 // draft asserts the remote session CONTINUED: the revise round's request must
 // still carry the first draft, which only happens when the node resumed the SAME
 // remote A2A contextID (multi-turn dispatch). A per-node identity must keep this
-// working — unique across nodes, but stable across a node's rounds.
+// working - unique across nodes, but stable across a node's rounds.
 type reviseStub struct {
 	mu       sync.Mutex
 	calls    int
@@ -205,7 +205,7 @@ func (j *failThenPassJudge) GenerateContent(_ context.Context, _ *model.LLMReque
 }
 
 // TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds: the per-node identity
-// must stay STABLE across a node's judge/revise rounds — the revise dispatch has
+// must stay STABLE across a node's judge/revise rounds - the revise dispatch has
 // to land back in the node's own remote A2A session (carrying the draft it is
 // revising), not a fresh one.
 func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
@@ -249,6 +249,6 @@ func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 		t.Fatalf("worker ran %d times, want a draft + a revise round", stub.calls)
 	}
 	if !stub.sawDraft {
-		t.Error("the revise round did not see the node's own first draft — the node did not resume its own remote A2A session")
+		t.Error("the revise round did not see the node's own first draft - the node did not resume its own remote A2A session")
 	}
 }

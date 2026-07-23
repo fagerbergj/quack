@@ -183,7 +183,7 @@ func TestCrawl4AIMarkdownFitFallsBackToRaw(t *testing.T) {
 
 // TestFetchViaRenderFailureDegrades: a crawl4ai 500 on a page the direct GET could
 // reach (but which had no readable text without a browser) must not fail the whole
-// fetch — it degrades to an honest, clearly-marked render-unavailable result, with
+// fetch - it degrades to an honest, clearly-marked render-unavailable result, with
 // a WARN logged, so one flaky dynamic page doesn't sink a research node.
 func TestFetchViaRenderFailureDegrades(t *testing.T) {
 	render := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

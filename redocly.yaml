@@ -6,7 +6,7 @@ rules:
   # to declare yet.
   security-defined: off
 
-  # Private spec, not distributed — a license field would be noise.
+  # Private spec, not distributed - a license field would be noise.
   info-license: off
 
   # The frontend is served same-origin and uses relative paths; a documented

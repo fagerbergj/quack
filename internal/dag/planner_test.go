@@ -59,7 +59,7 @@ func TestBuildRejectsBadPlans(t *testing.T) {
 }
 
 // TestBuildAppendsMissingSynthesizer: a multi-terminal plan with no synthesizer
-// (the model forgot the fan-in) gets one appended depending on every node —
+// (the model forgot the fan-in) gets one appended depending on every node -
 // otherwise the native graph build rejects the plan outright ("2 terminal
 // nodes (want 1)") and the whole run fails. Regression: live e2e 2026-07-05.
 func TestBuildAppendsMissingSynthesizer(t *testing.T) {
@@ -83,7 +83,7 @@ func TestBuildAppendsMissingSynthesizer(t *testing.T) {
 	}
 }
 
-// TestBuildNoSynthesizerAppendedForChain: a linear chain has one terminal —
+// TestBuildNoSynthesizerAppendedForChain: a linear chain has one terminal -
 // nothing to fan in, no synthesizer appended.
 func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 	p := testPlanner()
@@ -131,7 +131,7 @@ func TestReviewFanoutBackstop(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Checks are OPTIONAL. Regression (live e2e 2026-07-12): PR #180's checkCodeChecks
 // backstop REJECTED any code-implementer node with empty `checks` whenever check
-// commands were configured — but the planner authors the DAG before anything has
+// commands were configured - but the planner authors the DAG before anything has
 // looked at the repo, so it can only GUESS the commands (it guessed `go build` for
 // a JavaScript repo). The run thrashed through 7 rejected plans and executed ZERO
 // nodes. Checks are a property of the REPO: the trust gate now derives them from
@@ -160,7 +160,7 @@ func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Plan-rubric judge (judgeRouting) — replaces the old regex routing backstop.
+// Plan-rubric judge (judgeRouting) - replaces the old regex routing backstop.
 // A fake vetting.PlanJudge stands in for the LLM so these tests don't need a
 // live model; they prove the WIRING (request/plan reach the judge, its verdict
 // drives accept/reject, and a judge error degrades gracefully) rather than any
@@ -183,7 +183,7 @@ func fakePlanJudge(accept bool, reason string, callErr error) (judge vetting.Pla
 }
 
 // A plan-only run (explore → synthesize, no code-implementer) that the judge
-// accepts must pass — the case the old regex heuristic mis-fired on (a
+// accepts must pass - the case the old regex heuristic mis-fired on (a
 // plan-only issue whose acceptance text mentions "open a PR" for the EVENTUAL
 // implementation, not this request).
 func TestJudgeRoutingAcceptsPlanOnlyPlan(t *testing.T) {
@@ -261,7 +261,7 @@ func TestJudgeRoutingAcceptsReviewWithReviewerNode(t *testing.T) {
 	}
 }
 
-// A nil judge (judge stage disabled) must never block plan validation — the
+// A nil judge (judge stage disabled) must never block plan validation - the
 // dependency was never wired, so judgeRouting is a no-op.
 func TestJudgeRoutingNoopWhenJudgeNil(t *testing.T) {
 	p := testPlanner() // testPlanner wires judge=nil
@@ -273,7 +273,7 @@ func TestJudgeRoutingNoopWhenJudgeNil(t *testing.T) {
 	}
 }
 
-// A judge call error must degrade gracefully — allow the plan rather than
+// A judge call error must degrade gracefully - allow the plan rather than
 // wedge the run on the judge's own unavailability.
 func TestJudgeRoutingDegradesGracefullyOnJudgeError(t *testing.T) {
 	judge, calls, _, _ := fakePlanJudge(false, "", errors.New("judge model unreachable"))
@@ -290,7 +290,7 @@ func TestJudgeRoutingDegradesGracefullyOnJudgeError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// §4: orchestrator-set deterministic gate checks — plan-time validation.
+// §4: orchestrator-set deterministic gate checks - plan-time validation.
 // ---------------------------------------------------------------------------
 
 func TestBuildAcceptsChecksMatchingConfiguredPrefix(t *testing.T) {
@@ -333,7 +333,7 @@ func TestBuildRejectsCheckNotMatchingAnyPrefix(t *testing.T) {
 func TestBuildAcceptsCheckWithQuotedMetachar(t *testing.T) {
 	// Metachars are no longer rejected (#277): checks run shell-less, so a quoted
 	// regex with parens is literal argv under an allowed prefix. The prefix
-	// allowlist — not a metachar scan — is the boundary.
+	// allowlist - not a metachar scan - is the boundary.
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test -run 'Test(Foo)'"}, Workdir: "repo"},
@@ -347,7 +347,7 @@ func TestBuildAcceptsCheckWithQuotedMetachar(t *testing.T) {
 }
 
 func TestBuildAcceptsPipedCheckUnderMatchingPrefix(t *testing.T) {
-	// Pipes are native (workspace.RunPipeline), not shell metachars — a piped
+	// Pipes are native (workspace.RunPipeline), not shell metachars - a piped
 	// check under an allowed prefix passes plan-time validation.
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
 	plan, err := p.Build(context.Background(), []RawNode{
@@ -363,14 +363,14 @@ func TestBuildAcceptsPipedCheckUnderMatchingPrefix(t *testing.T) {
 }
 
 func TestBuildRejectsChecksLookingLikeAPrefixButNotSeparated(t *testing.T) {
-	// "go testing" must NOT match the "go test" prefix — HasPrefix without a
+	// "go testing" must NOT match the "go test" prefix - HasPrefix without a
 	// space/exact-match boundary would wrongly accept it.
 	p := testPlanner("go test")
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go testing ./..."}, Workdir: "repo"},
 	}, nil, nil, nil, "m", nil)
 	if err == nil {
-		t.Fatal("Build: expected error — \"go testing\" must not match the \"go test\" prefix")
+		t.Fatal("Build: expected error - \"go testing\" must not match the \"go test\" prefix")
 	}
 }
 
@@ -380,13 +380,13 @@ func TestBuildRejectsChecksWhenAllowlistEmpty(t *testing.T) {
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test ./..."}, Workdir: "repo"},
 	}, nil, nil, nil, "m", nil)
 	if err == nil {
-		t.Fatal("Build: expected error — checks unavailable when workspace.check_commands is empty")
+		t.Fatal("Build: expected error - checks unavailable when workspace.check_commands is empty")
 	}
 }
 
 func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
 	// A node that simply omits `checks` is unaffected by the allowlist being
-	// empty — checks are opt-in per node.
+	// empty - checks are opt-in per node.
 	p := testPlanner()
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x"},
@@ -397,7 +397,7 @@ func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Setup + Delivery — declared pre/post steps (github-delivery-architecture).
+// Setup + Delivery - declared pre/post steps (github-delivery-architecture).
 // ---------------------------------------------------------------------------
 
 func TestBuildStampsSetupAndDeliveryOntoPlan(t *testing.T) {
@@ -455,7 +455,7 @@ func TestBuildAcceptsEachValidDeliveryKind(t *testing.T) {
 
 // #310: a plan that declares Setup (one shared clone+branch) but whose
 // repo-touching nodes could run CONCURRENTLY (no depends_on between them)
-// must be rejected at build — they'd corrupt the one shared working tree.
+// must be rejected at build - they'd corrupt the one shared working tree.
 func TestBuildRejectsConcurrentRepoTouchingNodesWithSetup(t *testing.T) {
 	p := testPlanner()
 	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
@@ -464,7 +464,7 @@ func TestBuildRejectsConcurrentRepoTouchingNodesWithSetup(t *testing.T) {
 		{ID: "impl2", Agent: "code-implementer", Task: "part two"},
 	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two independent things", nil)
 	if err == nil {
-		t.Fatal("Build: expected an error — two repo-touching nodes with setup declared but no depends_on chain")
+		t.Fatal("Build: expected an error - two repo-touching nodes with setup declared but no depends_on chain")
 	}
 	if !strings.Contains(err.Error(), "impl1") || !strings.Contains(err.Error(), "impl2") {
 		t.Errorf("Build error = %q, want it to name both offending nodes", err)
@@ -472,7 +472,7 @@ func TestBuildRejectsConcurrentRepoTouchingNodesWithSetup(t *testing.T) {
 }
 
 // A depends_on CHAIN of repo-touching nodes is exactly what setup's
-// shared-branch design supports — Build must accept it.
+// shared-branch design supports - Build must accept it.
 func TestBuildAllowsChainedRepoTouchingNodesWithSetup(t *testing.T) {
 	p := testPlanner()
 	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
@@ -484,12 +484,12 @@ func TestBuildAllowsChainedRepoTouchingNodesWithSetup(t *testing.T) {
 		t.Fatalf("Build: a depends_on chain of repo-touching nodes must be accepted: %v", err)
 	}
 	if len(plan.Nodes) != 2 {
-		t.Errorf("nodes = %d, want exactly 2 (no synthesizer needed — one terminal already)", len(plan.Nodes))
+		t.Errorf("nodes = %d, want exactly 2 (no synthesizer needed - one terminal already)", len(plan.Nodes))
 	}
 }
 
 // Without a declared Setup, repo-touching nodes each get their OWN
-// independent clone (unchanged pre-#310 behavior) — concurrent ones share
+// independent clone (unchanged pre-#310 behavior) - concurrent ones share
 // nothing, so the chain requirement does not apply.
 func TestBuildAllowsConcurrentRepoTouchingNodesWithoutSetup(t *testing.T) {
 	p := testPlanner()
@@ -503,7 +503,7 @@ func TestBuildAllowsConcurrentRepoTouchingNodesWithoutSetup(t *testing.T) {
 }
 
 // The plan judge must see the declared setup/delivery (or their absence) so
-// it can validate them against the request type — planSummary is the only
+// it can validate them against the request type - planSummary is the only
 // channel it has into the plan.
 func TestPlanSummaryIncludesSetupAndDelivery(t *testing.T) {
 	plan := &Plan{

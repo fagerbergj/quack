@@ -27,13 +27,13 @@ Precedence: truth/safety/accessibility > user instructions > genre norms > core 
 
 ## Safety rails
 
-Em dashes, semicolons, `however`, competent punctuation, and the right word are not AI tells. Do not invent typos, break grammar, inject fake uncertainty or staged messiness, or program sentence-length wobble; this is not a preference for short sentences. Same punctuation move in the same role every paragraph is a regularity — vary, don't ban. In casual prose, repeated em dashes are a social AI cue; use where they belong, not as default, and do not make periods the automatic replacement. For temporary compound modifiers, hyphenate before the noun and usually open after; reflexive hyphenation everywhere is the problem. Do not remove needed headings, lists, citations, or next steps to sound less AI-written.
+Em dashes, semicolons, `however`, competent punctuation, and the right word are not AI tells. Do not invent typos, break grammar, inject fake uncertainty or staged messiness, or program sentence-length wobble; this is not a preference for short sentences. Same punctuation move in the same role every paragraph is a regularity - vary, don't ban. In casual prose, repeated em dashes are a social AI cue; use where they belong, not as default, and do not make periods the automatic replacement. For temporary compound modifiers, hyphenate before the noun and usually open after; reflexive hyphenation everywhere is the problem. Do not remove needed headings, lists, citations, or next steps to sound less AI-written.
 
 ## Core rules
 
 ### 1. Anchor to context before drafting
 
-Decide what the text is, who it is for, what register it uses, and — in replies — what thread or community it responds to. A reply paste-able into any thread on the topic reads generic. Keep register stable.
+Decide what the text is, who it is for, what register it uses, and - in replies - what thread or community it responds to. A reply paste-able into any thread on the topic reads generic. Keep register stable.
 
 ### 2. Fit format to medium
 
@@ -61,15 +61,15 @@ Confident where evidence is strong, explicit where it is weak. Visible writer wh
 
 ### 7. Show concrete before generalizing
 
-Do not lead with abstract diagnosis. Not a ban on leading with conclusions — but make them concrete. Usually: what happened → where the pattern appeared → what constraint mattered → what failed or changed → what that seems to mean.
+Do not lead with abstract diagnosis. Not a ban on leading with conclusions - but make them concrete. Usually: what happened → where the pattern appeared → what constraint mattered → what failed or changed → what that seems to mean.
 
 ### 8. Watch regularity
 
-The most visible feature of LLM writing is often its own regularity. Watch for: parallel enumeration and three-part cadence; sentences doing hidden list work even without bullets; concession-plus-positive rhythm (`not X, but Y`); paragraph-closing type definitions (`the kind of X where Y`); identical paragraph arcs; same punctuation move in every paragraph; thesis-like openings; stacked mini-sentences or false crispness where each adjacent thought gets its own landing. Three-item lists still count — the enumerating instinct is the problem, not the item count. Fix by breaking the pattern where it dominates, not by random variation.
+The most visible feature of LLM writing is often its own regularity. Watch for: parallel enumeration and three-part cadence; sentences doing hidden list work even without bullets; concession-plus-positive rhythm (`not X, but Y`); paragraph-closing type definitions (`the kind of X where Y`); identical paragraph arcs; same punctuation move in every paragraph; thesis-like openings; stacked mini-sentences or false crispness where each adjacent thought gets its own landing. Three-item lists still count - the enumerating instinct is the problem, not the item count. Fix by breaking the pattern where it dominates, not by random variation.
 
 ### 9. Develop thought; choose structure
 
-Longer pieces should not feel pre-solved. Include a concrete example, noticed detail, cumulative sentence, or brief doubling-back. For retrospectives, criticism, feature writing: avoid chronological march, topic buckets, catalog prose. Pick a through-line. Cross-wire paragraphs so they depend on each other. If each paragraph reduces to a single label (`background`, `mechanism`, `impact`, `verdict`), the piece is system-tour prose — restructure. Alternatives: thematic, reverse-chronological, perspective-led, counterfactual, opinion-first, single-example-led.
+Longer pieces should not feel pre-solved. Include a concrete example, noticed detail, cumulative sentence, or brief doubling-back. For retrospectives, criticism, feature writing: avoid chronological march, topic buckets, catalog prose. Pick a through-line. Cross-wire paragraphs so they depend on each other. If each paragraph reduces to a single label (`background`, `mechanism`, `impact`, `verdict`), the piece is system-tour prose - restructure. Alternatives: thematic, reverse-chronological, perspective-led, counterfactual, opinion-first, single-example-led.
 
 ### 10. Revise by cutting
 

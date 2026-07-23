@@ -6,9 +6,9 @@ import type { NodeState, QueuedMessage } from '../state/chatStore'
 // NodePopup (#384/#265, restyled for 0.9.0) is an extension of the main chat,
 // not a bespoke modal: the node's prompt renders through the same
 // BubbleHeader + AssistantText markdown treatment as every chat bubble, with
-// no standalone header or section dividers of its own — only a light
+// no standalone header or section dividers of its own - only a light
 // overlay + close affordance to pop it out. Pause/cancel live one click away
-// in DagNode's ⋮ menu now; this surface is for what needs the input/editor —
+// in DagNode's ⋮ menu now; this surface is for what needs the input/editor -
 // queueing a message, editing a not-yet-started prompt, or answering a
 // pending mid-node question.
 interface Props {
@@ -20,7 +20,7 @@ interface Props {
   onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
   onEditTask?: (nodeId: string, task: string) => void
   // Answers a paused node's mid-node question (needs_input) via the same
-  // resume path the main chat's QuestionBubble uses (chatStore.submit —
+  // resume path the main chat's QuestionBubble uses (chatStore.submit -
   // the next chat message is delivered to the node as its answer).
   onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
@@ -83,11 +83,11 @@ export function NodePopup({
   const [taskText, setTaskText] = useState(node.task)
 
   // A node is editable-before-start only while still `queued` (never
-  // dispatched) — matches the server's check (PATCH .../nodes/{id}).
+  // dispatched) - matches the server's check (PATCH .../nodes/{id}).
   const notStarted = state.status === 'queued'
   const running = state.status === 'running'
   // Answering resumes the node now; queueing waits for its next turn
-  // boundary — same input widget, chosen by which state the node is in.
+  // boundary - same input widget, chosen by which state the node is in.
   const answering = state.status === 'needs_input' && state.question != null
   const queue = state.queue ?? []
 
@@ -126,7 +126,7 @@ export function NodePopup({
           </button>
         </div>
 
-        {/* Prompt — the same bubble treatment as an assistant turn in chat. */}
+        {/* Prompt - the same bubble treatment as an assistant turn in chat. */}
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
           <div className="flex items-center justify-between">
             <BubbleHeader agent={node.agent} />
@@ -160,7 +160,7 @@ export function NodePopup({
           )}
         </div>
 
-        {/* Pending mid-node question — rendered as its own chat-style bubble,
+        {/* Pending mid-node question - rendered as its own chat-style bubble,
             answered (or read-only, if no resume wiring was passed) below. */}
         {answering && (
           <div className="bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 border-l-4 rounded-2xl rounded-tl-sm px-5 py-4">
@@ -172,14 +172,14 @@ export function NodePopup({
           </div>
         )}
 
-        {/* Message queue, only while running — plain history, immutable once delivered. */}
+        {/* Message queue, only while running - plain history, immutable once delivered. */}
         {running && !answering && queue.length > 0 && (
           <div>
             <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
               Queued messages
             </span>
             <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 mb-2">
-              Delivered at the node's next turn boundary — never mid-turn.
+              Delivered at the node's next turn boundary - never mid-turn.
             </p>
             <ul className="space-y-1.5">
               {queue.map(m => (
@@ -196,7 +196,7 @@ export function NodePopup({
 
         {/* One shared input: queues a message on a running node (delivered at
             its next turn boundary), or answers a needs_input node (resumes
-            it immediately) — same widget, different destination. */}
+            it immediately) - same widget, different destination. */}
         {((running && onQueueMessage) || (answering && onAnswerQuestion)) && (
           <div className="flex items-center gap-2">
             <input
@@ -228,7 +228,7 @@ export function NodePopup({
         )}
         {answering && !onAnswerQuestion && (
           <p className="text-[11px] text-gray-400 dark:text-gray-500 italic">
-            Answering from here isn't wired up yet — reply in the main chat.
+            Answering from here isn't wired up yet - reply in the main chat.
           </p>
         )}
       </div>

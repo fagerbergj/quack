@@ -9,7 +9,7 @@ import (
 )
 
 // eventSpec is one session event to yield: its parts, whether it is a partial
-// (streamed-only, never persisted — the runner drops Partial events from the
+// (streamed-only, never persisted - the runner drops Partial events from the
 // store) and optional usage for the final event.
 type eventSpec struct {
 	parts   []*genai.Part
@@ -29,7 +29,7 @@ type eventSpec struct {
 //
 // The durable pair is emitted only at the TERMINAL update because opencode
 // often delivers the interesting fields (the edit diff, the command output)
-// there, and the ledger reads args off the call part — an early call event
+// there, and the ledger reads args off the call part - an early call event
 // would freeze them half-empty.
 type translator struct {
 	cwd     string
@@ -63,7 +63,7 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		}
 	case u.ToolCall != nil:
 		// A tool call means everything narrated so far was pre-action
-		// throat-clearing, not the answer — keep only the text emitted since.
+		// throat-clearing, not the answer - keep only the text emitted since.
 		t.answer.Reset()
 		c := u.ToolCall
 		id := string(c.ToolCallId)
@@ -74,7 +74,7 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 			delete(t.pending, id)
 			return []eventSpec{t.pairSpec(id, name, args, p, c.Status == sdk.ToolCallStatusFailed, c.RawOutput)}
 		}
-		// Live progress only — the durable pair lands at the terminal update.
+		// Live progress only - the durable pair lands at the terminal update.
 		return []eventSpec{{partial: true, parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: id, Name: name, Args: args}}}}}
 	case u.ToolCallUpdate != nil:
 		up := u.ToolCallUpdate
@@ -112,7 +112,7 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 
 // finalSpec is the round's durable answer event: the agent message text
 // accumulated since the last tool call (what RunNode[string] returns via the
-// node Output) — earlier narration was reset away at each ToolCall dispatch.
+// node Output) - earlier narration was reset away at each ToolCall dispatch.
 func finalSpec(t *translator) eventSpec {
 	return eventSpec{parts: []*genai.Part{{Text: t.answer.String()}}, usage: t.usage}
 }
@@ -146,8 +146,8 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 		return "run_command", map[string]any{"command": cmd}
 	case sdk.ToolKindEdit:
 		// A diff carries the before/after text the frontend's diff view needs
-		// (EditFileView); map to "edit_file" — quack's native name for that
-		// view — so ACP edits render the same as native ones (#388). Without a
+		// (EditFileView); map to "edit_file" - quack's native name for that
+		// view - so ACP edits render the same as native ones (#388). Without a
 		// diff there's nothing to show a before/after for, so fall back to the
 		// plainer write_file view.
 		if d := firstDiff(p.content); d != nil {
@@ -223,7 +223,7 @@ func (t *translator) toolResponse(name string, p pendingTool, failed bool, rawOu
 }
 
 // editPath resolves the edited file's path (diff content first, then
-// locations), node-relative — the namespace the ledger and the judge's
+// locations), node-relative - the namespace the ledger and the judge's
 // changed-file re-read resolve against.
 func (t *translator) editPath(p pendingTool) string {
 	if d := firstDiff(p.content); d != nil {
@@ -247,7 +247,7 @@ func (t *translator) firstPath(p pendingTool) string {
 }
 
 // rel converts the agent's ABSOLUTE path (ACP mandates absolute paths) to a
-// node-relative one. A path outside the node dir is kept verbatim — the jail
+// node-relative one. A path outside the node dir is kept verbatim - the jail
 // resolve downstream refuses it, which is the right failure.
 func (t *translator) rel(p string) string {
 	if t.cwd == "" || !filepath.IsAbs(p) {

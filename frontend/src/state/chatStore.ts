@@ -11,7 +11,7 @@ import {
 import type { Turn, DagOutputItem, NodeStatus, QueuedMessage } from '../generated'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
-// unchanged — the generated enum is now the one source of truth for node states.
+// unchanged - the generated enum is now the one source of truth for node states.
 export type { NodeStatus, QueuedMessage }
 
 export interface NodeState {
@@ -37,7 +37,7 @@ export interface NodeState {
   steers?: string[]   // guidance folded in when a queued message was delivered, in order
   // Local, optimistic tracking of the node's message queue (add/edit/remove
   // responses tell the caller what changed; there's no separate SSE sync
-  // event — see openapi.yaml's sendMessage description). Cleared on
+  // event - see openapi.yaml's sendMessage description). Cleared on
   // node_steered (the queue was drained and delivered).
   queue?: QueuedMessage[]
 }
@@ -55,7 +55,7 @@ export interface DagTurnState {
 
 // LiveTurn is the in-progress / seeded state for one chat turn.
 export interface LiveTurn {
-  id: string             // turn ID (response_id) — empty string while streaming before first event
+  id: string             // turn ID (response_id) - empty string while streaming before first event
   userText: string
   dag?: DagTurnState
   // Top-level fields for orchestrator responses that don't go through a DAG node.
@@ -66,7 +66,7 @@ export interface LiveTurn {
 }
 
 // QueuedTurn is a follow-up message typed while the chat's run is still
-// streaming — held client-side (no endpoint; this is a pure send deferral,
+// streaming - held client-side (no endpoint; this is a pure send deferral,
 // unlike the per-node queue) and auto-submitted in order once the run ends.
 export interface QueuedTurn {
   id: string
@@ -92,7 +92,7 @@ type Listener = () => void
 export const EMPTY_STATE: ChatState = { turns: [], error: '', queue: [] }
 
 // retrySet returns nodeId plus every node transitively downstream of it (via the
-// DAG edges) — the subgraph a retry re-runs because the target's output feeds them.
+// DAG edges) - the subgraph a retry re-runs because the target's output feeds them.
 function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
   const dependents = new Map<string, string[]>()
   for (const e of edges) {
@@ -113,7 +113,7 @@ function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
 // turnFromLiveTurn synthesizes a persisted-shaped Turn from a finished LiveTurn,
 // for when a refetch races the server's own persistence of that turn (submit()
 // archiving a previous `live` before sending a follow-up). DAG turns keep only
-// the terminal node's answer text — enough to render, not a full DagOutputItem.
+// the terminal node's answer text - enough to render, not a full DagOutputItem.
 function turnFromLiveTurn(live: LiveTurn): Turn {
   const finalId = live.dag ? terminalNodeId(live.dag.nodes) : undefined
   const text = live.dag ? (finalId != null ? (live.dag.nodeAnswer[finalId] ?? '') : live.text) : live.text
@@ -213,7 +213,7 @@ export class ChatStore {
         if (res.ok) turns = ((await res.json()) as { turns?: Turn[] }).turns ?? turns
       } catch { /* keep local state; worst case the previous turn drops until refresh */ }
       // The refetch can race the server's own persistence of the turn that just
-      // finished streaming — if it's missing from `turns`, keep it by synthesizing
+      // finished streaming - if it's missing from `turns`, keep it by synthesizing
       // a Turn from the in-memory `live` rather than dropping the answer.
       if (cur.live && !turns.some(t => t.id === cur.live!.id)) {
         turns = [...turns, turnFromLiveTurn(cur.live)]
@@ -245,7 +245,7 @@ export class ChatStore {
   }
 
   // queueTurn holds a follow-up message locally while the chat's run streams
-  // (drainQueue submits it once that run ends) — the top-level counterpart of
+  // (drainQueue submits it once that run ends) - the top-level counterpart of
   // queueNodeMessage, but purely client-side: no endpoint, since deferring
   // store.submit needs no server involvement.
   queueTurn(chatId: string, text: string): void {
@@ -261,7 +261,7 @@ export class ChatStore {
     this.write(chatId, { ...s, queue: s.queue.filter(m => m.id !== id) })
   }
 
-  // drainQueue submits the next queued follow-up once a run finishes — called
+  // drainQueue submits the next queued follow-up once a run finishes - called
   // from finishStream so it fires whether the run ended normally, was
   // stopped, or dropped and reconnected. Submits one at a time: the auto
   // submit() call re-enters finishStream on ITS completion, draining the rest
@@ -275,7 +275,7 @@ export class ChatStore {
   }
 
   // stop cancels the chat's active run by response id (the id captured from
-  // the run's opening response_created event) — a no-op if that id hasn't
+  // the run's opening response_created event) - a no-op if that id hasn't
   // arrived yet (the client also aborts its own connection either way).
   stop(chatId: string): void {
     const responseId = this.states.get(chatId)?.live?.id
@@ -348,7 +348,7 @@ export class ChatStore {
       })
   }
 
-  // queueNodeMessage appends a message to a running node's queue — delivered
+  // queueNodeMessage appends a message to a running node's queue - delivered
   // at its next turn boundary, never mid-turn (replaces the old interrupt-based
   // steer). 404s (surfaced as a node error note) if the node isn't running.
   async queueNodeMessage(chatId: string, nodeId: string, text: string): Promise<void> {
@@ -401,7 +401,7 @@ export class ChatStore {
   }
 
   // editNodeTask replaces a not-yet-started node's task text (only legal before
-  // the node has started — 409 once it has, e.g. a downstream node waiting on
+  // the node has started - 409 once it has, e.g. a downstream node waiting on
   // its dependencies). Updates the local plan def optimistically on success.
   async editNodeTask(chatId: string, nodeId: string, task: string): Promise<boolean> {
     const trimmed = task.trim()
@@ -428,7 +428,7 @@ export class ChatStore {
   }
 
   // markNodeError annotates a live DAG node with a transient error note (used
-  // for rejected control actions — the next stream event for the node clears it).
+  // for rejected control actions - the next stream event for the node clears it).
   private markNodeError(chatId: string, nodeId: string, msg: string): void {
     const cur = this.get(chatId)
     const dag = cur.live?.dag
@@ -441,7 +441,7 @@ export class ChatStore {
   // descendants, reusing the stored outputs of the rest. Optional guidance is
   // folded into the node's task. The PUT itself returns immediately (an
   // optimistic "queued" state); the re-run happens in the background and its
-  // progress streams over the chat's GET .../stream relay — the affected
+  // progress streams over the chat's GET .../stream relay - the affected
   // subgraph is reset to queued locally (answer + runs cleared) so the
   // incoming node events rebuild it in place once that subscription is live.
   retryNode(chatId: string, nodeId: string, guidance?: string): void {
@@ -502,7 +502,7 @@ export class ChatStore {
       const result = await readAgentStream(res.body, this.streamHandlers(chatId, msg => { streamError = msg }, onTitle))
       if (streamError) throw new Error(streamError)
       if (!result.done) {
-        // The body ended without a `done` event — the connection dropped
+        // The body ended without a `done` event - the connection dropped
         // mid-run, not a normal completion. Hand off to the resumable GET
         // stream (which supports Last-Event-ID reconnect) instead of failing
         // the turn outright.
@@ -543,7 +543,7 @@ export class ChatStore {
   }
 
   // subscribeToStream opens the GET .../stream EventSource and wires it through
-  // the same handlers the POST path uses — shared by attach() (reconnect to an
+  // the same handlers the POST path uses - shared by attach() (reconnect to an
   // in-progress run) and retryNode (watch a background re-run's progress, since
   // its PUT no longer returns its own SSE body). Callers own seeding/resetting
   // `live` beforehand; this only wires the subscription + teardown.
@@ -560,7 +560,7 @@ export class ChatStore {
   // The server closes the connection once the run's `done` is delivered;
   // EventSource sees that as an `error` too, so onerror must tell a genuine
   // drop (worth retrying) apart from that expected close (tear down, `done`
-  // already fired) — sawDone is the flag that distinguishes them.
+  // already fired) - sawDone is the flag that distinguishes them.
   private openEventSource(chatId: string, generation: number, lastEventId: number, attempt: number): void {
     const url = lastEventId > 0
       ? `/api/v1/chats/${chatId}/stream?last_event_id=${lastEventId}`
@@ -593,7 +593,7 @@ export class ChatStore {
       if (this.generations.get(chatId) !== generation) return  // superseded by a newer run
       if (attempt >= MAX_RECONNECT_ATTEMPTS) {
         const s = this.states.get(chatId)
-        if (s) this.write(chatId, { ...s, error: 'Lost connection to the server — reload to resume.' })
+        if (s) this.write(chatId, { ...s, error: 'Lost connection to the server - reload to resume.' })
         this.finishStream(chatId, generation)
         return
       }
@@ -609,7 +609,7 @@ export class ChatStore {
 
   // resetLiveForResume clears a live turn's accumulated DAG/text/runs before
   // handing off to a full stream replay (openEventSource with lastEventId=0)
-  // — the POST body carries no event ids to resume past, so the replay starts
+  // - the POST body carries no event ids to resume past, so the replay starts
   // from the beginning; clearing first is what keeps that idempotent instead
   // of duplicating everything already applied.
   private resetLiveForResume(chatId: string): void {
@@ -626,10 +626,10 @@ export class ChatStore {
     this.finishStream(chatId, generation)
   }
 
-  // detachStream closes an attached subscribe stream WITHOUT ending the turn — the
+  // detachStream closes an attached subscribe stream WITHOUT ending the turn - the
   // run continues server-side. For chat switch / unmount. Re-attach re-subscribes
   // and the hub replays. ponytail: returning to a still-streaming chat shows its
-  // frozen last state (attach no-ops while streaming) — reload to resume live.
+  // frozen last state (attach no-ops while streaming) - reload to resume live.
   detachStream(chatId: string): void {
     const close = this.eventSources.get(chatId)
     if (close) {
@@ -699,10 +699,10 @@ export class ChatStore {
       // ANSWER_STAGES are the stages whose streamed text IS the node's answer: the
       // initial worker draft AND each revision (which fully replaces the prior
       // draft). Judge is internal gate commentary, never the answer (as are any
-      // ask_advisor consults — those are ordinary tool calls inside a worker/revise
+      // ask_advisor consults - those are ordinary tool calls inside a worker/revise
       // run, not a separate stage, so they never reach this check at all). A node
       // can go through several worker-stage runs now (mid-node HITL re-asks, each
-      // re-entering as a fresh 'worker'-stage run) — resetAnswer below clears the
+      // re-entering as a fresh 'worker'-stage run) - resetAnswer below clears the
       // accumulator per run so those don't concatenate together, and a revision
       // doesn't glue onto the judge-rejected draft it replaces.
       const ANSWER_STAGES: ReadonlySet<Stage> = new Set(['worker', 'revise'])
@@ -714,7 +714,7 @@ export class ChatStore {
       }
 
       // resetTopLevelText clears the orchestrator's top-level answer accumulator
-      // (no DAG node) — the top-level counterpart of resetAnswer above.
+      // (no DAG node) - the top-level counterpart of resetAnswer above.
       const resetTopLevelText = () => {
         const s = this.states.get(chatId)
         if (!s?.live) return
@@ -725,7 +725,7 @@ export class ChatStore {
         onAgentStart: d => {
           // A fresh top-level (no-node) run starting means any text already
           // accumulated from a PRIOR top-level run is a stale, superseded
-          // attempt at the same reply — not a continuation to concatenate onto.
+          // attempt at the same reply - not a continuation to concatenate onto.
           // Without this, two full top-level runs against the same live turn
           // (e.g. the GitHub dispatch's no-plan-ran nudge re-driving the
           // orchestrator, #422) render the answer doubled: the first attempt's
@@ -742,7 +742,7 @@ export class ChatStore {
           : updateTopLevelRuns(r => appendRunThinking(r, runId, text)),
         onAgentToolCall: (runId, callId, name, args, nid) => {
           // A tool call means everything narrated so far in this run was
-          // pre-action throat-clearing, not the answer — mirrors the reset
+          // pre-action throat-clearing, not the answer - mirrors the reset
           // internal/acp/translate.go performs backend-side (#358), applied
           // here to the LIVE stream (#387) so narration ahead of a tool call
           // never renders as if it were the final answer.
@@ -762,7 +762,7 @@ export class ChatStore {
         onAgentToken: (runId, text, nid) => {
           if (!nid) { updateTopLevelText(text); return }
           // Only an answer-stage run's text belongs in the node's answer box. The
-          // judge is internal gate commentary shown as its own run — without this,
+          // judge is internal gate commentary shown as its own run - without this,
           // it leaked into the answer (e.g. a failed node still displayed the
           // judge's critique as its "answer").
           const st = this.states.get(chatId)
@@ -814,7 +814,7 @@ export class ChatStore {
         // shows true elapsed time instead of restarting from the replay moment.
         onNodeStart: (nodeId, _agent, startedAtMs) => updateNodeState(nodeId, { status: 'running', startedAt: startedAtMs ?? Date.now() }),
         onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => {
-          // Freeze any run still counting — the node is done, so no run is live.
+          // Freeze any run still counting - the node is done, so no run is live.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, {
             status: 'done', finishedAt: Date.now(), outputPreview: preview,
@@ -835,14 +835,14 @@ export class ChatStore {
           updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
         },
         onNodeCancelled: nodeId => {
-          // The node was stopped by the user — rendered neutrally ("stopped"),
+          // The node was stopped by the user - rendered neutrally ("stopped"),
           // not as a red failure (node_cancelled is a distinct event now, not
           // inferred from a node_failed error string).
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'cancelled', finishedAt: Date.now(), error: undefined })
         },
         onNodePaused: nodeId => {
-          // The node was suspended by the user — keeps its accumulated work,
+          // The node was suspended by the user - keeps its accumulated work,
           // resumable (unlike cancel). Not a terminal/finished state for the
           // allDone check below.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
@@ -893,7 +893,7 @@ export class ChatStore {
   }
 }
 
-// isTurnInProgress reports whether a turn's DAG is still running — the gate for
+// isTurnInProgress reports whether a turn's DAG is still running - the gate for
 // re-subscribing to a live run on chat open/reload. After a server restart,
 // FailStaleDagNodes flips orphaned nodes to failed, so the DAG reads completed
 // and we don't (wrongly) re-attach to a dead run.
@@ -957,7 +957,7 @@ export interface Attribution {
   tokens?: number
 }
 
-// terminalNodeId returns the DAG's terminal node — the one with no successor,
+// terminalNodeId returns the DAG's terminal node - the one with no successor,
 // whose answer IS the turn's response. Shared by DagView's topology rendering
 // and the answer-bubble attribution (which node actually produced this answer).
 export function terminalNodeId(nodes: DagNodeDef[]): string | undefined {
@@ -966,7 +966,7 @@ export function terminalNodeId(nodes: DagNodeDef[]): string | undefined {
   return nodes.find(n => !hasSuccessor.has(n.id))?.id
 }
 
-// dagTotalTokens sums total_tokens across every node in a DAG — the DAG bubble
+// dagTotalTokens sums total_tokens across every node in a DAG - the DAG bubble
 // header's token count.
 export function dagTotalTokens(dag: DagTurnState): number {
   return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
@@ -984,7 +984,7 @@ export function dagAnswerAttribution(dag: DagTurnState): Attribution | undefined
 }
 
 // turnUsageTotal sums a persisted Turn's usage (input + output tokens), or
-// undefined when usage wasn't recorded (e.g. a DAG-only turn — its tokens are
+// undefined when usage wasn't recorded (e.g. a DAG-only turn - its tokens are
 // surfaced per-node instead) or is all-zero.
 export function turnUsageTotal(turn: Turn): number | undefined {
   const u = turn.usage
@@ -995,14 +995,14 @@ export function turnUsageTotal(turn: Turn): number | undefined {
 
 // plainReplyAttribution is the answer bubble's header for a reloaded plain-reply
 // turn: the orchestrator, with the actual model persisted on the turn row at run
-// end (turn.model — never the currently-configured model, which could silently
-// rewrite history) and the turn's total tokens — matching the live stream.
+// end (turn.model - never the currently-configured model, which could silently
+// rewrite history) and the turn's total tokens - matching the live stream.
 export function plainReplyAttribution(turn: Turn): Attribution {
   return { agent: 'orchestrator', model: turn.model, tokens: turnUsageTotal(turn) }
 }
 
 // pendingNodeQuestion finds a paused mid-node HITL question awaiting an answer
-// in a live DAG — the node's own conversation-level "question bubble" (as
+// in a live DAG - the node's own conversation-level "question bubble" (as
 // opposed to the orchestrator's get_user_choice, surfaced via pendingChoice).
 export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent: string; question: string } | undefined {
   for (const n of dag.nodes) {

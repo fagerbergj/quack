@@ -21,7 +21,7 @@ func writeRepo(t *testing.T, dir, originURL string) {
 	}
 }
 
-// TestRepoKey: the memory repo bucket's key is DERIVED from the chat's clone — the
+// TestRepoKey: the memory repo bucket's key is DERIVED from the chat's clone - the
 // same repo cloned over ssh or https is one bucket, and an ambiguous or repo-less
 // scope yields "" (fall back to the role bucket, never guess).
 func TestRepoKey(t *testing.T) {
@@ -58,7 +58,7 @@ func TestRepoKey(t *testing.T) {
 		t.Fatalf("https clone RepoKey = %q, want %q (one repo, one bucket)", got, want)
 	}
 
-	// Two repos in one scope is ambiguous — no key rather than a guess.
+	// Two repos in one scope is ambiguous - no key rather than a guess.
 	writeRepo(t, filepath.Join(scope, "other"), "https://github.com/acme/other.git")
 	if got := j.RepoKey("u1", "c1"); got != "" {
 		t.Fatalf("ambiguous scope RepoKey = %q, want \"\" (don't guess)", got)

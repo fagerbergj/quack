@@ -17,8 +17,8 @@ See also: [Quick Start](/quickstart.md)
 ### `make build`
 Builds the frontend, embeds it into the Go binary, and compiles the server.
 
-1. `make frontend-build` — runs `cd frontend && npm ci && npm run build`, copies `frontend/dist` into `internal/serve/web/dist` (the embed directory), creates a `.gitkeep` placeholder.
-2. `go build -o quack ./cmd/quack` — compiles the binary.
+1. `make frontend-build` - runs `cd frontend && npm ci && npm run build`, copies `frontend/dist` into `internal/serve/web/dist` (the embed directory), creates a `.gitkeep` placeholder.
+2. `go build -o quack ./cmd/quack` - compiles the binary.
 
 ### `make generate`
 Regenerates Go server stubs and TypeScript client from [`openapi.yaml`](/openapi.yaml) via [`scripts/generate.sh`](/scripts/generate.sh). Uses:
@@ -28,8 +28,8 @@ Regenerates Go server stubs and TypeScript client from [`openapi.yaml`](/openapi
 After modifying `openapi.yaml`, always run `make generate` and commit the generated files in the same commit. This is enforced as a hard rule in AGENTS.md.
 
 ### `make vet` / `make fmt`
-- `go vet ./...` — static analysis
-- `gofmt -w internal cmd` — format source
+- `go vet ./...` - static analysis
+- `gofmt -w internal cmd` - format source
 
 ### `make test`
 Runs `go test ./...` for the full Go test suite.
@@ -38,26 +38,26 @@ Runs `go test ./...` for the full Go test suite.
 
 ### `make docker-up` / `make docker-down`
 Orchestrates the full stack via `docker compose up --build`. The compose file configures:
-- **App** — Quack server binary
-- **Postgres** — persistent database for ADK sessions, DAG state, chat metadata
-- **SearXNG** — web search engine (JSON API)
+- **App** - Quack server binary
+- **Postgres** - persistent database for ADK sessions, DAG state, chat metadata
+- **SearXNG** - web search engine (JSON API)
 
 ### Dockerfile
 Multi-stage build: Node.js stage for frontend compilation → Go stage for server compilation → lightweight production image with the embedded binary.
 
 ## CI/CD Pipelines
 
-### `.github/workflows/ci.yaml` — Continuous Integration
+### `.github/workflows/ci.yaml` - Continuous Integration
 Runs on push and pull requests:
 - `go vet`, `go test ./...`, `gofmt -l` (Go checks)
 - `tsc --noEmit`, `eslint src/`, `npm run build`, `npm test` (frontend checks)
 - OpenAPI lint (`npx @redocly/cli@latest lint openapi.yaml`)
-- Codegen-drift check (`git diff --exit-code -- internal/schema frontend/src/generated`) — ensures generated files match openapi.yaml
+- Codegen-drift check (`git diff --exit-code -- internal/schema frontend/src/generated`) - ensures generated files match openapi.yaml
 
-### `.github/workflows/cd.yaml` — Continuous Deployment
+### `.github/workflows/cd.yaml` - Continuous Deployment
 Handles production/preview deployment of the Quack application.
 
-### `.github/workflows/openwiki-update.yml` — Automated OpenWiki Updates
+### `.github/workflows/openwiki-update.yml` - Automated OpenWiki Updates
 Scheduled daily at 08:00 UTC (`cron: "0 8 * * *"`) and triggerable manually via `workflow_dispatch`. Uses:
 - Node.js 22 (actions/setup-node@v4)
 - Installs OpenWiki globally via npm
@@ -78,25 +78,25 @@ Scheduled daily at 08:00 UTC (`cron: "0 8 * * *"`) and triggerable manually via 
 |----------|---------|---------|
 | `QUACK_DATABASE_URL` | Postgres DSN | Required |
 | `QUACK_LLM_ENDPOINT` | OpenAI-compatible LLM endpoint | Required |
-| `QUACK_LLM_API_KEY` | API key for LLM endpoint | — |
-| `QUACK_ORCH_MODEL` | Orchestrator model name | — |
+| `QUACK_LLM_API_KEY` | API key for LLM endpoint | - |
+| `QUACK_ORCH_MODEL` | Orchestrator model name | - |
 | `QUACK_RESEARCHER_MODEL` | Researcher/worker model (fallback for coder/media/image) | `QUACK_LLM_ENDPOINT` default |
 | `QUACK_CODER_MODEL` | Code agent model | `QUACK_RESEARCHER_MODEL` |
 | `QUACK_JUDGE_MODEL` | Judge model (should be different from worker) | `QUACK_LLM_ENDPOINT` default |
-| `QUACK_EMBED_MODEL` | Embedding model for vector store | — |
+| `QUACK_EMBED_MODEL` | Embedding model for vector store | - |
 | `QUACK_QDRANT_URL` | qdrant endpoint | Unset = memory self-disables |
-| `QUACK_SEARXNG_URL` | SearXNG JSON API endpoint | — |
+| `QUACK_SEARXNG_URL` | SearXNG JSON API endpoint | - |
 | `QUACK_WORKSPACE_ROOT` | Filesystem sandbox root | `./workspace` |
 | `QUACK_LOG_LEVEL` | slog level: debug, info, warn, error | info |
 | `QUACK_LOG_FORMAT` | Output format: text or json | text |
-| `QUACK_COMPACTION_ENABLED` | Toggle for history compaction | — |
-| `QUACK_COMPACTION_MODEL` | Compaction model | — |
+| `QUACK_COMPACTION_ENABLED` | Toggle for history compaction | - |
+| `QUACK_COMPACTION_MODEL` | Compaction model | - |
 
 ## Generated/Read-Only Files (Never Edit)
 
 Per AGENTS.md hard rules:
-- `internal/schema/quack.gen.go` — Go server stubs from OpenAPI codegen
-- `frontend/src/generated/` — TypeScript client from OpenAPI codegen
+- `internal/schema/quack.gen.go` - Go server stubs from OpenAPI codegen
+- `frontend/src/generated/` - TypeScript client from OpenAPI codegen
 - These are overwritten by `make generate`; hand edits will fail CI.
 
 ## Related Concepts

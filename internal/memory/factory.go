@@ -11,7 +11,7 @@ import (
 
 // Store-backend kinds. Empty kind defaults to the only bundled adapter (Qdrant),
 // so existing config keeps working without naming a kind. Mirrors the
-// inference.NewModel provider-kind factory and the tools backend factory — the
+// inference.NewModel provider-kind factory and the tools backend factory - the
 // one selection convention for every swappable backend.
 const (
 	KindQdrant = "qdrant"

@@ -7,7 +7,7 @@ import (
 
 // TestResolveToolNames guards the config-driven gating of runtime-conditional
 // builtins: stage_memory needs a task-memory store, ask_advisor needs a built
-// advisor agent (itself gated on gates.judge being enabled — see build's
+// advisor agent (itself gated on gates.judge being enabled - see build's
 // advisorAgent). Both are silently dropped rather than erroring when their
 // dependency is off, and load_memory is split out (ADK-native, added by the
 // caller) regardless.
@@ -57,7 +57,7 @@ func TestResolveToolNames(t *testing.T) {
 		},
 		{
 			// Extension tool names (internal/github.App.Tools()) are not special-cased
-			// here — they resolve later, in tools.Build, against Deps.ExtTools. An
+			// here - they resolve later, in tools.Build, against Deps.ExtTools. An
 			// agent gets one only by listing it, same as any builtin.
 			name:       "extension tool names pass through unchanged",
 			configured: []string{"read_file", "github_add_review_comment"},

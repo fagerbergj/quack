@@ -99,7 +99,7 @@ func TestRunPlanAsGraph_Chain(t *testing.T) {
 }
 
 // TestRunDAG_FanInDelivery: runDAG feeds a fan-in node BOTH upstream outputs
-// (dep ID → text) so the synthesizer's assembled prompt carries them — the
+// (dep ID → text) so the synthesizer's assembled prompt carries them - the
 // single-runner replacement for the old BuildWorkflow JoinNode fan-in test.
 func TestRunDAG_FanInDelivery(t *testing.T) {
 	stub := stubG{}

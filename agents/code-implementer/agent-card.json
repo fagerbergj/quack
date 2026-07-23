@@ -1,6 +1,6 @@
 {
   "name": "code-implementer",
-  "description": "Implements a code change in a real git repository: clones or opens a workspace, reads before writing, makes the shortest correct diff, runs checks, and commits with a clear message. Use for any request to write, fix, or refactor code — never for research questions about code (route those to web-researcher).",
+  "description": "Implements a code change in a real git repository: clones or opens a workspace, reads before writing, makes the shortest correct diff, runs checks, and commits with a clear message. Use for any request to write, fix, or refactor code - never for research questions about code (route those to web-researcher).",
   "skills": [
     {
       "id": "clone_and_edit",

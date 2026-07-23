@@ -35,7 +35,7 @@ func TestInit_EnabledInstallsGlobalProviders(t *testing.T) {
 		t.Fatalf("expected real providers when enabled, got %+v", p)
 	}
 
-	// Spans/metrics must be safe to record — emission-only, no local read-back.
+	// Spans/metrics must be safe to record - emission-only, no local read-back.
 	_, span := Start(context.Background(), "run")
 	End(span, nil)
 

@@ -10,7 +10,7 @@ import (
 )
 
 // diffFor returns one commit's unified diff (mirrors what commitDiff fetches
-// from GitHub's v3.diff media type) — used to compute a real patch-id in
+// from GitHub's v3.diff media type) - used to compute a real patch-id in
 // tests without hitting the network.
 func diffFor(t *testing.T, dir, sha string) string {
 	t.Helper()
@@ -74,7 +74,7 @@ func TestGitPatchIDStableAcrossRebase(t *testing.T) {
 }
 
 // TestDiffSnapshotsRebaseNoNewWork pins required test (a) from #459: a PR
-// reviewed at commits [c1,c2] gets rebased onto a newer base — same patches,
+// reviewed at commits [c1,c2] gets rebased onto a newer base - same patches,
 // new SHAs. The delta must report ZERO new commits, not "all new" and not an
 // error on a SHA that's no longer reachable the old way.
 func TestDiffSnapshotsRebaseNoNewWork(t *testing.T) {
@@ -91,7 +91,7 @@ func TestDiffSnapshotsRebaseNoNewWork(t *testing.T) {
 	}}
 
 	// Rebase: replay both commits onto a fresh base (simulated the same way
-	// as TestGitPatchIDStableAcrossRebase — amend rewrites the SHA chain).
+	// as TestGitPatchIDStableAcrossRebase - amend rewrites the SHA chain).
 	runGitTest(t, dir, "checkout", "--orphan", "newbase")
 	runGitTest(t, dir, "reset", "--hard")
 	writeCommit(t, dir, "base.txt", "base\n", "unrelated base commit")
@@ -109,13 +109,13 @@ func TestDiffSnapshotsRebaseNoNewWork(t *testing.T) {
 
 	delta := diffSnapshots(old, cur, 0)
 	if len(delta.NewCommits) != 0 {
-		t.Errorf("NewCommits = %+v; want zero — a rebase with no new work must not read as new", delta.NewCommits)
+		t.Errorf("NewCommits = %+v; want zero - a rebase with no new work must not read as new", delta.NewCommits)
 	}
 }
 
 // TestDiffSnapshotsRebasePlusOneNewCommit pins required test (b): the same
 // rebase as above, PLUS a genuinely new commit c3. The delta must be EXACTLY
-// c3 — not [c1,c2,c3].
+// c3 - not [c1,c2,c3].
 func TestDiffSnapshotsRebasePlusOneNewCommit(t *testing.T) {
 	requireGitBinary(t)
 	dir := t.TempDir()
@@ -173,12 +173,12 @@ func TestDiffSnapshotsForcePushDropsCommit(t *testing.T) {
 
 	delta := diffSnapshots(old, cur, 0)
 	if len(delta.NewCommits) != 0 {
-		t.Errorf("NewCommits = %+v; want zero — kept commits must not be re-flagged", delta.NewCommits)
+		t.Errorf("NewCommits = %+v; want zero - kept commits must not be re-flagged", delta.NewCommits)
 	}
 }
 
 // TestDiffSnapshotsCommentLifecycle pins the general (non-commit) delta
-// mechanics: added/edited/deleted comments, title/state/label changes — all
+// mechanics: added/edited/deleted comments, title/state/label changes - all
 // keyed by stable id, never by position.
 func TestDiffSnapshotsCommentLifecycle(t *testing.T) {
 	old := Snapshot{
@@ -191,7 +191,7 @@ func TestDiffSnapshotsCommentLifecycle(t *testing.T) {
 	cur := Snapshot{
 		Title: "New title", State: "closed", Labels: []string{"bug", "priority:high"},
 		Comments: []snapshotComment{
-			{ID: 1, User: "alice", Body: "first — edited", UpdatedAt: "t1"},
+			{ID: 1, User: "alice", Body: "first - edited", UpdatedAt: "t1"},
 			{ID: 3, User: "carol", Body: "brand new", UpdatedAt: "t1"},
 		},
 	}
@@ -218,7 +218,7 @@ func TestDiffSnapshotsCommentLifecycle(t *testing.T) {
 		t.Error("delta with real changes reported Empty()")
 	}
 
-	// An identical resnapshot yields an empty delta — the resume-with-nothing
+	// An identical resnapshot yields an empty delta - the resume-with-nothing
 	// -new case (#459's "injects an empty delta, not the whole thread again").
 	if noop := diffSnapshots(cur, cur, 0); !noop.Empty() {
 		t.Errorf("diffSnapshots(cur, cur) = %+v; want Empty()", noop)

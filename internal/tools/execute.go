@@ -25,7 +25,7 @@ type executeResult struct {
 
 // ExecPlanKey is the session-state key the execute tool stashes the selected plan
 // (full JSON) under. The orchestrator workflow's execute node reads it and runs the
-// DAG in the SAME runner after the llmagent's turn — so a tool (which has no
+// DAG in the SAME runner after the llmagent's turn - so a tool (which has no
 // sub-scheduler) never runs the DAG. Storing the whole plan (not just its id) means
 // a retry of a failed node finds it in the persisted session, where the
 // per-run plan cache no longer exists.
@@ -41,12 +41,12 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 			Name: "execute",
 			Description: "Tool to execute a DAG plan produced by the plan tool. Pass the plan_id returned by plan. " +
 				"The plan's answer is shown to the user directly; after calling execute you must output nothing " +
-				"further — no acknowledgement, no restatement, and never say a specialist will respond (the work is already done).",
+				"further - no acknowledgement, no restatement, and never say a specialist will respond (the work is already done).",
 		},
 		func(tc agent.Context, a executeArgs) (executeResult, error) {
 			plan, ok := cache.Get(a.PlanID)
 			if !ok {
-				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q — call plan first and pass the plan_id it returns", a.PlanID)
+				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q - call plan first and pass the plan_id it returns", a.PlanID)
 			}
 			planJSON, err := json.Marshal(plan)
 			if err != nil {
@@ -56,7 +56,7 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 			cache.SetSelected(a.PlanID)
 			// End the llmagent turn structurally so it can't emit a chatty
 			// acknowledgement over the execute node's streamed answer.
-			// ponytail: the plan's synthesizer node IS the loop-back — it folds the
+			// ponytail: the plan's synthesizer node IS the loop-back - it folds the
 			// specialist outputs into the final answer. Full fold-into-reply just needs the
 			// orchestrator's context (conversation history + the user's exact framing)
 			// threaded into that node; end_turn=false is a no-op for now (always deliver).

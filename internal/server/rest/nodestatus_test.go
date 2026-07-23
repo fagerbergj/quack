@@ -26,7 +26,7 @@ import (
 
 // stubModel is a minimal model.LLM that always answers with a plain text
 // reply and no tool calls, so the orchestrator's llmagent completes without
-// going through plan/execute — enough to exercise SendChatMessage end to end
+// going through plan/execute - enough to exercise SendChatMessage end to end
 // without a real research run.
 type stubModel struct{}
 
@@ -44,7 +44,7 @@ func (stubModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool)
 
 // newTestHandler builds a Handler backed by a real (sqlite, temp-file)
 // store and a real Orchestrator/Executor with an empty agent roster and a
-// stub top-level model — enough to run CancelNode/SteerNode/RetryNode (which
+// stub top-level model - enough to run CancelNode/SteerNode/RetryNode (which
 // never reach a real gated node in these tests) and a full SendChatMessage
 // direct-answer turn (no plan/execute).
 func newTestHandler(t *testing.T) *Handler {
@@ -98,7 +98,7 @@ func putNodeStatus(t *testing.T, h *Handler, chatID, nodeID string, body schema.
 
 // TestUpdateNodeStatus_CancelUndeliverable409: cancel, like steer, is NOT
 // optimistic. The node's persisted row says "running", but with no live control
-// registered the cancel lands nowhere — and the old handler discarded
+// registered the cancel lands nowhere - and the old handler discarded
 // CancelNode's bool and answered 200 + "cancelled" anyway. Live (2026-07-13) the
 // user hit Cancel six times in one second, got six 200s, and the node ran on:
 // "cancel and steer is seemingly doing nothing". Delivery success is exercised at
@@ -123,7 +123,7 @@ func TestUpdateNodeStatus_CancelUndeliverable409(t *testing.T) {
 		t.Errorf("409 body should explain nothing was cancelled; got %q", got.Error)
 	}
 	if got.Current != schema.NodeStatusRunning {
-		t.Errorf("Current = %q, want %q (the node is still running — nothing changed)", got.Current, schema.NodeStatusRunning)
+		t.Errorf("Current = %q, want %q (the node is still running - nothing changed)", got.Current, schema.NodeStatusRunning)
 	}
 }
 
@@ -175,7 +175,7 @@ func TestUpdateNodeStatus_CancelledToNeedsInput409(t *testing.T) {
 }
 
 // TestUpdateNodeStatus_PauseUndeliverable409: pause, like cancel, is NOT
-// optimistic — the node's persisted row says "running", but with no live
+// optimistic - the node's persisted row says "running", but with no live
 // control registered the pause lands nowhere.
 func TestUpdateNodeStatus_PauseUndeliverable409(t *testing.T) {
 	h := newTestHandler(t)
@@ -219,7 +219,7 @@ func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
 }
 
 // TestUpdateNodeStatus_RunningSelfLoopIllegal: the old steer-via-status
-// (running → running) no longer exists — steering is queueing a message
+// (running → running) no longer exists - steering is queueing a message
 // (POST .../queue), which doesn't transition the node's status at all.
 func TestUpdateNodeStatus_RunningSelfLoopIllegal(t *testing.T) {
 	h := newTestHandler(t)
@@ -397,7 +397,7 @@ func TestDeleteChat_CancelsActiveRun(t *testing.T) {
 }
 
 // TestDeleteChat_UnknownOrFinishedChatNoOp confirms DELETE stays a safe no-op
-// (still 204, no panic) when nothing is registered — the already-finished or
+// (still 204, no panic) when nothing is registered - the already-finished or
 // never-started case.
 func TestDeleteChat_UnknownOrFinishedChatNoOp(t *testing.T) {
 	h := newTestHandler(t)
@@ -426,7 +426,7 @@ func TestUpdateResponseStatus_NoActiveRun404(t *testing.T) {
 
 // TestSendChatMessage_ResponseCreatedFirst runs a full (stubbed) turn and
 // checks that response_created is the very first SSE event, carrying the same
-// id as the chat's persisted turn — and that the response is no longer
+// id as the chat's persisted turn - and that the response is no longer
 // cancellable by that id once the run (and handler call) has returned.
 func TestSendChatMessage_ResponseCreatedFirst(t *testing.T) {
 	h := newTestHandler(t)
@@ -434,7 +434,7 @@ func TestSendChatMessage_ResponseCreatedFirst(t *testing.T) {
 	if _, err := h.store.CreateChat(context.Background(), ""); err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	// The store's CreateChat mints its own id; use the fixed chatID directly —
+	// The store's CreateChat mints its own id; use the fixed chatID directly -
 	// SendChatMessage doesn't require the chat to pre-exist (SaveTurn upserts).
 
 	body := `{"content":"hello"}`
@@ -462,7 +462,7 @@ func TestSendChatMessage_ResponseCreatedFirst(t *testing.T) {
 	}
 
 	// The run has already returned (SendChatMessage is synchronous in this
-	// test), so activeCancels was cleared — cancelling by that id now 404s.
+	// test), so activeCancels was cleared - cancelling by that id now 404s.
 	b, _ := json.Marshal(schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 	req2 := httptest.NewRequest(http.MethodPut, "/api/v1/chats/"+chatID+"/responses/"+d.ResponseID+"/status", strings.NewReader(string(b)))
 	rec2 := httptest.NewRecorder()
@@ -501,7 +501,7 @@ func parseSSEBody(t *testing.T, body string) []sseEvent {
 // --- needs_input persistence -------------------------------------------------
 
 // TestNeedsInputPersistsAcrossReload: a HITL pause (node_needs_input) persists
-// the node's status as "needs_input" — visible in the turn's quack:dag output
+// the node's status as "needs_input" - visible in the turn's quack:dag output
 // item after a simulated reload (GetTurnsWithContent → buildTurn), not just in
 // the live SSE stream. The DAG item itself reads in_progress while any node is
 // still needs_input (a paused run is not "completed").
@@ -554,7 +554,7 @@ func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	}
 }
 
-// waitForDagNodeStatus polls the store for a node's persisted status — writes
+// waitForDagNodeStatus polls the store for a node's persisted status - writes
 // go through an internal goroutine (persistNodeEvent is fire-and-forget).
 func waitForDagNodeStatus(t *testing.T, h *Handler, planID, nodeID, want string) {
 	t.Helper()

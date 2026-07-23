@@ -11,7 +11,7 @@ import (
 )
 
 // markedCtx is a minimal agent.Context whose UserContent carries a given prompt
-// text — the ONE channel chatScopeFromContext reads the advisor-thread marker
+// text - the ONE channel chatScopeFromContext reads the advisor-thread marker
 // from (mirrors how a worker's prompt reaches a co-located or A2A tool call).
 type markedCtx struct {
 	adkagent.StrictContextMock
@@ -31,7 +31,7 @@ func newMarkedCtx(prompt string) *markedCtx {
 
 // TestScopeFromContext mirrors guard.go's guardSession derivation: the
 // advisor-thread marker in the worker's prompt keys the registry entry the gate
-// wrote at node entry — the per-chat workspace scope is that entry's SessionID
+// wrote at node entry - the per-chat workspace scope is that entry's SessionID
 // (== the chat id, since the DAG runs in the chat session) and the node's own
 // working dir is its NodeID.
 func TestScopeFromContext(t *testing.T) {

@@ -1,4 +1,4 @@
-# huh-wizard — theme recipe
+# huh-wizard - theme recipe
 
 The rubber-duck theme + the `runForm` wrapper. v1 (`github.com/charmbracelet/huh v1.0.0`). Adapt, don't drop in blind. For the form patterns, see `forms.md`.
 
@@ -80,4 +80,4 @@ func runForm(f *huh.Form) error {
 ## Notes
 
 - A custom theme is taste + risk: the ANSI escapes leak into golden snapshots, so don't theme a surface you golden-test without accounting for it. Keep the default theme if there's no brand call.
-- Blurred styling matters as much as focused: muting unfocused fields is what makes the one focused field read as the subject. It's also what lets you stack several selects in one group (see `forms.md` → specialist models) — blurred selects collapse to just their value.
+- Blurred styling matters as much as focused: muting unfocused fields is what makes the one focused field read as the subject. It's also what lets you stack several selects in one group (see `forms.md` → specialist models) - blurred selects collapse to just their value.

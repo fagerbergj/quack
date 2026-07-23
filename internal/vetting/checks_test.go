@@ -70,7 +70,7 @@ func TestChecksPassCriterionNoWorkspaceFailsClosed(t *testing.T) {
 }
 
 func TestChecksPassCriterionOutputInReason(t *testing.T) {
-	// A real failing command with distinctive stderr output — ls on a path
+	// A real failing command with distinctive stderr output - ls on a path
 	// that doesn't exist reliably prints a recognizable error and exits
 	// non-zero, without needing a shell (RunArgv never invokes one).
 	cfg := testChecksConfig(t, []string{"ls /quack-checks-test-does-not-exist-xyz"}, "")
@@ -91,7 +91,7 @@ func TestChecksPassCriterionOutputInReason(t *testing.T) {
 // 0.9; a phantom delivery shipped): when checks_pass does not apply at all,
 // "why" must land as a queryable span attribute, not just a slog.Info line
 // invisible in Tempo. An empty Config (no Checks, DeriveChecks off) is the
-// simplest of the four skip paths — see skipChecks in checks.go.
+// simplest of the four skip paths - see skipChecks in checks.go.
 func TestChecksPassCriterionSkipReason_RecordsOnSpan(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
@@ -119,7 +119,7 @@ func TestChecksPassCriterionSkipReason_RecordsOnSpan(t *testing.T) {
 		}
 	}
 	if gotApplicable {
-		t.Error("applicable = true, want false — the criterion did not run")
+		t.Error("applicable = true, want false - the criterion did not run")
 	}
 	if gotReason != skipReasonNotConfigured {
 		t.Errorf("skip_reason = %q, want %q", gotReason, skipReasonNotConfigured)
@@ -199,7 +199,7 @@ func TestComposeFeedbackNoFailuresReturnsJudgeFeedbackUnchanged(t *testing.T) {
 }
 
 // TestChecksDirFindsTheNodesOwnRepo: two concurrent nodes each cloned a repo
-// into the same chat scope. Derived checks must find THIS node's repo — a
+// into the same chat scope. Derived checks must find THIS node's repo - a
 // search from the chat root sees two repos, gives up ("no single repo"), and
 // nothing gets gated.
 func TestChecksDirFindsTheNodesOwnRepo(t *testing.T) {
@@ -251,7 +251,7 @@ func TestDeriveChecks_SkipsMissingToolchain(t *testing.T) {
 
 // A repo with more than one toolchain present (e.g. package.json + go.mod, as
 // quack's own repo root has) must derive checks from ALL of them, not just the
-// first match — see #349.
+// first match - see #349.
 func TestDeriveChecks_UnionsMultipleToolchains(t *testing.T) {
 	dir := t.TempDir()
 	pkg := `{"scripts": {"build": "tsc", "test": "vitest"}}`

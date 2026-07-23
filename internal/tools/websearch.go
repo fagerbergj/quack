@@ -23,10 +23,10 @@ type SearchResult struct {
 
 // searchResponse wraps the hits in an object. ADK requires a tool's result to
 // convert to a map (it lands in FunctionResponse.Response, a map[string]any), so
-// a top-level array fails — we return {results: [...]} instead.
+// a top-level array fails - we return {results: [...]} instead.
 type searchResponse struct {
 	Results []SearchResult `json:"results"`
-	// Note carries an out-of-band warning to the agent — e.g. that some search
+	// Note carries an out-of-band warning to the agent - e.g. that some search
 	// backends were rate-limited, so coverage was reduced. Omitted when empty.
 	Note string `json:"note,omitempty"`
 }

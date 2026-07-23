@@ -11,7 +11,7 @@ import (
 //
 // The live failure (2026-07-13): a code-implementer's `grep` matched inside a Next.js
 // build directory (games_repo/.next/build/chunks/*.js.map) and returned an UNBOUNDED
-// match list — one session event of 48 MB. The retained tail admits its most recent
+// match list - one session event of 48 MB. The retained tail admits its most recent
 // content unconditionally, whatever its size, so that result sailed through every rung
 // of the compaction ladder. The request hit the provider at 520,756 tokens against a
 // 65,536 window:
@@ -19,7 +19,7 @@ import (
 //	400 {"message":"request (520756 tokens) exceeds the available context size (65536 tokens)"}
 //
 // which is fatal: it killed explorer-goose and explorer-openhands after hours of work.
-// A truncated tool result is recoverable — the model re-runs the tool with a narrower
+// A truncated tool result is recoverable - the model re-runs the tool with a narrower
 // query. A 400 is not.
 func TestOversizedToolResultInTailIsClampedNotSent(t *testing.T) {
 	const budget = 45_536
@@ -43,7 +43,7 @@ func TestOversizedToolResultInTailIsClampedNotSent(t *testing.T) {
 		t.Fatalf("clamped %d tool results, want 1 (the 48 MB grep)", clamped)
 	}
 	if got := estimateTokens(contents); got > budget {
-		t.Fatalf("after clamping, the request is still %d tokens against a %d budget — it would still 400", got, budget)
+		t.Fatalf("after clamping, the request is still %d tokens against a %d budget - it would still 400", got, budget)
 	}
 
 	// The call/response pairing must survive: a response dropped out from under a live

@@ -7,13 +7,13 @@ import type { ReactNode } from 'react'
 // a long answer, a many-round node, or a big tool body stays scannable instead of
 // walling off the screen.
 //
-// The overflow decision is measured (scrollHeight vs the cap) on the CONTENT box —
+// The overflow decision is measured (scrollHeight vs the cap) on the CONTENT box -
 // never on the clamped box. Clamping changes that box's own layout (it becomes a
 // block formatting context and its full height leaves the scrolling ancestor), so
 // measuring the box we clamp feeds the decision back into its own input: measure
 // tall → clamp → measure short → unclamp → … Re-measured on every commit that
 // ping-pong is an unbounded chain of nested updates, and a streaming turn (hundreds
-// of token renders) hits React's guard — "Maximum update depth exceeded" (#185) —
+// of token renders) hits React's guard - "Maximum update depth exceeded" (#185) -
 // which blanks the whole chat tree. The content box is never clamped, so its height
 // is independent of the decision, and one ResizeObserver on it covers both re-measure
 // triggers: streamed content growing, and width changes that rewrap long lines.

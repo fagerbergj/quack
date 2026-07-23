@@ -40,7 +40,7 @@ func runGitT(t *testing.T, dir string, argv ...string) string {
 }
 
 // newBareRepoFixture creates a bare "remote" repo (outside any jail) seeded
-// with one commit on main containing README.md, entirely via runGit — no
+// with one commit on main containing README.md, entirely via runGit - no
 // network. Returns the bare repo's path.
 func newBareRepoFixture(t *testing.T) string {
 	t.Helper()
@@ -59,7 +59,7 @@ func newBareRepoFixture(t *testing.T) string {
 }
 
 // cloneIntoJail clones bare into the jail at relDir via runGit directly
-// (bypassing the git_clone TOOL's https-only enforcement — that's tested
+// (bypassing the git_clone TOOL's https-only enforcement - that's tested
 // separately; this is fixture setup for a local, no-network round trip).
 func cloneIntoJail(t *testing.T, b gitBinding, bare, relDir string) string {
 	t.Helper()
@@ -79,7 +79,7 @@ func cloneIntoJail(t *testing.T, b gitBinding, bare, relDir string) string {
 }
 
 // ---------------------------------------------------------------------------
-// git_clone: https-only + credential-URL rejection (no network needed — both
+// git_clone: https-only + credential-URL rejection (no network needed - both
 // are rejected before any git process runs).
 // ---------------------------------------------------------------------------
 
@@ -110,7 +110,7 @@ func TestGitCloneRejectsCredentialedURL(t *testing.T) {
 }
 
 func TestGitCloneAcceptsPlainHTTPS(t *testing.T) {
-	// validateCloneURL only inspects the URL's scheme/userinfo — prove the
+	// validateCloneURL only inspects the URL's scheme/userinfo - prove the
 	// VALIDATION itself accepts a credential-free https URL (no network call;
 	// the round-trip test below exercises the real clone path via runGit).
 	u, err := validateCloneURL("https://github.com/example/repo.git")
@@ -129,7 +129,7 @@ func TestGitCloneAcceptsPlainHTTPS(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // git_commit's bulk-commit sanity wall (maxAddAllFiles): the deterministic
-// guard against a blind `add_all` sweeping in garbage — the live incident
+// guard against a blind `add_all` sweeping in garbage - the live incident
 // this closes staged 1,261 npm-cache files alongside 8 real ones in one
 // commit (see internal/workspace's HomeDir isolation fix for the OTHER half).
 // ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	}
 	env2 := gitEnv("/home/x", workspace.Caps{}, auth)
 	want := map[string]bool{
-		// GIT_ASKPASS must be EXACTLY the executable symlink path — git execs
+		// GIT_ASKPASS must be EXACTLY the executable symlink path - git execs
 		// the value directly as one program, so any "<path> <arg>" form is a
 		// broken (unexecutable) configuration. This is the regression guard
 		// for the live "cannot exec 'quack git-askpass'" failure.
@@ -281,7 +281,7 @@ func TestCredentialForMatchesExactHostOnly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// git_checkout — the reviewer's path to a PR branch. A shallow clone
+// git_checkout - the reviewer's path to a PR branch. A shallow clone
 // (--depth 1, which git implies --single-branch for) lands on the default
 // branch ONLY: no other branch is reachable, so a code review of a PR was
 // impossible before this tool existed.

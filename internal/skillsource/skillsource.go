@@ -4,16 +4,16 @@
 // defines under its own .agents/skills/ and .claude/skills/ directories, so an
 // agent working in a repo can load_skill that repo's skills.
 //
-// The working repo is DYNAMIC — a per-user jailed clone the server never knew
-// about at startup — so this is a skill.Source that scans the jail's workspace
+// The working repo is DYNAMIC - a per-user jailed clone the server never knew
+// about at startup - so this is a skill.Source that scans the jail's workspace
 // at QUERY time (not a fixed startup source). Two rules keep it safe and lazy:
 //
 //   - Precedence: the built-in library ALWAYS wins a name collision. A cloned
 //     (untrusted) repo must not be able to hijack a core skill like `plan-work`
-//     or `ponytail` by shadowing its name. Project skills are purely ADDITIVE —
+//     or `ponytail` by shadowing its name. Project skills are purely ADDITIVE -
 //     a colliding project skill is silently HIDDEN, never an error (unlike a
 //     static skill.NewMergedSource, where a duplicate name is a startup
-//     failure — the right loudness for a vendoring mistake, the wrong loudness
+//     failure - the right loudness for a vendoring mistake, the wrong loudness
 //     for arbitrary repo contents).
 //   - Jail discipline: every path is resolved THROUGH the jail (symlink-
 //     resolved, containment-checked), so discovery only ever reads under the
@@ -21,12 +21,12 @@
 //
 // Ceiling (ponytail): the source discovers project skills only in the
 // IMMEDIATE child repos of the jail root (<root>/<repo>/.agents|.claude/skills)
-// — the clone-and-work-in-it case. A repo cloned into a nested subdir, or a
+// - the clone-and-work-in-it case. A repo cloned into a nested subdir, or a
 // monorepo's sub-project skills, are out of scope; add a bounded walk here if
 // that ever matters. And os.DirFS follows symlinks WITHIN a resolved skills
 // dir, so a fully hostile repo could symlink a skill file out of the jail; the
 // dir root is jail-contained, deeper per-file symlink hardening is deferred
-// (single-user, self-cloned workspace — low severity).
+// (single-user, self-cloned workspace - low severity).
 package skillsource
 
 import (
@@ -92,7 +92,7 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 	for _, sub := range projectSkillDirs {
 		real, err := jail.Resolve(userID, chatID, filepath.Join(clean, sub))
 		if err != nil {
-			continue // escapes the jail, or bad user/chat id — skip
+			continue // escapes the jail, or bad user/chat id - skip
 		}
 		if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
 			continue // no such skills dir in this repo
@@ -104,7 +104,7 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 
 // tolerant is a skill.Source whose listing survives a malformed skill. ADK's
 // FileSystemSource.ListFrontmatters aborts the WHOLE directory on the first
-// SKILL.md that fails frontmatter validation — so in a world of cloned
+// SKILL.md that fails frontmatter validation - so in a world of cloned
 // third-party repos, one bad file silently costs the agent every project skill
 // (and re-fails on every skill call). This lists per-directory instead: a skill
 // that parses is returned, one that doesn't is skipped and reported ONCE per
@@ -116,7 +116,7 @@ type tolerant struct {
 }
 
 // warnedBadSkills dedupes the malformed-skill warning to one line per path, for
-// the process lifetime — the listing is rebuilt on every skill call, so without
+// the process lifetime - the listing is rebuilt on every skill call, so without
 // this the same bad file warns hundreds of times in a single run.
 var warnedBadSkills sync.Map // skill dir path → struct{}
 
@@ -147,14 +147,14 @@ func (t *tolerant) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, 
 }
 
 // project builds a fresh source over ALL project skills currently in the jail.
-// Repos now live one level deeper — under each per-chat scope
-// (<root>/<user>/<chat>/<repo>) — but this source is the shared startup
+// Repos now live one level deeper - under each per-chat scope
+// (<root>/<user>/<chat>/<repo>) - but this source is the shared startup
 // skilltoolset singleton (list_skills/load_skill), built once and driven by a
 // plain context.Context, so it CANNOT recover the calling chat id the way the
 // workspace tools do (there is no advisor-thread marker on a context.Context).
 // It therefore walks BOTH levels: each per-chat scope dir, then each repo dir
 // within it. Skill names thus become visible across a single user's chats in
-// list_skills — read-only, single-user, acceptable; the `cd` tool's report
+// list_skills - read-only, single-user, acceptable; the `cd` tool's report
 // (ProjectSkills, threaded with the real chat id) is the per-chat-accurate
 // surface. Rebuilt per query so a repo cloned mid-run is picked up without
 // restart. Never errors: an unreadable root yields an empty source.
@@ -182,7 +182,7 @@ func (p *projectAware) sources() []skill.Source {
 			continue
 		}
 		// A chat scope's children are the per-NODE working dirs (each node of a
-		// plan gets one — see workspace.NodeDir), and a repo is cloned INSIDE one
+		// plan gets one - see workspace.NodeDir), and a repo is cloned INSIDE one
 		// of those. Older/un-gated clones sit directly in the chat scope, so both
 		// levels are offered.
 		for _, child := range readDirs(scopeRoot) {
@@ -227,7 +227,7 @@ type projectAware struct {
 
 // ListFrontmatters returns the built-in skills plus every project skill whose
 // name does NOT collide with an already-listed one (built-in wins; a project
-// duplicate — including the same skill name in two clones — is hidden, never an
+// duplicate - including the same skill name in two clones - is hidden, never an
 // error). Listing is per source and per file: a malformed SKILL.md anywhere in
 // the jail is skipped (warned once, by tolerant), and every skill that parsed is
 // still returned. One bad file in one cloned repo must never cost the agent its

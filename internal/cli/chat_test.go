@@ -495,7 +495,7 @@ func TestRunNodeQueue(t *testing.T) {
 }
 
 // TestRunNodeRetry PUTs {"status":"queued"} (guidance omitted when blank, set
-// when given) — updateNodeStatus's retry transition.
+// when given) - updateNodeStatus's retry transition.
 func TestRunNodeRetry(t *testing.T) {
 	for _, guidance := range []string{"", "use the newer source"} {
 		t.Setenv("QUACK_HOME", t.TempDir())

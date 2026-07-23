@@ -14,13 +14,13 @@ import (
 //
 // The tool's handler cannot derive the calling node from its own execution
 // context: production workers are served over A2A (internal/agent.Serve →
-// srv.Client()), so the handler runs inside the A2A SERVER's runner — a
+// srv.Client()), so the handler runs inside the A2A SERVER's runner - a
 // separate session (the A2A context session, AppName = the agent's name, a
 // FRESH context per gate round) whose events carry no NodeInfo and whose
 // state has none of the gate's keys. Branch is no help either: inside a tool
 // call it is the worker's own run segment co-located ("worker@worker-r0", no
 // node) and empty on the A2A server. The one channel that reliably crosses
-// the A2A hop is the PROMPT — so the gate stamps a short marker line carrying
+// the A2A hop is the PROMPT - so the gate stamps a short marker line carrying
 // a per-node token into every worker prompt, and the tool parses it back out
 // of its UserContent. Deterministic and race-free: UserContent is fixed
 // before the model ever runs.
@@ -48,9 +48,9 @@ func AdvisorThreadToken(planID, nodeID string) string {
 // AdvisorThreadMarker renders the marker line the gate APPENDS to a worker
 // prompt. Models treat the bracketed line as inert metadata. Trailing (not
 // leading) placement pairs with ParseAdvisorThread's last-match rule: text
-// that can carry a FOREIGN node's marker — an upstream output quoted into
+// that can carry a FOREIGN node's marker - an upstream output quoted into
 // this prompt, or (over A2A) an earlier concurrent node's prompt event swept
-// into this dispatch's message tail — always precedes this node's own
+// into this dispatch's message tail - always precedes this node's own
 // trailing marker.
 func AdvisorThreadMarker(token string) string {
 	return "[[quack:advisor-thread:" + token + "]]"
@@ -67,12 +67,12 @@ func ParseAdvisorThread(text string) (token string, ok bool) {
 	return ms[len(ms)-1][1], true
 }
 
-// AdvisorTask is what the mentor is told on first consult — the node's task
-// and its acceptance rubric (the desired outcome) — plus the WORKFLOW session
+// AdvisorTask is what the mentor is told on first consult - the node's task
+// and its acceptance rubric (the desired outcome) - plus the WORKFLOW session
 // coordinates the guard ladder needs (internal/tools/guard.go): over the A2A
 // hop a guarded tool executes inside the A2A SERVER's runner, whose own
 // ctx.AppName()/UserID()/SessionID()/InvocationID() name the A2A context
-// session — a fresh, per-round session that holds NONE of the confirm
+// session - a fresh, per-round session that holds NONE of the confirm
 // pause/resume events (adk_request_confirmation calls, the human's resume
 // FunctionResponse, GuardResolvedKey consumption markers all live in the
 // workflow/chat session). The gate registers these coordinates here (it runs
@@ -82,7 +82,7 @@ func ParseAdvisorThread(text string) (token string, ok bool) {
 type AdvisorTask struct {
 	Task   string
 	Rubric string
-	// NodeID is the plan node's REAL identity — the key node-level bookkeeping
+	// NodeID is the plan node's REAL identity - the key node-level bookkeeping
 	// (cancel/steer controls, HITL interrupt IDs) is registered under, read
 	// back by internal/tools' cancel/steer guards (cancelguard.go,
 	// steerguard.go). Never redirect this to a shared workspace scope: doing
@@ -90,7 +90,7 @@ type AdvisorTask struct {
 	NodeID string
 	// WorkspaceNodeID is the workspace-relative "node" a call's fs/git tools
 	// default their directory scope to (internal/tools scopeFromContext →
-	// workspace.NodeDir) — node.ID for almost every node, but shared across a
+	// workspace.NodeDir) - node.ID for almost every node, but shared across a
 	// plan.Setup chain's repo-touching nodes (see dag.workspaceNodeID). Empty
 	// falls back to NodeID (every caller but dag's chain-aware one leaves it
 	// unset).
@@ -102,10 +102,10 @@ type AdvisorTask struct {
 	InvocationID string
 
 	// MemSecret (#344) is this node's credential for the ACP memory MCP surface
-	// (internal/acp) — an unguessable value MINTED FRESH per node (NewMemSecret),
+	// (internal/acp) - an unguessable value MINTED FRESH per node (NewMemSecret),
 	// never derived from plan/node IDs. The advisor-thread token above is a poor
 	// substitute: it's pure planID+nodeID concatenation, and a worker's own prompt
-	// discloses its running siblings' node IDs (executor.go siblingIDs) — an
+	// discloses its running siblings' node IDs (executor.go siblingIDs) - an
 	// untrusted external subprocess could reconstruct another node's token and
 	// reach its memory bucket. MemSecret is looked up in a SEPARATE registry
 	// (memSessions, keyed by the secret itself, not the token) precisely so the
@@ -114,7 +114,7 @@ type AdvisorTask struct {
 }
 
 // MemSession is what the ACP memory MCP surface resolves for ONE node's
-// load_memory/stage_memory calls — registered under MemSecret (never the
+// load_memory/stage_memory calls - registered under MemSecret (never the
 // advisor-thread token; see AdvisorTask.MemSecret) so a guessed/derived token
 // buys an attacker nothing here.
 type MemSession struct {
@@ -127,14 +127,14 @@ type MemSession struct {
 	Staged *MemStage
 	// Review is the review MCP surface's landing buffer (stage_review_comment +
 	// stage_review, internal/acp reviewmcp.go). Non-nil ONLY on a review-delivery
-	// node (an external read-only reviewer whose task demands a posted review) —
+	// node (an external read-only reviewer whose task demands a posted review) -
 	// its presence is what registers the two review tools. The gate reads a
 	// Snapshot into act.stagedDelivery["review"] so a tool-staged review beats
 	// the answer-tail fallback (augmentFromAnswer). nil ⇒ the tools aren't offered.
 	Review *ReviewStage
 	// PRStage is the stage_pr MCP surface's landing buffer (internal/acp
 	// reviewmcp.go). Non-nil ONLY on an implement-delivery node (an external
-	// WRITE worker at the chain's terminal delivery point) — its presence is what
+	// WRITE worker at the chain's terminal delivery point) - its presence is what
 	// registers stage_pr. The gate snapshots it into act.stagedDelivery["pr"] so a
 	// skill-authored title+body beats augmentFromRepo's commit-subject fallback.
 	PRStage *PRStage
@@ -150,7 +150,7 @@ type MemStage struct {
 // ReviewStage is a per-node, mutex-guarded staging buffer the review MCP surface
 // (internal/acp reviewmcp.go) fills across a review node's rounds: an inline
 // comment per stage_review_comment call and the overall verdict+summary from
-// stage_review. Unlike MemStage it is READ, not drained — the gate snapshots it
+// stage_review. Unlike MemStage it is READ, not drained - the gate snapshots it
 // on every round (Snapshot) and the same snapshot survives into commitDelivery.
 type ReviewStage struct {
 	mu       sync.Mutex
@@ -200,7 +200,7 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 // PRStage is a per-node, mutex-guarded buffer the stage_pr MCP tool
 // (internal/acp reviewmcp.go) fills on an implement-delivery node: the PR title
 // and body the worker authored via the pr-authoring skill. Like ReviewStage it
-// is READ, not drained — the gate snapshots it each round (Snapshot), and the
+// is READ, not drained - the gate snapshots it each round (Snapshot), and the
 // same snapshot survives into commitDelivery.
 type PRStage struct {
 	mu    sync.Mutex
@@ -216,7 +216,7 @@ func (s *PRStage) Set(title, body string) {
 	s.title, s.body, s.set = title, body, true
 }
 
-// Snapshot renders the staged PR as a StagedDelivery (Kind pull_request — the
+// Snapshot renders the staged PR as a StagedDelivery (Kind pull_request - the
 // delivery discriminator). The branch is left empty: the worker authored only
 // text, so the gate fills the branch from the disk probe (augmentFromPRStage).
 // ok is false until stage_pr lands.
@@ -246,7 +246,7 @@ func (s *MemStage) Drain() []memory.Candidate {
 }
 
 // NewMemSecret mints a fresh, unguessable per-node credential for the memory
-// MCP surface — 256 bits from crypto/rand, hex-encoded. Deliberately
+// MCP surface - 256 bits from crypto/rand, hex-encoded. Deliberately
 // independent of AdvisorThreadToken: that token is derivable (planID+nodeID)
 // and disclosed to sibling nodes via the prompt, so it cannot double as a
 // bearer credential handed to an untrusted external subprocess.
@@ -258,7 +258,7 @@ func NewMemSecret() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// memSessions is the process-local secret → MemSession registry — SEPARATE
+// memSessions is the process-local secret → MemSession registry - SEPARATE
 // from advisorThreads (keyed by the guessable advisor-thread token) precisely
 // so the memory MCP surface can never be reached via a derived/guessed token.
 var memSessions sync.Map
@@ -285,7 +285,7 @@ func LookupMemSession(secret string) (MemSession, bool) {
 	return s, ok
 }
 
-// UnregisterMemSession removes a secret's entry — called the moment the gate
+// UnregisterMemSession removes a secret's entry - called the moment the gate
 // has drained its staging buffer (node.go) so a straggler MCP call arriving
 // after the node's own commit decision fails outright instead of writing into
 // a buffer nobody will ever drain again. A no-op for an empty/already-removed
@@ -299,7 +299,7 @@ func UnregisterMemSession(secret string) {
 
 // advisorThreads is the process-local token → AdvisorTask registry. Written
 // by the gated node (RegisterAdvisorThread before its worker runs, unregister
-// when the node body exits — a HITL re-entry or retry re-registers), read by
+// when the node body exits - a HITL re-entry or retry re-registers), read by
 // the ask_advisor tool on a thread's first consult.
 var advisorThreads sync.Map
 

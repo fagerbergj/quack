@@ -21,7 +21,7 @@ import (
 )
 
 // fakeMemEmbedder returns a fixed unit vector for every text, so any recall
-// query matches any stored point (cosine = 1) — the round-trip is exercised
+// query matches any stored point (cosine = 1) - the round-trip is exercised
 // through the SCOPE filter, not embedding similarity (mirrors internal/memory's
 // own fakeEmbedder).
 type fakeMemEmbedder struct{}
@@ -35,7 +35,7 @@ func (fakeMemEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 }
 
 // echoConsolidator replies with a single ADD op that echoes back the FIRST
-// staged candidate's content verbatim — enough to prove a specific staged
+// staged candidate's content verbatim - enough to prove a specific staged
 // candidate reached Store.Commit, without pulling in a real consolidation model.
 type echoConsolidator struct{}
 
@@ -58,7 +58,7 @@ func (echoConsolidator) GenerateContent(_ context.Context, req *model.LLMRequest
 }
 
 // fixedScoreModel is a worker+judge stub whose judge score is fixed at build
-// time — enough to drive RunGatedRefine to a deterministic pass or fail without
+// time - enough to drive RunGatedRefine to a deterministic pass or fail without
 // a scripted revise dance.
 type fixedScoreModel struct{ score float64 }
 
@@ -114,8 +114,8 @@ func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeSc
 
 // TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass pins the ACP memory MCP
 // surface's staging contract (#344): a candidate the stage_memory tool appended
-// to the node's MemStage lands in commitMemoryOnPass's input, and — exactly like
-// a native agent's stage_memory tool call — is only ever written to shared
+// to the node's MemStage lands in commitMemoryOnPass's input, and - exactly like
+// a native agent's stage_memory tool call - is only ever written to shared
 // memory when the gate's judge round PASSES.
 func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 	ctx := context.Background()
@@ -124,8 +124,8 @@ func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
 	// The scope commitMemoryOnPass actually writes with is computed by
-	// MemoryScope(ctx, cfg, nodeID) — cfg.MemoryRole + the runner's session user
-	// (fixed to "u" below) — so the assertions' View must match it exactly.
+	// MemoryScope(ctx, cfg, nodeID) - cfg.MemoryRole + the runner's session user
+	// (fixed to "u" below) - so the assertions' View must match it exactly.
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", CommitMemory: true, Memory: store, MemoryRole: "coding"}
 	scope := memory.Scope{Role: "coding", User: "u"}
 

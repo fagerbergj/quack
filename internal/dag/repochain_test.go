@@ -65,7 +65,7 @@ func TestNonTerminalRepoChainNode(t *testing.T) {
 	}
 	noSetup := Plan{Nodes: plan.Nodes}
 	if nonTerminalRepoChainNode(noSetup, plan.Nodes[0]) {
-		t.Error("plan.Setup == nil: want false — each node delivers independently")
+		t.Error("plan.Setup == nil: want false - each node delivers independently")
 	}
 }
 
@@ -97,7 +97,7 @@ func chainStagePRTool(t *testing.T) tool.Tool {
 }
 
 // chainStub drives every node identically: stage a PR, then finish. The judge
-// always passes. Used by both nodes in the chain — since they're chained
+// always passes. Used by both nodes in the chain - since they're chained
 // (never concurrent), sharing one stub/agent instance is safe (see
 // checks_gate_test.go's note on why that's unsafe only for TRUE concurrency).
 type chainStub struct{}
@@ -182,7 +182,7 @@ func runChainPlan(t *testing.T, ex *Executor, plan Plan) {
 }
 
 // (a) A two-node implementer CHAIN shares ONE clone+branch (one setupFn call)
-// and delivers ONE PR — at the terminal node only, even though BOTH nodes
+// and delivers ONE PR - at the terminal node only, even though BOTH nodes
 // stage one.
 func TestRunPlanAsGraph_ChainSharesOneCloneAndDeliversOnceAtTerminal(t *testing.T) {
 	ex, jail, deliverCh, setupCalls := newChainExecutor(t)
@@ -217,7 +217,7 @@ func TestRunPlanAsGraph_ChainSharesOneCloneAndDeliversOnceAtTerminal(t *testing.
 	}
 	select {
 	case dc := <-deliverCh:
-		t.Fatalf("a second delivery fired: %+v — want exactly ONE, at the terminal node", dc)
+		t.Fatalf("a second delivery fired: %+v - want exactly ONE, at the terminal node", dc)
 	default:
 	}
 }

@@ -93,7 +93,7 @@ func TestHubActive(t *testing.T) {
 }
 
 // A bare Subscribe (no run has ever published) auto-vivifies an empty topic
-// so a same-moment Publish never races past the registered subscriber — but
+// so a same-moment Publish never races past the registered subscriber - but
 // that placeholder must not itself read as Active, or a chat nobody ever ran
 // would show "running" forever (and the REST /stream handler's cold/warm
 // split would misfire on every later reconnect to the same never-run chat).
@@ -102,7 +102,7 @@ func TestHubActiveNotFooledByBareSubscribe(t *testing.T) {
 	_, _, cancel, done := h.Subscribe("c")
 	defer cancel()
 	if done {
-		t.Fatal("a fresh topic has no run yet, so it's not done — subscriber awaits a live tail")
+		t.Fatal("a fresh topic has no run yet, so it's not done - subscriber awaits a live tail")
 	}
 	if h.Active("c") {
 		t.Error("Subscribe alone must not make an unrun chat read as Active")
@@ -151,7 +151,7 @@ func TestHubCancelRun(t *testing.T) {
 	}
 }
 
-// CancelRun on a chat with nothing registered — unknown or already-finished —
+// CancelRun on a chat with nothing registered - unknown or already-finished -
 // must be a safe no-op, not a panic or a false "cancelled".
 func TestHubCancelRun_UnknownChatNoOp(t *testing.T) {
 	h := NewHub()
@@ -174,7 +174,7 @@ func TestHubCancelResponse_MatchesID(t *testing.T) {
 }
 
 // A stale response id (from a superseded run) must not cancel whatever is
-// running now — mirrors the UI stop button's guard.
+// running now - mirrors the UI stop button's guard.
 func TestHubCancelResponse_WrongIDNoOp(t *testing.T) {
 	h := NewHub()
 	cancelled := false
@@ -188,7 +188,7 @@ func TestHubCancelResponse_WrongIDNoOp(t *testing.T) {
 	}
 }
 
-// UnregisterRun makes a run uncancellable again — the driver calls this once
+// UnregisterRun makes a run uncancellable again - the driver calls this once
 // its run ends, so a late DELETE/stop on a finished run is a no-op rather than
 // reaching into a stale (possibly reused) cancel func.
 func TestHubUnregisterRun(t *testing.T) {
@@ -206,7 +206,7 @@ func TestHubUnregisterRun(t *testing.T) {
 }
 
 // A GitHub-dispatched run and a REST-started run are both just callers of
-// RegisterRun on the same Hub instance — this pins that the registry is
+// RegisterRun on the same Hub instance - this pins that the registry is
 // driver-agnostic: whichever goroutine registered a chat's cancel func, the
 // same CancelRun call reaches it. (internal/github.dispatch and
 // rest.Handler.startRun both call exactly this method on the shared hub.)

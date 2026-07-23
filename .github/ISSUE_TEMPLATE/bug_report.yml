@@ -30,8 +30,8 @@ body:
     id: grounding
     attributes:
       label: Grounding (optional)
-      description: Where in the code you think it lives — `file:line` anchors, the failing node/stage, or relevant log lines. Speeds up the fix.
-      placeholder: "internal/vetting/node.go:277 — recall never fires because …"
+      description: Where in the code you think it lives - `file:line` anchors, the failing node/stage, or relevant log lines. Speeds up the fix.
+      placeholder: "internal/vetting/node.go:277 - recall never fires because …"
     validations:
       required: false
   - type: input
@@ -61,9 +61,9 @@ body:
     attributes:
       label: Priority
       options:
-        - "high — do next"
-        - "medium — soon"
-        - "low — nice to have"
+        - "high - do next"
+        - "medium - soon"
+        - "low - nice to have"
     validations:
       required: false
   - type: checkboxes

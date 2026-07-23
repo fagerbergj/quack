@@ -154,7 +154,7 @@ func TestNilJailReturnsBuiltin(t *testing.T) {
 }
 
 // writeBadSkill writes a SKILL.md whose frontmatter fails validation (a
-// description over the skilltoolset's 1024-char ceiling) — the shape that took
+// description over the skilltoolset's 1024-char ceiling) - the shape that took
 // every project skill down in production.
 func writeBadSkill(t *testing.T, dir, name string) {
 	t.Helper()
@@ -214,7 +214,7 @@ func TestMalformedSkillWarnsOnce(t *testing.T) {
 
 // TestScopedRestrictsListingAndLoad proves the per-agent scoping contract
 // (#251): a name outside an agent's declared scope is invisible to
-// ListFrontmatters and unloadable — exactly as if it never existed.
+// ListFrontmatters and unloadable - exactly as if it never existed.
 func TestScopedRestrictsListingAndLoad(t *testing.T) {
 	_, _, builtin := setup(t, map[string]string{
 		"develop-feature": "builtin body",

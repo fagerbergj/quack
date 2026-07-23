@@ -11,12 +11,12 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// tracedModel wraps a model.LLM to record quack.model.call.duration — the
+// tracedModel wraps a model.LLM to record quack.model.call.duration - the
 // swap-sensitive metric (a shared local server can only have one model
 // resident at a time, so a slow call is often a SWAP, not just a slow
 // generation). Wrapping here, the single factory (NewModel), means every
-// model in the system — worker, judge, orchestrator, titler, compaction
-// fallback, embedder/consolidation — is covered for free, with no call site
+// model in the system - worker, judge, orchestrator, titler, compaction
+// fallback, embedder/consolidation - is covered for free, with no call site
 // changes anywhere else.
 type tracedModel struct {
 	model.LLM
@@ -36,7 +36,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 }
 
 // Embed delegates to the wrapped model when it implements Embedder (every
-// kind implemented today does) — keeps tracedModel usable as the Embedder
+// kind implemented today does) - keeps tracedModel usable as the Embedder
 // NewEmbedder's type assertion expects, while still timing the call.
 func (t *tracedModel) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	e, ok := t.LLM.(Embedder)

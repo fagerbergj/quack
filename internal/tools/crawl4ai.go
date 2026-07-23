@@ -11,7 +11,7 @@ import (
 
 // crawl4ai settle-wait knobs. crawl4ai reads the page HTML with Playwright, and a
 // page that is still redirecting / fetching / mutating its DOM makes that read race
-// the navigation — the backend then 500s with "Page.content: Unable to retrieve
+// the navigation - the backend then 500s with "Page.content: Unable to retrieve
 // content because the page is navigating and changing the content". We defend by
 // telling crawl4ai to wait for the page to settle before grabbing the HTML.
 const (
@@ -41,7 +41,7 @@ func (r *crawl4aiRenderer) Render(ctx context.Context, target string) (string, e
 }
 
 // crawl4aiMarkdown asks the crawl4ai backend to fetch + render the page (real
-// browser, after waiting for it to settle — see the crawl4aiWaitUntil knobs) and
+// browser, after waiting for it to settle - see the crawl4aiWaitUntil knobs) and
 // return it as Markdown. crawl4ai's /crawl returns both a "fit" markdown
 // (Readability-based, drops chrome) and the raw DOM markdown in one response; we
 // prefer fit and fall back to raw when fit prunes the page to nothing.
@@ -61,7 +61,7 @@ func crawl4aiMarkdown(ctx context.Context, client *http.Client, backend, target 
 // crawler_config and returns the page's fit and raw Markdown. The settle-wait
 // (network-idle + a fixed delay) is what avoids reading the page mid-navigation.
 // (The lighter /md endpoint is not used: this crawl4ai version silently ignores
-// unknown fields on /md, so a wait option there would be a no-op — only /crawl's
+// unknown fields on /md, so a wait option there would be a no-op - only /crawl's
 // crawler_config actually takes effect.)
 func crawl4aiCrawl(ctx context.Context, client *http.Client, backend, target string) (fit, raw string, err error) {
 	body, err := json.Marshal(map[string]any{

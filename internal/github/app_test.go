@@ -33,7 +33,7 @@ func testKeyPEM(t *testing.T) (string, *rsa.PublicKey) {
 }
 
 func TestAppJWTClaims(t *testing.T) {
-	// The issuer is passed through verbatim as `iss` — GitHub accepts either a
+	// The issuer is passed through verbatim as `iss` - GitHub accepts either a
 	// stringified App ID (legacy) or a Client ID (recommended).
 	for _, issuer := range []string{"424242", "Iv23liAbCdEfGhIjKlMn"} {
 		t.Run(issuer, func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestLastReviewedSHAPrefersOwnBotLogin(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			fmt.Fprint(w, `{"slug":"quack"}`)
 		case strings.HasSuffix(r.URL.Path, "/reviews"):
-			// A human review lands AFTER quack's own — lastReviewedSHA must still
+			// A human review lands AFTER quack's own - lastReviewedSHA must still
 			// prefer quack's own commit, not just the most recent of any review.
 			fmt.Fprint(w, `[
 				{"commit_id":"aaa111","user":{"login":"quack[bot]"},"submitted_at":"2026-07-01T00:00:00Z"},
@@ -278,7 +278,7 @@ func TestDoJSONRetriesGETOn503(t *testing.T) {
 }
 
 // TestDoJSONDoesNotRetryPOST pins the idempotency guard: a POST that 503s
-// must be tried exactly once — retrying a mutating call risks a duplicate
+// must be tried exactly once - retrying a mutating call risks a duplicate
 // (e.g. a comment posted twice).
 func TestDoJSONDoesNotRetryPOST(t *testing.T) {
 	var hits int32
@@ -407,7 +407,7 @@ func TestCreatePullRequestAndAddLabels(t *testing.T) {
 	}
 }
 
-// A failed labels API call must surface as an error — a PR that opens but never
+// A failed labels API call must surface as an error - a PR that opens but never
 // gets its review label would silently stall the plan→implement→review chain.
 func TestAddLabelsAPIErrorPropagates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

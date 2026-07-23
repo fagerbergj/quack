@@ -165,7 +165,7 @@ func TestChildHomeUsesCapsHomeDirWhenSet(t *testing.T) {
 
 // TestRunArgvHomeIsolatedFromCwd is the regression test for the live bug: a
 // coding task's cwd IS the target repo, so HOME must NEVER default to it once
-// Caps.HomeDir is wired up — otherwise a child tool (npm, pip, …) writing its
+// Caps.HomeDir is wired up - otherwise a child tool (npm, pip, …) writing its
 // own cache to $HOME writes it straight into the repo, where git_commit's
 // add_all can sweep it up.
 func TestRunArgvHomeIsolatedFromCwd(t *testing.T) {
@@ -183,7 +183,7 @@ func TestRunArgvHomeIsolatedFromCwd(t *testing.T) {
 		t.Errorf("child HOME = %q, want isolated homeDir %q", got, homeDir)
 	}
 	if got == repoDir {
-		t.Error("child HOME resolved to the repo's own cwd — the isolation this fix exists for is broken")
+		t.Error("child HOME resolved to the repo's own cwd - the isolation this fix exists for is broken")
 	}
 }
 
@@ -261,7 +261,7 @@ func TestRunPipelineTwoStageHappyPath(t *testing.T) {
 }
 
 func TestRunPipelineThreeStages(t *testing.T) {
-	// echo two lines | grep one | tr to upper — proves chaining beyond a pair.
+	// echo two lines | grep one | tr to upper - proves chaining beyond a pair.
 	res, err := RunPipeline(context.Background(), t.TempDir(),
 		[][]string{{"printf", "keep\ndrop\n"}, {"grep", "keep"}, {"tr", "a-z", "A-Z"}}, DefaultCaps())
 	if err != nil {
@@ -276,7 +276,7 @@ func TestRunPipelineThreeStages(t *testing.T) {
 }
 
 func TestRunPipelinePipefailMiddleStage(t *testing.T) {
-	// Middle stage fails (false exits 1) while the tail succeeds — pipefail
+	// Middle stage fails (false exits 1) while the tail succeeds - pipefail
 	// must surface the failure, and the output must name the failing stage.
 	res, err := RunPipeline(context.Background(), t.TempDir(),
 		[][]string{{"echo", "hi"}, {"false"}, {"cat"}}, DefaultCaps())
@@ -398,6 +398,6 @@ func TestRunShellDoesNotHangOnBackgroundedChildHoldingStdout(t *testing.T) {
 			t.Errorf("Output = %q, want it to contain 'hi'", o.res.Output)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunShell hung on a backgrounded child holding stdout — WaitDelay not applied")
+		t.Fatal("RunShell hung on a backgrounded child holding stdout - WaitDelay not applied")
 	}
 }

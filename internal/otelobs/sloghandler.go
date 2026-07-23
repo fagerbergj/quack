@@ -8,7 +8,7 @@ import (
 )
 
 // WrapHandler returns a slog.Handler that appends trace_id/span_id attrs to
-// every record whose ctx carries a valid span — otherwise it is a pure
+// every record whose ctx carries a valid span - otherwise it is a pure
 // passthrough to next, so existing log output is byte-for-byte unchanged for
 // any call site not using a *Context slog variant with a spanned ctx (e.g.
 // slog.Info, or slog.InfoContext(context.Background(), ...)).

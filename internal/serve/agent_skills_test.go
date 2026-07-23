@@ -15,7 +15,7 @@ var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 // fails, it retries, and it flails.
 //
 // The live failure this pins: agents/code-explorer/prompt.md opens with
-// `load_skill("research-git-repos")` — "first, before touching the repo" — but that
+// `load_skill("research-git-repos")` - "first, before touching the repo" - but that
 // skill lived only in .agents/skills/ (quack's PROJECT skills, loadable only after an
 // agent cd's into the quack repo). The shipped library never had it. Every explorer
 // run therefore began by failing its own mandatory discipline, and a live code-mode
@@ -27,7 +27,7 @@ func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	// serve.go's vendorSkillsDir). CI and the Docker build initialise it; a plain
 	// `git worktree add` does not. Without it we cannot tell "the prompt names a
 	// skill we never ship" (a real bug) from "this checkout just hasn't inited the
-	// submodule" (a local artifact) — so skip rather than cry wolf at every dev.
+	// submodule" (a local artifact) - so skip rather than cry wolf at every dev.
 	vendor := filepath.Join(root, ".agents", "vendor", "ponytail", "skills")
 	if st, err := os.Stat(vendor); err != nil || !st.IsDir() {
 		t.Skip("vendored skills submodule not initialised (git submodule update --init); cannot verify vendored skill references")

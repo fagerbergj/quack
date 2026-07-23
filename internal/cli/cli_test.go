@@ -57,7 +57,7 @@ func TestRegistryRoundTrip(t *testing.T) {
 	if err := c2.Save(); err != nil {
 		t.Fatal(err)
 	}
-	// Empty registry (after removing the last server + saving) → "" — the signal
+	// Empty registry (after removing the last server + saving) → "" - the signal
 	// to run the duck locally in-process rather than dial a remote.
 	c2.RemoveServer("local")
 	if err := c2.Save(); err != nil {
@@ -88,7 +88,7 @@ func TestLoadClientAbsent(t *testing.T) {
 	if err != nil || c == nil || len(c.Servers) != 0 {
 		t.Fatalf("LoadClient absent = %+v err=%v, want empty non-nil", c, err)
 	}
-	// configPath under the temp dir — proves the fallback path resolves.
+	// configPath under the temp dir - proves the fallback path resolves.
 	if _, err := os.Stat(configPath()); err == nil {
 		t.Error("config file should not be created by LoadClient")
 	}
@@ -207,7 +207,7 @@ func TestEmitServerConfigRoundTrip(t *testing.T) {
 }
 
 // TestEmitServerConfigTextOnly: a text-only setup (no vision/audio) gets a lean
-// roster — no media-reader, no image-reader.
+// roster - no media-reader, no image-reader.
 func TestEmitServerConfigTextOnly(t *testing.T) {
 	a := InitAnswers{
 		Endpoint: "http://x/v1", MainModel: "m", SessionKind: "sqlite",

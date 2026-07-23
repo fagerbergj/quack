@@ -19,7 +19,7 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// TestSessionUser: the ADK session identity derives from the chat id shape —
+// TestSessionUser: the ADK session identity derives from the chat id shape -
 // github-<owner>-<repo>-<number> (store.SetChatGitHub) resolves to the
 // webhook's runUserID ("github", internal/github.extension.go), any other id
 // to the first-party local user.
@@ -155,7 +155,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 
 // TestChatStatusRunning: the hub having a live topic for the chat wins over
 // needs_input/failed/idle (checked before them; queued, checked before running,
-// is orchestrator-only state this test's chat never enters — see
+// is orchestrator-only state this test's chat never enters - see
 // TestQueuedReportsAdmittedButNotAcquired in the orchestrator package).
 func TestChatStatusRunning(t *testing.T) {
 	h := newTestHandler(t)
@@ -173,8 +173,8 @@ func TestChatStatusRunning(t *testing.T) {
 }
 
 // TestChatStatusNeedsInput: a pending get_user_choice clarification in the
-// chat's session — the SAME scan Run's resume dispatch uses
-// (orchestrator.LatestPendingQuestion) — surfaces as needs_input with the
+// chat's session - the SAME scan Run's resume dispatch uses
+// (orchestrator.LatestPendingQuestion) - surfaces as needs_input with the
 // question text.
 func TestChatStatusNeedsInput(t *testing.T) {
 	h := newTestHandler(t)
@@ -244,7 +244,7 @@ func TestChatStatusFailed(t *testing.T) {
 
 // TestBuildTurnUsage covers PR2 item 2: buildTurn must populate Turn.usage from
 // the orchestrator's own accumulated token counts (store.TurnContent, itself
-// summed from stored ADK session events — see store.groupSessionEvents).
+// summed from stored ADK session events - see store.groupSessionEvents).
 // input_tokens = prompt; output_tokens folds candidates + reasoning together
 // (schema.Usage has no separate reasoning field).
 func TestBuildTurnUsage(t *testing.T) {
@@ -277,7 +277,7 @@ func TestBuildTurnUsage(t *testing.T) {
 
 // TestBuildTurnUsageNilWhenAbsent covers a DAG-only turn: the orchestrator itself
 // recorded no tokens (all the work happened in gated nodes, surfaced separately
-// via DagNodeState) — Turn.usage must stay nil, not a zero-valued struct, so the
+// via DagNodeState) - Turn.usage must stay nil, not a zero-valued struct, so the
 // frontend can tell "no data" from "genuinely zero usage".
 func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 	tc := store.TurnContent{ID: "t2", CreatedAt: time.Now(), UserText: "research X", AsstText: "The vetted answer."}
@@ -335,7 +335,7 @@ func TestUpdateChat_RenamesTitle(t *testing.T) {
 	}
 }
 
-// TestUpdateChat_EmptyTitle400: a missing or blank title is rejected — there's
+// TestUpdateChat_EmptyTitle400: a missing or blank title is rejected - there's
 // nothing else settable yet, so an empty body is just a bad request.
 func TestUpdateChat_EmptyTitle400(t *testing.T) {
 	h := newTestHandler(t)

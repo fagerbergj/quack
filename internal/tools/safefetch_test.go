@@ -78,7 +78,7 @@ func TestBlockedIP(t *testing.T) {
 	}
 }
 
-// TestSafeControl exercises the dial-time guard directly — this is what defeats
+// TestSafeControl exercises the dial-time guard directly - this is what defeats
 // DNS rebinding, since it sees the resolved IP rather than the hostname.
 func TestSafeControl(t *testing.T) {
 	if err := safeControl("tcp", "8.8.8.8:443", nil); err != nil {
@@ -98,7 +98,7 @@ func TestValidateResolvedHost(t *testing.T) {
 	ctx := context.Background()
 
 	// Literal public IPs are allowed; blocked literals and a hostname that
-	// resolves to loopback (localhost, via /etc/hosts — no network needed) are not.
+	// resolves to loopback (localhost, via /etc/hosts - no network needed) are not.
 	if err := validateResolvedHost(ctx, "8.8.8.8"); err != nil {
 		t.Errorf("validateResolvedHost(8.8.8.8) = %v, want nil", err)
 	}

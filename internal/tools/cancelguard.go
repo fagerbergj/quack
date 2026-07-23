@@ -16,7 +16,7 @@ import (
 // built-in tool at registration (registry.Build), it refuses the call when the
 // calling node has been cancelled. The gate's stage check is cooperative and can
 // be many minutes of tool loop away (mid-model-call cancellation would take out
-// sibling nodes sharing the runner — that ceiling stands), so the guard makes a
+// sibling nodes sharing the runner - that ceiling stands), so the guard makes a
 // cancel land on the node's NEXT tool call. Latency: one tool call, not instant.
 type cancelGuard struct {
 	inner     runnableTool
@@ -46,7 +46,7 @@ func (c *cancelGuard) IsLongRunning() bool { return c.inner.IsLongRunning() }
 func (c *cancelGuard) Declaration() *genai.FunctionDeclaration { return c.inner.Declaration() }
 
 // ProcessRequest packs the WRAPPER into the request's tool map so the flow
-// dispatches calls through this Run — delegating to inner.ProcessRequest would
+// dispatches calls through this Run - delegating to inner.ProcessRequest would
 // register the inner tool under the name and bypass the guard entirely. Same
 // reason, same shape, as guardedTool.ProcessRequest (see guard.go).
 func (c *cancelGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
@@ -62,7 +62,7 @@ func (c *cancelGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 }
 
 // Run refuses the call when the calling node is cancelled, and is otherwise a
-// straight pass-through — the hot path costs one map lookup under a mutex.
+// straight pass-through - the hot path costs one map lookup under a mutex.
 //
 // A call with no node scope (no advisor-thread marker: a direct/un-gated
 // invocation, an MCP call, the judge's own read tools) can't be attributed to a
@@ -77,7 +77,7 @@ func (c *cancelGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 }
 
 // nodeScope resolves the (chat, node) the call runs for, from the advisor-thread
-// marker in the worker's prompt — the ONE identity channel that survives the A2A
+// marker in the worker's prompt - the ONE identity channel that survives the A2A
 // hop (a tool's own ctx.SessionID() names the A2A context session, not the chat).
 // "", "" outside any gated node.
 func nodeScope(ctx agent.Context) (chatID, nodeID string) {

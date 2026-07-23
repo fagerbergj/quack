@@ -10,12 +10,12 @@ import (
 )
 
 // SetupClone is the harness-executed twin of a worker's own git_clone plus a
-// branch checkout — dag.Plan's declared Setup PRE-step, run once before any
+// branch checkout - dag.Plan's declared Setup PRE-step, run once before any
 // node. Authenticated via the SAME credential/tokenSource path
 // git_clone/PushBranch use. repoURL must be a plain https:// URL
-// (validateCloneURL) — a plan's Setup.Repo is orchestrator-declared, not
+// (validateCloneURL) - a plan's Setup.Repo is orchestrator-declared, not
 // operator-trusted, exactly like a worker's git_clone url. dir is
-// workspace-relative (jail.Resolve-ready — see workspace.SetupCloneDir, which
+// workspace-relative (jail.Resolve-ready - see workspace.SetupCloneDir, which
 // lands the clone AT the node's own root, unlike a worker's own git_clone,
 // which typically lands one level under it). checkoutExistingHead selects
 // which of the two branch checkouts setupCloneAndBranch runs (see its doc).
@@ -29,15 +29,15 @@ func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, 
 	return setupCloneAndBranch(ctx, b, dir, repoURL, baseRef, workBranch, checkoutExistingHead)
 }
 
-// setupCloneAndBranch is SetupClone past URL validation — split out so tests
+// setupCloneAndBranch is SetupClone past URL validation - split out so tests
 // can drive it against a local (file://) remote, exactly like cloneRepo's own
 // test seam (see cloneIntoJail in git_test.go).
 //
 // checkoutExistingHead distinguishes an IMPLEMENT setup from a REVIEW one:
-//   - false (implement): workBranch is a NEW branch to create off baseRef —
+//   - false (implement): workBranch is a NEW branch to create off baseRef -
 //     `checkout -b`, unchanged from before this existed. A re-run/supersede
 //     must start fresh from base, never continue a stale remote branch.
-//   - true (review): workBranch is an EXISTING remote branch (a PR head) —
+//   - true (review): workBranch is an EXISTING remote branch (a PR head) -
 //     `checkout -b` off baseRef would create an empty LOCAL branch shadowing
 //     the real remote one, leaving the reviewer looking at base with no diff
 //     (the bug this guards against). Instead, fetch the real branch and check
@@ -55,7 +55,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 		return "", fmt.Errorf("setup: resolve clone dir: %w", err)
 	}
 	// Idempotent provisioning: the workspace volume persists across runs, so a
-	// re-labeled issue or a retried run can leave a stale clone here — git clone
+	// re-labeled issue or a retried run can leave a stale clone here - git clone
 	// would then fail exit 128 ("destination path already exists and is not an
 	// empty directory"). Clear the target first so setup always starts clean.
 	if err := os.RemoveAll(target); err != nil {
@@ -65,7 +65,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 		return "", fmt.Errorf("setup: clone: %w", err)
 	}
 	if checkoutExistingHead {
-		// The initial clone is shallow (depth 1, base only) — unshallow so
+		// The initial clone is shallow (depth 1, base only) - unshallow so
 		// baseRef's full history is present and a three-dot diff against it has
 		// a merge-base to compute.
 		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", "--unshallow", "origin"}, b.caps, nil); err != nil {
@@ -82,7 +82,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	}
 	// A committer identity in the clone so a worker that shells out to
 	// `git commit` (not just the git_commit tool, which passes its own via -c)
-	// can commit — a fresh clone has none, and a raw commit without one fails
+	// can commit - a fresh clone has none, and a raw commit without one fails
 	// exit 128 ("Author identity unknown"). Same identity the git_commit tool uses.
 	for _, kv := range [][2]string{{"user.name", gitCommitAuthorName}, {"user.email", gitCommitAuthorEmail}} {
 		if _, _, err := runGit(ctx, target, []string{"config", kv[0], kv[1]}, b.caps, nil); err != nil {

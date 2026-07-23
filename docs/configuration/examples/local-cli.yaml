@@ -1,0 +1,72 @@
+# Fully local, no containers. sqlite session store, no qdrant (memory stays
+# disabled), keyless web tools, no coding agents. This is close to what
+# `quack init` writes when you pick "Local" and leave the optional features
+# and coding agents off - see ../deployment.md and ../../cli.md.
+#
+# Run it:
+#   QUACK_LLM_ENDPOINT=http://localhost:11436/v1 QUACK_ORCH_MODEL=... \
+#     ./quack server run --config docs/configuration/examples/local-cli.yaml
+
+providers:
+  default:
+    kind: openai
+    endpoint: ${QUACK_LLM_ENDPOINT}   # e.g. http://localhost:11436/v1 (llama-swap/Ollama/vLLM), or a hosted API
+    api_key: ${QUACK_LLM_API_KEY}     # blank if the endpoint needs none
+
+stores:
+  default_sqlite:
+    kind: sqlite
+    url: ./quack.db
+
+session:
+  store: default_sqlite
+
+orchestrator:
+  skills: [plan-work, format-markdown, present-coding-plan, contribute]
+  provider: default
+  model: ${QUACK_ORCH_MODEL}
+
+agents:
+  web-researcher:
+    bundle: agents/web-researcher
+    skills: [format-markdown, research-git-repos]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 65536
+    judge_rounds: 1
+    tools: [web_search, web_fetch, summarize, current_date, ask_user]
+  synthesizer:
+    bundle: agents/synthesizer
+    skills: [format-markdown]
+    provider: default
+    model: ${QUACK_RESEARCHER_MODEL}
+    context_window: 65536
+    judge_rounds: 1
+    tools: []
+
+tools:
+  web_search:
+    kind: exa   # keyless via Exa's hosted MCP; add auth.api_key for the sturdier REST path
+  web_fetch:
+    kind: direct   # plain GET, no render service - no crawl4ai container needed
+
+gates:
+  constitution_path: config/constitution.md
+  rubric_path: config/rubric.md
+  deterministic_checks:
+    max_rounds: 4
+  judge:
+    provider: default
+    model: ${QUACK_JUDGE_MODEL}   # empty ⇒ judge disabled; deterministic checks alone still run
+    max_rounds: 1
+    threshold: 0.7
+    max_iterations: 6
+    context_window: 65536
+
+dag:
+  max_active_runs: 3
+  max_active_nodes: 2
+
+server:
+  addr: ":8080"
+  topology: embedded   # sqlite, no containers - the whole point of this shape

@@ -1,7 +1,7 @@
 // Snapshot-and-diff session context (#459): on every dispatch quack fetches
 // the FULL current GitHub state for the issue/PR, diffs it against the last
 // snapshot stored for this session, and injects only the delta as the turn's
-// message — replacing the per-event, cherry-picked assembly this file used to
+// message - replacing the per-event, cherry-picked assembly this file used to
 // split across runMessage/gatherReviewContext/issueThreadContext (#457/#458's
 // interim, which re-injected every comment on every run). GitHub stays the
 // source of truth; the stored snapshot is a cache the session's own (trimmed,
@@ -25,13 +25,13 @@ type snapshotComment struct {
 	Body      string `json:"body"`
 	User      string `json:"user"`
 	UpdatedAt string `json:"updated_at,omitempty"`
-	// Hidden marks a minimized comment (GraphQL isMinimized) — kept in the
+	// Hidden marks a minimized comment (GraphQL isMinimized) - kept in the
 	// snapshot but filtered out of the rendered context (renderSeedContext).
 	// TODO(#459 follow-up): always false today. The REST API this file uses
 	// doesn't expose isMinimized; wiring it needs a GraphQL fetch (query
 	// shape: repository(owner,name){ issue(number){ comments(first:100){
 	// nodes{ databaseId isMinimized } } } }, pullRequest(number) equivalent
-	// for PR comments) — deliberately left as a seam (this field) rather than
+	// for PR comments) - deliberately left as a seam (this field) rather than
 	// half-building it, since the hidden-comment RETRIEVAL tool (native +
 	// MCP, for the ACP agents) is a separate, larger piece of work.
 	Hidden bool `json:"hidden,omitempty"`
@@ -55,7 +55,7 @@ type snapshotReviewComment struct {
 	User        string `json:"user"`
 	InReplyToID int64  `json:"in_reply_to_id,omitempty"`
 	// Resolved marks a comment whose review thread is isResolved (GraphQL).
-	// TODO(#459 follow-up): always false today — see snapshotComment.Hidden;
+	// TODO(#459 follow-up): always false today - see snapshotComment.Hidden;
 	// same deferred GraphQL wiring (query shape: pullRequest(number){
 	// reviewThreads(first:100){ nodes{ isResolved comments(first:100){
 	// nodes{ databaseId } } } } }, mapping each thread's databaseId comments
@@ -64,7 +64,7 @@ type snapshotReviewComment struct {
 }
 
 // snapshotCommit is one PR commit, identified by its rebase-stable patch-id
-// (not its SHA — a rebase/force-push rewrites every SHA even when the actual
+// (not its SHA - a rebase/force-push rewrites every SHA even when the actual
 // change is unchanged; see gitPatchID and diffSnapshots).
 type snapshotCommit struct {
 	SHA     string `json:"sha"`
@@ -73,7 +73,7 @@ type snapshotCommit struct {
 }
 
 // Snapshot is the full GitHub state for one issue/PR session, as of the last
-// dispatch — the ground truth diffSnapshots compares against. Every field is
+// dispatch - the ground truth diffSnapshots compares against. Every field is
 // stored whole; cherry-picking (which comments matter, which are stale)
 // happens only when RENDERING context, never here.
 type Snapshot struct {
@@ -92,7 +92,7 @@ type Snapshot struct {
 	Files          []changedFile           `json:"files,omitempty"`
 }
 
-// fetchSnapshot fetches the CURRENT full GitHub state for one issue/PR — the
+// fetchSnapshot fetches the CURRENT full GitHub state for one issue/PR - the
 // same call shape every dispatch makes, issue or PR, work request or
 // conversational follow-up (#459's "one unified path"). Every sub-fetch past
 // the required title/body/state/labels is best-effort: a failure logs and
@@ -169,11 +169,11 @@ func (e *Extension) fetchSnapshot(ctx context.Context, owner, repo string, numbe
 }
 
 // gitPatchID computes a rebase-stable patch identity for one commit's unified
-// diff, via `git patch-id --stable` reading the diff on stdin — no local
+// diff, via `git patch-id --stable` reading the diff on stdin - no local
 // clone or repository needed (patch-id parses the diff text itself), which is
 // what lets a snapshot fetch happen at webhook time, before any node clones.
 // "" (no error) for an empty diff (an empty commit, or a merge commit with no
-// diffable content) — there's no patch identity to report.
+// diffable content) - there's no patch identity to report.
 func gitPatchID(ctx context.Context, diff string) (string, error) {
 	if strings.TrimSpace(diff) == "" {
 		return "", nil
@@ -193,7 +193,7 @@ func gitPatchID(ctx context.Context, diff string) (string, error) {
 }
 
 // Delta is the semantic difference between two snapshots of the same
-// issue/PR, keyed by stable identity (comment/review id, commit patch-id —
+// issue/PR, keyed by stable identity (comment/review id, commit patch-id -
 // never a SHA set-difference or a raw text diff; see diffSnapshots).
 type Delta struct {
 	TitleChanged        bool
@@ -209,7 +209,7 @@ type Delta struct {
 	ReviewsAdded        []snapshotReview
 	ReviewCommentsAdded []snapshotReviewComment
 	// NewCommits are the commits in the new snapshot whose patch-id is not
-	// present anywhere in the old snapshot's commits — genuinely new work,
+	// present anywhere in the old snapshot's commits - genuinely new work,
 	// robust across a rebase or force-push (see diffSnapshots). A commit
 	// whose patch-id could not be computed (fetch/exec failure) is
 	// conservatively treated as new: silently dropping it from review would
@@ -218,7 +218,7 @@ type Delta struct {
 	FilesChanged bool
 }
 
-// Empty reports whether the delta carries nothing worth injecting — the
+// Empty reports whether the delta carries nothing worth injecting - the
 // resume case where GitHub looks exactly as it did last dispatch (#459's
 // "resume with an unchanged snapshot injects an empty delta, not the whole
 // thread again").
@@ -231,9 +231,9 @@ func (d Delta) Empty() bool {
 }
 
 // diffSnapshots computes the semantic delta from old (the previously stored
-// snapshot) to cur (freshly fetched) — the turn's context (#459 §2).
+// snapshot) to cur (freshly fetched) - the turn's context (#459 §2).
 // excludeCommentID drops one comment id from the added/edited sets (the
-// triggering comment itself, already quoted verbatim as "their request" —
+// triggering comment itself, already quoted verbatim as "their request" -
 // see excludeComment's old role); 0 excludes nothing.
 func diffSnapshots(old, cur Snapshot, excludeCommentID int64) Delta {
 	var d Delta
@@ -326,7 +326,7 @@ func diffSnapshots(old, cur Snapshot, excludeCommentID int64) Delta {
 }
 
 // renderDeltaDetail renders a delta as prose ready to inject as the turn's
-// context — the "resume" half of #459 §3 ("resume injects only the delta").
+// context - the "resume" half of #459 §3 ("resume injects only the delta").
 // "" when the delta is empty.
 func renderDeltaDetail(d Delta) string {
 	if d.Empty() {
@@ -370,7 +370,7 @@ func renderDeltaDetail(d Delta) string {
 	return b.String()
 }
 
-// renderSeedContext renders a snapshot's full non-hidden context — the
+// renderSeedContext renders a snapshot's full non-hidden context - the
 // "first load seeds the session" half of #459 §3. excludeCommentID drops the
 // triggering comment (already quoted separately as the request).
 func renderSeedContext(snap Snapshot, excludeCommentID int64) string {
@@ -398,7 +398,7 @@ func renderSeedContext(snap Snapshot, excludeCommentID int64) string {
 		}
 	}
 	if snap.IsPR {
-		// Files are NOT rendered here — runMessage renders the CURRENT changed
+		// Files are NOT rendered here - runMessage renders the CURRENT changed
 		// files list itself, every dispatch (not just first load): it's
 		// operational "what's in this diff" data for the reviewer, not part of
 		// the conversation history this function seeds.
@@ -413,7 +413,7 @@ func renderSeedContext(snap Snapshot, excludeCommentID int64) string {
 			disc.ReviewComments = append(disc.ReviewComments, reviewCommentView{Path: c.Path, Line: c.Line, Body: c.Body, User: c.User})
 		}
 		if s := discussionSummary(disc); s != "" {
-			b.WriteString("\nExisting discussion — take it into account, do NOT repeat it:\n" + s)
+			b.WriteString("\nExisting discussion - take it into account, do NOT repeat it:\n" + s)
 		}
 	}
 	return b.String()
@@ -429,14 +429,14 @@ func shortSHA(sha string) string {
 }
 
 // newCommitsAgainstBaseline returns the commits in `commits` whose patch-id
-// is NOT in `reviewed` — the review scope. Deliberately decoupled from
+// is NOT in `reviewed` - the review scope. Deliberately decoupled from
 // diffSnapshots' NewCommits (the general context delta, which advances on
 // EVERY dispatch, review or not): scoping a review off that would under-scope
 // it whenever a conversational dispatch landed between two reviews (it would
 // have already advanced the snapshot commits list past what was actually
 // reviewed). `reviewed` is the patch-id set from the last DELIVERED review
 // only (see the store's GithubReviewBaseline). A commit whose patch-id
-// couldn't be computed is conservatively treated as new — same policy as
+// couldn't be computed is conservatively treated as new - same policy as
 // diffSnapshots.
 func newCommitsAgainstBaseline(commits []snapshotCommit, reviewed map[string]bool) []snapshotCommit {
 	out := make([]snapshotCommit, 0, len(commits)) // non-nil even when empty: nil means "no baseline at all" (see reviewScope)
@@ -465,7 +465,7 @@ func unmarshalPatchIDs(s string) ([]string, error) {
 }
 
 // marshalSnapshot/unmarshalSnapshot are the store's opaque JSON
-// encode/decode for a Snapshot — split out so loadGithubContext reads as the
+// encode/decode for a Snapshot - split out so loadGithubContext reads as the
 // fetch→diff→persist sequence the spec describes, not JSON plumbing.
 func marshalSnapshot(s Snapshot) (string, error) {
 	b, err := json.Marshal(s)

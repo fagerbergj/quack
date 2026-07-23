@@ -13,7 +13,7 @@ import (
 )
 
 // TestNeedsFormatPass_LoneNonSynthesizerNoDelivery: a single-node plan with no
-// declared GitHub delivery is exactly the #430 case — its raw output would
+// declared GitHub delivery is exactly the #430 case - its raw output would
 // otherwise ship verbatim, so it needs the fallback format pass.
 func TestNeedsFormatPass_LoneNonSynthesizerNoDelivery(t *testing.T) {
 	plan := dag.Plan{Nodes: []dag.Node{{ID: "a", AgentName: "code-explorer"}}}
@@ -23,7 +23,7 @@ func TestNeedsFormatPass_LoneNonSynthesizerNoDelivery(t *testing.T) {
 }
 
 // TestNeedsFormatPass_TerminalSynthesizerSkipped: a plan whose terminal node
-// IS a synthesizer already produced a formatted deliverable — no double pass.
+// IS a synthesizer already produced a formatted deliverable - no double pass.
 func TestNeedsFormatPass_TerminalSynthesizerSkipped(t *testing.T) {
 	plan := dag.Plan{Nodes: []dag.Node{
 		{ID: "a", AgentName: "web-researcher"},
@@ -37,7 +37,7 @@ func TestNeedsFormatPass_TerminalSynthesizerSkipped(t *testing.T) {
 
 // TestNeedsFormatPass_GitHubDeliverySkipped: a plan declaring a pull_request/
 // review delivery ships its deliverable via commitDelivery (per-node, gate-
-// owned) — this chat text is not the deliverable, so no format pass.
+// owned) - this chat text is not the deliverable, so no format pass.
 func TestNeedsFormatPass_GitHubDeliverySkipped(t *testing.T) {
 	plan := dag.Plan{
 		Nodes:    []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
@@ -78,7 +78,7 @@ func (s *formatStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ b
 	}
 }
 
-// TestFormatAnswer_ReturnsModelOutput: the happy path — the formatted text
+// TestFormatAnswer_ReturnsModelOutput: the happy path - the formatted text
 // comes back from the tool-less writer.
 func TestFormatAnswer_ReturnsModelOutput(t *testing.T) {
 	stub := &formatStub{reply: "# Plan\n\n1. Do the thing."}
@@ -89,7 +89,7 @@ func TestFormatAnswer_ReturnsModelOutput(t *testing.T) {
 }
 
 // TestFormatAnswer_FailsOpenOnModelError: a broken format pass must never
-// block delivery — it falls back to the raw answer unchanged.
+// block delivery - it falls back to the raw answer unchanged.
 func TestFormatAnswer_FailsOpenOnModelError(t *testing.T) {
 	stub := &formatStub{err: fmt.Errorf("model unavailable")}
 	got := formatAnswer(context.Background(), stub, "plan the thing", "raw exploration notes")

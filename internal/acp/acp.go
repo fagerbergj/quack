@@ -1,18 +1,18 @@
 // Package acp runs an external coding agent (opencode, claude-agent-acp,
-// gemini-cli, …) as a subprocess speaking the Agent Client Protocol — ndjson
-// JSON-RPC 2.0 over stdio — and adapts it to an ADK agent quack's DAG executor
+// gemini-cli, …) as a subprocess speaking the Agent Client Protocol - ndjson
+// JSON-RPC 2.0 over stdio - and adapts it to an ADK agent quack's DAG executor
 // and trust gate drive exactly like a native worker.
 //
 // One subprocess per worker round: spawn → initialize → session/new(cwd) →
 // session/prompt → stream updates → kill. Revise/continuation prompts are
 // self-contained by design (vetting.buildRevisionContent), so no state needs to
 // survive between rounds; the repo on disk is the shared substrate.
-// ponytail: process-per-round re-reads context each round — keep the process
+// ponytail: process-per-round re-reads context each round - keep the process
 // alive per node (keyed like nodeClient.ForNode) if round startup ever matters.
 //
 // The agent yields ADK session events translated from ACP session/update
 // notifications, using QUACK's tool vocabulary (run_command, write_file,
-// read_file — see mapToolCall) so the existing DAG stream, the trust-gate
+// read_file - see mapToolCall) so the existing DAG stream, the trust-gate
 // activity ledger (vetting.activityFromSessionAt) and the judge all keep
 // working with no knowledge of ACP. Chunk deltas ride Partial events (streamed,
 // never persisted); tool pairs and the final answer are durable events.
@@ -42,14 +42,14 @@ import (
 type Options struct {
 	Command []string // argv to spawn, e.g. ["opencode", "acp"]
 	// Env is EXTRA environment (KEY=VAL) appended after the minimal base
-	// (PATH, HOME, OPENCODE_CONFIG_CONTENT, …) — later entries win, so an
+	// (PATH, HOME, OPENCODE_CONFIG_CONTENT, …) - later entries win, so an
 	// operator override beats a generated default.
 	Env []string
-	// Home is the subprocess $HOME — the jail's isolated per-user home
+	// Home is the subprocess $HOME - the jail's isolated per-user home
 	// (workspace.Caps.HomeDir), so the agent's own caches/state never land
 	// inside a cloned repo.
 	Home string
-	// Preamble (the bundle's prompt.md) is prepended to every round's prompt —
+	// Preamble (the bundle's prompt.md) is prepended to every round's prompt -
 	// the external agent controls its own system prompt, so this is the one
 	// channel quack's per-agent guidance still reaches it through.
 	Preamble string
@@ -64,10 +64,10 @@ type Options struct {
 	// session/updates AND the prompt RPC never returns (wedged), the round
 	// would otherwise only unblock on the node's outer ctx (up to
 	// defaultRunTimeout = 2h). Reset on every update, so a round that's slow
-	// but alive — subprocess spin-up, model prefill before the first token —
+	// but alive - subprocess spin-up, model prefill before the first token -
 	// is never killed. 0 ⇒ 10m.
 	IdleTimeout time.Duration
-	// PermissionJudge answers the agent's session/request_permission asks —
+	// PermissionJudge answers the agent's session/request_permission asks -
 	// the ACP twin of the native guard ladder's judge tier. Everything a
 	// round legitimately needs is already allowed in the generated config,
 	// so an ask is the exceptional case (a directory escape, a .env read,
@@ -130,7 +130,7 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 }
 
 // resolveNode derives the node's working directory AND its memory-MCP
-// credential from the advisor-thread marker in the prompt — the ONE channel
+// credential from the advisor-thread marker in the prompt - the ONE channel
 // that carries (chat, workspace-node) scope to a worker (the same one
 // internal/tools uses). The setup clone lands AT the node root
 // (workspace.SetupCloneDir == NodeDir), so this dir IS the repo for a
@@ -138,7 +138,7 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 //
 // memSecret rides this SAME lookup (AdvisorTask.MemSecret) but is looked up
 // in the SEPARATE memSessions registry when actually used (memoryMCPServers)
-// — the advisor-thread token itself must never double as the memory MCP
+// - the advisor-thread token itself must never double as the memory MCP
 // bearer credential; see vetting.AdvisorTask.MemSecret.
 func (a *Agent) resolveNode(prompt string) (cwd, memSecret string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
@@ -194,7 +194,7 @@ type promptDone struct {
 // through the translator into emit, and emit the final answer spec last.
 // Separated from runPrompt so it is drivable with a plain context in tests.
 // memSecret is this node's memory-MCP credential ("" disables the surface for
-// the round); it never rides outbound — see resolveNode.
+// the round); it never rides outbound - see resolveNode.
 func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
@@ -222,14 +222,14 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 		otelobs.End(handshakeSpan, err)
 		return fmt.Errorf("acp: initialize: %w%s", err, h.stderrTail())
 	}
-	// The memory MCP surface (#344) is keyed by memSecret — an unguessable
+	// The memory MCP surface (#344) is keyed by memSecret - an unguessable
 	// per-node credential resolved in-process (resolveNode), NEVER placed in
 	// outbound: an untrusted external subprocess can already see its running
 	// siblings' node IDs in its own prompt, and the advisor-thread token those
 	// IDs would let it reconstruct must never double as a bearer credential.
 	mcpServers := memoryMCPServers(memSecret, initResp.AgentCapabilities)
 	// #482: the negotiated caps decide whether load_memory/stage_memory/
-	// stage_review reach this subprocess at all — log them so a "tools
+	// stage_review reach this subprocess at all - log them so a "tools
 	// unavailable" report is diagnosable from prod logs instead of guessed at.
 	a.log.Debug("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
 		"mcp_sse", initResp.AgentCapabilities.McpCapabilities.Sse, "mcp_acp", initResp.AgentCapabilities.McpCapabilities.Acp,
@@ -248,8 +248,8 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 	defer promptSpan.End() // safety net for the relay-stopped/cancel exits below; the done-branch sets the real status first
 	go func() {
 		// The RPC runs on its own context: on node cancel we want a graceful
-		// session/cancel first, then the process kill — not an instant RPC abort.
-		// Deliberately NOT ctx (would inherit its cancellation) — the span is
+		// session/cancel first, then the process kill - not an instant RPC abort.
+		// Deliberately NOT ctx (would inherit its cancellation) - the span is
 		// still opened above, against ctx, so it nests correctly regardless.
 		resp, perr := h.conn.Prompt(context.Background(), sdk.PromptRequest{
 			SessionId: sess.SessionId,
@@ -311,7 +311,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 				otelobs.End(promptSpan, refusalErr)
 				return refusalErr
 			}
-			// max_tokens / max_turn_requests: keep whatever answer streamed —
+			// max_tokens / max_turn_requests: keep whatever answer streamed -
 			// the gate's continuation/judge loop deals with incompleteness.
 			final := finalSpec(tr)
 			a.log.Info("acp round done", "stop", string(d.resp.StopReason), "answer_len", len(final.parts[0].Text))
@@ -324,7 +324,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 			return ctx.Err()
 		case <-idleTimer.C:
 			a.gracefulCancel(h, sess.SessionId, done)
-			return fmt.Errorf("acp: no activity for %s — treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
+			return fmt.Errorf("acp: no activity for %s - treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
 		}
 	}
 }
@@ -379,7 +379,7 @@ func contentText(c *genai.Content) string {
 }
 
 // inputText extracts the prompt from a node input (string, or *genai.Content
-// for a media-capable node — ACP agents are text-only, media parts are dropped).
+// for a media-capable node - ACP agents are text-only, media parts are dropped).
 func inputText(in any) string {
 	switch v := in.(type) {
 	case string:

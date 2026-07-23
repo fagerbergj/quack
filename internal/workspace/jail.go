@@ -1,7 +1,7 @@
 // Package workspace is the isolation boundary every filesystem/git tool
 // resolves paths through: one configured root, with a per-user jail under it
 // (<root>/<user_id>/) that nothing outside can read, write, or even stat. It is
-// intentionally dependency-free (stdlib only) — internal/tools/fs.go (and the
+// intentionally dependency-free (stdlib only) - internal/tools/fs.go (and the
 // later git tools) build on it, but the boundary itself never needs anything
 // beyond os/path/filepath.
 package workspace
@@ -15,7 +15,7 @@ import (
 )
 
 // ErrEscape is the uniform rejection for any path that would resolve outside
-// the caller's jail — a `..` escape, an absolute path, or a symlink pointing
+// the caller's jail - a `..` escape, an absolute path, or a symlink pointing
 // outside. Every rejection reason collapses to this one error (and message) by
 // design: a model gets one thing to learn, not a taxonomy of jail failures.
 var ErrEscape = errors.New("path escapes your workspace")
@@ -28,11 +28,11 @@ var ErrEscape = errors.New("path escapes your workspace")
 var ErrInvalidUserID = errors.New("workspace: invalid user id")
 
 // ErrInvalidChatID rejects a chatID that cannot safely name one directory
-// component under a user's jail (the per-chat scope segment — see Resolve). A
+// component under a user's jail (the per-chat scope segment - see Resolve). A
 // chat id is a system-generated UUID, but it is treated as UNTRUSTED here: the
 // SAME single-component rule userID obeys (no separator, no `..`) is what keeps
 // a crafted id from relocating the scope root and defeating containment. An
-// EMPTY chatID is NOT an error — it means "no per-chat scope", falling back to
+// EMPTY chatID is NOT an error - it means "no per-chat scope", falling back to
 // the per-user root (backward compatible); only a NON-empty id that fails the
 // component rule returns this.
 var ErrInvalidChatID = errors.New("workspace: invalid chat id")
@@ -66,13 +66,13 @@ func NewJail(root string) (*Jail, error) {
 	return &Jail{root: real}, nil
 }
 
-// Root returns the jail's canonical root directory (for logging/diagnostics —
+// Root returns the jail's canonical root directory (for logging/diagnostics -
 // tools should use Resolve/UserRoot, never construct paths against this
 // directly).
 func (j *Jail) Root() string { return j.root }
 
 // UserRoot returns the (unresolved-for-symlinks) jail directory for userID,
-// joined under the workspace root. It may not exist yet — callers that need it
+// joined under the workspace root. It may not exist yet - callers that need it
 // to exist (e.g. write_file) create it themselves. A userID that fails
 // validateUserID returns ErrInvalidUserID.
 func (j *Jail) UserRoot(userID string) (string, error) {
@@ -83,14 +83,14 @@ func (j *Jail) UserRoot(userID string) (string, error) {
 }
 
 // homeDirName is the dot-prefixed sibling directory HomeDir creates under a
-// user's jail root — dot-prefixed so it reads unmistakably as infrastructure,
+// user's jail root - dot-prefixed so it reads unmistakably as infrastructure,
 // not a cloned repo, in a directory listing.
 const homeDirName = ".quack-home"
 
 // HomeDir returns (creating it if necessary) userID's dedicated $HOME for
-// spawned child processes (run_command, checks, git — see workspace.Caps.
+// spawned child processes (run_command, checks, git - see workspace.Caps.
 // HomeDir and internal/workspace/exec.go). It is a SIBLING of the user's
-// cloned repos under <root>/<userID>/, never nested inside one — the fix for
+// cloned repos under <root>/<userID>/, never nested inside one - the fix for
 // a live bug where HOME was pinned to a coding task's own cwd (the target
 // repo itself), so `npm ci` wrote its cache directly into the repo tree and a
 // later `git_commit`'s `add_all` swept up thousands of cache files alongside
@@ -108,15 +108,15 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 	return home, nil
 }
 
-// NodeDir returns the working directory a DAG node's tools default to — ONE
-// component under the per-chat scope (<root>/<user>/<chat>/<nodeID>/) — or ""
+// NodeDir returns the working directory a DAG node's tools default to - ONE
+// component under the per-chat scope (<root>/<user>/<chat>/<nodeID>/) - or ""
 // when nodeID can't safely name one (an un-gated call, or a planner-authored id
 // with a separator: fall back to the chat root, exactly the pre-node behaviour,
 // rather than fail every path the node touches).
 //
 // This is the fix for a live correctness bug: a plan's nodes run CONCURRENTLY in
 // one chat, so with only the per-chat scope every node cloned into the same
-// directory — and an explorer node told to study OpenHands sat there reading
+// directory - and an explorer node told to study OpenHands sat there reading
 // goose's source, because goose's clone was simply THERE. It is a DEFAULT, not a
 // wall: the "/"-prefixed escape hatch still addresses the chat root, so a
 // downstream node can deliberately reach an upstream node's clone.
@@ -128,7 +128,7 @@ func NodeDir(nodeID string) string {
 }
 
 // SetupCloneDir is the workspace-relative directory a plan's declared Setup
-// PRE-step clones a repo into — the node's OWN root (NodeDir), not a
+// PRE-step clones a repo into - the node's OWN root (NodeDir), not a
 // subdirectory of it: the repo IS the node's invisible-root workspace, so
 // read_file/edit_file resolve a plain relative path ("internal/foo.go") with
 // no "repo/" prefix and no absolute path (a "repo" leaf here once forced a
@@ -141,7 +141,7 @@ func SetupCloneDir(nodeID string) string {
 // SharedRepoScope is the reserved "node" identifier a plan's repo-touching
 // nodes (code-implementer/code-reviewer) resolve into when they share ONE
 // declared Setup clone+branch across a depends_on chain, instead of each
-// getting its own dir under SetupCloneDir(node.ID) — see dag's
+// getting its own dir under SetupCloneDir(node.ID) - see dag's
 // runPlanSetup/validateRepoChain. Fixed and quack-authored, never a planner-
 // chosen node ID, so it can't collide with one.
 const SharedRepoScope = "quack-shared-repo"
@@ -163,7 +163,7 @@ func (j *Jail) EnsureDir(userID, chatID, rel string) (string, error) {
 
 // validateUserID is the jail-boundary guard shared by UserRoot and Resolve:
 // a userID must name exactly ONE directory component directly under the
-// workspace root, because Resolve joins it into the path RAW — an
+// workspace root, because Resolve joins it into the path RAW - an
 // attacker-influenced identity ("../other", "a/b", an absolute path) would
 // otherwise relocate the jail root itself, and the containment check would
 // then verify against the WRONG root. The rule is separator/dot-traversal
@@ -177,7 +177,7 @@ func validateUserID(userID string) error {
 }
 
 // isSafePathComponent reports whether id names exactly ONE directory component
-// (no separator, no `.`/`..` traversal, already Clean) — the shared rule both
+// (no separator, no `.`/`..` traversal, already Clean) - the shared rule both
 // the userID and the per-chat chatID segment obey so neither can relocate the
 // scope root and defeat containment. Separator/dot based, not an alphanumeric
 // allowlist (real OIDC subjects like "auth0|abc123" must pass; a chat UUID
@@ -200,7 +200,7 @@ func isSafePathComponent(id string) bool {
 // (the backward-compatible fallback for a direct/un-gated call that could not
 // recover a chat id). userID is always guarded (ErrInvalidUserID); a NON-empty
 // chatID that isn't a safe single component is rejected (ErrInvalidChatID) so a
-// crafted id can never escape the user root — an empty chatID is the only way
+// crafted id can never escape the user root - an empty chatID is the only way
 // to address the user root itself.
 func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	userRoot, err := j.UserRoot(userID)
@@ -217,16 +217,16 @@ func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 }
 
 // Resolve is the ONE path-resolution function every filesystem/git tool uses:
-// it joins relPath under the (userID, chatID) scope root — <root>/<userID>/
-// <chatID>/ when chatID is set, else the per-user <root>/<userID>/ — cleans it,
+// it joins relPath under the (userID, chatID) scope root - <root>/<userID>/
+// <chatID>/ when chatID is set, else the per-user <root>/<userID>/ - cleans it,
 // resolves symlinks on the deepest existing ancestor, and verifies the result
 // is prefix-contained in that scope root. Absolute relPath, `..` escapes, and
-// symlinks pointing outside the scope all fail identically with ErrEscape — "no
+// symlinks pointing outside the scope all fail identically with ErrEscape - "no
 // exceptions" per the isolation design. A symlink that stays inside resolves and
 // works normally. userID is guarded first (ErrInvalidUserID) and a non-empty
 // chatID second (ErrInvalidChatID): both must be single path components, or the
 // scope root itself would relocate. chatID "" resolves the per-user root (the
-// backward-compatible fallback for a direct/un-gated call — see the per-chat
+// backward-compatible fallback for a direct/un-gated call - see the per-chat
 // scoping in internal/tools).
 func (j *Jail) Resolve(userID, chatID, relPath string) (string, error) {
 	scopeRoot, err := j.scopeRoot(userID, chatID)
@@ -256,7 +256,7 @@ func (j *Jail) Resolve(userID, chatID, relPath string) (string, error) {
 }
 
 // RemoveChatScope deletes a chat's per-chat workspace subtree
-// (<root>/<userID>/<chatID>/) and everything under it — the lifecycle
+// (<root>/<userID>/<chatID>/) and everything under it - the lifecycle
 // counterpart of per-chat scoping, called when a chat is deleted so its working
 // tree doesn't leak forever. userID and chatID are validated as single path
 // components (scopeRoot, RESOLVE-identical), so a crafted id can never make the
@@ -316,7 +316,7 @@ func resolveDeepestExisting(p string) (string, error) {
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
-			// Reached the filesystem root and nothing exists on the path at all —
+			// Reached the filesystem root and nothing exists on the path at all -
 			// there are no symlinks to resolve; the cleaned path is already real.
 			return p, nil
 		}

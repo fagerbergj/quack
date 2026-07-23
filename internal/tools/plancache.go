@@ -8,7 +8,7 @@ import (
 
 // PlanCache holds plans produced by the plan tool so the execute tool can run
 // them by ID. This avoids round-tripping the full plan JSON through the
-// orchestrator model between the plan and execute calls — LLMs truncate or
+// orchestrator model between the plan and execute calls - LLMs truncate or
 // mangle large JSON when copying it from one tool result into the next tool
 // call, which silently drops nodes (e.g. the synthesizer) from the executed
 // plan. Passing a short ID instead is lossless.
@@ -78,8 +78,8 @@ func (c *PlanCache) Get(id string) (dag.Plan, bool) {
 
 // Pending reports whether a plan was CREATED but never EXECUTED (selected). That
 // state means the turn did no work: the orchestrator authored a DAG and then
-// stopped. Observed live — the model called `plan`, read the tool's "review before
-// executing" summary, replied "The plan is solid — 4 parallel code-explorer nodes…"
+// stopped. Observed live - the model called `plan`, read the tool's "review before
+// executing" summary, replied "The plan is solid - 4 parallel code-explorer nodes…"
 // and finished the turn WITHOUT calling `execute`. It described running the work
 // instead of running it, and because it emitted text the turn looked complete, so
 // the run ended having done nothing.

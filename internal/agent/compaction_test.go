@@ -77,7 +77,7 @@ func (f *fakeLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 	}
 }
 
-// failingLLM always errors — for exercising the "summariser call failed"
+// failingLLM always errors - for exercising the "summariser call failed"
 // skip-and-continue path.
 type failingLLM struct{ calls int }
 
@@ -120,7 +120,7 @@ func sentinelIndex(contents []*genai.Content) int {
 
 // budgetWindow returns a ContextWindow whose usable() threshold sits strictly
 // between the calibrated size of ALL of contents and the calibrated size of
-// just its last `retention` items — enough to force exactly one compaction
+// just its last `retention` items - enough to force exactly one compaction
 // round whose resulting tail already fits under budget (no backstop clamp
 // ladder needed). Requires len(contents) > retention+1.
 func budgetWindow(contents []*genai.Content, retention int) int {
@@ -177,7 +177,7 @@ func TestNoBlankedToolResultsSurviveCompaction(t *testing.T) {
 
 	// A threshold strictly between "everything" and "just the retained tail":
 	// compaction must fire, but the retained tail (EventRetentionSize contents)
-	// fits verbatim on its own — no backstop clamp ladder needed.
+	// fits verbatim on its own - no backstop clamp ladder needed.
 	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
 	req := &model.LLMRequest{Contents: contents}
 	if _, err := cb(newFakeCtx(), req); err != nil {
@@ -238,7 +238,7 @@ func TestCompactSummarises(t *testing.T) {
 }
 
 // longestSelfContainedPrefix must never end between a FunctionCall and its
-// matching FunctionResponse — a recent tool round-trip stays paired, never
+// matching FunctionResponse - a recent tool round-trip stays paired, never
 // split by the boundary (port of splitHead's dangling-response walk).
 func TestLongestSelfContainedPrefixKeepsCallAndResponsePaired(t *testing.T) {
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
@@ -260,7 +260,7 @@ func TestLongestSelfContainedPrefixKeepsCallAndResponsePaired(t *testing.T) {
 }
 
 // boundary must never cut between an open call and its response even when the
-// count-based retention target alone would land exactly there — the pair is
+// count-based retention target alone would land exactly there - the pair is
 // pulled into the tail together instead.
 func TestBoundaryNeverSplitsAnOpenCall(t *testing.T) {
 	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
@@ -484,7 +484,7 @@ func TestSummaryCarriesCodeKnowledge(t *testing.T) {
 	}
 	for _, want := range []string{"Files & Code State", "Commands & Tools Run", "Errors & Fixes", "Repository State"} {
 		if !strings.Contains(llm.lastPrompt, want) {
-			t.Fatalf("summariser prompt does not ask for %q — the knowledge whose absence makes the agent re-read a file", want)
+			t.Fatalf("summariser prompt does not ask for %q - the knowledge whose absence makes the agent re-read a file", want)
 		}
 	}
 	idx := sentinelIndex(req.Contents)
@@ -520,8 +520,8 @@ func TestCalibrationNeverBelowDefault(t *testing.T) {
 	}
 }
 
-// The contents[0] backstop: an oversized self-contained task/revise prompt —
-// which summarisation leaves verbatim — is middle-truncated to fit,
+// The contents[0] backstop: an oversized self-contained task/revise prompt -
+// which summarisation leaves verbatim - is middle-truncated to fit,
 // so contents[0] alone can never strand the session on a 400 (the revise-round
 // spiral). Non-text parts are preserved; the head keeps a usable core.
 func TestTruncateOversizedHead(t *testing.T) {
@@ -586,7 +586,7 @@ func TestCalibrationDefaultBeforeMeasurement(t *testing.T) {
 
 // Once a summary event is durably appended, a later request that already
 // carries it (ADK's real request-builder folds every session event into
-// req.Contents by itself) is served by VIEW FILTERING alone — no new
+// req.Contents by itself) is served by VIEW FILTERING alone - no new
 // summariser call (the reuse path; the whole point of the ADK port is a
 // stable prompt-cache prefix across turns like this one).
 func TestReuseSkipsSummariser(t *testing.T) {
@@ -618,7 +618,7 @@ func TestReuseSkipsSummariser(t *testing.T) {
 	firstSummary := req.Contents[idx].Parts[0].Text
 
 	// Second turn: the session grew by one more small turn since the durable
-	// summary was appended — exactly what ADK's real request-builder would
+	// summary was appended - exactly what ADK's real request-builder would
 	// hand back (the summary event flows into req.Contents by itself).
 	grown := append(append([]*genai.Content{}, req.Contents...), textContent(genai.RoleModel, "one more turn"))
 	req2 := &model.LLMRequest{Contents: grown}
@@ -635,7 +635,7 @@ func TestReuseSkipsSummariser(t *testing.T) {
 }
 
 // Rolling summaries: a second firing seeds the summariser with the FIRST
-// summary (present in the request as the prior sentinel content) — and
+// summary (present in the request as the prior sentinel content) - and
 // filtering keys on the LAST sentinel, so the old summary event goes inert in
 // the log (subsumption for free) even though it is never deleted.
 func TestAnchoredSummaryFedBack(t *testing.T) {
@@ -664,8 +664,8 @@ func TestAnchoredSummaryFedBack(t *testing.T) {
 		t.Fatalf("first summary not durably present: %+v", req.Contents)
 	}
 
-	// Pile on another full batch of turns — comfortably past what the same
-	// threshold can hold — forcing a SECOND compaction.
+	// Pile on another full batch of turns - comfortably past what the same
+	// threshold can hold - forcing a SECOND compaction.
 	llm.text = "SECOND-SUMMARY"
 	grown := append(append([]*genai.Content{}, req.Contents...), build()[1:]...)
 	req2 := &model.LLMRequest{Contents: grown}
@@ -683,7 +683,7 @@ func TestAnchoredSummaryFedBack(t *testing.T) {
 		t.Fatalf("second summary not present in the durable view: %+v", req2.Contents)
 	}
 
-	// The first summary event is superseded, not deleted — raw events are
+	// The first summary event is superseded, not deleted - raw events are
 	// never mutated or removed (ADK invariant).
 	resp, err := sessions.Get(ctx, &session.GetRequest{AppName: ctx.AppName(), UserID: ctx.UserID(), SessionID: ctx.SessionID()})
 	if err != nil {
@@ -713,7 +713,7 @@ func TestDurableSummaryEventAppended(t *testing.T) {
 		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 3_000)))
 	}
 	// Persist the turns as REAL session events first, as ADK's own runtime
-	// would have — proves compaction only ever APPENDS, never deletes.
+	// would have - proves compaction only ever APPENDS, never deletes.
 	for _, c := range contents {
 		ev := session.NewEvent(ctx, ctx.InvocationID())
 		ev.Author = c.Role
@@ -767,7 +767,7 @@ func TestDurableSummaryEventAppended(t *testing.T) {
 		}
 		// Author = the appending agent's name (fakeCtx.AgentName() == "test"):
 		// same-author events are the class proven to re-enter that agent's
-		// request assembly (review fix — an invented author risks exclusion).
+		// request assembly (review fix - an invented author risks exclusion).
 		if ev.Author != "test" || ev.Content == nil || !isSentinel(ev.Content) {
 			t.Fatalf("unexpected new event: author=%q sentinel=%v", ev.Author, ev.Content != nil && isSentinel(ev.Content))
 		}
@@ -782,7 +782,7 @@ func TestDurableSummaryEventAppended(t *testing.T) {
 }
 
 // recordUsage learns the provider's FIXED overhead (system instruction + tool
-// schemas) additively — the part estimateTokens structurally cannot see — rather
+// schemas) additively - the part estimateTokens structurally cannot see - rather
 // than a multiplier. goose and opencode both drive compaction from the provider's
 // own reported usage for exactly this reason; a fudge factor on a bytes/4 guess is
 // how quack came to believe a ~7k-token request was 56,344 tokens and shredded a
@@ -791,7 +791,7 @@ func TestOverheadRecordedAndAppliedAdditively(t *testing.T) {
 	const density = defaultCalibrationRatio
 
 	// A turn whose content estimates at 1000 tokens but which the provider bills at
-	// 7300 — the extra ~6k is the system instruction + tool schemas.
+	// 7300 - the extra ~6k is the system instruction + tool schemas.
 	est, measured := 1000, 7300
 	overhead := measured - int(float64(est)*density)
 	if overhead < 0 {
@@ -799,7 +799,7 @@ func TestOverheadRecordedAndAppliedAdditively(t *testing.T) {
 	}
 
 	// The next turn doubles the content. The provider should bill roughly
-	// overhead + density*2000 — NOT double the whole previous measurement.
+	// overhead + density*2000 - NOT double the whole previous measurement.
 	got := calibrated(2000, density, overhead)
 	want := overhead + int(float64(2000)*density)
 	if got != want {

@@ -4,7 +4,7 @@ import "sort"
 
 // NodeStatus is the canonical node lifecycle state, mirroring openapi.yaml's
 // NodeStatus enum (schema.NodeStatus is the generated wire type; this is the
-// server-side domain type every status write routes through — see
+// server-side domain type every status write routes through - see
 // CanTransition). The store persists its string value directly.
 type NodeStatus string
 
@@ -20,7 +20,7 @@ const (
 
 // transitions is the legal edge set of the node-status state machine. Every
 // status write in the system (executor, gate, control, store) routes through
-// CanTransition — an edge missing here is a bug (logged), not a silent write.
+// CanTransition - an edge missing here is a bug (logged), not a silent write.
 //
 //	queued      → running (node dispatched), cancelled (user cancel), failed (stale-on-restart)
 //	running     → paused (user pause), needs_input (HITL pause), done, failed, cancelled
@@ -30,7 +30,7 @@ const (
 //	failed      → queued (retry)
 //	cancelled   → queued (retry)
 //
-// A running node no longer self-loops on "running" — steering it is now
+// A running node no longer self-loops on "running" - steering it is now
 // queueing a message (POST .../queue), which doesn't change its status.
 var transitions = map[NodeStatus]map[NodeStatus]bool{
 	StatusQueued: {

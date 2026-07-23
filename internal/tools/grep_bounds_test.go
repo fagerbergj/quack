@@ -20,7 +20,7 @@ import (
 //
 //	400 {"message":"request (520756 tokens) exceeds the available context size"}
 //
-// That is fatal — it killed two explorer nodes that had been running for hours.
+// That is fatal - it killed two explorer nodes that had been running for hours.
 func TestGrepIsBoundedInBytes(t *testing.T) {
 	b, root := testBinding(t)
 
@@ -36,13 +36,13 @@ func TestGrepIsBoundedInBytes(t *testing.T) {
 	total := 0
 	for _, m := range res.Matches {
 		if len(m.Text) > grepMatchMaxChars {
-			t.Errorf("a single match is %d chars (cap %d) — one minified line is enough to blow the context window",
+			t.Errorf("a single match is %d chars (cap %d) - one minified line is enough to blow the context window",
 				len(m.Text), grepMatchMaxChars)
 		}
 		total += len(m.Text)
 	}
 	if total > grepTotalMaxBytes {
-		t.Fatalf("grep returned %d bytes of matches (cap %d) — this is the 48 MB result that 400'd the node",
+		t.Fatalf("grep returned %d bytes of matches (cap %d) - this is the 48 MB result that 400'd the node",
 			total, grepTotalMaxBytes)
 	}
 }
@@ -103,7 +103,7 @@ func TestGrepSkipsOversizedFiles(t *testing.T) {
 	}
 }
 
-// glob must not hand back thousands of paths from generated trees — the agent
+// glob must not hand back thousands of paths from generated trees - the agent
 // then wastes its turns reading them.
 func TestGlobSkipsGeneratedTrees(t *testing.T) {
 	b, root := testBinding(t)

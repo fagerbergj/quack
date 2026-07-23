@@ -12,7 +12,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # 2) Build the Go server with the SPA embedded.
-# bookworm (glibc), NOT alpine (musl) — same reason as the frontend stage: the
+# bookworm (glibc), NOT alpine (musl) - same reason as the frontend stage: the
 # runtime copies /usr/local/go from here and must be able to execute it.
 FROM golang:1.26-bookworm AS backend
 WORKDIR /app
@@ -28,28 +28,28 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # 2b) The external ACP coding agent (internal/acp, docs/acp-coder.md): one
 # self-contained binary, extracted in its own stage so the runtime layer gets
-# the binary without the tarball. PINNED — the ACP surface is integration-
+# the binary without the tarball. PINNED - the ACP surface is integration-
 # tested per release (internal/acp/live_test.go), so bump deliberately.
 FROM debian:bookworm-slim AS opencode
 ADD https://github.com/sst/opencode/releases/download/v1.18.3/opencode-linux-x64.tar.gz /tmp/opencode.tar.gz
 RUN tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode
 
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
-# binary, which dynamically links against libcurl/libssl/libpcre2/zlib — those
+# binary, which dynamically links against libcurl/libssl/libpcre2/zlib - those
 # don't exist in distroless/static (no libc at all) and hand-copying git's
 # shared-library closure into distroless/base is fragile and unmaintainable
 # (ponytail: wrap the OS's own package manager, don't reimplement it). So the
 # runtime base is debian:bookworm-slim with git installed via apt, still
 # non-root via an explicit UID (65532, matching the prior distroless:nonroot
-# convention) — a deliberate size/attack-surface tradeoff for a real userland,
+# convention) - a deliberate size/attack-surface tradeoff for a real userland,
 # not a downgrade in the properties that actually matter here (non-root,
 # unprivileged port, no runtime writes outside the workspace volume).
 #
 # bubblewrap is the OS boundary agent child processes (run_command, the trust
-# gate's derived checks) run inside — workspace.sandbox: bwrap, the default, and
+# gate's derived checks) run inside - workspace.sandbox: bwrap, the default, and
 # the server REFUSES TO START without it. It needs no root and no daemon, but it
 # does need the container runtime to permit unprivileged user namespaces (Docker's
-# default seccomp profile does; a hardened runtime may not — see
+# default seccomp profile does; a hardened runtime may not - see
 # docs/configuration.md). util-linux carries prlimit(1), which applies the
 # per-child rlimits (workspace.limits).
 FROM debian:bookworm-slim
@@ -60,14 +60,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /
 COPY --from=backend /quack /quack
 # Build toolchains for the coding agents (#283): the code-implementer must be
-# able to `go build/test` and `npx tsc`/`npm test` what it writes — without them
+# able to `go build/test` and `npx tsc`/`npm test` what it writes - without them
 # every check fails with "not found" and the worker grinds hunting a toolchain
 # that isn't there. Copied from the build stages, so runtime versions exactly
 # match what CI builds with (~+500MB, a deliberate size tradeoff). Go's
 # per-user caches (GOPATH/GOCACHE) default under $HOME, which quack points at
-# the writable workspace volume — nothing writes outside it.
+# the writable workspace volume - nothing writes outside it.
 COPY --from=backend /usr/local/go /usr/local/go
-# The ACP coding agent (agents.<name>.acp: ["opencode", "acp"] — resolved via
+# The ACP coding agent (agents.<name>.acp: ["opencode", "acp"] - resolved via
 # the server's PATH). Its per-round state/caches land under the subprocess
 # $HOME quack sets (the jail home on the workspace volume), and its first round
 # fetches the @ai-sdk provider package over the network into that cache.
@@ -86,13 +86,13 @@ COPY config/ /config/
 COPY agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY skills/ /skills/
-# Vendored skill libraries (git submodule at .agents/vendor/ponytail — the
+# Vendored skill libraries (git submodule at .agents/vendor/ponytail - the
 # code-implementer's coding-discipline skills), merged into the skill toolset
 # when present (internal/serve's newSkillSource resolves the relative path
 # .agents/vendor/ponytail/skills against CWD /). Copying all of .agents/ keeps
 # this COPY valid even when the submodule isn't initialized in the build
 # context (the dir then just lacks vendor/ and the server runs without the
-# vendored skills — build with `git submodule update --init` to include them).
+# vendored skills - build with `git submodule update --init` to include them).
 COPY .agents/ /.agents/
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot
