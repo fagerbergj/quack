@@ -24,7 +24,11 @@ jobs:
           node-version: "24"
 
       - name: Install OpenWiki
-        run: npm install --global openwiki
+        # Pinned: unpinned, a scheduled run silently picks up a new OpenWiki and
+        # its output format changes, so a tool upgrade arrives disguised as a
+        # docs PR (0.2.2 dropped the sub-index frontmatter this way). Bump
+        # deliberately.
+        run: npm install --global openwiki@0.2.2
 
       - name: Run OpenWiki
         run: openwiki code --update --print
