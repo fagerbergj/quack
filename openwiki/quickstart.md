@@ -60,10 +60,16 @@ This wiki covers Quack across several areas:
 - **[DAG Execution](/workflows/dag-execution.md)** - DAG planning and validation by the orchestrator, plan judge scoring, topological node execution via ADK workflow graphs, delivery mechanics
 - **[Build & Deploy](/operations/deployment.md)** - Makefile targets, OpenAPI codegen pipeline, Docker Compose stack, CI checks, GitHub Actions
 
+## Recent Changes
+
+- **OpenWiki workflow updates (commit a0bcf48)** - The automated OpenWiki update workflow (`openwiki code --update --print`) now pins to a stable OpenWiki version via npm. The workflow schedule was simplified from "every other day at 7 AM UTC" to "daily at 8 AM UTC". Authentication was migrated from `openai-compatible` to `openrouter`, and the model changed from `qwen3.6-35b` to `z-ai/glm-5.2`. CI workflow versions were upgraded (actions/checkout@v4, actions/setup-node@v4, Node.js 22).
+
 ## Backlog
 
 The following areas were identified for future documentation updates:
 
+- **Login flow details** - recent refactor (commit 05a67a3, PR #524) replaced device grant login with auth code + PKCE; see [`docs/cli.md`](/docs/cli.md), [`docs/configuration/auth.md`](/docs/configuration/auth.md), and [`internal/cli/login.go`](/internal/cli/login.go)
+- **Per-user memory scoping** - recent change (commit c2ec866, PR #512) threads commenter login for per-user scoping in memory; see [`internal/store/store.go`](/internal/store/store.go) and [`internal/github/webhook.go`](/internal/github/webhook.go)
 - **ACP protocol details** - agent-client-subprocess communication via `internal/acp/translate.go` and the Agent Client Protocol
 - **Git tools deep dive** - detailed look at `git_clone`, `git_commit`, and `PushBranch` tool implementations in `internal/tools/`
 - **Frontend component architecture** - React components under `frontend/src/components/` and state management details
