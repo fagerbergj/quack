@@ -34,24 +34,17 @@ import (
 const userID = "local"
 
 // githubSessionUser mirrors internal/github.runUserID: the ADK session
-// identity webhook-dispatched runs persist their events under.
+// identity webhook-dispatched runs persist their events under before a
+// per-chat store.Chat.SessionUser is recorded (older chats' fallback).
 const githubSessionUser = "github"
 
-// githubChatIDPrefix is the id shape internal/github.webhook mints for a
-// dispatched chat: "github-<owner>-<repo>-<number>" (store.SetChatGitHub).
-const githubChatIDPrefix = "github-"
-
-// sessionUser derives the ADK session identity a chat's turns/events were
-// written under from its id shape, so lookups agree with whichever runner
-// (first-party REST, or the GitHub webhook) actually wrote them - a GitHub
-// chat's content lives under "github" (internal/github.runUserID), not
-// "local". The id prefix alone is authoritative: store.SetChatGitHub only
-// ever mints github-prefixed ids, so this needs no store round-trip.
-func sessionUser(chatID string) string {
-	if strings.HasPrefix(chatID, githubChatIDPrefix) {
-		return githubSessionUser
-	}
-	return userID
+// sessionUser resolves the ADK session identity a chat's turns/events were
+// written under, so lookups agree with whichever runner (first-party REST,
+// or the GitHub webhook keyed by commenter login, #512) actually wrote them.
+// Delegates to the store: a GitHub-dispatched chat's identity varies per chat
+// (the commenter's login) and is no longer derivable from the id alone.
+func (h *Handler) sessionUser(ctx context.Context, chatID string) string {
+	return h.store.SessionUserForChat(ctx, chatID)
 }
 
 const titleInstruction = "Generate a concise chat title (3–6 words, no punctuation, no quotes). Return only the title."
@@ -179,7 +172,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	turns, err := h.store.GetTurnsWithContent(r.Context(), orchestrator.AppName, sessionUser(chatID), chatID)
+	turns, err := h.store.GetTurnsWithContent(r.Context(), orchestrator.AppName, store.SessionUserFor(*c), chatID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -202,7 +195,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 }
 
 func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, responseID schema.ResponseID) {
-	tc, err := h.store.GetTurnWithContent(r.Context(), orchestrator.AppName, sessionUser(chatID), chatID, responseID)
+	tc, err := h.store.GetTurnWithContent(r.Context(), orchestrator.AppName, h.sessionUser(r.Context(), chatID), chatID, responseID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -420,7 +413,7 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 	// ADK's event storage drops ModelVersion, so history can't recover it later.
 	var orchModel string
 
-	for ev, err := range h.orch.Run(runCtx, sessionUser(chatID), chatID, message, attachments) {
+	for ev, err := range h.orch.Run(runCtx, h.sessionUser(runCtx, chatID), chatID, message, attachments) {
 		trySendTitle()
 		if err != nil {
 			publish(stream.Errorf(err.Error()))
@@ -700,7 +693,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
 		publish(stream.ResponseCreated(dp.TurnID))
 
-		for ev, err := range h.orch.RetryNode(runCtx, sessionUser(chatID), chatID, seeded, nodeID, guidance) {
+		for ev, err := range h.orch.RetryNode(runCtx, h.sessionUser(runCtx, chatID), chatID, seeded, nodeID, guidance) {
 			if err != nil {
 				publish(stream.Errorf(err.Error()))
 				break
@@ -1004,7 +997,7 @@ func float64Ptr(f float64) *float64 {
 // only worth batching if list gets slow); GetChat already has its turns loaded
 // and calls chatStatus directly instead.
 func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummary {
-	turns, _ := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, sessionUser(c.ID), c.ID)
+	turns, _ := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, store.SessionUserFor(c), c.ID)
 	status, pendingQuestion := h.chatStatus(ctx, c.ID, turns)
 	return schema.ChatSummary{
 		Id:              c.ID,
@@ -1043,7 +1036,7 @@ func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.T
 	if h.hub.Active(chatID) {
 		return schema.ChatStatusRunning, nil
 	}
-	if pq, ok := orchestrator.LatestPendingQuestion(h.orch.PriorEvents(ctx, sessionUser(chatID), chatID)); ok {
+	if pq, ok := orchestrator.LatestPendingQuestion(h.orch.PriorEvents(ctx, h.sessionUser(ctx, chatID), chatID)); ok {
 		q := pq.Message
 		return schema.ChatStatusNeedsInput, &q
 	}

@@ -616,7 +616,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 	defer e.inflight.Delete(sessionID)
 
-	e.persistGithubLink(ctx, sessionID, owner, repo, number, p.Issue.PullRequest != nil)
+	e.persistGithubLink(ctx, sessionID, login, owner, repo, number, p.Issue.PullRequest != nil)
 	e.ensureTitle(ctx, sessionID, p, task)
 	// Serialise runs on one PR: a follow-up that lands while a review is still
 	// running must WAIT, not run concurrently on the same session (concurrent runs
@@ -875,11 +875,13 @@ func (e *Extension) reviseInvalidMermaid(runCtx context.Context, uid, sessionID,
 }
 
 // persistGithubLink stores the web URL of the originating issue/PR on the
-// session's chat row, for the frontend's GitHub tab. isPR selects "pull" vs
+// session's chat row, for the frontend's GitHub tab, and - on first dispatch
+// only - the ADK session identity this run is writing under (login, #512)
+// so later reads/deletes agree with the write. isPR selects "pull" vs
 // "issues" in the URL; unknown defaults to "issues" (GitHub redirects PRs
 // requested at the issues path). Best-effort: a failure here must not block
 // the run.
-func (e *Extension) persistGithubLink(ctx context.Context, sessionID, owner, repo string, number int, isPR bool) {
+func (e *Extension) persistGithubLink(ctx context.Context, sessionID, login, owner, repo string, number int, isPR bool) {
 	if e.store == nil {
 		return
 	}
@@ -888,7 +890,7 @@ func (e *Extension) persistGithubLink(ctx context.Context, sessionID, owner, rep
 		kind = "pull"
 	}
 	url := fmt.Sprintf("https://github.com/%s/%s/%s/%d", owner, repo, kind, number)
-	if err := e.store.SetChatGitHub(ctx, sessionID, owner+"/"+repo, url); err != nil {
+	if err := e.store.SetChatGitHub(ctx, sessionID, owner+"/"+repo, url, login); err != nil {
 		slog.Warn("github: persist chat link failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 	}
 }

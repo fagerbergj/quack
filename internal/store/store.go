@@ -37,6 +37,11 @@ type Chat struct {
 	// github-<owner>-<repo>-<number>) via SetChatGitHub.
 	GithubRepo string `json:"github_repo,omitempty"`
 	GithubURL  string `json:"github_url,omitempty"`
+	// SessionUser is the ADK session identity this chat's turns/events/session
+	// were written under, recorded once at creation (SetChatGitHub: the GitHub
+	// commenter's login, #512). Empty for chats that predate this column or
+	// were never GitHub-dispatched - SessionUserFor falls back to id shape.
+	SessionUser string `json:"session_user,omitempty"`
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id exposed
@@ -398,17 +403,34 @@ func (s *Store) GetChat(ctx context.Context, id string) (*Chat, error) {
 // dependency of the orchestrator package, so it can't import it back.
 const chatAppName = "quack"
 
-// chatSessionUser mirrors internal/server/rest.sessionUser and
-// internal/github.runUserID: a GitHub-dispatched chat's ADK session was
-// written under user "github", not "local" - deleting it needs the same
-// user the run wrote it under. Duplicated rather than shared because each
-// copy is a one-line prefix check on the chat id.
-func chatSessionUser(chatID string) string {
-	const githubUser = "github"
-	if strings.HasPrefix(chatID, "github-") {
-		return githubUser
+// SessionUserFor resolves the ADK session identity a chat's turns/events/
+// session were written under: the per-chat SessionUser recorded at creation
+// (#512 - the GitHub commenter's login for a dispatched chat), or the id-shape
+// default ("github"/"local") for chats that predate that column. Mirrors
+// internal/github.runUserID's fallback; duplicated rather than shared since
+// store can't import the rest/github packages.
+func SessionUserFor(c Chat) string {
+	if c.SessionUser != "" {
+		return c.SessionUser
+	}
+	if strings.HasPrefix(c.ID, "github-") {
+		return "github"
 	}
 	return "local"
+}
+
+// SessionUserForChat is SessionUserFor for callers holding only a chat id.
+// A GetChat miss or error (deleted mid-flight, transient DB hiccup) falls
+// back to the id-shape default rather than failing the caller.
+func (s *Store) SessionUserForChat(ctx context.Context, id string) string {
+	c, err := s.GetChat(ctx, id)
+	if err != nil || c == nil {
+		if strings.HasPrefix(id, "github-") {
+			return "github"
+		}
+		return "local"
+	}
+	return SessionUserFor(*c)
 }
 
 // DeleteChat removes a chat and everything #352 found it otherwise strands:
@@ -421,6 +443,10 @@ func chatSessionUser(chatID string) string {
 // can't join the local transaction, and a chat already gone from every local
 // table is not worth failing the whole delete over a session-service hiccup.
 func (s *Store) DeleteChat(ctx context.Context, id string) error {
+	// Resolve BEFORE the transaction removes the chats row - SessionUserForChat
+	// reads that row, and a miss falls back to the id-shape default, which would
+	// silently mis-resolve a #512 per-chat SessionUser after the row is gone.
+	sessionUser := s.SessionUserForChat(ctx, id)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var planIDs []string
 		if err := tx.Model(&DagPlan{}).Where("chat_id = ?", id).Pluck("id", &planIDs).Error; err != nil {
@@ -445,7 +471,7 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Sessions.Delete(ctx, &session.DeleteRequest{AppName: chatAppName, UserID: chatSessionUser(id), SessionID: id}); err != nil {
+	if err := s.Sessions.Delete(ctx, &session.DeleteRequest{AppName: chatAppName, UserID: sessionUser, SessionID: id}); err != nil {
 		slog.Warn("chat deleted but its ADK session could not be reaped",
 			"component", "store", "chat", id, "err", err)
 	}
@@ -460,9 +486,15 @@ func (s *Store) Touch(ctx context.Context, id string) error {
 // SetChatGitHub upserts the originating GitHub repo/URL onto a chat. The
 // webhook dispatch may fire before the chat row exists (first message of a
 // new session), so this creates the row if missing rather than only updating.
-func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url string) error {
+// sessionUser is the ADK identity THIS dispatch is writing session/turn/memory
+// content under (#512: the commenter's login) - recorded only on the
+// create path (deliberately absent from DoUpdates below) so a chat's
+// session user is fixed at creation and later dispatches on the same
+// thread (possibly a different commenter) don't retroactively move where
+// its existing history is read from.
+func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url, sessionUser string) error {
 	now := time.Now().UTC()
-	c := &Chat{ID: id, CreatedAt: now, UpdatedAt: now, GithubRepo: repo, GithubURL: url}
+	c := &Chat{ID: id, CreatedAt: now, UpdatedAt: now, GithubRepo: repo, GithubURL: url, SessionUser: sessionUser}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"github_repo", "github_url", "updated_at"}),
