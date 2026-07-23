@@ -31,12 +31,12 @@ type ServerRef struct {
 }
 
 // ServerAuth is a server's stored OIDC session (from `quack server login`'s
-// device flow): enough for NewClient to attach a bearer token and silently
-// refresh it via the token endpoint when it's near expiry, without
-// re-running the browser/device flow. ClientID+Scopes+TokenURL are cached
-// from login so a refresh needs no re-discovery. There is no client secret
-// field - the login flow only supports public OIDC clients (device grant,
-// no secret), so there is never one to persist.
+// authorization code + PKCE flow): enough for NewClient to attach a bearer
+// token and silently refresh it via the token endpoint when it's near
+// expiry, without re-running the browser flow. ClientID+Scopes+TokenURL are
+// cached from login so a refresh needs no re-discovery. There is no client
+// secret field - the login flow only supports public OIDC clients (PKCE, no
+// secret), so there is never one to persist.
 type ServerAuth struct {
 	Issuer       string    `yaml:"issuer"`
 	ClientID     string    `yaml:"client_id"`
