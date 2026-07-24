@@ -294,6 +294,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()
+		// Mine stated preferences from the user's message and commit them to their
+		// user bucket (best-effort). This is how per-user memories enter when the
+		// orchestrator model doesn't reliably call commit_memory — see #262.
+		if o.userMem != nil {
+			cands := MinePreferences(message)
+			go func() { _ = commitPreferences(ctx, o.userMem, userID, cands) }()
+		}
 		// Persisted session, read BEFORE the runner appends this turn's user
 		// message - so it holds only earlier turns. Used for both the planner's
 		// history and pending-clarification detection below.
