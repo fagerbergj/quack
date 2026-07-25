@@ -62,7 +62,7 @@ This wiki covers Quack across several areas:
 
 ## Recent Changes
 
-- **OpenWiki workflow updates (commit a0bcf48)** - The automated OpenWiki update workflow (`openwiki code --update --print`) now pins to a stable OpenWiki version via npm. The workflow schedule was simplified from "every other day at 7 AM UTC" to "daily at 8 AM UTC". Authentication was migrated from `openai-compatible` to `openrouter`, and the model changed from `qwen3.6-35b` to `z-ai/glm-5.2`. CI workflow versions were upgraded (actions/checkout@v4, actions/setup-node@v4, Node.js 22).
+- **OpenWiki workflow updates (commit a0bcf48 → HEAD)** - The automated OpenWiki update workflow (`openwiki code --update --print`) runs daily at 08:00 UTC via `cron: "0 8 * * *"`. Auth provider is `openrouter` with model `z-ai/glm-5.2`. It uses Node.js 22, actions v4 (checkout + setup-node), and un-pinned global npm install. add-paths include `openwiki`, `AGENTS.md`, `CLAUDE.md`, and the workflow file itself.
 
 ## Backlog
 
