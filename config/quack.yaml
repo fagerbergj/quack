@@ -359,8 +359,12 @@ workspace:
 #     # is applied), issue_plan (plan an issue when labels.plan is applied),
 #     # issue_implement (implement the plan when labels.implement is applied),
 #     # merge (squash-merge a PR when labels.merge is applied by a human AND
-#     # quack's own latest review is APPROVED - needs pull request write incl. merge).
-#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
+#     # quack's own latest review is APPROVED - needs pull request write incl. merge),
+#     # ci_fix (auto-heal a labels.monitor PR when CI fails - needs the App
+#     # subscribed to Workflow run events + Actions/Checks read), pr_fix (fix the
+#     # failing checks once when labels.fix is applied).
+#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix, pr_fix]
+#     # fix_attempts: 3  # ci_fix retry bound per red streak; re-apply labels.monitor to reset
 #     # labels: the repo labels driving the label-based workflow (applying a label
 #     # needs repo write access, so labels double as the permission model).
 #     # labels:
@@ -369,6 +373,8 @@ workspace:
 #     #   review: "quack-auto-review"
 #     #   merge: "quack:merge"
 #     #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
+#     #   monitor: "quack:monitor"  # opt a PR in to CI auto-heal (ci_fix trigger)
+#     #   fix: "quack:fix"          # fix a PR's failing checks once (pr_fix trigger)
 
 # Inbound request auth (internal/auth), gating the REST + MCP surface (never
 # /health or the SPA). Absent entirely - as here - auth is disabled and every

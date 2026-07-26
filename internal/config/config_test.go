@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -780,6 +781,52 @@ extensions:
 	}
 	if l := c.Extensions.GitHub.Labels; l.Plan != "quack:plan" || l.Review != "quack-auto-review" {
 		t.Errorf("labels defaults = %+v; want plan quack:plan, review quack-auto-review", l)
+	}
+	if l := c.Extensions.GitHub.Labels; l.Monitor != "quack:monitor" || l.Fix != "quack:fix" {
+		t.Errorf("labels defaults = %+v; want monitor quack:monitor, fix quack:fix", l)
+	}
+	if got := c.Extensions.GitHub.FixAttempts; got != 3 {
+		t.Errorf("fix_attempts default = %d; want 3", got)
+	}
+}
+
+// The ci_fix/pr_fix triggers (#254) must pass the triggers whitelist; an
+// unknown entry must still be rejected.
+func TestGitHubExtensionFixTriggers(t *testing.T) {
+	t.Setenv("QUACK_GH_KEY", "pem")
+	t.Setenv("QUACK_GH_SECRET", "s3cret")
+	c, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+    fix_attempts: 5
+    triggers: [ci_fix, pr_fix]
+    labels:
+      monitor: watch-me
+      fix: fix-me
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := c.Extensions.GitHub.FixAttempts; got != 5 {
+		t.Errorf("fix_attempts = %d; want 5", got)
+	}
+	if l := c.Extensions.GitHub.Labels; l.Monitor != "watch-me" || l.Fix != "fix-me" {
+		t.Errorf("labels = %+v; want monitor watch-me, fix fix-me", l)
+	}
+
+	_, err = Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+    triggers: [ci_fixx]
+`))
+	if err == nil || !strings.Contains(err.Error(), "unknown entry") {
+		t.Fatalf("err = %v; want an unknown-trigger rejection", err)
 	}
 }
 
