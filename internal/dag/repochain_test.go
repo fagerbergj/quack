@@ -29,10 +29,14 @@ func TestWorkspaceNodeID(t *testing.T) {
 		node Node
 		want string
 	}{
-		{"no setup: own dir", Plan{}, Node{ID: "n1", AgentName: implementerAgent}, "n1"},
+		{"no setup: implementer gets its own dir", Plan{}, Node{ID: "n1", AgentName: implementerAgent}, "n1"},
+		{"no setup: reviewer gets its own dir", Plan{}, Node{ID: "n1", AgentName: reviewerAgent}, "n1"},
+		{"no setup: explorer gets its own dir", Plan{}, Node{ID: "n1", AgentName: explorerAgent}, "n1"},
+		{"no setup: everyone else gets their own dir", Plan{}, Node{ID: "n1", AgentName: "researcher"}, "n1"},
 		{"setup, non-repo agent: own dir", Plan{Setup: setup}, Node{ID: "n1", AgentName: "researcher"}, "n1"},
 		{"setup, implementer: shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: implementerAgent}, workspace.SharedRepoScope},
 		{"setup, reviewer: shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: reviewerAgent}, workspace.SharedRepoScope},
+		{"setup, explorer: shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: explorerAgent}, workspace.SharedRepoScope},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

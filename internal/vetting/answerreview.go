@@ -143,15 +143,16 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	// No provisioned clone/PR ⇒ nothing to review against: a read-only node whose
 	// TASK merely mentions reviews (e.g. a code-explorer investigating the review
 	// path on an ISSUE) would otherwise stage a review that delivery then can't
-	// post - "'' is not a github.com clone URL". Symmetric with augmentFromRepo's
-	// cfg.Setup guard: a reviewer node is setup-provisioned, an explorer is not.
+	// post - "'' is not a github.com clone URL".
 	if cfg.Setup == nil {
 		return
 	}
 	// The structural signal (Config.IsReviewer, stamped from the node's AGENT -
 	// dag.reviewerAgent - not the task's wording): a task-text regex left this
 	// path dead for a task with no posting verb, e.g. the label-review default
-	// "Review this pull request." (#482).
+	// "Review this pull request." (#482). Also the guard that actually excludes
+	// code-explorer now that it's setup-provisioned too (dag.setupQualifyingAgent)
+	// - explorer answers never get this staged-review treatment.
 	if !cfg.IsReviewer {
 		return
 	}

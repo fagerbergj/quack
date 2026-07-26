@@ -62,14 +62,15 @@ func ancestors(nodes []Node, id string) map[string]bool {
 
 // workspaceNodeID returns the workspace-relative "node" identifier a plan
 // node's fs/git tools and deterministic checks resolve into (see
-// workspace.NodeDir, vetting.Config.NodeID). A repo-touching node
-// (implementer/reviewer) in a plan.Setup chain resolves into the ONE shared
-// clone (workspace.SharedRepoScope) every other repo-touching node in the
-// chain also resolves into - validateRepoChain guarantees the chain runs one
-// node at a time, so sharing the directory is safe. Every other node keeps
-// its own dir (node.ID), unchanged from before this existed.
+// workspace.NodeDir, vetting.Config.NodeID). A setup-qualifying node
+// (setupQualifyingAgent: implementer, reviewer, explorer) in a plan.Setup
+// chain resolves into the ONE shared clone (workspace.SharedRepoScope) every
+// other qualifying node also resolves into - validateRepoChain guarantees
+// the mutating (implementer/reviewer) subset runs one node at a time, and a
+// read-only explorer needs no such guarantee to share safely. Every other
+// node keeps its own dir (node.ID), unchanged from before this existed.
 func workspaceNodeID(plan Plan, node Node) string {
-	if plan.Setup != nil && (node.AgentName == implementerAgent || node.AgentName == reviewerAgent) {
+	if plan.Setup != nil && setupQualifyingAgent(node.AgentName) {
 		return workspace.SharedRepoScope
 	}
 	return node.ID
