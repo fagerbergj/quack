@@ -49,11 +49,15 @@ func (e *Extension) isWorkRequest(ctx context.Context, task string) bool {
 		slog.Warn("github: intent classifier failed; treating mention as conversational", "component", "github", "err", err)
 		return false
 	}
-	switch strings.ToUpper(strings.TrimSpace(answer)) {
-	case "WORK":
-		return true
-	case "CONVERSATIONAL":
+	// Substring, not equality: a small instruct model wraps its one word often
+	// enough ("**WORK**", "WORK.") that an exact match would silently answer
+	// conversational for every genuine review request. CONVERSATIONAL is tested
+	// first so the longer word can't be shadowed by the "WORK" inside it.
+	switch up := strings.ToUpper(strings.TrimSpace(answer)); {
+	case strings.Contains(up, "CONVERSATIONAL"):
 		return false
+	case strings.Contains(up, "WORK"):
+		return true
 	default:
 		slog.Warn("github: intent classifier returned an unparseable answer; treating mention as conversational", "component", "github", "answer", answer)
 		return false

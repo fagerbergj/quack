@@ -1366,6 +1366,36 @@ func TestRunMessageLabelTriggerNeverClassifies(t *testing.T) {
 // re-review and discards a reply already written, while a wrong
 // CONVERSATIONAL verdict merely leaves it to the orchestrator, which can
 // still plan if the user explicitly asks.
+// TestIsWorkRequestTolerantOfWrappedVerdict: a small instruct model rarely
+// answers with a bare word. Exact matching made "**WORK**" unparseable, which
+// fails safe to conversational - so every genuine "@quack review this" would
+// have quietly lost the review framing. CONVERSATIONAL must win when both
+// appear, since "WORK" is a substring of neither but a hedged answer can name
+// both ("not WORK, CONVERSATIONAL").
+func TestIsWorkRequestTolerantOfWrappedVerdict(t *testing.T) {
+	for _, tt := range []struct {
+		answer string
+		want   bool
+	}{
+		{"WORK", true},
+		{"**WORK**", true},
+		{"WORK.", true},
+		{" work \n", true},
+		{"CONVERSATIONAL", false},
+		{"**CONVERSATIONAL**", false},
+		{"not WORK, CONVERSATIONAL", false},
+		{"I am unable to classify this", false},
+	} {
+		t.Run(tt.answer, func(t *testing.T) {
+			ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+			ext.SetIntentClassifier(&fakeIntentClassifier{verdict: tt.answer})
+			if got := ext.isWorkRequest(context.Background(), "@quack review this"); got != tt.want {
+				t.Errorf("isWorkRequest(%q) = %v, want %v", tt.answer, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsWorkRequestFailsSafe(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 
