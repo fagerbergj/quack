@@ -7,5 +7,8 @@ package quack
 
 import "embed"
 
-//go:embed all:agents all:skills
+// The dotagents skills are a git submodule: a fresh clone/worktree must run
+// `git submodule update --init` or this embed fails the build (no matching files).
+//
+//go:embed all:agents all:skills all:.agents/vendor/dotagents/skills
 var Embedded embed.FS

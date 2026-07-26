@@ -16,7 +16,7 @@ import (
 // every agent that clones quack, exactly as `huh-wizard`/`go-testing` did at 1045
 // and 1039 description chars).
 func TestSkillsLoad(t *testing.T) {
-	for _, dir := range []string{"../../skills", "../../.claude/skills"} {
+	for _, dir := range []string{"../../skills", "../../.claude/skills", "../../" + dotagentsSkillsDir} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("read skills dir %s: %v", dir, err)
@@ -85,14 +85,20 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 	}
 }
 
-// TestNewSkillSourceVendorAbsent proves the fallback: no vendor dir on disk
-// (submodule not initialized, or a binary installed outside the repo) ⇒ the
-// primary source alone, with no error and no ponytail skills.
+// TestNewSkillSourceVendorAbsent proves the fallback: no ponytail vendor dir
+// on disk (submodule not initialized, or a binary installed outside the repo)
+// ⇒ the shipped + embedded-dotagents sources alone, with no error and no
+// ponytail skills. format-markdown must resolve here - it lives in the
+// dotagents submodule and startup hard-fails without it, so the embedded copy
+// is what keeps an installed binary working from any directory.
 func TestNewSkillSourceVendorAbsent(t *testing.T) {
 	src := newSkillSource(filepath.Join(t.TempDir(), "does-not-exist"))
 	ctx := context.Background()
 	if _, err := src.LoadFrontmatter(ctx, "plan-work"); err != nil {
 		t.Errorf("LoadFrontmatter(plan-work): %v", err)
+	}
+	if _, err := src.LoadFrontmatter(ctx, "format-markdown"); err != nil {
+		t.Errorf("LoadFrontmatter(format-markdown) via embedded dotagents: %v", err)
 	}
 	if _, err := src.LoadFrontmatter(ctx, "ponytail"); err == nil {
 		t.Error("LoadFrontmatter(ponytail): want not-found without the vendor dir")

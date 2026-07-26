@@ -67,25 +67,36 @@ const localUserID = "local"
 // vendorSkillsDir is the vendored ponytail skill library - a git submodule
 // (github.com/DietrichGebert/ponytail, pinned by .gitmodules) whose skills/
 // dir holds SKILL.md skills in exactly the layout the shipped skills/ library
-// uses. Merged into the skill toolset as a second, lower-priority source when
+// uses. Merged into the skill toolset as a lower-priority source when
 // present on disk (newSkillSource); absent (submodule not initialized, or an
-// installed binary outside the repo) the primary source alone serves - no
+// installed binary outside the repo) the other sources alone serve - no
 // error, the ponytail skills are just unavailable. Run
 // `git submodule update --init` (or clone with --recursive) to populate it.
 const vendorSkillsDir = ".agents/vendor/ponytail/skills"
 
+// dotagentsSkillsDir is the vendored general-purpose skill library
+// (github.com/fagerbergj/dotagents, a git submodule). Unlike ponytail it is
+// ALSO embedded (see embed.go): agents' config skill lists name skills from it
+// (format-markdown, research-git-repos, pr-authoring, …), so it must resolve
+// even for an installed binary outside the repo.
+const dotagentsSkillsDir = ".agents/vendor/dotagents/skills"
+
 // newSkillSource builds the skill toolset's Source: the shipped skills/
-// library (disk-then-embedded via bundledir) plus, when vendorDir exists on
-// disk, the vendored skills merged in behind it (primary wins on any name
-// collision by mergedSource's query order; duplicate names across sources are
-// a startup error, which is the right loudness for a vendoring mistake).
+// library and the vendored dotagents skills (each disk-then-embedded via
+// bundledir) plus, when vendorDir exists on disk, the ponytail skills merged
+// in behind them (earlier sources win a name collision by mergedSource's
+// query order; duplicate names across sources are a startup error, which is
+// the right loudness for a vendoring mistake).
 func newSkillSource(vendorDir string) skill.Source {
-	primary := skill.NewFileSystemSource(bundledir.SubFS("skills"))
-	if st, err := os.Stat(vendorDir); err != nil || !st.IsDir() {
-		return primary
+	sources := []skill.Source{
+		skill.NewFileSystemSource(bundledir.SubFS("skills")),
+		skill.NewFileSystemSource(bundledir.SubFS(dotagentsSkillsDir)),
 	}
-	slog.Info("vendored skills merged into the skill library", "component", "startup", "dir", vendorDir)
-	return skill.NewMergedSource(primary, skill.NewFileSystemSource(os.DirFS(vendorDir)))
+	if st, err := os.Stat(vendorDir); err == nil && st.IsDir() {
+		slog.Info("vendored skills merged into the skill library", "component", "startup", "dir", vendorDir)
+		sources = append(sources, skill.NewFileSystemSource(os.DirFS(vendorDir)))
+	}
+	return skill.NewMergedSource(sources...)
 }
 
 //go:embed all:web/dist
@@ -291,8 +302,9 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 
 	// Load skills once at startup. Skills resolve from disk in cwd first (live
 	// repo edits) then the embedded copy, so an installed binary works from any
-	// directory; the vendored ponytail library (a git submodule - see
-	// vendorSkillsDir) merges in when present. builtinSkillSrc is the raw
+	// directory; the vendored dotagents library is resolved the same way, and
+	// ponytail (disk-only - see vendorSkillsDir) merges in when present.
+	// builtinSkillSrc is the raw
 	// built-in library (shipped + vendored) with no per-agent restriction - each
 	// agent gets its OWN load_skill/list_skills toolset scoped to its declared
 	// config.AgentConfig.Skills / OrchestratorConfig.Skills (buildAgents, and
@@ -1178,13 +1190,14 @@ func mcpServerName(raw string, i int) string {
 }
 
 // acpSkillPaths are the on-disk skill roots handed to an ACP agent's
-// skills.paths - the shipped skills/ dir and the vendored ponytail library,
-// absolute (the subprocess cwd is the node dir, not the server's). A root
-// missing on disk (embedded-only deploys) is simply skipped; opencode also
-// warns-and-continues on a missing path, so this can never fail a run.
+// skills.paths - the shipped skills/ dir and the vendored dotagents +
+// ponytail libraries, absolute (the subprocess cwd is the node dir, not the
+// server's). A root missing on disk (embedded-only deploys) is simply
+// skipped; opencode also warns-and-continues on a missing path, so this can
+// never fail a run.
 func acpSkillPaths() []string {
 	var out []string
-	for _, d := range []string{"skills", vendorSkillsDir} {
+	for _, d := range []string{"skills", dotagentsSkillsDir, vendorSkillsDir} {
 		abs, err := filepath.Abs(d)
 		if err != nil {
 			continue
