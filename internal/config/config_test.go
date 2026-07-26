@@ -711,6 +711,62 @@ workspace:
 	}
 }
 
+// TestWorkspaceEnvDefaultsEmpty: no workspace.env section ⇒ nil map, no error.
+func TestWorkspaceEnvDefaultsEmpty(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Workspace.Env) != 0 {
+		t.Errorf("Env = %v, want empty", c.Workspace.Env)
+	}
+}
+
+// TestWorkspaceEnvParsesAndInterpolates proves workspace.env round-trips and
+// its values interpolate ${VAR} exactly like every other config field.
+func TestWorkspaceEnvParsesAndInterpolates(t *testing.T) {
+	t.Setenv("QUACK_TEST_JAVA_HOME", "/opt/jdk-21")
+	c, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  env:
+    JAVA_HOME: ${QUACK_TEST_JAVA_HOME}
+    ANDROID_HOME: /opt/android-sdk
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Workspace.Env["JAVA_HOME"] != "/opt/jdk-21" {
+		t.Errorf("Env[JAVA_HOME] = %q, want interpolated /opt/jdk-21", c.Workspace.Env["JAVA_HOME"])
+	}
+	if c.Workspace.Env["ANDROID_HOME"] != "/opt/android-sdk" {
+		t.Errorf("Env[ANDROID_HOME] = %q, want /opt/android-sdk", c.Workspace.Env["ANDROID_HOME"])
+	}
+}
+
+// TestWorkspaceEnvRejectsEmptyKey guards the yaml shape `env: {"": "x"}`.
+func TestWorkspaceEnvRejectsEmptyKey(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  env:
+    "": "x"
+`))
+	if err == nil {
+		t.Fatal("expected error for an empty workspace.env key")
+	}
+}
+
+// TestWorkspaceEnvRejectsPathAndHome: PATH/HOME already have dedicated knobs
+// (exec_path, the jail's isolated per-user home) - silently letting env
+// override either would undo the hermetic-child guarantees those document.
+func TestWorkspaceEnvRejectsPathAndHome(t *testing.T) {
+	for _, key := range []string{"PATH", "HOME"} {
+		_, err := Load(writeTemp(t, baseConfig+"\nworkspace:\n  env:\n    "+key+": /tmp/x\n"))
+		if err == nil {
+			t.Errorf("workspace.env[%s]: expected a startup error, got none", key)
+		}
+	}
+}
+
 // TestGitCredentialsParsesAndDefaultsUsername proves git_credentials round-trips
 // (the ${VAR} value interpolates, an omitted username defaults to
 // x-access-token) and guards parse.

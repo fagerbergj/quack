@@ -43,7 +43,9 @@ type Options struct {
 	Command []string // argv to spawn, e.g. ["opencode", "acp"]
 	// Env is EXTRA environment (KEY=VAL) appended after the minimal base
 	// (PATH, HOME, OPENCODE_CONFIG_CONTENT, …) - later entries win, so an
-	// operator override beats a generated default.
+	// operator override beats a generated default. The caller (internal/serve)
+	// pre-merges workspace.env under the agent's own acp.env before building
+	// this, so agent-specific always wins here too.
 	Env []string
 	// Home is the subprocess $HOME - the jail's isolated per-user home
 	// (workspace.Caps.HomeDir), so the agent's own caches/state never land

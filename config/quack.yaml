@@ -310,6 +310,24 @@ workspace:
   # exec_path:
   #   - /home/user/.nvm/versions/node/v22.22.3/bin
   #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
+
+  # env: extra environment for the SAME children exec_path targets, PLUS the
+  # ACP coding-agent subprocess (opencode) - the half exec_path doesn't cover:
+  # a toolchain that must be FOUND, not just be on PATH (JAVA_HOME for
+  # Gradle, ANDROID_HOME/ANDROID_SDK_ROOT for AGP, a GOROOT outside /usr).
+  # Deployment-wide; a matching key in an agent's own `acp: {env: ...}` wins
+  # (docs/configuration/agents.md). PATH and HOME are reserved - a startup
+  # error, not a silent override - since exec_path and the jail's isolated
+  # per-user home already own those. Not a secrets vault: values interpolate
+  # ${VAR} like the rest of this file, but put anything actually sensitive in
+  # a provider/tool's own auth block instead. Under sandbox: bwrap, a
+  # directory an env value points at still needs its own exec_path entry to
+  # be bind-mounted into the child (see exec_path above).
+  # env:
+  #   JAVA_HOME: /home/user/toolchains/jdk-21
+  #   ANDROID_HOME: /home/user/toolchains/android-sdk
+  #   ANDROID_SDK_ROOT: /home/user/toolchains/android-sdk
+
   # check_commands: allowed command PREFIXES the planner may complete into a
   # code-implementer node's `checks` (§4) - the trust gate runs these against
   # the node's own workdir after each draft, and DERIVES a repo's own build/

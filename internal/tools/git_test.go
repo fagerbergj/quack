@@ -197,6 +197,23 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	}
 }
 
+// TestGitEnvIncludesWorkspaceEnv: workspace.env reaches git children too (a
+// hook or filter may legitimately need the configured toolchain).
+func TestGitEnvIncludesWorkspaceEnv(t *testing.T) {
+	caps := workspace.Caps{Env: map[string]string{"JAVA_HOME": "/opt/jdk-21"}}
+	env := gitEnv("/home/x", caps, nil)
+	want := "JAVA_HOME=/opt/jdk-21"
+	found := false
+	for _, e := range env {
+		if e == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("gitEnv = %v, want to contain %q", env, want)
+	}
+}
+
 // TestEnsureAskpassLink: the symlink is created pointing at the current
 // executable, is stable across calls, and a stale link (pointing elsewhere)
 // is repaired.
