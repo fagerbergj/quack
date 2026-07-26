@@ -232,6 +232,47 @@ func TestGithubReviewBaselineRoundTrip(t *testing.T) {
 	}
 }
 
+// TestGithubMergeIntentRoundTrip pins the standing quack:merge intent's store
+// half: no row until explicitly set, then readable back with the recorder,
+// updatable in place (re-applying the label refreshes it), and gone after
+// delete (consumed by a merge).
+func TestGithubMergeIntentRoundTrip(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	id := "github-acme-widgets-7"
+
+	if got, err := st.GetGithubMergeIntent(ctx, id); err != nil || got != nil {
+		t.Fatalf("GetGithubMergeIntent before any Set: got=%v err=%v; want (nil, nil)", got, err)
+	}
+
+	if err := st.SetGithubMergeIntent(ctx, id, "alice"); err != nil {
+		t.Fatalf("SetGithubMergeIntent (create): %v", err)
+	}
+	got, err := st.GetGithubMergeIntent(ctx, id)
+	if err != nil || got == nil || got.RequestedBy != "alice" {
+		t.Fatalf("GetGithubMergeIntent after create: got=%+v err=%v", got, err)
+	}
+
+	// A second application (by someone else) refreshes the authorizer in place.
+	if err := st.SetGithubMergeIntent(ctx, id, "bob"); err != nil {
+		t.Fatalf("SetGithubMergeIntent (update): %v", err)
+	}
+	got, err = st.GetGithubMergeIntent(ctx, id)
+	if err != nil || got == nil || got.RequestedBy != "bob" {
+		t.Fatalf("GetGithubMergeIntent after update: got=%+v err=%v", got, err)
+	}
+
+	if err := st.DeleteGithubMergeIntent(ctx, id); err != nil {
+		t.Fatalf("DeleteGithubMergeIntent: %v", err)
+	}
+	if got, err := st.GetGithubMergeIntent(ctx, id); err != nil || got != nil {
+		t.Fatalf("GetGithubMergeIntent after delete: got=%v err=%v; want (nil, nil)", got, err)
+	}
+}
+
 func TestStoreUnknownKind(t *testing.T) {
 	if _, err := New("mysql", "x"); err == nil {
 		t.Error("New should reject an unknown store kind")

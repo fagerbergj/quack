@@ -96,6 +96,19 @@ type GithubFixState struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// GithubMergeIntent records a standing authorization to merge a PR chat once
+// quack's own review approves it - what applying quack:merge BEFORE a review
+// exists becomes, instead of a dead end (internal/github's mergeIfApproved).
+// Durable for the same reason GithubFixState is: the approving review may
+// land after a process restart. RequestedBy is surfaced in the eventual merge
+// comment so it still names who authorized it.
+type GithubMergeIntent struct {
+	ChatID      string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
+	RequestedBy string    `json:"requested_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // DagPlan stores the JSON-encoded plan for a chat turn so the DAG can be
 // re-displayed on page reload. TurnID links it to the ChatTurn that produced it.
 type DagPlan struct {
@@ -335,7 +348,7 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}); err != nil {
 		return nil, err
 	}
 	sessions, err := database.NewSessionService(dialector(), gormCfg)
@@ -597,6 +610,39 @@ func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error 
 // (re-)applies the monitor label, the documented retry convention.
 func (s *Store) DeleteGithubFixState(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubFixState{}).Error
+}
+
+// GetGithubMergeIntent returns the standing merge authorization for a PR
+// chat, or (nil, nil) when none is recorded (the label was never applied
+// before an approval, or it already got consumed/cleared).
+func (s *Store) GetGithubMergeIntent(ctx context.Context, chatID string) (*GithubMergeIntent, error) {
+	var row GithubMergeIntent
+	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// SetGithubMergeIntent upserts the standing merge authorization for a PR
+// chat - applying quack:merge records/refreshes it, naming whoever most
+// recently applied the label.
+func (s *Store) SetGithubMergeIntent(ctx context.Context, chatID, requestedBy string) error {
+	now := time.Now().UTC()
+	row := &GithubMergeIntent{ChatID: chatID, RequestedBy: requestedBy, CreatedAt: now, UpdatedAt: now}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"requested_by", "updated_at"}),
+	}).Create(row).Error
+}
+
+// DeleteGithubMergeIntent clears the standing merge authorization for a PR
+// chat - called once it has been consumed by a merge.
+func (s *Store) DeleteGithubMergeIntent(ctx context.Context, chatID string) error {
+	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubMergeIntent{}).Error
 }
 
 // UpdateTitle sets the human-readable title for a chat.

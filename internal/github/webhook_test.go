@@ -2168,6 +2168,11 @@ func TestImplementTaskCore(t *testing.T) {
 // mergeStub is stubGitHub plus a reviews list, an issue-comments list (own-PR
 // verdict markers), and a merge endpoint; merged signals when the merge PUT
 // lands. commentsJSON == "" defaults to an empty list.
+// mergeStub serves both the merge-label handler's own REST surface
+// (reviews/comments for latestQuackVerdict, PUT .../merge) and the rest of
+// stubGitHub's dispatch surface (pulls meta, files, commits, reactions,
+// issue meta) - the merge label can itself dispatch a review run (see
+// mergeIfApproved), so the stub needs to serve that too.
 func mergeStub(t *testing.T, reviewsJSON, commentsJSON string, posted chan<- string, merged chan<- struct{}) *httptest.Server {
 	t.Helper()
 	if commentsJSON == "" {
@@ -2179,6 +2184,9 @@ func mergeStub(t *testing.T, reviewsJSON, commentsJSON string, posted chan<- str
 			fmt.Fprint(w, `{"id":5}`)
 		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
 			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
 		case strings.HasSuffix(r.URL.Path, "/app"):
 			fmt.Fprint(w, `{"slug":"quack"}`)
 		case strings.HasSuffix(r.URL.Path, "/reviews"):
@@ -2186,6 +2194,10 @@ func mergeStub(t *testing.T, reviewsJSON, commentsJSON string, posted chan<- str
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge"):
 			merged <- struct{}{}
 			fmt.Fprint(w, `{"merged":true}`)
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			fmt.Fprint(w, `[]`)
+		case strings.HasSuffix(r.URL.Path, "/commits"):
+			fmt.Fprint(w, `[]`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
 			fmt.Fprint(w, commentsJSON)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -2193,10 +2205,62 @@ func mergeStub(t *testing.T, reviewsJSON, commentsJSON string, posted chan<- str
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{}`)
 			posted <- string(body)
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprint(w, `{"title":"Test PR","body":"A test PR.","state":"open","head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Test issue","body":"A test issue.","state":"open"}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 	}))
+}
+
+// mergeStubDynamic is mergeStub with reviews served from a mutable value (an
+// empty review list to start) so a test can simulate a review landing
+// mid-dispatch via the returned setReviews - used only by
+// TestHandleWebhookMergeLabelReviewLandsConsumesIntent. merged carries the
+// PUT .../merge request body so a test can assert the head-sha merge guard.
+func mergeStubDynamic(t *testing.T, posted chan<- string, merged chan<- string) (srv *httptest.Server, setReviews func(string)) {
+	t.Helper()
+	var reviews atomic.Value
+	reviews.Store("[]")
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reviews"):
+			fmt.Fprint(w, reviews.Load().(string))
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge"):
+			body, _ := io.ReadAll(r.Body)
+			merged <- string(body)
+			fmt.Fprint(w, `{"merged":true}`)
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			fmt.Fprint(w, `[]`)
+		case strings.HasSuffix(r.URL.Path, "/commits"):
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			fmt.Fprint(w, `{"title":"Test PR","body":"A test PR.","state":"open","head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Test issue","body":"A test issue.","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	return srv, func(j string) { reviews.Store(j) }
 }
 
 func mergeLabelBody(sender string) []byte {
@@ -2210,6 +2274,14 @@ func mergeLabelBody(sender string) []byte {
 	}`, sender))
 }
 
+// TestHandleWebhookMergeLabel covers the cases where the merge label's fate is
+// decided WITHOUT needing to dispatch a run: an approving review already
+// exists (merges immediately, unchanged), a non-approving verdict already
+// exists (refuses and leaves the standing intent recorded so a later approval
+// - after fixes - can still merge it), the trigger is off, or the sender is a
+// bot. The "no review at all yet" case dispatches a review run and is covered
+// separately (TestHandleWebhookMergeLabelQueuesAndDispatchesReview) since it
+// needs the runner wired up to observe the dispatch.
 func TestHandleWebhookMergeLabel(t *testing.T) {
 	approved := `[{"state":"CHANGES_REQUESTED","user":{"login":"quack[bot]"}},{"state":"APPROVED","user":{"login":"quack[bot]"}}]`
 	tests := []struct {
@@ -2220,24 +2292,23 @@ func TestHandleWebhookMergeLabel(t *testing.T) {
 		sender      string
 		wantMerge   bool
 		wantComment string // substring of the posted comment; "" = no comment expected
+		wantIntent  bool   // whether a standing merge intent should be recorded
 	}{
-		{"approved review merges", []string{"merge"}, approved, "", "alice", true, "Merged"},
-		{"changes-requested refuses", []string{"merge"},
+		{"approved review merges", []string{"merge"}, approved, "", "alice", true, "Merged", false},
+		{"changes-requested stands by with the intent recorded", []string{"merge"},
 			`[{"state":"APPROVED","user":{"login":"quack[bot]"}},{"state":"CHANGES_REQUESTED","user":{"login":"quack[bot]"}}]`,
-			"", "alice", false, "Not merging: my latest review is request_changes, not an approval"},
-		{"no quack review refuses", []string{"merge"},
-			`[{"state":"APPROVED","user":{"login":"alice"}}]`, "", "alice", false, "I have not reviewed this PR"},
-		{"COMMENTED carries no verdict but still refuses without a later approve", []string{"merge"},
+			"", "alice", false, "Standing by: my latest review is request_changes, not an approval", true},
+		{"COMMENTED carries no verdict but still stands by without a later approve", []string{"merge"},
 			`[{"state":"APPROVED","user":{"login":"quack[bot]"},"submitted_at":"2026-01-01T00:00:00Z"},{"state":"COMMENTED","user":{"login":"quack[bot]"},"submitted_at":"2026-01-02T00:00:00Z"}]`,
-			"", "alice", false, "Not merging: my latest review is comment, not an approval"},
+			"", "alice", false, "Standing by: my latest review is comment, not an approval", true},
 		{"own-PR comment-review marker approves and merges", []string{"merge"}, `[]`,
 			`[{"user":{"login":"quack[bot]"},"body":"LGTM\n\n<!-- quack:delivery:review:approve -->","created_at":"2026-01-01T00:00:00Z"}]`,
-			"alice", true, "Merged"},
-		{"own-PR comment-review marker request_changes refuses", []string{"merge"}, `[]`,
+			"alice", true, "Merged", false},
+		{"own-PR comment-review marker request_changes stands by", []string{"merge"}, `[]`,
 			`[{"user":{"login":"quack[bot]"},"body":"needs work\n\n<!-- quack:delivery:review:request_changes -->","created_at":"2026-01-01T00:00:00Z"}]`,
-			"alice", false, "Not merging: my latest review is request_changes, not an approval"},
-		{"trigger not enabled is a no-op", []string{"mention"}, approved, "", "alice", false, ""},
-		{"bot sender cannot authorize", []string{"merge"}, approved, "", "other[bot]", false, ""},
+			"alice", false, "Standing by: my latest review is request_changes, not an approval", true},
+		{"trigger not enabled is a no-op", []string{"mention"}, approved, "", "alice", false, "", false},
+		{"bot sender cannot authorize", []string{"merge"}, approved, "", "other[bot]", false, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2246,8 +2317,9 @@ func TestHandleWebhookMergeLabel(t *testing.T) {
 			gh := mergeStub(t, tt.reviews, tt.comments, posted, merged)
 			defer gh.Close()
 
+			st := newFixTestStore(t)
 			runner := &fakeRunner{gotMessage: make(chan string, 1)}
-			ext := newTestExtensionWithTriggers(t, runner, gh.URL, tt.triggers, "")
+			ext := newFixExtension(t, runner, gh.URL, st, tt.triggers...)
 
 			rec := httptest.NewRecorder()
 			ext.handleWebhook(rec, signedRequest("pull_request", mergeLabelBody(tt.sender)))
@@ -2279,11 +2351,232 @@ func TestHandleWebhookMergeLabel(t *testing.T) {
 				default:
 				}
 			}
-			// The merge label never dispatches an agent run.
+			// None of these cases dispatches an orchestrator run - either the
+			// verdict was already decided, or the trigger/sender gate refused first.
 			if atomic.LoadInt32(&runner.calls) != 0 {
-				t.Error("merge label must not dispatch an orchestrator run")
+				t.Error("this case must not dispatch an orchestrator run")
+			}
+
+			intent, err := st.GetGithubMergeIntent(context.Background(), "github-acme-widgets-7")
+			if err != nil {
+				t.Fatalf("GetGithubMergeIntent: %v", err)
+			}
+			if tt.wantIntent && (intent == nil || intent.RequestedBy != "alice") {
+				t.Errorf("intent = %+v; want a recorded standing intent for alice", intent)
+			}
+			if !tt.wantIntent && intent != nil {
+				t.Errorf("intent = %+v; want none recorded", intent)
 			}
 		})
+	}
+}
+
+// TestHandleWebhookMergeLabelQueuesAndDispatchesReview covers applying
+// quack:merge to a PR quack has never looked at: the label becomes a standing
+// intent AND dispatches a review itself - otherwise the label would silently
+// do nothing until someone separately asked for a review.
+func TestHandleWebhookMergeLabelQueuesAndDispatchesReview(t *testing.T) {
+	posted := make(chan string, 4)
+	merged := make(chan struct{}, 1)
+	gh := mergeStub(t, "[]", "", posted, merged)
+	defer gh.Close()
+
+	st := newFixTestStore(t)
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}
+	ext := newFixExtension(t, runner, gh.URL, st, "merge")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("pull_request", mergeLabelBody("alice")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	select {
+	case c := <-posted:
+		if !strings.Contains(c, "Queued") || !strings.Contains(c, "Reviewing it now") {
+			t.Errorf("comment = %q; want a queued+reviewing message", c)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no queued comment posted")
+	}
+	select {
+	case msg := <-runner.gotMessage:
+		if !strings.Contains(msg, "Review this pull request") {
+			t.Errorf("dispatched task = %q; want the auto-review task", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no review was auto-dispatched for the unreviewed PR")
+	}
+
+	intent, err := st.GetGithubMergeIntent(context.Background(), "github-acme-widgets-7")
+	if err != nil || intent == nil || intent.RequestedBy != "alice" {
+		t.Fatalf("GetGithubMergeIntent = %+v, %v; want a recorded intent for alice", intent, err)
+	}
+}
+
+// TestHandleWebhookMergeLabelWaitsForInFlightReview covers applying
+// quack:merge while a review is ALREADY running on the PR (a common race: the
+// label lands while a review dispatched moments earlier is still in
+// progress) - it must record the intent and wait, never dispatch a SECOND
+// concurrent review on the same session.
+func TestHandleWebhookMergeLabelWaitsForInFlightReview(t *testing.T) {
+	posted := make(chan string, 4)
+	merged := make(chan struct{}, 1)
+	gh := mergeStub(t, "[]", "", posted, merged)
+	defer gh.Close()
+
+	st := newFixTestStore(t)
+	runner := &fakeRunner{gotMessage: make(chan string, 1), block: make(chan struct{}), answer: "reviewed"}
+	ext := newFixExtension(t, runner, gh.URL, st, "mention", "merge")
+
+	rec1 := httptest.NewRecorder()
+	ext.handleWebhook(rec1, signedRequest("issue_comment", pullCommentBody("@quack review this")))
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("status = %d", rec1.Code)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&runner.calls) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&runner.calls) != 1 {
+		t.Fatal("the mention-triggered review never started")
+	}
+
+	rec2 := httptest.NewRecorder()
+	ext.handleWebhook(rec2, signedRequest("pull_request", mergeLabelBody("alice")))
+	if rec2.Code != http.StatusAccepted {
+		t.Fatalf("status = %d", rec2.Code)
+	}
+
+	select {
+	case c := <-posted:
+		if !strings.Contains(c, "already in progress") {
+			t.Errorf("comment = %q; want it to note a review is already running", c)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no queued comment posted")
+	}
+
+	intent, err := st.GetGithubMergeIntent(context.Background(), "github-acme-widgets-7")
+	if err != nil || intent == nil {
+		t.Fatalf("GetGithubMergeIntent = %+v, %v; want a recorded intent", intent, err)
+	}
+	close(runner.block) // release the blocked run
+	time.Sleep(50 * time.Millisecond)
+	if got := atomic.LoadInt32(&runner.calls); got != 1 {
+		t.Errorf("runner.calls = %d; want 1 (the label must not dispatch a second review while one is in flight)", got)
+	}
+}
+
+// TestHandleWebhookMergeLabelReviewLandsConsumesIntent covers the standing
+// intent's whole point: no review existed when quack:merge was applied, the
+// label queued a review AND recorded the intent, and once that review is
+// actually POSTED to GitHub with an approving verdict, the PR merges on its
+// own - naming the original label-applier, not whoever (if anyone) is around
+// when the review lands.
+func TestHandleWebhookMergeLabelReviewLandsConsumesIntent(t *testing.T) {
+	posted := make(chan string, 4)
+	merged := make(chan string, 1)
+	gh, setReviews := mergeStubDynamic(t, posted, merged)
+	defer gh.Close()
+
+	st := newFixTestStore(t)
+	runner := &fakeRunner{gotMessage: make(chan string, 1), block: make(chan struct{}), deliverReview: true}
+	ext := newFixExtension(t, runner, gh.URL, st, "merge")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("pull_request", mergeLabelBody("alice")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	select {
+	case c := <-posted:
+		if !strings.Contains(c, "Queued") {
+			t.Errorf("comment = %q; want the queued message", c)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no queued comment posted")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&runner.calls) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&runner.calls) != 1 {
+		t.Fatal("the auto-dispatched review never started")
+	}
+
+	// The review "lands" as an approval right before the blocked run finishes
+	// and records its delivery - simulating quack's own review being posted.
+	setReviews(`[{"state":"APPROVED","user":{"login":"quack[bot]"},"submitted_at":"2026-01-01T00:00:00Z"}]`)
+	close(runner.block)
+
+	select {
+	case body := <-merged:
+		if !strings.Contains(body, `"sha":"headsha1"`) {
+			t.Errorf("merge request body = %q; want it pinned to the reviewed head sha", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a merge PUT once the review landed approving")
+	}
+	select {
+	case c := <-posted:
+		if !strings.Contains(c, "Merged") || !strings.Contains(c, "@alice") {
+			t.Errorf("comment = %q; want it to name the original authorizer", c)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no merge comment posted")
+	}
+
+	intent, err := st.GetGithubMergeIntent(context.Background(), "github-acme-widgets-7")
+	if err != nil || intent != nil {
+		t.Errorf("intent = %+v, %v; want it cleared after the merge", intent, err)
+	}
+}
+
+// TestHandleWebhookMergeLabelRestartSurvival pins that the standing intent
+// (like GithubFixState) survives a process restart: a FRESH Extension over
+// the SAME store - with no in-memory memory of the label event that recorded
+// it - still honours it once a review lands.
+func TestHandleWebhookMergeLabelRestartSurvival(t *testing.T) {
+	st := newFixTestStore(t)
+	sessionID := "github-acme-widgets-7"
+	if err := st.SetGithubMergeIntent(context.Background(), sessionID, "alice"); err != nil {
+		t.Fatalf("seed merge intent: %v", err)
+	}
+
+	posted := make(chan string, 4)
+	merged := make(chan struct{}, 1)
+	approved := `[{"state":"APPROVED","user":{"login":"quack[bot]"},"submitted_at":"2026-01-01T00:00:00Z"}]`
+	gh := mergeStub(t, approved, "", posted, merged)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}
+	ext := newFixExtension(t, runner, gh.URL, st, "mention")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", pullCommentBody("@quack review this")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	select {
+	case <-merged:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the pre-restart standing intent did not merge once the review landed")
+	}
+	select {
+	case c := <-posted:
+		if !strings.Contains(c, "Merged") || !strings.Contains(c, "@alice") {
+			t.Errorf("comment = %q; want it to name the pre-restart authorizer", c)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no merge comment posted")
+	}
+
+	intent, err := st.GetGithubMergeIntent(context.Background(), sessionID)
+	if err != nil || intent != nil {
+		t.Errorf("intent = %+v, %v; want it cleared after the merge", intent, err)
 	}
 }
 
