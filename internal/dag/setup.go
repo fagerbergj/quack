@@ -52,17 +52,30 @@ func setupQualifyingNodes(plan Plan) []Node {
 	return out
 }
 
-// isReviewOnlySetup reports whether the plan's qualifying nodes are
-// review-only - no implementerAgent node among them. That is the structural
-// signal that Setup.WorkBranch names an EXISTING remote PR head to check
-// out, not a new branch to create off BaseRef: neither a reviewer nor an
-// explorer can create a branch, so a qualifying set of only those two agents
-// (in any mix) still means "check out what's already there." An implementer
-// anywhere in the qualifying set means the chain still needs a fresh branch
-// to commit on, even if a reviewer or explorer also runs in that same chain.
+// isReviewOnlySetup reports whether the plan REVIEWS AN EXISTING PR HEAD: a
+// reviewerAgent node with no implementerAgent. That is the structural signal
+// that Setup.WorkBranch names an EXISTING remote ref to check out rather than
+// a new branch to cut off BaseRef.
+//
+// The reviewer is what makes it a review - "no implementer" alone is not
+// enough. An explorer-only plan is the plan-only/research shape (read an
+// ISSUE's repo to ground a plan), which has no PR and therefore no head ref
+// to check out; treating it as review-only made OverrideReviewWorkBranch
+// demand a head ref that an issue never has, and the planner thrashed against
+// the error instead of planning.
 func isReviewOnlySetup(plan Plan) bool {
 	nodes := setupQualifyingNodes(plan)
 	if len(nodes) == 0 {
+		return false
+	}
+	hasReviewer := false
+	for _, n := range nodes {
+		if n.AgentName == reviewerAgent {
+			hasReviewer = true
+			break
+		}
+	}
+	if !hasReviewer {
 		return false
 	}
 	for _, n := range nodes {

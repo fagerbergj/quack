@@ -58,6 +58,10 @@ func TestSetupQualifyingNodes(t *testing.T) {
 // TestIsReviewOnlySetup pins the full truth table from #555: an explorer can
 // no more create a branch than a reviewer can, so it must not flip
 // review-only to false, but an implementer anywhere in the set always does.
+// An explorer-only plan is NOT review-only: that is the plan-only/research
+// shape run against an ISSUE, which has no PR head to check out. Classifying
+// it as a review made OverrideReviewWorkBranch demand a head ref that never
+// exists there, and the planner thrashed against the error (NightsOut#57).
 func TestIsReviewOnlySetup(t *testing.T) {
 	tests := []struct {
 		name string
@@ -65,7 +69,7 @@ func TestIsReviewOnlySetup(t *testing.T) {
 		want bool
 	}{
 		{"no qualifying nodes", Plan{Nodes: []Node{{ID: "synth", AgentName: "synthesizer"}}}, false},
-		{"explorer only", Plan{Nodes: []Node{{ID: "explore", AgentName: explorerAgent}}}, true},
+		{"explorer only (plan-only shape: no PR, no head to check out)", Plan{Nodes: []Node{{ID: "explore", AgentName: explorerAgent}}}, false},
 		{"implementer only", Plan{Nodes: []Node{{ID: "impl", AgentName: implementerAgent}}}, false},
 		{"reviewer only", Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent}}}, true},
 		{"explorer + reviewer, no implementer", Plan{Nodes: []Node{
@@ -162,7 +166,7 @@ func TestRunPlanSetup_ComputesCheckoutExistingHead(t *testing.T) {
 	}{
 		{"reviewer only", []Node{{ID: "review", AgentName: reviewerAgent}}, true},
 		{"implementer only", []Node{{ID: "impl", AgentName: implementerAgent}}, false},
-		{"explorer only", []Node{{ID: "explore", AgentName: explorerAgent}}, true},
+		{"explorer only", []Node{{ID: "explore", AgentName: explorerAgent}}, false},
 		{"explorer + implementer", []Node{{ID: "explore", AgentName: explorerAgent}, {ID: "impl", AgentName: implementerAgent}}, false},
 	}
 	for _, tt := range tests {
@@ -403,3 +407,35 @@ type int32Counter struct {
 
 func (c *int32Counter) inc()     { c.mu.Lock(); c.n++; c.mu.Unlock() }
 func (c *int32Counter) get() int { c.mu.Lock(); defer c.mu.Unlock(); return c.n }
+
+// TestOverrideReviewWorkBranchIgnoresExplorerOnlyPlan pins the NightsOut#57
+// regression: a plan-only run on an ISSUE (explorers grounding a plan, no
+// reviewer, no implementer) has no PR and so no head ref. Once explorers
+// became setup-qualifying nodes (#556), "no implementer" alone read as
+// review-only and this errored out - the planner then thrashed against the
+// failure and posted its raw reasoning as the plan.
+func TestOverrideReviewWorkBranchIgnoresExplorerOnlyPlan(t *testing.T) {
+	p := &Plan{
+		Nodes: []Node{{ID: "explore", AgentName: explorerAgent}},
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "plan/investigate"},
+	}
+	if err := OverrideReviewWorkBranch(p, ""); err != nil {
+		t.Fatalf("explorer-only plan with no head ref must not error: %v", err)
+	}
+	if p.Setup.WorkBranch != "plan/investigate" {
+		t.Errorf("work branch = %q, want the planner's own name untouched", p.Setup.WorkBranch)
+	}
+}
+
+// TestOverrideReviewWorkBranchStillGuardsRealReview keeps #520's protection:
+// a genuine PR review (reviewer node) with no head ref must still fail loudly
+// rather than fetching an invented branch name.
+func TestOverrideReviewWorkBranchStillGuardsRealReview(t *testing.T) {
+	p := &Plan{
+		Nodes: []Node{{ID: "review", AgentName: reviewerAgent}},
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "invented/name"},
+	}
+	if err := OverrideReviewWorkBranch(p, ""); err == nil {
+		t.Fatal("a review-only plan with no head ref must error, not fetch an invented ref")
+	}
+}
