@@ -3,6 +3,8 @@ package vetting
 import (
 	"strings"
 	"testing"
+
+	mermaid "github.com/sammcj/mermaid-check"
 )
 
 func TestFindInvalidMermaid_ValidDiagramPasses(t *testing.T) {
@@ -218,6 +220,39 @@ func TestMermaidCriterion_DetectsInvalidStagedBody(t *testing.T) {
 	}
 	if !strings.Contains(c.Reason, "parse error") {
 		t.Fatalf("Reason = %q, want it to carry the concrete parse error", c.Reason)
+	}
+}
+
+// Pins WHY quotedLabelIssue still exists post-bump to v0.2.0: mermaid-check's
+// own Parse+Validate(strict), called directly with no supplementary check,
+// still parses and validates this clean - the quoted-label workaround is not
+// dead code, it's still the only thing catching this case.
+func TestQuotedLabelIssue_StillNotCaughtByLibraryAlone(t *testing.T) {
+	body := "flowchart TD\nA[bundle name<br/>e.g. \"code-reviewer\"] --> B[x]"
+	diagram, err := mermaid.Parse(body)
+	if err != nil {
+		t.Fatalf("mermaid.Parse returned an error, expected the library to accept this: %v", err)
+	}
+	if warnings := mermaid.Validate(diagram, true); len(warnings) != 0 {
+		t.Fatalf("mermaid.Validate(strict) = %v, want none - if this now fails, quotedLabelIssue is redundant and should be removed", warnings)
+	}
+}
+
+// v0.1.0 added fix(parser): parse quoted subgraph titles - confirm the gate
+// doesn't regress on a diagram using that feature.
+func TestFindInvalidMermaid_QuotedSubgraphTitlePasses(t *testing.T) {
+	md := "```mermaid\nflowchart TD\nsubgraph \"My Title\"\nA-->B\nend\n```"
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none - quoted subgraph titles are valid mermaid (v0.1.0+)", issues)
+	}
+}
+
+// v0.2.0 added class-diagram note parsing - confirm the gate accepts a class
+// diagram using a note without misclassifying it as invalid.
+func TestFindInvalidMermaid_ClassDiagramNotePasses(t *testing.T) {
+	md := "```mermaid\nclassDiagram\nclass Foo\nnote for Foo \"a note\"\n```"
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none - class diagram notes are valid mermaid (v0.2.0+)", issues)
 	}
 }
 
