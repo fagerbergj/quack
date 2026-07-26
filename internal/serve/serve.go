@@ -509,6 +509,12 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	executorRef.Store(executor) // arms the tools' cancel guard (see nodeCancelled above)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
+	// The run deadline belongs here, not at the webhook: applied once a run
+	// holds a slot, so the wait for one is not charged against it. Sourced from
+	// the GitHub extension's run_timeout_minutes, today's only configured bound.
+	if m := cfg.Extensions.GitHub.RunTimeoutMinutes; m > 0 {
+		orch.SetRunDeadline(time.Duration(m) * time.Minute)
+	}
 
 	// End-of-turn user-memory hook (#262): a dedicated extraction agent, built
 	// the same way as the advisor (bundle + bound model, tool-less), rather

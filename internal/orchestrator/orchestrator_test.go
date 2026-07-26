@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
@@ -245,4 +246,39 @@ func TestLatestPendingNodeInterrupt(t *testing.T) {
 			t.Fatalf("got %+v ok=%v", p, ok)
 		}
 	})
+}
+
+// TestRunDeadlineExcludesQueueWait pins the failure that killed three M3
+// implement runs: the deadline used to start at dispatch, so a run queued
+// behind others spent its whole budget WAITING and hit the wall having
+// delivered nothing. The clock must start only once a run slot is held.
+func TestRunDeadlineExcludesQueueWait(t *testing.T) {
+	o := &Orchestrator{runSem: make(chan struct{}, 1)}
+	o.SetRunDeadline(50 * time.Millisecond)
+
+	// Occupy the only slot, so the next acquire has to wait.
+	o.runSem <- struct{}{}
+
+	waited := make(chan bool, 1)
+	go func() {
+		// A caller context with no deadline of its own - the queue wait must be
+		// bounded by the caller, never by the run deadline.
+		release, acquired := o.acquireRun(context.Background())
+		defer release()
+		waited <- acquired
+	}()
+
+	// Hold the slot for well past the run deadline. If the deadline covered the
+	// wait, the acquire below would never succeed.
+	time.Sleep(150 * time.Millisecond)
+	<-o.runSem
+
+	select {
+	case acquired := <-waited:
+		if !acquired {
+			t.Fatal("queued run failed to acquire a slot after waiting longer than the run deadline")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued run never acquired a slot")
+	}
 }
