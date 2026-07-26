@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -511,11 +512,12 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	gh := stubGitHub(t, posted)
 	defer gh.Close()
 
+	// A label trigger is work by construction - nudge it once if it produced no plan.
 	runner := &fakeRunner{gotMessage: make(chan string, 4), answer: "reviewed", noPlan: true}
-	ext := newTestExtension(t, runner, gh.URL)
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_implement"}, "")
 
 	rec := httptest.NewRecorder()
-	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:implement", "alice", false)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d; want 202", rec.Code)
 	}
@@ -533,9 +535,9 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	gh2 := stubGitHub(t, posted2)
 	defer gh2.Close()
 	planned := &fakeRunner{gotMessage: make(chan string, 4), answer: "reviewed"} // noPlan=false ⇒ emits dag_plan
-	ext2 := newTestExtension(t, planned, gh2.URL)
+	ext2 := newTestExtensionWithTriggers(t, planned, gh2.URL, []string{"issue_implement"}, "")
 	rec2 := httptest.NewRecorder()
-	ext2.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	ext2.handleWebhook(rec2, signedRequest("issues", issuesBody("labeled", "quack:implement", "alice", false)))
 	select {
 	case <-posted2:
 	case <-time.After(2 * time.Second):
@@ -543,6 +545,26 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&planned.calls); got != 1 {
 		t.Errorf("runner invoked %d times, want 1 (a plan ran ⇒ no nudge)", got)
+	}
+
+	// Control: a MENTION that produced no plan is never nudged - this is the
+	// regression the old work-verb regex caused (a quoted method call like
+	// `it.migrate(connection)` armed the nudge and forced a re-review that
+	// discarded the reply already written).
+	posted3 := make(chan string, 1)
+	gh3 := stubGitHub(t, posted3)
+	defer gh3.Close()
+	mentionRunner := &fakeRunner{gotMessage: make(chan string, 4), answer: "reviewed", noPlan: true}
+	ext3 := newTestExtension(t, mentionRunner, gh3.URL)
+	rec3 := httptest.NewRecorder()
+	ext3.handleWebhook(rec3, signedRequest("issue_comment", issueCommentBody("@quack add a feature")))
+	select {
+	case <-posted3:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back (mention control)")
+	}
+	if got := atomic.LoadInt32(&mentionRunner.calls); got != 1 {
+		t.Errorf("runner invoked %d times, want 1 (a mention is never nudged)", got)
 	}
 }
 
@@ -940,14 +962,35 @@ func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
 	return githubContext{snap: snap, firstLoad: true, text: renderSeedContext(snap, excludeCommentID)}
 }
 
+// fakeIntentClassifier is a fixed-verdict IntentClassifier double: tests
+// express "this is a work request" by setting verdict, not by tuning prose to
+// trip a regex. errAlways, when set, simulates the classifier failing outright
+// (model error/timeout) regardless of verdict.
+type fakeIntentClassifier struct {
+	verdict   string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
+	errAlways error
+	calls     int32
+}
+
+func (f *fakeIntentClassifier) Classify(_ context.Context, _ string) (string, error) {
+	atomic.AddInt32(&f.calls, 1)
+	if f.errAlways != nil {
+		return "", f.errAlways
+	}
+	return f.verdict, nil
+}
+
 func TestRunMessageReviewAwareForPR(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	// Every case below is a genuine work request; drive the framing decision
+	// with a fixed classifier verdict rather than tuning task prose.
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0))
+	msg := ext.runMessage(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0))
 	for _, want := range []string{
 		"focusing on the auth path", // user's verbatim request preserved
 		"pull_number=7",             // the PR/issue number surfaced for the review tools
@@ -972,7 +1015,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	// With the PR's refs known, the reviewer is told the clone is ALREADY on the
 	// head branch (setup's CheckoutExistingHead - see internal/tools/setup.go)
 	// with the diff ready - no checkout needed, and no stale "empty diff" claim.
-	withRefs := ext.runMessage(pr, "review this", seedGC(Snapshot{IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}, 0))
+	withRefs := ext.runMessage(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}, 0))
 	for _, want := range []string{"already checked out on the PR's head branch `feat/x`", "git_diff main...feat/x"} {
 		if !strings.Contains(withRefs, want) {
 			t.Errorf("PR review message missing diff-ready guidance %q\n---\n%s", want, withRefs)
@@ -983,7 +1026,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	}
 
 	// A PR request that DOES ask to change code keeps the implement path.
-	impl := ext.runMessage(pr, "fix the null dereference in the auth path and open a PR", seedGC(Snapshot{IsPR: true}, 0))
+	impl := ext.runMessage(context.Background(), pr, "fix the null dereference in the auth path and open a PR", seedGC(Snapshot{IsPR: true}, 0))
 	if !strings.Contains(impl, "stage_pr") {
 		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
 	}
@@ -993,7 +1036,7 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(issue, "add a feature", seedGC(Snapshot{}, 0))
+	imsg := ext.runMessage(context.Background(), issue, "add a feature", seedGC(Snapshot{}, 0))
 	if strings.Contains(imsg, "stage_review") || strings.Contains(imsg, "pull_number=") {
 		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
 	}
@@ -1025,7 +1068,7 @@ func TestSeedContextInMention(t *testing.T) {
 		},
 	}
 
-	msg := ext.runMessage(issue, "rework it - mem0 is not a store", seedGC(snap, issue.Comment.ID))
+	msg := ext.runMessage(context.Background(), issue, "rework it - mem0 is not a store", seedGC(snap, issue.Comment.ID))
 	for _, want := range []string{
 		"evaluate mem0 as a memory backend",        // issue body
 		"hegu-1", "gate should stay the authority", // a prior participant
@@ -1057,7 +1100,7 @@ func TestResumeInjectsOnlyTheDelta(t *testing.T) {
 	}}
 	delta := diffSnapshots(old, cur, 0)
 	gh := githubContext{snap: cur, text: renderDeltaDetail(delta)}
-	msg := ext.runMessage(issue, "what's new?", gh)
+	msg := ext.runMessage(context.Background(), issue, "what's new?", gh)
 	if !strings.Contains(msg, "a brand new comment") {
 		t.Errorf("resume message missing the new comment:\n%s", msg)
 	}
@@ -1071,7 +1114,7 @@ func TestResumeInjectsOnlyTheDelta(t *testing.T) {
 		t.Fatalf("diffSnapshots(cur, cur) = %+v; want an empty delta", unchanged)
 	}
 	ghNoop := githubContext{snap: cur, text: renderDeltaDetail(unchanged)}
-	noopMsg := ext.runMessage(issue, "anything new?", ghNoop)
+	noopMsg := ext.runMessage(context.Background(), issue, "anything new?", ghNoop)
 	if strings.Contains(noopMsg, "a brand new comment") || strings.Contains(noopMsg, "first comment") {
 		t.Errorf("an unchanged-snapshot resume should inject no comment content:\n%s", noopMsg)
 	}
@@ -1081,6 +1124,7 @@ func TestResumeInjectsOnlyTheDelta(t *testing.T) {
 // run message so the orchestrator can slice the review without a node fetching it.
 func TestRunMessageIncludesReviewContext(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1092,7 +1136,7 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 		Comments:       []snapshotComment{{User: "bob", Body: "looks good"}},
 		ReviewComments: []snapshotReviewComment{{User: "carol", Path: "a.go", Line: 5, Body: "nit"}},
 	}
-	msg := ext.runMessage(pr, "review this", seedGC(snap, 0))
+	msg := ext.runMessage(context.Background(), pr, "review this", seedGC(snap, 0))
 	for _, want := range []string{
 		"PR title: Add widget", "This adds a widget", // intent
 		"Changed files (2)", "a.go (+10/-2)", "b.go (+1/-0)", // slicing data
@@ -1114,6 +1158,7 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 // node at all (empty answer).
 func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1132,7 +1177,7 @@ func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			msg := ext.runMessage(pr, "review this", seedGC(c.snap, 0))
+			msg := ext.runMessage(context.Background(), pr, "review this", seedGC(c.snap, 0))
 			if !strings.Contains(msg, "fresh review") && !strings.Contains(msg, "not a reason to skip") {
 				t.Errorf("review message with a prior review present must explicitly require a fresh review regardless:\n%s", msg)
 			}
@@ -1143,7 +1188,7 @@ func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
 	// feedback and push") on a PR with a prior review must NOT be told to stage
 	// a review instead of implementing.
 	implTask := "fix the review feedback and push"
-	implMsg := ext.runMessage(pr, implTask, seedGC(Snapshot{IsPR: true, Reviews: []snapshotReview{
+	implMsg := ext.runMessage(context.Background(), pr, implTask, seedGC(Snapshot{IsPR: true, Reviews: []snapshotReview{
 		{User: "fagerbergj", State: "REQUEST_CHANGES", Body: "fix the auth bug"},
 	}}, 0))
 	for _, absent := range []string{"fresh review", "REQUEST FOR A REVIEW"} {
@@ -1162,7 +1207,7 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most? No need to re-review."), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(pr, "which finding matters most? No need to re-review.", seedGC(Snapshot{IsPR: true}, 0))
+	msg := ext.runMessage(context.Background(), pr, "which finding matters most? No need to re-review.", seedGC(Snapshot{IsPR: true}, 0))
 	for _, want := range []string{"conversational follow-up", "Answer it directly", "Do NOT clone"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("conversational message missing %q\n---\n%s", want, msg)
@@ -1173,8 +1218,9 @@ func TestRunMessageConversationalFollowup(t *testing.T) {
 			t.Errorf("conversational message must not carry the review playbook (%q)\n---\n%s", absent, msg)
 		}
 	}
-	// A genuine review request still gets the full playbook.
-	if rev := ext.runMessage(pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0)); !strings.Contains(rev, "stage_review") {
+	// A genuine review request, classified as a work request, gets the full playbook.
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
+	if rev := ext.runMessage(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0)); !strings.Contains(rev, "stage_review") {
 		t.Errorf("a review request must still carry the review tools:\n%s", rev)
 	}
 }
@@ -1197,7 +1243,7 @@ func TestPRFollowupInjectsDiscussion(t *testing.T) {
 			{ID: 555, User: "fagerbergj", Body: "which finding matters most?"}, // the trigger; must be excluded
 		},
 	}
-	msg := ext.runMessage(pr, "which finding matters most?", seedGC(snap, pr.Comment.ID))
+	msg := ext.runMessage(context.Background(), pr, "which finding matters most?", seedGC(snap, pr.Comment.ID))
 	for _, want := range []string{
 		"conversation so far on this pull request",
 		"Two blockers in the auth path", // quack's own prior review
@@ -1222,13 +1268,14 @@ func TestPRFollowupInjectsDiscussion(t *testing.T) {
 // explicitly instead of triggering a full re-review.
 func TestRunMessageIncrementalReviewScoping(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
 	// First-time review: no scoping language, full playbook.
-	first := ext.runMessage(pr, "review this", seedGC(Snapshot{IsPR: true}, 0))
+	first := ext.runMessage(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true}, 0))
 	for _, absent := range []string{"Focus your review on what's NEW", "already looked at every commit"} {
 		if strings.Contains(first, absent) {
 			t.Errorf("first-time review should not carry incremental-review framing (%q):\n%s", absent, first)
@@ -1236,7 +1283,7 @@ func TestRunMessageIncrementalReviewScoping(t *testing.T) {
 	}
 
 	// Resume with new commits: scoped to exactly those, by SHA, not a re-review.
-	withNew := ext.runMessage(pr, "review this", githubContext{
+	withNew := ext.runMessage(context.Background(), pr, "review this", githubContext{
 		snap:       Snapshot{IsPR: true},
 		newCommits: []snapshotCommit{{SHA: "abc1234567", Message: "fix the bug"}},
 	})
@@ -1248,9 +1295,175 @@ func TestRunMessageIncrementalReviewScoping(t *testing.T) {
 
 	// Resume with zero new commits (e.g. a rebase with no new work): says so,
 	// does not trigger a full re-review.
-	noneNew := ext.runMessage(pr, "review this", githubContext{snap: Snapshot{IsPR: true}, newCommits: []snapshotCommit{}})
+	noneNew := ext.runMessage(context.Background(), pr, "review this", githubContext{snap: Snapshot{IsPR: true}, newCommits: []snapshotCommit{}})
 	if !strings.Contains(noneNew, "already looked at every commit") {
 		t.Errorf("zero-new-commits resume should say there's nothing new:\n%s", noneNew)
+	}
+}
+
+// TestRunMessageMentionClassifiedAsWork: a PR mention the classifier calls a
+// work request gets the review/work framing, not the conversational one.
+func TestRunMessageMentionClassifiedAsWork(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msg := ext.runMessage(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0))
+	if !strings.Contains(msg, "stage_review") {
+		t.Errorf("a mention classified WORK should get the review framing:\n%s", msg)
+	}
+	if strings.Contains(msg, "conversational follow-up") {
+		t.Errorf("a mention classified WORK should not get the conversational framing:\n%s", msg)
+	}
+}
+
+// TestRunMessageMentionClassifiedAsConversational: a PR mention the classifier
+// calls conversational gets the answer-from-context framing, not the review
+// playbook.
+func TestRunMessageMentionClassifiedAsConversational(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "CONVERSATIONAL"})
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack what did you mean by that finding?"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msg := ext.runMessage(context.Background(), pr, "what did you mean by that finding?", seedGC(Snapshot{IsPR: true}, 0))
+	if !strings.Contains(msg, "conversational follow-up") {
+		t.Errorf("a mention classified CONVERSATIONAL should get the conversational framing:\n%s", msg)
+	}
+	if strings.Contains(msg, "stage_review") {
+		t.Errorf("a mention classified CONVERSATIONAL should not carry the review playbook:\n%s", msg)
+	}
+}
+
+// TestRunMessageLabelTriggerNeverClassifies pins rule 1: a label trigger is
+// work by construction, so runMessage must never call the classifier for it -
+// not even to double-check.
+func TestRunMessageLabelTriggerNeverClassifies(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	classifier := &fakeIntentClassifier{verdict: "CONVERSATIONAL"} // even a "no" verdict must not flip a label trigger
+	ext.SetIntentClassifier(classifier)
+
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	pr.isLabelTrigger = true
+	msg := ext.runMessage(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true}, 0))
+	if !strings.Contains(msg, "stage_review") {
+		t.Errorf("a label-triggered PR request should keep the review/work framing:\n%s", msg)
+	}
+	if calls := atomic.LoadInt32(&classifier.calls); calls != 0 {
+		t.Errorf("classifier called %d times for a label trigger, want 0 (work by construction)", calls)
+	}
+}
+
+// TestIsWorkRequestFailsSafe pins the fail-safe direction: a nil classifier,
+// a classifier error, or an unparseable answer must all resolve to
+// conversational (false), never work - a wrong WORK verdict forces a
+// re-review and discards a reply already written, while a wrong
+// CONVERSATIONAL verdict merely leaves it to the orchestrator, which can
+// still plan if the user explicitly asks.
+// TestIsWorkRequestTolerantOfWrappedVerdict: a small instruct model rarely
+// answers with a bare word. Exact matching made "**WORK**" unparseable, which
+// fails safe to conversational - so every genuine "@quack review this" would
+// have quietly lost the review framing. CONVERSATIONAL must win when both
+// appear, since "WORK" is a substring of neither but a hedged answer can name
+// both ("not WORK, CONVERSATIONAL").
+func TestIsWorkRequestTolerantOfWrappedVerdict(t *testing.T) {
+	for _, tt := range []struct {
+		answer string
+		want   bool
+	}{
+		{"WORK", true},
+		{"**WORK**", true},
+		{"WORK.", true},
+		{" work \n", true},
+		{"CONVERSATIONAL", false},
+		{"**CONVERSATIONAL**", false},
+		{"not WORK, CONVERSATIONAL", false},
+		{"I am unable to classify this", false},
+	} {
+		t.Run(tt.answer, func(t *testing.T) {
+			ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+			ext.SetIntentClassifier(&fakeIntentClassifier{verdict: tt.answer})
+			if got := ext.isWorkRequest(context.Background(), "@quack review this"); got != tt.want {
+				t.Errorf("isWorkRequest(%q) = %v, want %v", tt.answer, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsWorkRequestFailsSafe(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+
+	cases := []struct {
+		name       string
+		classifier IntentClassifier
+	}{
+		{"nil classifier", nil},
+		{"classifier error", &fakeIntentClassifier{errAlways: errors.New("model unavailable")}},
+		{"unparseable answer", &fakeIntentClassifier{verdict: "maybe?"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ext.SetIntentClassifier(c.classifier)
+			if ext.isWorkRequest(context.Background(), "review this PR") {
+				t.Errorf("isWorkRequest = true, want false (fail safe to conversational)")
+			}
+		})
+	}
+}
+
+// blockingIntentClassifier blocks until its ctx is done, then reports the
+// ctx's error - simulating a classifier call that hangs past its deadline.
+type blockingIntentClassifier struct{}
+
+func (blockingIntentClassifier) Classify(ctx context.Context, _ string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// TestIsWorkRequestTimeoutFailsSafe pins the timeout bound: a classifier call
+// that hangs past its deadline fails safe to conversational, not work.
+func TestIsWorkRequestTimeoutFailsSafe(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(blockingIntentClassifier{})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if ext.isWorkRequest(ctx, "review this PR") {
+		t.Error("isWorkRequest = true on timeout, want false (fail safe to conversational)")
+	}
+}
+
+// TestRunMessageQuotedCodeCorrectionNotWorkRequest is the regression test for
+// the bug this classifier replaced: workVerbRe read a method call quoted
+// inside code (it.migrate(connection)) as the imperative "migrate", which
+// armed the no-plan nudge and forced a whole re-review that discarded the
+// reply the model had already written. A real model should call this
+// CONVERSATIONAL (a correction, not an instruction); this pins that the
+// framing follows the classifier's verdict end to end.
+func TestRunMessageQuotedCodeCorrectionNotWorkRequest(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	classifier := &fakeIntentClassifier{verdict: "CONVERSATIONAL"}
+	ext.SetIntentClassifier(classifier)
+
+	task := "That finding was wrong - it.migrate(connection) is called during setup, not teardown."
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody(task), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msg := ext.runMessage(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0))
+	if !strings.Contains(msg, "conversational follow-up") {
+		t.Errorf("a correction quoting code must be conversational, not a work request:\n%s", msg)
+	}
+	if strings.Contains(msg, "stage_review") || strings.Contains(msg, "stage_pr") {
+		t.Errorf("a correction quoting code must not carry the review/implement playbook:\n%s", msg)
+	}
+	if calls := atomic.LoadInt32(&classifier.calls); calls != 1 {
+		t.Errorf("classifier called %d times, want exactly 1 for a mention", calls)
 	}
 }
 
@@ -1418,11 +1631,12 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 	}
 	app.apiBase = gh.URL
 
-	run := func(runner *fakeRunner, task string) string {
+	run := func(runner *fakeRunner, task string, verdict string) string {
 		t.Helper()
 		ext := NewExtension(app, config.GitHubExtensionConfig{
 			WebhookSecret: testSecret, Mention: "@quack", AllowedUsers: []string{"alice"},
 		}, runner, st, nil)
+		ext.SetIntentClassifier(&fakeIntentClassifier{verdict: verdict})
 		rec := httptest.NewRecorder()
 		ext.handleWebhook(rec, signedRequest("issue_comment", pullCommentBody("@quack "+task)))
 		if rec.Code != http.StatusAccepted {
@@ -1439,7 +1653,7 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 
 	// 1. First review ever: full review (no baseline yet), and it DELIVERS -
 	// the baseline should advance to just c1's patch-id.
-	first := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
+	first := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this", "WORK")
 	if strings.Contains(first, "Focus your review on what's NEW") || strings.Contains(first, "already looked at every commit") {
 		t.Errorf("first-ever review should carry no incremental scoping language:\n%s", first)
 	}
@@ -1450,12 +1664,12 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 	// 3. A CONVERSATIONAL dispatch (no review delivered) - this advances the
 	// GENERAL snapshot (comments/commits-as-seen) but must NOT touch the
 	// review baseline.
-	_ = run(&fakeRunner{gotMessage: make(chan string, 1), answer: "sure, here's my take", noPlan: true}, "what do you think so far? no need to re-review")
+	_ = run(&fakeRunner{gotMessage: make(chan string, 1), answer: "sure, here's my take", noPlan: true}, "what do you think so far? no need to re-review", "CONVERSATIONAL")
 
 	// 4. A review request now MUST still see c2 as new - if the review scope
 	// had been keyed off the general snapshot (the bug), c2 would already
 	// read as "seen" because step 3 advanced it.
-	second := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this")
+	second := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed", deliverReview: true}, "review this", "WORK")
 	if !strings.Contains(second, "Focus your review on what's NEW") || !strings.Contains(second, "c2") {
 		t.Errorf("review after a conversational dispatch must still scope to c2:\n%s", second)
 	}
@@ -1465,7 +1679,7 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 
 	// 5. Step 4 DELIVERED a review covering c2 - the baseline now advances,
 	// so the NEXT review sees zero new work.
-	third := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}, "review this")
+	third := run(&fakeRunner{gotMessage: make(chan string, 1), answer: "reviewed"}, "review this", "WORK")
 	if !strings.Contains(third, "already looked at every commit") {
 		t.Errorf("after the review in step 4 delivered, the next review should see zero new commits:\n%s", third)
 	}
@@ -2581,9 +2795,9 @@ func TestHandleWebhookMergeLabelRestartSurvival(t *testing.T) {
 }
 
 // TestHandleWebhookPlanLabelPostsPlanEvenWhenDelivered pins the regression where a
-// plan-only run silently dropped its plan: isWorkRequest keys off the (work-verby)
-// issue text, so judgePassed && isWorkRequest made `delivered` true and dispatch
-// skipped the summary comment - but a plan-only run's deliverable IS that comment.
+// plan-only run silently dropped its plan: a label trigger implies work, so
+// judgePassed made `delivered` true and dispatch skipped the summary comment -
+// but a plan-only run's deliverable IS that comment.
 // (Latent until github_comment was removed; before that the worker posted the plan
 // itself, masking the skip.) The prior plan-label test never set judgePassed, so it
 // couldn't catch this.
