@@ -66,7 +66,10 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   }
 
   return (
-    <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 py-4">
+    // pb adds env(safe-area-inset-bottom) on top of the normal py-4 so the
+    // composer clears the home indicator on notched phones instead of
+    // sitting flush under it.
+    <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
       {queue != null && queue.length > 0 && (
         <div className="flex flex-col gap-2 mb-3" aria-label="Queued messages">
           {queue.map(item => (

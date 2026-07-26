@@ -44,3 +44,17 @@ export const StreamingWithQueue: Story = {
 export const Disabled: Story = {
   args: { disabled: true, streaming: false },
 }
+
+// Regression check for the mobile "composer not visible" bug: a phone-sized
+// (390px) frame, clipped with overflow-hidden like the real app shell, with
+// the composer pinned to the bottom via flex - same layout App.tsx/Chat.tsx
+// use with h-dvh. If the composer's bottom edge falls outside this frame,
+// the fix has regressed.
+export const MobileViewport: Story = {
+  args: { disabled: false, streaming: false },
+  decorators: [Story => (
+    <div className="w-[390px] h-[700px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+      <Story />
+    </div>
+  )],
+}
