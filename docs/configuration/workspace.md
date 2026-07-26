@@ -42,6 +42,38 @@ Applied via `prlimit(1)` as the innermost wrapper (Go's `os/exec` has no `setrli
 
 `check_commands` is the allowlist of command **prefixes** the planner may complete into a code-implementer node's `checks`, and that the trust gate's deterministic stage derives a repo's own build/vet/test commands from when the planner sets none (see [trust-gate.md](trust-gate.md)). Each derived check is further gated on its binary existing on the host, so a runtime without `go`/`npm` just derives nothing rather than failing every node. An explicit `check_commands: []` disables checks entirely; the default is the list shown above.
 
+## Custom toolchains (`exec_path` and `env`)
+
+The runtime image bakes in Go and Node so the trust gate's deterministic checks (`check_commands`, above) can `go build`/`npm test` what a code-implementer writes — see the [`Dockerfile`](../../Dockerfile). A repo in any other language needs its toolchain supplied at the workspace level; baking every possible toolchain into the image doesn't scale. The baked Go/Node stay the default either way — a workspace toolchain supplements or overrides them, it doesn't replace them.
+
+```yaml
+workspace:
+  exec_path:
+    - /toolchains/jdk-21/bin
+    - /toolchains/jdk-21          # JAVA_HOME itself: bind the whole prefix, not just bin/
+    - /toolchains/android-sdk/cmdline-tools/latest/bin
+    - /toolchains/android-sdk/platform-tools
+  env:
+    JAVA_HOME: /toolchains/jdk-21
+    ANDROID_HOME: /toolchains/android-sdk
+    ANDROID_SDK_ROOT: /toolchains/android-sdk
+  check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "./gradlew"]
+```
+
+`exec_path` puts directories on the `PATH` every `run_command`/check/git child (and, under `sandbox: bwrap`, the child's *filesystem* — see below) sees; `env` hands those same children, plus the ACP coding-agent subprocess (`opencode`), extra environment variables. Toolchains routinely need both: `PATH` alone finds `javac`, but Gradle also needs `JAVA_HOME` set, and the Android Gradle Plugin needs `ANDROID_HOME`/`ANDROID_SDK_ROOT` — a directory to look things up *in*, not a command to run.
+
+**Precedence.** `workspace.env` is deployment-wide. An agent's own `acp: {env: ...}` (see [agents.md](agents.md)) is more specific and wins on a shared key — e.g. one code-implementer pinned to a different JDK than the deployment default. `PATH` and `HOME` are reserved keys in `workspace.env`: they already have dedicated knobs (`exec_path`, and the jail's isolated per-user home) and setting them there is a startup error, not a silent override.
+
+**Under `sandbox: bwrap`**, a directory an `env` value *points at* must be independently reachable inside the sandbox's mount namespace, or the toolchain "exists" by env var but not on disk (`JAVA_HOME` set, but `$JAVA_HOME/bin/java: No such file or directory`). `exec_path` entries are bind-mounted read-only verbatim; list the toolchain root itself (`/toolchains/jdk-21`, not just its `bin/`) if `env` points at it. Keep toolchain directories *outside* `workspace.root` — a path nested under the configured root can collide with the sandbox's own fixed per-node mount and get shadowed. This is not a secrets mechanism: `env` values interpolate `${VAR}` like the rest of this file, but an actual credential belongs in a provider or tool's own `auth:` block, never here.
+
+**Worked example: an Android/Gradle repo.** The deployed instance mounts `workspace.root` at `/workspace` and a *separate* volume at `/toolchains`:
+
+1. Provision the toolchain onto `/toolchains`: a JDK under `jdk-21`, the Android SDK under `android-sdk` (`cmdline-tools`, `platform-tools`, `build-tools`, `platforms`, licenses accepted).
+2. Set `exec_path`/`env` as in the example above.
+3. Add the project's own build command to `check_commands` so the trust gate can actually verify a change: `./gradlew` (then e.g. `./gradlew testDebugUnitTest` or `./gradlew assembleDebug` is an allowed check).
+
+With that in place, a code-implementer node building an Android repo can run `./gradlew build` in `run_command`, and the gate's deterministic-checks stage can run `./gradlew testDebugUnitTest` against the diff exactly like it runs `go test` today.
+
 ## `git_credentials` and `git_push`
 
 ```yaml

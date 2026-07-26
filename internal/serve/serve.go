@@ -651,6 +651,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		MaxListEntries: cfg.Workspace.MaxListEntries,
 		Timeout:        time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
 		ExtraPath:      cfg.Workspace.ExecPath,
+		Env:            cfg.Workspace.Env,
 		Limits: workspace.Limits{
 			AddressSpaceMB: cfg.Workspace.Limits.AddressSpaceMB,
 			Procs:          cfg.Workspace.Limits.MaxProcs,
@@ -876,9 +877,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, servers, nil, nil, nil, fmtErr(name, "bundle: %v", err)
 			}
 			env := opencodeEnv(prov, ac, acpSkillPaths())
-			for _, k := range slices.Sorted(maps.Keys(ac.Acp.Env)) {
-				env = append(env, k+"="+ac.Acp.Env[k])
-			}
+			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			// The ACP permission judge: the same safety-judge tier the native
 			// guard ladder used, answering the subprocess's exceptional asks
 			// (directory escapes, .env reads, doom_loop). nil when the judge
@@ -908,6 +907,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
 				Command:         ac.Acp.Command,
 				Env:             env,
+				ExtraPath:       cfg.Workspace.ExecPath,
 				Home:            workspaceCaps.HomeDir,
 				Preamble:        bundle.Prompt,
 				Jail:            jail,
@@ -1113,6 +1113,21 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 // gate-owned: vetting.commitDelivery pushes and posts exactly once). Inert for
 // a non-opencode agent; an operator's acp.env entries are appended after this,
 // so an explicit override wins.
+// acpChildEnv merges workspace.env (deployment-wide) with an agent's own
+// acp.env (agentEnv wins on a shared key - more specific beats general) into
+// sorted KEY=VAL entries. A map merge, not duplicate env entries, so the
+// precedence doesn't depend on which duplicate a given exec/libc picks.
+func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
+	merged := make(map[string]string, len(workspaceEnv)+len(agentEnv))
+	maps.Copy(merged, workspaceEnv)
+	maps.Copy(merged, agentEnv)
+	env := make([]string, 0, len(merged))
+	for _, k := range slices.Sorted(maps.Keys(merged)) {
+		env = append(env, k+"="+merged[k])
+	}
+	return env
+}
+
 func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey

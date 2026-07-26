@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -245,6 +247,11 @@ func gitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"PATH=" + gitChildPath(caps),
 		"HOME=" + home,
+	}
+	// workspace.env, same as run_command/checks children - a hook or filter
+	// shelling out to a configured toolchain needs it findable too.
+	for _, k := range slices.Sorted(maps.Keys(caps.Env)) {
+		env = append(env, k+"="+caps.Env[k])
 	}
 	if auth != nil {
 		env = append(env,

@@ -29,6 +29,12 @@ type Caps struct {
 	// prefixes). Configured via workspace.exec_path. Empty = the fixed PATH
 	// alone, exactly as before.
 	ExtraPath []string
+	// Env is extra environment handed to every RunArgv/RunPipeline child, on
+	// top of the fixed PATH/HOME - the operator's knob for a toolchain that
+	// must be FOUND, not just be on PATH (JAVA_HOME, ANDROID_HOME, a GOROOT
+	// outside /usr). Configured via workspace.env; config validation already
+	// rejects PATH/HOME keys, so this never fights childPath/childHome.
+	Env map[string]string
 	// HomeDir is the $HOME every RunArgv/RunPipeline/git child sees, when set -
 	// a per-user directory OUTSIDE any cloned/target repo tree (see
 	// workspace.Jail.HomeDir), so a toolchain's own cache/config writes (npm's
@@ -81,9 +87,9 @@ func DefaultCaps() Caps {
 }
 
 // IsZero reports an entirely-unset Caps (callers substitute DefaultCaps).
-// Needed because ExtraPath/HomeDir make Caps non-comparable with ==.
+// Needed because ExtraPath/Env/HomeDir make Caps non-comparable with ==.
 func (c Caps) IsZero() bool {
 	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
 		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 &&
-		len(c.ExtraPath) == 0 && c.HomeDir == "" && c.Sandbox == "" && c.Limits == Limits{}
+		len(c.ExtraPath) == 0 && len(c.Env) == 0 && c.HomeDir == "" && c.Sandbox == "" && c.Limits == Limits{}
 }

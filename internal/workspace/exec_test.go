@@ -366,6 +366,42 @@ func TestChildPathExtras(t *testing.T) {
 	}
 }
 
+// TestChildEnvIncludesWorkspaceEnv: workspace.env entries land in the child's
+// env alongside the fixed PATH/HOME, sorted for a reproducible argv.
+func TestChildEnvIncludesWorkspaceEnv(t *testing.T) {
+	caps := Caps{Env: map[string]string{"ANDROID_HOME": "/opt/android-sdk", "JAVA_HOME": "/opt/jdk-21"}}
+	got := childEnv("/repo", caps)
+	want := []string{
+		"PATH=" + execEnvPath,
+		"HOME=/repo",
+		"ANDROID_HOME=/opt/android-sdk",
+		"JAVA_HOME=/opt/jdk-21",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("childEnv = %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("childEnv[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+// TestRunArgvEnvReachesChild is the executable-fixture proof: workspace.env
+// values actually arrive in a spawned child's real environment, not just in
+// the Caps struct.
+func TestRunArgvEnvReachesChild(t *testing.T) {
+	caps := DefaultCaps()
+	caps.Env = map[string]string{"QUACK_TEST_TOOLCHAIN_HOME": "/opt/fake-jdk"}
+	res, err := RunArgv(context.Background(), t.TempDir(), []string{"sh", "-c", "echo $QUACK_TEST_TOOLCHAIN_HOME"}, caps)
+	if err != nil {
+		t.Fatalf("RunArgv: %v", err)
+	}
+	if got := strings.TrimSpace(res.Output); got != "/opt/fake-jdk" {
+		t.Errorf("child saw QUACK_TEST_TOOLCHAIN_HOME=%q, want /opt/fake-jdk", got)
+	}
+}
+
 // TestRunShellDoesNotHangOnBackgroundedChildHoldingStdout pins the v0.5.2 plan-run
 // hang: a real shell (RunShell, #316) can background a grandchild that inherits the
 // stdout pipe, so without a WaitDelay backstop cmd.Wait() blocks until that child

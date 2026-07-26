@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -195,6 +196,28 @@ func childHome(dir string, caps Caps) string {
 	return dir
 }
 
+// sortedEnvKeys orders caps.Env deterministically so the child's argv/env is
+// reproducible across runs (and diffable in a test failure).
+func sortedEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// childEnv is the full environment every RunArgv/RunPipeline child sees: the
+// fixed PATH/HOME first, then the operator's workspace.env entries - config
+// validation already rejects a PATH/HOME key there, so this never fights them.
+func childEnv(dir string, caps Caps) []string {
+	env := []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
+	for _, k := range sortedEnvKeys(caps.Env) {
+		env = append(env, k+"="+caps.Env[k])
+	}
+	return env
+}
+
 // newChildCmd is the ONE place a child process is constructed - RunArgv and
 // every stage of RunPipeline go through it, so the OS sandbox and the resource
 // limits cannot be forgotten on one path and applied on the other.
@@ -222,7 +245,7 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	// bwrap passes its own environment straight through to the sandboxed child,
 	// so the scrub (no inherited secrets, a fixed PATH, the isolated HOME) holds
 	// identically in both modes.
-	cmd.Env = []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
+	cmd.Env = childEnv(dir, caps)
 	// Own process group + kill the WHOLE group on cancel, and a WaitDelay backstop.
 	// A real shell (RunShell) can leave a backgrounded grandchild that inherits our
 	// stdout pipe; exec's default cancel kills only the direct child, so the

@@ -249,6 +249,20 @@ type WorkspaceConfig struct {
 	// knob for toolchains living outside the fixed system dirs (nvm, asdf,
 	// custom prefixes). Empty (default) = the fixed PATH alone.
 	ExecPath []string `yaml:"exec_path"`
+	// Env is EXTRA environment handed to every workspace child process (gate
+	// checks, git probes, run_command) AND the ACP coding-agent subprocess —
+	// the half exec_path doesn't cover: a toolchain that must be FOUND, not
+	// just be on PATH (JAVA_HOME for Gradle, ANDROID_HOME/ANDROID_SDK_ROOT for
+	// AGP, a GOROOT outside /usr). Deployment-wide; a matching key in an
+	// agent's own acp.env WINS (AcpAgentConfig.Env) — the agent-specific
+	// override is more specific. PATH and HOME are reserved (exec_path and the
+	// jail's isolated per-user home already own those) and rejected here.
+	// This is deployment config, not a secrets vault: values interpolate
+	// ${VAR} like the rest of quack.yaml, but anything actually sensitive
+	// belongs in a provider/tool's own auth block, not here. Under
+	// sandbox: bwrap, a directory an env value POINTS AT still needs its own
+	// exec_path entry to be bind-mounted into the child — see exec_path's doc.
+	Env map[string]string `yaml:"env"`
 	// GitCredentials are deployment-level per-host HTTPS git credentials (one
 	// identity per host — a PAT, configured like every other secret). Empty
 	// (default) ⇒ public repos only. Token MUST be an ${VAR} env reference in
@@ -429,7 +443,7 @@ type MemoryConfig struct {
 // AcpAgentConfig configures an external ACP agent subprocess.
 type AcpAgentConfig struct {
 	Command []string          `yaml:"command"` // argv, e.g. ["opencode", "acp"]
-	Env     map[string]string `yaml:"env"`     // extra subprocess environment (overrides generated defaults)
+	Env     map[string]string `yaml:"env"`     // extra subprocess environment; wins over a matching workspace.env key (WorkspaceConfig.Env)
 	// McpServers is a list of MCP server URLs that the ACP agent will connect
 	// to (e.g. context7). Passes straight through into opencode's mcp config
 	// block in OPENCODE_CONFIG_CONTENT — zero Go abstraction, just plumbing.
@@ -1099,6 +1113,17 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	for tool, tier := range w.Guards {
 		if !validGuardTiers[tier] {
 			return fmt.Errorf("config: workspace.guards[%q] has unknown tier %q (want none, judge, confirm, or judge+confirm)", tool, tier)
+		}
+	}
+	// PATH and HOME are owned by exec_path and the jail's isolated per-user
+	// home respectively; letting workspace.env silently clobber either would
+	// undo the hermetic-child guarantees those two already document.
+	for k := range w.Env {
+		if strings.TrimSpace(k) == "" {
+			return fmt.Errorf("config: workspace.env has an empty variable name")
+		}
+		if k == "PATH" || k == "HOME" {
+			return fmt.Errorf("config: workspace.env must not set %q (use workspace.exec_path for PATH; HOME is the jail's isolated per-user home)", k)
 		}
 	}
 	return nil
