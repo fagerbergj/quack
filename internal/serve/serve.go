@@ -907,6 +907,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
 				Command:         ac.Acp.Command,
 				Env:             env,
+				ExtraPath:       cfg.Workspace.ExecPath,
 				Home:            workspaceCaps.HomeDir,
 				Preamble:        bundle.Prompt,
 				Jail:            jail,

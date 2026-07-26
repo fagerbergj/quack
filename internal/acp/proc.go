@@ -27,6 +27,20 @@ type procHandle struct {
 	once    sync.Once
 }
 
+// agentPath is the subprocess PATH: the operator's workspace.exec_path entries
+// FIRST (a configured toolchain beats a stale system one, matching
+// workspace.childPath), then the server's own ambient PATH. Without the
+// extras the agent could not RUN the toolchain it is writing code against -
+// only the gate's checks could, which turns every build error into a
+// gate-round round trip.
+func agentPath(extra []string) string {
+	ambient := os.Getenv("PATH")
+	if len(extra) == 0 {
+		return ambient
+	}
+	return strings.Join(extra, ":") + ":" + ambient
+}
+
 // start spawns the agent subprocess rooted at cwd and wires the ACP connection.
 func (a *Agent) start(cwd string) (*procHandle, error) {
 	h := &procHandle{
@@ -37,7 +51,7 @@ func (a *Agent) start(cwd string) (*procHandle, error) {
 	cmd := exec.Command(a.opts.Command[0], a.opts.Command[1:]...)
 	cmd.Dir = cwd
 	cmd.Env = append([]string{
-		"PATH=" + os.Getenv("PATH"),
+		"PATH=" + agentPath(a.opts.ExtraPath),
 		"HOME=" + a.opts.Home,
 		"TMPDIR=" + os.TempDir(),
 		"NO_COLOR=1",

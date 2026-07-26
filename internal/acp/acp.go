@@ -47,6 +47,10 @@ type Options struct {
 	// pre-merges workspace.env under the agent's own acp.env before building
 	// this, so agent-specific always wins here too.
 	Env []string
+	// ExtraPath is workspace.exec_path: operator-configured toolchain dirs
+	// prepended to the subprocess PATH, so the agent can run the same
+	// toolchain the gate's checks use.
+	ExtraPath []string
 	// Home is the subprocess $HOME - the jail's isolated per-user home
 	// (workspace.Caps.HomeDir), so the agent's own caches/state never land
 	// inside a cloned repo.
