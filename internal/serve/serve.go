@@ -498,6 +498,21 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
 
+	// End-of-turn user-memory hook (#262): a dedicated extraction agent, built
+	// the same way as the advisor (bundle + bound model, tool-less), rather
+	// than the regex miner #542 tried - the maintainer's call that hardcoded
+	// phrasing rules are too brittle. Needs user memory (userStore) on top of
+	// its own toggle, since it has nothing to commit to otherwise. Never fails
+	// startup: any build problem just leaves the hook off.
+	if userStore != nil && cfg.Orchestrator.UserMemoryHook.Enabled {
+		if memAgent, err := buildUserMemoryHookAgent(cfg.Orchestrator.UserMemoryHook, cfg); err != nil {
+			slog.Warn("user memory hook build failed; hook disabled", "component", "startup", "err", err)
+		} else {
+			orch.SetUserMemoryHook(memAgent)
+			slog.Info("user memory hook enabled", "component", "startup", "model", cfg.Orchestrator.UserMemoryHook.Model)
+		}
+	}
+
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
@@ -541,6 +556,38 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 		h = slog.NewJSONHandler(w, opts)
 	}
 	slog.SetDefault(slog.New(h))
+}
+
+// buildUserMemoryHookAgent builds the #262 memory-extraction agent: the
+// agents/memory-agent bundle bound to h's model, tool-less (it only reads a
+// message and replies with candidates, never acts). Its guidance is assembled
+// from two single sources of truth rather than duplicated into its own
+// prompt.md: agents/orchestrator/memory.md (what's worth remembering about a
+// user - shared with the orchestrator's own prompt) and this bundle's own
+// rubric.md (the candidate-quality bar).
+func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config) (adkagent.Agent, error) {
+	prov, ok := cfg.Provider(h.Provider)
+	if !ok {
+		return nil, fmt.Errorf("provider %q not found", h.Provider)
+	}
+	m, err := inference.NewModel(prov, h.Model)
+	if err != nil {
+		return nil, fmt.Errorf("model: %w", err)
+	}
+	b, err := agent.LoadBundle("agents/memory-agent")
+	if err != nil {
+		return nil, fmt.Errorf("bundle: %w", err)
+	}
+	whatToRemember, err := agent.LoadBundleMemory("agents/orchestrator")
+	if err != nil {
+		return nil, fmt.Errorf("orchestrator memory.md: %w", err)
+	}
+	rubric, err := vetting.LoadBundleRubric("agents/memory-agent")
+	if err != nil {
+		return nil, fmt.Errorf("rubric.md: %w", err)
+	}
+	guidance := strings.TrimSpace(whatToRemember + "\n\n" + rubric)
+	return agent.BuildChat(b, m, nil, nil, agent.Compaction{}, guidance)
 }
 
 // buildAgents loads each configured agent bundle, builds its model and built-in

@@ -94,6 +94,50 @@ orchestrator: { provider: nope, model: m }
 	}
 }
 
+func TestLoadRejectsUserMemoryHookMissingModel(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator:
+  provider: default
+  model: m
+  user_memory_hook: { enabled: true, provider: default }
+`))
+	if err == nil {
+		t.Fatal("expected error for enabled user_memory_hook with no model")
+	}
+}
+
+func TestLoadRejectsUserMemoryHookUnknownProvider(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator:
+  provider: default
+  model: m
+  user_memory_hook: { enabled: true, provider: nope, model: m2 }
+`))
+	if err == nil {
+		t.Fatal("expected error for user_memory_hook with unknown provider")
+	}
+}
+
+func TestLoadAllowsUserMemoryHookDisabledWithoutModel(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Orchestrator.UserMemoryHook.Enabled {
+		t.Error("user_memory_hook should default to disabled")
+	}
+}
+
 func TestLoadRejectsUnknownStoreKind(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:

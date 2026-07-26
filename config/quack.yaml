@@ -54,6 +54,16 @@ orchestrator:
   # correct_review_finding (a conversational GitHub-PR false-positive correction into
   # the coding memory bucket, #249) is always on whenever task memory (stage_memory,
   # below) is configured - narrowly scoped by its own schema, so it needs no opt-in here.
+  # End-of-turn memory hook (#262): the orchestrator model won't reliably call
+  # commit_memory itself, so a dedicated memory-agent bundle (agents/memory-agent)
+  # extracts durable preferences from the user's message and commits them
+  # fire-and-forget, after a cheap keyword pre-filter. Requires user memory
+  # (commit_memory above) to be on. Off by default - costs one model call per
+  # qualifying turn.
+  user_memory_hook:
+    enabled: ${QUACK_USER_MEMORY_HOOK_ENABLED}  # unset ⇒ false
+    provider: default
+    model: ${QUACK_JUDGE_MODEL}                 # reuse the always-warm judge model; override to bind a different one
 
 # Declarative agents. Each is an agent-card.json + prompt.md bundle on disk,
 # bound here to a model and a selection of built-in tools. Add an agent by

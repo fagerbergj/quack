@@ -603,10 +603,25 @@ func mergeStore(parent, child StoreConfig) StoreConfig {
 // `commit_memory` turns on user memory (the orchestrator then recalls + commits
 // personal facts).
 type OrchestratorConfig struct {
-	Provider string   `yaml:"provider"`
-	Model    string   `yaml:"model"`
-	Tools    []string `yaml:"tools"`
-	Skills   []string `yaml:"skills"` // built-in skill names the orchestrator may load_skill (see AgentConfig.Skills)
+	Provider       string               `yaml:"provider"`
+	Model          string               `yaml:"model"`
+	Tools          []string             `yaml:"tools"`
+	Skills         []string             `yaml:"skills"` // built-in skill names the orchestrator may load_skill (see AgentConfig.Skills)
+	UserMemoryHook UserMemoryHookConfig `yaml:"user_memory_hook"`
+}
+
+// UserMemoryHookConfig binds the end-of-turn user-memory extraction hook
+// (#262): a dedicated memory-agent bundle (agents/memory-agent) reads a
+// user's message and mines durable preferences/facts, run fire-and-forget so
+// it never blocks the response. The orchestrator model reliably calling
+// commit_memory itself turned out not to hold up, and hardcoded regex rules
+// (#542) were rejected as too brittle - this replaces both with a real
+// extraction model. Off by default: it costs one model call per qualifying
+// turn, so it is opt-in like the judge and compaction.
+type UserMemoryHookConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Provider string `yaml:"provider"` // inference provider for the memory-agent model
+	Model    string `yaml:"model"`    // memory-agent model (required when enabled)
 }
 
 // ServerConfig holds HTTP server settings.
@@ -723,6 +738,15 @@ func (c *Config) validate() error {
 	}
 	if c.Orchestrator.Model == "" {
 		return fmt.Errorf("config: orchestrator.model is empty")
+	}
+	if c.Orchestrator.UserMemoryHook.Enabled {
+		h := c.Orchestrator.UserMemoryHook
+		if _, ok := c.Providers[h.Provider]; !ok {
+			return fmt.Errorf("config: orchestrator.user_memory_hook.provider %q is not defined under providers", h.Provider)
+		}
+		if h.Model == "" {
+			return fmt.Errorf("config: orchestrator.user_memory_hook.model is empty")
+		}
 	}
 	// Agents: memory.bucket names a SHARED role bucket, so a typo would silently hand
 	// an agent a private silo of its own — exactly what the bucket model replaced.
