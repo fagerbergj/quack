@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -6,12 +6,16 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef } from 'react'
+import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
 import { agentLabel } from './messageParts'
 import { summarizeArgs, previewLine, toolFailed, copyPayload } from './toolFormat'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
 import { CopyButton } from './CopyButton'
+import { CopyablePre } from './CopyablePre'
+import { MermaidDiagram } from './MermaidDiagram'
+import { isTrailingMermaidFenceOpen } from './mermaidSource'
 import { StatusDot, type DotStatus } from './StatusDot'
 
 // Answer text is Markdown that may embed a little raw HTML - notably the
@@ -45,42 +49,58 @@ export function isAcpAgent(agent?: string): boolean {
   return !!agent && ACP_AGENTS.has(agent)
 }
 
-// CopyablePre wraps a fenced code block in a relative container with a one-click
-// copy button. rehype-highlight runs AFTER sanitize (see AssistantText), so the
-// hljs token markup is intact by the time this renders.
-function CopyablePre({ children, ...props }: ComponentPropsWithoutRef<'pre'>) {
-  const ref = useRef<HTMLPreElement>(null)
-  const [copied, setCopied] = useState(false)
-  const copy = () => {
-    navigator.clipboard.writeText(ref.current?.textContent ?? '')
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-  return (
-    <div className="relative group not-prose">
-      <button
-        type="button"
-        onClick={copy}
-        aria-label="Copy code"
-        className="absolute right-2 top-2 z-10 rounded border border-gray-600 bg-gray-800/80 px-2 py-0.5 text-[11px] text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-gray-700"
-      >
-        {copied ? 'Copied' : 'Copy'}
-      </button>
-      <pre ref={ref} {...props}>{children}</pre>
-    </div>
-  )
+// mermaidLang reads a hast <pre><code class="language-mermaid"> node's info
+// string directly off the AST, independent of how react-markdown/rehype-highlight
+// render its children - robust regardless of highlighting behavior for a
+// language highlight.js doesn't know.
+function mermaidLang(preNode: Element | undefined): boolean {
+  const code = preNode?.children.find((c): c is Element => c.type === 'element' && c.tagName === 'code')
+  const classNames = code?.properties?.className
+  return Array.isArray(classNames) && classNames.some(c => typeof c === 'string' && c.toLowerCase() === 'language-mermaid')
+}
+
+// hastText concatenates a hast node's text descendants - the raw mermaid
+// source, unaffected by any syntax-highlighting markup applied to its <code>.
+function hastText(node: Element | undefined): string {
+  if (!node) return ''
+  return node.children.map(c => (c.type === 'text' ? c.value : hastText(c as Element))).join('')
 }
 
 // AssistantText renders model text as markdown. rehype-highlight is placed LAST
 // so its hljs classes/spans aren't stripped by rehype-sanitize (the code's
 // `language-*` class survives sanitize, so highlight still detects the language).
+//
+// A ```mermaid block renders as a diagram once (and only once) its closing
+// fence has arrived. During streaming, the last fence in the document may
+// still be growing token-by-token (CommonMark: an unterminated fence swallows
+// the rest of the document, so at most one can ever be open, and it's always
+// the last one) - trying to parse a partial diagram would flash errors on
+// every token, so that block stays a plain code block until it closes.
+// `node.position.end.offset` (present because remark/rehype retain source
+// positions by default) tells us whether THIS block reaches the literal end
+// of `text`, i.e. whether it's the one that could still be open; comparing it
+// against `isTrailingMermaidFenceOpen(text)` (computed once per text change,
+// not per keystroke) gives a stable answer without depending on render order.
 export function AssistantText({ text }: { text: string }) {
+  const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(text), [text])
+  const docEnd = useMemo(() => text.replace(/\s+$/, '').length, [text])
+  const components = useMemo(() => ({
+    pre: (props: ComponentPropsWithoutRef<'pre'> & { node?: Element }) => {
+      const { node, children, ...rest } = props
+      const isLastBlock = node?.position?.end?.offset === docEnd
+      if (mermaidLang(node) && !(isLastBlock && trailingOpen)) {
+        const codeNode = node?.children.find((c): c is Element => c.type === 'element' && c.tagName === 'code')
+        return <MermaidDiagram code={hastText(codeNode)} />
+      }
+      return <CopyablePre {...rest}>{children}</CopyablePre>
+    },
+  }), [trailingOpen, docEnd])
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
-        components={{ pre: CopyablePre }}
+        components={components}
       >{text}</ReactMarkdown>
     </div>
   )

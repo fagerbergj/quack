@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { within, userEvent, expect } from 'storybook/test'
+import { within, userEvent, expect, waitFor } from 'storybook/test'
 import { ActivityList, AssistantText, BubbleHeader } from './AgentParts'
 import type { Activity } from './messageParts'
 
@@ -165,6 +165,64 @@ It coalesces rapid calls into the trailing one.`
 // with a hover Copy button (CopyablePre). Hover the block to reveal Copy.
 export const WithCodeBlock: Story = {
   render: () => <AssistantText text={CODE_ANSWER} />,
+}
+
+// A complete ```mermaid block (closing fence has arrived) renders as an SVG
+// diagram - mermaid is lazy-loaded on first mount, so the diagram appears a
+// beat after the rest of the bubble.
+const MERMAID_VALID = `Here's the request flow:
+
+\`\`\`mermaid
+flowchart TD
+  A[Client] --> B[Router]
+  B --> C[Orchestrator]
+  C --> D[DAG node]
+\`\`\`
+
+Each node runs through the trust gate before its output propagates.`
+
+export const MermaidValid: Story = {
+  render: () => <AssistantText text={MERMAID_VALID} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await waitFor(() => expect(canvas.getByTestId('mermaid-diagram').querySelector('svg')).not.toBeNull(), { timeout: 5000 })
+  },
+}
+
+// Invalid mermaid never throws or blanks the bubble - it falls back to the
+// same plain code-block rendering as WithCodeBlock, plus a small inline
+// notice explaining why (agents do emit invalid mermaid; this is the path
+// the backend's mermaid validator exists to catch before delivery).
+const MERMAID_INVALID = `\`\`\`mermaid
+this is not a valid diagram @@@ %%%
+\`\`\``
+
+export const MermaidInvalid: Story = {
+  render: () => <AssistantText text={MERMAID_INVALID} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await waitFor(() => expect(canvas.getByText(/Diagram failed to render/)).toBeInTheDocument(), { timeout: 5000 })
+    expect(canvas.queryByTestId('mermaid-diagram')).toBeNull()
+  },
+}
+
+// A ```mermaid fence with no closing fence yet - the state every diagram
+// passes through while streaming in token-by-token. It stays a plain,
+// unhighlighted code block (no mermaid attempt, no error flash) until the
+// closing fence arrives.
+const MERMAID_STREAMING = `Here's the request flow:
+
+\`\`\`mermaid
+flowchart TD
+  A[Client] --> B[Router`
+
+export const MermaidStreaming: Story = {
+  render: () => <AssistantText text={MERMAID_STREAMING} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    expect(canvas.queryByTestId('mermaid-diagram')).toBeNull()
+    expect(canvas.queryByText(/Diagram failed to render/)).toBeNull()
+  },
 }
 
 // #387 - preamble/reasoning tokens are never the answer. The activity list
