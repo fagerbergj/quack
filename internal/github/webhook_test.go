@@ -2581,9 +2581,9 @@ func TestHandleWebhookMergeLabelRestartSurvival(t *testing.T) {
 }
 
 // TestHandleWebhookPlanLabelPostsPlanEvenWhenDelivered pins the regression where a
-// plan-only run silently dropped its plan: isWorkRequest keys off the (work-verby)
-// issue text, so judgePassed && isWorkRequest made `delivered` true and dispatch
-// skipped the summary comment - but a plan-only run's deliverable IS that comment.
+// plan-only run silently dropped its plan: a label trigger implies work, so
+// judgePassed made `delivered` true and dispatch skipped the summary comment -
+// but a plan-only run's deliverable IS that comment.
 // (Latent until github_comment was removed; before that the worker posted the plan
 // itself, masking the skip.) The prior plan-label test never set judgePassed, so it
 // couldn't catch this.

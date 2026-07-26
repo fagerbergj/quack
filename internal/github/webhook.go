@@ -760,7 +760,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// too - otherwise the fresh session would still only get the DELTA since
 	// the stale snapshot (near-empty), instead of the full context a reset
 	// session needs (see loadGithubContext's forceReseed).
-	resetSession := p.isLabelTrigger && isWorkRequest(task)
+	resetSession := p.isLabelTrigger
 	if resetSession {
 		if err := e.runner.ResetSession(ctx, login, sessionID); err != nil {
 			slog.Warn("github: session reset failed; this attempt may inherit stale history",
@@ -780,7 +780,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// nothing actually injected - exactly the #467 failure mode. A
 	// conversational @mention is exempt: answering from the trigger comment
 	// alone is a legitimate degraded mode there.
-	if p.isLabelTrigger && gh.contextUnavailable && (isWorkRequest(task) || p.planOnly) {
+	if p.isLabelTrigger && gh.contextUnavailable {
 		slog.Warn("github: label-triggered work request has no usable GitHub context; aborting rather than running blind",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		abortCtx, abortCancel := context.WithTimeout(context.Background(), reactionTimeout)
@@ -840,11 +840,17 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// A WORK request (review/implement) always runs as a plan. A mid-tier
 	// orchestrator model sometimes answers in prose without calling plan - "Let me
 	// start by cloning the repo…" - and that preamble would be posted as if it were
-	// the review. So if a work request ran no plan, nudge once to actually run it.
-	// A purely conversational follow-up ("what did you mean by that finding?")
-	// legitimately runs no plan and must be answered directly - never nudged.
+	// the review. So if a LABEL-triggered run produced no plan, nudge once to
+	// actually run it: a label is an unambiguous work request, and its task text
+	// is synthesized here rather than written by a human.
+	//
+	// A mention is never nudged. Whether it wants work is the orchestrator's call
+	// - it either plans or answers - and second-guessing that from the prose was
+	// worse than trusting it: matching work verbs read `it.migrate(connection)` in
+	// a quoted snippet as "migrate something", so correcting a review forced a
+	// whole re-review and discarded the reply the model had already written.
 	planRan, judgePassed, paused, needsInput := e.drive(runCtx, login, sessionID, message, owner, repo, number, turnID, pub)
-	if !planRan && !paused && (isWorkRequest(task) || p.planOnly) {
+	if !planRan && !paused && p.isLabelTrigger {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		_, jp2, _, _ := e.drive(runCtx, login, sessionID, runNudge, owner, repo, number, turnID, pub)
@@ -1079,8 +1085,8 @@ const runNudge = "You answered without running anything. Do NOT reply in prose: 
 // reports a pass here, delivery has already been attempted - a failed delivery
 // is still logged loudly (slog.Error) even though this proxy can't distinguish
 // it from "nothing was staged" (a conversational node gated the same way).
-// dispatch only trusts this proxy for a task that DEMANDED delivery in the
-// first place (isWorkRequest) - see its caller.
+// dispatch only trusts this proxy for a LABEL-triggered run, which demanded
+// delivery in the first place - see its caller.
 //
 // pub is nil when the extension has no store (test harnesses that don't need
 // persistence) - every persistence step below is then a no-op, matching drive's
@@ -1282,22 +1288,6 @@ func (e *Extension) advanceReviewBaseline(ctx context.Context, sessionID string,
 	}
 }
 
-// workVerbRe matches an imperative that asks quack to DO something - review or
-// change code - as opposed to discussing it. CLAUSE-ANCHORED (start of text, after
-// sentence punctuation, or after please/and/then/also/to) so a verb buried
-// mid-sentence does not trip it: "No need to re-review" must NOT read as a review
-// request. An ALLOWLIST on purpose - a request matching nothing here is treated as
-// conversational and NOT nudged, so "what did you mean by that finding?" is
-// answered directly instead of being shoved into a DAG.
-var workVerbRe = regexp.MustCompile(`(?i)(?:^|[.;:!?\n]\s*|\b(?:please|and|then|also|to)\s+)(review|audit|critique|assess|implement|fix|add|create|refactor|rewrite|write|update|change|remove|delete|rename|migrate|investigate|analy[sz]e|build|check)\b`)
-
-// isWorkRequest reports whether a webhook task asks quack to DO work (so a run
-// that produced no plan should be nudged) versus a purely conversational
-// follow-up (answered directly, never nudged).
-func isWorkRequest(task string) bool {
-	return vetting.ImplementationIntent(task) || workVerbRe.MatchString(task)
-}
-
 // changedFilesSummary renders a compact, capped changed-files list for the plan
 // prompt - paths + churn so the planner can slice the review by area. Capped so a
 // huge PR doesn't blow the prompt; the total count still conveys the scale.
@@ -1386,12 +1376,14 @@ func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubCont
 	owner, repo := p.Repository.Owner.Login, p.Repository.Name
 	snap := gh.snap
 
-	// A PR follow-up that asks for no work (review/implement) is CONVERSATIONAL -
-	// "which finding matters most?", "what did you mean?". Answer it directly from
-	// the durable session (which holds any review already posted); handing over the
-	// clone-and-review playbook makes the orchestrator re-review instead of
-	// answering.
-	if isPR && !isWorkRequest(task) {
+	// A mention on a PR is CONVERSATIONAL - "which finding matters most?", "what
+	// did you mean?", "that finding was wrong". Answer it from the durable session
+	// (which holds any review already posted); handing over the clone-and-review
+	// playbook makes the orchestrator re-review instead of answering. A genuine
+	// "review it again" still works: the prompt below says so explicitly, and the
+	// orchestrator can call plan itself. Label triggers take the work framing
+	// below instead - the label IS the request, so nothing has to be inferred.
+	if isPR && !p.isLabelTrigger {
 		var b strings.Builder
 		fmt.Fprintf(&b, "GitHub user @%s asked a follow-up on %s/%s pull request #%d (pull_number=%d).\n\n",
 			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)
