@@ -20,11 +20,6 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// autoFixUser is the synthetic invoker for a CI-failure auto-heal run (no
-// human triggered it) - used only when the PR has no chat row yet; an existing
-// chat's recorded session user wins so the run continues that session.
-const autoFixUser = "quack-ci-fix"
-
 // fixContextTimeout bounds the pre-dispatch API phase of a fix trigger
 // (labels, check runs, annotations) - the run itself gets runTimeout.
 const fixContextTimeout = 2 * time.Minute
