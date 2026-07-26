@@ -1,0 +1,17 @@
+{
+  "name": "memory-agent",
+  "description": "Extracts durable user preferences and facts from a single conversational message, for the orchestrator's end-of-turn memory hook (#262). Does not answer the user or do any work - it only decides what, if anything, is worth remembering about how this user likes to work.",
+  "skills": [
+    {
+      "id": "extract_user_memory",
+      "name": "Extract user memory",
+      "description": "Reads one user message and returns zero or more durable preference/fact candidates - normalized, third-person, one fact each - worth committing to that user's memory bucket. Returns an empty list when nothing in the message clears the bar.",
+      "tags": ["memory", "extraction", "personalization"],
+      "examples": [
+        "From now on always open a PR instead of just pushing a branch.",
+        "Keep your answers terse, I don't need the full explanation every time.",
+        "Can you review this code?"
+      ]
+    }
+  ]
+}

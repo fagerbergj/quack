@@ -61,6 +61,10 @@ type Orchestrator struct {
 	// conversational GitHub-PR correction, narrowly scoped and attributable,
 	// never an always-on path for arbitrary content.
 	taskMem *memory.Store
+	// memAgent is the end-of-turn user-memory extraction agent (#262, agents/memory-agent),
+	// wired via SetUserMemoryHook. nil = the hook never runs, regardless of the
+	// pre-filter - keeps it opt-in on top of userMem being configured.
+	memAgent adkagent.Agent
 	// runSem is a server-wide cap on concurrent runs. max_active_nodes bounds nodes
 	// WITHIN one plan; nothing bounded the number of plans, so a burst of webhooks or
 	// REST calls fanned out unbounded onto one model. nil = no limit.
@@ -71,6 +75,12 @@ type Orchestrator struct {
 	// "started" at response_created, published before the semaphore is acquired, so
 	// hub.Active alone can't tell a queued run from an executing one.
 	queuedChats sync.Map // chatID -> struct{}
+}
+
+// SetUserMemoryHook wires the end-of-turn user-memory extraction agent (#262,
+// config orchestrator.user_memory_hook). nil (the default) leaves the hook off.
+func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
+	o.memAgent = memAgent
 }
 
 // SetMaxActiveRuns caps concurrent orchestrator runs server-wide (config
@@ -294,6 +304,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// One plan cache per run, shared by this run's plan and execute tools, so
 		// execute looks the plan up by ID instead of the model copying plan JSON.
 		planCache := tools.NewPlanCache()
+		// End-of-turn user-memory hook (#262): fire-and-forget, never on the
+		// response's critical path - see maybeMineUserMemory.
+		o.maybeMineUserMemory(ctx, userID, message)
 		// Persisted session, read BEFORE the runner appends this turn's user
 		// message - so it holds only earlier turns. Used for both the planner's
 		// history and pending-clarification detection below.
