@@ -488,6 +488,41 @@ func TestBuildAllowsChainedRepoTouchingNodesWithSetup(t *testing.T) {
 	}
 }
 
+// #555: explorers are read-only, so PARALLEL explorer nodes sharing a
+// plan.Setup clone must be accepted - unlike implementer/reviewer, they
+// never mutate branch state, so there is nothing for concurrency to
+// corrupt and no reason to force them into a chain.
+func TestBuildAllowsConcurrentExplorerNodesWithSetup(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-explorer"}}, nil, nil)
+	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore1", Agent: "code-explorer", Task: "survey the auth package"},
+		{ID: "explore2", Agent: "code-explorer", Task: "survey the storage package"},
+	}, setup, nil, nil, "explore two independent packages", nil)
+	if err != nil {
+		t.Fatalf("Build: concurrent explorer nodes with setup must be accepted, not forced into a chain: %v", err)
+	}
+	if len(plan.Nodes) != 2 {
+		t.Errorf("nodes = %d, want exactly 2", len(plan.Nodes))
+	}
+}
+
+// Mixing a mutating repo-touching node with explorers: the implementer/
+// reviewer subset still needs its depends_on chain even though the
+// explorers running alongside them need none.
+func TestBuildRejectsConcurrentImplementerNodesEvenWithExplorerPresent(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-implementer"}, {Name: "code-explorer"}}, nil, nil)
+	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
+		{ID: "impl2", Agent: "code-implementer", Task: "part two"},
+		{ID: "explore", Agent: "code-explorer", Task: "survey the repo"},
+	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two independent things plus explore", nil)
+	if err == nil {
+		t.Fatal("Build: expected an error - impl1/impl2 still need a depends_on chain, an unrelated explorer doesn't change that")
+	}
+}
+
 // Without a declared Setup, repo-touching nodes each get their OWN
 // independent clone (unchanged pre-#310 behavior) - concurrent ones share
 // nothing, so the chain requirement does not apply.

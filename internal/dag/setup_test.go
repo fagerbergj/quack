@@ -50,21 +50,38 @@ func TestSetupQualifyingNodes(t *testing.T) {
 		{ID: "synth", AgentName: "synthesizer"},
 	}}
 	got := setupQualifyingNodes(plan)
-	if len(got) != 2 || got[0].ID != "impl" || got[1].ID != "review" {
-		t.Fatalf("setupQualifyingNodes = %+v, want exactly [impl, review]", got)
+	if len(got) != 3 || got[0].ID != "explore" || got[1].ID != "impl" || got[2].ID != "review" {
+		t.Fatalf("setupQualifyingNodes = %+v, want exactly [explore, impl, review]", got)
 	}
 }
 
+// TestIsReviewOnlySetup pins the full truth table from #555: an explorer can
+// no more create a branch than a reviewer can, so it must not flip
+// review-only to false, but an implementer anywhere in the set always does.
 func TestIsReviewOnlySetup(t *testing.T) {
 	tests := []struct {
 		name string
 		plan Plan
 		want bool
 	}{
-		{"no qualifying nodes", Plan{Nodes: []Node{{ID: "explore", AgentName: explorerAgent}}}, false},
+		{"no qualifying nodes", Plan{Nodes: []Node{{ID: "synth", AgentName: "synthesizer"}}}, false},
+		{"explorer only", Plan{Nodes: []Node{{ID: "explore", AgentName: explorerAgent}}}, true},
 		{"implementer only", Plan{Nodes: []Node{{ID: "impl", AgentName: implementerAgent}}}, false},
 		{"reviewer only", Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent}}}, true},
+		{"explorer + reviewer, no implementer", Plan{Nodes: []Node{
+			{ID: "explore", AgentName: explorerAgent},
+			{ID: "review", AgentName: reviewerAgent},
+		}}, true},
+		{"explorer + implementer", Plan{Nodes: []Node{
+			{ID: "explore", AgentName: explorerAgent},
+			{ID: "impl", AgentName: implementerAgent},
+		}}, false},
 		{"implementer then reviewer (implement chain)", Plan{Nodes: []Node{
+			{ID: "impl", AgentName: implementerAgent},
+			{ID: "review", AgentName: reviewerAgent, DependsOn: []string{"impl"}},
+		}}, false},
+		{"explorer, implementer, reviewer all present", Plan{Nodes: []Node{
+			{ID: "explore", AgentName: explorerAgent},
 			{ID: "impl", AgentName: implementerAgent},
 			{ID: "review", AgentName: reviewerAgent, DependsOn: []string{"impl"}},
 		}}, false},
@@ -145,6 +162,8 @@ func TestRunPlanSetup_ComputesCheckoutExistingHead(t *testing.T) {
 	}{
 		{"reviewer only", []Node{{ID: "review", AgentName: reviewerAgent}}, true},
 		{"implementer only", []Node{{ID: "impl", AgentName: implementerAgent}}, false},
+		{"explorer only", []Node{{ID: "explore", AgentName: explorerAgent}}, true},
+		{"explorer + implementer", []Node{{ID: "explore", AgentName: explorerAgent}, {ID: "impl", AgentName: implementerAgent}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -193,6 +212,28 @@ func TestRunPlanSetup_NoQualifyingNodeIsNoOp(t *testing.T) {
 	}
 	if called {
 		t.Error("setupFn was called though no node in the plan can use a clone")
+	}
+}
+
+// TestRunPlanSetup_ExplorerOnlyProvisionsClone pins #555: a plan whose ONLY
+// repo-touching node is an explorer must still provision the shared clone -
+// before the fix, setupQualifyingNodes excluded explorers entirely, so
+// runPlanSetup no-op'd and the explorer ran in an empty directory.
+func TestRunPlanSetup_ExplorerOnlyProvisionsClone(t *testing.T) {
+	called := false
+	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error {
+		called = true
+		return nil
+	}}
+	plan := Plan{
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{{ID: "explore", AgentName: explorerAgent}},
+	}
+	if err := ex.runPlanSetup(context.Background(), "u", "c", plan); err != nil {
+		t.Fatalf("runPlanSetup: %v", err)
+	}
+	if !called {
+		t.Error("setupFn was never called though the plan's only node is an explorer, which qualifies")
 	}
 }
 

@@ -103,17 +103,24 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		// advisor-thread marker; see internal/tools chatScopeFromContext). chatID
 		// here is the run's chat/session id (== the workflow session id).
 		cfg.ChatID = chatID
-		// Thread the plan's declared Setup to the gate/delivery (see
-		// vetting.Config.Setup) - ONLY for the nodes runPlanSetup actually
-		// provisioned (setupQualifyingNodes: implementer/reviewer), the same
-		// set commitDelivery's workspace.SetupCloneDir(node.ID) resolves
-		// against.
-		if plan.Setup != nil && (node.AgentName == implementerAgent || node.AgentName == reviewerAgent) {
+		// Thread the plan's declared Setup to the gate (see vetting.Config.Setup)
+		// - ONLY for the nodes runPlanSetup actually provisioned
+		// (setupQualifyingAgent: implementer/reviewer/explorer), the same set
+		// commitDelivery's workspace.SetupCloneDir(node.ID) resolves against.
+		// This is NOT just a delivery hook: it's also how an ACP worker's disk
+		// reads get ground-truthed at all (resolveCiteCloneRoots,
+		// citationScore) - an ACP agent's own tools aren't ledger-tracked, so
+		// without cfg.Setup a read-only explorer's citations score 0.00 even
+		// when the file really was read off the clone.
+		if plan.Setup != nil && setupQualifyingAgent(node.AgentName) {
 			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
 			if nonTerminalRepoChainNode(plan, node) {
 				// Delivery fires exactly once, at the chain's terminal node - the
 				// only point the shared branch is complete. A mid-chain node that
-				// stages a PR anyway must never have it posted.
+				// stages a PR anyway must never have it posted. Explorers are
+				// never delivery-capable (nonTerminalRepoChainNode only matches
+				// implementer/reviewer), so this never nils out an explorer's
+				// cfg.Deliver - it has none to stage in the first place.
 				cfg.Deliver = nil
 			}
 		}

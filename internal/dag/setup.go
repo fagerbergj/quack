@@ -24,15 +24,28 @@ type SetupFunc func(ctx context.Context, userID, chatID, dir string, setup Setup
 // hard-errors at run start (runPlanSetup) rather than silently skipping it.
 func (e *Executor) SetSetup(fn SetupFunc) { e.setupFn = fn }
 
+// setupQualifyingAgent reports whether an agent can use the plan's ONE
+// provisioned clone: the delivery-capable pair (implementer, reviewer),
+// which validateRepoChain forces into a single depends_on chain since they
+// mutate branch state, plus the read-only explorer. An explorer never
+// mutates - it needs no chain ordering (nothing to corrupt) - but it still
+// needs the clone as ground truth: without it, its disk reads are
+// unverifiable and its citations score 0.00 (see resolveCiteCloneRoots,
+// citationScore's ACP-agent case).
+func setupQualifyingAgent(name string) bool {
+	return name == implementerAgent || name == reviewerAgent || name == explorerAgent
+}
+
 // setupQualifyingNodes returns the plan's nodes whose agent can actually use a
-// provisioned clone - the delivery-capable agents (implementer, reviewer).
-// runPlanSetup provisions ONE shared clone+branch for the whole set (see
-// workspace.SharedRepoScope) - validateRepoChain (planner.go's assemble)
-// guarantees these nodes form a single depends_on chain, so sharing is safe.
+// provisioned clone (setupQualifyingAgent). runPlanSetup provisions ONE
+// shared clone+branch for the whole set (see workspace.SharedRepoScope) -
+// validateRepoChain (planner.go's assemble) guarantees the delivery-capable
+// subset forms a single depends_on chain, so sharing is safe; explorers need
+// no such ordering (read-only, see setupQualifyingAgent).
 func setupQualifyingNodes(plan Plan) []Node {
 	var out []Node
 	for _, n := range plan.Nodes {
-		if n.AgentName == implementerAgent || n.AgentName == reviewerAgent {
+		if setupQualifyingAgent(n.AgentName) {
 			out = append(out, n)
 		}
 	}
@@ -40,11 +53,13 @@ func setupQualifyingNodes(plan Plan) []Node {
 }
 
 // isReviewOnlySetup reports whether the plan's qualifying nodes are
-// review-only - a reviewerAgent node with NO implementerAgent node. That is
-// the structural signal that Setup.WorkBranch names an EXISTING remote PR
-// head to check out, not a new branch to create off BaseRef: an implementer
+// review-only - no implementerAgent node among them. That is the structural
+// signal that Setup.WorkBranch names an EXISTING remote PR head to check
+// out, not a new branch to create off BaseRef: neither a reviewer nor an
+// explorer can create a branch, so a qualifying set of only those two agents
+// (in any mix) still means "check out what's already there." An implementer
 // anywhere in the qualifying set means the chain still needs a fresh branch
-// to commit on, even if a reviewer runs later in that same chain.
+// to commit on, even if a reviewer or explorer also runs in that same chain.
 func isReviewOnlySetup(plan Plan) bool {
 	nodes := setupQualifyingNodes(plan)
 	if len(nodes) == 0 {
