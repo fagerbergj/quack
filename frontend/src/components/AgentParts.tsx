@@ -81,20 +81,23 @@ function hastText(node: Element | undefined): string {
 // of `text`, i.e. whether it's the one that could still be open; comparing it
 // against `isTrailingMermaidFenceOpen(text)` (computed once per text change,
 // not per keystroke) gives a stable answer without depending on render order.
+// Compare against text.length RAW: an open fence swallows the trailing
+// newline (end.offset == text.length), so trimming here made isLastBlock
+// false for the ordinary streaming case and rendered the half-written
+// diagram this guard exists to suppress.
 export function AssistantText({ text }: { text: string }) {
   const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(text), [text])
-  const docEnd = useMemo(() => text.replace(/\s+$/, '').length, [text])
   const components = useMemo(() => ({
     pre: (props: ComponentPropsWithoutRef<'pre'> & { node?: Element }) => {
       const { node, children, ...rest } = props
-      const isLastBlock = node?.position?.end?.offset === docEnd
+      const isLastBlock = node?.position?.end?.offset === text.length
       if (mermaidLang(node) && !(isLastBlock && trailingOpen)) {
         const codeNode = node?.children.find((c): c is Element => c.type === 'element' && c.tagName === 'code')
         return <MermaidDiagram code={hastText(codeNode)} />
       }
       return <CopyablePre {...rest}>{children}</CopyablePre>
     },
-  }), [trailingOpen, docEnd])
+  }), [trailingOpen, text])
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none">
       <ReactMarkdown
