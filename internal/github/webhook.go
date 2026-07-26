@@ -738,7 +738,14 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), e.runTimeout)
+	// No deadline here. The run deadline is the ORCHESTRATOR's (SetRunDeadline,
+	// applied once a run slot is held) so that queueing is not charged against
+	// it: this context covers the session lock and the server-wide run queue,
+	// where a run can legitimately wait hours on a serial deployment. Starting
+	// the clock here killed three implement runs at the 4h wall having
+	// delivered nothing - they spent the budget waiting. Post-run GitHub calls
+	// use their own short contexts (see tailCtx, reactionTimeout).
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	defer e.inflight.Delete(sessionID)

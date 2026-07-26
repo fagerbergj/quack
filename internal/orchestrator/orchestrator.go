@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -65,6 +66,9 @@ type Orchestrator struct {
 	// wired via SetUserMemoryHook. nil = the hook never runs, regardless of the
 	// pre-filter - keeps it opt-in on top of userMem being configured.
 	memAgent adkagent.Agent
+	// runDeadline bounds a run's EXECUTION, applied only once it holds a run
+	// slot - never while it queues. Zero leaves runs unbounded.
+	runDeadline time.Duration
 	// runSem is a server-wide cap on concurrent runs. max_active_nodes bounds nodes
 	// WITHIN one plan; nothing bounded the number of plans, so a burst of webhooks or
 	// REST calls fanned out unbounded onto one model. nil = no limit.
@@ -82,6 +86,13 @@ type Orchestrator struct {
 func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
 	o.memAgent = memAgent
 }
+
+// SetRunDeadline bounds how long a run may EXECUTE. It deliberately does not
+// cover the wait for a run slot: a deadline that starts at dispatch is spent
+// queueing on a serial deployment, and the deeper a run sits the less time it
+// has left to do any work - three implement runs died at the wall having
+// delivered nothing that way. Zero (the default) leaves runs unbounded.
+func (o *Orchestrator) SetRunDeadline(d time.Duration) { o.runDeadline = d }
 
 // SetMaxActiveRuns caps concurrent orchestrator runs server-wide (config
 // dag.max_active_runs). Extras block until a slot frees. n < 1 leaves it unlimited.
@@ -297,6 +308,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			otelobs.RunUnqueued()
 			queued = false
 			otelobs.RunStarted()
+			// The clock starts HERE - holding a slot, about to work - so time
+			// spent queueing above is not charged against the run.
+			if o.runDeadline > 0 {
+				var deadlineCancel context.CancelFunc
+				ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
+				defer deadlineCancel()
+			}
 		}
 		// Fresh turn: drop any cancelled-node flags from a prior turn so a reused
 		// node ID (n1, n2, …) doesn't inherit last turn's "stopped" rendering.
