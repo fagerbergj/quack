@@ -153,9 +153,9 @@ func findFenceClose(lines []string, start int, fenceChar byte, fenceLen int) int
 // error, and a diagram that renders wrong on GitHub is exactly what this
 // exists to catch regardless of the severity mermaid-check assigns it.
 //
-// recover()-guarded: mermaid-check is a young (v0.0.4) third-party parser: a
-// panic here must degrade to "invalid" with a reason, never take the gate
-// round down with it.
+// recover()-guarded: mermaid-check (v0.2.0) still calls itself "not
+// production-ready" - a panic here must degrade to "invalid" with a reason,
+// never take the gate round down with it.
 func mermaidError(body string) (reason string) {
 	defer func() {
 		if recover() != nil {
@@ -205,13 +205,13 @@ func mermaidCriterion(answer string, act workerActivity) (criterionScore, bool) 
 // without a real parse.
 var mermaidLabelRe = regexp.MustCompile(`[\[({]([^\[\]{}()\n]*)[\])}]`)
 
-// quotedLabelIssue is the supplementary check mermaid-check v0.0.4 misses
-// (#448): a bracket/paren/brace node label containing a bare double-quote
-// that is NOT the whole label quoted (mermaid's own escape form,
-// A["label with \"quotes\""]) breaks GitHub's real mermaid.js parser even
-// though mermaid-check parses and strictly validates it clean - verified
-// empirically against the issue's own example
-// (A[bundle name<br/>e.g. "code-reviewer"]).
+// quotedLabelIssue is the supplementary check mermaid-check still misses as
+// of v0.2.0 (#448, re-verified on the bump to v0.2.0): a bracket/paren/brace
+// node label containing a bare double-quote that is NOT the whole label
+// quoted (mermaid's own escape form, A["label with \"quotes\""]) breaks
+// GitHub's real mermaid.js parser even though mermaid-check parses and
+// strictly validates it clean - verified empirically against the issue's own
+// example (A[bundle name<br/>e.g. "code-reviewer"]).
 func quotedLabelIssue(body string) string {
 	for _, m := range mermaidLabelRe.FindAllStringSubmatch(body, -1) {
 		label := m[1]
