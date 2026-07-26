@@ -603,16 +603,24 @@ func (a *App) minimizeComment(ctx context.Context, owner, repo, nodeID string) e
 }
 
 // mergePR squash-merges a pull request using the repo's installation token.
-// GitHub's error body (branch protection, conflicts, not mergeable) surfaces
-// verbatim via doJSON.
+// requiredHeadSHA, when non-empty, is passed as GitHub's own merge-guard
+// "sha" param: GitHub 409s rather than merge if the PR's head has moved past
+// it - used to pin a standing-intent merge to the commit the approving review
+// actually reviewed (see tryMergeStandingIntent). Empty skips the guard.
+// GitHub's error body (branch protection, conflicts, not mergeable, sha
+// mismatch) surfaces verbatim via doJSON.
 // ponytail: squash only; add a merge_method config when someone wants otherwise.
-func (a *App) mergePR(ctx context.Context, owner, repo string, number int) error {
+func (a *App) mergePR(ctx context.Context, owner, repo string, number int, requiredHeadSHA string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
 		return err
 	}
+	body := map[string]string{"merge_method": "squash"}
+	if requiredHeadSHA != "" {
+		body["sha"] = requiredHeadSHA
+	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, number)
-	return a.doJSON(ctx, http.MethodPut, path, "token "+tok, map[string]string{"merge_method": "squash"}, nil)
+	return a.doJSON(ctx, http.MethodPut, path, "token "+tok, body, nil)
 }
 
 // checkRunView is one check run for a commit (from commits/{sha}/check-runs) -
