@@ -28,6 +28,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/toolutils"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -98,34 +99,11 @@ func (g *guardedTool) Declaration() *genai.FunctionDeclaration { return g.inner.
 
 // ProcessRequest packs the WRAPPER - not the inner tool - into the request's
 // tool map, so the flow dispatches this tool's calls through the guard
-// ladder's Run. Delegating to inner.ProcessRequest would register the INNER
-// tool under the name and silently bypass every guard. Replicates ADK's
-// toolutils.PackTool (internal, unimportable) - exactly what ADK's own
-// confirmationTool wrapper does.
+// ladder's Run. Passing g (not g.inner) is the whole point: registering the
+// inner tool under the name would silently bypass every guard. PackTool became
+// public in adk v2.1.0 (tool/toolutils); before that this body hand-replicated it.
 func (g *guardedTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) error {
-	if req.Tools == nil {
-		req.Tools = make(map[string]any)
-	}
-	name := g.Name()
-	if _, ok := req.Tools[name]; ok {
-		return fmt.Errorf("duplicate tool: %q", name)
-	}
-	req.Tools[name] = g
-	if req.Config == nil {
-		req.Config = &genai.GenerateContentConfig{}
-	}
-	decl := g.Declaration()
-	if decl == nil {
-		return nil
-	}
-	for _, tl := range req.Config.Tools {
-		if tl != nil && tl.FunctionDeclarations != nil {
-			tl.FunctionDeclarations = append(tl.FunctionDeclarations, decl)
-			return nil
-		}
-	}
-	req.Config.Tools = append(req.Config.Tools, &genai.Tool{FunctionDeclarations: []*genai.FunctionDeclaration{decl}})
-	return nil
+	return toolutils.PackTool(req, g)
 }
 
 // Run is the guard ladder itself. See the package doc for the tier order.
