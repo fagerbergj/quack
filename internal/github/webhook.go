@@ -792,7 +792,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		return
 	}
 
-	message := e.runMessage(p, task, gh)
+	message := e.runMessage(ctx, p, task, gh)
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 
@@ -1371,19 +1371,16 @@ func truncate(s string, n int) string {
 // head is checked out), the PR's title/description (intent), the current
 // commits (rebase-safe incremental-review scoping via gh.newCommits), and the
 // rendered seed/delta text (the discussion, so the reviewer doesn't repeat it).
-func (e *Extension) runMessage(p issueCommentPayload, task string, gh githubContext) string {
+func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task string, gh githubContext) string {
 	isPR := p.Issue.PullRequest != nil
 	owner, repo := p.Repository.Owner.Login, p.Repository.Name
 	snap := gh.snap
 
-	// A mention on a PR is CONVERSATIONAL - "which finding matters most?", "what
-	// did you mean?", "that finding was wrong". Answer it from the durable session
-	// (which holds any review already posted); handing over the clone-and-review
-	// playbook makes the orchestrator re-review instead of answering. A genuine
-	// "review it again" still works: the prompt below says so explicitly, and the
-	// orchestrator can call plan itself. Label triggers take the work framing
-	// below instead - the label IS the request, so nothing has to be inferred.
-	if isPR && !p.isLabelTrigger {
+	// A mention on a PR defaults to CONVERSATIONAL ("which finding matters
+	// most?", "that finding was wrong") unless the classifier calls it a work
+	// request (see isWorkRequest, intent.go) - fails safe to conversational,
+	// since a wrong WORK verdict re-reviews and discards a written reply.
+	if isPR && !p.isLabelTrigger && !e.isWorkRequest(ctx, task) {
 		var b strings.Builder
 		fmt.Fprintf(&b, "GitHub user @%s asked a follow-up on %s/%s pull request #%d (pull_number=%d).\n\n",
 			p.Comment.User.Login, owner, repo, p.Issue.Number, p.Issue.Number)

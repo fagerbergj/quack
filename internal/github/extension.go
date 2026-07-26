@@ -84,6 +84,18 @@ type Extension struct {
 	// fixAttempts bounds the CI auto-heal loop per red streak on one PR
 	// (extensions.github.fix_attempts).
 	fixAttempts int
+	// intentClassifier classifies a PR mention as a work request or
+	// conversational (see isWorkRequest, intent.go). nil degrades to
+	// conversational - the safe default, and what every construction that
+	// doesn't call SetIntentClassifier gets for free.
+	intentClassifier IntentClassifier
+}
+
+// SetIntentClassifier wires the mention intent classifier used by runMessage.
+// Optional: an Extension with none set treats every PR mention as
+// conversational, same as before this classifier existed.
+func (e *Extension) SetIntentClassifier(c IntentClassifier) {
+	e.intentClassifier = c
 }
 
 // sessionLock returns the per-session mutex, creating it on first use.
