@@ -83,6 +83,19 @@ type GithubReviewBaseline struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// GithubFixState tracks the bounded CI auto-heal loop (#254) for one PR chat.
+// Durable on purpose: quack's own fix push re-runs CI and the next failure
+// arrives as a fresh webhook, possibly after a process restart - an in-memory
+// counter would reset and thrash forever. LastSHA dedups multiple failing
+// workflows on one head commit; Exhausted makes the give-up comment fire once.
+type GithubFixState struct {
+	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
+	Attempts  int       `json:"attempts"`
+	LastSHA   string    `gorm:"column:last_sha" json:"last_sha"`
+	Exhausted bool      `json:"exhausted"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // DagPlan stores the JSON-encoded plan for a chat turn so the DAG can be
 // re-displayed on page reload. TurnID links it to the ChatTurn that produced it.
 type DagPlan struct {
@@ -322,7 +335,7 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}); err != nil {
 		return nil, err
 	}
 	sessions, err := database.NewSessionService(dialector(), gormCfg)
@@ -553,6 +566,37 @@ func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSO
 		Columns:   []clause.Column{{Name: "chat_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"patch_ids", "updated_at"}),
 	}).Create(row).Error
+}
+
+// GetGithubFixState returns the auto-heal state for a PR chat, or (nil, nil)
+// when no fix run has ever been counted here.
+func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFixState, error) {
+	var row GithubFixState
+	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// SetGithubFixState upserts the auto-heal state for a PR chat. The caller
+// persists BEFORE dispatching a fix run so a crash mid-run never refunds an
+// attempt.
+func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error {
+	st.UpdatedAt = time.Now().UTC()
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"attempts", "last_sha", "exhausted", "updated_at"}),
+	}).Create(&st).Error
+}
+
+// DeleteGithubFixState re-arms auto-heal for a PR chat - called when a human
+// (re-)applies the monitor label, the documented retry convention.
+func (s *Store) DeleteGithubFixState(ctx context.Context, chatID string) error {
+	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubFixState{}).Error
 }
 
 // UpdateTitle sets the human-readable title for a chat.
