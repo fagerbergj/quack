@@ -86,13 +86,12 @@ COPY config/ /config/
 COPY agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY skills/ /skills/
-# Vendored skill libraries (git submodule at .agents/vendor/ponytail - the
-# code-implementer's coding-discipline skills), merged into the skill toolset
-# when present (internal/serve's newSkillSource resolves the relative path
-# .agents/vendor/ponytail/skills against CWD /). Copying all of .agents/ keeps
-# this COPY valid even when the submodule isn't initialized in the build
-# context (the dir then just lacks vendor/ and the server runs without the
-# vendored skills - build with `git submodule update --init` to include them).
+# Vendored skill libraries (git submodules under .agents/vendor: dotagents -
+# the general-purpose skills, incl. startup-required format-markdown - and
+# ponytail), merged into the skill toolset via relative paths against CWD /
+# (internal/serve's newSkillSource). dotagents is also embedded in the binary,
+# so only ponytail is lost if a submodule isn't initialized in the build
+# context - build with `git submodule update --init` to include everything.
 COPY .agents/ /.agents/
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot

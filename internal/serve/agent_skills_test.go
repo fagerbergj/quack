@@ -33,8 +33,10 @@ func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 		t.Skip("vendored skills submodule not initialised (git submodule update --init); cannot verify vendored skill references")
 	}
 
+	// dotagents needs no such skip: its embed (embed.go) already fails the
+	// build when the submodule is missing, so reaching this test implies it.
 	shipped := map[string]bool{}
-	for _, dir := range []string{filepath.Join(root, "skills"), vendor} {
+	for _, dir := range []string{filepath.Join(root, "skills"), filepath.Join(root, dotagentsSkillsDir), vendor} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
