@@ -28,20 +28,61 @@ func TestChangedFilesSection_ReviewNodeGetsDiff(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_ImplementNodeUnchanged pins that a non-review node
-// keeps sourcing changedFiles from act.written - the review-diff path must
-// never fire for it, even when a setup clone is present.
-func TestChangedFilesSection_ImplementNodeUnchanged(t *testing.T) {
+// TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader pins that a
+// non-review node never gets the review-only header/framing, even when a
+// setup clone is present - review and implement diffs are framed differently
+// (see TestChangedFilesSection_ImplementNodeGetsDiffAndContent for what an
+// implement node DOES get).
+func TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = false
 	act := workerActivity{written: []string{workspace.NodeDir("n1") + "/x.go"}}
 
 	got := changedFilesSection(cfg, act)
 	if strings.Contains(got, "DIFF UNDER REVIEW") {
-		t.Fatalf("implement node must not get the review-diff section:\n%s", got)
+		t.Fatalf("implement node must not get the review-framed diff header:\n%s", got)
 	}
 	if !strings.Contains(got, "ACTUAL CURRENT CONTENT") {
 		t.Fatalf("implement node must keep the act.written-based section:\n%s", got)
+	}
+}
+
+// TestChangedFilesSection_ImplementNodeGetsDiffAndContent pins the #498
+// residual fix: an implement node with a setup clone gets BOTH the actual
+// base..HEAD diff (so change-shape criteria like diff_minimality can see what
+// was actually added vs. pre-existing) and the full re-read file content
+// (still needed for whole-file quality criteria) - not one or the other.
+func TestChangedFilesSection_ImplementNodeGetsDiffAndContent(t *testing.T) {
+	cfg := probeRepo(t, true)
+	cfg.IsReviewer = false
+	act := workerActivity{written: []string{workspace.NodeDir("n1") + "/x.go"}}
+
+	got := changedFilesSection(cfg, act)
+	if !strings.Contains(got, "ACTUAL DIFF THIS NODE PRODUCED") || !strings.Contains(got, "package x") {
+		t.Fatalf("missing the actual diff section:\n%s", got)
+	}
+	if !strings.Contains(got, "ACTUAL CURRENT CONTENT") {
+		t.Fatalf("missing the full-content section:\n%s", got)
+	}
+}
+
+// TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly pins the
+// fallback: an implement node with no Setup clone (a non-code node, or a
+// worker with no pre-provisioned repo) must keep today's act.written-only
+// behaviour - buildImplementDiffSection degrading to "" must not blank out
+// the section entirely.
+func TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly(t *testing.T) {
+	cfg := probeRepo(t, true)
+	cfg.IsReviewer = false
+	cfg.Setup = nil
+	act := workerActivity{written: []string{workspace.NodeDir("n1") + "/x.go"}}
+
+	got := changedFilesSection(cfg, act)
+	if strings.Contains(got, "ACTUAL DIFF THIS NODE PRODUCED") {
+		t.Fatalf("no clone must yield no diff section:\n%s", got)
+	}
+	if !strings.Contains(got, "ACTUAL CURRENT CONTENT") {
+		t.Fatalf("missing the full-content section:\n%s", got)
 	}
 }
 
@@ -142,12 +183,28 @@ func TestBuildReviewDiffSection_Truncates(t *testing.T) {
 	git("commit", "-q", "-m", "add a large file")
 
 	got := buildReviewDiffSection(cfg)
-	if !strings.Contains(got, reviewDiffTruncatedMarker) {
+	if !strings.Contains(got, diffTruncatedMarker) {
 		t.Fatalf("large diff must carry the truncation marker:\n%s", got[:200])
 	}
 	// changedFilesBudget bytes of diff, plus the header/marker overhead - bound
 	// it generously rather than exactly, since the header text isn't budgeted.
 	if len(got) > changedFilesBudget+1024 {
 		t.Fatalf("diff section not bounded: %d bytes", len(got))
+	}
+}
+
+// TestBuildImplementDiffSection_NoCloneOrGitError mirrors the review-diff
+// fallback tests for the implement-node formatter: both share diffSince, so
+// this pins that the sharing didn't drop the degrade-to-"" behaviour.
+func TestBuildImplementDiffSection_NoCloneOrGitError(t *testing.T) {
+	cfg := probeRepo(t, true)
+	cfg.Setup = nil
+	if got := buildImplementDiffSection(cfg); got != "" {
+		t.Fatalf("no Setup must yield no section, got:\n%s", got)
+	}
+
+	cfg2 := probeRepo(t, false) // no commit beyond base
+	if got := buildImplementDiffSection(cfg2); got != "" {
+		t.Fatalf("no commits beyond base must yield no section, got:\n%s", got)
 	}
 }

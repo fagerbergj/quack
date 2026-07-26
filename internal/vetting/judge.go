@@ -262,13 +262,27 @@ const (
 // changedFilesSection picks the judge prompt's changedFiles source: a review
 // node's act.written is always empty (read-only), so it sources the actual PR
 // diff off the clone instead (#498 step 1), prefixed with the reviewer's
-// resolved structured verdict (#520); every other node keeps today's
-// act.written-based behaviour.
+// resolved structured verdict (#520). An implement node keeps its
+// act.written-based full-content section (still the best source for
+// code-quality criteria that need the whole file), with the actual base..HEAD
+// diff prepended when a setup clone is available - the diff is what the
+// change-SHAPE criteria (diff_minimality, commit_hygiene, ...) need and full
+// content alone can't show for an edit inside a large pre-existing file
+// (#498 residual: "OUTPUT = the staged PR + the diff" for an implement).
 func changedFilesSection(cfg Config, act workerActivity) string {
 	if cfg.IsReviewer {
 		return reviewVerdictLine(act) + buildReviewDiffSection(cfg)
 	}
-	return buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
+	written := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
+	diff := buildImplementDiffSection(cfg)
+	switch {
+	case diff == "":
+		return written
+	case written == "":
+		return diff
+	default:
+		return diff + "\n\n" + written
+	}
 }
 
 // reviewVerdictLine surfaces the reviewer's STRUCTURED verdict - the staged

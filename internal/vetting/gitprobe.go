@@ -96,41 +96,73 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 	}
 }
 
-// reviewDiffTruncatedMarker caps a review diff at changedFilesBudget (judge.go).
-const reviewDiffTruncatedMarker = "\n… (diff truncated)\n"
+// diffTruncatedMarker caps a diff section at changedFilesBudget (judge.go).
+const diffTruncatedMarker = "\n… (diff truncated)\n"
 
-// buildReviewDiffSection sources a REVIEW node's changedFiles slot from the
-// actual PR diff (base...HEAD) off the clone, since act.written is always
-// empty for a read-only reviewer (#498 step 1). Best-effort like
-// augmentFromRepo: any failure falls back to "" rather than failing the round.
-func buildReviewDiffSection(cfg Config) string {
+// diffSince returns the base...HEAD diff off a setup-provisioned node's clone
+// (base = baseCommit, the oldest reflog entry - the commit the work branch
+// forked from), truncated to changedFilesBudget, plus the shortened base/head
+// SHAs for the caller's header. "" when there's no clone, no commits beyond
+// base, or the diff is empty - best-effort like augmentFromRepo, so a git
+// failure degrades to no section rather than failing the judge round.
+func diffSince(cfg Config) (diff, base, head string) {
 	if cfg.Setup == nil || cfg.Workspace == nil {
-		return ""
+		return "", "", ""
 	}
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
 	if err != nil || !isDir(filepath.Join(dir, ".git")) {
-		return ""
+		return "", "", ""
 	}
 	caps := checksCaps(cfg)
-	base, err := baseCommit(dir, caps)
+	b, err := baseCommit(dir, caps)
 	if err != nil {
-		return ""
+		return "", "", ""
 	}
-	head := gitLine(dir, caps, "rev-parse", "HEAD")
-	if head == "" {
-		return ""
+	h := gitLine(dir, caps, "rev-parse", "HEAD")
+	if h == "" {
+		return "", "", ""
 	}
-	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", base + "..." + head}, caps)
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", b + "..." + h}, caps)
 	if err != nil || res.ExitCode != 0 || strings.TrimSpace(res.Output) == "" {
-		return ""
+		return "", "", ""
 	}
-	diff := res.Output
-	if len(diff) > changedFilesBudget {
-		diff = diff[:changedFilesBudget] + reviewDiffTruncatedMarker
+	out := res.Output
+	if len(out) > changedFilesBudget {
+		out = out[:changedFilesBudget] + diffTruncatedMarker
+	}
+	return out, short(b), short(h)
+}
+
+// buildReviewDiffSection sources a REVIEW node's changedFiles slot from the
+// actual PR diff (base...HEAD) off the clone, since act.written is always
+// empty for a read-only reviewer (#498 step 1).
+func buildReviewDiffSection(cfg Config) string {
+	diff, base, head := diffSince(cfg)
+	if diff == "" {
+		return ""
 	}
 	return fmt.Sprintf(
 		"DIFF UNDER REVIEW (%s..%s, the actual change this review is OF - verify each finding against this diff, not the review's own description of it):\n\n%s",
-		short(base), short(head), diff)
+		base, head, diff)
+}
+
+// buildImplementDiffSection sources an IMPLEMENT node's changedFiles slot with
+// the actual base...HEAD diff, alongside (not instead of) the full current
+// content buildChangedFilesSection already re-reads off disk: several rubric
+// criteria (diff_minimality, change_amplification, commit_hygiene,
+// deletion_over_addition) judge the SHAPE of the change - what was added vs.
+// what already existed - which full file content can't distinguish for an
+// edit to a large pre-existing file (#498: "OUTPUT = the staged PR + the diff
+// for an implement"). Empty for a node with no Setup clone (a non-code node,
+// or an implementer running without a pre-provisioned repo).
+func buildImplementDiffSection(cfg Config) string {
+	diff, base, head := diffSince(cfg)
+	if diff == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"ACTUAL DIFF THIS NODE PRODUCED (%s..%s - judge what CHANGED here, not just the full file content below: is the diff minimal, does every hunk serve the task, is anything unrelated bundled in):\n\n%s",
+		base, head, diff)
 }
 
 // gitLine runs one git command in dir and returns its first output line ("" on
