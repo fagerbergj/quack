@@ -615,6 +615,62 @@ func (a *App) mergePR(ctx context.Context, owner, repo string, number int) error
 	return a.doJSON(ctx, http.MethodPut, path, "token "+tok, map[string]string{"merge_method": "squash"}, nil)
 }
 
+// checkRunView is one check run for a commit (from commits/{sha}/check-runs) -
+// the failure-context source for the CI auto-heal path (#254). This endpoint
+// covers Actions jobs AND any other checks-API CI, unlike the Actions jobs API.
+type checkRunView struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Conclusion string `json:"conclusion"`
+	HTMLURL    string `json:"html_url"`
+	Output     struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	} `json:"output"`
+}
+
+// listCheckRuns fetches the check runs for one commit (per_page=100, one page -
+// a bound, not pagination; repos with more failing checks than that get a
+// truncated but still useful context).
+func (a *App) listCheckRuns(ctx context.Context, owner, repo, sha string) ([]checkRunView, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		CheckRuns []checkRunView `json:"check_runs"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/commits/%s/check-runs?per_page=100", owner, repo, sha)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.CheckRuns, nil
+}
+
+// checkAnnotation is one annotation on a check run - typically the file/line
+// error a CI step reported (the cheap alternative to downloading log archives).
+type checkAnnotation struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line"`
+	Level     string `json:"annotation_level"`
+	Message   string `json:"message"`
+}
+
+// listCheckAnnotations fetches a check run's annotations (per_page=50 - a
+// bound; anything past that is noise for a fix prompt).
+func (a *App) listCheckAnnotations(ctx context.Context, owner, repo string, checkRunID int64) ([]checkAnnotation, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	var out []checkAnnotation
+	path := fmt.Sprintf("/repos/%s/%s/check-runs/%d/annotations?per_page=50", owner, repo, checkRunID)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // addLabels applies labels to an issue or PR (GitHub's labels endpoint is the
 // issues one for both).
 func (a *App) addLabels(ctx context.Context, owner, repo string, number int, labels []string) error {

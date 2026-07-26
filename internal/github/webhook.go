@@ -161,6 +161,8 @@ func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		e.handlePullRequest(w, body)
 	case "issues":
 		e.handleIssues(w, body)
+	case "workflow_run":
+		e.handleWorkflowRun(w, body)
 	default:
 		w.WriteHeader(http.StatusOK) // unhandled event type: no-op ack
 	}
@@ -224,6 +226,36 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
 			"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
 		go e.mergeIfApproved(p)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	// (Re-)applying the monitor label re-arms auto-heal: a deterministic
+	// counter reset, no model run. Not allowlist-gated - the ci_fix gate reads
+	// the label's PRESENCE regardless of who applied it (write access is the
+	// permission), so gating only the reset would secure nothing.
+	if p.Action == "labeled" && e.triggers["ci_fix"] && p.Label.Name == e.labels.Monitor &&
+		!strings.HasSuffix(p.Sender.Login, "[bot]") && e.store != nil {
+		go e.resetFixState(p)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	// The fix label is an explicit human work request: fix the currently
+	// failing checks, once. Bot senders never chain label workflows.
+	if p.Action == "labeled" && e.triggers["pr_fix"] && p.Label.Name == e.labels.Fix &&
+		!strings.HasSuffix(p.Sender.Login, "[bot]") {
+		if !e.isInvokerAllowed(p.Sender.Login) {
+			slog.Warn("github webhook: invoker not in allowed_users; ignoring", "component", "github",
+				"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
+				"label", p.Label.Name, "user", p.Sender.Login)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		slog.Info("github webhook received", "component", "github",
+			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
+			"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
+		go e.runFixLabel(p)
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -332,12 +364,7 @@ func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload)
 
 // hasPartialFix reports whether names includes the configured partial-fix label.
 func hasPartialFix(partialFixLabel string, names []string) bool {
-	for _, n := range names {
-		if n == partialFixLabel {
-			return true
-		}
-	}
-	return false
+	return hasLabel(names, partialFixLabel)
 }
 
 // implementTask synthesizes the implementation request for an implement-labeled
