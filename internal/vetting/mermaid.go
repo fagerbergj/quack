@@ -197,15 +197,7 @@ var warnMermaidValidatorUnavailable = sync.OnceFunc(func() {
 // nothing rather than failing every node with a diagram - mirrors
 // toolchainPresent's posture for derived checks (checks.go) - logged once so
 // an operator can tell "validated clean" from "never validated".
-//
-// recover()-guarded: a bug in the invocation below must degrade to "invalid"
-// with a reason, never take the gate round down with it.
-func mermaidError(body string) (reason string) {
-	defer func() {
-		if recover() != nil {
-			reason = "the mermaid validator could not process this diagram - simplify it"
-		}
-	}()
+func mermaidError(body string) string {
 	if _, err := exec.LookPath("node"); err != nil {
 		warnMermaidValidatorUnavailable()
 		return ""
