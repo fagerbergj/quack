@@ -38,7 +38,9 @@ var baselineCache sync.Map // key: dir\x00sha\x00check → bool
 func failsAtBase(dir, check string, caps workspace.Caps) bool {
 	base, err := baseCommit(dir, caps)
 	if err != nil {
-		slog.Debug("cannot determine base commit; check keeps gating", "component", "vetting", "dir", dir, "err", err)
+		// Warn, not Debug: the worker is now charged for a failure that may not be
+		// its own, and it cannot see or fix why the probe didn't run.
+		slog.Warn("cannot determine base commit; check keeps gating", "component", "vetting", "dir", dir, "err", err)
 		return false
 	}
 	key := dir + "\x00" + base + "\x00" + check
@@ -47,7 +49,7 @@ func failsAtBase(dir, check string, caps workspace.Caps) bool {
 	}
 	fails, err := runAtBase(dir, base, check, caps)
 	if err != nil {
-		slog.Debug("cannot run check at base; check keeps gating", "component", "vetting", "check", check, "err", err)
+		slog.Warn("cannot run check at base; check keeps gating", "component", "vetting", "check", check, "err", err)
 		return false
 	}
 	baselineCache.Store(key, fails)
@@ -77,7 +79,9 @@ func baseCommit(dir string, caps workspace.Caps) (string, error) {
 // runAtBase checks out base into a throwaway detached worktree and runs check
 // there, returning whether it failed. The worktree is always removed.
 func runAtBase(dir, base, check string, caps workspace.Caps) (bool, error) {
-	tmp, err := os.MkdirTemp("", "quack-base-")
+	// Under a sandbox the child git only reaches granted paths, and the server's
+	// own /tmp is not one of them - hence SandboxTmpDir, not "".
+	tmp, err := os.MkdirTemp(workspace.SandboxTmpDir(caps), "quack-base-")
 	if err != nil {
 		return false, err
 	}
