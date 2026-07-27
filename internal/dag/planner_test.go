@@ -507,6 +507,27 @@ func TestBuildAllowsConcurrentExplorerNodesWithSetup(t *testing.T) {
 	}
 }
 
+// Worktree isolation: a reviewer no longer shares the shared clone
+// directly - it gets its own linked git worktree - so PARALLEL reviewer nodes
+// sharing a plan.Setup clone must be accepted exactly like parallel explorers
+// above. Before worktree isolation this was rejected (reviewer was in the
+// same repo-touching set as implementer); validateRepoChain now only orders
+// the WRITER (implementer).
+func TestBuildAllowsConcurrentReviewerNodesWithSetup(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, nil)
+	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "review1", Agent: "code-reviewer", Task: "review the auth changes"},
+		{ID: "review2", Agent: "code-reviewer", Task: "review the storage changes"},
+	}, setup, nil, nil, "review two independent changes", nil)
+	if err != nil {
+		t.Fatalf("Build: concurrent reviewer nodes with setup must be accepted, not forced into a chain: %v", err)
+	}
+	if len(plan.Nodes) != 2 {
+		t.Errorf("nodes = %d, want exactly 2", len(plan.Nodes))
+	}
+}
+
 // Mixing a mutating repo-touching node with explorers: the implementer/
 // reviewer subset still needs its depends_on chain even though the
 // explorers running alongside them need none.

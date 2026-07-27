@@ -32,7 +32,24 @@ const (
 	// SandboxNone runs children directly, exactly as quack did before: with the
 	// server user's full filesystem authority. Loudly warned about at startup.
 	SandboxNone SandboxMode = "none"
+	// SandboxLandlock confines each child with a self-applied Landlock ruleset
+	// (see landlock_linux.go) instead of a constructed mount namespace: no new
+	// PID/mount/user namespace, so paths are NOT remapped (SandboxWorkRoot is
+	// bwrap-only) and /proc stays the server's own (see childArgv's landlock
+	// branch). Chosen for the container deploy, where bwrap cannot nest inside
+	// an unprivileged Docker container but Landlock - a self-restriction, not a
+	// namespace construction - still applies.
+	SandboxLandlock SandboxMode = "landlock"
 )
+
+// SandboxExecArg is the hidden argv[1] dispatch mode any binary that can
+// resolve its own path (os.Executable) answers: [self, SandboxExecArg, --rw
+// <path>..., --ro <path>..., [--probe], --, <target argv>...]. It is the
+// Landlock analogue of the GIT_ASKPASS self-exec (internal/tools/git.go's
+// GitAskpassLinkName) - never a documented CLI command, dispatched on raw
+// argv before cobra/testing.Main ever runs (see RunSandboxExecIfInvoked and
+// cmd/quack/main.go).
+const SandboxExecArg = "__sandbox-exec"
 
 // bwrapBinary / prlimitBinary are looked up on the SERVER's ambient PATH (like
 // every other binary RunArgv resolves - see RunArgv's LookPath rationale).
@@ -100,8 +117,17 @@ func ResolveSandbox(mode SandboxMode) (SandboxMode, error) {
 				"the server user's full filesystem authority", SandboxBwrap, err)
 		}
 		return SandboxBwrap, nil
+	case SandboxLandlock:
+		if err := probeLandlockHook(); err != nil {
+			return "", fmt.Errorf("workspace.sandbox: %q: %w\n"+
+				"landlock requires a Linux kernel with Landlock ABI >= 3 (kernel 6.2+); "+
+				"set `workspace.sandbox: none` to accept unconfined children, or `bwrap` on a host where bubblewrap works",
+				SandboxLandlock, err)
+		}
+		slog.Info("workspace sandbox resolved", "component", "workspace", "mode", SandboxLandlock, "landlock_abi", ">=3 (probed)")
+		return SandboxLandlock, nil
 	default:
-		return "", fmt.Errorf("workspace.sandbox: unknown mode %q (want %q or %q)", mode, SandboxBwrap, SandboxNone)
+		return "", fmt.Errorf("workspace.sandbox: unknown mode %q (want %q, %q, or %q)", mode, SandboxBwrap, SandboxLandlock, SandboxNone)
 	}
 }
 
@@ -192,7 +218,12 @@ func bwrapSystemArgs() []string {
 // own user namespace.
 func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	inner := append([]string{bin}, argv[1:]...)
-	if caps.Sandbox != SandboxBwrap {
+	switch caps.Sandbox {
+	case SandboxLandlock:
+		return landlockArgv(dir, inner, caps)
+	case SandboxBwrap:
+		// falls through to the bwrap assembly below
+	default:
 		// No OS boundary: still bound the damage a runaway build can do, but
 		// leave RLIMIT_NPROC alone (see Limits.Procs).
 		return withLimits(inner, caps.Limits, false)
@@ -226,6 +257,20 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	if caps.HomeDir != "" && caps.HomeDir != dir {
 		args = append(args, "--bind", caps.HomeDir, caps.HomeDir)
 	}
+	// A linked git worktree's parent .git store lies OUTSIDE work entirely -
+	// bind it at its own real path, same exception as the outside-cwd branch
+	// above, since bwrap cannot remap two disjoint host trees into one mount
+	// without giving the child two names for one place. Read-only for the
+	// shared store, read-write for the worktree's own gitdir nested inside it
+	// (see worktreeGrants) - and in that order, because a later bwrap bind
+	// layers over an earlier one.
+	wtRW, wtRO := worktreeGrants(work, dir)
+	for _, common := range wtRO {
+		args = append(args, "--ro-bind", common, common)
+	}
+	for _, gitdir := range wtRW {
+		args = append(args, "--bind", gitdir, gitdir)
+	}
 	args = append(args, rootAliasArgs(work, dir, caps)...)
 	// The sandbox's own root is a throwaway tmpfs: anything written there is gone
 	// when the command exits. That is how we ate the agent's files once already
@@ -249,7 +294,7 @@ func rootAliasArgs(work, dir string, caps Caps) []string {
 	if err != nil {
 		return nil // unreadable node dir: the fixed mount alone is still correct
 	}
-	taken := reservedRoots(dir, caps)
+	taken := reservedRoots(dir, caps, worktreeCommonGitDirs(work, dir)...)
 	var args []string
 	for _, e := range entries {
 		name := e.Name()
@@ -270,8 +315,9 @@ const maxRootAliases = 100
 // reservedRoots are the top-level names inside the sandbox that a workspace entry
 // may NOT shadow: the system view's mountpoints, the workspace mount itself, and
 // the first component of every host path we bind (the isolated $HOME, an outside
-// cwd, the exec_path toolchains - bwrap creates those parent dirs at the root).
-func reservedRoots(dir string, caps Caps) map[string]bool {
+// cwd, the exec_path toolchains, a linked worktree's parent .git store - bwrap
+// creates those parent dirs at the root).
+func reservedRoots(dir string, caps Caps, extra ...string) map[string]bool {
 	m := map[string]bool{
 		"usr": true, "bin": true, "lib": true, "lib64": true, "sbin": true,
 		"etc": true, "proc": true, "dev": true, "tmp": true,
@@ -285,6 +331,9 @@ func reservedRoots(dir string, caps Caps) map[string]bool {
 	add(caps.HomeDir)
 	add(dir)
 	for _, p := range caps.ExtraPath {
+		add(p)
+	}
+	for _, p := range extra {
 		add(p)
 	}
 	return m
@@ -329,16 +378,28 @@ func isDir(p string) bool {
 // lives in RAM, and a `go build`'s temporary objects are exactly the kind of
 // multi-gigabyte write that would then become memory pressure on the server.
 func tmpArgs(caps Caps) []string {
+	if tmp := homeTmpDir(caps); tmp != "" {
+		return []string{"--bind", tmp, "/tmp"}
+	}
+	return []string{"--tmpfs", "/tmp"}
+}
+
+// homeTmpDir is caps.HomeDir/tmp, created on demand - "" when HomeDir is
+// unset or the dir can't be created, so callers fall back to whatever /tmp
+// isolation their sandbox mode offers (bwrap: a tmpfs; landlock: the real
+// /tmp, since it has no mount namespace to privatize one - see
+// landlockTmpDir).
+func homeTmpDir(caps Caps) string {
 	if caps.HomeDir == "" {
-		return []string{"--tmpfs", "/tmp"}
+		return ""
 	}
 	tmp := filepath.Join(caps.HomeDir, "tmp")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		slog.Warn("could not create the sandbox tmp dir; falling back to an in-memory /tmp",
+		slog.Warn("could not create the sandbox tmp dir; falling back to a shared /tmp",
 			"component", "workspace", "dir", tmp, "err", err)
-		return []string{"--tmpfs", "/tmp"}
+		return ""
 	}
-	return []string{"--bind", tmp, "/tmp"}
+	return tmp
 }
 
 // toolchainArgs read-only-binds the operator's configured exec_path entries
@@ -414,4 +475,302 @@ func bwrapPath() string {
 		return p
 	}
 	return bwrapBinary
+}
+
+// ---------------------------------------------------------------------------
+// Landlock mode: no mount namespace, so paths keep their real host names -
+// the child self-restricts (via the __sandbox-exec re-exec) instead of
+// running inside a constructed filesystem view. See landlock_linux.go for the
+// actual ruleset (build-tagged: Landlock is Linux-only).
+// ---------------------------------------------------------------------------
+
+// probeLandlockHook lets a test simulate an unsupported kernel (ABI < 3)
+// without one - ResolveSandbox's fail-closed path needs exercising even on a
+// host (like CI) that DOES have working Landlock. probeLandlock itself is
+// build-tag-selected (landlock_linux.go / landlock_other.go).
+var probeLandlockHook = probeLandlock
+
+// landlockArgv builds the [self, __sandbox-exec, --rw …, --ro …, --, inner…]
+// argv childArgv's landlock branch execs - the RunArgv/RunPipeline path,
+// which has no extra grants beyond the node's own scope (WrapArgv is the
+// seam for a caller that needs more, e.g. internal/acp's skill paths).
+func landlockArgv(dir string, inner []string, caps Caps) []string {
+	rw, ro := landlockGrants(dir, caps)
+	return assembleSandboxExec(rw, ro, withLimits(inner, caps.Limits, false))
+}
+
+// assembleSandboxExec is the ONE place a __sandbox-exec argv is built from a
+// grant set and a final command - shared by landlockArgv and WrapArgv so the
+// two callers can't drift on flag order or the self-exec path.
+func assembleSandboxExec(rw, ro, inner []string) []string {
+	args := []string{landlockSelfExe(), SandboxExecArg}
+	for _, p := range rw {
+		args = append(args, "--rw", p)
+	}
+	for _, p := range ro {
+		args = append(args, "--ro", p)
+	}
+	args = append(args, "--")
+	return append(args, inner...)
+}
+
+// landlockGrants computes the read-write and read-only path grants for a
+// child rooted at dir: RW is the node's own scope (mirrors childArgv's bwrap
+// branch - its own WorkRoot/cwd, the isolated HOME, and tmp), RO is the
+// system view plus the operator's toolchain extras. Landlock can't remap
+// paths (no mount namespace - see SandboxWorkRoot's doc), so unlike bwrap
+// these are the child's REAL host paths, not a fixed mount.
+func landlockGrants(dir string, caps Caps) (rw, ro []string) {
+	work := caps.WorkRoot
+	if work == "" || !isDir(work) {
+		work = dir
+	}
+	rw = append(rw, work)
+	if _, ok := relUnder(work, dir); !ok {
+		// dir lies outside the node's own workspace (the gate's baseline
+		// worktree is the only caller this happens for) - grant it directly,
+		// mirroring bwrap's childArgv "outside cwd" branch.
+		rw = append(rw, dir)
+	}
+	if caps.HomeDir != "" && caps.HomeDir != work {
+		rw = append(rw, caps.HomeDir)
+	}
+	// A linked git worktree (dag's read-only-node isolation) also needs its
+	// parent clone's .git - writable only for its OWN gitdir, read-only for the
+	// shared store (see worktreeGrants). Checked on both work and dir since a
+	// check's workdir can be a subdirectory of the node's own root.
+	wtRW, wtRO := worktreeGrants(work, dir)
+	rw = append(rw, wtRW...)
+	rw = append(rw, landlockTmpDir(caps))
+	// /dev RW (not RO): DAC still governs which device nodes actually do
+	// anything (an agent gains no reach a world-writable /dev/null didn't
+	// already offer), and `go vet` empirically OPENS /dev/null for WRITE
+	// (observed: "go: ... open /dev/null: permission denied" under an RO
+	// grant) - see the shim confinement test.
+	rw = append(rw, "/dev")
+
+	ro = append(ro, wtRO...)
+	ro = append(ro, landlockSystemDirs()...)
+	ro = append(ro, toolchainROPaths(caps)...)
+	return rw, ro
+}
+
+// landlockSystemDirs mirrors bwrapSystemArgs' read-only system view. Unlike
+// bwrap's per-file /etc allowlist, the whole of /etc is granted: Landlock adds
+// restrictions on TOP of ordinary DAC permissions, never loosens them, so
+// /etc/shadow stays unreadable by UID regardless. /proc is granted RO too -
+// empirically, `go build`/`git` don't need it, but Node does: without it
+// `os.cpus()` silently returns an empty array (libuv reads /proc/cpuinfo),
+// which would size npm/webpack/jest's worker pools at zero.
+func landlockSystemDirs() []string {
+	return []string{"/usr", "/bin", "/lib", "/lib64", "/sbin", "/etc", "/proc"}
+}
+
+// toolchainROPaths mirrors toolchainArgs (the bwrap equivalent): the
+// operator's workspace.exec_path entries, plus a bin/ entry's FHS siblings
+// (lib, libexec, share) so a prefix toolchain's binaries and their linked
+// libraries both resolve.
+func toolchainROPaths(caps Caps) []string {
+	var out []string
+	for _, p := range caps.ExtraPath {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		out = append(out, p)
+		if filepath.Base(p) != "bin" {
+			continue
+		}
+		prefix := filepath.Dir(p)
+		for _, sib := range []string{"lib", "libexec", "share"} {
+			out = append(out, filepath.Join(prefix, sib))
+		}
+	}
+	return out
+}
+
+// landlockTmpDir is the RW tmp grant: caps.HomeDir/tmp when available
+// (homeTmpDir - shared with bwrap's tmpArgs), else the real /tmp. Landlock has
+// no mount namespace, so unlike bwrap's private tmpfs fallback this is the
+// SAME /tmp every other process on the host sees - no worse than SandboxNone
+// without an isolated HOME configured, just not private.
+func landlockTmpDir(caps Caps) string {
+	if tmp := homeTmpDir(caps); tmp != "" {
+		return tmp
+	}
+	return os.TempDir()
+}
+
+// landlockSelfExe resolves this binary's own path for the __sandbox-exec
+// self-spawn (os.Executable() - askpass already relies on this working).
+// ResolveSandbox's probe already proved this exact lookup succeeds before any
+// child runs, so a failure here is unreachable in a running server;
+// falling back to argv[0] keeps a would-be failure a clear exec error rather
+// than a panic (mirrors bwrapPath's rationale).
+func landlockSelfExe() string {
+	if p, err := os.Executable(); err == nil {
+		return p
+	}
+	return os.Args[0]
+}
+
+// RunSandboxExecIfInvoked is the Landlock analogue of the GIT_ASKPASS argv[0]
+// dispatch (internal/tools/git.go's isGitAskpassInvocation / cmd/quack's
+// main): when this process was spawned as [self, SandboxExecArg, …] by
+// landlockArgv/WrapArgv, apply the ruleset and exec the target - never
+// returns on success. Call this at the very top of main() (see
+// cmd/quack/main.go), before cobra/testing.Main ever run; this package's own
+// tests mirror the call in a TestMain for the same reason askpass's do.
+func RunSandboxExecIfInvoked() {
+	if len(os.Args) < 2 || os.Args[1] != SandboxExecArg {
+		return
+	}
+	// SandboxExecMain only ever RETURNS for --probe (or an error) - a real
+	// target exec's success path replaces this process and never comes back.
+	// Always os.Exit here regardless, so the caller (main, or a test
+	// binary's TestMain) can never fall through into its own normal
+	// execution - which, in a test binary, would silently re-run the whole
+	// suite inside what was meant to be a throwaway probe/shim child.
+	if err := SandboxExecMain(os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, "sandbox-exec:", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// SandboxTmpDir is the TMPDIR a subprocess built OUTSIDE RunArgv/RunPipeline
+// (internal/acp) should be given: the granted tmp dir under landlock (see
+// childEnv's doc - Landlock can't remap /tmp, so a tool must be TOLD where
+// its writable tmp lives), the server's real /tmp otherwise (bwrap remaps it
+// wholesale; none has no grant to honor).
+func SandboxTmpDir(caps Caps) string {
+	if caps.Sandbox == SandboxLandlock {
+		return landlockTmpDir(caps)
+	}
+	return os.TempDir()
+}
+
+// ChildPath is the hermetic PATH any subprocess built OUTSIDE RunArgv/
+// RunPipeline should run with (internal/acp's ACP agent, which constructs its
+// own exec.Cmd) - caps.ExtraPath first, then the same fixed system
+// directories every other child gets. See childPath.
+func ChildPath(caps Caps) string {
+	return childPath(caps)
+}
+
+// WrapArgv wraps argv (already command[0]+args, resolved by the caller) to
+// run confined at dir under caps.Sandbox, with extraRO/extraRW grants added on
+// top of the caller's own scope (internal/acp's skill paths and exec_path) -
+// a linked worktree's parent .git store is granted automatically
+// (worktreeCommonGitDirs via landlockGrants), with no extraRW needed for it.
+// The ONE seam a caller outside RunArgv/newChildCmd routes through.
+//
+// landlock: fully confines, same mechanism as childArgv's landlock branch.
+// none: returns argv unchanged by design - there is no boundary to wrap into.
+// bwrap: ALSO returns argv unchanged for now - ponytail: wiring an ACP
+// subprocess into the SAME bind/remount/chdir machinery childArgv assembles
+// for RunArgv (fixed /workspace, root aliases, the outside-cwd exception) is
+// real work with its own edge cases the ACP spawn shape doesn't share with a
+// gate check; landlock is what the container deploy this spec exists for
+// actually uses, and bwrap's host deploys already ran the ACP agent bare.
+// Ceiling: an ACP round under `sandbox: bwrap` stays unconfined until this is
+// wired.
+func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
+	if len(argv) == 0 || caps.Sandbox != SandboxLandlock {
+		return argv
+	}
+	rw, ro := landlockGrants(dir, caps)
+	rw = append(rw, extraRW...)
+	ro = append(ro, extraRO...)
+	return assembleSandboxExec(rw, ro, argv)
+}
+
+// ---------------------------------------------------------------------------
+// Linked-worktree grants: dag's read-only-node isolation (worktree per
+// reviewer/explorer node) gives each such node its own `git worktree`, linked
+// off the plan's ONE shared setup clone rather than an independent clone. A
+// linked worktree's OWN ".git" is a pointer FILE (not a directory) reading
+// "gitdir: <parent>/.git/worktrees/<name>" - the actual object database,
+// refs, and per-worktree index/HEAD/logs all live under the PARENT clone's
+// ".git", found via that gitdir's own "commondir" file. Granting only the
+// worktree's own directory leaves every git command inside it unable to see
+// its own history ("not a git repository" or worse, a silent empty log) -
+// this resolves the one extra grant that fixes it, for both sandbox modes.
+// ---------------------------------------------------------------------------
+
+// WorktreeCommonGitDir resolves the shared ".git" directory a linked git
+// worktree at dir points at ("" when dir is not a linked worktree at all - a
+// plain clone's own ".git" is a directory, not a pointer file, and this
+// returns "" for it too since a plain clone needs no extra grant).
+func WorktreeCommonGitDir(dir string) string {
+	_, common := worktreeGitDirs(dir)
+	return common
+}
+
+// worktreeGitDirs resolves both halves a linked worktree needs: its OWN gitdir
+// (the "gitdir:" pointer target, .git/worktrees/<name> - HEAD and the index
+// live here, so git writes it on an ordinary `status`) and the shared common
+// dir it nests inside (objects, refs, packed-refs, logs). Both "" when dir is
+// not a linked worktree.
+func worktreeGitDirs(dir string) (gitdir, common string) {
+	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		return "", ""
+	}
+	const prefix = "gitdir: "
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, prefix) {
+		return "", ""
+	}
+	gitdir = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(dir, gitdir)
+	}
+	commonBytes, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil {
+		return "", ""
+	}
+	common = strings.TrimSpace(string(commonBytes))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitdir, common)
+	}
+	return filepath.Clean(gitdir), filepath.Clean(common)
+}
+
+// worktreeGrants splits the linked-worktree grants for paths (typically (work,
+// dir), often the same directory) into the WRITABLE per-worktree gitdirs and
+// the READ-ONLY shared common dirs, deduped.
+//
+// The split is the point: granting the common dir read-write would let a
+// read-only node (a reviewer or explorer in its own worktree) rewrite the
+// IMPLEMENTER's refs and object store - the very sharing the worktree
+// isolation exists to end. Measured: with the common dir read-only and only
+// the per-worktree gitdir writable, `git status`, `git log` and `git diff` all
+// still work inside the worktree, while writing <common>/refs/heads/X is
+// denied. Landlock applies the most specific enclosing rule, and bwrap's later
+// binds layer over earlier ones, so the writable gitdir nested inside the
+// read-only common dir works in both modes.
+func worktreeGrants(paths ...string) (rw, ro []string) {
+	seenRW, seenRO := map[string]bool{}, map[string]bool{}
+	for _, p := range paths {
+		gitdir, common := worktreeGitDirs(p)
+		if common == "" {
+			continue
+		}
+		if !seenRO[common] {
+			seenRO[common] = true
+			ro = append(ro, common)
+		}
+		if gitdir != "" && !seenRW[gitdir] {
+			seenRW[gitdir] = true
+			rw = append(rw, gitdir)
+		}
+	}
+	return rw, ro
+}
+
+// worktreeCommonGitDirs is worktreeGrants' read-only half, for callers that
+// only need the paths (rootAliasArgs' reserved-name set).
+func worktreeCommonGitDirs(paths ...string) []string {
+	_, ro := worktreeGrants(paths...)
+	return ro
 }

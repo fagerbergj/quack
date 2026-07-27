@@ -1444,13 +1444,11 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) - the harness "+
 		"clones it and checks out that branch for you, BEFORE any node runs, AT THE ROOT of each repo-touching "+
 		"node's own working directory: the repo IS that node's working directory, not a subdirectory inside it. "+
-		"That node's task MUST say the repo is ALREADY cloned and checked out right there - never instruct the "+
-		"worker to clone THIS repository (no \"Clone <url>\" wording; the worker starts inside it) - and must "+
-		"refer to files by plain repo-relative path (internal/foo.go, never ./repo/… or /workspace/…). A node "+
-		"whose job is to examine a DIFFERENT repository (a comparison target, a dependency) SHOULD be told to "+
-		"clone that other repo into its own working directory itself - that is allowed and expected. Repo-changing "+
-		"work is committed locally; delivery pushes the branch and opens the PR after the trust gate passes - no "+
-		"node ever pushes or opens a PR itself. ",
+		"That node's task must refer to files by plain repo-relative path (internal/foo.go, never ./repo/… or "+
+		"/workspace/…). A node whose job is to examine a DIFFERENT repository (a comparison target, a dependency) "+
+		"SHOULD be told to clone that other repo into its own working directory itself - that is allowed and "+
+		"expected. Repo-changing work is committed locally; delivery pushes the branch and opens the PR after the "+
+		"trust gate passes - no node ever pushes or opens a PR itself. ",
 		owner, repo, base, p.Repository.CloneURL, base)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d).\n\n", p.Issue.Number, p.Issue.Number)
@@ -1535,7 +1533,7 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 		b.WriteString("Do not assert a dependency version, action tag, or API detail from memory as if it were current - if you have not verified it this session (checked the repo, fetched a page), say \"the current stable X\" rather than naming a specific version number; a stale one recalled from training data reads as confidently wrong.")
 		return b.String()
 	}
-	b.WriteString("If the task needs code changes, work at your workspace root (the repo is already cloned and checked out there for you - plain relative paths, no prefix), commit your work locally on the branch already checked out for you, then call stage_pr with a title and body - you do not push or open the pull request yourself ")
+	b.WriteString("If the task needs code changes, work at your workspace root, commit your work locally on the branch already checked out for you, then call stage_pr with a title and body - you do not push or open the pull request yourself ")
 	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); it is opened for you once your work passes review. ", owner, repo, base)
 	b.WriteString("Your final answer is posted back automatically. ")
 	b.WriteString("Answer concisely and reference any branch, PR, or review you staged.")

@@ -45,6 +45,41 @@ func TestOpencodeEnvMcpServersShape(t *testing.T) {
 	}
 }
 
+// TestOpencodeEnvDeniesCloneAndPush pins the clone-deny half of the worktree-isolation
+// follow-up: cloning is unnecessary now that the environment block
+// (internal/acp's environmentBlock) shows the agent what's already on disk,
+// and denied for the same reason git push already is - mirror the git push
+// deny's exact shape (bare command + wildcard variant) for git clone and
+// gh repo clone.
+func TestOpencodeEnvDeniesCloneAndPush(t *testing.T) {
+	env := opencodeEnv(config.ProviderConfig{}, config.AgentConfig{
+		Model: "m",
+		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}},
+	}, nil)
+	raw := strings.TrimPrefix(env[0], "OPENCODE_CONFIG_CONTENT=")
+
+	var cfg struct {
+		Permission struct {
+			Bash map[string]string `json:"bash"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("OPENCODE_CONFIG_CONTENT: %v:\n%s", err, raw)
+	}
+	for _, denied := range []string{
+		"git push", "git push *",
+		"git clone", "git clone *",
+		"gh repo clone", "gh repo clone *",
+	} {
+		if got := cfg.Permission.Bash[denied]; got != "deny" {
+			t.Errorf("bash permission[%q] = %q, want %q", denied, got, "deny")
+		}
+	}
+	if cfg.Permission.Bash["*"] != "allow" {
+		t.Errorf(`bash permission["*"] = %q, want "allow"`, cfg.Permission.Bash["*"])
+	}
+}
+
 // TestAcpChildEnvAgentOverridesWorkspace: workspace.env is the deployment-wide
 // default; a matching key in the agent's own acp.env is more specific and
 // wins - the precedence rule documented on WorkspaceConfig.Env.

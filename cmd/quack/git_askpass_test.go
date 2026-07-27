@@ -9,17 +9,21 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/tools"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestMain mirrors main()'s argv[0] dispatch so the askpass-exec test below
-// can run the REAL mechanism: it symlinks the test binary under the askpass
-// link name and execs it exactly the way git execs $GIT_ASKPASS - direct
-// program path, prompt as the single argument, no shell. Without this, tests
-// could only call the answer function in-process and would never catch an
-// unexecutable GIT_ASKPASS value (the exact live failure this guards:
-// GIT_ASKPASS="<binary> git-askpass" made git look for a file literally
-// named "quack git-askpass").
+// TestMain mirrors main()'s dispatch so tests can exercise the REAL
+// self-exec mechanisms rather than calling their logic in-process:
+//   - __sandbox-exec (workspace.RunSandboxExecIfInvoked): the Landlock shim.
+//   - GIT_ASKPASS (isGitAskpassInvocation): symlinks the test binary under the
+//     askpass link name and execs it exactly the way git execs $GIT_ASKPASS -
+//     direct program path, prompt as the single argument, no shell. Without
+//     this, tests could only call the answer function in-process and would
+//     never catch an unexecutable GIT_ASKPASS value (the exact live failure
+//     this guards: GIT_ASKPASS="<binary> git-askpass" made git look for a
+//     file literally named "quack git-askpass").
 func TestMain(m *testing.M) {
+	workspace.RunSandboxExecIfInvoked()
 	if isGitAskpassInvocation() {
 		gitAskpassMain(os.Args, os.Stdout)
 		os.Exit(0)

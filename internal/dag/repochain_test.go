@@ -34,14 +34,44 @@ func TestWorkspaceNodeID(t *testing.T) {
 		{"no setup: explorer gets its own dir", Plan{}, Node{ID: "n1", AgentName: explorerAgent}, "n1"},
 		{"no setup: everyone else gets their own dir", Plan{}, Node{ID: "n1", AgentName: "researcher"}, "n1"},
 		{"setup, non-repo agent: own dir", Plan{Setup: setup}, Node{ID: "n1", AgentName: "researcher"}, "n1"},
-		{"setup, implementer: shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: implementerAgent}, workspace.SharedRepoScope},
-		{"setup, reviewer: shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: reviewerAgent}, workspace.SharedRepoScope},
-		{"setup, explorer: shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: explorerAgent}, workspace.SharedRepoScope},
+		{"setup, implementer (the writer): shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: implementerAgent}, workspace.SharedRepoScope},
+		// Read-only qualifying nodes keep their OWN dir even under Setup - it's
+		// provisioned as a linked worktree of the shared clone (worktreeParentID),
+		// never the shared clone directory itself (see worktreeParentID).
+		{"setup, reviewer: own dir (worktree)", Plan{Setup: setup}, Node{ID: "n1", AgentName: reviewerAgent}, "n1"},
+		{"setup, explorer: own dir (worktree)", Plan{Setup: setup}, Node{ID: "n1", AgentName: explorerAgent}, "n1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := workspaceNodeID(c.plan, c.node); got != c.want {
 				t.Errorf("workspaceNodeID = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestWorktreeParentID pins the OTHER half of the picture workspaceNodeID
+// alone doesn't show: a read-only qualifying node's own dir is a git
+// worktree OF the shared clone, named here - "" for a writer (it gets the
+// shared clone directly) and for anything with no plan.Setup.
+func TestWorktreeParentID(t *testing.T) {
+	setup := &Setup{Repo: "r", BaseRef: "main", WorkBranch: "w"}
+	cases := []struct {
+		name string
+		plan Plan
+		node Node
+		want string
+	}{
+		{"no setup: nothing", Plan{}, Node{ID: "n1", AgentName: reviewerAgent}, ""},
+		{"setup, implementer: not a worktree (it's the writer)", Plan{Setup: setup}, Node{ID: "n1", AgentName: implementerAgent}, ""},
+		{"setup, reviewer: worktree of the shared clone", Plan{Setup: setup}, Node{ID: "n1", AgentName: reviewerAgent}, workspace.SharedRepoScope},
+		{"setup, explorer: worktree of the shared clone", Plan{Setup: setup}, Node{ID: "n1", AgentName: explorerAgent}, workspace.SharedRepoScope},
+		{"setup, other agent: not a worktree", Plan{Setup: setup}, Node{ID: "n1", AgentName: "researcher"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := worktreeParentID(c.plan, c.node); got != c.want {
+				t.Errorf("worktreeParentID = %q, want %q", got, c.want)
 			}
 		})
 	}
@@ -55,17 +85,17 @@ func TestNonTerminalRepoChainNode(t *testing.T) {
 		{ID: "review", AgentName: reviewerAgent, DependsOn: []string{"impl2"}},
 	}}
 	if !nonTerminalRepoChainNode(plan, plan.Nodes[0]) {
-		t.Error("impl1: want non-terminal (impl2/review depend on it)")
+		t.Error("impl1: want non-terminal (impl2 - also a writer - depends on it)")
 	}
-	if !nonTerminalRepoChainNode(plan, plan.Nodes[1]) {
-		t.Error("impl2: want non-terminal (review depends on it)")
+	if nonTerminalRepoChainNode(plan, plan.Nodes[1]) {
+		t.Error("impl2: want terminal - review is read-only now (its own worktree), not a writer depending on impl2's branch state")
 	}
 	if nonTerminalRepoChainNode(plan, plan.Nodes[2]) {
-		t.Error("review: want terminal (nothing repo-touching depends on it)")
+		t.Error("review: want terminal (it's read-only, never in the writer set at all)")
 	}
 	other := Node{ID: "synth", AgentName: "synthesizer", DependsOn: []string{"review"}}
 	if nonTerminalRepoChainNode(plan, other) {
-		t.Error("synth: not a repo-touching node, want false regardless of position")
+		t.Error("synth: not a writer node, want false regardless of position")
 	}
 	noSetup := Plan{Nodes: plan.Nodes}
 	if nonTerminalRepoChainNode(noSetup, plan.Nodes[0]) {

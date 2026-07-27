@@ -24,6 +24,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/serve"
 	"github.com/fagerbergj/quack/internal/wizard"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // version is the build stamp, overridden at release time via
@@ -34,6 +35,10 @@ import (
 var version = "dev"
 
 func main() {
+	// __sandbox-exec mode, dispatched on argv[1] BEFORE cobra: the Landlock
+	// self-exec (see workspace.RunSandboxExecIfInvoked) - never returns on
+	// success (syscall.Exec replaces this process).
+	workspace.RunSandboxExecIfInvoked()
 	// GIT_ASKPASS mode, dispatched on argv[0] BEFORE cobra: when this binary
 	// is exec'd through the workspace askpass symlink (git runs $GIT_ASKPASS
 	// directly as one program path - see cmd/quack/git_askpass.go), answer

@@ -67,6 +67,16 @@ func (h *Hub) CancelRun(chatID string) bool {
 	return true
 }
 
+// HasRegisteredRun reports whether chatID currently has a run registered
+// (RegisterRun called, UnregisterRun not yet) - covers a run still queued on
+// the orchestrator's runSem as well as one actively executing, unlike Active
+// (started at first Publish, which happens only once a run holds its slot).
+// Workspace GC's one signal for "never reap this scope mid-round".
+func (h *Hub) HasRegisteredRun(chatID string) bool {
+	_, ok := h.runs.Load(chatID)
+	return ok
+}
+
 // CancelResponse cancels chatID's active run only if responseID names it - the
 // UI stop button's guard against cancelling a run that isn't the one it
 // observed (a stale id from a superseded run 404s rather than silently

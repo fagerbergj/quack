@@ -215,6 +215,12 @@ const (
 	defaultWorkspaceAddressSpaceMB = 8192
 	defaultWorkspaceMaxProcs       = 512
 	defaultWorkspaceMaxFileSizeMB  = 1024
+	// Workspace GC defaults (see WorkspaceGCConfig) — TTL-based, not
+	// quota-based; filling the volume inside the TTL window isn't covered by
+	// this sweep.
+	defaultGCChatTTLHours    = 168 // 7 days
+	defaultGCScratchTTLHours = 6
+	defaultGCIntervalHours   = 1
 )
 
 // defaultCheckCommands is the check-prefix allowlist an UNSET
@@ -271,18 +277,42 @@ type WorkspaceConfig struct {
 	// Guards maps a tool name to its guard-ladder tier: none (default,
 	// unlisted) | judge | confirm | judge+confirm. See §4b of the design doc.
 	Guards map[string]string `yaml:"guards"`
-	// Sandbox is the OS boundary run_command/gate-check CHILD PROCESSES run
+	// Sandbox is the OS boundary run_command/gate-check/ACP CHILD PROCESSES run
 	// inside: "bwrap" (default — a bubblewrap mount/pid/user namespace: nothing
-	// outside the child's cwd and its isolated $HOME exists in its filesystem)
-	// or "none" (the child runs with the server user's full filesystem
-	// authority). "bwrap" on a host without a working bwrap is a startup ERROR,
-	// never a silent fallback; "none" logs a loud WARN. See
-	// internal/workspace.ResolveSandbox.
+	// outside the child's cwd and its isolated $HOME exists in its filesystem),
+	// "landlock" (a self-applied Landlock ruleset — no new namespace, so it
+	// works inside an unprivileged container where bwrap can't nest; requires a
+	// Linux kernel with Landlock ABI >= 3), or "none" (the child runs with the
+	// server user's full filesystem authority). "bwrap"/"landlock" on a host
+	// that can't prove the boundary works is a startup ERROR, never a silent
+	// fallback; "none" logs a loud WARN. See internal/workspace.ResolveSandbox.
 	Sandbox string `yaml:"sandbox"`
 	// Limits are the per-child-process resource limits (setrlimit) — a runaway
 	// build must not be able to take the host down with it.
 	Limits WorkspaceLimits `yaml:"limits"`
+	// GC is the periodic disk reaper (see internal/workspace.RunGC) — nothing
+	// else reclaims a chat's clones, or the gate's scratch worktrees, once a
+	// run finishes, on a volume kept deliberately persistent across rebuilds.
+	GC WorkspaceGCConfig `yaml:"gc"`
 }
+
+// WorkspaceGCConfig is the periodic reaper's tunables. Absent entirely, GC
+// still runs with every default below — workspace.gc: {} isn't required.
+//
+// ChatTTLHours/ScratchTTLHours: 0 or absent BOTH mean "use the default" — the
+// same convention every other workspace.* numeric knob in this file already
+// uses (see Limits.AddressSpaceMB). There is no separate "disable just this
+// TTL class" value; turn the whole sweep off with enabled: false instead.
+type WorkspaceGCConfig struct {
+	Enabled         *bool `yaml:"enabled"`           // default true
+	ChatTTLHours    int   `yaml:"chat_ttl_hours"`    // default 168 (7 days); chat scopes idle longer than this are reaped
+	ScratchTTLHours int   `yaml:"scratch_ttl_hours"` // default 6; gate baseline worktrees + .quack-home/tmp entries idle longer than this are reaped
+	IntervalHours   int   `yaml:"interval_hours"`    // default 1; sweep cadence
+}
+
+// IsEnabled reports whether the workspace GC sweep should run. nil (section
+// absent or enabled unset) defaults to true — mirrors OtelConfig.IsEnabled.
+func (g WorkspaceGCConfig) IsEnabled() bool { return g.Enabled == nil || *g.Enabled }
 
 // WorkspaceLimits are the per-child rlimits (see internal/workspace.Limits for
 // what each one means and why RLIMIT_NPROC only applies inside the sandbox).
@@ -1087,8 +1117,8 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.CheckCommands == nil {
 		w.CheckCommands = append([]string{}, defaultCheckCommands...)
 	}
-	if w.Sandbox != "bwrap" && w.Sandbox != "none" {
-		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap or none)", w.Sandbox)
+	if w.Sandbox != "bwrap" && w.Sandbox != "landlock" && w.Sandbox != "none" {
+		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap, landlock, or none)", w.Sandbox)
 	}
 	if w.Limits.AddressSpaceMB == 0 {
 		w.Limits.AddressSpaceMB = defaultWorkspaceAddressSpaceMB
@@ -1101,6 +1131,18 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	}
 	if w.Limits.AddressSpaceMB < 0 || w.Limits.MaxProcs < 0 || w.Limits.MaxFileSizeMB < 0 {
 		return fmt.Errorf("config: workspace.limits must be >= 0")
+	}
+	if w.GC.ChatTTLHours == 0 {
+		w.GC.ChatTTLHours = defaultGCChatTTLHours
+	}
+	if w.GC.ScratchTTLHours == 0 {
+		w.GC.ScratchTTLHours = defaultGCScratchTTLHours
+	}
+	if w.GC.IntervalHours == 0 {
+		w.GC.IntervalHours = defaultGCIntervalHours
+	}
+	if w.GC.ChatTTLHours < 0 || w.GC.ScratchTTLHours < 0 || w.GC.IntervalHours < 0 {
+		return fmt.Errorf("config: workspace.gc hours must be >= 0")
 	}
 	for i, gc := range w.GitCredentials {
 		if strings.TrimSpace(gc.Host) == "" {

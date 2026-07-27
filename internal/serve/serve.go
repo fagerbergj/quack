@@ -562,6 +562,34 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		Extensions: extensions,
 		Auth:       authMW,
 	})
+
+	// Workspace GC (internal/workspace.RunGC): the volume is deliberately
+	// persistent across rebuilds, and nothing else reclaims a chat's clones or
+	// the gate's scratch worktrees once a run finishes. Bound to ctx (the
+	// server's own lifetime) so it stops on shutdown; started in a goroutine so
+	// a sweep of a volume that may hold years of clones never blocks startup.
+	// runHub.HasRegisteredRun is the hard stop against reaping a live run's
+	// clone mid-round - it covers a run still queued as well as one executing.
+	gcHomeDir, err := jail.HomeDir(localUserID)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("workspace gc home dir init failed: %w", err)
+	}
+	gcCaps := workspace.Caps{
+		Timeout:   time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
+		ExtraPath: cfg.Workspace.ExecPath,
+		Env:       cfg.Workspace.Env,
+		HomeDir:   gcHomeDir,
+	}
+	gcCfg := workspace.GCConfig{
+		Enabled:    cfg.Workspace.GC.IsEnabled(),
+		ChatTTL:    time.Duration(cfg.Workspace.GC.ChatTTLHours) * time.Hour,
+		ScratchTTL: time.Duration(cfg.Workspace.GC.ScratchTTLHours) * time.Hour,
+		Interval:   time.Duration(cfg.Workspace.GC.IntervalHours) * time.Hour,
+	}
+	go workspace.RunGC(ctx, jail, gcCfg, runHub.HasRegisteredRun, func(pctx context.Context, dir string) error {
+		return tools.PruneWorktree(pctx, dir, gcCaps)
+	})
+
 	return handler, runCleanups, addr, nil
 }
 
@@ -926,12 +954,27 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
 				Command:         ac.Acp.Command,
 				Env:             env,
-				ExtraPath:       cfg.Workspace.ExecPath,
+				Caps:            workspaceCaps,
+				ExtraRO:         acpSkillPaths(),
 				Home:            workspaceCaps.HomeDir,
 				Preamble:        bundle.Prompt,
 				Jail:            jail,
 				UserID:          localUserID,
 				PermissionJudge: permJudge,
+				// Worktree isolation: a read-only qualifying node
+				// (reviewer, explorer) gets its own git worktree linked off
+				// the plan's shared setup clone, never the clone directly -
+				// same jail/caps/localUserID path SetupClone above uses, so
+				// it lands at exactly the coordinates the node's advisor-
+				// thread marker (WorktreeParent) names.
+				Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
+					parentDir, err := jail.Resolve(userID, chatID, workspace.NodeDir(parentNodeID))
+					if err != nil {
+						return "", fmt.Errorf("acp worktree: resolve parent clone: %w", err)
+					}
+					return tools.SetupWorktree(ctx, jail, userID, chatID, parentDir, workspace.NodeDir(nodeID),
+						workspace.WorktreeBranch(nodeID), workspaceCaps)
+				},
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "acp: %v", err)
@@ -1176,8 +1219,18 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		//   doom_loop: opencode's own stuck-detector asking "continue?" - no
 		//     is the loop-breaker semantics; the gate judges what came back.
 		//   .env reads: secrets hygiene.
+		//   git clone / gh repo clone: the environment block (internal/acp's
+		//     environmentBlock) now tells the agent factually what's already
+		//     on disk, so cloning is both unnecessary and, if attempted,
+		//     almost always a second unwanted copy of the SAME repo landing
+		//     inside its own cwd.
 		"permission": m{
-			"bash":               m{"git push": "deny", "git push *": "deny", "*": "allow"},
+			"bash": m{
+				"git push": "deny", "git push *": "deny",
+				"git clone": "deny", "git clone *": "deny",
+				"gh repo clone": "deny", "gh repo clone *": "deny",
+				"*": "allow",
+			},
 			"external_directory": m{"*": "deny"},
 			"doom_loop":          "deny",
 			"read":               m{"*.env": "deny", "*.env.*": "deny"},
