@@ -5,6 +5,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -736,6 +737,31 @@ func validateNoLiteralTokens(raw string) error {
 	return nil
 }
 
+// knownRenames maps a deprecated YAML key name → the replacement that should be used.
+// When an unknown field is detected by KnownFields and this map has an entry, the
+// loader appends a migration hint to the error message. Add entries here when you
+// deprecate a config key.
+var knownRenames = map[string]string{
+	"memory_role": "memory.bucket",
+}
+
+// scanForKnownRenames returns an error if any renamed (now unknown) key appears in
+// the raw YAML text, naming both the old key and the replacement.  This is a
+// purely mechanical check against the raw YAML lines and must run on the pre-expansion
+// text so it catches literal typos before env interpolation.
+func scanForKnownRenames(raw string) error {
+	for oldKey := range knownRenames {
+		// Match `oldKey:` at the start of a logical key (optionally preceded by
+		// whitespace inside a YAML mapping).  Anchored to word boundary so a longer
+		// name won't collide with an abbreviation.
+		re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(oldKey) + `:`)
+		if re.MatchString(raw) {
+			return fmt.Errorf("config: unknown field %q — use %s instead", oldKey, knownRenames[oldKey])
+		}
+	}
+	return nil
+}
+
 // coderModelFallbackEnv/researcherModelEnv implement agents.code-implementer's
 // documented model fallback (config/quack.yaml, §6 of
 // .quack/plan-pr5-tool-schemas.md): QUACK_CODER_MODEL, or QUACK_RESEARCHER_MODEL
@@ -763,6 +789,8 @@ func expandEnv(key string) string {
 }
 
 // Load reads the YAML at path, expands ${ENV} references, and validates it.
+// Unknown fields cause a startup error (KnownFields); known renames produce a
+// migration hint naming the replacement key.
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -771,10 +799,15 @@ func Load(path string) (*Config, error) {
 	if err := validateNoLiteralTokens(string(raw)); err != nil {
 		return nil, err
 	}
+	if err := scanForKnownRenames(string(raw)); err != nil {
+		return nil, err
+	}
 	expanded := os.Expand(string(raw), expandEnv)
 
 	var c Config
-	if err := yaml.Unmarshal([]byte(expanded), &c); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader([]byte(expanded)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	if err := c.validate(); err != nil {
