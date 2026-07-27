@@ -297,6 +297,32 @@ func TestCredentialForMatchesExactHostOnly(t *testing.T) {
 	}
 }
 
+// TestRunGitNeutralizesHooks: an executable .git/hooks/post-checkout that
+// writes a marker file must NOT fire when runGit checks out a branch - the
+// escape hatch a sandboxed ACP agent's own commit would otherwise leave
+// behind for this unconfined git binary to trigger.
+func TestRunGitNeutralizesHooks(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	repo := t.TempDir()
+	runGitT(t, filepath.Dir(repo), "clone", "--quiet", bare, repo)
+
+	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	marker := filepath.Join(repo, "hook-fired")
+	script := "#!/bin/sh\ntouch " + marker + "\n"
+	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	runGitT(t, repo, "checkout", "-b", "other-branch")
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("post-checkout hook fired - runGit did not neutralize .git/hooks")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // git_checkout - the reviewer's path to a PR branch. A shallow clone
 // (--depth 1, which git implies --single-branch for) lands on the default

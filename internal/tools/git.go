@@ -294,7 +294,10 @@ func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps,
 	defer cancel()
 
 	env := gitEnv(dir, caps, auth)
-	cmd := exec.CommandContext(cctx, bin, argv...)
+	// Hooks neutralized: an agent-written .git/hooks/* would otherwise run
+	// unsandboxed via this unconfined git binary.
+	fullArgv := append([]string{"-c", "core.hooksPath=/dev/null"}, argv...)
+	cmd := exec.CommandContext(cctx, bin, fullArgv...)
 	cmd.Dir = dir
 	cmd.Env = env
 	var outBuf, errBuf bytes.Buffer

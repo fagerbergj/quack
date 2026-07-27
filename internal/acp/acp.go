@@ -47,10 +47,14 @@ type Options struct {
 	// pre-merges workspace.env under the agent's own acp.env before building
 	// this, so agent-specific always wins here too.
 	Env []string
-	// ExtraPath is workspace.exec_path: operator-configured toolchain dirs
-	// prepended to the subprocess PATH, so the agent can run the same
-	// toolchain the gate's checks use.
-	ExtraPath []string
+	// Caps is the resolved workspace caps (internal/serve, once at startup) -
+	// its Sandbox mode and ExtraPath (workspace.exec_path) drive both the
+	// subprocess's hermetic PATH (workspace.ChildPath) and the OS boundary the
+	// spawn is wrapped in (workspace.WrapArgv), exactly like every other
+	// child process. ExtraRO adds grants on top (the skill paths handed to
+	// opencode), which Caps has no notion of.
+	Caps    workspace.Caps
+	ExtraRO []string
 	// Home is the subprocess $HOME - the jail's isolated per-user home
 	// (workspace.Caps.HomeDir), so the agent's own caches/state never land
 	// inside a cloned repo.

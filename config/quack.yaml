@@ -278,13 +278,21 @@ workspace:
   #     all work. The metachar filter is not applied on this path - it blocked no
   #     attack (`sh -c` never contained one of those characters), it only made
   #     agents write throwaway script files to route around it.
+  #   landlock - a self-applied Landlock ruleset (no new namespace): the child
+  #     restricts ITSELF then execs, so it works inside an unprivileged
+  #     container where bwrap can't nest. Requires Linux kernel >= 6.2
+  #     (Landlock ABI >= 3); the server REFUSES TO START otherwise. Paths keep
+  #     their real host names (no fixed /workspace remap - that needs a mount
+  #     namespace).
   #   none - children run with the server user's full filesystem authority.
   #     Logs a loud WARN at startup. Only sane when the whole server is already
   #     confined (a throwaway container/VM) or you trust the agents with that
   #     account. With no OS boundary the habit guard is all there is, so THERE
   #     run_command stays argv-only and still rejects & ; $ < > ` ( ).
-  sandbox: none   # bwrap cannot nest inside this Docker container (nested-namespace mount denied);
-                  # the container itself is the isolation boundary for this deploy.
+  sandbox: landlock   # bwrap can't nest inside this unprivileged Docker container (nested
+                      # mount-namespace denied); Landlock is a self-restriction, not a
+                      # namespace construction, so it works here and IS an OS-enforced
+                      # boundary (unlike `none`, which relied on the container alone).
 
   # Per-child resource limits (rlimits). A runaway build (`npm ci` on a hostile
   # repo, a test that allocates without bound) must not be able to take the host
