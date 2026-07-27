@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -411,16 +413,54 @@ func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles st
 	return boundExcerpt(answer, target)
 }
 
-// runJudgeAgent budgets the judge prompt to the judge model's context window
-// (fitJudgeAnswer) and runs one round (runJudgeRound). A call that still
-// errors - a 400 the byte/4 estimate didn't predict, a transient fault - gets
-// ONE retry with the answer clamped harder before runJudgeAgent gives up; the
-// caller (node.go) treats a returned error as a failed-closed gate, never a
-// pass, so a judge that can't be reached never ships an answer unvetted.
+// judgeRetryAttempts/judgeRetryBaseDelay: backoff for a transient
+// model-endpoint fault - typically a model swap in flight (#572). Separate
+// from the context-shrink retry below, which targets an oversized answer.
+const judgeRetryAttempts = 3
+const judgeRetryBaseDelay = 400 * time.Millisecond
+
+// isTransientJudgeErr reports an endpoint fault worth retrying, not a
+// genuine rejection (bad request, auth, context overflow) retrying repeats.
+func isTransientJudgeErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{"status 502", "status 503", "status 504", "status 429", "timeout", "deadline exceeded", "connection reset", "connection refused", "eof"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// runJudgeAgent budgets the judge prompt to the context window (fitJudgeAnswer),
+// retries a transient endpoint fault with backoff (#572), then falls back to
+// ONE harder-clamped retry for whatever's left (e.g. an unpredicted 400). The
+// caller (node.go) treats any remaining error as a failed-closed gate.
 func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
 	changedFiles := changedFilesSection(cfg, act)
 	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, act, 1.0)
-	v, err := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, act, emit)
+
+	var v verdict
+	var err error
+	for attempt := 1; attempt <= judgeRetryAttempts; attempt++ {
+		v, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, act, emit)
+		if err == nil || ctx.Err() != nil || !isTransientJudgeErr(err) || attempt == judgeRetryAttempts {
+			break
+		}
+		delay := judgeRetryBaseDelay * time.Duration(1<<uint(attempt-1))
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return verdict{}, ctx.Err()
+		}
+	}
 	if err == nil || ctx.Err() != nil {
 		return v, err
 	}
