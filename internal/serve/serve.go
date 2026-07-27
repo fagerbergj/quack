@@ -389,7 +389,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
-			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, agent.Compaction{}, ""); aerr != nil {
+			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, agent.Compaction{}, "", nil, ""); aerr != nil {
 				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
 			} else {
 				advisorAgent = built
@@ -426,7 +426,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// are resolved - the deterministic twin of `deliver` above, wired onto the
 	// executor once it exists (see executor.SetSetup below).
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn)
+	clientMap, modelMap, servers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -640,14 +640,14 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config)
 		return nil, fmt.Errorf("rubric.md: %w", err)
 	}
 	guidance := strings.TrimSpace(whatToRemember + "\n\n" + rubric)
-	return agent.BuildChat(b, m, nil, nil, agent.Compaction{}, guidance)
+	return agent.BuildChat(b, m, nil, nil, agent.Compaction{}, guidance, nil, "")
 }
 
 // buildAgents loads each configured agent bundle, builds its model and built-in
 // tools, exposes it over a co-located A2A server, and returns:
 // - clientMap: agent name → A2A client (for the DAG executor)
 // - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc) (map[string]adkagent.Agent, map[string]model.LLM, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
@@ -914,15 +914,53 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// External ACP coding agent (internal/acp): the bundle still supplies
 		// identity (card) and guidance (prompt.md, delivered as a per-round
 		// preamble - the subprocess owns its own system prompt); everything else
-		// about the native path (tools, memory, skills, compaction, A2A serving)
-		// doesn't apply. It joins clientMap directly - the executor only needs
-		// an adkagent.Agent, and this one implements RunNode so the gate drives
-		// it like a local worker.
+		// about the native path (tools, compaction, A2A serving) doesn't apply.
+		// It joins clientMap directly - the executor only needs an
+		// adkagent.Agent, and this one implements RunNode so the gate drives it
+		// like a local worker.
 		if ac.Acp != nil {
 			bundle, err := agent.LoadBundle(ac.Bundle)
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "bundle: %v", err)
 			}
+			// memory.md guidance (M6/A4): loaded the SAME way the native path
+			// loads it (agent.LoadBundleMemory) so an ACP bundle's "what to
+			// remember" guidance lives in ONE file instead of being hand-copied
+			// into prompt.md. An ACP agent has no memory tools - this is prose
+			// appended to its preamble, not a tool binding.
+			var memGuidance string
+			if taskStore != nil {
+				if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
+					return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
+				}
+			}
+			// The gate config (threshold/rounds/retrieval/read-only) and the
+			// skill roster, both computed BEFORE the preamble is assembled below
+			// so promptbuilder.Agent can state them as facts instead of them
+			// being hand-written into the bundle's prompt.md.
+			var grading string
+			if cfg.Gates.Enabled() && ac.IsGated() {
+				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && memGuidance != "")
+				if err != nil {
+					return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
+				}
+				gateCfgs[name] = agentGateCfg
+				grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
+			}
+			// Unscoped (the full built-in library, not ac.Skills): opencode's
+			// skills.paths (acpSkillPaths below) hands an ACP agent every
+			// built-in skill dir unrestricted, so the roster told to the model
+			// must match what's actually reachable rather than a native
+			// per-agent scope that doesn't apply here.
+			skillFms, err := builtinSkillSrc.ListFrontmatters(context.Background())
+			if err != nil {
+				return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
+			}
+			behaviour := bundle.Prompt
+			if g := strings.TrimSpace(memGuidance); g != "" {
+				behaviour += "\n\n" + g
+			}
+			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading)
 			env := opencodeEnv(prov, ac, acpSkillPaths())
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			// The ACP permission judge: the same safety-judge tier the native
@@ -957,7 +995,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Caps:            workspaceCaps,
 				ExtraRO:         acpSkillPaths(),
 				Home:            workspaceCaps.HomeDir,
-				Preamble:        bundle.Prompt,
+				Preamble:        preamble,
 				Jail:            jail,
 				UserID:          localUserID,
 				PermissionJudge: permJudge,
@@ -978,17 +1016,6 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "acp: %v", err)
-			}
-			if cfg.Gates.Enabled() && ac.IsGated() {
-				// An ACP agent's memory participation is keyed by memory.bucket (it
-				// has no memory.md/tools): the gate injects recall into its prompt
-				// (vetting.memoryRecall) and mines its PASSED answer for durable
-				// facts (memory.Commit's answer-extraction - staging tool not needed).
-				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && ac.Memory.Bucket != "")
-				if err != nil {
-					return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
-				}
-				gateCfgs[name] = agentGateCfg
 			}
 			clientMap[name] = ag
 			modelMap[name] = m
@@ -1060,30 +1087,39 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// Each agent gets its OWN load_skill/list_skills scope - config's
 		// agents.<name>.skills - not the full library (see newScopedSkillTS /
 		// internal/skillsource.Scoped): a researcher shouldn't see code-review
-		// skills, an implementer shouldn't see the planner's, etc.
+		// skills, an implementer shouldn't see the planner's, etc. skillFms is the
+		// same scope's frontmatters, rendered into the prompt (promptbuilder.Agent)
+		// so the model knows those names exist at all (ADK doesn't surface them).
 		agentSkillTS, err := newScopedSkillTS(ac.Skills)
 		if err != nil {
 			return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "skills toolset: %v", err)
 		}
-		comp := compactionFor(ac, m)
-		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance)
+		skillFms, err := skillsource.Scoped(builtinSkillSrc, ac.Skills).ListFrontmatters(context.Background())
 		if err != nil {
-			return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "build: %v", err)
+			return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
 		}
+		comp := compactionFor(ac, m)
 
 		// The agent is served PLAIN - the trust gate is applied per-node by the graph
 		// (dag.BuildWorkflow → vetting.RunGatedRefine), not wrapped around the agent.
-		// Here we only collect the per-agent gate config (base + this bundle's rubric
-		// override + memory participation) for the executor's cfgFor.
+		// Computed BEFORE Build so its grading facts can be rendered into the
+		// prompt instead of hand-written into the bundle's prompt.md.
 		if cfg.Gates.Enabled() && !ac.IsGated() {
 			slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
 		}
+		var grading string
 		if cfg.Gates.Enabled() && ac.IsGated() {
 			agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && memGuidance != "")
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 			}
 			gateCfgs[name] = agentGateCfg
+			grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
+		}
+
+		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading)
+		if err != nil {
+			return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "build: %v", err)
 		}
 
 		srv, err := agent.Serve(ag, sessions, memSvc)

@@ -29,7 +29,7 @@ func TestAgentLayers(t *testing.T) {
 		fakeTool{"web_search", "searches the web"},
 		fakeTool{"web_fetch", "fetches a URL"},
 	}
-	out := promptbuilder.Agent("web-researcher", "researches the web", tools, "## Steps\n1. Plan.")
+	out := promptbuilder.Agent("web-researcher", "researches the web", tools, nil, "## Steps\n1. Plan.", "")
 
 	cases := []struct {
 		layer string
@@ -37,7 +37,8 @@ func TestAgentLayers(t *testing.T) {
 	}{
 		{"identity name", "web-researcher"},
 		{"identity description", "researches the web"},
-		{"tools header", "## Tools"},
+		{"capabilities header", "## Capabilities"},
+		{"tools header", "### Tools"},
 		{"tool name", "web_search"},
 		{"tool description", "searches the web"},
 		{"behaviour", "## Steps"},
@@ -52,11 +53,87 @@ func TestAgentLayers(t *testing.T) {
 	}
 }
 
+// TestAgentSkillsRendered verifies a specialist agent's declared skill scope
+// renders as a Skills subsection (A1 - previously only Orchestrator did this;
+// a specialist had no way to learn its bound skill names exist at all).
+func TestAgentSkillsRendered(t *testing.T) {
+	skills := []*skill.Frontmatter{
+		{Name: "research-git-repos", Description: "clone and read a repo locally"},
+	}
+	out := promptbuilder.Agent("web-researcher", "researches the web", nil, skills, "", "")
+
+	for _, want := range []string{"### Skills", "load_skill", "research-git-repos", "clone and read a repo locally"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Agent() with skills missing %q in output:\n%s", want, out)
+		}
+	}
+}
+
+// TestAgentACPNoFabricatedTools verifies the ACP shape (nil tools, real
+// skills) never fabricates a Tools section - an external coding agent has no
+// quack tools, so the Capabilities layer must carry only what's real.
+func TestAgentACPNoFabricatedTools(t *testing.T) {
+	skills := []*skill.Frontmatter{{Name: "ponytail", Description: "laziest thing that works"}}
+	out := promptbuilder.Agent("code-implementer", "implements code", nil, skills, "## Ground rules\nCommit atomically.", "")
+
+	if strings.Contains(out, "### Tools") {
+		t.Error("Agent() with nil tools should never emit a ### Tools section")
+	}
+	for _, want := range []string{"### Skills", "ponytail", "## Ground rules", "## Capabilities"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Agent() ACP shape missing %q in output:\n%s", want, out)
+		}
+	}
+}
+
+// TestGradingFacts verifies the grading block states only what applies to a
+// given agent, sourced from its resolved gate config - never a fabricated
+// number - and is entirely absent for a judge-less agent.
+func TestGradingFacts(t *testing.T) {
+	g := promptbuilder.GradingFacts(0.7, 2, false, true)
+	for _, want := range []string{"0.7", "weakest-link", "2 revision round"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("GradingFacts missing %q in: %q", want, g)
+		}
+	}
+	if !strings.Contains(g, "zero retrieval activity") {
+		t.Error("GradingFacts should state the retrieval requirement when requireRetrieval is true")
+	}
+	if strings.Contains(g, "delivery tools") {
+		t.Error("GradingFacts should not state the read-only fact when readOnly is false")
+	}
+
+	if got := promptbuilder.GradingFacts(0.7, 0, false, false); got != "" {
+		t.Errorf("GradingFacts with judgeRounds=0 should be empty (no judge to score this agent), got %q", got)
+	}
+}
+
+// TestAgentGradingRendered verifies a non-empty grading block reaches the
+// assembled prompt as its own layer.
+func TestAgentGradingRendered(t *testing.T) {
+	grading := promptbuilder.GradingFacts(0.7, 1, true, false)
+	out := promptbuilder.Agent("code-reviewer", "reviews code", nil, nil, "", grading)
+
+	if !strings.Contains(out, "## Grading") {
+		t.Error("Agent() with a non-empty grading fact should emit a ## Grading section")
+	}
+	if !strings.Contains(out, "delivery tools") {
+		t.Error("Agent() grading section missing the read-only fact")
+	}
+}
+
+func TestAgentNoGrading(t *testing.T) {
+	out := promptbuilder.Agent("helper", "helps", nil, nil, "do stuff", "")
+	if strings.Contains(out, "## Grading") {
+		t.Error("Agent() should not emit ## Grading when grading is empty")
+	}
+}
+
 // TestWritingLayerAlways verifies the shared prose ruleset is injected even for
 // a bare agent (no tools, no behaviour) - it applies to every assembled prompt.
 func TestWritingLayerAlways(t *testing.T) {
 	for _, out := range []string{
-		promptbuilder.Agent("helper", "helps", nil, ""),
+		promptbuilder.Agent("helper", "helps", nil, nil, "", ""),
 		promptbuilder.Judge(nil, ""),
 		promptbuilder.Orchestrator("", nil, ""),
 	} {
@@ -67,9 +144,9 @@ func TestWritingLayerAlways(t *testing.T) {
 }
 
 func TestAgentNoTools(t *testing.T) {
-	out := promptbuilder.Agent("helper", "helps", nil, "do stuff")
-	if strings.Contains(out, "## Tools") {
-		t.Error("Agent() should not emit ## Tools section when no tools provided")
+	out := promptbuilder.Agent("helper", "helps", nil, nil, "do stuff", "")
+	if strings.Contains(out, "### Tools") {
+		t.Error("Agent() should not emit ### Tools section when no tools provided")
 	}
 	if !strings.Contains(out, "## Environment") {
 		t.Error("Agent() must always include ## Environment layer")
@@ -77,13 +154,13 @@ func TestAgentNoTools(t *testing.T) {
 }
 
 func TestAgentNoBehaviour(t *testing.T) {
-	out := promptbuilder.Agent("helper", "helps", nil, "")
+	out := promptbuilder.Agent("helper", "helps", nil, nil, "", "")
 	if !strings.Contains(out, "## Environment") {
 		t.Error("Agent() must include ## Environment even with empty behaviour")
 	}
 }
 
-// toolLine is how promptbuilder renders a tool in the ## Tools section
+// toolLine is how promptbuilder renders a tool in the ### Tools section
 // ("- `name` - desc"). Asserting this exact prefix proves the tool is in the
 // Tools list, distinct from a tool name merely mentioned in the behaviour/guidance.
 func toolLine(name string) string { return "- `" + name + "` -" }
@@ -100,7 +177,7 @@ func TestAgentMemoryToolsAndGuidance(t *testing.T) {
 	}
 	// Build sets behaviour = prompt.md + "\n\n" + memory.md; mirror that here.
 	behaviour := "## Steps\n1. Plan." + "\n\n" + "## What to remember\n\nStage durable tradecraft."
-	out := promptbuilder.Agent("web-researcher", "researches the web", memTools, behaviour)
+	out := promptbuilder.Agent("web-researcher", "researches the web", memTools, nil, behaviour, "")
 
 	for _, name := range []string{"stage_memory", "load_memory", "preload_memory"} {
 		if !strings.Contains(out, toolLine(name)) {
@@ -137,7 +214,7 @@ func TestAgentMemoryRealBundle(t *testing.T) {
 	memTools := append(builtins, loadmemorytool.New(), preloadmemorytool.New())
 
 	behaviour := bundle.Prompt + "\n\n" + mem // exactly what agent.Build assembles
-	out := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, memTools, behaviour)
+	out := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, memTools, nil, behaviour, "")
 
 	// Both deliberate memory tools must appear in the Tools section.
 	for _, name := range []string{"stage_memory", "load_memory", "preload_memory"} {

@@ -7,6 +7,7 @@ import (
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
@@ -18,9 +19,12 @@ import (
 // session before each model call so long runs can't overflow the window.
 // memoryGuidance, when non-empty, is the bundle's memory.md appended to the
 // behaviour layer (M6) - passed only for memory-participating agents when the
-// feature is on, so it never dangles otherwise.
-func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, comp, memoryGuidance, "")
+// feature is on, so it never dangles otherwise. skills is this agent's declared
+// skill scope (rendered so the model knows the names exist - see
+// promptbuilder.Agent); grading is the pre-rendered trust-gate contract
+// (promptbuilder.GradingFacts), "" for an ungated or judge-less agent.
+func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
+	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, "")
 }
 
 // BuildChat is Build with the agent's delegation mode PINNED to ModeChat at
@@ -33,11 +37,11 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 // turns that write into a pure read. Workers keep Build's unset mode: wrapped
 // in a workflow AgentNode they default to single-turn task mode (prompt-only,
 // no session history), which is exactly what the gate wants.
-func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, comp, memoryGuidance, llmagent.ModeChat)
+func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
+	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, llmagent.ModeChat)
 }
 
-func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, mode llmagent.Mode) (adkagent.Agent, error) {
+func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode) (adkagent.Agent, error) {
 	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
 	if g := strings.TrimSpace(memoryGuidance); g != "" {
 		behaviour = behaviour + "\n\n" + g
@@ -47,7 +51,7 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 		Description: desc,
 		Model:       m,
 		InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-			return promptbuilder.Agent(name, desc, tools, behaviour), nil
+			return promptbuilder.Agent(name, desc, tools, skills, behaviour, grading), nil
 		},
 		Tools:    tools,
 		Toolsets: toolsets,
