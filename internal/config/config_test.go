@@ -1268,8 +1268,8 @@ foobar: true
 // block (server, workspace, gates.judge, etc.) is caught.
 func TestKnownFieldsRejectsUnknownNestedKey(t *testing.T) {
 	for _, desc := range []struct {
-		yaml   string
-		field  string
+		yaml  string
+		field string
 	}{
 		{`
 server:
@@ -1279,7 +1279,7 @@ server:
 workspace:
   max_read_kb: 128
   foobar: x`,
-			"foobar"},     // workspace block
+			"foobar"}, // workspace block
 		{`
 gates:
   rubric: r
