@@ -229,6 +229,49 @@ func TestSandboxLandlockLinkedWorktreeGitWorks(t *testing.T) {
 	}
 }
 
+// TestSandboxLandlockWorktreeCannotWriteParentStore is the other half of the
+// worktree grant: the shared store is granted READ-ONLY, so a read-only node
+// (a reviewer or explorer in its own worktree) can read the writer's history
+// but cannot rewrite its refs or objects. Granting the whole parent .git
+// read-write - as the first cut of this did - would have left exactly the
+// cross-node write the worktree isolation exists to end.
+func TestSandboxLandlockWorktreeCannotWriteParentStore(t *testing.T) {
+	requireLandlock(t)
+	worktreeDir := setupLinkedWorktreeFixture(t)
+
+	common := WorktreeCommonGitDir(worktreeDir)
+	if common == "" {
+		t.Fatal("fixture is not a linked worktree")
+	}
+	caps := sandboxCaps(t, SandboxLandlock)
+	caps.WorkRoot = worktreeDir
+
+	// The per-worktree gitdir stays writable - git writes HEAD/index there on
+	// an ordinary status, so a read-only grant would break the case above.
+	gitdir, _ := worktreeGitDirs(worktreeDir)
+	res, err := RunArgv(context.Background(), worktreeDir,
+		[]string{"touch", filepath.Join(gitdir, "gc-probe")}, caps)
+	if err != nil {
+		t.Fatalf("touch in the worktree's own gitdir: %v (%q)", err, res.Output)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("writing the worktree's OWN gitdir was denied: exit=%d %q", res.ExitCode, res.Output)
+	}
+
+	// The shared store is not writable.
+	evil := filepath.Join(common, "refs", "heads", "EVIL")
+	res, err = RunArgv(context.Background(), worktreeDir, []string{"touch", evil}, caps)
+	if err != nil {
+		t.Fatalf("touch parent ref: %v (%q)", err, res.Output)
+	}
+	if res.ExitCode == 0 {
+		t.Errorf("wrote %s from inside a worktree - the parent store is NOT read-only", evil)
+	}
+	if _, statErr := os.Stat(evil); statErr == nil {
+		t.Errorf("%s exists - the write landed despite the grant", evil)
+	}
+}
+
 // TestWorktreeCommonGitDirResolvesParentGitDir pins the pointer-file parsing
 // itself, independent of the sandbox: a linked worktree's WorktreeCommonGitDir
 // resolves to the PARENT clone's real ".git" directory, and a plain (non-

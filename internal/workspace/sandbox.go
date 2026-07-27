@@ -257,12 +257,19 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	if caps.HomeDir != "" && caps.HomeDir != dir {
 		args = append(args, "--bind", caps.HomeDir, caps.HomeDir)
 	}
-	// A linked git worktree's parent .git store (see WorktreeCommonGitDir) lies
-	// OUTSIDE work entirely - bind it at its own real path, same exception as
-	// the outside-cwd branch above, since bwrap cannot remap two disjoint host
-	// trees into one mount without giving the child two names for one place.
-	for _, common := range worktreeCommonGitDirs(work, dir) {
-		args = append(args, "--bind", common, common)
+	// A linked git worktree's parent .git store lies OUTSIDE work entirely -
+	// bind it at its own real path, same exception as the outside-cwd branch
+	// above, since bwrap cannot remap two disjoint host trees into one mount
+	// without giving the child two names for one place. Read-only for the
+	// shared store, read-write for the worktree's own gitdir nested inside it
+	// (see worktreeGrants) - and in that order, because a later bwrap bind
+	// layers over an earlier one.
+	wtRW, wtRO := worktreeGrants(work, dir)
+	for _, common := range wtRO {
+		args = append(args, "--ro-bind", common, common)
+	}
+	for _, gitdir := range wtRW {
+		args = append(args, "--bind", gitdir, gitdir)
 	}
 	args = append(args, rootAliasArgs(work, dir, caps)...)
 	// The sandbox's own root is a throwaway tmpfs: anything written there is gone
@@ -528,11 +535,12 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	if caps.HomeDir != "" && caps.HomeDir != work {
 		rw = append(rw, caps.HomeDir)
 	}
-	// A linked git worktree (dag's read-only-node isolation) needs its PARENT
-	// clone's .git store too - see WorktreeCommonGitDir's doc. Checked on both
-	// work and dir since a check's workdir can be a subdirectory of the node's
-	// own root.
-	rw = append(rw, worktreeCommonGitDirs(work, dir)...)
+	// A linked git worktree (dag's read-only-node isolation) also needs its
+	// parent clone's .git - writable only for its OWN gitdir, read-only for the
+	// shared store (see worktreeGrants). Checked on both work and dir since a
+	// check's workdir can be a subdirectory of the node's own root.
+	wtRW, wtRO := worktreeGrants(work, dir)
+	rw = append(rw, wtRW...)
 	rw = append(rw, landlockTmpDir(caps))
 	// /dev RW (not RO): DAC still governs which device nodes actually do
 	// anything (an agent gains no reach a world-writable /dev/null didn't
@@ -541,6 +549,7 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	// grant) - see the shim confinement test.
 	rw = append(rw, "/dev")
 
+	ro = append(ro, wtRO...)
 	ro = append(ro, landlockSystemDirs()...)
 	ro = append(ro, toolchainROPaths(caps)...)
 	return rw, ro
@@ -693,44 +702,75 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 // plain clone's own ".git" is a directory, not a pointer file, and this
 // returns "" for it too since a plain clone needs no extra grant).
 func WorktreeCommonGitDir(dir string) string {
+	_, common := worktreeGitDirs(dir)
+	return common
+}
+
+// worktreeGitDirs resolves both halves a linked worktree needs: its OWN gitdir
+// (the "gitdir:" pointer target, .git/worktrees/<name> - HEAD and the index
+// live here, so git writes it on an ordinary `status`) and the shared common
+// dir it nests inside (objects, refs, packed-refs, logs). Both "" when dir is
+// not a linked worktree.
+func worktreeGitDirs(dir string) (gitdir, common string) {
 	data, err := os.ReadFile(filepath.Join(dir, ".git"))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	const prefix = "gitdir: "
 	line := strings.TrimSpace(string(data))
 	if !strings.HasPrefix(line, prefix) {
-		return ""
+		return "", ""
 	}
-	gitdir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	gitdir = strings.TrimSpace(strings.TrimPrefix(line, prefix))
 	if !filepath.IsAbs(gitdir) {
 		gitdir = filepath.Join(dir, gitdir)
 	}
 	commonBytes, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	common := strings.TrimSpace(string(commonBytes))
+	common = strings.TrimSpace(string(commonBytes))
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(gitdir, common)
 	}
-	return filepath.Clean(common)
+	return filepath.Clean(gitdir), filepath.Clean(common)
 }
 
-// worktreeCommonGitDirs resolves WorktreeCommonGitDir for each of paths,
-// deduped and skipping empties - paths is typically (work, dir), which are
-// often the same directory but occasionally differ (a check's workdir nested
-// under the node's own root).
-func worktreeCommonGitDirs(paths ...string) []string {
-	seen := map[string]bool{}
-	var out []string
+// worktreeGrants splits the linked-worktree grants for paths (typically (work,
+// dir), often the same directory) into the WRITABLE per-worktree gitdirs and
+// the READ-ONLY shared common dirs, deduped.
+//
+// The split is the point: granting the common dir read-write would let a
+// read-only node (a reviewer or explorer in its own worktree) rewrite the
+// IMPLEMENTER's refs and object store - the very sharing the worktree
+// isolation exists to end. Measured: with the common dir read-only and only
+// the per-worktree gitdir writable, `git status`, `git log` and `git diff` all
+// still work inside the worktree, while writing <common>/refs/heads/X is
+// denied. Landlock applies the most specific enclosing rule, and bwrap's later
+// binds layer over earlier ones, so the writable gitdir nested inside the
+// read-only common dir works in both modes.
+func worktreeGrants(paths ...string) (rw, ro []string) {
+	seenRW, seenRO := map[string]bool{}, map[string]bool{}
 	for _, p := range paths {
-		common := WorktreeCommonGitDir(p)
-		if common == "" || seen[common] {
+		gitdir, common := worktreeGitDirs(p)
+		if common == "" {
 			continue
 		}
-		seen[common] = true
-		out = append(out, common)
+		if !seenRO[common] {
+			seenRO[common] = true
+			ro = append(ro, common)
+		}
+		if gitdir != "" && !seenRW[gitdir] {
+			seenRW[gitdir] = true
+			rw = append(rw, gitdir)
+		}
 	}
-	return out
+	return rw, ro
+}
+
+// worktreeCommonGitDirs is worktreeGrants' read-only half, for callers that
+// only need the paths (rootAliasArgs' reserved-name set).
+func worktreeCommonGitDirs(paths ...string) []string {
+	_, ro := worktreeGrants(paths...)
+	return ro
 }
