@@ -447,6 +447,40 @@ func (a *App) branchHeadSHA(ctx context.Context, owner, repo, branch string) (st
 	return out.Object.SHA, nil
 }
 
+// pushVerifyAttempts/pushVerifyBaseDelay: a 404 right after an accepted push
+// is GitHub's eventual-consistency window (#570), not doJSON's 5xx/429 case
+// (isRetryableStatus deliberately excludes 404 - for most callers it's real).
+const pushVerifyAttempts = 4
+const pushVerifyBaseDelay = 300 * time.Millisecond
+
+// verifyPushedBranch confirms branch's head on GitHub, retrying a 404 with
+// backoff. Any other failure - including a SHA mismatch - fails immediately.
+func (a *App) verifyPushedBranch(ctx context.Context, owner, repo, branch string) (string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= pushVerifyAttempts; attempt++ {
+		sha, err := a.branchHeadSHA(ctx, owner, repo, branch)
+		if err == nil {
+			return sha, nil
+		}
+		lastErr = err
+		if !strings.Contains(err.Error(), "status 404") {
+			return "", err
+		}
+		if attempt == pushVerifyAttempts {
+			break
+		}
+		delay := pushVerifyBaseDelay * time.Duration(1<<uint(attempt-1))
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		}
+	}
+	return "", lastErr
+}
+
 // listIssueComments fetches an issue's conversation comments (where a posted
 // plan lives), flattening the nested user object to a login string.
 func (a *App) listIssueComments(ctx context.Context, owner, repo string, number int) ([]commentView, error) {

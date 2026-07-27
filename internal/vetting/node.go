@@ -558,7 +558,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// judge.score/judge.verdict series silently thin whenever its judge
 				// calls error disproportionately (bigger prompts, flakier tool use).
 				otelobs.RecordJudgeUnavailable(cfg.Agent)
-				return answer, res, nil
+				// Fail closed but fall through to the SAME deliver-with-caveat
+				// path a low score takes (not an early return) - only that path
+				// writes a GitHub review's verdict marker, so returning here
+				// strands it (#572).
+				res = GateResult{Score: 0, Passed: false, Feedback: "quack's judge was unavailable, so this answer could not be scored: " + jerr.Error(), Rounds: round}
+				break
 			}
 			// Adversarial verify (#370): before folding in the deterministic
 			// criteria, give load-bearing PASSING judge criteria a chance to be

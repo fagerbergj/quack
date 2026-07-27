@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
 	"sync/atomic"
@@ -163,6 +164,91 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	}
 	if len(seenPrompt) >= len(hugeAnswer) {
 		t.Errorf("judge prompt (%d chars) is not smaller than the raw answer (%d chars) - expected compaction", len(seenPrompt), len(hugeAnswer))
+	}
+}
+
+// flakyTransientJudge fails its first `failures` calls with a transient-
+// looking error (a 502, standing in for a model swap in flight), then submits
+// a normal verdict - the stand-in for #572's incident.
+type flakyTransientJudge struct {
+	failures int32
+	calls    int32
+}
+
+func (j *flakyTransientJudge) Name() string { return "flaky-transient-judge" }
+
+func (j *flakyTransientJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if atomic.AddInt32(&j.calls, 1) <= atomic.LoadInt32(&j.failures) {
+			yield(nil, errors.New("openai gemma4-26b-a4b (generate): status 502: bad gateway"))
+			return
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.85, "feedback": "recovered"}), nil)
+	}
+}
+
+// TestRunJudgeAgent_RetriesTransientErrorThenSucceeds proves #572's fix: a
+// judge call that fails with a transient-looking error (502) is retried with
+// backoff and, once the endpoint recovers, produces a NORMAL scored verdict -
+// never a degrade.
+func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
+	judge := &flakyTransientJudge{failures: 2}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.85 {
+		t.Errorf("verdict score = %v, want 0.85 (the retry that finally recovered)", v.Score)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 3 {
+		t.Errorf("judge model called %d times, want 3 (two transient 502s + the recovering call)", got)
+	}
+}
+
+// TestRunJudgeAgent_PermanentTransientErrorFailsClosed proves the other half:
+// a judge that never recovers within judgeRetryAttempts still returns an
+// error (fail closed), not a silent pass - node.go's caller is what turns
+// this into a visible caveat rather than a stripped verdict.
+func TestRunJudgeAgent_PermanentTransientErrorFailsClosed(t *testing.T) {
+	judge := &flakyTransientJudge{failures: 100} // never recovers
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	_, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, func(*genai.Part) bool { return true })
+	if err == nil {
+		t.Fatal("runJudgeAgent: expected an error when the judge model never recovers, got nil")
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != judgeRetryAttempts {
+		t.Errorf("judge model called %d times, want %d (judgeRetryAttempts; the short answer leaves the shrink-retry a no-op)", got, judgeRetryAttempts)
+	}
+}
+
+// TestIsTransientJudgeErr pins the retry predicate: only endpoint-fault-
+// shaped errors are worth a backoff retry, never a genuine rejection that
+// retrying would just repeat.
+func TestIsTransientJudgeErr(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"502", errors.New("openai model (generate): status 502: bad gateway"), true},
+		{"503", errors.New("openai model (generate): status 503: unavailable"), true},
+		{"429", errors.New("openai model (generate): status 429: rate limited"), true},
+		{"timeout", errors.New("context deadline exceeded (Client.Timeout exceeded while awaiting headers)"), true},
+		{"connection reset", errors.New("read: connection reset by peer"), true},
+		{"deadline exceeded sentinel", context.DeadlineExceeded, true},
+		{"400 bad request", errors.New("openai model (generate): status 400: context length exceeded"), false},
+		{"401 auth", errors.New("openai model (generate): status 401: invalid api key"), false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTransientJudgeErr(tt.err); got != tt.want {
+				t.Errorf("isTransientJudgeErr(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

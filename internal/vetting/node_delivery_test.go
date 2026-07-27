@@ -2,7 +2,9 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"iter"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,6 +216,29 @@ func (m *deliveryStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 	}
 }
 
+// deliveryStubJudgeErrors drives a worker through the same commit -> stage_pr
+// -> done spine as deliveryStub, but the judge call always fails with a
+// non-transient error (never recovers, even after runJudgeAgent's backoff
+// retries) - the stand-in for #572's permanent judge outage.
+type deliveryStubJudgeErrors struct{}
+
+func (m *deliveryStubJudgeErrors) Name() string { return "deliveryStubJudgeErrors" }
+
+func (m *deliveryStubJudgeErrors) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		switch {
+		case stubHasTool(req, submitVerdictTool):
+			yield(nil, errors.New("judge model permanently unreachable"))
+		case !stubHasResponse(req, "git_commit"):
+			yield(stubCall("git_commit", map[string]any{"message": "add the game"}), nil)
+		case !stubHasResponse(req, "stage_pr"):
+			yield(stubCall("stage_pr", map[string]any{"title": "Add flappy bird", "body": "adds a game"}), nil)
+		default:
+			yield(stubText("Committed and staged for delivery."), nil)
+		}
+	}
+}
+
 const deliveryGateTask = "Add a game to the repo, commit it, push the branch and open a pull request."
 
 func runDeliveryGate(t *testing.T, stub model.LLM, cfg Config) {
@@ -297,6 +322,42 @@ func TestGate_DeliversWithCaveatOnJudgeFail(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Deliver never fired on a judge fail - delivery must be graceful (with caveat), not dropped")
+	}
+}
+
+// TestGate_JudgeOutageDeliversWithCaveatNeverStrandsVerdict pins #572: when
+// the judge call itself errors and never recovers (not a low score - the
+// model was unreachable), the gate must NOT return early and skip
+// commitDelivery. Before the fix, that early return meant nothing was ever
+// staged/delivered through the gate's own path - for a GitHub review, the
+// verdict marker (the ONLY place a self-review's verdict can live) was never
+// written, and the reviewer's text instead surfaced elsewhere as a plain,
+// unmarked comment that read exactly like a normal approved review.
+func TestGate_JudgeOutageDeliversWithCaveatNeverStrandsVerdict(t *testing.T) {
+	got := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		select {
+		case got <- dc:
+		default:
+		}
+		return nil, nil
+	}
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Task: deliveryGateTask, Deliver: deliver}
+	runDeliveryGate(t, &deliveryStubJudgeErrors{}, cfg)
+
+	select {
+	case dc := <-got:
+		if dc.GatePassed {
+			t.Error("GatePassed = true, want false - the judge never scored this at all")
+		}
+		if !strings.Contains(dc.GateFeedback, "unavailable") {
+			t.Errorf("GateFeedback = %q, want it to name the judge outage so a caveat naming it is visible on delivery", dc.GateFeedback)
+		}
+		if len(dc.Items) != 1 || dc.Items[0].Kind != "pull_request" {
+			t.Errorf("Items = %+v, want the staged work delivered anyway, never silently stranded", dc.Items)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired on a permanent judge outage - #572 requires delivering with a visible caveat, never stranding the verdict")
 	}
 }
 
