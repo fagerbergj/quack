@@ -107,7 +107,8 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 	}
 	caps := checksCaps(cfg)
 	var preexisting []string
-	for _, check := range checks {
+	for _, rawCheck := range checks {
+		check := stripUnmarked(rawCheck)
 		stages, err := workspace.SplitPipeline(check)
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
@@ -117,10 +118,11 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}
 		if res.ExitCode != 0 {
-			// The gate may only fail a node for what the node's own change BROKE.
-			// A check that already fails on the repo's base commit is repo debt the
-			// worker cannot fix and is not responsible for (baseline.go).
-			if failsAtBase(dir, check, caps) {
+			// Format-checks (gofmt -l, npx prettier --check) are never waived
+			// by failsAtBase: formatting violations cannot pre-exist on the base
+			// commit because gofmt/prettier output on the base tree minus the
+			// worker's edits equals the working-tree result.  See #585.
+			if !isSkipBase(rawCheck) && failsAtBase(dir, check, caps) {
 				slog.Warn("check already fails at base; not gating on it", "component", "vetting", "node", cfg.NodeID, "check", check)
 				preexisting = append(preexisting, check)
 				continue
@@ -128,6 +130,12 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 			return criterionScore{Score: 0, Reason: fmt.Sprintf(
 				"deterministic: check %q failed (exit %d):\n%s%s", check, res.ExitCode, boundCheckOutput(res.Output), preexistingNote(preexisting))}, true
 		}
+	}
+	// If ALL derived checks were waived this is materially different from
+	// "checks passed" — the gate verified nothing deterministic. Callers and
+	// the human viewer should see a warning rather than conflating two states.
+	if len(cfg.Checks) == 0 && cfg.DeriveChecks && len(preexisting) == len(checks) && len(checks) > 0 {
+		slog.Warn("all derived checks waived for this node; no deterministic verification ran", "component", "vetting", "node", cfg.NodeID)
 	}
 	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d check(s) passed%s", len(checks), preexistingNote(preexisting))}, true
 }
@@ -247,6 +255,13 @@ var makeCheckTargets = []string{"build", "lint", "test"}
 // excluding variable assignments ("FOO := bar").
 var makeTargetRe = regexp.MustCompile(`(?m)^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 
+// skipBasePrefix is the leading tag used to mark a derived check as a
+// format-check — these must never be excused by failsAtBase because formatting
+// violations cannot "pre-exist" on the base commit (gofmt -l output on the
+// base tree equals the working-tree result minus whatever the worker changed;
+// a net-new unformatted file is still caught by the same check).
+const skipBasePrefix = "!gofmt:"
+
 // deriveChecks reads dir - the repo the node worked in - and returns the repo's
 // OWN check commands, filtered by the configured workspace.check_commands
 // allowlist (the security boundary stays exactly where it was; an empty allowlist
@@ -255,6 +270,11 @@ var makeTargetRe = regexp.MustCompile(`(?m)^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 // targets), npm → go → make order - a repo with more than one stack gates on all
 // of them, not just the first found. Returning none is normal, not a failure: an
 // unrecognised repo simply gets no deterministic gate.
+//
+// Format-check candidates are prefixed with skipBasePrefix so the caller knows
+// they must never be excused via failsAtBase — formatting violations cannot
+// pre-exist in a shallow clone (see #585). The prefix is stripped before the
+// check actually runs.
 func deriveChecks(dir string, allow []string) []string {
 	var cands []string
 	if fileExists(dir, "package.json") {
@@ -267,6 +287,7 @@ func deriveChecks(dir string, allow []string) []string {
 	}
 	if fileExists(dir, "go.mod") {
 		cands = append(cands, "go build ./...", "go vet ./...", "go test ./...")
+		cands = append(cands, skipBasePrefix+"gofmt -l")
 	}
 	if fileExists(dir, "Makefile") {
 		targets := makeTargets(dir)
@@ -278,11 +299,36 @@ func deriveChecks(dir string, allow []string) []string {
 	}
 	var out []string
 	for _, c := range cands {
-		if workspace.MatchesCheckPrefix(c, allow) && toolchainPresent(c) {
+		if workspace.MatchesCheckPrefix(stripUnmarked(c), allow) && toolchainPresent(stripUnmarked(c)) {
 			out = append(out, c)
 		}
 	}
+	// npx prettier --check is a derived candidate for any JS/TS repo when the
+	// binary exists and the prefix is in the allowlist. Unlike npm-run scripts
+	// (which must be declared by the repo), Prettier is an external formatter
+	// whose presence alone signals intent — if npx is on PATH and "npx prettier"
+	// is allowed, run it. Never waive: formatting violations cannot pre-exist.
+	if fileExists(dir, "package.json") && toolchainPresent("npx prettier") && workspace.MatchesCheckPrefix("npx prettier", allow) {
+		out = append(out, skipBasePrefix+"npx prettier --check --list-different")
+	}
 	return out
+}
+
+// stripUnmarked removes the skipBasePrefix from a candidate check that was
+// tagged as a format-check during derivation; passes through unchanged when
+// marked or absent. This lets deriveChecks carry both marked and unmarked
+// candidates in one result slice without introducing a wrapper type.
+func stripUnmarked(s string) string {
+	if strings.HasPrefix(s, skipBasePrefix) {
+		return s[len(skipBasePrefix):]
+	}
+	return s
+}
+
+// isSkipBase reports whether the raw check command was tagged as a format-check
+// — i.e. it should never be excused via failsAtBase (see deriveChecks).
+func isSkipBase(s string) bool {
+	return strings.HasPrefix(s, skipBasePrefix)
 }
 
 // toolchainPresent reports whether a derived check's binary exists on the

@@ -229,7 +229,7 @@ const (
 // complete for the repos quack actually builds (go, npm, make), each further
 // gated on the binary existing on the host. Explicit `check_commands: []`
 // still means "checks disabled".
-var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"}
+var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier"}
 
 // WorkspaceConfig is the agents' working disk: one configured root, with a
 // per-user jail under it (<root>/<user_id>/ — see internal/workspace.Jail)
