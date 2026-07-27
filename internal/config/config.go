@@ -271,13 +271,15 @@ type WorkspaceConfig struct {
 	// Guards maps a tool name to its guard-ladder tier: none (default,
 	// unlisted) | judge | confirm | judge+confirm. See §4b of the design doc.
 	Guards map[string]string `yaml:"guards"`
-	// Sandbox is the OS boundary run_command/gate-check CHILD PROCESSES run
+	// Sandbox is the OS boundary run_command/gate-check/ACP CHILD PROCESSES run
 	// inside: "bwrap" (default — a bubblewrap mount/pid/user namespace: nothing
-	// outside the child's cwd and its isolated $HOME exists in its filesystem)
-	// or "none" (the child runs with the server user's full filesystem
-	// authority). "bwrap" on a host without a working bwrap is a startup ERROR,
-	// never a silent fallback; "none" logs a loud WARN. See
-	// internal/workspace.ResolveSandbox.
+	// outside the child's cwd and its isolated $HOME exists in its filesystem),
+	// "landlock" (a self-applied Landlock ruleset — no new namespace, so it
+	// works inside an unprivileged container where bwrap can't nest; requires a
+	// Linux kernel with Landlock ABI >= 3), or "none" (the child runs with the
+	// server user's full filesystem authority). "bwrap"/"landlock" on a host
+	// that can't prove the boundary works is a startup ERROR, never a silent
+	// fallback; "none" logs a loud WARN. See internal/workspace.ResolveSandbox.
 	Sandbox string `yaml:"sandbox"`
 	// Limits are the per-child-process resource limits (setrlimit) — a runaway
 	// build must not be able to take the host down with it.
@@ -1087,8 +1089,8 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.CheckCommands == nil {
 		w.CheckCommands = append([]string{}, defaultCheckCommands...)
 	}
-	if w.Sandbox != "bwrap" && w.Sandbox != "none" {
-		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap or none)", w.Sandbox)
+	if w.Sandbox != "bwrap" && w.Sandbox != "landlock" && w.Sandbox != "none" {
+		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap, landlock, or none)", w.Sandbox)
 	}
 	if w.Limits.AddressSpaceMB == 0 {
 		w.Limits.AddressSpaceMB = defaultWorkspaceAddressSpaceMB

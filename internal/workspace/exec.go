@@ -210,8 +210,16 @@ func sortedEnvKeys(env map[string]string) []string {
 // childEnv is the full environment every RunArgv/RunPipeline child sees: the
 // fixed PATH/HOME first, then the operator's workspace.env entries - config
 // validation already rejects a PATH/HOME key there, so this never fights them.
+// Under landlock, TMPDIR is pinned to the granted tmp dir too: Landlock can't
+// remap /tmp the way bwrap does, so a tool that defaults to the real /tmp
+// (go build's work dir, mktemp) must be TOLD where its writable tmp actually
+// is, or it hits an ungranted path (observed: `go build` failing to create
+// its work dir under the real /tmp).
 func childEnv(dir string, caps Caps) []string {
 	env := []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
+	if caps.Sandbox == SandboxLandlock {
+		env = append(env, "TMPDIR="+landlockTmpDir(caps))
+	}
 	for _, k := range sortedEnvKeys(caps.Env) {
 		env = append(env, k+"="+caps.Env[k])
 	}

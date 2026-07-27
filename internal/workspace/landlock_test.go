@@ -1,0 +1,212 @@
+package workspace
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// requireLandlock skips a test when Landlock ABI >= 3 isn't usable here -
+// LOUDLY, mirroring requireBwrap: a sandbox test that silently no-ops proves
+// nothing.
+func requireLandlock(t *testing.T) {
+	t.Helper()
+	if err := probeLandlock(); err != nil {
+		t.Skipf("SKIPPING landlock test: Landlock ABI >= 3 is not usable here (%v). "+
+			"Needs a Linux kernel >= 6.2.", err)
+	}
+}
+
+// runSandboxExec self-spawns THIS test binary in __sandbox-exec mode (the
+// real mechanism - see main_test.go's TestMain, which mirrors
+// RunSandboxExecIfInvoked) and returns its combined output and exit code.
+func runSandboxExec(t *testing.T, args ...string) (string, int) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, append([]string{SandboxExecArg}, args...)...)
+	out, _ := cmd.CombinedOutput()
+	code := -1
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	}
+	return string(out), code
+}
+
+// landlockBaseRO grants the real system dirs every exec (sh, cat) needs just
+// to run at all under a strict ruleset - standing in for the RO grants
+// landlockSystemDirs() supplies in production.
+var landlockBaseRO = []string{"--ro", "/usr", "--ro", "/bin", "--ro", "/lib", "--ro", "/lib64"}
+
+// TestSandboxExecShimConfinement is spec test case 1: the whole point of the
+// shim. An rw-granted write succeeds, the SAME command targeting a sibling
+// (ungranted) dir fails, a granted RO read succeeds, and a read outside every
+// grant fails.
+func TestSandboxExecShimConfinement(t *testing.T) {
+	requireLandlock(t)
+
+	granted := t.TempDir()
+	sibling := t.TempDir()
+
+	args := append([]string{"--rw", granted}, landlockBaseRO...)
+	args = append(args, "--", "sh", "-c", "echo x > "+filepath.Join(granted, "f"))
+	if out, code := runSandboxExec(t, args...); code != 0 {
+		t.Fatalf("rw-granted write failed: exit=%d output=%q", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(granted, "f")); err != nil {
+		t.Fatalf("the granted write did not land: %v", err)
+	}
+
+	args = append([]string{"--rw", granted}, landlockBaseRO...)
+	args = append(args, "--", "sh", "-c", "echo x > "+filepath.Join(sibling, "f"))
+	if out, code := runSandboxExec(t, args...); code == 0 {
+		t.Fatalf("SANDBOX ESCAPE: wrote to a sibling dir outside the RW grant: %q", out)
+	}
+
+	outside := filepath.Join(sibling, "secret")
+	if err := os.WriteFile(outside, []byte("PRIVATE-KEY-MATERIAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args = append([]string{"--ro", "/etc"}, landlockBaseRO...)
+	args = append(args, "--", "cat", "/etc/passwd")
+	if out, code := runSandboxExec(t, args...); code != 0 {
+		t.Fatalf("RO-granted read of /etc/passwd failed: exit=%d output=%q", code, out)
+	} else if !strings.Contains(out, "root") {
+		t.Fatalf("RO read of /etc/passwd returned unexpected content: %q", out)
+	}
+
+	args = append([]string{"--rw", granted}, landlockBaseRO...)
+	args = append(args, "--", "cat", outside)
+	if out, code := runSandboxExec(t, args...); code == 0 || strings.Contains(out, "PRIVATE-KEY-MATERIAL") {
+		t.Fatalf("SANDBOX ESCAPE: read a file outside every grant: exit=%d output=%q", code, out)
+	}
+}
+
+// TestSandboxExecProbe: --probe applies a trivial strict ruleset and exits
+// clean - the mechanism ResolveSandbox's fail-closed check is built on.
+func TestSandboxExecProbe(t *testing.T) {
+	requireLandlock(t)
+	if out, code := runSandboxExec(t, "--probe"); code != 0 {
+		t.Fatalf("--probe failed on a host with working Landlock: exit=%d output=%q", code, out)
+	}
+}
+
+// TestSandboxExecRequiresTarget: no "--" / no target command is a clean
+// error, not a hang or a panic.
+func TestSandboxExecRequiresTarget(t *testing.T) {
+	requireLandlock(t)
+	if out, code := runSandboxExec(t, "--rw", t.TempDir()); code == 0 {
+		t.Fatalf("sandbox-exec with no target command should fail; got exit 0: %q", out)
+	}
+}
+
+// TestSandboxLandlockRealToolchains is the empirical basis for the /proc and
+// /dev grant decisions (landlockGrants/landlockSystemDirs' docs), exercised
+// through the REAL production path (RunArgv -> childArgv's landlock branch),
+// not just the raw shim: git runs cleanly with no /proc grant at all, and
+// node's os.cpus() - which silently returns an EMPTY array without /proc,
+// rather than failing loudly - reports the real CPU count with it.
+func TestSandboxLandlockRealToolchains(t *testing.T) {
+	requireLandlock(t)
+
+	t.Run("git_needs_no_proc", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not on PATH")
+		}
+		dir := t.TempDir()
+		caps := sandboxCaps(t, SandboxLandlock)
+		caps.WorkRoot = dir
+		run := func(argv ...string) ExecResult {
+			t.Helper()
+			res, err := RunArgv(context.Background(), dir, argv, caps)
+			if err != nil {
+				t.Fatalf("%v: %v (%q)", argv, err, res.Output)
+			}
+			return res
+		}
+		if res := run("git", "init", "-q"); res.ExitCode != 0 {
+			t.Fatalf("git init: exit=%d %q", res.ExitCode, res.Output)
+		}
+		if res := run("git", "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init"); res.ExitCode != 0 {
+			t.Fatalf("git commit: exit=%d %q", res.ExitCode, res.Output)
+		}
+		if res := run("git", "status"); res.ExitCode != 0 {
+			t.Fatalf("git status: exit=%d %q", res.ExitCode, res.Output)
+		}
+	})
+
+	t.Run("node_needs_proc_for_cpu_count", func(t *testing.T) {
+		nodeBin, err := exec.LookPath("node")
+		if err != nil {
+			t.Skip("node not on PATH")
+		}
+		dir := t.TempDir()
+		caps := sandboxCaps(t, SandboxLandlock)
+		caps.WorkRoot = dir
+		caps.ExtraPath = []string{filepath.Dir(nodeBin)}
+		res, err := RunArgv(context.Background(), dir,
+			[]string{"node", "-e", "console.log(require('os').cpus().length)"}, caps)
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("node under landlock: err=%v exit=%d output=%q", err, res.ExitCode, res.Output)
+		}
+		if got := strings.TrimSpace(res.Output); got == "0" || got == "" {
+			t.Errorf("node os.cpus().length = %q under landlock - the /proc grant regressed", got)
+		}
+	})
+}
+
+// TestResolveSandboxLandlockFailsClosed is spec test case 2: a probe failure
+// must refuse to start, never fall back - stubbed via probeLandlockHook so
+// this runs on every host regardless of kernel support.
+func TestResolveSandboxLandlockFailsClosed(t *testing.T) {
+	orig := probeLandlockHook
+	defer func() { probeLandlockHook = orig }()
+	probeLandlockHook = func() error { return errors.New("stub: kernel below Landlock ABI 3") }
+
+	if _, err := ResolveSandbox(SandboxLandlock); err == nil {
+		t.Fatal("a failed landlock probe must refuse to start, not fall back")
+	} else if !strings.Contains(err.Error(), "ABI") {
+		t.Errorf("error should explain the kernel requirement: %v", err)
+	}
+}
+
+// TestResolveSandboxLandlockSucceeds: on a host where Landlock actually
+// works, ResolveSandbox(landlock) returns cleanly - and bwrap's own behavior
+// (TestResolveSandbox) stays unchanged alongside it.
+func TestResolveSandboxLandlockSucceeds(t *testing.T) {
+	requireLandlock(t)
+	mode, err := ResolveSandbox(SandboxLandlock)
+	if err != nil || mode != SandboxLandlock {
+		t.Fatalf("ResolveSandbox(landlock) = %q, %v; want landlock, nil", mode, err)
+	}
+}
+
+// TestWrapArgvLandlockIncludesExtraGrants: WrapArgv adds extraRO/extraRW on
+// top of the caller's own scope (internal/acp's skill paths, and worktree
+// isolation's future extraRW), and mode none/bwrap pass argv through
+// unchanged (see WrapArgv's ponytail note on the bwrap ACP ceiling).
+func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
+	dir := t.TempDir()
+	argv := []string{"opencode", "acp"}
+	caps := Caps{Sandbox: SandboxLandlock}
+	got := WrapArgv(dir, argv, caps, []string{"/skills"}, []string{"/extra-rw"})
+	joined := strings.Join(got, " ")
+	for _, want := range []string{SandboxExecArg, dir, "/skills", "/extra-rw", "opencode acp"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("WrapArgv(landlock) = %v, missing %q", got, want)
+		}
+	}
+
+	for _, mode := range []SandboxMode{SandboxNone, SandboxBwrap, ""} {
+		unwrapped := WrapArgv(dir, argv, Caps{Sandbox: mode}, []string{"/skills"}, nil)
+		if len(unwrapped) != 2 || unwrapped[0] != "opencode" || unwrapped[1] != "acp" {
+			t.Errorf("WrapArgv(%q) = %v, want argv unchanged", mode, unwrapped)
+		}
+	}
+}
