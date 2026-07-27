@@ -208,6 +208,36 @@ func TestSandboxToolchainAndHomeSurviveTheFixedMount(t *testing.T) {
 	}
 }
 
+// TestSandboxBwrapLinkedWorktreeGitWorks is the bwrap-mode counterpart of
+// TestSandboxLandlockLinkedWorktreeGitWorks: a linked git worktree's parent
+// clone lives OUTSIDE work entirely (a sibling under the same chat scope, see
+// dag.worktreeParentID), so without the extra bind (worktreeCommonGitDirs,
+// wired into childArgv's bwrap branch) it would simply be absent from the
+// child's mount namespace and every git command inside would fail.
+func TestSandboxBwrapLinkedWorktreeGitWorks(t *testing.T) {
+	requireBwrap(t)
+	worktreeDir := setupLinkedWorktreeFixture(t)
+
+	caps := sandboxCaps(t, SandboxBwrap)
+	caps.WorkRoot = worktreeDir
+	run := func(argv ...string) ExecResult {
+		t.Helper()
+		res, err := RunArgv(context.Background(), worktreeDir, argv, caps)
+		if err != nil {
+			t.Fatalf("%v: %v (%q)", argv, err, res.Output)
+		}
+		return res
+	}
+	if res := run("git", "status"); res.ExitCode != 0 {
+		t.Fatalf("git status inside a bwrap-wrapped worktree: exit=%d %q", res.ExitCode, res.Output)
+	}
+	if res := run("git", "log", "-1", "--format=%H"); res.ExitCode != 0 {
+		t.Fatalf("git log inside a bwrap-wrapped worktree: exit=%d %q", res.ExitCode, res.Output)
+	} else if strings.TrimSpace(res.Output) == "" {
+		t.Fatal("git log returned no output - the worktree can't see its own history")
+	}
+}
+
 // TestSandboxBlocksWritesOutsideTheJail: read containment is half of it - a
 // child must not be able to WRITE outside its working dir either.
 func TestSandboxBlocksWritesOutsideTheJail(t *testing.T) {

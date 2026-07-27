@@ -257,6 +257,13 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	if caps.HomeDir != "" && caps.HomeDir != dir {
 		args = append(args, "--bind", caps.HomeDir, caps.HomeDir)
 	}
+	// A linked git worktree's parent .git store (see WorktreeCommonGitDir) lies
+	// OUTSIDE work entirely - bind it at its own real path, same exception as
+	// the outside-cwd branch above, since bwrap cannot remap two disjoint host
+	// trees into one mount without giving the child two names for one place.
+	for _, common := range worktreeCommonGitDirs(work, dir) {
+		args = append(args, "--bind", common, common)
+	}
 	args = append(args, rootAliasArgs(work, dir, caps)...)
 	// The sandbox's own root is a throwaway tmpfs: anything written there is gone
 	// when the command exits. That is how we ate the agent's files once already
@@ -280,7 +287,7 @@ func rootAliasArgs(work, dir string, caps Caps) []string {
 	if err != nil {
 		return nil // unreadable node dir: the fixed mount alone is still correct
 	}
-	taken := reservedRoots(dir, caps)
+	taken := reservedRoots(dir, caps, worktreeCommonGitDirs(work, dir)...)
 	var args []string
 	for _, e := range entries {
 		name := e.Name()
@@ -301,8 +308,9 @@ const maxRootAliases = 100
 // reservedRoots are the top-level names inside the sandbox that a workspace entry
 // may NOT shadow: the system view's mountpoints, the workspace mount itself, and
 // the first component of every host path we bind (the isolated $HOME, an outside
-// cwd, the exec_path toolchains - bwrap creates those parent dirs at the root).
-func reservedRoots(dir string, caps Caps) map[string]bool {
+// cwd, the exec_path toolchains, a linked worktree's parent .git store - bwrap
+// creates those parent dirs at the root).
+func reservedRoots(dir string, caps Caps, extra ...string) map[string]bool {
 	m := map[string]bool{
 		"usr": true, "bin": true, "lib": true, "lib64": true, "sbin": true,
 		"etc": true, "proc": true, "dev": true, "tmp": true,
@@ -316,6 +324,9 @@ func reservedRoots(dir string, caps Caps) map[string]bool {
 	add(caps.HomeDir)
 	add(dir)
 	for _, p := range caps.ExtraPath {
+		add(p)
+	}
+	for _, p := range extra {
 		add(p)
 	}
 	return m
@@ -517,6 +528,11 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	if caps.HomeDir != "" && caps.HomeDir != work {
 		rw = append(rw, caps.HomeDir)
 	}
+	// A linked git worktree (dag's read-only-node isolation) needs its PARENT
+	// clone's .git store too - see WorktreeCommonGitDir's doc. Checked on both
+	// work and dir since a check's workdir can be a subdirectory of the node's
+	// own root.
+	rw = append(rw, worktreeCommonGitDirs(work, dir)...)
 	rw = append(rw, landlockTmpDir(caps))
 	// /dev RW (not RO): DAC still governs which device nodes actually do
 	// anything (an agent gains no reach a world-writable /dev/null didn't
@@ -634,9 +650,10 @@ func ChildPath(caps Caps) string {
 
 // WrapArgv wraps argv (already command[0]+args, resolved by the caller) to
 // run confined at dir under caps.Sandbox, with extraRO/extraRW grants added on
-// top of the caller's own scope (internal/acp's skill paths and exec_path
-// today; worktree isolation will pass extraRW next). The ONE seam a caller
-// outside RunArgv/newChildCmd routes through.
+// top of the caller's own scope (internal/acp's skill paths and exec_path) -
+// a linked worktree's parent .git store is granted automatically
+// (worktreeCommonGitDirs via landlockGrants), with no extraRW needed for it.
+// The ONE seam a caller outside RunArgv/newChildCmd routes through.
 //
 // landlock: fully confines, same mechanism as childArgv's landlock branch.
 // none: returns argv unchanged by design - there is no boundary to wrap into.
@@ -656,4 +673,64 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 	rw = append(rw, extraRW...)
 	ro = append(ro, extraRO...)
 	return assembleSandboxExec(rw, ro, argv)
+}
+
+// ---------------------------------------------------------------------------
+// Linked-worktree grants: dag's read-only-node isolation (worktree per
+// reviewer/explorer node) gives each such node its own `git worktree`, linked
+// off the plan's ONE shared setup clone rather than an independent clone. A
+// linked worktree's OWN ".git" is a pointer FILE (not a directory) reading
+// "gitdir: <parent>/.git/worktrees/<name>" - the actual object database,
+// refs, and per-worktree index/HEAD/logs all live under the PARENT clone's
+// ".git", found via that gitdir's own "commondir" file. Granting only the
+// worktree's own directory leaves every git command inside it unable to see
+// its own history ("not a git repository" or worse, a silent empty log) -
+// this resolves the one extra grant that fixes it, for both sandbox modes.
+// ---------------------------------------------------------------------------
+
+// WorktreeCommonGitDir resolves the shared ".git" directory a linked git
+// worktree at dir points at ("" when dir is not a linked worktree at all - a
+// plain clone's own ".git" is a directory, not a pointer file, and this
+// returns "" for it too since a plain clone needs no extra grant).
+func WorktreeCommonGitDir(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		return ""
+	}
+	const prefix = "gitdir: "
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, prefix) {
+		return ""
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(dir, gitdir)
+	}
+	commonBytes, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil {
+		return ""
+	}
+	common := strings.TrimSpace(string(commonBytes))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitdir, common)
+	}
+	return filepath.Clean(common)
+}
+
+// worktreeCommonGitDirs resolves WorktreeCommonGitDir for each of paths,
+// deduped and skipping empties - paths is typically (work, dir), which are
+// often the same directory but occasionally differ (a check's workdir nested
+// under the node's own root).
+func worktreeCommonGitDirs(paths ...string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range paths {
+		common := WorktreeCommonGitDir(p)
+		if common == "" || seen[common] {
+			continue
+		}
+		seen[common] = true
+		out = append(out, common)
+	}
+	return out
 }

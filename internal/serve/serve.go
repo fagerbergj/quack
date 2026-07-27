@@ -933,6 +933,20 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Jail:            jail,
 				UserID:          localUserID,
 				PermissionJudge: permJudge,
+				// Worktree isolation: a read-only qualifying node
+				// (reviewer, explorer) gets its own git worktree linked off
+				// the plan's shared setup clone, never the clone directly -
+				// same jail/caps/localUserID path SetupClone above uses, so
+				// it lands at exactly the coordinates the node's advisor-
+				// thread marker (WorktreeParent) names.
+				Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
+					parentDir, err := jail.Resolve(userID, chatID, workspace.NodeDir(parentNodeID))
+					if err != nil {
+						return "", fmt.Errorf("acp worktree: resolve parent clone: %w", err)
+					}
+					return tools.SetupWorktree(ctx, jail, userID, chatID, parentDir, workspace.NodeDir(nodeID),
+						workspace.WorktreeBranch(nodeID), workspaceCaps)
+				},
 			})
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "acp: %v", err)

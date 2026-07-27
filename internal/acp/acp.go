@@ -67,6 +67,15 @@ type Options struct {
 	// advisor-thread marker the gate stamps into every worker prompt.
 	Jail   *workspace.Jail
 	UserID string
+	// Worktree provisions a read-only qualifying node's (reviewer, explorer)
+	// own git worktree, linked off the plan's shared setup clone - see
+	// vetting.AdvisorTask.WorktreeParent. Called from resolveNode with
+	// (userID, chatID, parentWorkspaceNodeID, thisWorkspaceNodeID); returns
+	// the resolved absolute worktree dir. nil is fine as long as no plan ever
+	// stamps a WorktreeParent (no code-review/explore agent configured, or no
+	// plan.Setup) - a node that needs it with none configured is a wiring bug
+	// (mirrors dag.SetupFunc's nil-executor error).
+	Worktree func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (dir string, err error)
 	// StartTimeout bounds initialize + session/new (not the prompt itself,
 	// which runs under the node's own context). 0 ⇒ 60s.
 	StartTimeout time.Duration
@@ -144,13 +153,16 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 // that carries (chat, workspace-node) scope to a worker (the same one
 // internal/tools uses). The setup clone lands AT the node root
 // (workspace.SetupCloneDir == NodeDir), so this dir IS the repo for a
-// setup-provisioned node.
+// setup-provisioned node. A read-only qualifying node (at.WorktreeParent set
+// - reviewer, explorer) gets its dir provisioned as a linked git worktree of
+// the parent clone instead (Options.Worktree) - the worktree-per-node
+// follow-up .quack/specs/sandbox-acp-landlock.md's "Out" section named.
 //
 // memSecret rides this SAME lookup (AdvisorTask.MemSecret) but is looked up
 // in the SEPARATE memSessions registry when actually used (memoryMCPServers)
 // - the advisor-thread token itself must never double as the memory MCP
 // bearer credential; see vetting.AdvisorTask.MemSecret.
-func (a *Agent) resolveNode(prompt string) (cwd, memSecret string, err error) {
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
 		return "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
@@ -158,6 +170,13 @@ func (a *Agent) resolveNode(prompt string) (cwd, memSecret string, err error) {
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
 		return "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
+	}
+	if at.WorktreeParent != "" {
+		if a.opts.Worktree == nil {
+			return "", "", fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+		}
+		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.SessionID, at.WorktreeParent, at.WorkspaceNodeID)
+		return cwd, at.MemSecret, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.SessionID, workspace.NodeDir(at.WorkspaceNodeID))
 	return cwd, at.MemSecret, err
@@ -171,7 +190,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, err := a.resolveNode(prompt)
+		cwd, memSecret, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return

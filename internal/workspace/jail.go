@@ -146,6 +146,14 @@ func SetupCloneDir(nodeID string) string {
 // chosen node ID, so it can't collide with one.
 const SharedRepoScope = "quack-shared-repo"
 
+// WorktreeBranch derives the unique branch name a read-only qualifying node's
+// linked git worktree is checked out on - git refuses to check the same
+// branch out in two worktrees at once, and node IDs are already unique within
+// a plan, so deriving from nodeID needs no separate counter or registry.
+func WorktreeBranch(nodeID string) string {
+	return "quack-worktree/" + nodeID
+}
+
 // EnsureDir resolves rel under the (userID, chatID) scope and creates it,
 // returning the real path. Used to materialise a node's working directory at
 // node entry, so the worker's very first `list_dir .` sees an (empty) dir

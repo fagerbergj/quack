@@ -161,6 +161,94 @@ func TestSandboxLandlockRealToolchains(t *testing.T) {
 	})
 }
 
+// setupLinkedWorktreeFixture creates a plain (unsandboxed) clone at parentDir
+// and links a git worktree off it at the returned dir, checked out on its own
+// branch - the fixture the landlock grant (worktreeCommonGitDirs) exists
+// for. Provisioning itself runs OUTSIDE the sandbox (exactly like
+// tools.SetupClone/SetupWorktree do in production - the harness provisions,
+// only the AGENT'S OWN commands run confined).
+func setupLinkedWorktreeFixture(t *testing.T) (worktreeDir string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	parentDir := filepath.Join(t.TempDir(), "parent")
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(dir string, argv ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", argv...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", argv, err, out)
+		}
+		return string(out)
+	}
+	run(parentDir, "init", "-q")
+	run(parentDir, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
+
+	worktreeDir = filepath.Join(t.TempDir(), "review-node")
+	run(parentDir, "worktree", "add", "--quiet", "-B", "quack-worktree/review1", worktreeDir, "HEAD")
+	return worktreeDir
+}
+
+// TestSandboxLandlockLinkedWorktreeGitWorks is the worktree-isolation landlock verification:
+// a linked git worktree's OWN ".git" is a pointer file, not a directory - the
+// object database, refs, and per-worktree index/HEAD/logs it points at live
+// under the PARENT clone's ".git", entirely outside the worktree's own
+// directory. Without the extra grant (worktreeCommonGitDirs, wired into
+// landlockGrants) `git status`/`git log` inside it would fail "not a git
+// repository" (or worse) under landlock's deny-by-default - this proves they
+// succeed through the REAL production path (RunArgv -> childArgv's landlock
+// branch), exactly the path checksPassCriterion/gitprobe.go run a read-only
+// node's git commands through once workspaceNodeID resolves it into a
+// worktree (see dag.worktreeParentID).
+func TestSandboxLandlockLinkedWorktreeGitWorks(t *testing.T) {
+	requireLandlock(t)
+	worktreeDir := setupLinkedWorktreeFixture(t)
+
+	caps := sandboxCaps(t, SandboxLandlock)
+	caps.WorkRoot = worktreeDir
+	run := func(argv ...string) ExecResult {
+		t.Helper()
+		res, err := RunArgv(context.Background(), worktreeDir, argv, caps)
+		if err != nil {
+			t.Fatalf("%v: %v (%q)", argv, err, res.Output)
+		}
+		return res
+	}
+	if res := run("git", "status"); res.ExitCode != 0 {
+		t.Fatalf("git status inside a landlock-wrapped worktree: exit=%d %q", res.ExitCode, res.Output)
+	}
+	if res := run("git", "log", "-1", "--format=%H"); res.ExitCode != 0 {
+		t.Fatalf("git log inside a landlock-wrapped worktree: exit=%d %q", res.ExitCode, res.Output)
+	} else if strings.TrimSpace(res.Output) == "" {
+		t.Fatal("git log returned no output - the worktree can't see its own history")
+	}
+}
+
+// TestWorktreeCommonGitDirResolvesParentGitDir pins the pointer-file parsing
+// itself, independent of the sandbox: a linked worktree's WorktreeCommonGitDir
+// resolves to the PARENT clone's real ".git" directory, and a plain (non-
+// worktree) clone or an arbitrary directory resolves to "".
+func TestWorktreeCommonGitDirResolvesParentGitDir(t *testing.T) {
+	worktreeDir := setupLinkedWorktreeFixture(t)
+
+	common := WorktreeCommonGitDir(worktreeDir)
+	if common == "" {
+		t.Fatal("WorktreeCommonGitDir returned \"\" for a real linked worktree")
+	}
+	if !strings.HasSuffix(common, string(filepath.Separator)+".git") {
+		t.Errorf("WorktreeCommonGitDir = %q, want it to end in .git", common)
+	}
+
+	if got := WorktreeCommonGitDir(t.TempDir()); got != "" {
+		t.Errorf("WorktreeCommonGitDir(plain dir) = %q, want \"\"", got)
+	}
+}
+
 // TestResolveSandboxLandlockFailsClosed is spec test case 2: a probe failure
 // must refuse to start, never fall back - stubbed via probeLandlockHook so
 // this runs on every host regardless of kernel support.

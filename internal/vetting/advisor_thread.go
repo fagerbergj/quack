@@ -95,6 +95,15 @@ type AdvisorTask struct {
 	// falls back to NodeID (every caller but dag's chain-aware one leaves it
 	// unset).
 	WorkspaceNodeID string
+	// WorktreeParent is the WorkspaceNodeID of the plan's shared setup clone
+	// (workspace.SharedRepoScope) when THIS node's own WorkspaceNodeID is a
+	// git worktree linked off it, rather than an independent directory - set
+	// only for a read-only qualifying node (reviewer/explorer) in a
+	// plan.Setup chain (see dag.worktreeParentID). Empty for every other node:
+	// the writer sharing the clone directly, and any node with no Setup at
+	// all. internal/acp's resolveNode reads this to provision the worktree
+	// (via Options.Worktree) before handing the round its cwd.
+	WorktreeParent string
 	// Workflow session coordinates + invocation, for guard-ladder scans.
 	AppName      string
 	UserID       string

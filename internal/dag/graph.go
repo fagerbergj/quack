@@ -115,12 +115,12 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if plan.Setup != nil && setupQualifyingAgent(node.AgentName) {
 			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
 			if nonTerminalRepoChainNode(plan, node) {
-				// Delivery fires exactly once, at the chain's terminal node - the
-				// only point the shared branch is complete. A mid-chain node that
-				// stages a PR anyway must never have it posted. Explorers are
-				// never delivery-capable (nonTerminalRepoChainNode only matches
-				// implementer/reviewer), so this never nils out an explorer's
-				// cfg.Deliver - it has none to stage in the first place.
+				// Delivery fires exactly once, at the chain's terminal writer -
+				// the only point the shared branch is complete. A mid-chain
+				// writer that stages a PR anyway must never have it posted.
+				// Read-only nodes (reviewer, explorer) are never in this set
+				// (nonTerminalRepoChainNode only matches the writer chain), so
+				// this never nils out a reviewer's or explorer's cfg.Deliver.
 				cfg.Deliver = nil
 			}
 		}
@@ -189,7 +189,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				// (controls are registered under it above), which must never be
 				// redirected to the shared scope.
 				WorkspaceNodeID: workspaceNodeID(plan, node),
-				InvocationID:    ctx.InvocationID(),
+				// WorktreeParent: set only for a read-only qualifying node
+				// (reviewer, explorer) in a plan.Setup chain - tells
+				// internal/acp's resolveNode to link a git worktree off the
+				// shared clone rather than hand the node a bare directory.
+				WorktreeParent: worktreeParentID(plan, node),
+				InvocationID:   ctx.InvocationID(),
 			}
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()

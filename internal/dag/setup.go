@@ -25,23 +25,26 @@ type SetupFunc func(ctx context.Context, userID, chatID, dir string, setup Setup
 func (e *Executor) SetSetup(fn SetupFunc) { e.setupFn = fn }
 
 // setupQualifyingAgent reports whether an agent can use the plan's ONE
-// provisioned clone: the delivery-capable pair (implementer, reviewer),
-// which validateRepoChain forces into a single depends_on chain since they
-// mutate branch state, plus the read-only explorer. An explorer never
-// mutates - it needs no chain ordering (nothing to corrupt) - but it still
-// needs the clone as ground truth: without it, its disk reads are
-// unverifiable and its citations score 0.00 (see resolveCiteCloneRoots,
-// citationScore's ACP-agent case).
+// provisioned clone: the sole WRITER (implementer), which validateRepoChain
+// forces into a single depends_on chain since it mutates branch state, plus
+// the read-only pair (reviewer, explorer). Neither read-only agent mutates -
+// it needs no chain ordering (nothing to corrupt) - but each still needs the
+// clone as ground truth, so it gets its OWN linked git worktree off it
+// (worktreeParentID) rather than sharing the writer's working tree directly:
+// without that, a read-only node's disk reads are unverifiable and its
+// citations score 0.00 (see resolveCiteCloneRoots, citationScore's ACP-agent
+// case).
 func setupQualifyingAgent(name string) bool {
 	return name == implementerAgent || name == reviewerAgent || name == explorerAgent
 }
 
 // setupQualifyingNodes returns the plan's nodes whose agent can actually use a
 // provisioned clone (setupQualifyingAgent). runPlanSetup provisions ONE
-// shared clone+branch for the whole set (see workspace.SharedRepoScope) -
-// validateRepoChain (planner.go's assemble) guarantees the delivery-capable
-// subset forms a single depends_on chain, so sharing is safe; explorers need
-// no such ordering (read-only, see setupQualifyingAgent).
+// shared clone+branch that the writer resolves into directly (workspace.
+// SharedRepoScope) and every read-only qualifying node links its own git
+// worktree off (see worktreeParentID) - validateRepoChain (planner.go's
+// assemble) guarantees at most one writer runs at a time; read-only nodes
+// need no such ordering (their worktrees don't share a working tree at all).
 func setupQualifyingNodes(plan Plan) []Node {
 	var out []Node
 	for _, n := range plan.Nodes {
@@ -110,12 +113,16 @@ func OverrideReviewWorkBranch(p *Plan, headRef string) error {
 // runPlanSetup executes the plan's declared PRE-step exactly once, before any
 // node runs: clone Setup.Repo at Setup.BaseRef, then checkout -b
 // Setup.WorkBranch, into ONE shared workspace location (workspace.
-// SetupCloneDir(workspace.SharedRepoScope)) every qualifying node resolves
-// into - see dag.workspaceNodeID. ANY failure - an incomplete declaration, a
-// missing setup executor, or the clone/checkout itself - aborts the run (a
-// failed run, never a silent no-delivery). A plan with no qualifying node is
-// a no-op (nothing will read the clone); a plan with plan.Setup == nil is
-// untouched - today's worker-clones behavior.
+// SetupCloneDir(workspace.SharedRepoScope)) - the writer's own working
+// directory (see workspaceNodeID). Every read-only qualifying node links its
+// own git worktree off THIS clone instead (internal/acp's resolveNode, via
+// Options.Worktree - see worktreeParentID), lazily, right before its own
+// round, since it may depend on writes this step hasn't made yet. ANY
+// failure - an incomplete declaration, a missing setup executor, or the
+// clone/checkout itself - aborts the run (a failed run, never a silent
+// no-delivery). A plan with no qualifying node is a no-op (nothing will read
+// the clone); a plan with plan.Setup == nil is untouched - today's
+// worker-clones behavior.
 func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan Plan) (err error) {
 	if plan.Setup == nil {
 		return nil
