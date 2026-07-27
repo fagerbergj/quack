@@ -655,8 +655,9 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 		// A `git push` that exits 0 is not proof the branch landed (a dropped
 		// connection mid-push, a revoked installation) - confirm against GitHub's
 		// OWN state before claiming anything downstream. localSHA is a
-		// short hash; GitHub's ref API returns the full one.
-		remoteSHA, verr := a.branchHeadSHA(ctx, owner, repo, dc.Branch)
+		// short hash; GitHub's ref API returns the full one. verifyPushedBranch
+		// retries a 404 (eventual-consistency race, #570) before failing.
+		remoteSHA, verr := a.verifyPushedBranch(ctx, owner, repo, dc.Branch)
 		if verr != nil {
 			err = fmt.Errorf("github: delivery: push %q: verify against GitHub: %w", dc.Branch, verr)
 			return itemOutcomesForPushFailure(dc, err), err

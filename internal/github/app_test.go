@@ -341,6 +341,79 @@ func TestDoJSONGETExhaustsRetriesThenFails(t *testing.T) {
 	}
 }
 
+// TestVerifyPushedBranchRetries404ThenSucceeds pins #570: GitHub's git-refs
+// API isn't read-your-writes consistent, so a ref lookup right after an
+// accepted push can 404 even though the branch landed. verifyPushedBranch
+// must retry that 404 and return the SHA once it appears.
+func TestVerifyPushedBranchRetries404ThenSucceeds(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) <= 2 {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		fmt.Fprint(w, `{"object":{"sha":"deadbeefcafef00d"}}`)
+	}))
+	defer srv.Close()
+
+	app := &App{apiBase: srv.URL, http: srv.Client(), installs: map[string]int64{"acme/widgets": 1}, tokens: map[int64]cachedToken{1: {token: "ghs_x", expires: time.Now().Add(time.Hour)}}}
+	sha, err := app.verifyPushedBranch(context.Background(), "acme", "widgets", "feature")
+	if err != nil {
+		t.Fatalf("verifyPushedBranch: %v", err)
+	}
+	if sha != "deadbeefcafef00d" {
+		t.Errorf("sha = %q, want the SHA from the eventually-successful GET", sha)
+	}
+	if got := atomic.LoadInt32(&hits); got != 3 {
+		t.Errorf("server hit %d times; want 3 (two 404s, one that finally lands)", got)
+	}
+}
+
+// TestVerifyPushedBranchPersistentNotFoundFails pins the other half: a ref
+// that genuinely never appears must still fail loud - retrying can't turn a
+// real phantom push into a false success.
+func TestVerifyPushedBranchPersistentNotFoundFails(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	app := &App{apiBase: srv.URL, http: srv.Client(), installs: map[string]int64{"acme/widgets": 1}, tokens: map[int64]cachedToken{1: {token: "ghs_x", expires: time.Now().Add(time.Hour)}}}
+	_, err := app.verifyPushedBranch(context.Background(), "acme", "widgets", "feature")
+	if err == nil {
+		t.Fatal("verifyPushedBranch: expected an error for a ref that never appears, got nil")
+	}
+	if !strings.Contains(err.Error(), "status 404") {
+		t.Errorf("error = %v; want it to carry the underlying 404", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != pushVerifyAttempts {
+		t.Errorf("server hit %d times; want %d (pushVerifyAttempts)", got, pushVerifyAttempts)
+	}
+}
+
+// TestVerifyPushedBranchDoesNotRetryOtherFailures pins that the 404-only retry
+// doesn't paper over a genuinely different failure (auth, 5xx that doJSON's
+// own retry already exhausted, etc.) - those return on the first attempt.
+func TestVerifyPushedBranchDoesNotRetryOtherFailures(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	app := &App{apiBase: srv.URL, http: srv.Client(), installs: map[string]int64{"acme/widgets": 1}, tokens: map[int64]cachedToken{1: {token: "ghs_x", expires: time.Now().Add(time.Hour)}}}
+	_, err := app.verifyPushedBranch(context.Background(), "acme", "widgets", "feature")
+	if err == nil {
+		t.Fatal("verifyPushedBranch: expected an error, got nil")
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("server hit %d times; want 1 (a non-404 failure must not retry)", got)
+	}
+}
+
 func TestOwnerRepoFromURL(t *testing.T) {
 	tests := []struct {
 		url         string

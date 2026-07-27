@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -191,6 +192,43 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 		d, ok := takeDeliveryDetail("chat-push-ok")
 		if !ok || d.err != nil || d.pushedSHA != fullSHA || d.prNumber != 9 {
 			t.Errorf("recorded outcome = %+v, ok=%v; want the verified pushed SHA + pr_number", d, ok)
+		}
+	})
+
+	// #570: GitHub's git-refs API isn't read-your-writes consistent - a ref
+	// lookup right after an accepted push can 404 before it settles. Delivery
+	// must retry that instead of declaring the push a phantom failure.
+	t.Run("transient 404 on verification recovers", func(t *testing.T) {
+		dc := dc
+		dc.ChatID = "chat-push-race"
+		var refHits, prOpened int32
+		app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/git/ref/heads/feature"):
+				if atomic.AddInt32(&refHits, 1) <= 2 {
+					http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+					return
+				}
+				fmt.Fprintf(w, `{"object":{"sha":%q}}`, fullSHA)
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+				io.WriteString(w, `[]`)
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+				atomic.AddInt32(&prOpened, 1)
+				w.WriteHeader(http.StatusCreated)
+				io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/10","number":10}`)
+			default:
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			}
+		})
+		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if atomic.LoadInt32(&prOpened) != 1 {
+			t.Error("expected the PR to be opened once the racy verification finally landed")
+		}
+		d, ok := takeDeliveryDetail("chat-push-race")
+		if !ok || d.err != nil || d.prNumber != 10 {
+			t.Errorf("recorded outcome = %+v, ok=%v; want a successful delivery despite the transient 404s", d, ok)
 		}
 	})
 }
