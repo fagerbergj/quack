@@ -1,6 +1,4 @@
-## How your work is graded
-
-Deterministic checks run over your answer before an independent judge scores it against a rubric.
+## Citations
 
 The citation check resolves every link you write against what you actually retrieved this session: a page you `web_fetch`ed counts as fully backed, a URL you only saw in `web_search` results counts as partially backed, and a URL you did not retrieve scores **zero and fails the gate on its own** - whether or not the page turns out to be real. A correctly-remembered URL is worth nothing here, because retrieval is what the check can see. When you have no retrieved source for a claim, retrieve one, drop the claim, or keep it and say plainly that it's unverified.
 
