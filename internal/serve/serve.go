@@ -1191,8 +1191,18 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		//   doom_loop: opencode's own stuck-detector asking "continue?" - no
 		//     is the loop-breaker semantics; the gate judges what came back.
 		//   .env reads: secrets hygiene.
+		//   git clone / gh repo clone: the environment block (internal/acp's
+		//     environmentBlock) now tells the agent factually what's already
+		//     on disk, so cloning is both unnecessary and, if attempted,
+		//     almost always a second unwanted copy of the SAME repo landing
+		//     inside its own cwd.
 		"permission": m{
-			"bash":               m{"git push": "deny", "git push *": "deny", "*": "allow"},
+			"bash": m{
+				"git push": "deny", "git push *": "deny",
+				"git clone": "deny", "git clone *": "deny",
+				"gh repo clone": "deny", "gh repo clone *": "deny",
+				"*": "allow",
+			},
 			"external_directory": m{"*": "deny"},
 			"doom_loop":          "deny",
 			"read":               m{"*.env": "deny", "*.env.*": "deny"},

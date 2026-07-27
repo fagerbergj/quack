@@ -195,7 +195,11 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, err)
 			return
 		}
-		outbound := prompt
+		// The environment block grounds the round in what's ACTUALLY on disk
+		// (the environment-grounding follow-up) - observation, not
+		// instruction, so it never has to compete with a task's own prose the
+		// way the deleted "do not clone the repo" clauses did.
+		outbound := environmentBlock(ctx, cwd, a.opts.Caps) + "\n\n" + prompt
 		if a.opts.Preamble != "" {
 			outbound = a.opts.Preamble + "\n\n" + outbound
 		}
