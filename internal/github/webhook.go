@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
@@ -966,7 +967,15 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		answer = fmt.Sprintf("⚠️ quack hit its run deadline (%s) before finishing; nothing was delivered. Re-apply the label to retry.\n\nLast progress:\n\n%s",
 			e.runTimeout, answer)
 	} else if answer == "" {
-		answer = "quack finished but produced no answer."
+		// The silent-gap class (#568): the run hit no deadline and was not
+		// cancelled, yet persisted no final answer - from outside, indistinguishable
+		// from a run that legitimately had nothing to say. Say so explicitly and
+		// leave a queryable trace, the same treatment as gate.checks.skipped/
+		// judge.unavailable/delivery.outcome=none.
+		otelobs.RecordRunNoAnswer()
+		slog.Warn("github: run completed with no final answer", "component", "github", "repo", owner+"/"+repo, "issue", number)
+		answer = "⚠️ quack finished this run but produced no answer - no error, no failed node, nothing delivered. " +
+			"That's a silent-gap failure, not a run with nothing to say. Re-apply the label to retry."
 	} else {
 		// This is the orchestrator's own write-up, not a gated worker answer -
 		// it never runs through mermaidCriterion (#480 regression, #483). Check
@@ -1518,7 +1527,12 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 		// Like reviewOnly: no commit/push/PR words, or the vetting completion gate
 		// reads a phantom delivery demand off the task and loops the worker.
 		b.WriteString("This is a PLANNING-ONLY task: read the repository as needed to ground the plan, but do NOT change code or deliver anything to GitHub. ")
-		b.WriteString("Your final answer - the plan - is posted back to the issue automatically.")
+		// #569: a plan-only run wrote its plan to a file in the node's clone and
+		// posted a comment pointing at it - the file was never committed (plan-only
+		// commits nothing), so it existed nowhere the instant the run ended.
+		// State the actual contract instead of leaving it for the model to guess.
+		b.WriteString("Your ANSWER TEXT is the plan - it is posted back to the issue verbatim and automatically. Do NOT write the plan to a file and point at the path in your answer: any file this run writes is discarded with its working directory when the run ends, plan-only runs commit nothing, and a path reference to it is a dangling pointer to nothing. Write the actual plan content in your answer. ")
+		b.WriteString("Do not assert a dependency version, action tag, or API detail from memory as if it were current - if you have not verified it this session (checked the repo, fetched a page), say \"the current stable X\" rather than naming a specific version number; a stale one recalled from training data reads as confidently wrong.")
 		return b.String()
 	}
 	b.WriteString("If the task needs code changes, work at your workspace root (the repo is already cloned and checked out there for you - plain relative paths, no prefix), commit your work locally on the branch already checked out for you, then call stage_pr with a title and body - you do not push or open the pull request yourself ")

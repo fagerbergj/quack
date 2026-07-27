@@ -282,6 +282,17 @@ func TestClassifyMemoryCommitError(t *testing.T) {
 	}
 }
 
+// TestRecordRunNoAnswer_Counts guards #568: a run that completes without an
+// answer must leave a queryable trace, not just a placeholder comment.
+func TestRecordRunNoAnswer_Counts(t *testing.T) {
+	reader := newTestMeter(t)
+	RecordRunNoAnswer()
+	RecordRunNoAnswer()
+	if got := sumTotal(t, reader, "quack.run.no_answer"); got != 2 {
+		t.Fatalf("quack.run.no_answer = %d, want 2", got)
+	}
+}
+
 // TestJudgeScoreHistogram_HasExplicitBuckets guards #433: a 0-1 score
 // recorded against the OTel default buckets (5, 10, ...) lands entirely in
 // one bucket, making the histogram useless. Explicit sub-1.0 boundaries must

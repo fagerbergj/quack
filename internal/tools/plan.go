@@ -67,7 +67,10 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"working directory itself. And `delivery: {kind}` - exactly one of \"pull_request\" " +
 				"(implement-and-deliver requests), \"review\" (PR/diff review requests), or \"comment\" (plan-only/" +
 				"research requests that post a summary back); the harness authors and posts the PR/review from the " +
-				"node's own work - you never write PR prose. Omit both only for a plan with no GitHub repo involved. " +
+				"node's own work - you never write PR prose. For \"comment\" delivery a node's ANSWER TEXT is the " +
+				"artifact posted verbatim - a node must never write its plan/report to a file and point at the path " +
+				"instead: nothing commits it, the working directory is discarded when the run ends, and the path is " +
+				"then a dangling pointer to nothing. Omit both only for a plan with no GitHub repo involved. " +
 				"Returns a plan_id (pass to execute) plus a summary to review. Do NOT call for tasks you can answer " +
 				"directly. If validation fails, fix the nodes and call again.",
 		},
