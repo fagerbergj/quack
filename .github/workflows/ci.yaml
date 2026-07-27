@@ -17,6 +17,16 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      # internal/vetting's mermaid tests shell out to scripts/mermaid-validate.mjs
+      # (#574) - node + its deps must be on PATH for that coverage to actually run
+      # rather than skip.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: scripts/package-lock.json
+      - run: npm ci
+        working-directory: scripts
       - run: go vet ./...
       - run: go test ./...
 

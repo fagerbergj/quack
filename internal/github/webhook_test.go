@@ -618,6 +618,11 @@ func TestHandleWebhookNoAnswerFailsLoudly(t *testing.T) {
 // #480 regression (#483): the orchestrator's plan/research write-up never ran
 // through mermaidCriterion, so an invalid diagram shipped unchecked. Fixed
 // answer: the revise round should land it verbatim, valid, un-degraded.
+// mermaidValidateTestTimeout bounds the two tests below, which exercise a
+// path that calls the real mermaid.js validator (#574) up to 3 times
+// end-to-end (cold node+jsdom+mermaid import measures ~1-1.5s each).
+const mermaidValidateTestTimeout = 10 * time.Second
+
 func TestHandleWebhookInvalidMermaidRevisedFixesDiagram(t *testing.T) {
 	posted := make(chan string, 1)
 	gh := stubGitHub(t, posted)
@@ -636,12 +641,15 @@ func TestHandleWebhookInvalidMermaidRevisedFixesDiagram(t *testing.T) {
 	}
 
 	// First Run() call is the original dispatch; the second is the mermaid
-	// revise nudge - it must name the concrete parse error.
+	// revise nudge - it must name the concrete parse error. mermaidValidateTimeout
+	// (not 2s): each vetting.FindInvalidMermaid/DegradeInvalidMermaid call now
+	// shells out to the real mermaid.js parser (#574) - a cold node+jsdom+mermaid
+	// import measures ~1-1.5s on its own, and this path calls it twice.
 	<-gotMessage
 	var nudge string
 	select {
 	case nudge = <-gotMessage:
-	case <-time.After(2 * time.Second):
+	case <-time.After(mermaidValidateTestTimeout):
 		t.Fatal("no revise nudge dispatched")
 	}
 	if !strings.Contains(nudge, "invalid mermaid") || !strings.Contains(nudge, "parse error") {
@@ -651,7 +659,7 @@ func TestHandleWebhookInvalidMermaidRevisedFixesDiagram(t *testing.T) {
 	var body string
 	select {
 	case body = <-posted:
-	case <-time.After(2 * time.Second):
+	case <-time.After(mermaidValidateTestTimeout):
 		t.Fatal("no comment posted back")
 	}
 	if !strings.Contains(body, "```mermaid") || strings.Contains(body, "```text") {
@@ -681,7 +689,7 @@ func TestHandleWebhookInvalidMermaidStillBadAfterReviseDegradesVisibly(t *testin
 	var body string
 	select {
 	case body = <-posted:
-	case <-time.After(2 * time.Second):
+	case <-time.After(mermaidValidateTestTimeout):
 		t.Fatal("no comment posted back")
 	}
 	if strings.Contains(body, "```mermaid") {
