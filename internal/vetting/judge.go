@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/url"
 	"os"
@@ -77,7 +78,7 @@ const (
 		// worker had actually web_fetched the file from GitHub instead of
 		// reading the clone). "Sample the ledger" is not enough; the judge
 		// must actually open files before scoring grounding.
-		"MANDATORY before scoring any grounding/accuracy/correctness criterion: identify every load-bearing specific claim the answer makes about this repo, and independently verify each one yourself with grep/glob/read_file - actually open the file or run the grep, don't infer from the ledger summary or the answer's own description of what it read. An in-repo claim you have not personally verified this way is UNSUPPORTED, not grounded, no matter how confident or detailed it reads. A claim that contradicts what the file/grep actually shows is a fabrication regardless of whether it carries a citation, and sinks the criterion it backs. " +
+		"Your read-tool calls are counted, and a PASS with zero reads is discarded and re-judged: nothing in such a verdict was verified. So before scoring any grounding/accuracy/correctness criterion, identify every load-bearing specific claim the answer makes about this repo and check each one yourself with grep/glob/read_file - the ledger summary and the answer's own account of what it read are not substitutes. An in-repo claim you have not verified that way is UNSUPPORTED, not grounded, however confident it reads; one that contradicts what the file actually shows is a fabrication regardless of any citation, and sinks the criterion it backs. " +
 		"The workspace ledger below is evidence, not proof of diligence - treat it adversarially. If the answer makes claims about this repo's code but the ledger shows little or no local file reading (for example the worker web_fetched pages instead of using read_file/grep on the clone - a `web_fetch` entry hitting a repo host like raw.githubusercontent.com or api.github.com when read_file entries are sparse or absent is a RED FLAG, not a substitute), do not extend the benefit of the doubt: verify the claims yourself by reading the repo, and score the grounding/accuracy criteria harshly if you cannot confirm them. Read only what you need to reach a verdict - inspect the claimed files, do not spelunk the whole tree. For a pure-research answer with no in-repo claims you won't need these tools. "
 
 	// judgeSkillsClause is appended when the judge holds the skill toolset
@@ -140,7 +141,9 @@ type verdict struct {
 // closes over the judge model and the judge's read-only workspace tools (built
 // ONCE - they're jailed at construction and carry no per-round state); see
 // NewJudgeFactory.
-type JudgeFactory func(sink *verdict) (adkagent.Agent, error)
+// The *readCounter tallies the judge's read-tool calls for THIS round - the
+// factory is shared across concurrent nodes, so the tally cannot live on it.
+type JudgeFactory func(sink *verdict) (adkagent.Agent, *readCounter, error)
 
 // NewJudgeFactory returns a JudgeFactory that builds the agentic judge as an ADK
 // llmagent with judgeModel, the supplied read-only workspace tools (read_file,
@@ -158,15 +161,16 @@ type JudgeFactory func(sink *verdict) (adkagent.Agent, error)
 // fetches, so they are safe in the judge's isolated runner.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
-	return func(sink *verdict) (adkagent.Agent, error) {
+	return func(sink *verdict) (adkagent.Agent, *readCounter, error) {
 		submit, err := newSubmitVerdictTool(sink)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		counted, reads := countReads(readTools)
 		judgeTools := make([]tool.Tool, 0, len(readTools)+1)
-		judgeTools = append(judgeTools, readTools...)
+		judgeTools = append(judgeTools, counted...)
 		judgeTools = append(judgeTools, submit)
-		return llmagent.New(llmagent.Config{
+		a, err := llmagent.New(llmagent.Config{
 			Name:        "judge",
 			Description: "independent skeptical verifier",
 			Model:       judgeModel,
@@ -176,6 +180,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			Tools:    judgeTools,
 			Toolsets: skillsets,
 		})
+		return a, reads, err
 	}
 }
 
@@ -446,9 +451,10 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, act, 1.0)
 
 	var v verdict
+	var readc *readCounter
 	var err error
 	for attempt := 1; attempt <= judgeRetryAttempts; attempt++ {
-		v, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, act, emit)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, act, emit)
 		if err == nil || ctx.Err() != nil || !isTransientJudgeErr(err) || attempt == judgeRetryAttempts {
 			break
 		}
@@ -462,13 +468,30 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		}
 	}
 	if err == nil || ctx.Err() != nil {
+		if unreadPass(readc, v) {
+			// Discard it and judge once more, saying why. Second offence is
+			// accepted rather than looping - one wasted round is the ceiling.
+			slog.Warn("judge passed without reading the repo; re-judging once",
+				"component", "vetting", "agent", cfg.Agent, "score", v.Score)
+			v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
+				fitted+"\n\n"+unreadPassFeedback, changedFiles, act, emit)
+			if err2 == nil {
+				if unreadPass(readc2, v2) {
+					slog.Warn("judge passed without reading the repo again; accepting the verdict",
+						"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
+				}
+				return v2, nil
+			}
+			slog.Warn("re-judge failed; keeping the unread verdict", "component", "vetting", "err", err2)
+		}
 		return v, err
 	}
 	retryAnswer := fitJudgeAnswer(cfg, question, fitted, changedFiles, act, 0.5)
 	if retryAnswer == fitted {
 		return verdict{}, err // nothing left to shrink; the retry would repeat the same call
 	}
-	return runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, act, emit)
+	v, _, err = runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, act, emit)
+	return v, err
 }
 
 // runJudgeRound runs one agentic judge round in its own isolated runner +
@@ -480,11 +503,11 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 // The verdict is captured structurally via submit_verdict (sink). If the judge
 // ends without calling it, runJudgeRound falls back to parsing any text it
 // emitted, and failing that returns an error so the gate degrades gracefully.
-func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
+func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles string, act workerActivity, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
 	var sink verdict
-	judgeAgent, err := factory(&sink)
+	judgeAgent, reads, err := factory(&sink)
 	if err != nil {
-		return verdict{}, fmt.Errorf("vetting: build judge agent: %w", err)
+		return verdict{}, nil, fmt.Errorf("vetting: build judge agent: %w", err)
 	}
 	jr, err := runner.New(runner.Config{
 		AppName:           "quack-judge",
@@ -493,7 +516,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		AutoCreateSession: true,
 	})
 	if err != nil {
-		return verdict{}, fmt.Errorf("vetting: judge runner: %w", err)
+		return verdict{}, nil, fmt.Errorf("vetting: judge runner: %w", err)
 	}
 
 	maxIters := cfg.JudgeMaxIterations
@@ -529,7 +552,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	)
 	for ev, err := range jr.Run(runCtx, "judge", "verdict", content, adkagent.RunConfig{}) {
 		if err != nil {
-			return verdict{}, err
+			return verdict{}, reads, err
 		}
 		if ev == nil || ev.Content == nil {
 			continue
@@ -545,22 +568,22 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 				// suppress from display
 			case p.Thought && p.Text != "":
 				if !emit(stream.ThinkingPart(p.Text)) {
-					return verdict{}, context.Canceled
+					return verdict{}, reads, context.Canceled
 				}
 			case p.FunctionCall != nil:
 				if !emit(&genai.Part{FunctionCall: p.FunctionCall}) {
-					return verdict{}, context.Canceled
+					return verdict{}, reads, context.Canceled
 				}
 			case p.FunctionResponse != nil:
 				if !emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
-					return verdict{}, context.Canceled
+					return verdict{}, reads, context.Canceled
 				}
 			case p.Text != "":
 				// The local model emits reasoning as plain text rather than Thought
 				// parts; surface it as thinking and keep it for the text fallback.
 				accum.WriteString(p.Text)
 				if !emit(stream.ThinkingPart(p.Text)) {
-					return verdict{}, context.Canceled
+					return verdict{}, reads, context.Canceled
 				}
 			}
 		}
@@ -575,13 +598,13 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 
 	if submitted {
-		return aggregateVerdict(sink), nil
+		return aggregateVerdict(sink), reads, nil
 	}
 	// Fallback: judge ended without a structured verdict. Try its text, else fail.
 	if v, perr := parseVerdict(accum.String()); perr == nil {
-		return v, nil
+		return v, reads, nil
 	}
-	return verdict{}, fmt.Errorf("vetting: judge ended without a verdict")
+	return verdict{}, reads, fmt.Errorf("vetting: judge ended without a verdict")
 }
 
 // markdownLinkRe extracts inline Markdown link targets - web URLs AND local

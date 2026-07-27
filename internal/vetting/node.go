@@ -101,6 +101,12 @@ type NodeControl interface {
 // the user's answer back to this node on the next turn.
 const AskToolName = "ask_user"
 
+// memoryCommitTimeout bounds the consolidation call. Generous because it runs on
+// a local model against a whole answer, and it fires AFTER delivery - the run's
+// output is already on the PR, so waiting costs the user nothing while timing out
+// silently drops the node's durable memory (observed at 60s).
+const memoryCommitTimeout = 3 * time.Minute
+
 // hitlInterruptID is the STABLE per-node, per-round interrupt key for a mid-node
 // HITL pause. Node IDs repeat across plans and rounds repeat within a node, but
 // (invocation, node, round) is unique - and ADK scopes resume rehydration by
@@ -784,7 +790,7 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	// shape for async work triggered by a request that doesn't wait for it.
 	parentSC := oteltrace.SpanContextFromContext(spanCtx)
 	go func() {
-		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		cctx, cancel := context.WithTimeout(context.Background(), memoryCommitTimeout)
 		defer cancel()
 		cctx, commitSpan := otelobs.StartLinked(cctx, "memory.commit", parentSC, attribute.String("agent", author))
 		n, err := cfg.Memory.Commit(cctx, sc, author, staged, answer)

@@ -51,6 +51,12 @@ const (
 // cmd/quack/main.go).
 const SandboxExecArg = "__sandbox-exec"
 
+// SandboxEnvMarker names the env var the shim stamps into the process it execs,
+// e.g. "landlock:abi3:rw4:ro9". Observability only - a confined process is
+// otherwise indistinguishable from a bare one from outside (see the shim's
+// comment). Never read it to decide whether something is safe.
+const SandboxEnvMarker = "QUACK_SANDBOX"
+
 // bwrapBinary / prlimitBinary are looked up on the SERVER's ambient PATH (like
 // every other binary RunArgv resolves - see RunArgv's LookPath rationale).
 const (

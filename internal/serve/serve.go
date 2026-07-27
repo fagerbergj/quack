@@ -940,7 +940,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// being hand-written into the bundle's prompt.md.
 			var grading string
 			if cfg.Gates.Enabled() && ac.IsGated() {
-				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && memGuidance != "")
+				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil, memGuidance)
 				if err != nil {
 					return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 				}
@@ -1109,7 +1109,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		var grading string
 		if cfg.Gates.Enabled() && ac.IsGated() {
-			agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil && memGuidance != "")
+			agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil, memGuidance)
 			if err != nil {
 				return nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 			}
@@ -1144,12 +1144,18 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 // perAgentGateCfg specializes the base trust-gate config for one agent:
 // memory participation, retrieval/read-only derivation from its tool list, the
 // bundle rubric override, and the judge round budget.
-func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, memParticipant bool) (vetting.Config, error) {
+func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, memEnabled bool, memGuidance string) (vetting.Config, error) {
 	c := base
 	// An agent participates in task memory iff it has a memory.md. Such agents
 	// commit on a judge pass even when they staged nothing, so Commit's
 	// answer-extraction still runs.
-	c.CommitMemory = memParticipant
+	c.CommitMemory = memEnabled && memGuidance != ""
+	// A configured bucket with no memory.md gets recall but never commits, which
+	// otherwise looks identical to working memory (#560's failure class).
+	if memEnabled && ac.Memory.Bucket != "" && memGuidance == "" {
+		slog.Warn("agent has a memory bucket but no memory.md; it will recall but never commit",
+			"component", "serve", "agent", name, "bucket", ac.Memory.Bucket, "bundle", ac.Bundle)
+	}
 	// The role bucket this agent reads and writes (memory is shared, bucketed
 	// by subject - see internal/memory/scope.go).
 	c.MemoryRole = ac.Memory.Bucket
