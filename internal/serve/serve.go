@@ -562,6 +562,34 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		Extensions: extensions,
 		Auth:       authMW,
 	})
+
+	// Workspace GC (internal/workspace.RunGC): the volume is deliberately
+	// persistent across rebuilds, and nothing else reclaims a chat's clones or
+	// the gate's scratch worktrees once a run finishes. Bound to ctx (the
+	// server's own lifetime) so it stops on shutdown; started in a goroutine so
+	// a sweep of a volume that may hold years of clones never blocks startup.
+	// runHub.HasRegisteredRun is the hard stop against reaping a live run's
+	// clone mid-round - it covers a run still queued as well as one executing.
+	gcHomeDir, err := jail.HomeDir(localUserID)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("workspace gc home dir init failed: %w", err)
+	}
+	gcCaps := workspace.Caps{
+		Timeout:   time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
+		ExtraPath: cfg.Workspace.ExecPath,
+		Env:       cfg.Workspace.Env,
+		HomeDir:   gcHomeDir,
+	}
+	gcCfg := workspace.GCConfig{
+		Enabled:    cfg.Workspace.GC.IsEnabled(),
+		ChatTTL:    time.Duration(cfg.Workspace.GC.ChatTTLHours) * time.Hour,
+		ScratchTTL: time.Duration(cfg.Workspace.GC.ScratchTTLHours) * time.Hour,
+		Interval:   time.Duration(cfg.Workspace.GC.IntervalHours) * time.Hour,
+	}
+	go workspace.RunGC(ctx, jail, gcCfg, runHub.HasRegisteredRun, func(pctx context.Context, dir string) error {
+		return tools.PruneWorktree(pctx, dir, gcCaps)
+	})
+
 	return handler, runCleanups, addr, nil
 }
 

@@ -366,6 +366,19 @@ workspace:
   # guards:
   #   web_fetch: judge
 
+  # gc: the periodic disk reaper - the workspace volume is deliberately
+  # persistent across rebuilds, and nothing else reclaims a chat's clones or
+  # the gate's scratch worktrees once a run finishes. TTL-based (idle time),
+  # not quota-based (disk usage) - filling the volume inside the TTL window
+  # isn't covered. 0/absent on either TTL below means "use the default"; there
+  # is no separate "disable just this class" value - set enabled: false to
+  # turn the whole sweep off.
+  gc:
+    enabled: true
+    chat_ttl_hours: 168      # 7 days; a chat scope idle longer than this is removed (never one with a run in flight)
+    scratch_ttl_hours: 6     # gate baseline worktrees + .quack-home/tmp entries idle longer than this are removed
+    interval_hours: 1        # sweep cadence
+
 # Bundled integrations (inbound + outbound). Optional; each is off unless its
 # sub-section is present. Commented out here because dev/local runs typically
 # have no GitHub App - uncomment and set the env vars to enable it.

@@ -52,6 +52,27 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	return target, nil
 }
 
+// PruneWorktree detaches dir from its parent clone's worktree bookkeeping
+// before dir is removed out from under git - a bare os.RemoveAll on a linked
+// worktree leaves the parent's .git/worktrees/<name> pointing at nothing,
+// which makes the parent's later `git worktree add` calls complain (see
+// WorktreeCommonGitDir's doc). No-op if dir isn't a linked worktree at all,
+// or its parent clone no longer exists - plain removal covers both. This is
+// workspace GC's (internal/workspace.RunGC) WorktreePruner implementation:
+// git operations don't belong in that dependency-free package.
+func PruneWorktree(ctx context.Context, dir string, caps workspace.Caps) error {
+	common := workspace.WorktreeCommonGitDir(dir)
+	if common == "" {
+		return nil
+	}
+	parent := filepath.Dir(common)
+	if _, err := os.Stat(parent); err != nil {
+		return nil
+	}
+	_, _, err := runGit(ctx, parent, []string{"worktree", "remove", "--force", dir}, caps, nil)
+	return err
+}
+
 // worktreeValid reports whether target is ALREADY a linked worktree of
 // parentDir - SetupWorktree's idempotency check, so a resumed run's re-entry
 // into an already-provisioned node is a cheap no-op rather than a disruptive
