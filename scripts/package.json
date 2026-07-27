@@ -1,0 +1,9 @@
+{
+  "name": "quack-scripts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "jsdom": "^29.1.1",
+    "mermaid": "11.16.0"
+  }
+}

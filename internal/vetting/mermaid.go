@@ -8,16 +8,29 @@
 // deterministic gate with the concrete error, feeding a revise round instead
 // of silently degrading. #358 argued a bare "write valid mermaid" instruction
 // is exactly what a model ignores intermittently - true, but irrelevant here:
-// the feedback below always names the actual parse/validation error and which
-// block, which is the actionable instruction #358 didn't have.
+// the feedback below always names the actual parse error and which block,
+// which is the actionable instruction #358 didn't have.
+//
+// #574: validation used to run through github.com/sammcj/mermaid-check, a Go
+// REIMPLEMENTATION of mermaid's grammar - looser than the real thing (0 of 7
+// real plan diagrams flagged; GitHub's own jison-generated parser rejected
+// 5). This now shells out to scripts/mermaid-validate.mjs, the real
+// mermaid.parse() - the same parser GitHub renders with.
 package vetting
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
-
-	mermaid "github.com/sammcj/mermaid-check"
+	"sync"
+	"time"
 )
 
 // fenceOpenRe matches a fence-opening line - up to 3 leading spaces (CommonMark's
@@ -47,8 +60,8 @@ func FindInvalidMermaid(md string) []mermaidIssue {
 	}
 	lines := strings.Split(md, "\n")
 	var issues []mermaidIssue
-	walkMermaidBlocks(lines, func(openLine, _ int, reason string) {
-		if reason != "" {
+	walkMermaidBlocks(lines, func(openLine, _ int, body string) {
+		if reason := mermaidError(body); reason != "" {
 			issues = append(issues, mermaidIssue{line: openLine + 1, err: reason})
 		}
 	})
@@ -63,9 +76,9 @@ func (i mermaidIssue) Feedback() string {
 
 // walkMermaidBlocks is the one fence-walker shared by FindInvalidMermaid and
 // DegradeInvalidMermaid: it visits each genuine top-level ```mermaid block's
-// 0-based fence-open/fence-close line indices plus its validation reason ("" if
-// valid).
-func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, reason string)) {
+// 0-based fence-open/fence-close line indices plus its body text (fence
+// lines excluded) - validating is entirely up to the caller's visit func.
+func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, body string)) {
 	for i := 0; i < len(lines); {
 		m := fenceOpenRe.FindStringSubmatch(lines[i])
 		if m == nil {
@@ -80,8 +93,7 @@ func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, reaso
 			return
 		}
 		if info == "mermaid" {
-			body := strings.Join(lines[i+1:close], "\n")
-			visit(i, close, mermaidError(body))
+			visit(i, close, strings.Join(lines[i+1:close], "\n"))
 		}
 		i = close + 1
 	}
@@ -100,7 +112,8 @@ func DegradeInvalidMermaid(md string) (string, []mermaidIssue) {
 	var issues []mermaidIssue
 	out := make([]string, 0, len(lines))
 	last := 0
-	walkMermaidBlocks(lines, func(openLine, closeLine int, reason string) {
+	walkMermaidBlocks(lines, func(openLine, closeLine int, body string) {
+		reason := mermaidError(body)
 		if reason == "" {
 			return
 		}
@@ -145,32 +158,76 @@ func findFenceClose(lines []string, start int, fenceChar byte, fenceLen int) int
 	return -1
 }
 
-// mermaidError returns "" if body is valid mermaid, else a concrete,
-// actionable reason it isn't - a real parser/validator error, or the
-// supplementary quoted-label rule below. Strict validation, because one of
-// the issue's named failure modes - an unquoted label containing parentheses
-// - surfaces as a validator warning (NoParenthesesInLabels), not a parse
-// error, and a diagram that renders wrong on GitHub is exactly what this
-// exists to catch regardless of the severity mermaid-check assigns it.
-//
-// recover()-guarded: mermaid-check (v0.2.0) still calls itself "not
-// production-ready" - a panic here must degrade to "invalid" with a reason,
-// never take the gate round down with it.
-func mermaidError(body string) (reason string) {
-	defer func() {
-		if recover() != nil {
-			reason = "the mermaid checker could not process this diagram - simplify it"
+// mermaidValidatorPath is scripts/mermaid-validate.mjs. In production it's
+// found relative to the server's own CWD - repo root in dev, "/" in the
+// runtime image, same convention as every config/agents/skills path (see the
+// Dockerfile). `go test`'s CWD is instead the package's own directory, which
+// differs per package (internal/vetting vs internal/github, both consumers -
+// see FindInvalidMermaid/DegradeInvalidMermaid) - resolveMermaidValidatorPath
+// falls back to a path relative to THIS source file so every package's tests
+// find the same repo checkout without each needing its own override.
+var mermaidValidatorPath = resolveMermaidValidatorPath()
+
+func resolveMermaidValidatorPath() string {
+	const rel = "scripts/mermaid-validate.mjs"
+	if _, err := os.Stat(rel); err == nil {
+		return rel
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		if repoRel := filepath.Join(filepath.Dir(file), "..", "..", rel); pathExists(repoRel) {
+			return repoRel
 		}
-	}()
-	if r := quotedLabelIssue(body); r != "" {
-		return r
 	}
-	diagram, err := mermaid.Parse(body)
+	return rel
+}
+
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+var warnMermaidValidatorUnavailable = sync.OnceFunc(func() {
+	slog.Warn("mermaid diagrams are not being validated: node is missing or scripts/mermaid-validate.mjs was not found",
+		"component", "vetting")
+})
+
+// mermaidError returns "" if body is valid mermaid per the REAL mermaid.js
+// parser (scripts/mermaid-validate.mjs, run over stdin), else a reason
+// naming the parser's own error. Node absent, or the script missing, derives
+// nothing rather than failing every node with a diagram - mirrors
+// toolchainPresent's posture for derived checks (checks.go) - logged once so
+// an operator can tell "validated clean" from "never validated".
+func mermaidError(body string) string {
+	if _, err := exec.LookPath("node"); err != nil {
+		warnMermaidValidatorUnavailable()
+		return ""
+	}
+	if !pathExists(mermaidValidatorPath) {
+		warnMermaidValidatorUnavailable()
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "node", mermaidValidatorPath)
+	cmd.Stdin = strings.NewReader(body)
+	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Sprintf("parse error: %v", err)
+		if _, isExitErr := err.(*exec.ExitError); !isExitErr {
+			// A launch failure, not the script reporting a bad diagram - degrade
+			// like a missing validator rather than mislabel it as invalid mermaid.
+			warnMermaidValidatorUnavailable()
+			return ""
+		}
 	}
-	if warnings := mermaid.Validate(diagram, true); len(warnings) > 0 {
-		return fmt.Sprintf("validation error: %v", warnings[0])
+	var res struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(out, &res) != nil {
+		return fmt.Sprintf("the mermaid validator produced unreadable output: %s", out)
+	}
+	if !res.OK {
+		return "parse error: " + res.Error
 	}
 	return ""
 }
@@ -192,34 +249,4 @@ func mermaidCriterion(answer string, act workerActivity) (criterionScore, bool) 
 		}
 	}
 	return criterionScore{}, false
-}
-
-// mermaidLabelRe finds a single-level bracket/paren/brace node label
-// ([...], (...), {...}) - the label text itself is not allowed to contain
-// another one of these delimiters, which is enough to isolate each label
-// without a real parse.
-var mermaidLabelRe = regexp.MustCompile(`[\[({]([^\[\]{}()\n]*)[\])}]`)
-
-// quotedLabelIssue is the supplementary check mermaid-check still misses as
-// of v0.2.0 (#448, re-verified on the bump to v0.2.0): a bracket/paren/brace
-// node label containing a bare double-quote that is NOT the whole label
-// quoted (mermaid's own escape form, A["label with \"quotes\""]) breaks
-// GitHub's real mermaid.js parser even though mermaid-check parses and
-// strictly validates it clean - verified empirically against the issue's own
-// example (A[bundle name<br/>e.g. "code-reviewer"]).
-func quotedLabelIssue(body string) string {
-	for _, m := range mermaidLabelRe.FindAllStringSubmatch(body, -1) {
-		label := m[1]
-		if !strings.Contains(label, `"`) {
-			continue
-		}
-		trimmed := strings.TrimSpace(label)
-		if len(trimmed) >= 2 && strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`) {
-			continue // fully-quoted label - mermaid's own escape form, valid
-		}
-		return fmt.Sprintf(
-			`label %q has a double-quote inside an unquoted bracket/paren/brace label - GitHub's parser rejects this; wrap the WHOLE label in double quotes and escape inner quotes (e.g. ["label with \"quotes\""]) or remove the quotes`,
-			label)
-	}
-	return ""
 }
