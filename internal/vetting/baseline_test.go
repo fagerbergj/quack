@@ -60,6 +60,46 @@ func clonedRepoConfig(t *testing.T, checks []string, seed map[string]string) (Co
 	}, repo
 }
 
+// The bug (live dogfood 2026-07-27, quack 0.16.0): the baseline worktree was
+// created under the SERVER's os.TempDir(), but the git that populates it runs as
+// a sandboxed child whose grants cover the node dir, its $HOME and the sandbox's
+// own tmp - not /tmp. So `git worktree add` died with "could not create leading
+// directories of '/tmp/quack-base-*/wt/.git': Permission denied", failsAtBase
+// reported "does not fail at base", and a Go-only change was gated three rounds
+// running on a frontend build failure it never caused. The baseline dir has to
+// live where the sandbox already lets the child write.
+func TestRunAtBaseUsesTheSandboxTmpDir(t *testing.T) {
+	cfg, repo := clonedRepoConfig(t, []string{"true"}, map[string]string{"a.txt": "x"})
+	caps := cfg.WorkspaceCaps
+	caps.Sandbox = workspace.SandboxLandlock
+	caps.HomeDir = t.TempDir()
+	granted := workspace.SandboxTmpDir(caps)
+	if granted == os.TempDir() {
+		t.Fatalf("SandboxTmpDir returned the server's own tmp %q - the grant set does not cover it", granted)
+	}
+
+	base, err := baseCommit(repo, caps)
+	if err != nil {
+		t.Fatalf("baseCommit: %v", err)
+	}
+	// runAtBase deletes its scratch dir before returning, so the check itself is
+	// the witness: it runs INSIDE the worktree, so its cwd is that dir. The record
+	// goes under the granted $HOME - anywhere else and the sandbox denies the
+	// write, which is the point of the mode.
+	record := filepath.Join(caps.HomeDir, "cwd")
+	if _, err := runAtBase(repo, base, "pwd | tee "+record, caps); err != nil {
+		t.Fatalf("runAtBase: %v", err)
+	}
+	got, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the base check never ran: %v", err)
+	}
+	wt := strings.TrimSpace(string(got))
+	if !strings.HasPrefix(wt, granted) {
+		t.Errorf("baseline worktree ran at %q, want it under the granted tmp %q", wt, granted)
+	}
+}
+
 // The bug (live e2e 2026-07-13): the target repo's `lint` already failed on its
 // base commit (pre-existing eslint errors in a game the worker never touched).
 // The worker's own code was clean, yet the gate failed it 5 rounds running on a
