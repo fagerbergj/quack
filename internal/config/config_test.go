@@ -631,6 +631,71 @@ func TestWorkspaceDefaults(t *testing.T) {
 	}
 }
 
+// TestWorkspaceGCDefaults: an absent workspace.gc: section still gets a
+// running reaper at its documented defaults.
+func TestWorkspaceGCDefaults(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc := c.Workspace.GC
+	if !gc.IsEnabled() {
+		t.Error("IsEnabled() = false, want true (default)")
+	}
+	if gc.ChatTTLHours != 168 {
+		t.Errorf("ChatTTLHours = %d, want 168", gc.ChatTTLHours)
+	}
+	if gc.ScratchTTLHours != 6 {
+		t.Errorf("ScratchTTLHours = %d, want 6", gc.ScratchTTLHours)
+	}
+	if gc.IntervalHours != 1 {
+		t.Errorf("IntervalHours = %d, want 1", gc.IntervalHours)
+	}
+}
+
+// TestWorkspaceGCOverrides proves every gc: field round-trips, and that
+// enabled: false is honored (not overwritten by the true default).
+func TestWorkspaceGCOverrides(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  gc:
+    enabled: false
+    chat_ttl_hours: 24
+    scratch_ttl_hours: 2
+    interval_hours: 4
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc := c.Workspace.GC
+	if gc.IsEnabled() {
+		t.Error("IsEnabled() = true, want false (explicitly disabled)")
+	}
+	if gc.ChatTTLHours != 24 {
+		t.Errorf("ChatTTLHours = %d, want 24", gc.ChatTTLHours)
+	}
+	if gc.ScratchTTLHours != 2 {
+		t.Errorf("ScratchTTLHours = %d, want 2", gc.ScratchTTLHours)
+	}
+	if gc.IntervalHours != 4 {
+		t.Errorf("IntervalHours = %d, want 4", gc.IntervalHours)
+	}
+}
+
+// TestWorkspaceGCRejectsNegativeHours: a negative TTL/interval is a config
+// error, not a silent default (0 alone means "use the default" - see
+// WorkspaceGCConfig's doc).
+func TestWorkspaceGCRejectsNegativeHours(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  gc:
+    chat_ttl_hours: -1
+`))
+	if err == nil {
+		t.Fatal("expected error for a negative workspace.gc TTL")
+	}
+}
+
 // TestWorkspaceSandboxOverrides: `none` is the explicit opt-out, the limits
 // round-trip, and any other value is a startup error rather than a typo that
 // silently degrades to "no sandbox".
