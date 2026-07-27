@@ -11,6 +11,16 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
 RUN npm run build
 
+# 1b) Mermaid validator deps (#574): mermaid.parse() run for real, not the Go
+# reimplementation it replaces (internal/vetting/mermaid.go). npm install
+# only - no bundler - the image already carries the Go toolchain, node, and
+# opencode, so ~180MB of node_modules here is not a meaningful addition.
+FROM node:24-bookworm-slim AS mermaid-validator
+WORKDIR /app/scripts
+COPY scripts/package.json scripts/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
+COPY scripts/mermaid-validate.mjs ./
+
 # 2) Build the Go server with the SPA embedded.
 # bookworm (glibc), NOT alpine (musl) - same reason as the frontend stage: the
 # runtime copies /usr/local/go from here and must be able to execute it.
@@ -77,6 +87,10 @@ COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 ENV PATH=/usr/local/go/bin:$PATH
+# The mermaid validator (internal/vetting/mermaid.go, #574): `node
+# scripts/mermaid-validate.mjs` resolves against CWD / here, exactly like
+# every path below - same relative path the source tree uses in dev.
+COPY --from=mermaid-validator /app/scripts /scripts
 # The config directory: quack.yaml plus files it references by relative path
 # (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
 COPY config/ /config/
