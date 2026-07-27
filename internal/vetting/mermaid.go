@@ -184,12 +184,7 @@ func mermaidError(body string) (reason string) {
 // folds into the next revise prompt - the model gets the actual parser error
 // and the block it came from, not a generic "check your mermaid".
 func mermaidCriterion(answer string, act workerActivity) (criterionScore, bool) {
-	texts := make([]string, 0, len(act.stagedDelivery)+1)
-	texts = append(texts, answer)
-	for _, sd := range act.stagedDelivery {
-		texts = append(texts, sd.Body)
-	}
-	for _, t := range texts {
+	for _, t := range deliveryTexts(answer, act) {
 		if issues := FindInvalidMermaid(t); len(issues) > 0 {
 			iss := issues[0]
 			return criterionScore{Score: 0, Reason: fmt.Sprintf(
