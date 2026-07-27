@@ -5,6 +5,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -716,6 +717,29 @@ var literalTokenRe = regexp.MustCompile(`(?m)^\s*(?:token|private_key|webhook_se
 // envRefRe matches a bare ${VAR_NAME} env reference with nothing else around it.
 var envRefRe = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
 
+// knownRenames maps deprecated YAML keys (pre-#517) to their replacement, so the
+// startup error can name the correct key instead of a bare "unknown field". Any
+// future renames go in this map. Keys are matched by regex against the raw YAML
+// text (before ${VAR} expansion) because yaml.knownFields fires only after decode.
+var knownRenames = map[string]string{
+	"memory_role": "memory.bucket",
+}
+
+// scanForKnownRenames checks the raw (pre-expansion) config text for keys that
+// match known renames and returns a hint string naming the replacement, or ""
+// when nothing is found. The regex matches a YAML key followed by a colon and
+// at least one space of whitespace (the value boundary), so comments like
+// "# uses memory_role" don't trigger false positives.
+func scanForKnownRenames(raw []byte) string {
+	for oldKey, newKey := range knownRenames {
+		re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(oldKey) + `\s*:\s+`)
+		if re.Match(raw) {
+			return fmt.Sprintf(" (known rename: use %q instead)", newKey)
+		}
+	}
+	return ""
+}
+
 // validateNoLiteralTokens is a MECHANICAL, syntactic check on the RAW config
 // text (before os.Expand interpolates ${VAR} references) — a git credential's
 // `token:` value must be exactly an ${VAR} env reference, so a literal secret
@@ -771,10 +795,21 @@ func Load(path string) (*Config, error) {
 	if err := validateNoLiteralTokens(string(raw)); err != nil {
 		return nil, err
 	}
+
+	// Pre-scan the RAW (pre-expansion) text for known renames: keys never
+	// contain ${VAR}, so a regex on raw text is exact. The hint enriches the
+	// KnownFields error below when it fires on a renamed structural key.
+	hint := scanForKnownRenames(raw)
+
 	expanded := os.Expand(string(raw), expandEnv)
 
 	var c Config
-	if err := yaml.Unmarshal([]byte(expanded), &c); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader([]byte(expanded)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
+		if hint != "" {
+			return nil, fmt.Errorf("parse config %q: %w%v", path, err, hint)
+		}
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	if err := c.validate(); err != nil {

@@ -1243,3 +1243,83 @@ func TestWorkspaceDefaults_CheckCommands(t *testing.T) {
 		t.Fatalf("explicit [] must stay disabled, got %v", disabled.CheckCommands)
 	}
 }
+
+// TestLoadRejectsUnknownYAMLKey verifies that KnownFields(true) rejects any
+// unrecognized YAML key at any nesting level — this is the primary guard for
+// config drift (renamed keys, typos in field names, stale deployments).
+func TestLoadRejectsUnknownYAMLKey(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+agents:
+  test:
+    bundle: agents/test
+    provider: default
+    model: m
+    old_field: value
+`))
+	if err == nil {
+		t.Fatal("expected error for unknown top-level agent field")
+	}
+	if !strings.Contains(err.Error(), "old_field") {
+		t.Errorf("error should mention the unknown key, got: %v", err)
+	}
+}
+
+// TestLoadRejectsUnknownNestedYAMLKey verifies strict validation reaches into
+// nested structs (e.g. workspace.gates.deep_unknown inside gates config).
+func TestLoadRejectsUnknownNestedYAMLKey(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  sandbox: none
+  deep_unknown: true
+`))
+	if err == nil {
+		t.Fatal("expected error for unknown nested key")
+	}
+	if !strings.Contains(err.Error(), "deep_unknown") {
+		t.Errorf("error should mention the unknown key, got: %v", err)
+	}
+}
+
+// TestLoadMemoryRoleMigrationHint verifies that the deprecated memory_role
+// key (renamed to memory.bucket in #517) fails with a migration hint naming
+// the replacement key.
+func TestLoadMemoryRoleMigrationHint(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+agents:
+  test:
+    bundle: agents/test
+    provider: default
+    model: m
+    memory_role: coding
+`))
+	if err == nil {
+		t.Fatal("expected error for deprecated memory_role key")
+	}
+	if !strings.Contains(err.Error(), "memory_role") {
+		t.Errorf("error should mention the unknown key, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "memory.bucket") {
+		t.Errorf("error should suggest memory.bucket as replacement, got: %v", err)
+	}
+}
+
+// TestLoadRejectsUnknownFieldInGates verifies that unexpected keys inside
+// the gates config are rejected too.
+func TestLoadRejectsUnknownFieldInGates(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+gates:
+  constitution: be good
+  deterministic_checks: { max_rounds: 2 }
+  judge:
+    provider: default
+    model: j
+    max_rounds: 1
+  bogus_key: true
+`))
+	if err == nil {
+		t.Fatal("expected error for unknown key in gates block")
+	}
+	if !strings.Contains(err.Error(), "bogus_key") {
+		t.Errorf("error should mention the unknown key, got: %v", err)
+	}
+}
