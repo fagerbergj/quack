@@ -19,6 +19,10 @@ import (
 // exists for (see ResolveSandbox).
 var landlockABI = landlock.V3
 
+// landlockABIVersion is landlockABI's number, for the env marker only - the
+// landlock.Config carries no accessor for it.
+const landlockABIVersion = 3
+
 // probeLandlock proves Landlock ABI >= V3 actually works HERE by applying a
 // trivial strict ruleset in a THROWAWAY child process (self-spawned in
 // --probe mode) - never in the server process, which a successful
@@ -72,7 +76,16 @@ func SandboxExecMain(args []string) error {
 		return fmt.Errorf("sandbox-exec: restrict: %w", err)
 	}
 	execArgv := append([]string{bin}, target[1:]...)
-	return syscall.Exec(bin, execArgv, os.Environ())
+	// Stamp the ruleset into the environment we exec into. syscall.Exec replaces
+	// this process image, so a confined child is indistinguishable from a bare one
+	// in `ps`, and kernels through 6.8 expose no Landlock field in
+	// /proc/<pid>/status - without this there is no way to answer "is this
+	// confined?" from outside. NOT a security control: the child can overwrite it
+	// (same caveat Codex documents for CODEX_PERMISSION_PROFILE), so it is for
+	// operators, not for enforcement decisions.
+	env := append(os.Environ(), fmt.Sprintf("%s=landlock:abi%d:rw%d:ro%d",
+		SandboxEnvMarker, landlockABIVersion, len(rw), len(ro)))
+	return syscall.Exec(bin, execArgv, env)
 }
 
 // parseSandboxExecArgs splits the __sandbox-exec argv into its repeatable

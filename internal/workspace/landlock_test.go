@@ -341,3 +341,31 @@ func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 		}
 	}
 }
+
+// TestSandboxExecStampsTheEnvMarker pins the observability marker: a confined
+// process is indistinguishable from a bare one in `ps` (syscall.Exec replaces the
+// image) and kernels through 6.8 expose no Landlock field in /proc, so the marker
+// is the only way to answer "is this confined?" from outside.
+func TestSandboxExecStampsTheEnvMarker(t *testing.T) {
+	requireLandlock(t)
+	dir := t.TempDir()
+	caps := sandboxCaps(t, SandboxLandlock)
+	caps.WorkRoot = dir
+
+	res, err := RunArgv(context.Background(), dir, []string{"env"}, caps)
+	if err != nil {
+		t.Fatalf("env under landlock: %v (%q)", err, res.Output)
+	}
+	var line string
+	for _, l := range strings.Split(res.Output, "\n") {
+		if strings.HasPrefix(l, SandboxEnvMarker+"=") {
+			line = strings.TrimSpace(l)
+		}
+	}
+	if line == "" {
+		t.Fatalf("no %s in the child's environment:\n%s", SandboxEnvMarker, res.Output)
+	}
+	if !strings.Contains(line, "landlock:abi3:rw") || !strings.Contains(line, ":ro") {
+		t.Errorf("marker %q does not name the mode, ABI and grant counts", line)
+	}
+}

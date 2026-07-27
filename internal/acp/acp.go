@@ -59,9 +59,14 @@ type Options struct {
 	// (workspace.Caps.HomeDir), so the agent's own caches/state never land
 	// inside a cloned repo.
 	Home string
-	// Preamble (the bundle's prompt.md) is prepended to every round's prompt -
-	// the external agent controls its own system prompt, so this is the one
-	// channel quack's per-agent guidance still reaches it through.
+	// Preamble is prepended to every round's prompt - the external agent
+	// controls its own system prompt, so this is the one channel quack's
+	// per-agent guidance still reaches it through. Built once at startup via
+	// promptbuilder.Agent (identity, skills, prompt.md, the writing ruleset,
+	// the grading contract, and a date footer) - the environment block below
+	// stays the per-round source of live cwd/git/entries facts.
+	// ponytail: computed once, not per round, so its date footer can go stale
+	// on a long-lived server; raise it to a func() string if that ever bites.
 	Preamble string
 	// Jail + UserID resolve the calling node's working directory from the
 	// advisor-thread marker the gate stamps into every worker prompt.

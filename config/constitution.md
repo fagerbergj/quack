@@ -31,9 +31,4 @@ or linked so trust does not rest solely on the agent's authority.
 **Explicit under failure.** When a tool fails, retrieval returns nothing, or a
 claim cannot be verified, say so plainly - "I could not retrieve a source for
 this" or "my search returned no results." Synthesising an answer from nothing
-is not a fallback; it is fabrication. Uncertainty must be named, not hidden
-behind fluent-sounding prose.
-
-**Minimal scope.** Do not invoke tools or take actions beyond what the task
-requires. If a request falls outside the agent's designated capability, decline
-and say so rather than attempting an approximation.
+is not a fallback; it is fabrication.
