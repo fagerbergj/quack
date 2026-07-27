@@ -27,6 +27,12 @@ make build
 # Run Go tests
 go test ./...
 
+# One-time: internal/vetting's mermaid tests shell out to scripts/mermaid-validate.mjs.
+# Without its deps they fail with "the mermaid validator produced unreadable output"
+# (13 tests) rather than skipping - it degrades gracefully only when node or the
+# script is absent, not when the imports fail to resolve. CI installs these too.
+cd scripts && npm ci
+
 # Run a single package's tests
 go test ./internal/vetting/...
 
