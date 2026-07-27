@@ -1243,3 +1243,158 @@ func TestWorkspaceDefaults_CheckCommands(t *testing.T) {
 		t.Fatalf("explicit [] must stay disabled, got %v", disabled.CheckCommands)
 	}
 }
+
+// TestKnownFieldsRejectsUnknownTopLevel proves a completely unknown top-level
+// key is caught by KnownFields(true) and named in the error.
+func TestKnownFieldsRejectsUnknownTopLevel(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+foobar: true
+`))
+	if err == nil {
+		t.Fatal("expected error for unknown top-level key 'foobar'")
+	}
+	if !strings.Contains(err.Error(), "foobar") {
+		t.Fatalf("error should name the unknown field: %v", err)
+	}
+}
+
+// TestKnownFieldsRejectsUnknownNestedKey proves an unknown key inside any nested
+// block (server, workspace, gates.judge, etc.) is caught.
+func TestKnownFieldsRejectsUnknownNestedKey(t *testing.T) {
+	for _, desc := range []struct {
+		yaml  string
+		field string
+	}{
+		{`
+server:
+  foobar: true`,
+			"foobar"}, // server block
+		{`
+workspace:
+  max_read_kb: 128
+  foobar: x`,
+			"foobar"}, // workspace block
+		{`
+gates:
+  rubric: r
+  judge:
+    provider: default
+    model: j
+    foobar: y
+    max_rounds: 1`,
+			"foobar"}, // gate/judge
+	} {
+		_, err := Load(writeTemp(t, baseConfig+desc.yaml))
+		if err == nil {
+			t.Errorf("%s: expected error for unknown nested field %q", desc.field, desc.field)
+			continue
+		}
+		if !strings.Contains(err.Error(), desc.field) {
+			t.Errorf("%s: error should name the unknown field: %v", desc.field, err)
+		}
+	}
+}
+
+// TestKnownFieldsRejectsMemoryRoleRename proves the deprecated memory_role key
+// is rejected with a migration hint naming the replacement.
+func TestKnownFieldsRejectsMemoryRoleRename(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  code-reviewer:
+    bundle: agents/code-reviewer
+    provider: default
+    model: c-model
+    memory_role: coding
+`))
+	if err == nil {
+		t.Fatal("expected error for deprecated memory_role key")
+	}
+	if !strings.Contains(err.Error(), "memory_role") {
+		t.Errorf("error should mention the old key 'memory_role': %v", err)
+	}
+	if !strings.Contains(err.Error(), "memory.bucket") {
+		t.Errorf("error should name the replacement 'memory.bucket': %v", err)
+	}
+}
+
+// TestValidConfigStillLoads ensures KnownFields(true) doesn't regress on a config that
+// contains every valid known field (the exact set the struct defines).
+func TestValidConfigStillLoads(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+server:
+  addr: ":9999"
+agents:
+  code-reviewer:
+    bundle: agents/code-reviewer
+    provider: default
+    model: r-model
+    memory:
+      bucket: coding
+tools:
+  stage_memory: { store: main }
+gates:
+  rubric: "be good"
+  deterministic_checks: { max_rounds: 2 }
+  judge:
+    provider: default
+    model: j-model
+    max_rounds: 1
+`))
+	if err != nil {
+		t.Fatalf("valid config should load without error: %v", err)
+	}
+	mem := c.Agents["code-reviewer"].Memory.Bucket
+	if mem != "coding" {
+		t.Errorf("memory.bucket = %q, want 'coding'", mem)
+	}
+	if c.Server.Addr != ":9999" {
+		t.Errorf("addr = %q, want :9999", c.Server.Addr)
+	}
+}
+
+// TestKnownRenamesMapIsPopulated ensures the map has at least one entry so nobody
+// deletes it accidentally and the pre-scan path is nontrivial.
+func TestKnownRenamesMapHasEntries(t *testing.T) {
+	if len(knownRenames) == 0 {
+		t.Fatal("knownRenames map should not be empty")
+	}
+	if _, ok := knownRenames["memory_role"]; !ok {
+		t.Error("expected 'memory_role' in knownRenames")
+	}
+}
+
+// TestScanForKnownRenames tests the scan-for-renames helper directly.
+func TestScanForKnownRenames(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{"memory_role present", "  memory_role: coding", true},
+		{"memory_role with indent", "\nagents:\n  reviewer:\n    memory_role: x\n", true},
+		{"no renamed keys", "  bucket: coding\n  provider: default\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := scanForKnownRenames(tc.yaml)
+			if tc.wantErr && err == nil {
+				t.Error("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
