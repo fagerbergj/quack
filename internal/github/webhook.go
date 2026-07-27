@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
@@ -966,7 +967,15 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		answer = fmt.Sprintf("⚠️ quack hit its run deadline (%s) before finishing; nothing was delivered. Re-apply the label to retry.\n\nLast progress:\n\n%s",
 			e.runTimeout, answer)
 	} else if answer == "" {
-		answer = "quack finished but produced no answer."
+		// The silent-gap class (#568): the run hit no deadline and was not
+		// cancelled, yet persisted no final answer - from outside, indistinguishable
+		// from a run that legitimately had nothing to say. Say so explicitly and
+		// leave a queryable trace, the same treatment as gate.checks.skipped/
+		// judge.unavailable/delivery.outcome=none.
+		otelobs.RecordRunNoAnswer()
+		slog.Warn("github: run completed with no final answer", "component", "github", "repo", owner+"/"+repo, "issue", number)
+		answer = "⚠️ quack finished this run but produced no answer - no error, no failed node, nothing delivered. " +
+			"That's a silent-gap failure, not a run with nothing to say. Re-apply the label to retry."
 	} else {
 		// This is the orchestrator's own write-up, not a gated worker answer -
 		// it never runs through mermaidCriterion (#480 regression, #483). Check

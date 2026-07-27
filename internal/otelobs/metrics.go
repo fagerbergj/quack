@@ -39,6 +39,7 @@ type metrics struct {
 	memRecall        metric.Int64Counter     // attrs: hit
 	checksSkipped    metric.Int64Counter     // attrs: reason - deterministic checks did NOT run at all (see RecordChecksSkipped)
 	memCommitFail    metric.Int64Counter     // attrs: reason, agent - fire-and-forget memory commit that errored (see RecordMemoryCommitFailure)
+	runNoAnswer      metric.Int64Counter     // a run completed (no deadline, no cancel) but persisted no final answer (see RecordRunNoAnswer)
 }
 
 // initMetrics builds every instrument from meter and installs it as the
@@ -101,6 +102,10 @@ func initMetrics(meter metric.Meter) error {
 	}
 	if m2.memCommitFail, err = meter.Int64Counter("quack.memory.commit.failures",
 		metric.WithDescription("fire-and-forget memory commits that errored (consolidation/embed timeout etc - see RecordMemoryCommitFailure), by reason and agent - the only queryable signal for the M6 commit goroutine, which never fails a node")); err != nil {
+		return err
+	}
+	if m2.runNoAnswer, err = meter.Int64Counter("quack.run.no_answer",
+		metric.WithDescription("runs that finished without hitting the run deadline or being cancelled, yet persisted no final answer - the silent-gap class also covered by gate.checks.skipped/judge.unavailable/delivery.outcome=none, but at the whole-run level (see the GitHub extension's tail-comment fallback)")); err != nil {
 		return err
 	}
 	m = m2
@@ -323,6 +328,17 @@ func ClassifyMemoryCommitError(err error) string {
 	default:
 		return "other"
 	}
+}
+
+// RecordRunNoAnswer records a run that ran to completion (not deadline-killed,
+// not cancelled) but persisted no final answer text - see webhook.go's tail
+// comment, which posts a loud failure instead of a silent placeholder for
+// exactly this case.
+func RecordRunNoAnswer() {
+	if m == nil {
+		return
+	}
+	m.runNoAnswer.Add(context.Background(), 1)
 }
 
 func attrAgent(v string) attribute.KeyValue          { return attribute.String("agent", v) }

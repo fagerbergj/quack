@@ -568,6 +568,44 @@ func TestHandleWebhookNudgesWhenNoPlanRan(t *testing.T) {
 	}
 }
 
+// TestHandleWebhookNoAnswerFailsLoudly guards #568: a run that neither hits
+// its deadline nor gets cancelled, but persists no final answer, must post an
+// explicit failure - not the old "quack finished but produced no answer."
+// placeholder, which read identically to a run that legitimately had nothing
+// to say. The comment must also tell the maintainer what to do next, like the
+// deadline path already does.
+func TestHandleWebhookNoAnswerFailsLoudly(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: ""}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack summarize this issue")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+
+	var body string
+	select {
+	case body = <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment posted back")
+	}
+
+	if strings.Contains(body, "quack finished but produced no answer.") {
+		t.Errorf("posted the old silent placeholder verbatim: %q", body)
+	}
+	if !strings.Contains(body, "Re-apply the label to retry") {
+		t.Errorf("comment does not say what to do next: %q", body)
+	}
+	if !strings.Contains(strings.ToLower(body), "no error") {
+		t.Errorf("comment does not describe what actually happened: %q", body)
+	}
+}
+
 // The plan/answer comment path (dispatch posting e.runner.LatestAnswer directly)
 // is separate from the trust gate's commitDelivery, which only strips staged
 // PR/review bodies (#371) - this proves dispatch ALSO strips an invalid
