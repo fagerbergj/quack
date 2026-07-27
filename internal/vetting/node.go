@@ -1161,6 +1161,12 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	if c, ok := toolCallSyntaxCriterion(answer, act); ok {
 		v.Criteria["no_tool_call_syntax"] = c
 	}
+	// Answer-shape check (#569): a pointer to a file this run wrote but never
+	// committed is broken by construction - the working directory holding it
+	// is discarded when the run ends.
+	if c, ok := danglingDeliverablePathCriterion(answer, act); ok {
+		v.Criteria["no_dangling_deliverable_path"] = c
+	}
 	// Delivery: a node whose task says commit/push/PR cannot pass unless the
 	// ledger shows it did, and one told to POST a review on a PR cannot pass
 	// unless it submitted one (delivery.go). Untouched for a node whose task

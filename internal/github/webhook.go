@@ -1518,7 +1518,12 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 		// Like reviewOnly: no commit/push/PR words, or the vetting completion gate
 		// reads a phantom delivery demand off the task and loops the worker.
 		b.WriteString("This is a PLANNING-ONLY task: read the repository as needed to ground the plan, but do NOT change code or deliver anything to GitHub. ")
-		b.WriteString("Your final answer - the plan - is posted back to the issue automatically.")
+		// #569: a plan-only run wrote its plan to a file in the node's clone and
+		// posted a comment pointing at it - the file was never committed (plan-only
+		// commits nothing), so it existed nowhere the instant the run ended.
+		// State the actual contract instead of leaving it for the model to guess.
+		b.WriteString("Your ANSWER TEXT is the plan - it is posted back to the issue verbatim and automatically. Do NOT write the plan to a file and point at the path in your answer: any file this run writes is discarded with its working directory when the run ends, plan-only runs commit nothing, and a path reference to it is a dangling pointer to nothing. Write the actual plan content in your answer. ")
+		b.WriteString("Do not assert a dependency version, action tag, or API detail from memory as if it were current - if you have not verified it this session (checked the repo, fetched a page), say \"the current stable X\" rather than naming a specific version number; a stale one recalled from training data reads as confidently wrong.")
 		return b.String()
 	}
 	b.WriteString("If the task needs code changes, work at your workspace root (the repo is already cloned and checked out there for you - plain relative paths, no prefix), commit your work locally on the branch already checked out for you, then call stage_pr with a title and body - you do not push or open the pull request yourself ")

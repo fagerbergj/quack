@@ -2014,6 +2014,19 @@ func TestHandleWebhookIssuePlanLabel(t *testing.T) {
 				if !strings.Contains(msg, "PLANNING-ONLY") {
 					t.Errorf("plan message not framed planning-only: %q", msg)
 				}
+				// #569: the plan-only prompt must state that the answer text IS the
+				// deliverable, not a pointer to a file the run wrote and discarded.
+				if !strings.Contains(msg, "ANSWER TEXT is the plan") {
+					t.Errorf("plan message does not state the answer text is the deliverable: %q", msg)
+				}
+				if !strings.Contains(msg, "discarded") {
+					t.Errorf("plan message does not warn that written files are discarded: %q", msg)
+				}
+				// A related finding from the same milestone: don't assert an
+				// unverified dependency version/tag as if it were current.
+				if !strings.Contains(msg, "current stable") {
+					t.Errorf("plan message does not caution against asserting unverified versions: %q", msg)
+				}
 				// The vetting completion gate reads delivery demands off the task text:
 				// a planning run must carry no push/PR instructions.
 				for _, banned := range []string{"git_push", "github_pull_request", "create a branch"} {
