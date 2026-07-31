@@ -21,7 +21,7 @@ require (
 	github.com/openai/openai-go/v3 v3.43.0
 	github.com/qdrant/go-client v1.18.3
 	github.com/spf13/cobra v1.10.2
-	github.com/zitadel/oidc/v3 v3.48.0
+	github.com/zitadel/oidc/v3 v3.48.1
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.43.0
