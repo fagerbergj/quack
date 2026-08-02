@@ -62,8 +62,6 @@ type Config struct {
 
 	// Memory, when set, receives the agent's staged tradecraft on a judge pass
 	// (M6). nil disables the gated commit path.
-	// ponytail: the gated-commit-on-pass path is not yet wired into RunGatedRefine
-	// (dropped with the custom-agent gate); re-add in a memory follow-up.
 	Memory *memory.Store
 	// CommitMemory marks this agent as a task-memory participant.
 	CommitMemory bool
