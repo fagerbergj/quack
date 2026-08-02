@@ -57,9 +57,10 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 			// End the llmagent turn structurally so it can't emit a chatty
 			// acknowledgement over the execute node's streamed answer.
 			// ponytail: the plan's synthesizer node IS the loop-back - it folds the
-			// specialist outputs into the final answer. Full fold-into-reply just needs the
-			// orchestrator's context (conversation history + the user's exact framing)
-			// threaded into that node; end_turn=false is a no-op for now (always deliver).
+			// specialist outputs into the final answer, so the plan always delivers
+			// and there is no caller-side "keep the turn open" knob. Add one only
+			// when the orchestrator needs to reshape a result itself, which also
+			// needs its conversation context threaded into that node.
 			tc.Actions().SkipSummarization = true
 			slog.Info("plan selected for execution", "component", "execute", "plan", a.PlanID)
 			return executeResult{Status: "delivered"}, nil
