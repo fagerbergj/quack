@@ -284,3 +284,60 @@ func TestDeriveChecks_SingleEcosystemUnchanged(t *testing.T) {
 		t.Fatalf("want only go checks %v, got %v", want, got)
 	}
 }
+
+// #585: in a --depth 1 clone every dependency-needing check fails on the base
+// commit, so all of them are waived and the gate keeps no deterministic teeth -
+// which is how a PR that failed CI's gofmt shipped. gofmt needs no deps, no
+// module cache and no network, so it is the one check that still runs there.
+func TestDeriveChecks_IncludesGofmt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := deriveChecks(dir, []string{"go build", "gofmt"})
+	var found bool
+	for _, c := range got {
+		if strings.HasPrefix(c, "gofmt") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("derived %v, want a gofmt check among them", got)
+	}
+}
+
+// A format check is NOT special-cased past failsAtBase. The first cut of #585
+// marked it never-waivable on the premise that formatting violations cannot
+// pre-exist; they can - `gofmt -l` lists every unformatted file in the tree, so
+// on a repo carrying formatting debt that would gate a worker for someone
+// else's mess, reintroducing exactly what #583 fixed. Waiving is correct there,
+// and on a clean base (the common case) the check passes at base and still
+// gates the worker's own violations.
+func TestGofmtCheckIsWaivedWhenItAlreadyFailsAtBase(t *testing.T) {
+	cfg, _ := clonedRepoConfig(t, []string{"gofmt -l . | wc -l | grep -q ^0$"}, map[string]string{
+		// Committed unformatted: the debt exists on the base commit.
+		"bad.go": "package x\nfunc  F()  {}\n",
+	})
+	sc, applies := checksPassCriterion(context.Background(), cfg)
+	if applies && sc.Score == 0 {
+		t.Errorf("gated on a gofmt violation that already exists at base - repo debt, not this worker's: %s", sc.Reason)
+	}
+}
+
+// The other half: a violation the worker itself introduced DOES gate, because
+// the check passes on the clean base commit. Without this the feature is a
+// no-op - `gofmt -l` alone always exits 0, so the derived check pipes its count
+// through grep to turn "nothing listed" into the exit status.
+func TestGofmtCheckGatesAWorkerIntroducedViolation(t *testing.T) {
+	cfg, repo := clonedRepoConfig(t, []string{"gofmt -l . | wc -l | grep -q ^0$"}, map[string]string{
+		"ok.go": "package x\n\nfunc F() {}\n",
+	})
+	// The worker's own edit, uncommitted and unformatted.
+	if err := os.WriteFile(filepath.Join(repo, "new.go"), []byte("package x\nfunc  G()  {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sc, applies := checksPassCriterion(context.Background(), cfg)
+	if !applies || sc.Score != 0 {
+		t.Errorf("want the worker's own formatting violation to gate; got applies=%v score=%v %s", applies, sc.Score, sc.Reason)
+	}
+}
