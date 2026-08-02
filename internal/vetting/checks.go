@@ -129,6 +129,12 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 				"deterministic: check %q failed (exit %d):\n%s%s", check, res.ExitCode, boundCheckOutput(res.Output), preexistingNote(preexisting))}, true
 		}
 	}
+	// If ALL derived checks were waived this is materially different from
+	// "checks passed" — the gate verified nothing deterministic. Callers and
+	// the human viewer should see a warning rather than conflating two states.
+	if len(cfg.Checks) == 0 && cfg.DeriveChecks && len(preexisting) == len(checks) && len(checks) > 0 {
+		slog.Warn("all derived checks waived for this node; no deterministic verification ran", "component", "vetting", "node", cfg.NodeID)
+	}
 	return criterionScore{Score: 1, Reason: fmt.Sprintf("deterministic: %d check(s) passed%s", len(checks), preexistingNote(preexisting))}, true
 }
 
@@ -255,6 +261,10 @@ var makeTargetRe = regexp.MustCompile(`(?m)^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 // targets), npm → go → make order - a repo with more than one stack gates on all
 // of them, not just the first found. Returning none is normal, not a failure: an
 // unrecognised repo simply gets no deterministic gate.
+//
+// they must never be excused via failsAtBase — formatting violations cannot
+// pre-exist in a shallow clone (see #585). The prefix is stripped before the
+// check actually runs.
 func deriveChecks(dir string, allow []string) []string {
 	var cands []string
 	if fileExists(dir, "package.json") {
@@ -267,6 +277,12 @@ func deriveChecks(dir string, allow []string) []string {
 	}
 	if fileExists(dir, "go.mod") {
 		cands = append(cands, "go build ./...", "go vet ./...", "go test ./...")
+		// `gofmt -l` LISTS unformatted files but always exits 0, so it cannot
+		// gate anything on its own - pipe the count through grep to turn "no
+		// files listed" into the exit status (CI's own step wraps it in
+		// `test -z` for the same reason). Only pipes, no substitution:
+		// workspace.SplitPipeline supports the former, not the latter.
+		cands = append(cands, "gofmt -l . | wc -l | grep -q ^0$")
 	}
 	if fileExists(dir, "Makefile") {
 		targets := makeTargets(dir)
@@ -281,6 +297,14 @@ func deriveChecks(dir string, allow []string) []string {
 		if workspace.MatchesCheckPrefix(c, allow) && toolchainPresent(c) {
 			out = append(out, c)
 		}
+	}
+	// npx prettier --check is a derived candidate for any JS/TS repo when the
+	// binary exists and the prefix is in the allowlist. Unlike npm-run scripts
+	// (which must be declared by the repo), Prettier is an external formatter
+	// whose presence alone signals intent — if npx is on PATH and "npx prettier"
+	// is allowed, run it. Never waive: formatting violations cannot pre-exist.
+	if fileExists(dir, "package.json") && toolchainPresent("npx prettier") && workspace.MatchesCheckPrefix("npx prettier", allow) {
+		out = append(out, "npx prettier --check")
 	}
 	return out
 }
