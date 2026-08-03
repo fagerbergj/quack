@@ -307,13 +307,19 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			log.Warn("could not create the node's working directory", "dir", nodeDir, "err", err)
 		}
 	}
+	// probeCtx carries this node's replay-ledger coordinates for the gate's OWN
+	// disk probes (augmentFromRepo below, checksPassCriterionTraced) - Round is
+	// a fixed marker, not a worker/judge runID, since a probe re-reads disk
+	// state on every activity() call rather than belonging to one model round
+	// (#604, deferred from #600 because neither probe took a context.Context).
+	probeCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound})
 	// activity replays the worker's session from that node dir - the cwd its
 	// relative paths (and the judge's re-read of them) resolve against - then
 	// folds in the clone's git state (augmentFromRepo): an external ACP worker
 	// commits outside the tool layer, so the session alone under-reports.
 	activity := func() workerActivity {
 		act := activityFromSessionAt(ctx.Session(), nodeDir)
-		augmentFromRepo(&act, cfg)
+		augmentFromRepo(probeCtx, &act, cfg)
 		return act
 	}
 	// actFor additionally folds in the reviewer's staged review: first the tool-
@@ -1098,12 +1104,16 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 }
 
 // checksPassCriterionTraced wraps checksPassCriterion with a "quack.gate.checks"
-// span - the deterministic-checks gate stage.
+// span - the deterministic-checks gate stage - and stamps the SAME fixed-round
+// replay-ledger coordinates node.go's probeCtx uses, so each check's
+// workspace.RunPipeline call records an execute_tool event (checks.go) with
+// proper coords (#604, deferred from #600).
 func checksPassCriterionTraced(ctx context.Context, cfg Config) (criterionScore, bool) {
 	spanCtx, span := otelobs.Start(ctx, "gate.checks",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", cfg.NodeID))
 	defer span.End()
-	c, ok := checksPassCriterion(spanCtx, cfg)
+	probeCtx := ledger.WithCoords(spanCtx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound})
+	c, ok := checksPassCriterion(probeCtx, cfg)
 	span.SetAttributes(attribute.Bool("applicable", ok), attribute.Float64("score", c.Score))
 	return c, ok
 }
