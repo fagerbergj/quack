@@ -43,6 +43,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
           # SLSA provenance + SBOM are near-free here and give consumers supply-chain
           # attestations. Trivy scanning / cosign signing are the next step if needed.
           provenance: mode=max

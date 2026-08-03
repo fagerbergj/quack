@@ -26,6 +26,9 @@ COPY scripts/mermaid-validate.mjs ./
 # runtime copies /usr/local/go from here and must be able to execute it.
 FROM golang:1.26-bookworm AS backend
 WORKDIR /app
+# VERSION stamps main.version (cmd/quack/main.go); cd.yaml passes the release
+# tag, defaults to "dev" so a plain `docker build` / `make build` still works.
+ARG VERSION=dev
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
@@ -34,7 +37,7 @@ COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
 # (smaller, reproducible binary). Module + build caches are mounted, not embedded.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack ./cmd/quack
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /quack ./cmd/quack
 
 # 2b) The external ACP coding agent (internal/acp, docs/acp-coder.md): one
 # self-contained binary, extracted in its own stage so the runtime layer gets
