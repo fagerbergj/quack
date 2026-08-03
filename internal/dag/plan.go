@@ -45,11 +45,13 @@ type Setup struct {
 	BaseRef    string `json:"base_ref"`
 	WorkBranch string `json:"work_branch"`
 
-	// CheckoutExistingHead is computed by runPlanSetup (never planner-declared,
-	// hence json:"-") from the plan's qualifying nodes: true when WorkBranch
-	// names an EXISTING remote branch to check out as-is (a review - its
-	// commits must be fetched, not created), false when it names a NEW branch
-	// to create off BaseRef (an implement).
+	// CheckoutExistingHead is set by OverrideExistingPRHead (never
+	// planner-declared, hence json:"-"), true only when the run is bound to a
+	// REAL existing PR head: WorkBranch is fetched and checked out as-is (its
+	// commits must be preserved, not created from scratch) rather than created
+	// fresh with `checkout -b` off BaseRef. It is NOT derived from node
+	// composition - a fix/implement plan on an existing PR needs it just as
+	// much as a review does (#625).
 	CheckoutExistingHead bool `json:"-"`
 }
 

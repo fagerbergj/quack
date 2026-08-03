@@ -345,7 +345,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// follow-up) resolves references against what was already said.
 		history := buildHistory(prior)
 		// Read ONCE, at the top, per GitHubPRFromContext's contract - reused below
-		// for both the plan tool's review-head override and correct_review_finding.
+		// for both the plan tool's existing-PR-head override and correct_review_finding.
 		githubPR, hasGitHubPR := tools.GitHubPRFromContext(ctx)
 		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubPR.HeadRef)
 		if err != nil {

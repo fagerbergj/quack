@@ -19,8 +19,9 @@ type GitHubPR struct {
 	Repo   string
 	Number int
 	// HeadRef is the PR's actual head branch (e.g. "feat/oidc-auth"), used to
-	// override a review plan's planner-authored Setup.WorkBranch - see
-	// dag.OverrideReviewWorkBranch. Empty for a plain issue (no head branch).
+	// override ANY PR-bound plan's planner-authored Setup.WorkBranch (review,
+	// fix, or implement) - see dag.OverrideExistingPRHead. Empty for a plain
+	// issue (no head branch).
 	HeadRef string
 }
 

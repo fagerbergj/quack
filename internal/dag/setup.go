@@ -56,16 +56,20 @@ func setupQualifyingNodes(plan Plan) []Node {
 }
 
 // isReviewOnlySetup reports whether the plan REVIEWS AN EXISTING PR HEAD: a
-// reviewerAgent node with no implementerAgent. That is the structural signal
-// that Setup.WorkBranch names an EXISTING remote ref to check out rather than
-// a new branch to cut off BaseRef.
+// reviewerAgent node with no implementerAgent. Node composition alone is NOT
+// a reliable signal for Setup.CheckoutExistingHead (#625 - a fix/implement
+// plan on an existing PR needs an existing-head checkout too, and always has
+// an implementer node); this is used ONLY by OverrideExistingPRHead, to
+// decide whether a plan that turns out to have no resolvable PR head ref
+// should hard-error (a review has nothing sensible to fall back to) or
+// silently proceed as a fresh-branch plan (an issue with no PR yet).
 //
 // The reviewer is what makes it a review - "no implementer" alone is not
 // enough. An explorer-only plan is the plan-only/research shape (read an
 // ISSUE's repo to ground a plan), which has no PR and therefore no head ref
-// to check out; treating it as review-only made OverrideReviewWorkBranch
-// demand a head ref that an issue never has, and the planner thrashed against
-// the error instead of planning.
+// to check out; treating it as review-only made OverrideExistingPRHead demand
+// a head ref that an issue never has, and the planner thrashed against the
+// error instead of planning.
 func isReviewOnlySetup(plan Plan) bool {
 	nodes := setupQualifyingNodes(plan)
 	if len(nodes) == 0 {
@@ -89,40 +93,57 @@ func isReviewOnlySetup(plan Plan) bool {
 	return true
 }
 
-// OverrideReviewWorkBranch forces a review-only plan's Setup.WorkBranch to the
-// PR's real head branch (headRef). WorkBranch is otherwise planner-authored
-// JSON, and for a review the planner sometimes invents a name instead of
-// echoing the real head (e.g. "quack-auto-review/review-pr-520", derived from
-// the auto-review commenter identity) - isReviewOnlySetup then checks it out
-// as an EXISTING remote ref, which fatals with "couldn't find remote ref" for
-// an invented name (#520). No-op for a plan with no Setup or one that isn't
-// review-only (the implement path keeps its planner-chosen new-branch name).
-// Errors rather than silently keeping the invented name when headRef is
-// unknown, so the run fails loudly instead of fetching a bogus ref.
-func OverrideReviewWorkBranch(p *Plan, headRef string) error {
-	if p == nil || p.Setup == nil || !isReviewOnlySetup(*p) {
+// OverrideExistingPRHead forces Setup.WorkBranch to the run's real PR head
+// branch (headRef) and marks Setup.CheckoutExistingHead so the head is
+// fetched and checked out as-is rather than branched fresh off BaseRef -
+// whenever the run is bound to a REAL existing PR, review OR fix/implement
+// alike (#625: node composition alone previously decided this, and any
+// implementer node forced checkout -b off base, silently discarding the PR's
+// existing commits the moment delivery's necessary --force push landed).
+//
+// WorkBranch is otherwise planner-authored JSON, and the planner sometimes
+// invents a name instead of echoing the real head - a review's
+// "quack-auto-review/review-pr-520" (derived from the auto-review commenter
+// identity, #520), or a fix/implement plan's own new-branch name (the
+// planner is never told a PR head already exists to reuse). Checking out an
+// invented name as an existing remote ref fatals with "couldn't find remote
+// ref", so it must be overridden, not merely validated.
+//
+// A review-only plan (isReviewOnlySetup) with no resolvable headRef still
+// errors rather than silently keeping the invented name (#520 - there is no
+// base-branch fallback that makes sense for a review). Every other
+// Setup-bearing plan with no headRef (a plain issue, no PR yet) is left
+// untouched - the normal new-branch case. No-op for a plan with no Setup.
+func OverrideExistingPRHead(p *Plan, headRef string) error {
+	if p == nil || p.Setup == nil {
 		return nil
 	}
 	if headRef == "" {
-		return fmt.Errorf("dag: review setup needs the PR's real head branch but none was provided")
+		if isReviewOnlySetup(*p) {
+			return fmt.Errorf("dag: review setup needs the PR's real head branch but none was provided")
+		}
+		return nil
 	}
 	p.Setup.WorkBranch = headRef
+	p.Setup.CheckoutExistingHead = true
 	return nil
 }
 
 // runPlanSetup executes the plan's declared PRE-step exactly once, before any
-// node runs: clone Setup.Repo at Setup.BaseRef, then checkout -b
-// Setup.WorkBranch, into ONE shared workspace location (workspace.
-// SetupCloneDir(workspace.SharedRepoScope)) - the writer's own working
-// directory (see workspaceNodeID). Every read-only qualifying node links its
-// own git worktree off THIS clone instead (internal/acp's resolveNode, via
-// Options.Worktree - see worktreeParentID), lazily, right before its own
-// round, since it may depend on writes this step hasn't made yet. ANY
-// failure - an incomplete declaration, a missing setup executor, or the
-// clone/checkout itself - aborts the run (a failed run, never a silent
-// no-delivery). A plan with no qualifying node is a no-op (nothing will read
-// the clone); a plan with plan.Setup == nil is untouched - today's
-// worker-clones behavior.
+// node runs: clone Setup.Repo at Setup.BaseRef, then either fetch+checkout an
+// existing PR head or `checkout -b` a fresh Setup.WorkBranch (Setup.
+// CheckoutExistingHead - decided upstream by OverrideExistingPRHead when the
+// plan was authored, NOT recomputed here from node composition, #625), into
+// ONE shared workspace location (workspace.SetupCloneDir(workspace.
+// SharedRepoScope)) - the writer's own working directory (see
+// workspaceNodeID). Every read-only qualifying node links its own git
+// worktree off THIS clone instead (internal/acp's resolveNode, via Options.
+// Worktree - see worktreeParentID), lazily, right before its own round, since
+// it may depend on writes this step hasn't made yet. ANY failure - an
+// incomplete declaration, a missing setup executor, or the clone/checkout
+// itself - aborts the run (a failed run, never a silent no-delivery). A plan
+// with no qualifying node is a no-op (nothing will read the clone); a plan
+// with plan.Setup == nil is untouched - today's worker-clones behavior.
 func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan Plan) (err error) {
 	if plan.Setup == nil {
 		return nil
@@ -139,7 +160,6 @@ func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan
 		return fmt.Errorf("dag: setup: repo, base_ref, and work_branch must all be set (got repo=%q base_ref=%q work_branch=%q)",
 			s.Repo, s.BaseRef, s.WorkBranch)
 	}
-	s.CheckoutExistingHead = isReviewOnlySetup(plan)
 	if e.setupFn == nil {
 		return fmt.Errorf("dag: plan declares setup but no setup executor is configured")
 	}
