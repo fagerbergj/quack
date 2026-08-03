@@ -415,6 +415,18 @@ type ReasoningPart struct {
 // ReasoningPartType defines model for ReasoningPart.Type.
 type ReasoningPartType string
 
+// RecordingList defines model for RecordingList.
+type RecordingList struct {
+	Data []RecordingSummary `json:"data"`
+}
+
+// RecordingSummary defines model for RecordingSummary.
+type RecordingSummary struct {
+	ChatId     string    `json:"chat_id"`
+	ModifiedAt time.Time `json:"modified_at"`
+	SizeBytes  int64     `json:"size_bytes"`
+}
+
 // ResponseStatus The only supported target status for a response - cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
 type ResponseStatus string
 
@@ -777,6 +789,9 @@ type ServerInterface interface {
 	// Subscribe to a chat's live response stream
 	// (GET /api/v1/chats/{chat_id}/stream)
 	SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// List recorded chat sessions
+	// (GET /api/v1/recordings)
+	ListRecordings(w http.ResponseWriter, r *http.Request)
 	// Liveness check
 	// (GET /health)
 	HealthCheck(w http.ResponseWriter, r *http.Request)
@@ -873,6 +888,12 @@ func (_ Unimplemented) UpdateResponseStatus(w http.ResponseWriter, r *http.Reque
 // Subscribe to a chat's live response stream
 // (GET /api/v1/chats/{chat_id}/stream)
 func (_ Unimplemented) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List recorded chat sessions
+// (GET /api/v1/recordings)
+func (_ Unimplemented) ListRecordings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1338,6 +1359,20 @@ func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ListRecordings operation middleware
+func (siw *ServerInterfaceWrapper) ListRecordings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecordings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // HealthCheck operation middleware
 func (siw *ServerInterfaceWrapper) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
@@ -1509,6 +1544,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.SubscribeChatStream)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/recordings", wrapper.ListRecordings)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/health", wrapper.HealthCheck)

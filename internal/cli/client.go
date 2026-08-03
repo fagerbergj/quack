@@ -69,6 +69,39 @@ func (c *Client) ListChats(ctx context.Context) ([]schema.ChatSummary, error) {
 	return out.Data, nil
 }
 
+// ListRecordings returns every session the replay ledger has an entry for
+// (server orders however LedgerStore.List does; today that's directory
+// order, unsorted). 404 (recording disabled) surfaces as ErrNotFound.
+func (c *Client) ListRecordings(ctx context.Context) ([]schema.RecordingSummary, error) {
+	var out schema.RecordingList
+	if err := c.getJSON(ctx, "/api/v1/recordings", &out); err != nil {
+		return nil, err
+	}
+	return out.Data, nil
+}
+
+// DownloadRecording streams chatID's replay-ledger bundle (a ZIP) to w.
+// 404 (never recorded, GC'd, or recording disabled) surfaces as ErrNotFound.
+func (c *Client) DownloadRecording(ctx context.Context, chatID string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1/chats/"+chatID+"/recording", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return c.reachErr(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("GET .../recording: HTTP %d", resp.StatusCode)
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
 // GetChat returns a chat with its turns.
 func (c *Client) GetChat(ctx context.Context, id string) (schema.ChatDetail, error) {
 	var out schema.ChatDetail

@@ -39,6 +39,16 @@ export type ChatList = {
     data: Array<ChatSummary>;
 };
 
+export type RecordingSummary = {
+    chat_id: string;
+    size_bytes: number;
+    modified_at: string;
+};
+
+export type RecordingList = {
+    data: Array<RecordingSummary>;
+};
+
 export type CreateChatBody = {
     system_prompt?: string;
 };
@@ -345,6 +355,29 @@ export type UpdateChatResponses = {
 };
 
 export type UpdateChatResponse = UpdateChatResponses[keyof UpdateChatResponses];
+
+export type ListRecordingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/recordings';
+};
+
+export type ListRecordingsErrors = {
+    /**
+     * Recording is not enabled
+     */
+    404: unknown;
+};
+
+export type ListRecordingsResponses = {
+    /**
+     * The recorded sessions
+     */
+    200: RecordingList;
+};
+
+export type ListRecordingsResponse = ListRecordingsResponses[keyof ListRecordingsResponses];
 
 export type GetChatRecordingData = {
     body?: never;

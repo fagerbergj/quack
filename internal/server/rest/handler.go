@@ -216,6 +216,31 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 	writeJSON(w, http.StatusOK, buildTurn(*tc))
 }
 
+// ListRecordings lists every session the replay ledger has an entry for,
+// backing `quack recording list`. Same disabled signal as GetChatRecording
+// (nil ledgerStore ⇒ 404); an enabled store with no sessions yet is a 200
+// with an empty array.
+func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
+	if h.ledgerStore == nil {
+		http.Error(w, "recording is not enabled", http.StatusNotFound)
+		return
+	}
+	refs, err := h.ledgerStore.List(r.Context())
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := schema.RecordingList{Data: make([]schema.RecordingSummary, len(refs))}
+	for i, ref := range refs {
+		out.Data[i] = schema.RecordingSummary{
+			ChatId:     ref.ID,
+			SizeBytes:  ref.Size,
+			ModifiedAt: ref.ModTime,
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // GetChatRecording streams the chat's replay-ledger recording as a ZIP
 // bundle (internal/ledger.AssembleBundle). The existence check (ReadStream)
 // happens before any byte reaches w, so a missing recording still gets a
