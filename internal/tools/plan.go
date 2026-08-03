@@ -1,15 +1,19 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	otellog "go.opentelemetry.io/otel/log"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -91,6 +95,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				yieldFn(DagPlanEvent(*p))
 			}
 
+			emitPlanEvent(tc, p)
 			return planResult{PlanID: p.ID, Summary: summarizePlan(p)}, nil
 		},
 	)
@@ -118,6 +123,25 @@ func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
 		}
 	}
 	return edges
+}
+
+// emitPlanEvent records one gen_ai "plan" ledger event for a validated,
+// cached plan - the orchestrator's own turn, not a gated DAG node, so its
+// coordinates come from tc directly (there is no vetting-gate round to
+// inherit them from) rather than ledger.CoordsFromContext.
+func emitPlanEvent(tc agent.Context, p *dag.Plan) {
+	if !otelobs.LoggingEnabled("quack.planner") {
+		return
+	}
+	ctx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID(), Agent: "orchestrator", Round: "plan"})
+	attrs := []otellog.KeyValue{
+		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlan),
+		otellog.String(otelobs.GenAIWorkflowName, p.ID),
+	}
+	if b, err := json.Marshal(p); err == nil {
+		attrs = append(attrs, otellog.String(otelobs.GenAIOutputMessages, string(b)))
+	}
+	otelobs.EmitLog(ctx, "quack.planner", "", attrs...)
 }
 
 // summarizePlan renders the plan for the model to review before executing: each

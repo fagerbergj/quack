@@ -3,10 +3,11 @@
 Quack emits traces and metrics via OTel (`internal/otelobs`) but keeps no local store or read API of its own — Tempo/Grafana (or whatever your OTLP collector feeds) own viewing. Emission and export are two separate knobs:
 
 ```yaml
-otel:
-  enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true — spans/metrics are recorded either way
-  otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ nothing exported (harmless — just inert)
-  sample: 1.0                                # trace sample ratio in (0,1]
+observability:
+  otel:
+    enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true — spans/metrics/logs are recorded either way
+    otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ nothing exported (harmless — just inert)
+    sample: 1.0                                # trace sample ratio in (0,1]
 ```
 
 `enabled: false` swaps in the SDK's no-op providers, so every `otelobs.Start`/`Record*` call in the code stays a cheap no-op with no `if enabled` branch at any call site. `otlp_endpoint` unset means spans are still recorded and metrics still accumulate in-process — they're just never shipped anywhere. Set it to actually export (e.g. `http://otel-collector:4318`).
@@ -67,4 +68,23 @@ The active/queued/in-flight gauges (`quack.runs.active`, `quack.runs.queued`, `q
 
 ## Logs
 
-`internal/otelobs/sloghandler.go` bridges `log/slog` to trace correlation — see [`AGENTS.md`](../../AGENTS.md)'s `QUACK_LOG_LEVEL`/`QUACK_LOG_FORMAT` for the logging side of this; this page covers traces/metrics only.
+`internal/otelobs/sloghandler.go` bridges `log/slog` to trace correlation — see [`AGENTS.md`](../../AGENTS.md)'s `QUACK_LOG_LEVEL`/`QUACK_LOG_FORMAT` for the logging side of this. Separately, `internal/otelobs` also runs an OTel *logger* provider (`internal/otelobs/logs.go`) — this is the replay ledger's transport, not `slog`.
+
+## Replay ledger
+
+Three seams emit one `gen_ai.*` OTel log event per call — `inference.NewModel` (`chat`), `tools.Build` (`execute_tool`), and the ACP subprocess connection (`invoke_agent`, the full teed protocol conversation) — plus the judge emits one `gen_ai.evaluation.result` per rubric criterion. Every event carries `gen_ai.conversation.id` (the chat id) and the two custom `quack.node`/`quack.round` attributes, stamped once by the vetting gate and read back via `internal/ledger`'s context carrier.
+
+```yaml
+stores:
+  default_ledger:
+    kind: filesystem              # append-only session recordings; s3 is a future adapter
+    root: ${QUACK_RECORDING_DIR}  # unset ⇒ ./recordings
+
+observability:
+  recording:
+    enabled: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
+    store: default_ledger
+    retention_days: 30
+```
+
+The built-in ledger exporter appends every event as one redacted (auth headers/API keys/credentials stripped) JSON line to `recordings/<chat-id>.jsonl` — quack's default "collector". Recording rides the SAME logger provider as `otlp_endpoint`, so it can only be on when `otel.enabled` is; a store that fails to resolve degrades to "not recording" (a Warn log), never a startup failure or a change to the run itself. Export and replay (reconstructing/replaying a run from these recordings) are later milestones — this stage is emission + storage only.

@@ -43,6 +43,7 @@ import (
 	"github.com/fagerbergj/quack/internal/extension"
 	"github.com/fagerbergj/quack/internal/github"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -97,6 +98,31 @@ func newSkillSource(vendorDir string) skill.Source {
 		sources = append(sources, skill.NewFileSystemSource(os.DirFS(vendorDir)))
 	}
 	return skill.NewMergedSource(sources...)
+}
+
+// ledgerStoreFromConfig resolves the replay ledger's backend from the stores
+// registry (observability.recording.store), if named. Best-effort: an unset
+// or unresolvable store returns nil, and otelobs.Init degrades to "not
+// recording" (log Warn, continue) rather than failing startup - the same
+// "store error ⇒ zero behavior change" rule the ledger exporter itself
+// follows. config.Load already validated a NAMED store resolves and is
+// kind: filesystem, so the only nil-returning path left here is genuinely
+// unconfigured or a runtime mkdir failure.
+func ledgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
+	name := cfg.Observability.Recording.Store
+	if name == "" {
+		return nil
+	}
+	s, ok := cfg.Store(name)
+	if !ok || s.Kind != "filesystem" {
+		return nil
+	}
+	store, err := ledger.NewFSStore(s.Root)
+	if err != nil {
+		slog.Warn("replay ledger store init failed; recording disabled", "component", "startup", "err", err)
+		return nil
+	}
+	return store
 }
 
 //go:embed all:web/dist
@@ -218,7 +244,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// see the KNOWN LIMITATION on otelobs.Providers). Disabled (otel.enabled:
 	// false) yields a no-op Providers; every otelobs call site stays safe to
 	// call unconditionally.
-	_, otelShutdown, err := otelobs.Init(ctx, cfg.Otel)
+	_, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStoreFromConfig(cfg))
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
 	}

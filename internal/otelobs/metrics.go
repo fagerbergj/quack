@@ -1,8 +1,8 @@
-// Package otelobs is Quack's OTel wiring: tracer/meter provider setup
+// Package otelobs is Quack's OTel wiring: tracer/meter/logger provider setup
 // (emission-only - Tempo/Grafana own trace/metric viewing, quack keeps no
-// local store or read API of its own), a slog↔trace correlation bridge, and
-// the metric instruments the trust gate / delivery / memory pipeline records
-// against.
+// local store or read API of its own), a slog↔trace correlation bridge, the
+// metric instruments the trust gate / delivery / memory pipeline records
+// against, and EmitLog (logs.go) - the replay ledger's one emission seam.
 package otelobs
 
 import (

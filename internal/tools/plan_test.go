@@ -1,11 +1,16 @@
 package tools
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
 
+	otellog "go.opentelemetry.io/otel/log"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -44,6 +49,47 @@ func TestSummarizePlanIncludesSetupAndDelivery(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("summarizePlan = %q, want it to contain %q", got, want)
 		}
+	}
+}
+
+// recordCapture is a minimal sdklog.Exporter for direct record inspection.
+type recordCapture struct{ records []sdklog.Record }
+
+func (c *recordCapture) Export(_ context.Context, records []sdklog.Record) error {
+	c.records = append(c.records, records...)
+	return nil
+}
+func (c *recordCapture) Shutdown(context.Context) error   { return nil }
+func (c *recordCapture) ForceFlush(context.Context) error { return nil }
+
+func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
+	capExp := &recordCapture{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	plan := &dag.Plan{ID: "plan-123", Nodes: []dag.Node{{ID: "impl", AgentName: "code-implementer"}}}
+	emitPlanEvent(newFakeCtx(), plan)
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	attrs := map[string]otellog.Value{}
+	capExp.records[0].WalkAttributes(func(kv otellog.KeyValue) bool {
+		attrs[string(kv.Key)] = kv.Value
+		return true
+	})
+	if got := attrs["gen_ai.operation.name"].AsString(); got != "plan" {
+		t.Errorf("gen_ai.operation.name = %q, want plan", got)
+	}
+	if got := attrs["gen_ai.workflow.name"].AsString(); got != "plan-123" {
+		t.Errorf("gen_ai.workflow.name = %q, want plan-123", got)
+	}
+	if got := attrs["gen_ai.conversation.id"].AsString(); got != "sess" {
+		t.Errorf("gen_ai.conversation.id = %q, want sess (from tc.SessionID())", got)
+	}
+	if attrs["gen_ai.output.messages"].AsString() == "" {
+		t.Error("gen_ai.output.messages missing the marshaled plan")
 	}
 }
 

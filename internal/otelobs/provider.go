@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -16,6 +17,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // Tracer is the one tracer every Quack span is started from.
@@ -45,17 +47,22 @@ const ChatIDKey = "chat_id"
 type Providers struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
+	LoggerProvider *sdklog.LoggerProvider
 }
 
-// Init builds the tracer + meter providers per cfg and installs them as the
-// otel package globals. Disabled (cfg.IsEnabled() == false) returns a no-op
-// Providers so callers never need an `if enabled` branch of their own - every
-// otelobs.Start/Record* call below is a cheap no-op against the SDK's default
-// no-op global providers. otlp_endpoint unset ⇒ providers are built (spans are
-// still recorded, metrics still accumulate) but nothing is EXPORTED anywhere
-// - harmless, just inert; set it to actually ship to a collector.
-func Init(ctx context.Context, cfg config.OtelConfig) (*Providers, func(context.Context) error, error) {
-	if !cfg.IsEnabled() {
+// Init builds the tracer + meter + logger providers per cfg and installs the
+// tracer/meter as the otel package globals (the logger provider has no such
+// global in this SDK version - see Logger). Disabled (cfg.Otel.IsEnabled() ==
+// false) returns a no-op Providers so callers never need an `if enabled`
+// branch of their own - every otelobs.Start/Record*/EmitLog call below is a
+// cheap no-op against the SDK's default no-op providers. otlp_endpoint unset
+// ⇒ providers are built (spans/metrics/logs still recorded) but nothing is
+// EXPORTED anywhere - harmless, just inert; set it to actually ship to a
+// collector. The replay ledger (cfg.Recording) rides this SAME logger
+// provider, so it can only ever be active when otel itself is - see
+// config.RecordingConfig.IsEnabled.
+func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledger.LedgerStore) (*Providers, func(context.Context) error, error) {
+	if !cfg.Otel.IsEnabled() {
 		return &Providers{}, func(context.Context) error { return nil }, nil
 	}
 
@@ -68,12 +75,12 @@ func Init(ctx context.Context, cfg config.OtelConfig) (*Providers, func(context.
 
 	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Sample))),
+		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Otel.Sample))),
 	}
 	mpOpts := []metric.Option{metric.WithResource(res)}
 	var shutdowns []func(context.Context) error
-	if cfg.OTLPEndpoint != "" {
-		texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(cfg.OTLPEndpoint))
+	if cfg.Otel.OTLPEndpoint != "" {
+		texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(cfg.Otel.OTLPEndpoint))
 		if err != nil {
 			return nil, nil, fmt.Errorf("otelobs: otlp trace exporter: %w", err)
 		}
@@ -81,7 +88,7 @@ func Init(ctx context.Context, cfg config.OtelConfig) (*Providers, func(context.
 		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
 		shutdowns = append(shutdowns, bsp.Shutdown)
 
-		mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(cfg.OTLPEndpoint))
+		mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(cfg.Otel.OTLPEndpoint))
 		if err != nil {
 			return nil, nil, fmt.Errorf("otelobs: otlp metric exporter: %w", err)
 		}
@@ -100,7 +107,13 @@ func Init(ctx context.Context, cfg config.OtelConfig) (*Providers, func(context.
 		logf("metric instrument init failed; metrics disabled", "err", err)
 	}
 
-	providers := &Providers{TracerProvider: tp, MeterProvider: mp}
+	lp, logShutdown, err := initLogs(ctx, res, cfg, ledgerStore)
+	if err != nil {
+		return nil, nil, err
+	}
+	shutdowns = append(shutdowns, logShutdown)
+
+	providers := &Providers{TracerProvider: tp, MeterProvider: mp, LoggerProvider: lp}
 	shutdown := func(sctx context.Context) error {
 		var firstErr error
 		for _, fn := range append([]func(context.Context) error{tp.Shutdown, mp.Shutdown}, shutdowns...) {
