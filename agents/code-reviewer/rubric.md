@@ -150,7 +150,8 @@ flaws); style and preference are never a blocking verdict.
 The review critiques the work, not the developer; explains the *why* behind
 each finding so it's actionable; and includes at least one sincere piece of
 praise. Language is plain and respectful - no sarcasm, hyperbole, or
-diminishing words.
+diminishing words. A finding that proposes a SPECIFIC code change is only
+actionable if it shows that code, not just describes it.
 
 **Evaluation steps.**
 1. Check the tone targets the code, not the author, and avoids "just"/"always"
@@ -158,12 +159,21 @@ diminishing words.
 2. Check findings explain the underlying reason (risk/principle/benefit), not
    only "this is wrong".
 3. Check for at least one genuine `praise:`.
+4. For each finding that proposes a specific code change (a rename, an
+   extraction, a different implementation - anything more concrete than "this
+   could be cleaner"), check whether it supplies that code in a fenced code
+   block with a language tag, rather than only describing the change in
+   prose. A PURELY OBSERVATIONAL finding - a question, a naming nit with no
+   proposed name, "consider whether this handles X" - proposes nothing
+   concrete and needs NO code block; do not penalize those for lacking one.
 
 **Scoring bands.**
-- **7–10** - respectful, every finding explains its why, and there is sincere
-  praise.
-- **4–6** - actionable but terse (some findings state what without why), or
-  praise is missing/perfunctory.
+- **7–10** - respectful, every finding explains its why, there is sincere
+  praise, and every finding proposing specific code supplies it in a fenced
+  block.
+- **4–6** - actionable but terse (some findings state what without why),
+  praise is missing/perfunctory, or a finding proposes a specific change in
+  prose without the code to back it.
 - **0–3** - comments target the person, are dismissive, or are unactionable
   ("this is bad") with no reasoning.
 
@@ -212,6 +222,15 @@ is a fifteen-second takeaway that does NOT repeat the verdict.
    bare `comment` used as a way to avoid committing to a verdict. No staged
    verdict at all is the actual failure here, not a summary that omits the
    word "verdict".
+4. Cross-check every finding's OWN severity label against the overall
+   verdict - the two must tell the same story. A finding labeled `blocking:`
+   (with or without a category tag like `blocking (security):`) sitting
+   alongside an `approve` verdict is a direct self-contradiction, regardless
+   of whether the underlying issue actually warrants blocking; so is a
+   `request_changes` verdict backed by nothing but `nit:`/`suggestion:`
+   findings. This is a coherence check on the review's OWN labels, not a
+   re-review of the diff - reason about it, do not pattern-match on the label
+   text alone.
 
 **Scoring bands.**
 - **7–10** - clear summary, severity-grouped findings, a present and
@@ -220,8 +239,10 @@ is a fifteen-second takeaway that does NOT repeat the verdict.
   slightly mismatches the findings.
 - **0–3** - an unstructured wall of comments with no summary, no staged
   verdict at all, a staged verdict that contradicts the findings (approves
-  over an unresolved blocking issue), or a clean review resolved to `comment`
-  instead of `approve`.
+  over an unresolved blocking issue, or ANY finding is labeled blocking/
+  security-severity while the verdict is `approve`, or `request_changes` is
+  staged over findings that are all nits/suggestions), or a clean review
+  resolved to `comment` instead of `approve`.
 
 ---
 
