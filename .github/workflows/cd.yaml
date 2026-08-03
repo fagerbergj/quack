@@ -43,6 +43,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Tag push → the semver (0.19.1). Main push → metadata-action would say
+          # "latest", identical across every main build; a bundle manifest needs to
+          # name ONE build, so stamp the sha instead.
+          build-args: VERSION=${{ startsWith(github.ref, 'refs/tags/v') && steps.meta.outputs.version || format('main-{0}', github.sha) }}
           # SLSA provenance + SBOM are near-free here and give consumers supply-chain
           # attestations. Trivy scanning / cosign signing are the next step if needed.
           provenance: mode=max
