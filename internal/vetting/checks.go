@@ -18,6 +18,10 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
+// probeChecksPass names this probe's execute_tool ledger event (emitProbeEvent,
+// probeemit.go) - one per check command run via workspace.RunPipeline.
+const probeChecksPass = "checks_pass"
+
 // Skip reasons for checksPassCriterion's ok=false returns - see skipChecks.
 const (
 	skipReasonNotConfigured   = "not_configured"    // no cfg.Checks and DeriveChecks is off
@@ -113,6 +117,11 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}
 		res, err := workspace.RunPipeline(ctx, dir, stages, caps)
+		var probeResult map[string]any
+		if err == nil {
+			probeResult = map[string]any{"exit_code": res.ExitCode, "output": boundCheckOutput(res.Output)}
+		}
+		emitProbeEvent(ctx, probeChecksPass, map[string]any{"check": check}, probeResult, err)
 		if err != nil {
 			return criterionScore{Score: 0, Reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}, true
 		}

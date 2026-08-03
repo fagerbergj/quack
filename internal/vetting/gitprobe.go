@@ -16,6 +16,11 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
+// probeAugmentFromRepo names this probe's execute_tool ledger event
+// (emitProbeEvent, probeemit.go) - the disk-truth twin of a real tool call,
+// so replay's stream matching has an identity to key on (#604).
+const probeAugmentFromRepo = "augment_from_repo"
+
 // augmentFromRepo folds the clone's git state into a session-derived activity:
 // commits since the clone's base (baseCommit - the oldest HEAD reflog entry),
 // the changed paths (the judge's changed-file re-read + citation grounding),
@@ -26,7 +31,15 @@ import (
 // ponytail: runs a few git subprocesses per activity() call (no caching) - the
 // probe fires only on setup-provisioned nodes with an empty ledger; memoise per
 // HEAD sha if it ever shows up in a profile.
-func augmentFromRepo(act *workerActivity, cfg Config) {
+//
+// ctx carries this call's replay-ledger coordinates (ledger.Coords, stamped by
+// the caller - node.go's activity() closure) - the ONE execute_tool event this
+// function emits (via emitProbeEvent, deferred below) is what lets a recorded
+// ACP round's gate probe replay without a clone (#604). Only the guard clauses
+// below (node genuinely has nothing to probe) skip emission entirely; every
+// path that actually reaches the clone reports its outcome, even "no new
+// commits found".
+func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 	// A read-only reviewer/explorer makes no commits; synthesizing disk state
 	// into a pull_request staging for it would push its (base-HEAD) branch and
 	// reset the reviewed PR, wiping commits (#452).
@@ -40,13 +53,20 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 	if err != nil || !isDir(filepath.Join(dir, ".git")) {
 		return
 	}
+
+	var result map[string]any
+	var probeErr error
+	defer func() { emitProbeEvent(ctx, probeAugmentFromRepo, nil, result, probeErr) }()
+
 	caps := checksCaps(cfg)
 	base, err := baseCommit(dir, caps)
 	if err != nil {
+		probeErr = err
 		return
 	}
 	head := gitLine(dir, caps, "rev-parse", "HEAD")
 	if head == "" || head == base {
+		result = map[string]any{"committed": false}
 		return
 	}
 	act.committed = true
@@ -65,6 +85,7 @@ func augmentFromRepo(act *workerActivity, cfg Config) {
 	act.workspace = append(act.workspace, wsOp{tool: "git_commit", detail: fmt.Sprintf(
 		"git_commit(disk probe) → head=%q, files_changed=%d (commits found in the clone itself; the worker commits with its own git)",
 		short(head), len(changed))})
+	result = map[string]any{"committed": true, "branch": act.currentBranch, "files_changed": len(changed)}
 
 	// Delivery handoff for a worker with no stage_pr tool: this node is the
 	// plan's TERMINAL delivery node (cfg.Deliver non-nil - mid-chain nodes get

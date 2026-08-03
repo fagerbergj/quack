@@ -34,6 +34,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -99,6 +100,14 @@ type Options struct {
 	// nil ⇒ allow (single-tenant deploys with the judge stage off trust the
 	// container boundary, matching workspace.sandbox: none).
 	PermissionJudge func(ctx context.Context, toolName, title string, input map[string]any) (allow bool, reason string)
+	// Replay, when set, replaces the real subprocess with a recorded
+	// conversation: start (proc.go) resolves this round's invoke_agent entry
+	// via Session.NextInvokeAgent (keyed the SAME way inference.NewReplayModel
+	// and the tools' replay stubs resolve theirs - ledger.CoordsFromContext)
+	// and wires the SAME clientHandler/connection machinery over a
+	// replayAgentIO standing in for stdin/stdout - no opencode binary, no
+	// subprocess at all (#604). nil ⇒ the normal spawn path.
+	Replay *replay.Session
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess. It
@@ -239,7 +248,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 
 	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String("agent", a.name))
 	_ = spawnCtx
-	h, err := a.start(cwd)
+	h, err := a.start(ctx, cwd)
 	otelobs.End(spawnSpan, err)
 	if err != nil {
 		return err

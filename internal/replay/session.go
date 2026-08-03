@@ -76,15 +76,31 @@ type toolEntry struct {
 	errStr string
 }
 
+// invokeAgentEntry is one recorded "invoke_agent" operation - one ACP
+// subprocess round's full protocol conversation (acp/emit.go's
+// emitInvokeAgent), both directions preserved as raw ndjson frames so
+// playback can replay them byte-for-byte without reinterpreting the wire
+// format (#604).
+type invokeAgentEntry struct {
+	ts        time.Time
+	agentName string
+	sent      []json.RawMessage // client → agent (quack's requests)
+	received  []json.RawMessage // agent → client (session/updates + responses)
+}
+
 // streamState is one StreamKey's recorded activity plus live consumption
 // cursors - chat is one ordered sequence; tools are further keyed by name
 // (.quack/replay-log.md: "execute_tool events per stream keyed further by
-// gen_ai.tool.name sequence"), each its own ordered sequence.
+// gen_ai.tool.name sequence"), each its own ordered sequence. agents (ACP
+// rounds) is one more ordered sequence, like chat - a node's ACP worker
+// makes at most one invoke_agent call per round, so no further keying needed.
 type streamState struct {
-	chat    []chatEntry
-	chatPos int
-	tools   map[string][]toolEntry
-	toolPos map[string]int
+	chat     []chatEntry
+	chatPos  int
+	tools    map[string][]toolEntry
+	toolPos  map[string]int
+	agents   []invokeAgentEntry
+	agentPos int
 }
 
 // Session is a loaded, replayable bundle: stream indexes plus concurrency-
@@ -118,9 +134,8 @@ func (s *Session) state(key StreamKey) *streamState {
 }
 
 // ingest files one parsed ledger line into its stream, by gen_ai.operation.name.
-// Anything else (plan/invoke_agent/evaluation.result events, or a record
-// with no operation at all) carries nothing replay matches on and is
-// dropped - out of this issue's native-only scope.
+// Anything else (plan/evaluation.result events, or a record with no
+// operation at all) carries nothing replay matches on and is dropped.
 func (s *Session) ingest(l line) {
 	key := StreamKey{Node: attrStr(l.Attrs, "quack.node"), Agent: attrStr(l.Attrs, "gen_ai.agent.name"), Round: attrStr(l.Attrs, "quack.round")}
 	st := s.state(key)
@@ -148,6 +163,15 @@ func (s *Session) ingest(l line) {
 			_ = json.Unmarshal([]byte(raw), &te.result)
 		}
 		st.tools[name] = append(st.tools[name], te)
+	case "invoke_agent":
+		ae := invokeAgentEntry{ts: l.Timestamp, agentName: attrStr(l.Attrs, "gen_ai.agent.name")}
+		if raw := attrStr(l.Attrs, "gen_ai.input.messages"); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &ae.sent)
+		}
+		if raw := attrStr(l.Attrs, "gen_ai.output.messages"); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &ae.received)
+		}
+		st.agents = append(st.agents, ae)
 	}
 }
 
@@ -162,6 +186,7 @@ func (s *Session) finalize() {
 			sortByTime(entries, func(e toolEntry) time.Time { return e.ts })
 			st.tools[name] = entries
 		}
+		sortByTime(st.agents, func(e invokeAgentEntry) time.Time { return e.ts })
 	}
 }
 
@@ -281,6 +306,44 @@ func (s *Session) NextToolResult(coords ledger.Coords, toolName string, _ any) (
 	return te.result, nil
 }
 
+// NextInvokeAgent consumes the next recorded invoke_agent entry in coords'
+// stream, enforcing sequence + shallow identity (agentName - matches
+// NextChat's modelName check, redundant with the stream key in practice
+// since both derive from the same configured agent name, but keeps the same
+// defended-identity shape as every other Next* method). Returns the raw
+// ndjson frames both directions of the round exchanged - internal/acp's
+// playback path (#604) replays received verbatim and only counts sent.
+func (s *Session) NextInvokeAgent(coords ledger.Coords, agentName string) (sent, received []json.RawMessage, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := streamKeyFor(coords)
+	st := s.state(key)
+	pos := st.agentPos
+	if pos >= len(st.agents) {
+		return nil, nil, s.recordFailure(&MissError{Class: ClassExtra, Stream: key, Op: "invoke_agent", Position: pos, Want: agentName, Diff: nearMissAgent(st.agents, pos)})
+	}
+	ae := st.agents[pos]
+	if ae.agentName != agentName {
+		return nil, nil, s.recordFailure(&MissError{Class: ClassMismatched, Stream: key, Op: "invoke_agent", Position: pos, Want: agentName, Diff: nearMissAgent(st.agents, pos)})
+	}
+	st.agentPos++
+	return ae.sent, ae.received, nil
+}
+
+// nearMissAgent builds the near-miss diff for an invoke_agent divergence:
+// up to one entry on each side of pos, same shape as nearMissChat.
+func nearMissAgent(agents []invokeAgentEntry, pos int) []NearMiss {
+	var out []NearMiss
+	for _, i := range []int{pos - 1, pos, pos + 1} {
+		if i < 0 || i >= len(agents) {
+			continue
+		}
+		out = append(out, NearMiss{Position: i, Name: agents[i].agentName, Field: "agent"})
+	}
+	return out
+}
+
 // nearMissTool builds the near-miss diff for a tool-call divergence: the
 // other tool names that DO have unconsumed recorded entries in this stream
 // (a live call for the wrong tool, or one call too many, both show up as
@@ -313,6 +376,9 @@ func (s *Session) Report() Report {
 		}
 		for name, entries := range st.tools {
 			r.Streams = append(r.Streams, StreamReport{Stream: key, Op: name, Consumed: st.toolPos[name], Total: len(entries)})
+		}
+		if len(st.agents) > 0 || st.agentPos > 0 {
+			r.Streams = append(r.Streams, StreamReport{Stream: key, Op: "invoke_agent", Consumed: st.agentPos, Total: len(st.agents)})
 		}
 	}
 	r.Drift = append(r.Drift, s.drift...)
