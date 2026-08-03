@@ -126,7 +126,21 @@ var registry = map[string]constructor{
 // is force-injected. A name in neither is an error.
 func Build(names []string, d Deps) ([]tool.Tool, error) {
 	if d.Replayer != nil {
-		return newReplayStubs(names, d.Replayer, d.LedgerCoords), nil
+		if d.Replayer.Mode() != replay.ModeFork {
+			return newReplayStubs(names, d.Replayer, d.LedgerCoords), nil
+		}
+		// Fork-replay (#605): build the REAL tools too, fully guard/repeat/
+		// cancel/emit-wrapped exactly like a live run's, so a stub that
+		// forks delegates to something already safe to call for real - then
+		// wrap each in a stub that starts from the recording and falls
+		// through on divergence (replayToolStub.Run).
+		live := d
+		live.Replayer = nil
+		liveTools, err := Build(names, live)
+		if err != nil {
+			return nil, fmt.Errorf("tools: fork-mode live build: %w", err)
+		}
+		return newReplayStubsWithLive(names, d.Replayer, d.LedgerCoords, liveTools), nil
 	}
 	if d.Client == nil {
 		d.Client = &http.Client{Timeout: 30 * time.Second}

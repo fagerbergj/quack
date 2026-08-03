@@ -55,6 +55,27 @@ func (e *MissError) Error() string {
 	}
 }
 
+// ForkSignal is returned by Session.Next* instead of a *MissError when the
+// session is in fork mode (Session.EnableFork) and coords' stream just went
+// LIVE: the caller (replayModel / replayToolStub / acp.Agent) must answer
+// this call from its own live delegate instead of treating it as a failure
+// (.quack/replay-log.md "fork-replay serves the recorded prefix, then goes
+// live from the first divergent step"). Sticky - every later call in the
+// SAME stream returns a fresh ForkSignal with Reason "sticky" rather than
+// being matched against the recording again.
+type ForkSignal struct {
+	Stream StreamKey
+	Reason string     // "fork-from" (explicit --fork-from boundary), "miss" (structural divergence), or "sticky" (already forked)
+	Cause  *MissError // set when Reason == "miss"; nil otherwise
+}
+
+func (f *ForkSignal) Error() string {
+	if f.Cause != nil {
+		return fmt.Sprintf("replay: fork-replay: stream %s went live (%v)", f.Stream, f.Cause)
+	}
+	return fmt.Sprintf("replay: fork-replay: stream %s went live (%s)", f.Stream, f.Reason)
+}
+
 // PromptDrift is an INFORMATIONAL divergence: the live system instruction's
 // content hash disagrees with the recorded gen_ai.prompt.version at the same
 // sequence position. Never fails a replay - only structural divergence does.
@@ -85,6 +106,11 @@ type Report struct {
 	Streams  []StreamReport
 	Drift    []PromptDrift
 	Failures []*MissError
+	// Forked records every stream that switched to live in fork mode - empty
+	// in strict mode (or a fork run that never diverged and had no explicit
+	// --fork-from boundary hit). Informational, like Drift: forking is
+	// fork-replay's whole point, not a failure.
+	Forked []*ForkSignal
 }
 
 // Clean reports whether nothing in r indicates any divergence at all -

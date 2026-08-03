@@ -184,8 +184,25 @@ func Run(ctx context.Context, configPath string, port int) error {
 // locally - co-hosted in the CLI process, no separate `quack server run`. Logs go
 // to stderr (default warn) so the client's stdout stays clean (e.g. `quack -p`).
 func InProcess(ctx context.Context, configPath string) (baseURL string, stop func() error, err error) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("config load failed: %w", err)
+	}
+	return InProcessFromConfig(ctx, cfg)
+}
+
+// InProcessFromConfig is InProcess for a caller that already has a resolved
+// *config.Config in memory - `quack replay` (#605): it config.Loads the
+// user's OWN quack.yaml (for its real provider/workspace/stores wiring),
+// swaps providers to kind:"replay" pointing at a recording bundle, and hands
+// the mutated struct straight in here. That's deliberate: re-marshaling an
+// already-${VAR}-expanded Config back to YAML and reloading it would trip
+// Load's literal-secret guard (validateNoLiteralTokens) on every git/webhook
+// token it resolved - going through the struct sidesteps the round trip
+// entirely.
+func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL string, stop func() error, err error) {
 	setupLoggingTo(os.Stderr, slog.LevelWarn)
-	handler, cleanup, _, err := build(ctx, configPath, 0)
+	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0)
 	if err != nil {
 		return "", nil, err
 	}
@@ -215,6 +232,17 @@ func InProcess(ctx context.Context, configPath string) (baseURL string, stop fun
 // func (close A2A servers; note managed stores), and the listen addr. On any
 // error it runs the cleanups registered so far and returns the error.
 func build(ctx context.Context, configPath string, port int) (handler http.Handler, cleanup func(), addr string, err error) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
+	}
+	return buildFromConfig(ctx, cfg, port)
+}
+
+// buildFromConfig is build for an already-loaded *config.Config - see
+// InProcessFromConfig for why a caller would have one of those instead of a
+// path.
+func buildFromConfig(ctx context.Context, cfg *config.Config, port int) (handler http.Handler, cleanup func(), addr string, err error) {
 	var cleanups []func()
 	runCleanups := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -228,10 +256,6 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 		}
 	}()
 
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
-	}
 	addr = cfg.Server.Addr
 	if port != 0 {
 		addr = fmt.Sprintf(":%d", port)
@@ -1041,12 +1065,19 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// model resolves (prov, above) - kind: replay + bundle: path - reused
 			// rather than a new ACP-specific knob, exactly how inference.NewModel's
 			// kind switch already works. nil unless configured, so a live deploy
-			// never loads a bundle it doesn't have.
+			// never loads a bundle it doesn't have. Fork-replay (#605): prov.
+			// ForkMode/ForkFrom switch the SAME Session live from a divergence or
+			// an explicit node boundary - acp.Agent.start's fork handoff needs no
+			// separate live delegate (unlike the model/tool seams), since "live"
+			// for ACP is just the real spawn path every opts.Command already names.
 			var acpReplay *replay.Session
 			if prov.Kind == "replay" {
 				acpReplay, err = replay.Load(prov.Bundle)
 				if err != nil {
 					return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "acp replay: %v", err)
+				}
+				if prov.ForkMode == "fork" {
+					acpReplay.EnableFork(prov.ForkFrom)
 				}
 			}
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{

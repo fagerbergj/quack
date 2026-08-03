@@ -21,6 +21,10 @@ func TestCommandTree(t *testing.T) {
 	if c, _, err := root.Find([]string{"init"}); err != nil || c.Name() != "init" {
 		t.Errorf("top-level init not registered: %v", err)
 	}
+	// Top-level `replay` (#605) - fork-replay + debug surface.
+	if c, _, err := root.Find([]string{"replay"}); err != nil || c.Name() != "replay" {
+		t.Errorf("top-level replay not registered: %v", err)
+	}
 	for name, subs := range want {
 		cmd, _, err := root.Find([]string{name})
 		if err != nil || cmd.Name() != name {

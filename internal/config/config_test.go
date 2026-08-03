@@ -81,6 +81,63 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
+// TestLoadAcceptsReplayProviderForkMode pins #605's fork-replay config shape:
+// kind: replay + fork_mode: fork + a live provider config all round-trip
+// through Load cleanly.
+func TestLoadAcceptsReplayProviderForkMode(t *testing.T) {
+	c, err := Load(writeTemp(t, `
+providers:
+  default:
+    kind: replay
+    bundle: /tmp/bundle.zip
+    fork_mode: fork
+    fork_from: node-a
+    live: { kind: openai, endpoint: http://x, api_key: k }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	p := c.Providers["default"]
+	if p.ForkMode != "fork" || p.ForkFrom != "node-a" {
+		t.Errorf("provider = %+v, want fork_mode=fork fork_from=node-a", p)
+	}
+	if p.Live == nil || p.Live.Kind != "openai" || p.Live.Endpoint != "http://x" {
+		t.Errorf("Live = %+v, want the live openai config", p.Live)
+	}
+}
+
+func TestLoadRejectsReplayForkModeWithoutLive(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: replay, bundle: /tmp/bundle.zip, fork_mode: fork }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`))
+	if err == nil {
+		t.Fatal("expected error for fork_mode: fork with no live provider config")
+	}
+}
+
+func TestLoadRejectsReplayForkModeUnknownValue(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: replay, bundle: /tmp/bundle.zip, fork_mode: bogus }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`))
+	if err == nil {
+		t.Fatal("expected error for an unsupported fork_mode value")
+	}
+}
+
 func TestLoadRejectsMissingOrchestratorProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:

@@ -573,6 +573,16 @@ type ProviderConfig struct {
 	Endpoint string `yaml:"endpoint"` // OpenAI-compatible base URL
 	APIKey   string `yaml:"api_key"`
 	Bundle   string `yaml:"bundle"` // kind "replay": path to a recording bundle (.zip or .jsonl)
+	// ForkMode, ForkFrom, and Live are kind:"replay"-only fork-replay knobs
+	// (#605, `quack replay --fork-from`): ForkMode "fork" switches the
+	// loaded bundle into fork mode (replay.Session.EnableFork); ForkFrom is
+	// the optional explicit node boundary; Live is the REAL provider config
+	// (kind: openai) NewModel builds the live fallback from on a divergence
+	// or at ForkFrom's boundary (internal/inference/factory.go). "" ForkMode
+	// (the default) is replay-strict - Live/ForkFrom are ignored.
+	ForkMode string          `yaml:"fork_mode"`
+	ForkFrom string          `yaml:"fork_from"`
+	Live     *ProviderConfig `yaml:"live"`
 }
 
 // StoreConfig is one named backend in the stores registry. `kind` selects the
@@ -878,6 +888,22 @@ func (c *Config) validate() error {
 		case "replay":
 			if p.Bundle == "" {
 				return fmt.Errorf("config: provider %q (kind %q) has empty bundle", name, "replay")
+			}
+			switch p.ForkMode {
+			case "", "fork":
+			default:
+				return fmt.Errorf("config: provider %q has unsupported fork_mode %q (only \"\" and \"fork\")", name, p.ForkMode)
+			}
+			if p.ForkMode == "fork" {
+				if p.Live == nil {
+					return fmt.Errorf("config: provider %q has fork_mode: fork but no live provider config", name)
+				}
+				if p.Live.Kind != "openai" {
+					return fmt.Errorf("config: provider %q live config must be kind %q, got %q", name, "openai", p.Live.Kind)
+				}
+				if p.Live.Endpoint == "" {
+					return fmt.Errorf("config: provider %q live config has empty endpoint", name)
+				}
 			}
 		default:
 			return fmt.Errorf("config: provider %q has unsupported kind %q (only %q and %q are implemented)", name, p.Kind, "openai", "replay")
