@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -26,6 +27,10 @@ type procHandle struct {
 	stop    chan struct{} // closed on shutdown so the update pump never blocks forever
 	stderr  *tailBuffer
 	once    sync.Once
+	// sent/received tee the raw JSON-RPC frames this handle's connection
+	// exchanges over stdin/stdout - the replay ledger's invoke_agent event
+	// (emit.go) is built from these at the end of the round.
+	sent, received *teeBuffer
 }
 
 // wrappedArgv is the subprocess argv actually exec'd: a.opts.Command wrapped
@@ -55,9 +60,11 @@ func (a *Agent) spawnEnv() []string {
 // start spawns the agent subprocess rooted at cwd and wires the ACP connection.
 func (a *Agent) start(cwd string) (*procHandle, error) {
 	h := &procHandle{
-		updates: make(chan sdk.SessionUpdate, 64),
-		stop:    make(chan struct{}),
-		stderr:  &tailBuffer{max: 4096},
+		updates:  make(chan sdk.SessionUpdate, 64),
+		stop:     make(chan struct{}),
+		stderr:   &tailBuffer{max: 4096},
+		sent:     &teeBuffer{},
+		received: &teeBuffer{},
 	}
 	argv := a.wrappedArgv(cwd)
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -83,7 +90,13 @@ func (a *Agent) start(cwd string) (*procHandle, error) {
 		return nil, fmt.Errorf("acp: start %q: %w", strings.Join(a.opts.Command, " "), err)
 	}
 	h.cmd = cmd
-	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, stdin, stdout)
+	// Tee the wire: everything quack writes to the subprocess's stdin and
+	// everything it reads back off stdout, for the replay ledger's
+	// invoke_agent event (emit.go) - the ACP conversation itself, not just a
+	// summary of it.
+	teedIn := io.MultiWriter(stdin, h.sent)
+	teedOut := io.TeeReader(stdout, h.received)
+	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, teedIn, teedOut)
 	return h, nil
 }
 

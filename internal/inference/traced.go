@@ -26,12 +26,29 @@ type tracedModel struct {
 // GenerateContent times the FULL iteration (the request streams; the
 // underlying HTTP work happens as the caller ranges over it, not at this call
 // itself), so the timer spans from the first pull to the iterator's exhaustion.
+// It also emits one gen_ai "chat" ledger event per call (emit.go): the LAST
+// response yielded stands in for "the assembled response" (a streaming
+// provider's final chunk carries the accumulated turn, same assumption
+// runWorkerNode's callers already make of GenerateContent's output).
 func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	inner := t.LLM.GenerateContent(ctx, req, stream)
 	return func(yield func(*model.LLMResponse, error) bool) {
 		t0 := time.Now()
-		defer func() { otelobs.RecordModelCallDuration(t.name, time.Since(t0)) }()
-		inner(yield)
+		var last *model.LLMResponse
+		var callErr error
+		defer func() {
+			otelobs.RecordModelCallDuration(t.name, time.Since(t0))
+			emitChatEvent(ctx, t.name, req, last, callErr)
+		}()
+		inner(func(resp *model.LLMResponse, err error) bool {
+			if err != nil {
+				callErr = err
+			}
+			if resp != nil {
+				last = resp
+			}
+			return yield(resp, err)
+		})
 	}
 }
 

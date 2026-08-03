@@ -155,6 +155,9 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if direct, err = cancelWrap(direct, name, d); err != nil {
 			return nil, err
 		}
+		if direct, err = emitWrap(direct); err != nil {
+			return nil, fmt.Errorf("tools: emit wrap %q: %w", name, err)
+		}
 		out = append(out, direct)
 	}
 	return out, nil

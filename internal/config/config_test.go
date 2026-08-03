@@ -1398,3 +1398,110 @@ func TestScanForKnownRenames(t *testing.T) {
 		})
 	}
 }
+
+// baseObservabilityYAML is the smallest valid config, reused by the
+// recording-inheritance tests below with an `observability:` block appended.
+func baseObservabilityYAML(t *testing.T, observability string) string {
+	t.Helper()
+	t.Setenv("QUACK_LLM_ENDPOINT", "http://x/v1")
+	t.Setenv("QUACK_LLM_API_KEY", "secret")
+	t.Setenv("QUACK_DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("QUACK_ORCH_MODEL", "m")
+	return writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: ${QUACK_LLM_ENDPOINT}, api_key: ${QUACK_LLM_API_KEY} }
+stores:
+  main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
+  ledger: { kind: filesystem, root: /tmp/quack-recordings }
+session: { store: main }
+orchestrator: { provider: default, model: ${QUACK_ORCH_MODEL} }
+`+observability)
+}
+
+func TestRecordingUnsetFollowsOtelEnabled(t *testing.T) {
+	c, err := Load(baseObservabilityYAML(t, ""))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.Observability.Otel.IsEnabled() {
+		t.Fatal("otel should default enabled")
+	}
+	if !c.Observability.Recording.IsEnabled(c.Observability.Otel.IsEnabled()) {
+		t.Error("recording.enabled unset should inherit otel.enabled (true)")
+	}
+}
+
+func TestRecordingCannotBeOnWhenOtelDisabled(t *testing.T) {
+	c, err := Load(baseObservabilityYAML(t, `
+observability:
+  otel: { enabled: false }
+  recording: { enabled: true, store: ledger }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Observability.Recording.IsEnabled(c.Observability.Otel.IsEnabled()) {
+		t.Error("recording must never be enabled when otel itself is disabled")
+	}
+}
+
+func TestRecordingExplicitFalseOverridesOtelEnabled(t *testing.T) {
+	c, err := Load(baseObservabilityYAML(t, `
+observability:
+  recording: { enabled: false }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Observability.Recording.IsEnabled(c.Observability.Otel.IsEnabled()) {
+		t.Error("explicit recording.enabled: false should stay off even though otel defaults on")
+	}
+}
+
+func TestRecordingUnconfiguredStoreDoesNotFailLoad(t *testing.T) {
+	// No observability: section at all - otel and recording both default
+	// enabled, but no store is named. Per the ledger's "off or store error ⇒
+	// zero behavior change" rule, this must degrade at wiring time, not fail
+	// config load.
+	if _, err := Load(baseObservabilityYAML(t, "")); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestRecordingNamedStoreMustResolveAndBeFilesystem(t *testing.T) {
+	if _, err := Load(baseObservabilityYAML(t, `
+observability:
+  recording: { enabled: true, store: does-not-exist }
+`)); err == nil {
+		t.Error("expected an error for a recording.store that isn't defined under stores")
+	}
+	if _, err := Load(baseObservabilityYAML(t, `
+observability:
+  recording: { enabled: true, store: main }
+`)); err == nil {
+		t.Error("expected an error for a recording.store that isn't kind: filesystem")
+	}
+}
+
+func TestFilesystemStoreDefaultsRoot(t *testing.T) {
+	t.Setenv("QUACK_LLM_ENDPOINT", "http://x/v1")
+	t.Setenv("QUACK_LLM_API_KEY", "secret")
+	t.Setenv("QUACK_DATABASE_URL", "postgres://localhost/db")
+	t.Setenv("QUACK_ORCH_MODEL", "m")
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: ${QUACK_LLM_ENDPOINT}, api_key: ${QUACK_LLM_API_KEY} }
+stores:
+  main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
+  ledger2: { kind: filesystem }
+session: { store: main }
+orchestrator: { provider: default, model: ${QUACK_ORCH_MODEL} }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	s, ok := c.Store("ledger2")
+	if !ok || s.Root != defaultLedgerRoot {
+		t.Errorf("Store(ledger2).Root = %q, want %q", s.Root, defaultLedgerRoot)
+	}
+}

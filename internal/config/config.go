@@ -17,19 +17,58 @@ import (
 
 // Config is the top-level declarative configuration.
 type Config struct {
-	Providers    map[string]ProviderConfig `yaml:"providers"`
-	Stores       map[string]StoreConfig    `yaml:"stores"`  // named backend registry (like providers)
-	Session      SessionConfig             `yaml:"session"` // ADK session/chat store + compaction
-	Orchestrator OrchestratorConfig        `yaml:"orchestrator"`
-	Agents       map[string]AgentConfig    `yaml:"agents"`
-	Tools        map[string]ToolConfig     `yaml:"tools"`
-	Gates        GatesConfig               `yaml:"gates"`
-	Dag          DagConfig                 `yaml:"dag"`
-	Server       ServerConfig              `yaml:"server"`
-	Workspace    WorkspaceConfig           `yaml:"workspace"`  // agents' working disk (filesystem/git tools)
-	Extensions   ExtensionsConfig          `yaml:"extensions"` // bundled inbound+outbound integrations (e.g. GitHub App)
-	Otel         OtelConfig                `yaml:"otel"`       // OpenTelemetry tracing/metrics (emission-only)
-	Auth         *InboundAuthConfig        `yaml:"auth"`       // inbound request auth; nil (section absent) = disabled, open
+	Providers     map[string]ProviderConfig `yaml:"providers"`
+	Stores        map[string]StoreConfig    `yaml:"stores"`  // named backend registry (like providers)
+	Session       SessionConfig             `yaml:"session"` // ADK session/chat store + compaction
+	Orchestrator  OrchestratorConfig        `yaml:"orchestrator"`
+	Agents        map[string]AgentConfig    `yaml:"agents"`
+	Tools         map[string]ToolConfig     `yaml:"tools"`
+	Gates         GatesConfig               `yaml:"gates"`
+	Dag           DagConfig                 `yaml:"dag"`
+	Server        ServerConfig              `yaml:"server"`
+	Workspace     WorkspaceConfig           `yaml:"workspace"`     // agents' working disk (filesystem/git tools)
+	Extensions    ExtensionsConfig          `yaml:"extensions"`    // bundled inbound+outbound integrations (e.g. GitHub App)
+	Observability ObservabilityConfig       `yaml:"observability"` // OTel tracing/metrics/logs + the replay-ledger recording toggle
+	Auth          *InboundAuthConfig        `yaml:"auth"`          // inbound request auth; nil (section absent) = disabled, open
+}
+
+// ObservabilityConfig groups OTel wiring (otel:) with the replay-ledger
+// recording toggle (recording:) that rides the same log pipeline - both are
+// "how quack observes its own runs", so they share one top-level section.
+type ObservabilityConfig struct {
+	Otel      OtelConfig      `yaml:"otel"`
+	Recording RecordingConfig `yaml:"recording"`
+}
+
+// RecordingConfig configures the replay ledger: the in-process log exporter
+// that appends every gen_ai.* event to a LedgerStore (see internal/ledger).
+// It rides the SAME OTel logger provider otel: configures, so it can only
+// ever be active when otel is - see IsEnabled.
+type RecordingConfig struct {
+	Enabled *bool `yaml:"enabled"` // unset ⇒ follows otel.enabled
+	// Store names a stores[] entry (kind: filesystem in v1) the ledger
+	// exporter appends into. Required when recording is enabled.
+	Store string `yaml:"store"`
+	// RetentionDays bounds a future GC sweep (whole-session, by last-modified);
+	// 0 ⇒ forever. Not enforced by this PR - config only.
+	RetentionDays int `yaml:"retention_days"`
+	// CloneSnapshot opts a run into bundling a git snapshot (repo + base SHA +
+	// produced commits) alongside its recording. Not implemented by this PR.
+	CloneSnapshot bool `yaml:"clone_snapshot"`
+}
+
+// IsEnabled reports whether the ledger exporter should be wired up. otelEnabled
+// is cfg.Observability.Otel.IsEnabled() - recording rides the same logger
+// provider, so it can never be on when otel itself is off, and an unset
+// recording.enabled inherits otel's value exactly.
+func (r RecordingConfig) IsEnabled(otelEnabled bool) bool {
+	if !otelEnabled {
+		return false
+	}
+	if r.Enabled == nil {
+		return true
+	}
+	return *r.Enabled
 }
 
 // InboundAuthConfig gates the API surface (REST + MCP). Absent entirely (nil),
@@ -548,7 +587,13 @@ type StoreConfig struct {
 	MinScore      *float32       `yaml:"min_score"`     // vector store: min cosine similarity for a recall hit
 	Schema        string         `yaml:"schema"`        // relational namespace default (overridable per tool)
 	Collection    string         `yaml:"collection"`    // vector namespace default (overridable per tool)
+	// Root is a `kind: filesystem` store's directory (the replay ledger's
+	// default_ledger store) - unset defaults to defaultLedgerRoot.
+	Root string `yaml:"root"`
 }
+
+// defaultLedgerRoot is a `kind: filesystem` store's root when unset.
+const defaultLedgerRoot = "./recordings"
 
 // Store resolves a named store, applying `extends` inheritance (parent fields
 // first, child overrides). Returns false if the name (or an ancestor) is unknown
@@ -863,9 +908,20 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: store %q has an unknown or cyclic extends", name)
 		}
 		switch s.Kind {
-		case "postgres", "qdrant", "sqlite":
+		case "postgres", "qdrant", "sqlite", "filesystem":
 		default:
-			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite)", name, s.Kind)
+			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite, filesystem)", name, s.Kind)
+		}
+	}
+	// Default a filesystem store's root, same convention as the vector-store
+	// recall defaulting loop below.
+	for name, s := range c.Stores {
+		if s.Kind != "filesystem" {
+			continue
+		}
+		if s.Root == "" {
+			s.Root = defaultLedgerRoot
+			c.Stores[name] = s
 		}
 	}
 	// Default + range-check vector-store recall tuning so consumers don't repeat it.
@@ -1000,11 +1056,40 @@ func (c *Config) validate() error {
 	if err := c.Extensions.GitHub.applyDefaults(); err != nil {
 		return err
 	}
-	if err := c.Otel.applyDefaults(); err != nil {
+	if err := c.Observability.Otel.applyDefaults(); err != nil {
+		return err
+	}
+	if err := c.Observability.Recording.validate(c, c.Observability.Otel.IsEnabled()); err != nil {
 		return err
 	}
 	if err := c.Auth.validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validate checks a recording: section against the stores registry. An
+// unconfigured store (Store == "") is NOT a load error even when recording
+// is enabled - recording.enabled defaults to true whenever otel is on (which
+// itself defaults to true), so most deployments reach here with recording
+// "on" and no opinion about a store; that degrades to "not recording" at
+// wiring time (log Warn, continue - the same "store error ⇒ zero behavior
+// change" rule the ledger exporter itself follows), not a startup failure. A
+// NAMED store that doesn't resolve, or resolves to the wrong kind, is a real
+// typo and still fails loudly, same as every other store reference in this file.
+func (r RecordingConfig) validate(c *Config, otelEnabled bool) error {
+	if r.RetentionDays < 0 {
+		return fmt.Errorf("config: observability.recording.retention_days must be >= 0")
+	}
+	if !r.IsEnabled(otelEnabled) || r.Store == "" {
+		return nil
+	}
+	s, ok := c.Store(r.Store)
+	if !ok {
+		return fmt.Errorf("config: observability.recording.store %q is not defined under stores", r.Store)
+	}
+	if s.Kind != "filesystem" {
+		return fmt.Errorf("config: observability.recording.store %q must be a filesystem store, got kind %q", r.Store, s.Kind)
 	}
 	return nil
 }

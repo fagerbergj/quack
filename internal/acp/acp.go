@@ -245,6 +245,11 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit
 		return err
 	}
 	defer h.close(a.log)
+	// One invoke_agent ledger event per subprocess round (this whole
+	// function's scope, per the package doc), whichever way it ends - err is
+	// this func's named return, fixed to its final value by the time any
+	// defer runs.
+	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err) }()
 
 	ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
 	defer cancelInit()

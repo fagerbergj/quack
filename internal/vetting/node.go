@@ -18,6 +18,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -552,7 +553,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
 				attribute.String("run_id", runID), attribute.String("agent", cfg.Agent), attribute.Int("round", round))
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
-			v, jerr := runJudgeAgent(ctx, judge, cfg, question, answer, act, judgePartEmitter(sink, nodeID, runID))
+			// ledgerCtx carries this round's replay-ledger coordinates
+			// (gen_ai.agent.name: judge, per the design) into every model/tool
+			// call the judge round makes - same WithCoords seam runWorkerNodeTraced
+			// uses for the worker, just via plain context.WithValue here since
+			// runJudgeAgent already takes a context.Context, not an adkagent.Context.
+			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID})
+			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, question, answer, act, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
 				// ERROR, not Warn: a judge failure means the answer is going out
 				// UNVETTED - that must be loud in the logs, not buried.
@@ -579,6 +586,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			v = foldDeterministic(judgeCtx, v, answer, act, cfg)
 			feedback := composeFeedback(v, cfg.Threshold)
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
+			emitEvaluationResults(ledgerCtx, runID, v)
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
 			judgeSpan.SetAttributes(attribute.Float64("score", res.Score), attribute.Bool("passed", res.Passed))
@@ -1052,7 +1060,13 @@ func modelName(m model.LLM) string {
 // (parented under spanCtx, the node's span-carrying context - NOT ctx, which
 // stays the plain ADK context runWorkerNode itself needs) and the
 // round-duration metric. The single seam every worker round - draft,
-// HITL/guard resume, continuation, revise - passes through.
+// HITL/guard resume, continuation, revise - passes through, so it is also
+// the ONE place that stamps this round's replay-ledger coordinates
+// (ledger.Coords: chat/node/agent/round) onto ctx via WithAgentContext - the
+// ADK-documented seam for overriding a Context's embedded context.Context
+// (see agent.Context.WithAgentContext) - so every model and tool call this
+// round makes, however deep in ADK's own call tree, can read them back via
+// ledger.CoordsFromContext without a signature change of its own.
 //
 // The duration recorded is TimedSpan's own window (span start → span end),
 // not a separately-tracked timer: the two can never disagree (see #354,
@@ -1067,7 +1081,10 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String("model", modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	out, err := runWorkerNode(ctx, workerNode, input, runID, emit)
+	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, ledger.Coords{
+		ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID,
+	}))
+	out, err := runWorkerNode(gctx, workerNode, input, runID, emit)
 	d := ts.End(err)
 	otelobs.RecordRoundDuration(cfg.Agent, modelName(workerModel), stage, d)
 	return out, err

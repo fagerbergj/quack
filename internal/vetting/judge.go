@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	otellog "go.opentelemetry.io/otel/log"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
@@ -28,10 +29,15 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// judgeScope names the logger every gen_ai.evaluation.result ledger event is
+// emitted through.
+const judgeScope = "quack.judge"
 
 const (
 	// submitVerdictTool is the name of the structured-termination tool the
@@ -1160,6 +1166,30 @@ func aggregateVerdict(v verdict) verdict {
 		v.Score = 1
 	}
 	return v
+}
+
+// emitEvaluationResults records one standard gen_ai.evaluation.result log
+// event per rubric criterion in v - deterministic criteria folded in by
+// foldDeterministic included, since those are as much a verdict as the
+// judge's own. responseID correlates every criterion from the SAME round
+// (gen_ai.response.id has no natural value here - the judge round has no
+// single upstream API response id - so runID, e.g. "judge-r1", stands in;
+// it already keys this round's chat event via quack.round).
+func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
+	names := make([]string, 0, len(v.Criteria))
+	for name := range v.Criteria {
+		names = append(names, name)
+	}
+	sort.Strings(names) // map iteration is random; a stable emit order matters for replay diffing
+	for _, name := range names {
+		cs := v.Criteria[name]
+		otelobs.EmitLog(ctx, judgeScope, "",
+			otellog.String(otelobs.GenAIResponseID, responseID),
+			otellog.String(otelobs.GenAIEvaluationName, name),
+			otellog.Float64(otelobs.GenAIEvaluationScore, cs.Score),
+			otellog.String(otelobs.GenAIEvaluationExplain, cs.Reason),
+		)
+	}
 }
 
 // parseVerdict reads the judge's JSON, tolerating a ```json fenced block. It is

@@ -25,6 +25,9 @@ stores:
       model: ${QUACK_JUDGE_MODEL}       # reuse the always-warm judge (gemma) for extract/vet/consolidate
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
+  default_ledger:
+    kind: filesystem                     # append-only per-session recordings; s3 is a future adapter
+    root: ${QUACK_RECORDING_DIR}         # unset ⇒ ./recordings
 
 # ADK session + chat persistence (references a store) plus context compaction,
 # which operates over that session history.
@@ -243,11 +246,20 @@ server:
 # monitoring stack, own trace/metric viewing; quack keeps no local store of
 # its own). enabled defaults to true; otlp_endpoint is what actually ships
 # spans/metrics anywhere - unset, providers are built but nothing exports.
-otel:
-  enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true
-  otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ providers built, nothing exported
-  # otlp_endpoint: http://otel-collector:4318  # the deployed home-server collector
-  sample: 1.0                                # trace sample ratio in (0,1]
+observability:
+  otel:
+    enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true
+    otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ providers built, nothing exported
+    # otlp_endpoint: http://otel-collector:4318  # the deployed home-server collector
+    sample: 1.0                                # trace sample ratio in (0,1]
+  # The replay ledger (.quack/replay-log.md): every gen_ai.* log event, appended
+  # to default_ledger as one JSONL line per session. Rides the otel logger
+  # provider above, so it can only be on when otel is.
+  recording:
+    enabled: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
+    store: default_ledger
+    retention_days: 30                   # whole-session GC by last-modified; not yet enforced
+    clone_snapshot: false                 # opt-in git snapshot in the export bundle; not yet implemented
 
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC

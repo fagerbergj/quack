@@ -12,7 +12,7 @@ Providers, stores, and several tools are pluggable through a `kind` discriminato
 
 ```yaml
 providers:      # named inference backends (openai-compatible endpoints)
-stores:         # named data backends (postgres, qdrant, sqlite)
+stores:         # named data backends (postgres, qdrant, sqlite, filesystem)
 session:        # ADK session/chat persistence + context compaction
 orchestrator:   # the planner's model + tools + skills
 agents:         # per-agent bundle bindings (model, tools, acp)
@@ -22,7 +22,7 @@ dag:            # concurrency caps for the DAG executor
 server:         # listen address + store topology
 workspace:      # the agents' filesystem/git/run_command sandbox
 extensions:     # optional bundled integrations (e.g. GitHub App)
-otel:           # tracing/metrics emission
+observability:  # otel tracing/metrics/logs emission + the replay-ledger recording toggle
 ```
 
 Each section gets its own page below:

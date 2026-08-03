@@ -128,6 +128,8 @@ func scrubbed(t tool.Tool) bool {
 		switch v := t.(type) {
 		case *pathScrub:
 			return true
+		case *emitTool:
+			t = v.inner
 		case *cancelGuard:
 			t = v.inner
 		case *repeatGuard:

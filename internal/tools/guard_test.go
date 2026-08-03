@@ -146,18 +146,26 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Build always adds the repeat guard as the outer layer (repeatguard.go);
-	// the guard-ladder wrapper sits inside it.
-	rg0, ok := tools[0].(*repeatGuard)
+	// Build's outermost layer is now emitWrap (registry.go); the repeat guard
+	// (repeatguard.go) sits just inside it, and the guard-ladder wrapper inside that.
+	et0, ok := tools[0].(*emitTool)
 	if !ok {
-		t.Fatalf("ask_user = %T, want *repeatGuard(outer)", tools[0])
+		t.Fatalf("ask_user = %T, want *emitTool(outer)", tools[0])
+	}
+	rg0, ok := et0.inner.(*repeatGuard)
+	if !ok {
+		t.Fatalf("ask_user = %T, want *repeatGuard", et0.inner)
 	}
 	if _, ok := rg0.inner.(*guardedTool); !ok {
 		t.Errorf("ask_user (guards: judge) inner = %T, want *guardedTool", rg0.inner)
 	}
-	rg1, ok := tools[1].(*repeatGuard)
+	et1, ok := tools[1].(*emitTool)
 	if !ok {
-		t.Fatalf("current_date = %T, want *repeatGuard(outer)", tools[1])
+		t.Fatalf("current_date = %T, want *emitTool(outer)", tools[1])
+	}
+	rg1, ok := et1.inner.(*repeatGuard)
+	if !ok {
+		t.Fatalf("current_date = %T, want *repeatGuard", et1.inner)
 	}
 	if _, ok := rg1.inner.(*guardedTool); ok {
 		t.Error("current_date (unlisted) must NOT be guard-laddered")
