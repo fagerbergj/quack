@@ -32,7 +32,7 @@ func TestExecute_JudgeStreamsAsStageJudge(t *testing.T) {
 	}
 	judge := vetting.NewJudgeFactory(stub, nil, nil)
 	cfgFor := func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }
-	ex := NewExecutor(session.InMemoryService(), agents, nil, judge, cfgFor, nil)
+	ex := NewExecutor(session.InMemoryService(), agents, nil, nil, judge, cfgFor, nil)
 
 	plan := Plan{ID: "t", UserMessage: "compare A and B", Nodes: []Node{
 		{ID: "r1", AgentName: "r1", Task: "research A"},

@@ -265,7 +265,7 @@ func newConfirmHarness(t *testing.T) (*dag.Executor, dag.Plan, session.Service, 
 	if err != nil {
 		t.Fatalf("agent: %v", err)
 	}
-	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil,
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil, nil,
 		vetting.NewJudgeFactory(stub, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := dag.Plan{ID: "t", UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
@@ -431,7 +431,7 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent: %v", err)
 	}
-	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil,
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil, nil,
 		vetting.NewJudgeFactory(stub, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := dag.Plan{ID: "t", UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}

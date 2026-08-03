@@ -14,6 +14,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -86,6 +88,16 @@ type Deps struct {
 	// never force-injects it (see registry lookup in Build). Empty/nil when no
 	// extension is configured.
 	ExtTools map[string]tool.Tool
+	// Replayer, when set, makes Build return a replay stub for every
+	// requested name instead of a real tool - no registry lookup, no real
+	// backend constructed (see replaystub.go). nil (the default) is normal
+	// live operation.
+	Replayer *replay.Session
+	// LedgerCoords, when non-zero, is stamped on every execute_tool ledger
+	// event this Build call's tools emit (Round always empty - see
+	// emitTool's doc comment). Zero value: coordinates come from ctx
+	// instead, today's behavior everywhere except replaytest.
+	LedgerCoords ledger.Coords
 }
 
 // constructor builds one tool from the shared dependencies.
@@ -113,6 +125,9 @@ var registry = map[string]constructor{
 // so an extension only reaches an agent that lists its tool by name; nothing
 // is force-injected. A name in neither is an error.
 func Build(names []string, d Deps) ([]tool.Tool, error) {
+	if d.Replayer != nil {
+		return newReplayStubs(names, d.Replayer, d.LedgerCoords), nil
+	}
 	if d.Client == nil {
 		d.Client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -155,7 +170,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		if direct, err = cancelWrap(direct, name, d); err != nil {
 			return nil, err
 		}
-		if direct, err = emitWrap(direct); err != nil {
+		if direct, err = emitWrap(direct, d.LedgerCoords); err != nil {
 			return nil, fmt.Errorf("tools: emit wrap %q: %w", name, err)
 		}
 		out = append(out, direct)

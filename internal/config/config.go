@@ -564,11 +564,15 @@ func (t ToolConfig) APIKey() string {
 }
 
 // ProviderConfig is one named inference provider. `kind` selects the adapter
-// (the API protocol); the endpoint picks the actual server.
+// (the API protocol); the endpoint picks the actual server. kind "replay"
+// (internal/inference/factory.go) ignores endpoint/api_key and reads Bundle
+// instead - a generated config pointing providers.default at a recording is
+// how CLI replay (later) reruns a session offline.
 type ProviderConfig struct {
-	Kind     string `yaml:"kind"`     // e.g. openai
+	Kind     string `yaml:"kind"`     // e.g. openai, replay
 	Endpoint string `yaml:"endpoint"` // OpenAI-compatible base URL
 	APIKey   string `yaml:"api_key"`
+	Bundle   string `yaml:"bundle"` // kind "replay": path to a recording bundle (.zip or .jsonl)
 }
 
 // StoreConfig is one named backend in the stores registry. `kind` selects the
@@ -866,11 +870,17 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: no providers defined")
 	}
 	for name, p := range c.Providers {
-		if p.Kind != "openai" {
-			return fmt.Errorf("config: provider %q has unsupported kind %q (only %q is implemented)", name, p.Kind, "openai")
-		}
-		if p.Endpoint == "" {
-			return fmt.Errorf("config: provider %q has empty endpoint", name)
+		switch p.Kind {
+		case "openai":
+			if p.Endpoint == "" {
+				return fmt.Errorf("config: provider %q has empty endpoint", name)
+			}
+		case "replay":
+			if p.Bundle == "" {
+				return fmt.Errorf("config: provider %q (kind %q) has empty bundle", name, "replay")
+			}
+		default:
+			return fmt.Errorf("config: provider %q has unsupported kind %q (only %q and %q are implemented)", name, p.Kind, "openai", "replay")
 		}
 	}
 	if _, ok := c.Providers[c.Orchestrator.Provider]; !ok {

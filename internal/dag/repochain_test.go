@@ -194,7 +194,7 @@ func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliver
 			},
 		}
 	}
-	ex = NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub},
+	ex = NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub}, nil,
 		vetting.NewJudgeFactory(stub, nil, nil), cfgFor, nil)
 	ex.SetMaxActive(1)
 	setupCalls = &int32Counter{}

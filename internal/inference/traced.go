@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"sync"
 	"time"
 
 	"google.golang.org/adk/v2/model"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
@@ -21,6 +23,34 @@ import (
 type tracedModel struct {
 	model.LLM
 	name string
+
+	mu     sync.Mutex
+	coords ledger.Coords // see SetLedgerCoords
+}
+
+// TracedModelForTesting wraps m the same way NewModel wraps every provider
+// kind - exported so another package's tests (replay's fixture generator)
+// can drive the real duration-metric + chat-ledger-event seam with a
+// scripted model.LLM, without a live provider to construct through NewModel.
+func TracedModelForTesting(m model.LLM, name string) model.LLM {
+	return &tracedModel{LLM: m, name: name}
+}
+
+// SetLedgerCoords stamps the coordinates every SUBSEQUENT GenerateContent
+// call uses, taking precedence over whatever ctx carries. Needed because a
+// worker round runs through workflow.RunNode, whose dynamic-child scheduler
+// rebuilds the child's context from the context captured when the
+// ENCLOSING node was scheduled - a context.WithValue done inside the
+// node's own body (internal/vetting/node.go's ctx.WithAgentContext call)
+// never reaches the model underneath it. This mutable field sidesteps
+// that: it's the SAME Go object the agent calls directly, no ADK context
+// reconstruction in between. RunGatedRefine calls this once per round; a
+// model nobody calls it on just falls back to ctx (unaffected - the judge
+// round, which never crosses a RunNode boundary, already worked on ctx alone).
+func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
+	t.mu.Lock()
+	t.coords = c
+	t.mu.Unlock()
 }
 
 // GenerateContent times the FULL iteration (the request streams; the
@@ -31,6 +61,12 @@ type tracedModel struct {
 // provider's final chunk carries the accumulated turn, same assumption
 // runWorkerNode's callers already make of GenerateContent's output).
 func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	t.mu.Lock()
+	c := t.coords
+	t.mu.Unlock()
+	if c != (ledger.Coords{}) {
+		ctx = ledger.WithCoords(ctx, c)
+	}
 	inner := t.LLM.GenerateContent(ctx, req, stream)
 	return func(yield func(*model.LLMResponse, error) bool) {
 		t0 := time.Now()

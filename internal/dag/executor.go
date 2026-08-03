@@ -10,6 +10,7 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -22,15 +23,16 @@ import (
 // executor - ADK's scheduler owns concurrency, ordering, and (on a durable
 // session store) restart-durable completed-node skipping.
 type Executor struct {
-	sessions    session.Service
-	agents      map[string]adkagent.Agent             // agent name → built (plain) agent
-	models      map[string]model.LLM                  // agent name → raw model (for the tool-less empty-recovery writer)
-	judge       vetting.JudgeFactory                  // independent judge factory
-	cfgFor      func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
-	mediaAgents map[string]bool                       // agents accepting image/audio parts
-	controls    *runControls                          // live per-node cancel/steer handles (M5b)
-	maxActive   int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
-	setupFn     SetupFunc                             // plan.Setup executor (see SetSetup); nil = a declared Setup hard-errors
+	sessions     session.Service
+	agents       map[string]adkagent.Agent             // agent name → built (plain) agent
+	models       map[string]model.LLM                  // agent name → raw model (for the tool-less empty-recovery writer)
+	toolsByAgent map[string][]tool.Tool                // agent name → its built tools (dag.buildGateNodes: per-node ledger stamping)
+	judge        vetting.JudgeFactory                  // independent judge factory
+	cfgFor       func(agentName string) vetting.Config // per-agent gate config (rubric override etc.)
+	mediaAgents  map[string]bool                       // agents accepting image/audio parts
+	controls     *runControls                          // live per-node cancel/steer handles (M5b)
+	maxActive    int                                   // concurrent-node cap for the single-runner runDAG path (default 2)
+	setupFn      SetupFunc                             // plan.Setup executor (see SetSetup); nil = a declared Setup hard-errors
 
 	// gateResults holds each node's trust-gate outcome in memory, keyed
 	// "<chatID>\x00<nodeID>". The gated node also writes it to session state, but
@@ -177,7 +179,7 @@ func (s *DagStream) Finish() {
 // freshly re-run). Per-node guidance should already be folded into the plan's node
 // Task by the caller.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.toolsByAgent, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		})
@@ -189,9 +191,10 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 
 // NewExecutor returns a graph Executor. agents maps agent name → plain agent
 // (no longer pre-wrapped in the gate - the graph wraps each node in the refine
-// loop). cfgFor supplies the per-agent trust-gate config.
-func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, models: models, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
+// loop). cfgFor supplies the per-agent trust-gate config. toolsByAgent may be
+// nil (no tool-side ledger stamping - see buildGateNodes).
+func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, toolsByAgent map[string][]tool.Tool, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
+	return &Executor{sessions: sessions, agents: agents, models: models, toolsByAgent: toolsByAgent, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 
 // gateScore is a node's trust-gate result.

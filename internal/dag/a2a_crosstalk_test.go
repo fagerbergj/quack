@@ -119,7 +119,7 @@ func TestConcurrentNodes_SameAgentOverA2A_KeepTheirOwnTask(t *testing.T) {
 		{ID: "n2", AgentName: "explorer", Task: "Clone and explore repo BETA.", Rubric: "covers BETA"},
 		{ID: "synth", AgentName: "synth", Task: "Summarize both.", Rubric: "covers both", DependsOn: []string{"n1", "n2"}},
 	}}
-	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"explorer": client, "synth": synth}, nil,
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"explorer": client, "synth": synth}, nil, nil,
 		vetting.NewJudgeFactory(passJudge{}, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 
@@ -230,7 +230,7 @@ func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 	plan := dag.Plan{ID: "p", UserMessage: "x", Nodes: []dag.Node{
 		{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"},
 	}}
-	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil,
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil, nil,
 		vetting.NewJudgeFactory(&failThenPassJudge{}, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
