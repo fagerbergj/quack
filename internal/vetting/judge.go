@@ -139,6 +139,11 @@ type verdict struct {
 	Score    float64                   `json:"score"`
 	Passed   bool                      `json:"passed"`
 	Feedback string                    `json:"feedback"`
+	// Findings is the judge's per-finding verification of the staged review
+	// comments listed by stagedFindingsSection (#498) - empty for a node with
+	// no staged findings to verify. aggregateVerdict folds any "contradicted"
+	// entry into findingsGroundingCriterion (findings.go).
+	Findings []findingVerdict `json:"findings,omitempty"`
 }
 
 // JudgeFactory builds a fresh agentic judge bound to sink: when the judge calls
@@ -191,12 +196,14 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 }
 
 // verdictArgs is the schema the judge fills when calling submit_verdict. Only
-// score is required; criteria and feedback are optional so a terse judge call
-// still validates (aggregateVerdict tolerates absent criteria).
+// score is required; criteria, feedback, and findings are optional so a terse
+// judge call still validates (aggregateVerdict tolerates absent criteria; a
+// node with no staged findings to verify never needs findings at all).
 type verdictArgs struct {
 	Score    float64                   `json:"score"`
 	Criteria map[string]criterionScore `json:"criteria,omitempty"`
 	Feedback string                    `json:"feedback,omitempty"`
+	Findings []findingVerdict          `json:"findings,omitempty"`
 }
 
 // newSubmitVerdictTool builds the structured-termination tool. Its handler
@@ -205,9 +212,9 @@ type verdictArgs struct {
 func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        submitVerdictTool,
-		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion.",
+		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion - and, when the prompt lists staged findings to verify, after recording a result for each one in `findings`.",
 	}, func(ctx adkagent.Context, args verdictArgs) (map[string]any, error) {
-		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback}
+		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback, Findings: args.Findings}
 		normalizeScale(&v)
 		*sink = v
 		ctx.Actions().Escalate = true
@@ -284,7 +291,7 @@ const (
 // (#498 residual: "OUTPUT = the staged PR + the diff" for an implement).
 func changedFilesSection(cfg Config, act workerActivity) string {
 	if cfg.IsReviewer {
-		return reviewVerdictLine(act) + buildReviewDiffSection(cfg)
+		return reviewVerdictLine(act) + stagedFindingsSection(act) + buildReviewDiffSection(cfg)
 	}
 	written := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
 	diff := buildImplementDiffSection(cfg)
@@ -1144,6 +1151,11 @@ func normalizeScale(v *verdict) {
 // again by the gate after it folds in the deterministic criteria; it is
 // idempotent on the lowest value.
 func aggregateVerdict(v verdict) verdict {
+	// #498: fold any "contradicted" per-finding result into
+	// findingsGroundingCriterion BEFORE taking the weakest link, so a
+	// fabricated review finding sinks the verdict via the SAME mechanism
+	// below rather than a parallel pass/fail path.
+	applyFindingsVerdict(&v)
 	// Per-criterion gating (DeepEval-style multi-metric composition): each
 	// criterion is an independent requirement, so the overall score is the WEAKEST
 	// criterion - the binding constraint. The gate passes only when every criterion
