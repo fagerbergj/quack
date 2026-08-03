@@ -81,6 +81,22 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 		if resp.ModelVersion != "" {
 			attrs = append(attrs, otellog.String(otelobs.GenAIResponseModel, resp.ModelVersion))
 		}
+		if resp.FinishReason != "" {
+			// semconv models finish_reasons as an array (one entry per
+			// candidate); quack's LLMResponse carries a single candidate.
+			attrs = append(attrs, otellog.Slice(otelobs.GenAIResponseFinishReasons, otellog.StringValue(string(resp.FinishReason))))
+		}
+		if u := resp.UsageMetadata; u != nil {
+			// Cost accounting per node/round, and the token/finish parity a
+			// swapped-model eval re-run (#606) needs to compare against a
+			// recording - both free once UsageMetadata is populated.
+			if u.PromptTokenCount != 0 {
+				attrs = append(attrs, otellog.Int64(otelobs.GenAIUsageInputTokens, int64(u.PromptTokenCount)))
+			}
+			if u.CandidatesTokenCount != 0 {
+				attrs = append(attrs, otellog.Int64(otelobs.GenAIUsageOutputTokens, int64(u.CandidatesTokenCount)))
+			}
+		}
 	}
 	if callErr != nil {
 		attrs = append(attrs, otellog.String(otelobs.ErrorType, callErr.Error()))

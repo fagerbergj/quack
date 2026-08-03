@@ -59,7 +59,16 @@ func TestTracedModel_EmitsWellFormedChatEvent(t *testing.T) {
 	}
 	resps := []*model.LLMResponse{
 		{Content: &genai.Content{Parts: []*genai.Part{{Text: "partial"}}}, Partial: true},
-		{Content: &genai.Content{Parts: []*genai.Part{{Text: "final answer"}}}, TurnComplete: true, ModelVersion: "test-model-v1"},
+		{
+			Content:      &genai.Content{Parts: []*genai.Part{{Text: "final answer"}}},
+			TurnComplete: true,
+			ModelVersion: "test-model-v1",
+			FinishReason: genai.FinishReasonStop,
+			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
+				PromptTokenCount:     12,
+				CandidatesTokenCount: 34,
+			},
+		},
 	}
 	stub := &stubModel{name: "test-model", resps: resps}
 	tm := &tracedModel{LLM: stub, name: "test-model"}
@@ -109,6 +118,16 @@ func TestTracedModel_EmitsWellFormedChatEvent(t *testing.T) {
 	}
 	if got := attrs["gen_ai.response.model"].AsString(); got != "test-model-v1" {
 		t.Errorf("gen_ai.response.model = %q, want test-model-v1", got)
+	}
+	if v := attrs["gen_ai.usage.input_tokens"].AsInt64(); v != 12 {
+		t.Errorf("gen_ai.usage.input_tokens = %v, want 12", v)
+	}
+	if v := attrs["gen_ai.usage.output_tokens"].AsInt64(); v != 34 {
+		t.Errorf("gen_ai.usage.output_tokens = %v, want 34", v)
+	}
+	finishReasons := attrs["gen_ai.response.finish_reasons"].AsSlice()
+	if len(finishReasons) != 1 || finishReasons[0].AsString() != string(genai.FinishReasonStop) {
+		t.Errorf("gen_ai.response.finish_reasons = %v, want [%q]", finishReasons, genai.FinishReasonStop)
 	}
 
 	if attrs["gen_ai.system_instructions"].AsString() == "" {
