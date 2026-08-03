@@ -493,7 +493,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int) (handler
 	// are resolved - the deterministic twin of `deliver` above, wired onto the
 	// executor once it exists (see executor.SetSetup below).
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, toolsByAgent, servers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn)
+	clientMap, modelMap, toolsByAgent, servers, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -501,6 +501,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int) (handler
 		for _, s := range servers {
 			_ = s.Close()
 		}
+		// Backstop for a per-node native-agent server (#609) whose owning
+		// node's own release() never ran (an abandoned dynamic node, a crash
+		// mid-run) - see perNodeServers' doc comment.
+		nodeServers.closeAll()
 	})
 
 	// Build agent info list for the planner (name + description) and a set of
@@ -714,7 +718,16 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config)
 // tools, exposes it over a co-located A2A server, and returns:
 // - clientMap: agent name → A2A client (for the DAG executor)
 // - servers: A2A server handles (to close on shutdown)
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc) (map[string]adkagent.Agent, map[string]model.LLM, map[string][]tool.Tool, []*agent.A2AServer, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc) (map[string]adkagent.Agent, map[string]model.LLM, map[string][]tool.Tool, []*agent.A2AServer, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+	// nodeServers tracks every per-node native-agent A2A server opened over
+	// this build's lifetime (nativeAgent.ForNode, #609) - a shutdown backstop
+	// for whichever node's own release() never ran; see perNodeServers' doc
+	// comment. Declared before any early return so every error path can
+	// return it too (always empty at that point - a per-node server is only
+	// ever opened by a build(nodeKey) closure, which runs at request time,
+	// long after buildAgents itself has returned).
+	nodeServers := newPerNodeServers()
+
 	// nodeScope resolves the part of an agent's memory entitlement that is only
 	// knowable per invocation: the repo the node is working in, and the real user.
 	// Neither survives the A2A hop on its own (a worker's ctx.UserID() is the
@@ -774,7 +787,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	// WARN that says exactly what the deployment is accepting.
 	sandbox, err := workspace.ResolveSandbox(workspace.SandboxMode(cfg.Workspace.Sandbox))
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, err
 	}
 	workspaceCaps.Sandbox = sandbox
 	// A dedicated $HOME for run_command/checks/git children, OUTSIDE the
@@ -787,7 +800,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	// tools AND the trust gate's deterministic checks) gets it for free.
 	homeDir, err := jail.HomeDir(localUserID)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("workspace home dir init failed: %w", err)
+		return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("workspace home dir init failed: %w", err)
 	}
 	workspaceCaps.HomeDir = homeDir
 
@@ -808,7 +821,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	if cfg.Gates.Enabled() {
 		var err error
 		if gateCfg, err = vetting.FromConfig(cfg.Gates); err != nil {
-			return nil, nil, nil, nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, err
 		}
 		// The trust gate commits vetted tradecraft on a judge pass (M6). nil
 		// *memory.Store when memory is off - the gate's nil check handles it.
@@ -840,11 +853,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if cfg.Gates.JudgeEnabled() {
 			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
 			if !ok {
-				return nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
+				return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
 			}
 			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model)
 			if err != nil {
-				return nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
+				return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
 			judgeModel = judge
 			var judgeReadTools []tool.Tool
@@ -855,7 +868,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					WorkspaceCaps:   workspaceCaps,
 				})
 				if err != nil {
-					return nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
+					return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
 				}
 			}
 			// The judge also gets the SAME skill toolset the workers hold, so it
@@ -921,11 +934,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	if compCfg.Enabled && compCfg.Model != "" {
 		cprov, ok := cfg.Provider(compCfg.Provider)
 		if !ok {
-			return nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
+			return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
 		}
 		var err error
 		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model); err != nil {
-			return nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
+			return nil, nil, nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
 		slog.Info("context compaction enabled", "component", "startup", "fallback_summariser", compCfg.Model)
 	} else if compCfg.Enabled {
@@ -976,11 +989,11 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 
 		prov, ok := cfg.Provider(ac.Provider)
 		if !ok {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "provider %q not found", ac.Provider)
+			return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "provider %q not found", ac.Provider)
 		}
 		m, err := inference.NewModel(prov, ac.Model)
 		if err != nil {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
+			return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
 		}
 
 		// External ACP coding agent (internal/acp): the bundle still supplies
@@ -993,7 +1006,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if ac.Acp != nil {
 			bundle, err := agent.LoadBundle(ac.Bundle)
 			if err != nil {
-				return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "bundle: %v", err)
+				return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "bundle: %v", err)
 			}
 			// memory.md guidance (M6/A4): loaded the SAME way the native path
 			// loads it (agent.LoadBundleMemory) so an ACP bundle's "what to
@@ -1003,7 +1016,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			var memGuidance string
 			if taskStore != nil {
 				if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
-					return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
+					return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
 				}
 			}
 			// The gate config (threshold/rounds/retrieval/read-only) and the
@@ -1014,7 +1027,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if cfg.Gates.Enabled() && ac.IsGated() {
 				agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil, memGuidance)
 				if err != nil {
-					return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
+					return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 				}
 				gateCfgs[name] = agentGateCfg
 				grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
@@ -1026,7 +1039,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// per-agent scope that doesn't apply here.
 			skillFms, err := builtinSkillSrc.ListFrontmatters(context.Background())
 			if err != nil {
-				return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
+				return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
 			}
 			behaviour := bundle.Prompt
 			if g := strings.TrimSpace(memGuidance); g != "" {
@@ -1074,7 +1087,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if prov.Kind == "replay" {
 				acpReplay, err = replay.Load(prov.Bundle)
 				if err != nil {
-					return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "acp replay: %v", err)
+					return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "acp replay: %v", err)
 				}
 				if prov.ForkMode == "fork" {
 					acpReplay.EnableFork(prov.ForkFrom)
@@ -1107,7 +1120,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				},
 			})
 			if err != nil {
-				return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "acp: %v", err)
+				return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "acp: %v", err)
 			}
 			clientMap[name] = ag
 			modelMap[name] = m
@@ -1122,33 +1135,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// (opt-in via the agent's tools list). Strip load_memory from the builtin
 		// names regardless, so tools.Build never sees an unknown tool.
 		toolNames, wantLoadMemory := resolveToolNames(ac.Tools, taskStore != nil, advisorAgent != nil)
-		var builtins []tool.Tool
-		if len(toolNames) > 0 {
-			builtins, err = tools.Build(toolNames, tools.Deps{
-				WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
-				Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
-				Summarizer:      m,
-				Cache:           urlCache,
-				Advisor:         advisorAgent,
-				Sessions:        sessions,
-				Workspace:       jail,
-				WorkspaceUserID: localUserID,
-				WorkspaceCaps:   workspaceCaps,
-				GitCredentials:  gitCredentials,
-				GitTokenSource:  gitTokenSource,
-				Guards:          cfg.Workspace.Guards,
-				SafetyJudge:     safetyJudge,
-				NodeCancelled:   nodeCancelled,
-				ExtTools:        extToolsByName,
-			})
-			if err != nil {
-				return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "tools: %v", err)
-			}
-		}
 
 		bundle, err := agent.LoadBundle(ac.Bundle)
 		if err != nil {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "bundle: %v", err)
+			return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "bundle: %v", err)
 		}
 		// Memory guidance (M6): the bundle's optional memory.md. Its presence marks the
 		// agent as a memory participant - ONLY such agents get recall (preload/load_memory).
@@ -1160,21 +1150,20 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		var memGuidance string
 		if taskStore != nil {
 			if memGuidance, err = agent.LoadBundleMemory(ac.Bundle); err != nil {
-				return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
+				return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "memory.md: %v", err)
 			}
 		}
 		// The agent's recall service: a VIEW of the shared store bound to this agent's
 		// buckets - its role family + the per-node repo/user (nodeScope) - plus its own
 		// agent name as the legacy read key, so memories written under the old
 		// per-agent-silo scheme still load. nil (not a typed-nil interface) when this
-		// agent is not a memory participant.
+		// agent is not a memory participant. Safe to build ONCE and share across every
+		// per-node worker below: a memory.Store view carries no per-round mutable
+		// coordinate state (unlike the model/tools SetLedgerCoords stamps - #609),
+		// same reason sessions/jail/urlCache are shared deps too.
 		var memSvc adkmemory.Service
 		if taskStore != nil && memGuidance != "" {
 			memSvc = taskStore.View(memory.Scope{Role: ac.Memory.Bucket, Legacy: name}, nodeScope)
-			builtins = append(builtins, memory.NewPreload())
-			if wantLoadMemory {
-				builtins = append(builtins, loadmemorytool.New())
-			}
 		}
 		// Each agent gets its OWN load_skill/list_skills scope - config's
 		// agents.<name>.skills - not the full library (see newScopedSkillTS /
@@ -1184,13 +1173,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		// so the model knows those names exist at all (ADK doesn't surface them).
 		agentSkillTS, err := newScopedSkillTS(ac.Skills)
 		if err != nil {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "skills toolset: %v", err)
+			return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills toolset: %v", err)
 		}
 		skillFms, err := skillsource.Scoped(builtinSkillSrc, ac.Skills).ListFrontmatters(context.Background())
 		if err != nil {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
+			return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "skills: %v", err)
 		}
-		comp := compactionFor(ac, m)
 
 		// The agent is served PLAIN - the trust gate is applied per-node by the graph
 		// (dag.BuildWorkflow → vetting.RunGatedRefine), not wrapped around the agent.
@@ -1203,35 +1191,104 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if cfg.Gates.Enabled() && ac.IsGated() {
 			agentGateCfg, err := perAgentGateCfg(gateCfg, name, ac, taskStore != nil, memGuidance)
 			if err != nil {
-				return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
+				return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 			}
 			gateCfgs[name] = agentGateCfg
 			grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
 		}
 
-		ag, err := agent.Build(bundle, m, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading)
-		if err != nil {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "build: %v", err)
+		// Replay-mode tool stubs (#610): a SEPARATE replay.Session dedicated to
+		// this agent's tools, mirroring the ACP branch's acpReplay above -
+		// inference.NewModel loads its OWN session for the model the same way.
+		// nil in normal (kind: "openai") operation, so tools.Build proceeds live.
+		var nativeReplay *replay.Session
+		if prov.Kind == "replay" {
+			if nativeReplay, err = replay.Load(prov.Bundle); err != nil {
+				return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "replay: tools: %v", err)
+			}
+			if prov.ForkMode == "fork" {
+				nativeReplay.EnableFork(prov.ForkFrom)
+			}
 		}
 
-		srv, err := agent.Serve(ag, sessions, memSvc)
-		if err != nil {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "a2a serve: %v", err)
+		// buildWorker constructs a FRESH model + tools + llmagent: called once
+		// right below (the roster prototype - Name()/Description() only, never
+		// Run) and again per DAG node (nativeAgent.ForNode, #609) so two nodes
+		// sharing this configured agent concurrently never share the mutable
+		// coordinate field SetLedgerCoords/ledger.StampCoords stamp onto a
+		// worker's model/tools - the same object shared across concurrent
+		// nodes was how a node's ledger events could misattribute to its
+		// sibling's coordinates.
+		buildWorker := func() (adkagent.Agent, model.LLM, []tool.Tool, error) {
+			wm, err := inference.NewModel(prov, ac.Model)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("model: %w", err)
+			}
+			var builtins []tool.Tool
+			if len(toolNames) > 0 {
+				if builtins, err = tools.Build(toolNames, tools.Deps{
+					WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
+					Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+					Summarizer:      wm,
+					Cache:           urlCache,
+					Advisor:         advisorAgent,
+					Sessions:        sessions,
+					Workspace:       jail,
+					WorkspaceUserID: localUserID,
+					WorkspaceCaps:   workspaceCaps,
+					GitCredentials:  gitCredentials,
+					GitTokenSource:  gitTokenSource,
+					Guards:          cfg.Workspace.Guards,
+					SafetyJudge:     safetyJudge,
+					NodeCancelled:   nodeCancelled,
+					ExtTools:        extToolsByName,
+					Replayer:        nativeReplay,
+				}); err != nil {
+					return nil, nil, nil, fmt.Errorf("tools: %w", err)
+				}
+			}
+			if memSvc != nil {
+				builtins = append(builtins, memory.NewPreload())
+				if wantLoadMemory {
+					builtins = append(builtins, loadmemorytool.New())
+				}
+			}
+			comp := compactionFor(ac, wm)
+			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("build: %w", err)
+			}
+			return wag, wm, builtins, nil
 		}
-		servers = append(servers, srv)
 
-		client, err := srv.Client()
+		protoAgent, _, _, err := buildWorker()
 		if err != nil {
-			return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "a2a client: %v", err)
+			return nil, nil, nil, servers, nodeServers, nil, nil, nil, nil, fmtErr(name, "%v", err)
 		}
-		clientMap[name] = client
-		modelMap[name] = m
-		toolsByAgent[name] = builtins
+		clientMap[name] = nativeAgent{
+			Agent: protoAgent,
+			build: func(nodeKey string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+				wag, wm, builtins, err := buildWorker()
+				if err != nil {
+					return nil, nil, nil, nil, err
+				}
+				srv, err := agent.Serve(wag, sessions, memSvc)
+				if err != nil {
+					return nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
+				}
+				client, err := srv.ClientForNode(nodeKey)
+				if err != nil {
+					_ = srv.Close()
+					return nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
+				}
+				return client, wm, builtins, nodeServers.track(srv), nil
+			},
+		}
 		// tools listed here is the definitive record of what the agent can call -
 		// when a worker "didn't use its tool", check this line first.
-		slog.Info("agent serving over A2A", "component", "startup", "agent", name, "url", srv.Card.SupportedInterfaces[0].URL, "tools", ac.Tools)
+		slog.Info("agent serving over A2A per DAG node", "component", "startup", "agent", name, "tools", ac.Tools)
 	}
-	return clientMap, modelMap, toolsByAgent, servers, judgeFactory, planJudge, gateCfgs, judgeModel, nil
+	return clientMap, modelMap, toolsByAgent, servers, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, nil
 }
 
 // perAgentGateCfg specializes the base trust-gate config for one agent:
