@@ -128,6 +128,12 @@ func ledgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 //go:embed all:web/dist
 var webDist embed.FS
 
+// Version is the build stamp cmd/quack sets (from its own ldflags-overridable
+// `version` var) before calling Run/InProcess - so `quack version` and a
+// recording bundle's manifest.json (GetChatRecording) report the same
+// string. Left at its zero value "" in tests that build the server directly.
+var Version string
+
 // Run builds the server and serves it on cfg.Server.Addr (or :port) until ctx is
 // cancelled (the caller wires SIGINT/SIGTERM). The standalone `quack server run`
 // path; logs to stdout so a container/supervisor collects them.
@@ -243,8 +249,12 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// span from here on is captured (ADK's OWN internal spans are NOT covered;
 	// see the KNOWN LIMITATION on otelobs.Providers). Disabled (otel.enabled:
 	// false) yields a no-op Providers; every otelobs call site stays safe to
-	// call unconditionally.
-	_, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStoreFromConfig(cfg))
+	// call unconditionally. ledgerStore is resolved ONCE here and reused by
+	// both the exporter and the retention sweep/fetch endpoint below - two
+	// FSStore instances over the same directory would defeat its single-writer
+	// mutex.
+	ledgerStore := ledgerStoreFromConfig(cfg)
+	_, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
 	}
@@ -259,6 +269,12 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	// bridge: existing output is unchanged for any call site whose ctx carries
 	// no span; a spanned ctx gains trace_id/span_id attrs for free.
 	slog.SetDefault(slog.New(otelobs.WrapHandler(slog.Default().Handler())))
+
+	// Replay-ledger retention sweep (issue #601): whole-session GC by
+	// last-modified, once at start and then daily. Bound to ctx (the server's
+	// own lifetime) like workspace GC below; a nil ledgerStore or
+	// retention_days <= 0 ("forever") makes RunRetentionSweep a no-op.
+	go ledger.RunRetentionSweep(ctx, ledgerStore, cfg.Observability.Recording.RetentionDays, 24*time.Hour)
 
 	// Workspace (filesystem/git tools' isolation boundary): one jail per server
 	// process, rooted at workspace.root (config.Load already defaulted it to
@@ -582,7 +598,7 @@ func build(ctx context.Context, configPath string, port int) (handler http.Handl
 	}
 
 	handler = server.New(server.Options{
-		REST:       rest.NewHandler(st, orch, llm, jail, runHub),
+		REST:       rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version),
 		MCP:        mcpserver.Handler(orch),
 		SPA:        spa,
 		Extensions: extensions,

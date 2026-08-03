@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatData, GetChatErrors, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -67,6 +67,20 @@ export const updateChat = <ThrowOnError extends boolean = false>(options: Option
         ...options.headers
     }
 });
+
+/**
+ * Download a chat's replay-ledger recording bundle
+ *
+ * Streams a self-contained ZIP export of the chat's replay ledger:
+ * `manifest.json` (quack version, gen_ai semconv version, session id,
+ * recording flags) + `entries.jsonl` (the session's OTel event stream,
+ * including gate-probe outputs) + an optional `clone.bundle` when a
+ * clone snapshot was recorded for this session. See
+ * `.quack/replay-log.md`. 404 when the session has no recording (never
+ * recorded, already GC'd by retention, or recording disabled).
+ *
+ */
+export const getChatRecording = <ThrowOnError extends boolean = false>(options: Options<GetChatRecordingData, ThrowOnError>): RequestResult<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError> => (options.client ?? client).get<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/recording', ...options });
 
 /**
  * Send a message and stream the response

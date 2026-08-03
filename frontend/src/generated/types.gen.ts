@@ -346,6 +346,31 @@ export type UpdateChatResponses = {
 
 export type UpdateChatResponse = UpdateChatResponses[keyof UpdateChatResponses];
 
+export type GetChatRecordingData = {
+    body?: never;
+    path: {
+        chat_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/recording';
+};
+
+export type GetChatRecordingErrors = {
+    /**
+     * No recording exists for this chat
+     */
+    404: unknown;
+};
+
+export type GetChatRecordingResponses = {
+    /**
+     * The recording bundle (ZIP)
+     */
+    200: Blob | File;
+};
+
+export type GetChatRecordingResponse = GetChatRecordingResponses[keyof GetChatRecordingResponses];
+
 export type SendChatMessageData = {
     body: SendMessageBody;
     path: {

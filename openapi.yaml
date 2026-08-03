@@ -101,6 +101,31 @@ paths:
         "404":
           description: No such chat
 
+  /api/v1/chats/{chat_id}/recording:
+    get:
+      operationId: getChatRecording
+      summary: Download a chat's replay-ledger recording bundle
+      description: |
+        Streams a self-contained ZIP export of the chat's replay ledger:
+        `manifest.json` (quack version, gen_ai semconv version, session id,
+        recording flags) + `entries.jsonl` (the session's OTel event stream,
+        including gate-probe outputs) + an optional `clone.bundle` when a
+        clone snapshot was recorded for this session. See
+        `.quack/replay-log.md`. 404 when the session has no recording (never
+        recorded, already GC'd by retention, or recording disabled).
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+      responses:
+        "200":
+          description: The recording bundle (ZIP)
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No recording exists for this chat
+
   /api/v1/chats/{chat_id}/responses:
     post:
       operationId: sendChatMessage

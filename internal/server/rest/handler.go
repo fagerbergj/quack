@@ -5,9 +5,12 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,7 +22,9 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -58,23 +63,27 @@ const runTimeout = 24 * time.Hour
 
 // Handler implements schema.ServerInterface backed by the store + orchestrator.
 type Handler struct {
-	store    *store.Store
-	orch     *orchestrator.Orchestrator
-	titler   model.LLM
-	jail     *workspace.Jail  // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
-	hub      *stream.Hub      // fans a chat's run to extra subscribers (other devices); also the cancel-run registry (#468)
-	eventLog *runlog.EventLog // durably persists the run stream, backing replay across restarts
+	store        *store.Store
+	orch         *orchestrator.Orchestrator
+	titler       model.LLM
+	jail         *workspace.Jail    // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
+	hub          *stream.Hub        // fans a chat's run to extra subscribers (other devices); also the cancel-run registry (#468)
+	eventLog     *runlog.EventLog   // durably persists the run stream, backing replay across restarts
+	ledgerStore  ledger.LedgerStore // replay ledger backend; nil ⇒ recording disabled, GetChatRecording 404s
+	quackVersion string             // build stamp, stamped into a recording bundle's manifest.json
 }
 
 // NewHandler builds a REST handler. jail may be nil (no workspace configured).
 // hub may be nil to get a private hub; pass a shared *stream.Hub (e.g. from
 // internal/serve) when another driver of runs on the same chats - such as the
 // GitHub webhook dispatcher - needs live subscribers to see the same events.
-func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub) *Handler {
+// ledgerStore may be nil (recording disabled or unconfigured); quackVersion
+// is the build stamp (cmd/quack's version var, threaded through serve.Run).
+func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string) *Handler {
 	if hub == nil {
 		hub = stream.NewHub()
 	}
-	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s)}
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
@@ -205,6 +214,39 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 		return
 	}
 	writeJSON(w, http.StatusOK, buildTurn(*tc))
+}
+
+// GetChatRecording streams the chat's replay-ledger recording as a ZIP
+// bundle (internal/ledger.AssembleBundle). The existence check (ReadStream)
+// happens before any byte reaches w, so a missing recording still gets a
+// clean 404 rather than a truncated 200.
+func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	if h.ledgerStore == nil {
+		http.Error(w, "recording is not enabled", http.StatusNotFound)
+		return
+	}
+	entries, err := h.ledgerStore.ReadStream(r.Context(), chatID)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			http.Error(w, "no recording for this chat", http.StatusNotFound)
+			return
+		}
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer entries.Close()
+
+	w.Header().Set("Content-Type", "application/zip")
+	// mime.FormatMediaType quotes/escapes the filename - chatID is
+	// caller-supplied, so it must never reach the header verbatim.
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType("attachment", map[string]string{"filename": chatID + ".zip"}))
+	if err := ledger.AssembleBundle(r.Context(), h.ledgerStore, chatID, h.quackVersion, otelobs.GenAISemConvVersion, entries, w); err != nil {
+		// Headers (and possibly a partial body) are already sent - all we can
+		// do is log it, same as any other mid-stream write failure in this
+		// package (see streamHub).
+		slog.Warn("recording bundle write failed mid-stream", "component", "rest", "chat", chatID, "err", err)
+	}
 }
 
 // UpdateChat applies a partial update to a chat's mutable metadata. The only
