@@ -88,6 +88,22 @@ type invokeAgentEntry struct {
 	received  []json.RawMessage // agent → client (session/updates + responses)
 }
 
+// EvalScore is one recorded gen_ai.evaluation.result event (vetting/judge.go's
+// emitEvaluationResults): one rubric criterion's judge verdict from one
+// judge round. Consumed by `quack eval` (#606) to compare a recorded run's
+// scores against a fresh live one - these events carry no gen_ai.operation.name
+// and aren't part of any replay-matched stream, so they're collected
+// separately from the chat/tool/agent streams above.
+type EvalScore struct {
+	Node        string
+	Round       string
+	ResponseID  string
+	Criterion   string
+	Score       float64
+	Explanation string
+	Timestamp   time.Time
+}
+
 // streamState is one StreamKey's recorded activity plus live consumption
 // cursors - chat is one ordered sequence; tools are further keyed by name
 // (.quack/replay-log.md: "execute_tool events per stream keyed further by
@@ -135,6 +151,12 @@ type Session struct {
 	earliestChatInput string
 	haveEarliest      bool
 	earliestTS        time.Time
+
+	// evalScores collects every recorded gen_ai.evaluation.result event,
+	// unindexed (they're not part of any replay-matched stream - see
+	// EvalScore) - `quack eval` (#606) is the one consumer, via
+	// EvaluationResults.
+	evalScores []EvalScore
 
 	drift    []PromptDrift
 	failures []*MissError
@@ -220,9 +242,24 @@ func (s *Session) state(key StreamKey) *streamState {
 }
 
 // ingest files one parsed ledger line into its stream, by gen_ai.operation.name.
-// Anything else (plan/evaluation.result events, or a record with no
-// operation at all) carries nothing replay matches on and is dropped.
+// A gen_ai.evaluation.result event (identified by carrying an evaluation
+// name, since emitEvaluationResults stamps no operation.name at all) is
+// collected into evalScores instead - it has no stream identity replay
+// matches on. Anything else (plan events, or a record with no operation at
+// all) carries nothing replay matches on and is dropped.
 func (s *Session) ingest(l line) {
+	if name := attrStr(l.Attrs, "gen_ai.evaluation.name"); name != "" {
+		s.evalScores = append(s.evalScores, EvalScore{
+			Node:        attrStr(l.Attrs, "quack.node"),
+			Round:       attrStr(l.Attrs, "quack.round"),
+			ResponseID:  attrStr(l.Attrs, "gen_ai.response.id"),
+			Criterion:   name,
+			Score:       attrFloat64(l.Attrs, "gen_ai.evaluation.score.value"),
+			Explanation: attrStr(l.Attrs, "gen_ai.evaluation.explanation"),
+			Timestamp:   l.Timestamp,
+		})
+		return
+	}
 	key := StreamKey{Node: attrStr(l.Attrs, "quack.node"), Agent: attrStr(l.Attrs, "gen_ai.agent.name"), Round: attrStr(l.Attrs, "quack.round")}
 	st := s.state(key)
 	switch attrStr(l.Attrs, "gen_ai.operation.name") {
@@ -274,6 +311,7 @@ func (s *Session) finalize() {
 		}
 		sortByTime(st.agents, func(e invokeAgentEntry) time.Time { return e.ts })
 	}
+	sortByTime(s.evalScores, func(e EvalScore) time.Time { return e.Timestamp })
 }
 
 // UserTurn returns the newest role:user message text from the earliest
@@ -303,6 +341,112 @@ func (s *Session) UserTurn() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// rootStream is the top-level orchestrator/planner conversation: the one
+// stream whose calls carry no ledger.Coords at all (vetting.WithCoords is
+// only ever called from a NODE's worker/judge round - see internal/dag/
+// graph.go and internal/vetting/node.go), so its zero-value StreamKey is the
+// entry point every recorded session has, regardless of how many DAG nodes
+// ran underneath it.
+func (s *Session) rootStream() (*streamState, bool) {
+	st, ok := s.streams[StreamKey{}]
+	return st, ok
+}
+
+// UserTurns returns every recorded end-user turn from the root stream, in
+// the order the user sent them. Each of that stream's chat calls carries the
+// FULL conversation so far (growing turn over turn), so a turn is counted
+// once, the first time its text is seen scanning calls oldest to newest -
+// `quack eval` (#606) feeds these back into a fresh run one at a time.
+func (s *Session) UserTurns() []string {
+	st, ok := s.rootStream()
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var turns []string
+	for _, ce := range st.chat {
+		for _, text := range userTexts(ce.inputJSON) {
+			if seen[text] {
+				continue
+			}
+			seen[text] = true
+			turns = append(turns, text)
+		}
+	}
+	return turns
+}
+
+// userTexts parses a gen_ai.input.messages JSON array and returns every
+// role:user message's concatenated text, in array order.
+func userTexts(inputJSON string) []string {
+	if inputJSON == "" {
+		return nil
+	}
+	var contents []*genai.Content
+	if err := json.Unmarshal([]byte(inputJSON), &contents); err != nil {
+		return nil
+	}
+	var out []string
+	for _, c := range contents {
+		if c == nil || c.Role != genai.RoleUser {
+			continue
+		}
+		if text := partsText(c.Parts); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// partsText concatenates a genai.Content's text parts.
+func partsText(parts []*genai.Part) string {
+	var b []byte
+	for _, p := range parts {
+		if p != nil && p.Text != "" {
+			b = append(b, []byte(p.Text)...)
+		}
+	}
+	return string(b)
+}
+
+// FinalAnswer returns the newest recorded model output text in the root
+// stream - eval's proxy for "what this run answered", used only for a
+// length comparison. It's the orchestrator's own last reply, not necessarily
+// a DAG's terminal node output (the ledger records model calls, not
+// stream-assembled node answers) - applying the SAME extraction to both the
+// recorded and the fresh run's bundle keeps the comparison apples to apples
+// even though neither side is guaranteed to be the "true" final answer.
+func (s *Session) FinalAnswer() (string, bool) {
+	st, ok := s.rootStream()
+	if !ok {
+		return "", false
+	}
+	for i := len(st.chat) - 1; i >= 0; i-- {
+		ce := st.chat[i]
+		if ce.outputJSON == "" {
+			continue
+		}
+		var c genai.Content
+		if err := json.Unmarshal([]byte(ce.outputJSON), &c); err != nil {
+			continue
+		}
+		if text := partsText(c.Parts); text != "" {
+			return text, true
+		}
+	}
+	return "", false
+}
+
+// EvaluationResults returns every recorded gen_ai.evaluation.result event
+// (one per rubric criterion per judge round, across every node), oldest
+// first - `quack eval` (#606) reads these from both the recorded bundle and
+// the fresh run's own recording to build its comparison.
+func (s *Session) EvaluationResults() []EvalScore {
+	out := make([]EvalScore, len(s.evalScores))
+	copy(out, s.evalScores)
+	return out
 }
 
 // contentHash is replay's own copy of inference/emit.go's prompt-version
