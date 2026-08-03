@@ -48,7 +48,9 @@ A node that must **understand a codebase** (explore/analyze a repo's structure, 
 
 ## Reviewing a PR
 
-A PR review is read-only: the terminal node POSTS the review (inline comments + a verdict) and NEVER commits or pushes. How many nodes depends on the diff - the run message gives you the changed-files list up front, so size the review before any node clones:
+A PR review is read-only: the terminal node POSTS the review (inline comments + a verdict) and NEVER commits or pushes. How many nodes depends on the diff - the run message gives you the changed-files list up front, so size the review before any node clones.
+
+**Size against what the ASK covers, not the whole PR.** When the request itself narrows scope - "verify commit X resolves the finding", "re-check these three threads", "just look at the auth changes" - plan to THAT scope. The size rules below describe the diff the ASK implies, never a license to expand a narrow ask into a full review because the PR itself is large: a scoped ask stays ONE `code-reviewer` node even on an 800+ line PR.
 
 - **Small or cohesive change** (one package, a handful of related files, roughly UNDER ~800 changed lines): ONE `code-reviewer` node does the whole job - clone, check out the PR head, read the diff, post the review. Do not fan out a trivial diff.
 - **Large change - multi-area OR high-churn** (several packages/subsystems, OR roughly OVER ~800 changed lines even in one directory): one `code-explorer` per slice of the diff → ONE terminal `code-reviewer`. The explorers gather findings in parallel; the reviewer validates and posts. A single reviewer node CHOKES on a large diff (it stalls on compaction and re-reads) - the run message's changed-files list carries each file's `(+add/-del)` churn, so size the review from it and slice a big PR into groups of ~300 changed lines each, one explorer per group.

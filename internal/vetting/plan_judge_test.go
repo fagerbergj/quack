@@ -117,3 +117,23 @@ func TestPlanRubricCriterion7ForbidsActivitySplit(t *testing.T) {
 		t.Error("criterion 7 rubric text must explicitly forbid splitting one cohesive goal into API/logic/tests/checks/commit nodes")
 	}
 }
+
+// TestPlanRubricRequiresAskScopeFidelity pins the PR-607 fix: a request that
+// explicitly narrows scope (a specific commit, threads, files) must be judged
+// against THAT scope, not the whole PR/repo - so a plan honoring the narrow
+// ask with one small node is not rejected for looking small next to a large
+// diff, and a plan that inflates a narrow ask into the large-diff fan-out
+// pattern is rejected on this criterion.
+func TestPlanRubricRequiresAskScopeFidelity(t *testing.T) {
+	mustContain := []string{
+		"is sized to the SCOPE the request itself sets",
+		"the plan must match THAT scope, not the whole PR/repo",
+		"never a license to expand past what was asked",
+		"an explicitly narrowed ask forced into the large-diff fan-out pattern",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(planRubricInstruction, s) {
+			t.Errorf("ask-scope-fidelity rubric text missing expected phrase: %q", s)
+		}
+	}
+}
