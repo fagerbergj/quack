@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"google.golang.org/adk/v2/model"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration answers the
@@ -15,7 +17,7 @@ import (
 // wrapping must never change what the model sees.
 func TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration(t *testing.T) {
 	inner := &fakeRunnable{}
-	wrapped, err := emitWrap(inner)
+	wrapped, err := emitWrap(inner, ledger.Coords{})
 	if err != nil {
 		t.Fatalf("emitWrap: %v", err)
 	}

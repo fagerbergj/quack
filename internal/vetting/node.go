@@ -1081,9 +1081,16 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String("model", modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, ledger.Coords{
-		ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID,
-	}))
+	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID}
+	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
+	// The WithAgentContext stamp above does not survive workflow.RunNode's
+	// dynamic-child scheduling (see inference.tracedModel.SetLedgerCoords) -
+	// a model built via the inference package implements this and gets
+	// stamped directly instead; anything else (a test stub, an ACP worker
+	// with no local model.LLM) just doesn't get per-round ledger coords.
+	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
+		cs.SetLedgerCoords(coords)
+	}
 	out, err := runWorkerNode(gctx, workerNode, input, runID, emit)
 	d := ts.End(err)
 	otelobs.RecordRoundDuration(cfg.Agent, modelName(workerModel), stage, d)

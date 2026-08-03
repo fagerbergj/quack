@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 
 	otellog "go.opentelemetry.io/otel/log"
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
@@ -19,23 +21,37 @@ const toolsScope = "quack.tools"
 // emitTool is the OUTERMOST wrapper on every tool this registry builds: it
 // records one execute_tool ledger event per call, capturing what actually
 // ran (including a guard denial or cancel refusal - final observable
-// behavior, the same thing replay needs to reproduce). node/round/agent
-// come off ctx (ledger.CoordsFromContext, via otelobs.EmitLog) - the calling
-// worker round already stamped them, so this wrapper needs no identity of
-// its own.
+// behavior, the same thing replay needs to reproduce).
+//
+// coords, when set, stamps node/agent (never round - a tool is built once
+// per agent, before any round exists, and reused across every round of
+// it), taking precedence over ctx: the same context-reconstruction issue
+// inference.tracedModel.SetLedgerCoords works around for the model call
+// also loses a context.WithValue stamp before it reaches a tool call. Zero
+// value falls back to ctx (ledger.CoordsFromContext, via otelobs.EmitLog).
 type emitTool struct {
-	inner runnableTool
+	inner  runnableTool
+	coords ledger.Coords
 }
 
 // emitWrap wraps t. A non-runnable tool (shouldn't happen - every tool this
 // registry builds via functiontool.New is one) passes through unwrapped
 // rather than failing the whole agent's tool build over missing telemetry.
-func emitWrap(t tool.Tool) (tool.Tool, error) {
+func emitWrap(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
 	rt, ok := t.(runnableTool)
 	if !ok {
 		return t, nil
 	}
-	return &emitTool{inner: rt}, nil
+	return &emitTool{inner: rt, coords: coords}, nil
+}
+
+// EmitWrapForTesting applies the same execute_tool emission wrapper Build
+// puts around every tool - exported so another package's tests (replay's
+// fixture generator) can drive the real emission seam with a scripted tool,
+// without the full Build pipeline (guards, repeat/cancel wrapping). coords,
+// when non-zero, is stamped the same way Deps.LedgerCoords would be.
+func EmitWrapForTesting(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
+	return emitWrap(t, coords)
 }
 
 func (e *emitTool) Name() string        { return e.inner.Name() }
@@ -60,13 +76,17 @@ func (e *emitTool) ProcessRequest(ctx agent.Context, req *model.LLMRequest) erro
 
 func (e *emitTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	result, err := e.inner.Run(ctx, args)
-	emitToolEvent(ctx, e.Name(), args, result, err)
+	emitCtx := context.Context(ctx)
+	if e.coords != (ledger.Coords{}) {
+		emitCtx = ledger.WithCoords(ctx, e.coords)
+	}
+	emitToolEvent(emitCtx, e.Name(), args, result, err)
 	return result, err
 }
 
 // emitToolEvent records one execute_tool ledger event. Marshal failures
 // degrade a field to omitted, never abort emission.
-func emitToolEvent(ctx agent.Context, name string, args any, result map[string]any, err error) {
+func emitToolEvent(ctx context.Context, name string, args any, result map[string]any, err error) {
 	if !otelobs.LoggingEnabled(toolsScope) {
 		return // nothing listening - skip building a (potentially large) event nobody reads
 	}
@@ -83,6 +103,14 @@ func emitToolEvent(ctx agent.Context, name string, args any, result map[string]a
 	}
 	if err != nil {
 		attrs = append(attrs, otellog.String(otelobs.ErrorType, err.Error()))
+	}
+	// gen_ai.agent.name: same identity emitChatEvent stamps
+	// (internal/inference/emit.go) - replay's stream key needs it for a
+	// tool call exactly as much as it does for a chat call (both key on
+	// (node, agent, round); EmitLog itself only stamps node/round/session,
+	// not agent - see its doc comment).
+	if c := ledger.CoordsFromContext(ctx); c.Agent != "" {
+		attrs = append(attrs, otellog.String(otelobs.GenAIAgentName, c.Agent))
 	}
 	otelobs.EmitLog(ctx, toolsScope, "", attrs...)
 }
