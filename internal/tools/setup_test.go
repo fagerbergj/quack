@@ -281,3 +281,69 @@ func TestSetupCloneAndBranchImplementStillCreatesFreshBranch(t *testing.T) {
 		t.Errorf("checked-out branch = %q, want quack/work", got)
 	}
 }
+
+// TestSetupThenPushPreservesExistingPRHeadCommit pins the invariant #625
+// exists to protect: a run bound to an existing PR branch must never rewrite
+// that branch's history - new commits land ON TOP of what was already there.
+// It reproduces the exact live failure (quack:fix on NightsOut#92 destroyed
+// commit 6abb8ef): setup with checkoutExistingHead=false (the pre-#625 bug -
+// any implementer node always got this) branches fresh off base, a worker
+// commits new-and-unrelated work on top, and PushBranch's required --force
+// (git.go: no remote-tracking ref in a fresh clone, so --force-with-lease is
+// unavailable) then overwrites the remote branch outright - the PR's real
+// commit (pr.txt) is gone. checkoutExistingHead=true (the fix, once
+// OverrideExistingPRHead recognizes the run is bound to a real head) fetches
+// and checks out that commit FIRST, so the same push is a fast-forward that
+// keeps it.
+func TestSetupThenPushPreservesExistingPRHeadCommit(t *testing.T) {
+	requireGit(t)
+
+	run := func(t *testing.T, checkoutExistingHead bool) (hasOriginal, hasNew bool) {
+		t.Helper()
+		bare := newBareRepoFixture(t)
+		addBranchFixture(t, bare, "pr/head") // the PR's existing commit (pr.txt)
+		b := newTestGitBinding(t)
+
+		target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "pr/head", checkoutExistingHead)
+		if err != nil {
+			t.Fatalf("setupCloneAndBranch: %v", err)
+		}
+		// The worker's own new commit, on top of whatever setup checked out.
+		if err := os.WriteFile(filepath.Join(target, "fix.txt"), []byte("fix\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runGitT(t, target, "add", "-A")
+		runGitT(t, target, "commit", "--quiet", "-m", "fix commit")
+
+		if _, err := PushBranch(context.Background(), b.jail.Root(), target, "pr/head", GitCredential{}, b.caps); err != nil {
+			t.Fatalf("PushBranch: %v", err)
+		}
+
+		fetched := t.TempDir()
+		runGitT(t, filepath.Dir(fetched), "clone", "--quiet", bare, fetched)
+		runGitT(t, fetched, "checkout", "--quiet", "pr/head")
+		_, errOrig := os.Stat(filepath.Join(fetched, "pr.txt"))
+		_, errNew := os.Stat(filepath.Join(fetched, "fix.txt"))
+		return errOrig == nil, errNew == nil
+	}
+
+	t.Run("pre-#625 bug: checkoutExistingHead=false destroys the PR's existing commit", func(t *testing.T) {
+		hasOriginal, hasNew := run(t, false)
+		if hasOriginal {
+			t.Error("original PR commit (pr.txt) survived - want it destroyed, this subtest documents the bug this invariant test guards against")
+		}
+		if !hasNew {
+			t.Error("new commit (fix.txt) missing after push")
+		}
+	})
+
+	t.Run("fixed: checkoutExistingHead=true preserves the PR's existing commit", func(t *testing.T) {
+		hasOriginal, hasNew := run(t, true)
+		if !hasOriginal {
+			t.Fatal("original PR commit (pr.txt) was destroyed by setup+push - the invariant #625 exists to protect")
+		}
+		if !hasNew {
+			t.Error("new commit (fix.txt) missing after push - work must land ON TOP of the existing head")
+		}
+	})
+}

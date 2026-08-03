@@ -60,7 +60,7 @@ func TestSetupQualifyingNodes(t *testing.T) {
 // review-only to false, but an implementer anywhere in the set always does.
 // An explorer-only plan is NOT review-only: that is the plan-only/research
 // shape run against an ISSUE, which has no PR head to check out. Classifying
-// it as a review made OverrideReviewWorkBranch demand a head ref that never
+// it as a review made OverrideExistingPRHead demand a head ref that never
 // exists there, and the planner thrashed against the error (NightsOut#57).
 func TestIsReviewOnlySetup(t *testing.T) {
 	tests := []struct {
@@ -99,11 +99,11 @@ func TestIsReviewOnlySetup(t *testing.T) {
 	}
 }
 
-// TestOverrideReviewWorkBranch pins #520: a review of a PR with head
+// TestOverrideExistingPRHead pins #520: a review of a PR with head
 // "feat/oidc-auth" must end up with Setup.WorkBranch == "feat/oidc-auth", not
 // whatever the planner invented (e.g. "quack-auto-review/review-pr-520",
 // which doesn't exist as a remote ref and fatals the setup fetch).
-func TestOverrideReviewWorkBranch(t *testing.T) {
+func TestOverrideExistingPRHead(t *testing.T) {
 	reviewPlan := func(workBranch string) *Plan {
 		return &Plan{
 			Nodes: []Node{{ID: "review", AgentName: reviewerAgent}},
@@ -119,8 +119,8 @@ func TestOverrideReviewWorkBranch(t *testing.T) {
 
 	t.Run("review plan: forces the real head, overriding the planner's invented name", func(t *testing.T) {
 		p := reviewPlan("quack-auto-review/review-pr-520")
-		if err := OverrideReviewWorkBranch(p, "feat/oidc-auth"); err != nil {
-			t.Fatalf("OverrideReviewWorkBranch: %v", err)
+		if err := OverrideExistingPRHead(p, "feat/oidc-auth"); err != nil {
+			t.Fatalf("OverrideExistingPRHead: %v", err)
 		}
 		if p.Setup.WorkBranch != "feat/oidc-auth" {
 			t.Errorf("Setup.WorkBranch = %q, want %q", p.Setup.WorkBranch, "feat/oidc-auth")
@@ -129,7 +129,7 @@ func TestOverrideReviewWorkBranch(t *testing.T) {
 
 	t.Run("review plan: errors rather than keeping an invented name when headRef is unknown", func(t *testing.T) {
 		p := reviewPlan("quack-auto-review/review-pr-520")
-		if err := OverrideReviewWorkBranch(p, ""); err == nil {
+		if err := OverrideExistingPRHead(p, ""); err == nil {
 			t.Fatal("want an error when no head ref is available, got nil")
 		}
 		if p.Setup.WorkBranch != "quack-auto-review/review-pr-520" {
@@ -137,37 +137,61 @@ func TestOverrideReviewWorkBranch(t *testing.T) {
 		}
 	})
 
-	t.Run("implement plan: untouched, keeps the planner's new-branch name", func(t *testing.T) {
+	// #625: an implementer node used to leave WorkBranch (and
+	// CheckoutExistingHead) untouched even when the run is bound to a real
+	// existing PR head - runPlanSetup then did `checkout -b` off base, and
+	// delivery's force-push overwrote the PR branch, destroying its commits
+	// (observed live on NightsOut#92: original commit 6abb8ef gone).
+	t.Run("implement plan bound to an existing PR: forced onto that head, not the planner's new-branch name", func(t *testing.T) {
 		p := implementPlan("quack/new-feature")
-		if err := OverrideReviewWorkBranch(p, "feat/oidc-auth"); err != nil {
-			t.Fatalf("OverrideReviewWorkBranch: %v", err)
+		if err := OverrideExistingPRHead(p, "feat/oidc-auth"); err != nil {
+			t.Fatalf("OverrideExistingPRHead: %v", err)
+		}
+		if p.Setup.WorkBranch != "feat/oidc-auth" {
+			t.Errorf("Setup.WorkBranch = %q, want the PR's real head %q", p.Setup.WorkBranch, "feat/oidc-auth")
+		}
+		if !p.Setup.CheckoutExistingHead {
+			t.Error("Setup.CheckoutExistingHead = false, want true - a fix/implement run bound to an existing PR must fetch and check out its head, never branch fresh off base")
+		}
+	})
+
+	t.Run("implement plan with no known PR head (a plain issue): untouched, keeps the planner's new-branch name", func(t *testing.T) {
+		p := implementPlan("quack/new-feature")
+		if err := OverrideExistingPRHead(p, ""); err != nil {
+			t.Fatalf("OverrideExistingPRHead: %v", err)
 		}
 		if p.Setup.WorkBranch != "quack/new-feature" {
 			t.Errorf("Setup.WorkBranch = %q, want unchanged %q", p.Setup.WorkBranch, "quack/new-feature")
+		}
+		if p.Setup.CheckoutExistingHead {
+			t.Error("Setup.CheckoutExistingHead = true, want false - no PR head is known, this is a fresh branch off base")
 		}
 	})
 
 	t.Run("no setup: no-op", func(t *testing.T) {
 		p := &Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent}}}
-		if err := OverrideReviewWorkBranch(p, "feat/oidc-auth"); err != nil {
-			t.Fatalf("OverrideReviewWorkBranch: %v", err)
+		if err := OverrideExistingPRHead(p, "feat/oidc-auth"); err != nil {
+			t.Fatalf("OverrideExistingPRHead: %v", err)
 		}
 	})
 }
 
-// runPlanSetup must compute CheckoutExistingHead from the plan's qualifying
-// nodes and pass it to setupFn - review-only true, anything with an
-// implementer false - even though it is never planner-declared JSON.
-func TestRunPlanSetup_ComputesCheckoutExistingHead(t *testing.T) {
+// TestRunPlanSetup_PassesThroughCheckoutExistingHead pins #625: runPlanSetup
+// must pass Setup.CheckoutExistingHead to setupFn EXACTLY as
+// OverrideExistingPRHead already decided it, for every node composition -
+// never recompute it from the plan's nodes (the bug: "reviewer-only" true,
+// "any implementer" always false, regardless of whether the run is actually
+// bound to an existing PR head).
+func TestRunPlanSetup_PassesThroughCheckoutExistingHead(t *testing.T) {
 	tests := []struct {
 		name  string
 		nodes []Node
 		want  bool
 	}{
-		{"reviewer only", []Node{{ID: "review", AgentName: reviewerAgent}}, true},
-		{"implementer only", []Node{{ID: "impl", AgentName: implementerAgent}}, false},
-		{"explorer only", []Node{{ID: "explore", AgentName: explorerAgent}}, false},
-		{"explorer + implementer", []Node{{ID: "explore", AgentName: explorerAgent}, {ID: "impl", AgentName: implementerAgent}}, false},
+		{"reviewer only, existing head", []Node{{ID: "review", AgentName: reviewerAgent}}, true},
+		{"implementer only, existing head (#625: an implement/fix on a real PR)", []Node{{ID: "impl", AgentName: implementerAgent}}, true},
+		{"implementer only, no existing head (a fresh issue-driven branch)", []Node{{ID: "impl", AgentName: implementerAgent}}, false},
+		{"explorer + implementer, existing head", []Node{{ID: "explore", AgentName: explorerAgent}, {ID: "impl", AgentName: implementerAgent}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -177,14 +201,14 @@ func TestRunPlanSetup_ComputesCheckoutExistingHead(t *testing.T) {
 				return nil
 			}}
 			plan := Plan{
-				Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+				Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work", CheckoutExistingHead: tt.want},
 				Nodes: tt.nodes,
 			}
 			if err := ex.runPlanSetup(context.Background(), "u", "c", plan); err != nil {
 				t.Fatalf("runPlanSetup: %v", err)
 			}
 			if got != tt.want {
-				t.Errorf("setupFn's Setup.CheckoutExistingHead = %v, want %v", got, tt.want)
+				t.Errorf("setupFn's Setup.CheckoutExistingHead = %v, want %v (runPlanSetup must pass through what OverrideExistingPRHead already decided upstream, not recompute it from node composition)", got, tt.want)
 			}
 		})
 	}
@@ -408,18 +432,18 @@ type int32Counter struct {
 func (c *int32Counter) inc()     { c.mu.Lock(); c.n++; c.mu.Unlock() }
 func (c *int32Counter) get() int { c.mu.Lock(); defer c.mu.Unlock(); return c.n }
 
-// TestOverrideReviewWorkBranchIgnoresExplorerOnlyPlan pins the NightsOut#57
+// TestOverrideExistingPRHeadIgnoresExplorerOnlyPlan pins the NightsOut#57
 // regression: a plan-only run on an ISSUE (explorers grounding a plan, no
 // reviewer, no implementer) has no PR and so no head ref. Once explorers
 // became setup-qualifying nodes (#556), "no implementer" alone read as
 // review-only and this errored out - the planner then thrashed against the
 // failure and posted its raw reasoning as the plan.
-func TestOverrideReviewWorkBranchIgnoresExplorerOnlyPlan(t *testing.T) {
+func TestOverrideExistingPRHeadIgnoresExplorerOnlyPlan(t *testing.T) {
 	p := &Plan{
 		Nodes: []Node{{ID: "explore", AgentName: explorerAgent}},
 		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "plan/investigate"},
 	}
-	if err := OverrideReviewWorkBranch(p, ""); err != nil {
+	if err := OverrideExistingPRHead(p, ""); err != nil {
 		t.Fatalf("explorer-only plan with no head ref must not error: %v", err)
 	}
 	if p.Setup.WorkBranch != "plan/investigate" {
@@ -427,15 +451,15 @@ func TestOverrideReviewWorkBranchIgnoresExplorerOnlyPlan(t *testing.T) {
 	}
 }
 
-// TestOverrideReviewWorkBranchStillGuardsRealReview keeps #520's protection:
+// TestOverrideExistingPRHeadStillGuardsRealReview keeps #520's protection:
 // a genuine PR review (reviewer node) with no head ref must still fail loudly
 // rather than fetching an invented branch name.
-func TestOverrideReviewWorkBranchStillGuardsRealReview(t *testing.T) {
+func TestOverrideExistingPRHeadStillGuardsRealReview(t *testing.T) {
 	p := &Plan{
 		Nodes: []Node{{ID: "review", AgentName: reviewerAgent}},
 		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "invented/name"},
 	}
-	if err := OverrideReviewWorkBranch(p, ""); err == nil {
+	if err := OverrideExistingPRHead(p, ""); err == nil {
 		t.Fatal("a review-only plan with no head ref must error, not fetch an invented ref")
 	}
 }
