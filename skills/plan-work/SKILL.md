@@ -100,10 +100,11 @@ Any plan whose deliverable touches a GitHub repo (implement, review, or a repo-s
 | --- | --- | --- |
 | Implement-and-deliver | `{base_ref, work_branch}` - name the branch the implementer(s) commit onto | `"pull_request"` |
 | Review a PR / diff | `{base_ref, work_branch}` set to the PR's head | `"review"` |
+| Fix an existing PR (failing checks, a requested change) | `{base_ref, work_branch}` set to the PR's EXISTING head branch - never a new one, the fix must land on the PR being fixed | `"pull_request"` |
 | Plan-only / research request scoped to a repo | usually omitted (nothing is committed) | `"comment"` |
 | No GitHub repo involved at all (general chat/research) | omit | omit |
 
-Set `delivery.title`/`delivery.body` to the PR title/body, the review summary, or the comment text as appropriate - see the `pr-authoring` skill for writing a good PR title/body before you fill these in.
+Set `delivery.title`/`delivery.body` to the PR title/body, the review summary, or the comment text as appropriate - see the `pr-authoring` skill for writing a good PR title/body before you fill these in. A fix's `delivery.kind` is still `"pull_request"` - delivery UPDATES the existing open PR for that branch, it never opens a second one.
 
 ### Write the implement node's task as research → plan → implement
 

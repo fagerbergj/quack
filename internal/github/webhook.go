@@ -1440,8 +1440,16 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 	if !isPR && gh.text != "" {
 		fmt.Fprintf(&b, "For context, here is the issue and the discussion so far:\n%s\n", gh.text)
 	}
+	// A fix/change request on an ALREADY-OPEN PR must land on that PR's real
+	// head, never a new branch (#622) - state the ref so the model never has to
+	// ask for it or invent one, which either stalls the run on needs_input or
+	// opens a second, duplicate PR.
+	workBranchGuidance := "work_branch=a new branch name for this change"
+	if isPR && !reviewOnly && !p.planOnly && snap.HeadRef != "" {
+		workBranchGuidance = fmt.Sprintf("work_branch=%q (this PR's EXISTING head branch - land your commits there, never on a new branch)", snap.HeadRef)
+	}
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q, clone URL %s). Declare it in your plan's `setup` "+
-		"(repo=the clone URL above, base_ref=%q, work_branch=a new branch name for this change) - the harness "+
+		"(repo=the clone URL above, base_ref=%q, %s) - the harness "+
 		"clones it and checks out that branch for you, BEFORE any node runs, AT THE ROOT of each repo-touching "+
 		"node's own working directory: the repo IS that node's working directory, not a subdirectory inside it. "+
 		"That node's task must refer to files by plain repo-relative path (internal/foo.go, never ./repo/… or "+
@@ -1449,7 +1457,7 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 		"SHOULD be told to clone that other repo into its own working directory itself - that is allowed and "+
 		"expected. Repo-changing work is committed locally; delivery pushes the branch and opens the PR after the "+
 		"trust gate passes - no node ever pushes or opens a PR itself. ",
-		owner, repo, base, p.Repository.CloneURL, base)
+		owner, repo, base, p.Repository.CloneURL, base, workBranchGuidance)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d).\n\n", p.Issue.Number, p.Issue.Number)
 		if t := strings.TrimSpace(snap.Title); t != "" {
@@ -1534,7 +1542,12 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 		return b.String()
 	}
 	b.WriteString("If the task needs code changes, work at your workspace root, commit your work locally on the branch already checked out for you, then call stage_pr with a title and body - you do not push or open the pull request yourself ")
-	fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); it is opened for you once your work passes review. ", owner, repo, base)
+	if isPR && snap.HeadRef != "" {
+		fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); delivery pushes your commit onto `%s` and UPDATES pull request #%d - it does not open a new one, once your work passes review. ",
+			owner, repo, base, snap.HeadRef, p.Issue.Number)
+	} else {
+		fmt.Fprintf(&b, "(owner=%s, repo=%s, base=%q); it is opened for you once your work passes review. ", owner, repo, base)
+	}
 	b.WriteString("Your final answer is posted back automatically. ")
 	b.WriteString("Answer concisely and reference any branch, PR, or review you staged.")
 	return b.String()
