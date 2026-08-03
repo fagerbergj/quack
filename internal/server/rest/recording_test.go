@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -116,5 +118,35 @@ func TestGetChatRecordingRoundTrip(t *testing.T) {
 	want := "{\"seq\":1}\n{\"seq\":2}\n"
 	if buf.String() != want {
 		t.Errorf("entries.jsonl = %q, want %q", buf.String(), want)
+	}
+}
+
+// A hostile chat id must never reach Content-Disposition verbatim (quack
+// review on #611: header-parameter injection via `;` / quotes).
+func TestGetChatRecording_SanitizesContentDisposition(t *testing.T) {
+	h := newTestHandler(t)
+	store, err := ledger.NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	h.ledgerStore = store
+	hostile := `evil"; dummy="x`
+	if err := store.Append(context.Background(), hostile, []byte(`{"seq":1}`)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/x/recording", nil)
+	h.GetChatRecording(rec, req, hostile)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if strings.Contains(cd, `dummy=`) && !strings.Contains(cd, `filename*`) {
+		if _, params, perr := mime.ParseMediaType(cd); perr != nil || params["dummy"] != "" {
+			t.Fatalf("Content-Disposition not sanitized: %q", cd)
+		}
+	}
+	if _, params, perr := mime.ParseMediaType(cd); perr != nil || params["filename"] != hostile+".zip" {
+		t.Fatalf("round-trip parse failed: %q params=%v err=%v", cd, params, perr)
 	}
 }

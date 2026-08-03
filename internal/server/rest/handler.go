@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -236,7 +237,10 @@ func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatI
 	defer entries.Close()
 
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, chatID))
+	// mime.FormatMediaType quotes/escapes the filename - chatID is
+	// caller-supplied, so it must never reach the header verbatim.
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType("attachment", map[string]string{"filename": chatID + ".zip"}))
 	if err := ledger.AssembleBundle(r.Context(), h.ledgerStore, chatID, h.quackVersion, otelobs.GenAISemConvVersion, entries, w); err != nil {
 		// Headers (and possibly a partial body) are already sent - all we can
 		// do is log it, same as any other mid-stream write failure in this
