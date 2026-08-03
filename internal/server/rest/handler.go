@@ -86,10 +86,13 @@ func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, 
 	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion}
 }
 
-func (h *Handler) generateTitle(ctx context.Context, firstMessage string) string {
+func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string) string {
 	if h.titler == nil {
 		return ""
 	}
+	// ChatID-only Coords: files this call under the chat instead of
+	// "unscoped" while keeping StreamKey{} as its root-stream identity (#617).
+	ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: chatID})
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + firstMessage}}}},
 		Config: &genai.GenerateContentConfig{
@@ -456,7 +459,7 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 		if c == nil || c.Title != "" {
 			return
 		}
-		title := h.generateTitle(runCtx, message)
+		title := h.generateTitle(runCtx, chatID, message)
 		if title == "" {
 			return
 		}

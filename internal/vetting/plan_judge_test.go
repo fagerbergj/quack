@@ -6,7 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	otellog "go.opentelemetry.io/otel/log"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"google.golang.org/adk/v2/model"
+
+	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
 // stubPlanJudgeModel is a scripted model.LLM that always calls
@@ -67,6 +73,52 @@ func TestPlanJudgeErrorsWithoutVerdict(t *testing.T) {
 	judge := NewPlanJudge(noVerdictModel{})
 	if _, _, err := judge(context.Background(), "x", "y"); err == nil {
 		t.Fatal("PlanJudge: expected an error when the model never calls submit_plan_verdict")
+	}
+}
+
+// TestPlanJudge_ChatEventCarriesCallerCoords pins #617's planner entry point:
+// the plan judge runs its own isolated agent.Run, but never crosses a
+// workflow.RunNode boundary - a ChatID stamped on the caller's ctx (as
+// tools.NewPlanTool's handler now does) must reach the judge's OWN "chat"
+// ledger event, not fall back to "unscoped".
+func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
+	capExp := &captureEvalExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	traced := inference.TracedModelForTesting(stubPlanJudgeModel{accept: true}, "plan-judge-test-model")
+	judge := NewPlanJudge(traced)
+
+	const chatID = "planner-chat"
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID})
+	if _, _, err := judge(ctx, "write a plan", "1 node(s):\n- explore (web-researcher)"); err != nil {
+		t.Fatalf("PlanJudge: %v", err)
+	}
+
+	var gotChatID string
+	var found bool
+	for _, r := range capExp.records {
+		var operation string
+		r.WalkAttributes(func(kv otellog.KeyValue) bool {
+			switch kv.Key {
+			case otelobs.GenAIOperationName:
+				operation = kv.Value.AsString()
+			case otelobs.GenAIConversationID:
+				gotChatID = kv.Value.AsString()
+			}
+			return true
+		})
+		if operation == otelobs.GenAIOperationChat {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no chat ledger event recorded for the plan judge's call")
+	}
+	if gotChatID != chatID {
+		t.Errorf("plan judge chat gen_ai.conversation.id = %q, want %q", gotChatID, chatID)
 	}
 }
 

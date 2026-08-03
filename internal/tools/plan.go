@@ -79,7 +79,11 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"directly. If validation fails, fix the nodes and call again.",
 		},
 		func(tc agent.Context, a planArgs) (planResult, error) {
-			p, err := planner.Build(tc, a.Nodes, a.Setup, a.Delivery, history, message, attachments)
+			// ChatID-only Coords: the plan judge's own chat call files under this
+			// chat instead of "unscoped" while staying part of the root stream
+			// (Node/Agent/Round empty - #617), same stamp emitPlanEvent below uses.
+			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
+			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
