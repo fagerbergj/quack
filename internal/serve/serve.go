@@ -362,6 +362,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int) (handler
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("github extension init failed: %w", err)
 		}
+		githubApp.SetPartialFixLabel(gh.Labels.PartialFix)
 		extTools = githubApp.Tools()
 		gitTokenSource = githubApp // App implements tools.GitTokenSource
 		slog.Info("github extension enabled", "component", "startup", "issuer", gh.Issuer(), "mention", gh.Mention)

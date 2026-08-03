@@ -46,6 +46,11 @@ type App struct {
 	apiBase string
 	http    *http.Client
 
+	// partialFixLabel suppresses the deterministic `Closes #N` PR trailer
+	// (see withClosesTrailer) - defaults to config.GitHubLabels' own default,
+	// overridable via SetPartialFixLabel to track a custom configured name.
+	partialFixLabel string
+
 	mu        sync.Mutex
 	tokens    map[int64]cachedToken // installation id → token
 	installs  map[string]int64      // "owner/repo" → installation id (stable; cached forever)
@@ -102,15 +107,29 @@ func NewApp(issuer, pemKey string) (*App, error) {
 		return nil, fmt.Errorf("github: parse private key: %w", err)
 	}
 	return &App{
-		issuer:    issuer,
-		key:       key,
-		apiBase:   defaultAPIBase,
-		http:      &http.Client{Timeout: 20 * time.Second},
-		tokens:    map[int64]cachedToken{},
-		installs:  map[string]int64{},
-		noInstall: map[string]struct{}{},
-		diffs:     map[string]cachedDiff{},
+		issuer:          issuer,
+		key:             key,
+		apiBase:         defaultAPIBase,
+		http:            &http.Client{Timeout: 20 * time.Second},
+		tokens:          map[int64]cachedToken{},
+		installs:        map[string]int64{},
+		noInstall:       map[string]struct{}{},
+		diffs:           map[string]cachedDiff{},
+		partialFixLabel: defaultPartialFixLabel,
 	}, nil
+}
+
+// defaultPartialFixLabel mirrors config.GitHubLabels' own default value (kept
+// as a literal, not an import, to avoid coupling app.go to internal/config).
+const defaultPartialFixLabel = "quack:partial-fix"
+
+// SetPartialFixLabel overrides the label name withClosesTrailer checks to
+// suppress the deterministic Closes #N trailer, tracking a non-default
+// configured name (config.GitHubLabels.PartialFix). A "" call is a no-op.
+func (a *App) SetPartialFixLabel(label string) {
+	if label != "" {
+		a.partialFixLabel = label
+	}
 }
 
 // LoadPrivateKey returns the PEM key contents from either an inline value or a

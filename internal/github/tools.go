@@ -656,7 +656,10 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 // draft applies only on a fresh open: an EXISTING open PR keeps its state (the
 // REST API can't flip a PR to draft; the gate's caveat banner still rides the
 // updated body).
-func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool) (url string, number int, err error) {
+// closesIssue only ever applies on the FRESH-open branch: an update means head
+// already had a PR (a fix/continuation of that same PR, never a new one closing
+// some other issue - #575).
+func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool, closesIssue int) (url string, number int, err error) {
 	if num, _, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
 		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
 	} else if ok {
@@ -668,7 +671,50 @@ func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, h
 			"component", "github", "repo", owner+"/"+repo, "pr", num, "url", u)
 		return u, num, nil
 	}
+	body = a.withClosesTrailer(ctx, owner, repo, closesIssue, body)
 	return a.openPullRequest(ctx, owner, repo, title, head, base, body, labels, draft)
+}
+
+// closesKeywordRe/closesReferences detect whether body already references
+// issueNum with a GitHub closing keyword (any tense, and the broken
+// "Closes #50, #51, #52" comma-list form - GitHub only honors the keyword
+// against the number right after it, but for OUR purposes any keyword on the
+// same line as #issueNum means the model already tried, and a second
+// trailer would only add noise, not fix the list).
+var closesKeywordRe = regexp.MustCompile(`(?i)\b(close[sd]?|fixe?[sd]?|resolve[sd]?)\b`)
+
+func closesReferences(body string, issueNum int) bool {
+	numRe := regexp.MustCompile(fmt.Sprintf(`#%d\b`, issueNum))
+	for _, line := range strings.Split(body, "\n") {
+		if closesKeywordRe.MatchString(line) && numRe.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// withClosesTrailer deterministically appends `Closes #N` to a freshly-opened
+// PR's body, rather than trusting the worker's prose to include it - the
+// model dropped it roughly one implement PR in three (#575). Left alone when:
+// issueNum is 0 (no originating issue - e.g. a UI-initiated run), the body
+// already references it, or the issue currently carries the partial-fix label
+// (a maintainer's explicit "this PR does not close it" signal, which must
+// never be overridden). An issueMeta failure fails safe - no trailer, same as
+// today's behavior - rather than risk closing an issue against that signal.
+func (a *App) withClosesTrailer(ctx context.Context, owner, repo string, issueNum int, body string) string {
+	if issueNum == 0 || closesReferences(body, issueNum) {
+		return body
+	}
+	_, _, _, labels, err := a.issueMeta(ctx, owner, repo, issueNum)
+	if err != nil {
+		slog.Warn("github: delivery: couldn't check the partial-fix label before appending Closes #N; leaving the body as-is",
+			"component", "github", "repo", owner+"/"+repo, "issue", issueNum, "err", err)
+		return body
+	}
+	if hasLabel(labels, a.partialFixLabel) {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + fmt.Sprintf("\n\nCloses #%d\n", issueNum)
 }
 
 // Deliver is the vetting.DeliverFunc this extension provides (wired in
@@ -887,7 +933,10 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		}
 		// A gate FAIL still delivers (a human decides), but as a DRAFT: the
 		// caveat banner explains, the draft state stops an accidental merge.
-		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil, !dc.GatePassed)
+		// dc.IssueNumber doubles as the closing target here (Deliver backfills it
+		// from the chat id for every kind) - openOrUpdatePullRequest only acts on
+		// it when this is a genuinely NEW PR (#575).
+		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil, !dc.GatePassed, dc.IssueNumber)
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: open pull request: %w", err)
 		}

@@ -238,8 +238,10 @@ type DeliveryContext struct {
 	// IssueNumber is the pull request a staged review/comment targets (from
 	// the ledger's github_add_review_comment/github_submit_review calls). 0
 	// when unavailable - a review/comment item then can't be delivered (logged,
-	// not fatal to the rest of the set); a staged pull_request item never needs
-	// it (it opens a NEW one).
+	// not fatal to the rest of the set). A staged pull_request item ignores it
+	// EXCEPT as the closing-issue target when the App backfills it from the
+	// chat id (github's Deliver: only a fresh PR open acts on it, never an
+	// update to an already-open PR).
 	IssueNumber int
 	// GatePassed is the node's final judge verdict. Delivery fires regardless
 	// (graceful degradation), but a false here tells App.Deliver to attach a
