@@ -387,7 +387,7 @@ func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
 	for _, tl := range res.Tools {
 		got[tl.Name] = true
 	}
-	for _, want := range []string{"stage_review_comment", "unstage_review_comment", "stage_review", "stage_pr"} {
+	for _, want := range []string{"stage_review_comment", "list_review_comments", "unstage_review_comment", "stage_review", "stage_pr"} {
 		if !got[want] {
 			t.Errorf("tool %q not registered; got %v", want, got)
 		}

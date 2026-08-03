@@ -3,6 +3,7 @@ package vetting
 import (
 	crand "crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"sync"
 
@@ -156,42 +157,83 @@ type MemStage struct {
 	items []memory.Candidate
 }
 
+// StagedReviewComment is one inline finding as staged, with the id that
+// identifies it for list_review_comments / unstage_review_comment (#562).
+// The id is scoped to this ReviewStage alone - never durable, never posted -
+// but formatted "<path>:<line>#<n>" (e.g. "internal/judge.go:112#1") so it
+// reads as a location to a human or the judge (#498 feeds per-finding verdicts
+// back as reviewer feedback), not just an opaque token. Treat it as opaque
+// anyway: never parse it back into path/line (a path can contain ':' or '#').
+type StagedReviewComment struct {
+	ID string
+	ReviewComment
+}
+
 // ReviewStage is a per-node, mutex-guarded staging buffer the review MCP surface
 // (internal/acp reviewmcp.go) fills across a review node's rounds: an inline
 // comment per stage_review_comment call and the overall verdict+summary from
 // stage_review. Unlike MemStage it is READ, not drained - the gate snapshots it
 // on every round (Snapshot) and the same snapshot survives into commitDelivery.
+// The tool surface over it is CRUD-shaped: stage_review_comment creates,
+// list_review_comments reads, unstage_review_comment deletes by id.
 type ReviewStage struct {
 	mu       sync.Mutex
 	event    string
 	body     string
 	set      bool // a stage_review (verdict) call landed
-	comments []ReviewComment
+	comments []StagedReviewComment
+	// seq is "path:line" -> the highest #n ever issued at that location in
+	// THIS review, monotonic and never reused even after a comment there is
+	// removed. Reusing a retracted n would let a stale id (in judge feedback,
+	// a log line, a retry) silently resolve to a DIFFERENT comment once one
+	// was re-staged at the same spot; monotonic allocation makes a stale id
+	// error instead.
+	seq map[string]int
 }
 
-// AddComment stages one inline, line-anchored finding.
-func (s *ReviewStage) AddComment(path string, line int, body string) {
+// AddComment stages one inline, line-anchored finding and returns its id -
+// stage_review_comment's "create"; unstage_review_comment deletes by exactly
+// this id.
+func (s *ReviewStage) AddComment(path string, line int, body string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.comments = append(s.comments, ReviewComment{Path: path, Line: line, Body: body})
+	if s.seq == nil {
+		s.seq = make(map[string]int)
+	}
+	key := fmt.Sprintf("%s:%d", path, line)
+	s.seq[key]++
+	id := fmt.Sprintf("%s#%d", key, s.seq[key])
+	s.comments = append(s.comments, StagedReviewComment{ID: id, ReviewComment: ReviewComment{Path: path, Line: line, Body: body}})
+	return id
 }
 
-// RemoveComment unstages a previously staged finding, matched exactly on path,
-// line, AND body (#562) - precise enough that two different findings sharing a
-// line are never confused with each other, unlike a (path, line)-only match.
-// A no-op when nothing matches: a reviewer that retracts twice, or misremembers
-// what it staged, cannot fail its own round over it.
-func (s *ReviewStage) RemoveComment(path string, line int, body string) {
+// ListComments returns every staged inline comment, in stage order - the
+// list_review_comments "read", called before staging a new finding to check
+// it isn't already recorded (#562).
+func (s *ReviewStage) ListComments() []StagedReviewComment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]StagedReviewComment(nil), s.comments...)
+}
+
+// RemoveComment unstages the comment with the given id - the "delete". ok is
+// false for an unknown id (already removed, or never staged), so the caller
+// can surface an explicit error instead of a silent no-op. The id's #n is
+// never reissued (see seq), so a stale id from before a re-stage at the same
+// path+line correctly stays unresolvable rather than hitting the new comment.
+func (s *ReviewStage) RemoveComment(id string) (ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := s.comments[:0]
 	for _, c := range s.comments {
-		if c.Path == path && c.Line == line && c.Body == body {
+		if c.ID == id {
+			ok = true
 			continue
 		}
 		out = append(out, c)
 	}
 	s.comments = out
+	return ok
 }
 
 // SetVerdict records the review's overall event + summary; a later call replaces
@@ -216,11 +258,15 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 	if event == "" {
 		event = "comment"
 	}
+	comments := make([]ReviewComment, len(s.comments))
+	for i, c := range s.comments {
+		comments[i] = c.ReviewComment
+	}
 	return StagedDelivery{
 		Kind:     "review",
 		Event:    event,
 		Body:     s.body,
-		Comments: append([]ReviewComment(nil), s.comments...),
+		Comments: comments,
 	}, true
 }
 

@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -79,5 +80,134 @@ func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 	}
 	if !bad.IsError {
 		t.Fatal("an invalid verdict must return a tool error")
+	}
+}
+
+// TestReviewMCP_StageReturnsID proves stage_review_comment's "create" leg of
+// the CRUD surface (#562): it hands back the id needed to retract the finding
+// later, formatted "<path>:<line>#<n>" so it's self-explanatory to a human or
+// the judge without a lookup.
+func TestReviewMCP_StageReturnsID(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	review := &vetting.ReviewStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: review})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "stage_review_comment",
+		Arguments: map[string]any{"path": "internal/judge.go", "line": 112, "body": "blocking: unchecked error"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("stage_review_comment errored: %s", toolResultText(t, res))
+	}
+	text := toolResultText(t, res)
+	if !strings.Contains(text, "internal/judge.go:112#1") {
+		t.Fatalf("stage result should carry the id, got %q", text)
+	}
+	// The id in the tool result must be the SAME id the buffer assigned.
+	staged := review.ListComments()
+	if len(staged) != 1 || !strings.Contains(text, staged[0].ID) {
+		t.Fatalf("tool-returned id disagrees with the buffer: text=%q staged=%+v", text, staged)
+	}
+}
+
+// TestReviewMCP_ListAndUnstageByID exercises the read + delete legs together:
+// list shows the staged set (id, path, line, excerpt - no need to reproduce
+// the body verbatim), unstage-by-id removes exactly that one and leaves the
+// rest, and retracting the same id twice is a visible tool error, not a
+// silent no-op (#562's read-before-you-stage loop).
+func TestReviewMCP_ListAndUnstageByID(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	review := &vetting.ReviewStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: review})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	longBody := strings.Repeat("x", 200)
+	for _, c := range []struct {
+		path string
+		line int
+		body string
+	}{
+		{"a.go", 1, "question: what does this do"},
+		{"a.go", 1, longBody},
+		{"b.go", 9, "suggestion: extract helper"},
+	} {
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "stage_review_comment",
+			Arguments: map[string]any{"path": c.path, "line": c.line, "body": c.body},
+		})
+		if err != nil || res.IsError {
+			t.Fatalf("stage %+v: err=%v res=%v", c, err, res)
+		}
+	}
+
+	// list_review_comments: full page, id/path/line/excerpt present, long body truncated.
+	listRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "list_review_comments", Arguments: map[string]any{}})
+	if err != nil || listRes.IsError {
+		t.Fatalf("list_review_comments: err=%v res=%v", err, listRes)
+	}
+	listText := toolResultText(t, listRes)
+	if !strings.Contains(listText, "showing 3 of 3") {
+		t.Fatalf("list should report the full set as one page: %q", listText)
+	}
+	if strings.Contains(listText, longBody) {
+		t.Fatal("list must excerpt a long body, not echo it whole")
+	}
+	if !strings.Contains(listText, "a.go:1#1") || !strings.Contains(listText, "a.go:1#2") || !strings.Contains(listText, "b.go:9#1") {
+		t.Fatalf("list missing an expected id: %q", listText)
+	}
+
+	// Paginate: limit=1 offset=1 should show the second entry only, total still 3.
+	page, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "list_review_comments", Arguments: map[string]any{"limit": 1, "offset": 1}})
+	if err != nil || page.IsError {
+		t.Fatalf("list_review_comments (paged): err=%v res=%v", err, page)
+	}
+	pageText := toolResultText(t, page)
+	if !strings.Contains(pageText, "showing 1 of 3") {
+		t.Fatalf("paginated list wrong: %q", pageText)
+	}
+
+	// Unstage the first comment by id, confirm it's gone from a fresh list.
+	idToRemove := review.ListComments()[0].ID
+	unstageRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "unstage_review_comment", Arguments: map[string]any{"id": idToRemove}})
+	if err != nil {
+		t.Fatalf("unstage_review_comment: %v", err)
+	}
+	if unstageRes.IsError {
+		t.Fatalf("unstage of a known id should not error: %s", toolResultText(t, unstageRes))
+	}
+	if remaining := review.ListComments(); len(remaining) != 2 {
+		t.Fatalf("want 2 comments remaining, got %+v", remaining)
+	}
+
+	// Retracting the same id again is a visible error, not a silent no-op.
+	again, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "unstage_review_comment", Arguments: map[string]any{"id": idToRemove}})
+	if err != nil {
+		t.Fatalf("unstage_review_comment (repeat): %v", err)
+	}
+	if !again.IsError {
+		t.Fatal("retracting an already-removed id must be a tool error")
+	}
+
+	// And an id that was never issued at all.
+	unknown, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "unstage_review_comment", Arguments: map[string]any{"id": "never.go:1#1"}})
+	if err != nil {
+		t.Fatalf("unstage_review_comment (unknown): %v", err)
+	}
+	if !unknown.IsError {
+		t.Fatal("retracting an id that was never issued must be a tool error")
 	}
 }
