@@ -1260,7 +1260,8 @@ func composeFeedback(v verdict, threshold float64) string {
 			extra = append(extra, fmt.Sprintf("- %s: %s", name, c.Reason))
 		}
 	}
-	if len(extra) == 0 {
+	findingsFeedback := composeFindingsFeedback(v.Findings)
+	if len(extra) == 0 && findingsFeedback == "" {
 		return v.Feedback
 	}
 	sort.Strings(extra) // stable order across runs (map iteration is random)
@@ -1269,8 +1270,16 @@ func composeFeedback(v verdict, threshold float64) string {
 		sb.WriteString(v.Feedback)
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString("Deterministic check failures:\n")
-	sb.WriteString(strings.Join(extra, "\n"))
+	if len(extra) > 0 {
+		sb.WriteString("Deterministic check failures:\n")
+		sb.WriteString(strings.Join(extra, "\n"))
+	}
+	if findingsFeedback != "" {
+		if len(extra) > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(findingsFeedback)
+	}
 	return sb.String()
 }
 
