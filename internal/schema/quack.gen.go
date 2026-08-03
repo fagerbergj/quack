@@ -762,6 +762,9 @@ type ServerInterface interface {
 	// Transition a DAG node's status (cancel, pause/resume, or retry)
 	// (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 	UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// Download a chat's replay-ledger recording bundle
+	// (GET /api/v1/chats/{chat_id}/recording)
+	GetChatRecording(w http.ResponseWriter, r *http.Request, chatId ChatID)
 	// Send a message and stream the response
 	// (POST /api/v1/chats/{chat_id}/responses)
 	SendChatMessage(w http.ResponseWriter, r *http.Request, chatId ChatID)
@@ -840,6 +843,12 @@ func (_ Unimplemented) EditQueuedMessage(w http.ResponseWriter, r *http.Request,
 // Transition a DAG node's status (cancel, pause/resume, or retry)
 // (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 func (_ Unimplemented) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download a chat's replay-ledger recording bundle
+// (GET /api/v1/chats/{chat_id}/recording)
+func (_ Unimplemented) GetChatRecording(w http.ResponseWriter, r *http.Request, chatId ChatID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1181,6 +1190,32 @@ func (siw *ServerInterfaceWrapper) UpdateNodeStatus(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetChatRecording operation middleware
+func (siw *ServerInterfaceWrapper) GetChatRecording(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetChatRecording(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SendChatMessage operation middleware
 func (siw *ServerInterfaceWrapper) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 
@@ -1459,6 +1494,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/status", wrapper.UpdateNodeStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/recording", wrapper.GetChatRecording)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/responses", wrapper.SendChatMessage)

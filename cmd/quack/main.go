@@ -35,6 +35,10 @@ import (
 var version = "dev"
 
 func main() {
+	// Threaded through to internal/serve so a recording bundle's
+	// manifest.json (GetChatRecording) reports the same build stamp as
+	// `quack version`.
+	serve.Version = version
 	// __sandbox-exec mode, dispatched on argv[1] BEFORE cobra: the Landlock
 	// self-exec (see workspace.RunSandboxExecIfInvoked) - never returns on
 	// success (syscall.Exec replaces this process).
