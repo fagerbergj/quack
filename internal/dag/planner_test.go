@@ -101,7 +101,9 @@ func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 
 // A large PR review planned as a LONE code-reviewer must be rejected and told to
 // fan out (per-file-group explorers → one reviewer); a fanned-out plan, a small
-// PR, and a roster without a code-explorer all pass.
+// PR, and a roster without a code-explorer all pass. Judge is nil throughout -
+// this backstop is the FALLBACK for a judge-disabled deployment (see
+// TestReviewFanoutBackstopInertWhenJudgePresent for the judge-wired case).
 func TestReviewFanoutBackstop(t *testing.T) {
 	roster := []AgentInfo{{Name: "code-explorer"}, {Name: "code-reviewer"}}
 	p := NewPlanner(roster, nil, nil)
@@ -125,6 +127,26 @@ func TestReviewFanoutBackstop(t *testing.T) {
 	p2 := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	if _, err := p2.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, nil, nil, largeMsg, nil); err != nil {
 		t.Errorf("no code-explorer in the roster ⇒ backstop must be inert: %v", err)
+	}
+}
+
+// TestReviewFanoutBackstopInertWhenJudgePresent pins the PR-607 fix: with a
+// judge wired, the mechanical churn count must NOT override a plan the judge
+// already accepted - e.g. a lone code-reviewer node for a scoped re-check on a
+// large PR. The judge (ask-fidelity aware, see plan_judge.go) is the
+// authority on review sizing whenever one is available; the line-count
+// backstop is only the fallback for a judge-disabled deployment.
+func TestReviewFanoutBackstopInertWhenJudgePresent(t *testing.T) {
+	roster := []AgentInfo{{Name: "code-explorer"}, {Name: "code-reviewer"}}
+	judge, _, _, _ := fakePlanJudge(true, "", nil)
+	p := NewPlanner(roster, nil, judge)
+	largeMsg := "Verify commit 8e50447 resolves the blocking finding; a scoped re-check of those three threads only.\n\n" +
+		"Changed files (3):\n  a.ts (+600/-0)\n  b.ts (+400/-10)\n  c.ts (+50/-5)\n" // churn 1065 > 800
+
+	if _, err := p.Build(context.Background(), []RawNode{
+		{ID: "r", Agent: "code-reviewer", Task: "Verify commit 8e50447 resolves the blocking finding; re-check the three named threads only."},
+	}, nil, nil, nil, largeMsg, nil); err != nil {
+		t.Errorf("a judge-accepted scoped single-reviewer plan on a large PR must pass: %v", err)
 	}
 }
 

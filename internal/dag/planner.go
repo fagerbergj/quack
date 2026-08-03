@@ -126,8 +126,15 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	if err = p.judgeRouting(ctx, plan, message); err != nil {
 		return nil, err
 	}
-	if err = p.checkReviewFanout(plan, message); err != nil {
-		return nil, err
+	// checkReviewFanout is a MECHANICAL fallback for when the judge is disabled
+	// (see its doc comment) - with a judge wired, its ask-fidelity and
+	// decomposition criteria are the authority on review sizing, so an
+	// explicitly narrowed ask isn't force-split just because the PR's TOTAL
+	// diff crosses the line-count threshold.
+	if p.judge == nil {
+		if err = p.checkReviewFanout(plan, message); err != nil {
+			return nil, err
+		}
 	}
 	plan.History = history
 	plan.UserMessage = message
@@ -204,6 +211,11 @@ func planSummary(p *Plan) string {
 // reviewer but NO explorer to spread the reading across, reject with a targeted
 // fix - slice the changed files into per-group explorers feeding the one reviewer.
 // Inert when the roster has no code-explorer, or when the plan already fans out.
+//
+// Only called when the judge is disabled (see Build) - it counts the PR's TOTAL
+// churn from the run message with no view of the ASK's own scope, so a judge that
+// actually read the request is always the better call on whether a narrowly
+// scoped review legitimately stays one node.
 func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 	hasExplorer := false
 	for _, a := range p.agents {
