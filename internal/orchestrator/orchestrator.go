@@ -30,6 +30,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -275,6 +276,12 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
+		// ChatID-only Coords (Node/Agent/Round empty) files the root
+		// conversation under this chat instead of "unscoped" while keeping
+		// StreamKey{} as its root-stream identity (#617). Ctx alone suffices
+		// here - agentNode is this run's own top-level node, never a RunNode
+		// dynamic child, so nothing rebuilds this context away.
+		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID})
 		// queued tracks which gauge (runs.queued vs runs.active) this run currently
 		// occupies, so the deferred cleanup below decrements the right one on EVERY
 		// exit path - including cancelled-while-queued, which never reaches acquired.

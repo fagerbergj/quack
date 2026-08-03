@@ -112,8 +112,10 @@ type RawNode struct {
 // this request type is the plan judge's job (judgeRouting). message is the
 // verbatim user request, history the prior turns, attachments the current
 // media - all threaded to every node by the executor. ctx bounds the
-// (optional) plan-judge call. Returns an error (no silent fallback) so the
-// orchestrator can fix and re-submit.
+// (optional) plan-judge call and carries its ledger Coords (the caller
+// stamps ChatID - see tools.NewPlanTool's emitPlanEvent for the same
+// pattern). Returns an error (no silent fallback) so the orchestrator can
+// fix and re-submit.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part) (plan *Plan, err error) {
 	ctx, span := otelobs.Start(ctx, "plan")
 	defer func() { otelobs.End(span, err) }()
