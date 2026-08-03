@@ -1176,7 +1176,13 @@ func aggregateVerdict(v verdict) verdict {
 // single upstream API response id - so runID, e.g. "judge-r1", stands in;
 // it already keys this round's chat event via quack.round).
 func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
-	for name, cs := range v.Criteria {
+	names := make([]string, 0, len(v.Criteria))
+	for name := range v.Criteria {
+		names = append(names, name)
+	}
+	sort.Strings(names) // map iteration is random; a stable emit order matters for replay diffing
+	for _, name := range names {
+		cs := v.Criteria[name]
 		otelobs.EmitLog(ctx, judgeScope, "",
 			otellog.String(otelobs.GenAIResponseID, responseID),
 			otellog.String(otelobs.GenAIEvaluationName, name),

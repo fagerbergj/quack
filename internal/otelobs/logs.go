@@ -121,13 +121,19 @@ func SetLoggerProviderForTesting(lp *sdklog.LoggerProvider) (restore func()) {
 	return func() { loggerProvider.Store(prev) }
 }
 
-// initLogs builds the logger provider with up to two processors: the
+// initLogs builds the logger provider with up to three processors: the
+// redacting processor FIRST (always - see ledger.RedactingProcessor's doc
+// for why every OTHER processor must run after it, never before), the
 // ledger exporter (quack's built-in "collector" - appends every record to
 // ledgerStore) when recording is enabled, and an OTLP log exporter when
-// otlp_endpoint is set. Either, both, or neither may be active; a provider
-// with no processors performs no operations (see sdklog.NewLoggerProvider).
+// otlp_endpoint is set. The latter two are independently optional; a
+// provider with only the redactor performs no externally-visible operation
+// (see sdklog.NewLoggerProvider).
 func initLogs(ctx context.Context, res *resource.Resource, cfg config.ObservabilityConfig, ledgerStore ledger.LedgerStore) (*sdklog.LoggerProvider, func(context.Context) error, error) {
-	opts := []sdklog.LoggerProviderOption{sdklog.WithResource(res)}
+	opts := []sdklog.LoggerProviderOption{
+		sdklog.WithResource(res),
+		sdklog.WithProcessor(ledger.NewRedactingProcessor()),
+	}
 	var shutdowns []func(context.Context) error
 
 	if cfg.Recording.IsEnabled(cfg.Otel.IsEnabled()) {
