@@ -141,13 +141,13 @@ func TestPlanJudgeAcceptsCohesiveSingleNodePlan(t *testing.T) {
 	}
 }
 
-// TestPlanRubricCriterion7RequiresSingleNodeForCohesiveWork pins the reworded
+// TestPlanRubricCriterion5RequiresSingleNodeForCohesiveWork pins the reworded
 // rubric text against the live over-decomposition bug: the judge rejected a
 // correct single-node plan for splitting "into separate nodes for API
 // implementation, logic implementation, and testing/verification" - activity
 // slicing, not independent-portion slicing. This asserts the instruction text
 // itself so the guidance can't silently regress without a model run.
-func TestPlanRubricCriterion7RequiresSingleNodeForCohesiveWork(t *testing.T) {
+func TestPlanRubricCriterion5RequiresSingleNodeForCohesiveWork(t *testing.T) {
 	mustContain := []string{
 		"decompose by independent PORTION of work",
 		"NEVER by activity or layer",
@@ -156,17 +156,17 @@ func TestPlanRubricCriterion7RequiresSingleNodeForCohesiveWork(t *testing.T) {
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(planRubricInstruction, s) {
-			t.Errorf("criterion 7 rubric text missing expected phrase: %q", s)
+			t.Errorf("criterion 5 rubric text missing expected phrase: %q", s)
 		}
 	}
 }
 
-// TestPlanRubricCriterion7ForbidsActivitySplit pins that the rubric names the
+// TestPlanRubricCriterion5ForbidsActivitySplit pins that the rubric names the
 // exact activity split the maintainer observed (API / logic / tests / checks
 // / commit) as a FAILURE, not a pass - the bug this fix closes.
-func TestPlanRubricCriterion7ForbidsActivitySplit(t *testing.T) {
+func TestPlanRubricCriterion5ForbidsActivitySplit(t *testing.T) {
 	if !strings.Contains(planRubricInstruction, `splitting "API implementation" vs. "logic implementation" vs. "testing/verification" vs. "run checks" vs. "commit" into separate nodes for what is really one goal FAILS this criterion`) {
-		t.Error("criterion 7 rubric text must explicitly forbid splitting one cohesive goal into API/logic/tests/checks/commit nodes")
+		t.Error("criterion 5 rubric text must explicitly forbid splitting one cohesive goal into API/logic/tests/checks/commit nodes")
 	}
 }
 
@@ -190,24 +190,73 @@ func TestPlanRubricRequiresAskScopeFidelity(t *testing.T) {
 	}
 }
 
-// TestPlanRubricRecognizesFixExistingPR pins the #622 fix: a plan that fixes
-// an already-open PR (failing checks, a requested change) is its own request
-// type, not implement-and-deliver-to-a-new-branch or review - it needs a
-// terminal code-implementer node, delivery.kind "pull_request", and
-// setup.work_branch set to the PR's EXISTING head branch. Before this fix the
-// judge had no guidance for this shape and rejected a correct plan asking it
-// to "set delivery.kind to pull_request" as if the plan had omitted it.
-func TestPlanRubricRecognizesFixExistingPR(t *testing.T) {
+// TestPlanRubricRequiresRequestArtifactMatch pins the #634 fix: criterion 1
+// collapsed the old request-type enumeration (which licensed an
+// explorer-shaped "plan") into one generic check - does the plan's TERMINAL
+// node actually produce the artifact the request asked to receive, reasoned
+// from the request itself rather than pattern-matched against a catalogue of
+// request-type shapes. Deliberately loose: the exact prose is free to evolve,
+// only the rule needs to survive.
+func TestPlanRubricRequiresRequestArtifactMatch(t *testing.T) {
 	mustContain := []string{
-		"a request to FIX an already-open PR",
-		"needs the SAME terminal code-implementer node as implement-and-deliver",
-		`ALSO needs delivery.kind "pull_request"`,
-		"delivery UPDATES the existing PR for that branch, it never opens a second one",
-		"setup.work_branch set to the PR's EXISTING head branch, never a new branch name",
+		"does it hand back what the request asked to receive",
+		"terminal",
+		"never satisfies a request whose deliverable is a plan, a review, or shipped code",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(planRubricInstruction, s) {
-			t.Errorf("fix-existing-PR rubric text missing expected phrase: %q", s)
+			t.Errorf("request-artifact-match rubric text missing expected phrase: %q", s)
 		}
+	}
+}
+
+// TestPlanJudgeRejectsExplorationTerminalForPlanRequest pins the #634 shape
+// itself: a plan-only request ("produce an implementation plan: the
+// approach, the files to change, and how to verify it") whose single
+// terminal node is a code-explorer tasked to "produce a detailed report"
+// must be rejected, with a reason naming the missing plan-producing terminal
+// node - not accepted as a correct "plan-only, stays read-only" shape. The
+// judge's own reasoning runs against a live model; this pins the plumbing
+// (the judge propagates a reject verdict + reason for this exact shape)
+// rather than the model's judgment, which is untestable without one.
+func TestPlanJudgeRejectsExplorationTerminalForPlanRequest(t *testing.T) {
+	reason := "add a terminal node that actually writes the plan - the current terminal node only explores and produces a report"
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason})
+	planSummary := "1 node(s):\n" +
+		"- explore (code-explorer): Explore the repository and produce a detailed report covering: files, Compose patterns, Gradle config, navigation\n" +
+		"delivery: kind=comment"
+	accept, gotReason, err := judge(context.Background(),
+		"Produce an implementation plan for issue #63: lay out a concrete plan - the approach, the files to change, and how to verify it.",
+		planSummary)
+	if err != nil {
+		t.Fatalf("PlanJudge: %v", err)
+	}
+	if accept {
+		t.Error("accept = true, want false: a bare code-explorer terminal node tasked to produce a report does not satisfy a request for an implementation plan")
+	}
+	if !strings.Contains(gotReason, "terminal") {
+		t.Errorf("reason = %q, want it to name the missing plan-producing terminal node", gotReason)
+	}
+}
+
+// TestPlanJudgeRejectsExplorationTerminalForImplementRequest is the mirror
+// of the #634 shape: a plan that stops at exploration does not satisfy a
+// request whose deliverable is shipped code either.
+func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
+	reason := "this plan stops at exploration; add a terminal code-implementer node that ships the change"
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason})
+	planSummary := "1 node(s):\n" +
+		"- explore (code-explorer): Explore the repository and report where the dark-mode toggle should be added\n"
+	accept, gotReason, err := judge(context.Background(),
+		"Add a dark-mode toggle to the settings screen and open a pull request.",
+		planSummary)
+	if err != nil {
+		t.Fatalf("PlanJudge: %v", err)
+	}
+	if accept {
+		t.Error("accept = true, want false: a plan that only explores does not satisfy a request to ship code")
+	}
+	if !strings.Contains(gotReason, "terminal") {
+		t.Errorf("reason = %q, want it to name the missing terminal code-implementer node", gotReason)
 	}
 }
