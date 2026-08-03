@@ -103,7 +103,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) - image/audio - to the prompt (repeatable)")
 	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
-	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd())
+	root.AddCommand(newInitCmd(), newChatCmd(), newRecordingCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd())
 	return root
 }
 
@@ -300,6 +300,55 @@ func newChatDeleteCmd() *cobra.Command {
 // asJSONFlag registers a standard --json flag bound to dst.
 func asJSONFlag(c *cobra.Command, dst *bool) {
 	c.Flags().BoolVar(dst, "json", false, "output raw JSON")
+}
+
+// newRecordingCmd: the replay ledger's CLI surface - list recorded sessions
+// and export one as a bundle for offline replay/fixtures.
+func newRecordingCmd() *cobra.Command {
+	c := &cobra.Command{Use: "recording", Short: "Inspect and export replay-ledger recordings"}
+	c.AddCommand(newRecordingListCmd(), newRecordingExportCmd())
+	return c
+}
+
+func newRecordingListCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "list",
+		Short: "List recorded chat sessions",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunRecordingList(cmd.Context(), cmd.OutOrStdout(), t, asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	return c
+}
+
+// newRecordingExportCmd: `recording export <chat-id> [-o file]` - the
+// dogfooding ritual for the replay engine (.quack/replay-log.md): hit a bug
+// running quack → `quack recording export <chat-id>` → attach the zip to the
+// issue, or drop it in testdata/ to pin it as a fixture.
+func newRecordingExportCmd() *cobra.Command {
+	var output string
+	c := &cobra.Command{
+		Use:   "export <chat-id>",
+		Short: "Download a chat's replay-ledger recording bundle",
+		Long: "Download a chat's replay-ledger recording bundle (a ZIP: manifest.json +\n" +
+			"entries.jsonl + an optional clone.bundle) - default filename <chat-id>.zip.\n\n" +
+			"Dogfooding ritual: hit a bug while running quack -> `quack recording export\n" +
+			"<chat-id>` -> attach the zip to the issue, or drop it in testdata/ to pin\n" +
+			"it as a fixture for the replay engine.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunRecordingExport(cmd.Context(), cmd.OutOrStdout(), t, args[0], output)
+			})
+		},
+	}
+	c.Flags().StringVarP(&output, "output", "o", "", "output file path (default: <chat-id>.zip)")
+	return c
 }
 
 func newNodeStopCmd() *cobra.Command {

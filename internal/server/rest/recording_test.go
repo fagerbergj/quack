@@ -12,7 +12,86 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/schema"
 )
+
+// TestListRecordingsNoStore: recording disabled entirely (nil ledgerStore)
+// 404s, same disabled signal as GetChatRecording.
+func TestListRecordingsNoStore(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings", nil)
+	h.ListRecordings(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestListRecordingsEmpty: a store is configured but nothing has been
+// recorded yet - 200 with an empty array, not a 404.
+func TestListRecordingsEmpty(t *testing.T) {
+	h := newTestHandler(t)
+	store, err := ledger.NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	h.ledgerStore = store
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings", nil)
+	h.ListRecordings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out schema.RecordingList
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Data == nil || len(out.Data) != 0 {
+		t.Errorf("data = %#v, want empty (non-nil) array", out.Data)
+	}
+}
+
+// TestListRecordingsWithSessions: lists every recorded session's id and size.
+func TestListRecordingsWithSessions(t *testing.T) {
+	h := newTestHandler(t)
+	store, err := ledger.NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	h.ledgerStore = store
+	ctx := context.Background()
+	if err := store.Append(ctx, "c1", []byte(`{"seq":1}`)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := store.Append(ctx, "c2", []byte(`{"seq":1}`)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/recordings", nil)
+	h.ListRecordings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out schema.RecordingList
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Data) != 2 {
+		t.Fatalf("data = %#v, want 2 entries", out.Data)
+	}
+	seen := map[string]bool{}
+	for _, r := range out.Data {
+		seen[r.ChatId] = true
+		if r.SizeBytes <= 0 {
+			t.Errorf("chat %s SizeBytes = %d, want > 0", r.ChatId, r.SizeBytes)
+		}
+	}
+	if !seen["c1"] || !seen["c2"] {
+		t.Errorf("data = %#v, want c1 and c2", out.Data)
+	}
+}
 
 // TestGetChatRecordingNoStore: recording disabled entirely (nil ledgerStore)
 // 404s.

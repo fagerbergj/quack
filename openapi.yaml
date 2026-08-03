@@ -101,6 +101,26 @@ paths:
         "404":
           description: No such chat
 
+  /api/v1/recordings:
+    get:
+      operationId: listRecordings
+      summary: List recorded chat sessions
+      description: |
+        Every session the replay ledger has an entry for (internal/ledger's
+        `LedgerStore.List`), backing `quack recording list`/export. 200 with
+        an empty array when recording is enabled but nothing has been
+        recorded yet; 404 when recording is disabled entirely - same
+        disabled signal as `getChatRecording`.
+      responses:
+        "200":
+          description: The recorded sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingList"
+        "404":
+          description: Recording is not enabled
+
   /api/v1/chats/{chat_id}/recording:
     get:
       operationId: getChatRecording
@@ -550,6 +570,32 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ChatSummary"
+
+    # -------------------------------------------------------------------------
+    # Replay ledger
+    # -------------------------------------------------------------------------
+
+    RecordingSummary:
+      type: object
+      required: [chat_id, size_bytes, modified_at]
+      properties:
+        chat_id:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        modified_at:
+          type: string
+          format: date-time
+
+    RecordingList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingSummary"
 
     CreateChatBody:
       type: object
