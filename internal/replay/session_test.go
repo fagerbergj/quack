@@ -301,6 +301,73 @@ func TestNextToolResult_HappyPathAndExtra(t *testing.T) {
 	}
 }
 
+// invokeAgent builds one hand-crafted "invoke_agent" ledger line - mirrors
+// chat/execTool above.
+func invokeAgent(ts time.Time, node, agent, round string, sent, received []string) entry {
+	toRaw := func(msgs []string) []json.RawMessage {
+		out := make([]json.RawMessage, len(msgs))
+		for i, m := range msgs {
+			out[i] = json.RawMessage(m)
+		}
+		return out
+	}
+	sentJSON, _ := json.Marshal(toRaw(sent))
+	receivedJSON, _ := json.Marshal(toRaw(received))
+	return entry{ts: ts, attrs: map[string]any{
+		"gen_ai.operation.name":  "invoke_agent",
+		"gen_ai.agent.name":      agent,
+		"gen_ai.input.messages":  string(sentJSON),
+		"gen_ai.output.messages": string(receivedJSON),
+		"quack.node":             node,
+		"quack.round":            round,
+	}}
+}
+
+func TestNextInvokeAgent_HappyPathAndExtra(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		invokeAgent(t0(), "node-a", "code-implementer", "worker-r0",
+			[]string{`{"id":1,"method":"initialize"}`},
+			[]string{`{"id":1,"result":{}}`, `{"method":"session/update"}`}),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	coords := ledger.Coords{Node: "node-a", Agent: "code-implementer", Round: "worker-r0"}
+	sent, received, err := sess.NextInvokeAgent(coords, "code-implementer")
+	if err != nil {
+		t.Fatalf("NextInvokeAgent: %v", err)
+	}
+	if len(sent) != 1 || len(received) != 2 {
+		t.Fatalf("sent=%d received=%d, want 1/2", len(sent), len(received))
+	}
+
+	_, _, err = sess.NextInvokeAgent(coords, "code-implementer")
+	me, ok := err.(*MissError)
+	if !ok || me.Class != ClassExtra {
+		t.Fatalf("second call: err = %v, want an extra MissError", err)
+	}
+}
+
+func TestNextInvokeAgent_Mismatched(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		invokeAgent(t0(), "node-a", "code-implementer", "worker-r0", nil, nil),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	coords := ledger.Coords{Node: "node-a", Agent: "code-implementer", Round: "worker-r0"}
+	_, _, err = sess.NextInvokeAgent(coords, "code-reviewer")
+	me, ok := err.(*MissError)
+	if !ok {
+		t.Fatalf("err type = %T, want *MissError", err)
+	}
+	if me.Class != ClassMismatched {
+		t.Errorf("Class = %q, want mismatched", me.Class)
+	}
+}
+
 func TestUserTurn(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		chat(t0().Add(time.Second), "node-b", "worker", "worker-r0", "worker-model", map[string]any{

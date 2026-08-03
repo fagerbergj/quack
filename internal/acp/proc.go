@@ -13,6 +13,7 @@ import (
 
 	sdk "github.com/coder/acp-go-sdk"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -31,6 +32,10 @@ type procHandle struct {
 	// exchanges over stdin/stdout - the replay ledger's invoke_agent event
 	// (emit.go) is built from these at the end of the round.
 	sent, received *teeBuffer
+	// replayIO is set instead of cmd for a replayed round (startReplay) - its
+	// pump goroutine needs closing on every exit path, same as a real
+	// subprocess needs killing.
+	replayIO io.Closer
 }
 
 // wrappedArgv is the subprocess argv actually exec'd: a.opts.Command wrapped
@@ -57,8 +62,14 @@ func (a *Agent) spawnEnv() []string {
 	}, a.opts.Env...)
 }
 
-// start spawns the agent subprocess rooted at cwd and wires the ACP connection.
-func (a *Agent) start(cwd string) (*procHandle, error) {
+// start spawns the agent subprocess rooted at cwd and wires the ACP
+// connection - or, when Options.Replay is set, wires the SAME connection
+// machinery against a recorded conversation instead (startReplay): no
+// subprocess, no opencode binary (#604).
+func (a *Agent) start(ctx context.Context, cwd string) (*procHandle, error) {
+	if a.opts.Replay != nil {
+		return a.startReplay(ctx)
+	}
 	h := &procHandle{
 		updates:  make(chan sdk.SessionUpdate, 64),
 		stop:     make(chan struct{}),
@@ -100,10 +111,44 @@ func (a *Agent) start(cwd string) (*procHandle, error) {
 	return h, nil
 }
 
-// close kills the subprocess's whole process group and reaps it. Idempotent.
+// startReplay resolves this round's recorded invoke_agent entry (the SAME
+// ledger.Coords seam inference.NewReplayModel and the tools' replay stubs
+// read - ledger.CoordsFromContext) and wires the ACP connection over a
+// replayAgentIO instead of a real subprocess's pipes: h.cmd stays nil (close
+// then has nothing to kill/wait on), so the gate's view of this round is
+// reproduced with no opencode binary at all.
+func (a *Agent) startReplay(ctx context.Context) (*procHandle, error) {
+	sent, received, err := a.opts.Replay.NextInvokeAgent(ledger.CoordsFromContext(ctx), a.name)
+	if err != nil {
+		return nil, fmt.Errorf("acp: replay: %w", err)
+	}
+	h := &procHandle{
+		updates:  make(chan sdk.SessionUpdate, 64),
+		stop:     make(chan struct{}),
+		stderr:   &tailBuffer{max: 4096},
+		sent:     &teeBuffer{},
+		received: &teeBuffer{},
+	}
+	rio := newReplayAgentIO(sent, received)
+	h.replayIO = rio
+	teedIn := io.MultiWriter(rio, h.sent)
+	teedOut := io.TeeReader(rio, h.received)
+	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, teedIn, teedOut)
+	return h, nil
+}
+
+// close kills the subprocess's whole process group and reaps it - for a
+// replayed round (h.cmd nil; nothing was ever spawned) it instead closes
+// replayIO, unblocking its pump goroutine. Idempotent.
 func (h *procHandle) close(log *slog.Logger) {
 	h.once.Do(func() {
 		close(h.stop)
+		if h.replayIO != nil {
+			_ = h.replayIO.Close()
+		}
+		if h.cmd == nil {
+			return
+		}
 		if h.cmd.Process != nil {
 			_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
 		}

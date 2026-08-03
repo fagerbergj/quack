@@ -48,6 +48,7 @@ import (
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
+	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/server"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
 	"github.com/fagerbergj/quack/internal/server/rest"
@@ -1036,9 +1037,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					return allow, reason
 				}
 			}
+			// Replay playback (#604): the SAME provider config an agent's own
+			// model resolves (prov, above) - kind: replay + bundle: path - reused
+			// rather than a new ACP-specific knob, exactly how inference.NewModel's
+			// kind switch already works. nil unless configured, so a live deploy
+			// never loads a bundle it doesn't have.
+			var acpReplay *replay.Session
+			if prov.Kind == "replay" {
+				acpReplay, err = replay.Load(prov.Bundle)
+				if err != nil {
+					return nil, nil, nil, servers, nil, nil, nil, nil, fmtErr(name, "acp replay: %v", err)
+				}
+			}
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
 				Command:         ac.Acp.Command,
 				Env:             env,
+				Replay:          acpReplay,
 				Caps:            workspaceCaps,
 				ExtraRO:         acpSkillPaths(),
 				Home:            workspaceCaps.HomeDir,
