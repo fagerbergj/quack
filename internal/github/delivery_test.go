@@ -639,6 +639,51 @@ func TestDeliverSuppressesClosesTrailerWhenPartialFix(t *testing.T) {
 	}
 }
 
+// TestDeliverSkipsClosesTrailerWhenChatIDResolvesToAPR covers the edge case
+// findOpenPR alone can't catch: a PR-scoped chat id (github-owner-repo-<PR
+// number>) whose branch's ORIGINAL PR was since closed/merged also takes the
+// fresh-open path (no OPEN PR on that branch), and the chat id's number is
+// still a pull request, not an issue - GitHub's issues endpoint returns PRs
+// too, so a body-less partial-fix check alone would wrongly close #92 by
+// naming another pull request.
+func TestDeliverSkipsClosesTrailerWhenChatIDResolvesToAPR(t *testing.T) {
+	var prBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[]`) // no OPEN PR on this branch - the original PR #92 was closed/merged
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/92"):
+			// GitHub marks an issues-endpoint response as actually being a PR via
+			// the pull_request field.
+			io.WriteString(w, `{"title":"t","body":"b","state":"closed","pull_request":{},"labels":[]}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			prBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/93","number":93}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "github-acme-widgets-92",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "quack/fix-92",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Redo the fix", Body: "the fix"}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(prBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(posted.Body, "Closes") {
+		t.Fatalf("chat id resolving to a PULL REQUEST must never get a Closes trailer: %s", posted.Body)
+	}
+}
+
 // TestDeliverDoesNotAppendClosesOnPRUpdate pins the other half of #575: a PR
 // update (an already-open PR on this branch - a fix/continuation run, not a
 // fresh issue-implement run) must never get a Closes trailer, even when the

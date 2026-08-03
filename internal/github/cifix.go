@@ -107,7 +107,7 @@ func (e *Extension) autoHeal(p workflowRunPayload, number int) {
 	ctx, cancel := context.WithTimeout(context.Background(), fixContextTimeout)
 	defer cancel()
 
-	_, _, _, labels, err := e.app.issueMeta(ctx, owner, repo, number)
+	_, _, _, labels, _, err := e.app.issueMeta(ctx, owner, repo, number)
 	if err != nil {
 		slog.Warn("github: auto-heal label check failed; skipping", "component", "github",
 			"repo", owner+"/"+repo, "pr", number, "err", err)

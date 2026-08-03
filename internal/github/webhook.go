@@ -360,7 +360,7 @@ func (e *Extension) runImplement(p issuesPayload, synthetic issueCommentPayload)
 	ctx, cancel := context.WithTimeout(context.Background(), reactionTimeout)
 	defer cancel()
 
-	_, _, _, labels, err := e.app.issueMeta(ctx, owner, repo, number)
+	_, _, _, labels, _, err := e.app.issueMeta(ctx, owner, repo, number)
 	if err != nil {
 		slog.Warn("github: fetch issue labels failed; running without partial-fix signal", "component", "github",
 			"repo", owner+"/"+repo, "issue", number, "err", err)

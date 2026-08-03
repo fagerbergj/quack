@@ -697,21 +697,25 @@ func closesReferences(body string, issueNum int) bool {
 // PR's body, rather than trusting the worker's prose to include it - the
 // model dropped it roughly one implement PR in three (#575). Left alone when:
 // issueNum is 0 (no originating issue - e.g. a UI-initiated run), the body
-// already references it, or the issue currently carries the partial-fix label
-// (a maintainer's explicit "this PR does not close it" signal, which must
-// never be overridden). An issueMeta failure fails safe - no trailer, same as
-// today's behavior - rather than risk closing an issue against that signal.
+// already references it, issueNum turns out to be a PULL REQUEST rather than
+// an issue (a PR-scoped chat id whose branch's original PR was closed/merged
+// takes the fresh-open path too - findOpenPR only rules out an OPEN PR on that
+// branch, not "this number is a PR at all" - closing another PR is never the
+// intent), or the issue currently carries the partial-fix label (a
+// maintainer's explicit "this PR does not close it" signal, which must never
+// be overridden). An issueMeta failure fails safe - no trailer, same as
+// today's behavior - rather than risk closing something against that signal.
 func (a *App) withClosesTrailer(ctx context.Context, owner, repo string, issueNum int, body string) string {
 	if issueNum == 0 || closesReferences(body, issueNum) {
 		return body
 	}
-	_, _, _, labels, err := a.issueMeta(ctx, owner, repo, issueNum)
+	_, _, _, labels, isPR, err := a.issueMeta(ctx, owner, repo, issueNum)
 	if err != nil {
 		slog.Warn("github: delivery: couldn't check the partial-fix label before appending Closes #N; leaving the body as-is",
 			"component", "github", "repo", owner+"/"+repo, "issue", issueNum, "err", err)
 		return body
 	}
-	if hasLabel(labels, a.partialFixLabel) {
+	if isPR || hasLabel(labels, a.partialFixLabel) {
 		return body
 	}
 	return strings.TrimRight(body, "\n") + fmt.Sprintf("\n\nCloses #%d\n", issueNum)

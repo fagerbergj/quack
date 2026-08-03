@@ -530,28 +530,33 @@ func (a *App) listIssueComments(ctx context.Context, owner, repo string, number 
 // endpoint (GitHub treats a PR as an issue for this purpose too, but omits PR
 // -only fields like head/base - see pullMeta for those). This is the
 // issue-side half of a snapshot fetch (snapshot.go); pullMeta covers PRs.
-func (a *App) issueMeta(ctx context.Context, owner, repo string, number int) (title, body, state string, labels []string, err error) {
+// isPR reports whether `number` is actually a pull request (GitHub marks this
+// by including a `pull_request` field on the issues-endpoint response) -
+// withClosesTrailer needs it: the number a delivery closes must be a real
+// issue, never another pull request.
+func (a *App) issueMeta(ctx context.Context, owner, repo string, number int) (title, body, state string, labels []string, isPR bool, err error) {
 	tok, terr := a.tokenForRepo(ctx, owner, repo)
 	if terr != nil {
-		return "", "", "", nil, terr
+		return "", "", "", nil, false, terr
 	}
 	var out struct {
-		Title  string `json:"title"`
-		Body   string `json:"body"`
-		State  string `json:"state"`
-		Labels []struct {
+		Title       string    `json:"title"`
+		Body        string    `json:"body"`
+		State       string    `json:"state"`
+		PullRequest *struct{} `json:"pull_request"`
+		Labels      []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
 	}
 	path := fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, number)
 	if err = a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
-		return "", "", "", nil, err
+		return "", "", "", nil, false, err
 	}
 	labels = make([]string, 0, len(out.Labels))
 	for _, l := range out.Labels {
 		labels = append(labels, l.Name)
 	}
-	return out.Title, out.Body, out.State, labels, nil
+	return out.Title, out.Body, out.State, labels, out.PullRequest != nil, nil
 }
 
 // prCommitView is one commit in a PR's commit list (from pulls/{n}/commits) -
