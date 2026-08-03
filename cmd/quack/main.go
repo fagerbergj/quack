@@ -72,6 +72,7 @@ func newRootCmd() *cobra.Command {
 			"  quack chat send <id> \"<msg>\"      send a message (or answer a paused question)\n" +
 			"  quack chat show <id> [-f]         status snapshot, optionally follow the live run\n" +
 			"  quack chat list                  list chats with their status\n" +
+			"  quack replay <id-or-bundle.zip>  replay a recorded run - strict, or --fork-from a node\n" +
 			"  quack chat|server|api            manage chats, the server, and raw API calls",
 		SilenceUsage: true, // a failing RunE is an error, not a usage mistake
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -103,7 +104,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) - image/audio - to the prompt (repeatable)")
 	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
-	root.AddCommand(newInitCmd(), newChatCmd(), newRecordingCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd())
+	root.AddCommand(newInitCmd(), newChatCmd(), newRecordingCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newReplayCmd())
 	return root
 }
 

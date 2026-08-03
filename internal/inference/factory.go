@@ -31,7 +31,19 @@ func NewModel(p config.ProviderConfig, modelName string) (model.LLM, error) {
 		if err != nil {
 			return nil, fmt.Errorf("inference: replay provider: %w", err)
 		}
-		return NewReplayModel(sess, modelName), nil
+		if p.ForkMode != "fork" {
+			return NewReplayModel(sess, modelName), nil
+		}
+		// Fork-replay (#605): p.Live is the caller's REAL provider config
+		// (config.Load already validated it's present and kind:"openai" for
+		// fork_mode: fork) - built through this SAME factory, so the live
+		// delegate is wrapped in tracedModel exactly like any other model.
+		sess.EnableFork(p.ForkFrom)
+		live, err := NewModel(*p.Live, modelName)
+		if err != nil {
+			return nil, fmt.Errorf("inference: replay provider: live delegate: %w", err)
+		}
+		return NewReplayModelFork(sess, modelName, live), nil
 	default:
 		return nil, fmt.Errorf("inference: unsupported provider kind %q", p.Kind)
 	}

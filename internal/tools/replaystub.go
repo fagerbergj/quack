@@ -1,6 +1,9 @@
 package tools
 
 import (
+	"errors"
+	"fmt"
+
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
@@ -19,10 +22,15 @@ import (
 // or toolchain for the gate's probes either - both simply have nothing to
 // reach. Guard/repeat/cancel wrapping is skipped for stubs (nothing live to
 // guard against or cancel).
+//
+// live (#605) is fork-replay's escape hatch, mirroring inference.
+// replayModel.live: nil in strict mode, where session.NextToolResult never
+// yields a *replay.ForkSignal (EnableFork was never called).
 type replayToolStub struct {
 	name    string
 	session *replay.Session
 	coords  ledger.Coords
+	live    runnableTool // guard.go's structural interface: Declaration + Run
 }
 
 // newReplayStubs builds one stub per requested name - no registry lookup,
@@ -32,9 +40,25 @@ type replayToolStub struct {
 // call's ctx doesn't reliably carry it (see emitTool's doc comment); zero
 // value falls back to ctx.
 func newReplayStubs(names []string, sess *replay.Session, coords ledger.Coords) []tool.Tool {
+	return newReplayStubsWithLive(names, sess, coords, nil)
+}
+
+// newReplayStubsWithLive is newReplayStubs with a live fallback per stub,
+// positionally zipped with names (live[i] backs names[i]; live may be
+// shorter or nil - a name with no corresponding live tool just gets nil,
+// same as newReplayStubs). Build's fork-mode branch (registry.go) is the one
+// caller that supplies live, built by recursively calling Build with
+// Replayer cleared - every entry Build returns satisfies runnableTool (it's
+// what guardedTool/cancelGuard/pathScrub already require to wrap a tool
+// transparently), so the assertion below can't fail in practice.
+func newReplayStubsWithLive(names []string, sess *replay.Session, coords ledger.Coords, live []tool.Tool) []tool.Tool {
 	out := make([]tool.Tool, 0, len(names))
-	for _, name := range names {
-		out = append(out, &replayToolStub{name: name, session: sess, coords: coords})
+	for i, name := range names {
+		var l runnableTool
+		if i < len(live) {
+			l, _ = live[i].(runnableTool)
+		}
+		out = append(out, &replayToolStub{name: name, session: sess, coords: coords, live: l})
 	}
 	return out
 }
@@ -64,5 +88,13 @@ func (r *replayToolStub) Run(ctx agent.Context, args any) (map[string]any, error
 	if coords == (ledger.Coords{}) {
 		coords = ledger.CoordsFromContext(ctx)
 	}
-	return r.session.NextToolResult(coords, r.name, args)
+	res, err := r.session.NextToolResult(coords, r.name, args)
+	var fs *replay.ForkSignal
+	if errors.As(err, &fs) {
+		if r.live == nil {
+			return nil, fmt.Errorf("tools: replay: %q forked to live but no live delegate is configured: %w", r.name, fs)
+		}
+		return r.live.Run(ctx, args)
+	}
+	return res, err
 }

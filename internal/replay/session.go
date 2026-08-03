@@ -94,6 +94,7 @@ type invokeAgentEntry struct {
 // gen_ai.tool.name sequence"), each its own ordered sequence. agents (ACP
 // rounds) is one more ordered sequence, like chat - a node's ACP worker
 // makes at most one invoke_agent call per round, so no further keying needed.
+// forked is fork mode's per-stream sticky bit (see Session.forkCheck).
 type streamState struct {
 	chat     []chatEntry
 	chatPos  int
@@ -101,7 +102,22 @@ type streamState struct {
 	toolPos  map[string]int
 	agents   []invokeAgentEntry
 	agentPos int
+	forked   bool
 }
+
+// Mode selects a Session's replay semantics.
+type Mode string
+
+const (
+	// ModeStrict never makes a live call - a miss is a failure, full stop
+	// (.quack/replay-log.md "Forbidden"). The zero value, so a Session no
+	// caller ever calls EnableFork on behaves exactly as before #605.
+	ModeStrict Mode = "strict"
+	// ModeFork serves the recorded prefix, then goes live from the first
+	// divergent step (or an explicit --fork-from node boundary) instead of
+	// failing - see Session.EnableFork.
+	ModeFork Mode = "fork"
+)
 
 // Session is a loaded, replayable bundle: stream indexes plus concurrency-
 // safe consumption cursors and the accumulating divergence report. A plan's
@@ -122,6 +138,76 @@ type Session struct {
 
 	drift    []PromptDrift
 	failures []*MissError
+	forks    []*ForkSignal
+
+	// mode/forkFrom are fork-replay's two triggers (EnableFork): mode ==
+	// ModeFork switches semantics at all; forkFrom, when non-empty, forces
+	// EVERY stream on that node id live from its very first call, whether or
+	// not the recording would otherwise have matched it (the CLI's --fork-
+	// from - verifying a prompt/plan fix needs a REAL model call, not the
+	// old recorded one, even when the call sequence itself never diverges).
+	mode     Mode
+	forkFrom string
+}
+
+// EnableFork switches s into fork-replay mode. forkFromNode, when non-empty,
+// forces every stream on that node id live from its first call onward
+// (explicit boundary); "" forks purely on the first structural miss any
+// stream hits (useful when a deterministic-code fix's downstream ripple
+// isn't known in advance). Call once, before driving any Next* call -
+// concurrent with them is safe (same mutex) but the FIRST call on a stream
+// decides whether that stream is forced live, so enabling fork mid-run only
+// affects streams not yet touched.
+func (s *Session) EnableFork(forkFromNode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mode = ModeFork
+	s.forkFrom = forkFromNode
+}
+
+// Mode reports s's current replay mode (ModeStrict unless EnableFork was called).
+func (s *Session) Mode() Mode {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mode == "" {
+		return ModeStrict
+	}
+	return s.mode
+}
+
+// forkCheck runs BEFORE consulting the recording at all - caller holds
+// s.mu. Returns a *ForkSignal when key's stream should go live without even
+// attempting a match: it already forked (sticky), or key.Node is s's
+// explicit --fork-from boundary. Returns nil to mean "consult the recording
+// normally".
+func (s *Session) forkCheck(key StreamKey, st *streamState) *ForkSignal {
+	if s.mode != ModeFork {
+		return nil
+	}
+	if st.forked {
+		return &ForkSignal{Stream: key, Reason: "sticky"}
+	}
+	if s.forkFrom != "" && key.Node == s.forkFrom {
+		st.forked = true
+		fs := &ForkSignal{Stream: key, Reason: "fork-from"}
+		s.forks = append(s.forks, fs)
+		return fs
+	}
+	return nil
+}
+
+// forkOrFail is the OTHER fork trigger: a structural miss just found in
+// key's stream. In fork mode this hands off to live (fork-replay's whole
+// point) instead of failing the run; in strict mode it's recorded as a
+// failure exactly as before #605. Caller holds s.mu.
+func (s *Session) forkOrFail(key StreamKey, st *streamState, me *MissError) error {
+	if s.mode == ModeFork {
+		st.forked = true
+		fs := &ForkSignal{Stream: key, Reason: "miss", Cause: me}
+		s.forks = append(s.forks, fs)
+		return fs
+	}
+	return s.recordFailure(me)
 }
 
 func (s *Session) state(key StreamKey) *streamState {
@@ -263,13 +349,16 @@ func (s *Session) NextChat(coords ledger.Coords, modelName string, sysInstrJSON 
 
 	key := streamKeyFor(coords)
 	st := s.state(key)
+	if fs := s.forkCheck(key, st); fs != nil {
+		return nil, fs
+	}
 	pos := st.chatPos
 	if pos >= len(st.chat) {
-		return nil, s.recordFailure(&MissError{Class: ClassExtra, Stream: key, Op: "chat", Position: pos, Want: modelName, Diff: nearMissChat(st.chat, pos)})
+		return nil, s.forkOrFail(key, st, &MissError{Class: ClassExtra, Stream: key, Op: "chat", Position: pos, Want: modelName, Diff: nearMissChat(st.chat, pos)})
 	}
 	ce := st.chat[pos]
 	if ce.requestModel != modelName {
-		return nil, s.recordFailure(&MissError{Class: ClassMismatched, Stream: key, Op: "chat", Position: pos, Want: modelName, Diff: nearMissChat(st.chat, pos)})
+		return nil, s.forkOrFail(key, st, &MissError{Class: ClassMismatched, Stream: key, Op: "chat", Position: pos, Want: modelName, Diff: nearMissChat(st.chat, pos)})
 	}
 	st.chatPos++
 
@@ -293,10 +382,13 @@ func (s *Session) NextToolResult(coords ledger.Coords, toolName string, _ any) (
 
 	key := streamKeyFor(coords)
 	st := s.state(key)
+	if fs := s.forkCheck(key, st); fs != nil {
+		return nil, fs
+	}
 	entries := st.tools[toolName]
 	pos := st.toolPos[toolName]
 	if pos >= len(entries) {
-		return nil, s.recordFailure(&MissError{Class: ClassExtra, Stream: key, Op: toolName, Position: pos, Want: toolName, Diff: nearMissTool(st, toolName)})
+		return nil, s.forkOrFail(key, st, &MissError{Class: ClassExtra, Stream: key, Op: toolName, Position: pos, Want: toolName, Diff: nearMissTool(st, toolName)})
 	}
 	st.toolPos[toolName] = pos + 1
 	te := entries[pos]
@@ -319,13 +411,16 @@ func (s *Session) NextInvokeAgent(coords ledger.Coords, agentName string) (sent,
 
 	key := streamKeyFor(coords)
 	st := s.state(key)
+	if fs := s.forkCheck(key, st); fs != nil {
+		return nil, nil, fs
+	}
 	pos := st.agentPos
 	if pos >= len(st.agents) {
-		return nil, nil, s.recordFailure(&MissError{Class: ClassExtra, Stream: key, Op: "invoke_agent", Position: pos, Want: agentName, Diff: nearMissAgent(st.agents, pos)})
+		return nil, nil, s.forkOrFail(key, st, &MissError{Class: ClassExtra, Stream: key, Op: "invoke_agent", Position: pos, Want: agentName, Diff: nearMissAgent(st.agents, pos)})
 	}
 	ae := st.agents[pos]
 	if ae.agentName != agentName {
-		return nil, nil, s.recordFailure(&MissError{Class: ClassMismatched, Stream: key, Op: "invoke_agent", Position: pos, Want: agentName, Diff: nearMissAgent(st.agents, pos)})
+		return nil, nil, s.forkOrFail(key, st, &MissError{Class: ClassMismatched, Stream: key, Op: "invoke_agent", Position: pos, Want: agentName, Diff: nearMissAgent(st.agents, pos)})
 	}
 	st.agentPos++
 	return ae.sent, ae.received, nil
@@ -383,5 +478,6 @@ func (s *Session) Report() Report {
 	}
 	r.Drift = append(r.Drift, s.drift...)
 	r.Failures = append(r.Failures, s.failures...)
+	r.Forked = append(r.Forked, s.forks...)
 	return r
 }

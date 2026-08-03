@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	sdk "github.com/coder/acp-go-sdk"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -65,11 +67,28 @@ func (a *Agent) spawnEnv() []string {
 // start spawns the agent subprocess rooted at cwd and wires the ACP
 // connection - or, when Options.Replay is set, wires the SAME connection
 // machinery against a recorded conversation instead (startReplay): no
-// subprocess, no opencode binary (#604).
+// subprocess, no opencode binary (#604). Fork-replay (#605): when the
+// session is in fork mode and this round's stream goes live (startReplay
+// returns a *replay.ForkSignal), start falls through to startLive - the
+// SAME real-subprocess path a never-replayed round takes, so "live" for ACP
+// needs no separate delegate object, only the opts every round already
+// carries (Command, Env, Caps, ...).
 func (a *Agent) start(ctx context.Context, cwd string) (*procHandle, error) {
 	if a.opts.Replay != nil {
-		return a.startReplay(ctx)
+		h, err := a.startReplay(ctx)
+		var fs *replay.ForkSignal
+		if errors.As(err, &fs) {
+			a.log.Info("acp round forked to live", "reason", fs.Reason, "stream", fs.Stream.String())
+			return a.startLive(ctx, cwd)
+		}
+		return h, err
 	}
+	return a.startLive(ctx, cwd)
+}
+
+// startLive spawns a real opencode subprocess and wires the ACP connection -
+// the only path before #605 added fork-replay's live fallback.
+func (a *Agent) startLive(ctx context.Context, cwd string) (*procHandle, error) {
 	h := &procHandle{
 		updates:  make(chan sdk.SessionUpdate, 64),
 		stop:     make(chan struct{}),
