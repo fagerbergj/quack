@@ -228,6 +228,37 @@ func TestChecksDirFindsTheNodesOwnRepo(t *testing.T) {
 	}
 }
 
+// TestChecksDirIgnoresGarbageWorkdirWhenDeriving guards #620: an ACP
+// implement node with a pre-provisioned clone (plan.Setup) derives its
+// checks (cfg.Checks empty, cfg.DeriveChecks true), where Workdir is
+// documented as ignored (dag.Node.Workdir, vetting.Config.Workdir) - but the
+// orchestrator model sometimes fills it in anyway ("/tmp" was observed live).
+// checksDir must still find the node's own clone instead of erroring on an
+// absolute/garbage Workdir it was never meant to consult.
+func TestChecksDirIgnoresGarbageWorkdirWhenDeriving(t *testing.T) {
+	cfg := testChecksConfig(t, nil, "/tmp")
+	cfg.ChatID = "chat-1"
+	cfg.NodeID = "impl_node"
+	cfg.DeriveChecks = true
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "impl_node/.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := checksDir(cfg)
+	if err != nil {
+		t.Fatalf("checksDir: %v (want it to ignore the garbage Workdir and find the node's own clone)", err)
+	}
+	if !ok {
+		t.Fatal("checksDir found no repo: it should have located the node's own clone")
+	}
+	if !strings.HasSuffix(got, "impl_node") {
+		t.Errorf("checksDir = %q, want the node's own clone (…/impl_node)", got)
+	}
+}
+
 // A default-ON check_commands allowlist must be safe on a host WITHOUT the
 // toolchain: deriveChecks additionally gates each candidate on its binary
 // existing (toolchainPresent), so a missing `go` derives nothing instead of
