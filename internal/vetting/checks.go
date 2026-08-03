@@ -212,11 +212,19 @@ func checksCaps(cfg Config) workspace.Caps {
 // chat root the search sees every node's clone, finds no single repo, and gates
 // nothing.
 func checksDir(cfg Config) (string, bool, error) {
-	nodeStart, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, joinWritten(workspace.NodeDir(cfg.NodeID), cfg.Workdir))
+	// Workdir is documented as ignored when Checks is empty (dag.Node.Workdir,
+	// Config.Workdir) - the planner is told to set it only alongside explicit
+	// checks, but a model doesn't always honor that (#620: "/tmp" reached here
+	// on a derive-only node and the jail rejected it before any repo search ran).
+	workdir := cfg.Workdir
+	if len(cfg.Checks) == 0 {
+		workdir = ""
+	}
+	nodeStart, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, joinWritten(workspace.NodeDir(cfg.NodeID), workdir))
 	if err != nil {
 		return "", false, err
 	}
-	chatStart, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, cfg.Workdir)
+	chatStart, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workdir)
 	if err != nil {
 		return "", false, err
 	}

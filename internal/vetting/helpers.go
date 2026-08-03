@@ -129,8 +129,10 @@ type Config struct {
 	// showing it happened. Empty ⇒ the check simply doesn't apply.
 	Task string
 	// Workdir is the workspace-relative directory Checks run in (the node's
-	// repo, e.g. "repo" after a git_clone). When unset and checks are derived,
-	// the gate locates the single repo in the node's workspace scope.
+	// repo, e.g. "repo" after a git_clone). Ignored when Checks is empty (see
+	// checksDir): when checks are DERIVED, the gate locates the single repo in
+	// the node's workspace scope instead - a planner model doesn't always honor
+	// "only set this alongside explicit checks" (#620).
 	Workdir string
 	// ChatID is the per-chat workspace scope (the chat/session id) Checks
 	// resolve their Workdir under, so a node's deterministic checks run in the
