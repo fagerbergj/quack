@@ -335,6 +335,36 @@ func TestMemoryMCPURL_LoopbackOnly(t *testing.T) {
 	}
 }
 
+// TestMemoryMCP_NamespaceIsSurfaceNeutral pins #558: the shared per-node
+// server (memory + review + PR surfaces) advertises itself as "quack", not
+// "quack-memory" - opencode namespaces tools as "<Name>_<tool>", and a review
+// tool should never read as a memory tool. Checks both names that matter: the
+// server's own identity (the initialize handshake) and the Name handed to
+// opencode in session/new (memoryMCPServers - the one that actually drives the
+// prefix).
+func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	if got := cs.InitializeResult().ServerInfo.Name; got != "quack" {
+		t.Errorf("server identity = %q, want \"quack\" (not memory-prefixed)", got)
+	}
+
+	caps := sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}}
+	servers := memoryMCPServers("deadbeef", caps)
+	if len(servers) != 1 || servers[0].Sse == nil {
+		t.Fatalf("expected one SSE server, got %#v", servers)
+	}
+	if got := servers[0].Sse.Name; got != "quack" {
+		t.Errorf("session/new server name = %q, want \"quack\" - this is what opencode prefixes tool names with", got)
+	}
+}
+
 func toolResultText(t *testing.T, res *mcp.CallToolResult) string {
 	t.Helper()
 	for _, c := range res.Content {
