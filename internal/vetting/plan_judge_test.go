@@ -189,3 +189,25 @@ func TestPlanRubricRequiresAskScopeFidelity(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanRubricRecognizesFixExistingPR pins the #622 fix: a plan that fixes
+// an already-open PR (failing checks, a requested change) is its own request
+// type, not implement-and-deliver-to-a-new-branch or review - it needs a
+// terminal code-implementer node, delivery.kind "pull_request", and
+// setup.work_branch set to the PR's EXISTING head branch. Before this fix the
+// judge had no guidance for this shape and rejected a correct plan asking it
+// to "set delivery.kind to pull_request" as if the plan had omitted it.
+func TestPlanRubricRecognizesFixExistingPR(t *testing.T) {
+	mustContain := []string{
+		"a request to FIX an already-open PR",
+		"needs the SAME terminal code-implementer node as implement-and-deliver",
+		`ALSO needs delivery.kind "pull_request"`,
+		"delivery UPDATES the existing PR for that branch, it never opens a second one",
+		"setup.work_branch set to the PR's EXISTING head branch, never a new branch name",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(planRubricInstruction, s) {
+			t.Errorf("fix-existing-PR rubric text missing expected phrase: %q", s)
+		}
+	}
+}

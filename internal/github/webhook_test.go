@@ -1091,6 +1091,44 @@ func TestRunMessageReviewAwareForPR(t *testing.T) {
 	}
 }
 
+// TestRunMessageStatesHeadBranchForPRFix pins the #622 fix: a request to fix
+// an already-open PR (the pr_fix/ci_fix trigger shape) must state the PR's
+// real head branch explicitly, so the model never has to ask for it
+// (needs_input) or invent a new one (which would open a duplicate PR). Before
+// this fix the generic setup guidance always said "work_branch=a new branch
+// name for this change", contradicting fixTask's own "do not start a new
+// branch" instruction.
+func TestRunMessageStatesHeadBranchForPRFix(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	// A fix run is dispatched with isLabelTrigger=false (session reuse - see
+	// cifix.go), so it goes through the same WORK/CONVERSATIONAL classifier as
+	// a mention; drive that verdict directly rather than tuning task prose.
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
+
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack fix the failing checks"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	task := fixTask("CI is failing on this pull request (auto-heal attempt 1 of 3).", "- go-test (https://ci/42)\n  1 test failed\n")
+	gh := seedGC(Snapshot{IsPR: true, HeadRef: "fix/622-something", HeadSHA: "abc123", BaseRef: "main"}, 0)
+	msg := ext.runMessage(context.Background(), pr, task, gh)
+
+	for _, want := range []string{
+		`work_branch="fix/622-something"`, // the real head, not an invented name
+		"this PR's EXISTING head branch",
+		"never on a new branch",
+		"UPDATES pull request #7",
+		"it does not open a new one",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("PR-fix message missing %q\n---\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "work_branch=a new branch name for this change") {
+		t.Errorf("PR-fix message should not fall back to the generic new-branch guidance:\n%s", msg)
+	}
+}
+
 // TestSeedContextInMention pins the first-load-seeds-the-session half of #459
 // §3 for a plain issue mention: the issue body plus prior comments (quack's
 // own included), triggering comment excluded (it's quoted as the request).
