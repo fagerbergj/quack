@@ -260,3 +260,21 @@ func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
 		t.Errorf("reason = %q, want it to name the missing terminal code-implementer node", gotReason)
 	}
 }
+
+// TestPlanRubricStatesTerminalOutputIsTheAnswer pins the architectural fact the
+// judge twice confabulated away: it accepted a lone code-explorer plan because
+// the findings "will be used to write the plan in the final response". No such
+// step exists - buildPlanGraph enforces one terminal node and its output is
+// delivered verbatim - so the rubric has to say so.
+func TestPlanRubricStatesTerminalOutputIsTheAnswer(t *testing.T) {
+	r := planRubricInstruction
+	for _, want := range []string{
+		"TERMINAL node's own output IS what the user receives",
+		"Nothing runs after the graph",
+		"final response",
+	} {
+		if !strings.Contains(r, want) {
+			t.Errorf("plan rubric is missing %q - the judge needs the mechanism stated, not implied", want)
+		}
+	}
+}
