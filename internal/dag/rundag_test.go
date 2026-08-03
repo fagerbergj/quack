@@ -50,7 +50,7 @@ func TestRunDAG_Layers(t *testing.T) {
 	for _, n := range plan.Nodes {
 		ag, _ := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 		wn, _ := vetting.NewWorkerNode(ag)
-		gateNodes[n.ID] = newGatedNode(plan, n, wn, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg("w"), nil, nil, "", nil)
+		gateNodes[n.ID] = newGatedNode(plan, n, wn, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg("w"), nil, nil, "", nil, nil)
 	}
 	var out map[string]string
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",

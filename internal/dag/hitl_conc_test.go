@@ -43,8 +43,8 @@ func TestSpike_ConcurrentRunNode(t *testing.T) {
 	}
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w"}, {ID: "n2", AgentName: "w"}}}
 	cfg := func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }
-	gn1 := newGatedNode(plan, plan.Nodes[0], mk(), nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg("w"), nil, nil, "", nil)
-	gn2 := newGatedNode(plan, plan.Nodes[1], mk(), nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg("w"), nil, nil, "", nil)
+	gn1 := newGatedNode(plan, plan.Nodes[0], mk(), nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg("w"), nil, nil, "", nil, nil)
+	gn2 := newGatedNode(plan, plan.Nodes[1], mk(), nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg("w"), nil, nil, "", nil, nil)
 
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {

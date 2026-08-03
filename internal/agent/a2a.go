@@ -180,6 +180,21 @@ func (c nodeClient) ForNode(nodeKey string) (adkagent.Agent, error) {
 	return c.srv.clientNamed(c.srv.Card.Name + "#" + nodeKey)
 }
 
+// ClientForNode is Client() with the per-node local CLIENT identity fix
+// (nodeClient.ForNode) already applied - the client a per-node-constructed
+// server (internal/serve's buildAgents, #609) should hand out, exactly like a
+// shared server's Client().ForNode(nodeKey) would. Needed even for an
+// otherwise-exclusive server: nodeClient.ForNode's doc comment explains the
+// bug (remoteagent matches a remote session to CONTINUE by scanning the
+// PLAN's shared workflow session, not this server, for an event authored by
+// the client's local Name) - that scan is keyed on the calling side's shared
+// session regardless of which server the call actually reaches, so two
+// sibling nodes sharing an unqualified local name can still cross-adopt each
+// other's remote session even when each talks to its own server.
+func (s *A2AServer) ClientForNode(nodeKey string) (adkagent.Agent, error) {
+	return s.clientNamed(s.Card.Name + "#" + nodeKey)
+}
+
 // clientNamed builds a remote agent for this server under the given local name.
 func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
 	factory := a2aclient.NewFactory(

@@ -26,15 +26,41 @@ const (
 	gateRoundsKey = "quack.gate_rounds/"
 )
 
+// nodeScopedWorker is implemented by a clientMap entry whose worker - and,
+// crucially, its BOUND model and tools - must be constructed fresh per DAG
+// node rather than shared across concurrent nodes running the same
+// configured agent (internal/serve's buildAgents, native agents only; an
+// ACP agent has no local model/tools to isolate - each round is already an
+// isolated subprocess).
+//
+// Why the model/tools need this and a ctx stamp doesn't suffice: SetLedgerCoords
+// (inference.tracedModel) and ledger.StampCoords mutate a coordinate field
+// shared by whichever object receives the calls - safe for ONE node using an
+// agent, unsafe the moment a SIBLING node using the SAME configured agent
+// runs concurrently and races the same setter (#609). A per-node CLIENT
+// identity alone (the OLDER agent.nodeClient.ForNode, still needed - see
+// below) fixes remoteagent's session-continuation bug but leaves the
+// underlying model/tool objects shared.
+//
+// release must be called exactly once, when the node's gated-refine loop
+// returns (success, empty, or paused) - regardless of outcome - to free
+// whatever construction opened (a fresh loopback A2A listener per node).
+// nodeKey mirrors agent.nodeClient.ForNode's own requirement: stable across
+// a node's judge/revise rounds and an ADK-native HITL pause/resume within
+// the SAME graph build (a user-initiated PauseNode is a fresh restart - a
+// fresh buildGateNodes call - so it gets a fresh nodeKey call for free).
+type nodeScopedWorker interface {
+	ForNode(nodeKey string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
+}
+
 // buildGateNodes builds one gated-worker node per plan node (node ID → node),
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
-// runDAG ignores them). toolsByAgent is agent name → its built tool list
-// (tools.Build's return value at server startup) - needed to re-stamp
-// ledger coordinates (ledger.StampCoords) each time one of that agent's
-// nodes actually runs, the same reason models is passed alongside agents;
-// nil/empty skips tool-side ledger stamping entirely (e.g. a caller with
-// no tools configured for that agent).
+// runDAG ignores them). models/toolsByAgent are the FALLBACK model/tools for
+// an agent that does NOT implement nodeScopedWorker (an ACP agent, or a test
+// double) - a nodeScopedWorker's own ForNode return always wins over them.
+// nil/empty skips tool-side ledger stamping entirely for such an agent (e.g.
+// a caller with no tools configured for it).
 func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, toolsByAgent map[string][]tool.Tool, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -48,24 +74,21 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 			seenAgent[n.AgentName] = true
 			subAgents = append(subAgents, ag) // dedup: author resolution only
 		}
-		// Per-node CLIENT identity for an A2A agent (agent.nodeClient.ForNode):
-		// concurrent nodes running the SAME agent share ONE workflow session, and
-		// remoteagent picks the remote A2A session to continue by scanning that
-		// session backward for an event authored by its own Name - so with the
-		// plain agent name a node adopts a SIBLING's remote session, task and all
-		// (live: the OpenHands explorer cloned goose). Keyed by plan+node so it is
-		// unique across nodes yet stable across a node's judge/revise rounds and a
-		// HITL resume (the same remote session must be resumed there). Local
-		// (non-A2A) agents don't implement ForNode and are used as-is.
+		// Per-node identity + construction (nodeScopedWorker, doc comment above):
+		// a native agent gets a FRESH worker/model/tools exclusive to this node
+		// (closes #609's same-agent-concurrency ledger race); an agent that
+		// doesn't implement it (ACP, or a test double) is used as-is, with the
+		// shared models/toolsByAgent lookups below as its model/tools.
 		worker := ag
-		if scoped, ok := ag.(interface {
-			ForNode(string) (adkagent.Agent, error)
-		}); ok {
-			w, err := scoped.ForNode(plan.ID + ":" + n.ID)
+		workerModel := models[n.AgentName]
+		workerTools := toolsByAgent[n.AgentName]
+		var release func()
+		if scoped, ok := ag.(nodeScopedWorker); ok {
+			w, m, wt, rel, err := scoped.ForNode(plan.ID + ":" + n.ID)
 			if err != nil {
-				return nil, nil, fmt.Errorf("dag: node %q: per-node a2a client: %w", n.ID, err)
+				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
-			worker = w
+			worker, workerModel, workerTools, release = w, m, wt, rel
 		}
 		workerNode, err := vetting.NewWorkerNode(worker)
 		if err != nil {
@@ -131,7 +154,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 				cfg.Deliver = nil
 			}
 		}
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], toolsByAgent[node.AgentName], judge, cfg, mediaAgents, controls, chatID, recordGate)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -140,10 +163,15 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 // worker prompt from upstream outputs, runs the trust-gate refine loop, and
 // FAILS (marks the node) on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
-// directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) workflow.Node {
+// directly by an orchestration node (single-runner path). release (nilable) is
+// nodeScopedWorker's cleanup for THIS node's construction - deferred so it
+// fires exactly once, whatever this run produces.
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func()) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
+			if release != nil {
+				defer release()
+			}
 			// Register a per-node control so CancelNode/PauseNode/QueueNodeMessage
 			// can reach THIS node while it runs (cooperative, at gate-stage
 			// boundaries), and atomically pick up any pending prompt edit for this
