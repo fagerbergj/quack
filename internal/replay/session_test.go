@@ -36,6 +36,26 @@ func chat(ts time.Time, node, agent, round, model string, extra map[string]any) 
 	return entry{ts: ts, attrs: a}
 }
 
+// evalResult builds one gen_ai.evaluation.result entry - vetting/judge.go's
+// emitEvaluationResults, no gen_ai.operation.name (see Session.ingest).
+func evalResult(ts time.Time, node, round, responseID, criterion string, score float64) entry {
+	return entry{ts: ts, attrs: map[string]any{
+		"gen_ai.response.id":            responseID,
+		"gen_ai.evaluation.name":        criterion,
+		"gen_ai.evaluation.score.value": score,
+		"gen_ai.evaluation.explanation": "because",
+		"quack.node":                    node,
+		"quack.round":                   round,
+	}}
+}
+
+// rootChat builds a root-stream (top-level orchestrator) chat entry - the
+// zero-value Node/Agent/Round every orchestrator-level call carries, since
+// ledger.WithCoords is only ever called from a node's worker/judge round.
+func rootChat(ts time.Time, model string, extra map[string]any) entry {
+	return chat(ts, "", "", "", model, extra)
+}
+
 func execTool(ts time.Time, node, agent, round, tool string, result map[string]any) entry {
 	resultJSON, _ := json.Marshal(result)
 	return entry{ts: ts, attrs: map[string]any{
@@ -419,5 +439,102 @@ func TestContentHash(t *testing.T) {
 	want := hex.EncodeToString(sum[:])[:16]
 	if got := contentHash(b); got != want {
 		t.Errorf("contentHash = %q, want %q", got, want)
+	}
+}
+
+// TestUserTurns_MultiTurn: a 2-turn conversation - each root-stream chat call
+// carries the full history so far - returns both turns, oldest first, and
+// does not repeat turn 1 just because it reappears in turn 2's context.
+// Node-level (non-root) chat calls, which carry a role:user task prompt of
+// their own, must NOT be picked up as an end-user turn.
+func TestUserTurns_MultiTurn(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		rootChat(t0(), "orch-model", map[string]any{
+			"gen_ai.input.messages": `[{"role":"user","parts":[{"text":"turn one"}]}]`,
+		}),
+		chat(t0().Add(time.Second), "node-a", "worker", "worker-r0", "worker-model", map[string]any{
+			"gen_ai.input.messages": `[{"role":"user","parts":[{"text":"do subtask X"}]}]`,
+		}),
+		rootChat(t0().Add(2*time.Second), "orch-model", map[string]any{
+			"gen_ai.input.messages": `[{"role":"user","parts":[{"text":"turn one"}]},{"role":"model","parts":[{"text":"ok"}]},{"role":"user","parts":[{"text":"turn two"}]}]`,
+		}),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := sess.UserTurns()
+	want := []string{"turn one", "turn two"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("UserTurns = %v, want %v", got, want)
+	}
+}
+
+func TestUserTurns_NoRootStream(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		chat(t0(), "node-a", "worker", "worker-r0", "worker-model", map[string]any{
+			"gen_ai.input.messages": `[{"role":"user","parts":[{"text":"task prompt"}]}]`,
+		}),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := sess.UserTurns(); got != nil {
+		t.Errorf("UserTurns = %v, want nil (no root-stream call recorded)", got)
+	}
+}
+
+func TestFinalAnswer(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		rootChat(t0(), "orch-model", map[string]any{
+			"gen_ai.output.messages": `{"role":"model","parts":[{"text":"first reply"}]}`,
+		}),
+		rootChat(t0().Add(time.Second), "orch-model", map[string]any{
+			"gen_ai.output.messages": `{"role":"model","parts":[{"text":"final reply"}]}`,
+		}),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got, ok := sess.FinalAnswer()
+	if !ok {
+		t.Fatalf("FinalAnswer: not found")
+	}
+	if got != "final reply" {
+		t.Errorf("FinalAnswer = %q, want %q", got, "final reply")
+	}
+}
+
+// TestEvaluationResults: evaluation.result events carry no
+// gen_ai.operation.name and no stream identity replay matches on - they must
+// come back from EvaluationResults regardless, oldest first, without
+// polluting Report()'s stream accounting.
+func TestEvaluationResults(t *testing.T) {
+	path := writeJSONL(t, []entry{
+		evalResult(t0().Add(time.Second), "node-a", "judge-r1", "judge-r1", "accuracy", 0.9),
+		evalResult(t0(), "node-a", "judge-r1", "judge-r1", "clarity", 0.6),
+		chat(t0(), "node-a", "worker", "worker-r0", "worker-model", nil),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := sess.EvaluationResults()
+	if len(got) != 2 {
+		t.Fatalf("EvaluationResults len = %d, want 2", len(got))
+	}
+	if got[0].Criterion != "clarity" || got[0].Score != 0.6 {
+		t.Errorf("got[0] = %+v, want clarity/0.6 (oldest first)", got[0])
+	}
+	if got[1].Criterion != "accuracy" || got[1].Score != 0.9 {
+		t.Errorf("got[1] = %+v, want accuracy/0.9", got[1])
+	}
+	// An evaluation.result event carries no chat/tool/agent identity - it must
+	// not show up as a stream in Report().
+	rep := sess.Report()
+	if len(rep.Streams) != 1 {
+		t.Errorf("Report().Streams = %+v, want exactly the one worker chat stream", rep.Streams)
 	}
 }

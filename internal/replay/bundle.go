@@ -142,6 +142,13 @@ func attrInt64(attrs map[string]any, key string) int64 {
 	return int64(f)
 }
 
+// attrFloat64 reads a numeric attribute as a float64 (a judge score is
+// already fractional, unlike attrInt64's token counts).
+func attrFloat64(attrs map[string]any, key string) float64 {
+	f, _ := attrs[key].(float64)
+	return f
+}
+
 // sortByTime sorts entries in place by their recorded timestamp - the
 // design's ordering rule ("order within a stream is timestamp order");
 // stable so entries sharing a timestamp keep their append order.
