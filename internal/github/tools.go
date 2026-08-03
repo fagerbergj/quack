@@ -719,6 +719,14 @@ func itemOutcomesForPushFailure(dc vetting.DeliveryContext, err error) []vetting
 // its repo-relative form (resolvePath). A diff-fetch failure drops ALL inline
 // comments rather than the review: the summary body always carries the
 // findings text.
+//
+// It also drops exact-duplicate findings (same resolved path, line, and body -
+// #562). This is the natural place for that: it's the single choke point both
+// delivery call sites run through, and it runs AFTER path resolution, so two
+// findings staged against equivalent-but-differently-spelled paths (clone-
+// relative vs repo-relative) are recognised as the same finding. A dedupe at
+// stage time (ReviewStage.AddComment) would miss that case. Same-line
+// different-body findings are never collapsed - only a byte-identical repeat.
 func (a *App) validComments(ctx context.Context, owner, repo string, number int, comments []vetting.ReviewComment) []reviewComment {
 	if len(comments) == 0 {
 		return nil
@@ -729,6 +737,7 @@ func (a *App) validComments(ctx context.Context, owner, repo string, number int,
 			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
 		return nil
 	}
+	seen := make(map[reviewComment]bool, len(comments))
 	out := make([]reviewComment, 0, len(comments))
 	for _, c := range comments {
 		path, rerr := resolvePath(positions, c.Path)
@@ -742,7 +751,14 @@ func (a *App) validComments(ctx context.Context, owner, repo string, number int,
 				"component", "github", "path", path, "line", c.Line, "err", verr)
 			continue
 		}
-		out = append(out, reviewComment{Path: path, Line: c.Line, Body: c.Body})
+		rc := reviewComment{Path: path, Line: c.Line, Body: c.Body}
+		if seen[rc] {
+			slog.Warn("github: delivery: dropping an exact-duplicate inline finding",
+				"component", "github", "path", path, "line", c.Line)
+			continue
+		}
+		seen[rc] = true
+		out = append(out, rc)
 	}
 	return out
 }

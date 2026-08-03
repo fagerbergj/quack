@@ -365,6 +365,35 @@ func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	}
 }
 
+// TestReviewMCP_ToolNamesUnprefixed pins the review + PR tool names the ACP
+// agent prompts (agents/code-reviewer, agents/code-implementer) hardcode: the
+// wire-level MCP tool name is always the bare "stage_review_comment" etc, and
+// opencode adds the "quack_" prefix client-side, so these strings - the ones
+// grepped for elsewhere - must never change without a matching prompt update.
+func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	got := map[string]bool{}
+	for _, tl := range res.Tools {
+		got[tl.Name] = true
+	}
+	for _, want := range []string{"stage_review_comment", "unstage_review_comment", "stage_review", "stage_pr"} {
+		if !got[want] {
+			t.Errorf("tool %q not registered; got %v", want, got)
+		}
+	}
+}
+
 func toolResultText(t *testing.T, res *mcp.CallToolResult) string {
 	t.Helper()
 	for _, c := range res.Content {

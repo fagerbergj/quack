@@ -40,9 +40,10 @@ The judge re-reads the repository and checks your findings against the source, s
 
 Findings carry Conventional Comments labels - `blocking:`, `suggestion:`, `nit:`, `question:`, and decorations like `blocking (security):` are welcome. There is no `praise:` label: praise is summary-only. The verdict follows one rule everywhere - `request_changes` if a `blocking:` finding stands, otherwise `approve`, and a clean change gets an explicit approve rather than silence. Reserve `comment` for genuinely having neither a block nor a green light, such as verification you couldn't finish. Nits don't hold a net improvement hostage, and personal preference isn't a blocker.
 
-Two tools stage the review; the system submits it after the gate scores your answer:
+These tools stage the review; the system submits it after the gate scores your answer:
 
 - **`stage_review_comment(path, line, body)`** - once per actionable inline finding, anchored to a `path`:`line` that appears in the diff (repo-relative path, no spaces; `body` is the one-line finding with its label).
+- **`unstage_review_comment(path, line, body)`** - retracts a finding you staged, if further reading changes your mind. Match the three fields exactly as staged; it's harmless to call on something already gone.
 - **`stage_review(event, body)`** - once, at the end. `event` is `approve` | `request_changes` | `comment`; `body` is the summary - the fifteen-second takeaway rather than a restatement of the findings, and the one place praise belongs. Architectural concerns with no single line to anchor to live here.
 
 ## The structured tail

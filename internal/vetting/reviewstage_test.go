@@ -58,3 +58,48 @@ func TestReviewStage_SnapshotVerdictless(t *testing.T) {
 		t.Fatalf("verdict-less snapshot wrong: %+v", sd)
 	}
 }
+
+// TestReviewStage_RemoveComment proves unstage_review_comment's backing store
+// (#562): an exact (path, line, body) match is removed, a same-line
+// different-body finding survives untouched, and removing something that was
+// never staged (or already removed) is a harmless no-op rather than an error.
+func TestReviewStage_RemoveComment(t *testing.T) {
+	review := &ReviewStage{}
+	review.AddComment("a.go", 3, "nit: rename x")
+	review.AddComment("a.go", 3, "blocking: unrelated finding, same line")
+	review.AddComment("b.go", 9, "suggestion: extract helper")
+
+	// No-op: nothing staged at this path/line/body.
+	review.RemoveComment("z.go", 1, "never staged")
+	sd, ok := review.Snapshot()
+	if !ok || len(sd.Comments) != 3 {
+		t.Fatalf("no-op remove must not touch the buffer: %+v", sd.Comments)
+	}
+
+	review.RemoveComment("a.go", 3, "nit: rename x")
+	sd, ok = review.Snapshot()
+	if !ok || len(sd.Comments) != 2 {
+		t.Fatalf("want 2 comments after removing one, got %+v", sd.Comments)
+	}
+	for _, c := range sd.Comments {
+		if c.Path == "a.go" && c.Body == "nit: rename x" {
+			t.Fatalf("removed comment still present: %+v", sd.Comments)
+		}
+	}
+	// The same-line, different-body finding must survive.
+	found := false
+	for _, c := range sd.Comments {
+		if c.Path == "a.go" && c.Line == 3 && c.Body == "blocking: unrelated finding, same line" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("same-line different-body finding was wrongly dropped: %+v", sd.Comments)
+	}
+
+	// Retracting twice is harmless, not an error.
+	review.RemoveComment("a.go", 3, "nit: rename x")
+	if sd, _ := review.Snapshot(); len(sd.Comments) != 2 {
+		t.Fatalf("double-retract must be a no-op, got %+v", sd.Comments)
+	}
+}

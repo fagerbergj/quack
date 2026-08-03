@@ -25,15 +25,25 @@ type stageReviewCommentInput struct {
 	Body string `json:"body" jsonschema:"the inline finding at that line"`
 }
 
+// unstageReviewCommentInput is unstage_review_comment's input: the exact same
+// three fields the finding was staged with (#562) - precise enough that two
+// findings sharing a line are never confused.
+type unstageReviewCommentInput struct {
+	Path string `json:"path" jsonschema:"repo-relative path, exactly as staged"`
+	Line int    `json:"line" jsonschema:"1-based line number, exactly as staged"`
+	Body string `json:"body" jsonschema:"the finding's body, exactly as staged"`
+}
+
 // stageReviewInput is stage_review's input: the overall verdict + summary.
 type stageReviewInput struct {
 	Event string `json:"event" jsonschema:"overall verdict: approve, request_changes, or comment"`
 	Body  string `json:"body" jsonschema:"the review summary posted alongside the verdict"`
 }
 
-// registerReviewTools adds stage_review_comment + stage_review to a per-node
-// server, landing calls in the node's ReviewStage. The gate snapshots that
-// buffer into the staged review after the answer passes (vetting).
+// registerReviewTools adds stage_review_comment + unstage_review_comment +
+// stage_review to a per-node server, landing calls in the node's ReviewStage.
+// The gate snapshots that buffer into the staged review after the answer
+// passes (vetting).
 func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "stage_review_comment",
@@ -44,6 +54,13 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		}
 		review.AddComment(strings.TrimSpace(args.Path), args.Line, strings.TrimSpace(args.Body))
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
+	})
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "unstage_review_comment",
+		Description: "Retract a previously staged inline comment - e.g. after re-reading the file and deciding the finding doesn't hold. Match path, line, and body exactly as staged. A no-op (still succeeds) if nothing matches.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args unstageReviewCommentInput) (*mcp.CallToolResult, any, error) {
+		review.RemoveComment(strings.TrimSpace(args.Path), args.Line, strings.TrimSpace(args.Body))
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "unstaged"}}}, nil, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "stage_review",

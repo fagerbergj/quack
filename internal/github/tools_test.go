@@ -269,3 +269,43 @@ func TestValidCommentsNormalisesAndDrops(t *testing.T) {
 		}
 	}
 }
+
+// TestValidCommentsDropsExactDuplicates pins #562: a byte-identical finding
+// staged twice posts once, but two DIFFERENT findings on the same line both
+// survive (they must never be silently collapsed).
+func TestValidCommentsDropsExactDuplicates(t *testing.T) {
+	app := newReviewApp(t, nil)
+	in := []vetting.ReviewComment{
+		{Path: "auth.go", Line: 42, Body: "blocking: nil deref"},
+		{Path: "auth.go", Line: 42, Body: "blocking: nil deref"}, // exact repeat
+		{Path: "auth.go", Line: 42, Body: "suggestion: extract helper"},
+	}
+	got := app.validComments(context.Background(), "acme", "widgets", 7, in)
+	if len(got) != 2 {
+		t.Fatalf("validComments kept %d, want 2 (one exact dup dropped): %+v", len(got), got)
+	}
+	bodies := map[string]bool{}
+	for _, c := range got {
+		bodies[c.Body] = true
+	}
+	if !bodies["blocking: nil deref"] || !bodies["suggestion: extract helper"] {
+		t.Fatalf("wrong survivors: %+v", got)
+	}
+}
+
+// TestValidCommentsDropsDuplicatesAcrossPathSpellings proves the dedupe runs
+// AFTER path normalisation: two findings staged against differently-spelled
+// but equivalent paths (clone-relative vs repo-relative) with the same line
+// and body are the same finding, and only one survives. A dedupe keyed on the
+// raw staged path (e.g. at stage_review_comment time) would miss this.
+func TestValidCommentsDropsDuplicatesAcrossPathSpellings(t *testing.T) {
+	app := newReviewApp(t, nil)
+	in := []vetting.ReviewComment{
+		{Path: "auth.go", Line: 42, Body: "blocking: nil deref"},
+		{Path: "widgets/auth.go", Line: 42, Body: "blocking: nil deref"},
+	}
+	got := app.validComments(context.Background(), "acme", "widgets", 7, in)
+	if len(got) != 1 {
+		t.Fatalf("validComments kept %d, want 1 (cross-spelling dup dropped): %+v", len(got), got)
+	}
+}

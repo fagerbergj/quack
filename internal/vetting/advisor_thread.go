@@ -176,6 +176,24 @@ func (s *ReviewStage) AddComment(path string, line int, body string) {
 	s.comments = append(s.comments, ReviewComment{Path: path, Line: line, Body: body})
 }
 
+// RemoveComment unstages a previously staged finding, matched exactly on path,
+// line, AND body (#562) - precise enough that two different findings sharing a
+// line are never confused with each other, unlike a (path, line)-only match.
+// A no-op when nothing matches: a reviewer that retracts twice, or misremembers
+// what it staged, cannot fail its own round over it.
+func (s *ReviewStage) RemoveComment(path string, line int, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.comments[:0]
+	for _, c := range s.comments {
+		if c.Path == path && c.Line == line && c.Body == body {
+			continue
+		}
+		out = append(out, c)
+	}
+	s.comments = out
+}
+
 // SetVerdict records the review's overall event + summary; a later call replaces
 // an earlier one (the reviewer's final word wins).
 func (s *ReviewStage) SetVerdict(event, body string) {
