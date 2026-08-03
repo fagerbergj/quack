@@ -425,12 +425,80 @@ func (a *App) findQuackComment(ctx context.Context, owner, repo string, number i
 	return 0, false, nil
 }
 
+// narrationLeadRe matches a worker's process narration standing in for the
+// actual first line of an answer ("I need to fix the mermaid diagrams... Let
+// me replace them", "I've read all the relevant files. Here is the plan.") -
+// writing.md already asks agents not to open with narration, and #581 found
+// it slips through anyway.
+var narrationLeadRe = regexp.MustCompile(`(?i)^(I've|I have|I need to|I'll|I will|Let me|Here's|Here is)\b`)
+
+// sanitizeCommentBody strips the two staged-comment defects #581 found in
+// delivered plan comments: a leading narration line, and the whole body
+// wrapped in an outer ```markdown/```md fence (renders as one literal code
+// block on GitHub - no headings, no tables, no rendered mermaid). Detection
+// only ever touches the OUTER wrapper/lead line - it never tries to parse or
+// rebalance fences deeper in the body.
+func sanitizeCommentBody(body string) string {
+	lines := strings.Split(body, "\n")
+	lines = stripFenceWrapper(lines)
+	lines = stripNarrationLead(lines)
+	return strings.Join(lines, "\n")
+}
+
+// stripFenceWrapper drops a leading ```markdown/```md fence line and its
+// matching trailing bare ``` line, when the body's first and last non-blank
+// lines are exactly that pair - i.e. the ENTIRE body is one outer fence, not
+// a fence used legitimately partway through.
+func stripFenceWrapper(lines []string) []string {
+	start, end := 0, len(lines)-1
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	for end >= 0 && strings.TrimSpace(lines[end]) == "" {
+		end--
+	}
+	if start >= end {
+		return lines
+	}
+	switch strings.ToLower(strings.TrimSpace(lines[start])) {
+	case "```markdown", "```md":
+	default:
+		return lines
+	}
+	if strings.TrimSpace(lines[end]) != "```" {
+		return lines
+	}
+	return lines[start+1 : end]
+}
+
+// stripNarrationLead drops the body's first non-blank line when it reads as
+// process narration, leaving the rest untouched - unless nothing would be
+// left, in which case the (still-imperfect) original ships rather than an
+// empty comment.
+func stripNarrationLead(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	if start >= len(lines) || !narrationLeadRe.MatchString(strings.TrimSpace(lines[start])) {
+		return lines
+	}
+	rest := lines[start+1:]
+	for len(rest) > 0 && strings.TrimSpace(rest[0]) == "" {
+		rest = rest[1:]
+	}
+	if len(rest) == 0 {
+		return lines
+	}
+	return rest
+}
+
 // deliverStagedComment posts (or, if a prior quack comment for this SAME slot
 // already exists, edits) a staged comment - the marker makes a revise-before-
 // post re-run idempotent instead of piling up duplicates.
 func (a *App) deliverStagedComment(ctx context.Context, owner, repo string, number int, slot, bodyText string) error {
 	marker := deliveryMarker("comment:" + slot)
-	withMarker := strings.TrimSpace(bodyText) + "\n\n" + marker
+	withMarker := strings.TrimSpace(sanitizeCommentBody(bodyText)) + "\n\n" + marker
 	id, found, err := a.findQuackComment(ctx, owner, repo, number, marker)
 	if err != nil {
 		slog.Warn("github: find prior comment failed; posting fresh", "component", "github", "repo", owner+"/"+repo, "issue", number, "slot", slot, "err", err)
@@ -588,7 +656,10 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 // draft applies only on a fresh open: an EXISTING open PR keeps its state (the
 // REST API can't flip a PR to draft; the gate's caveat banner still rides the
 // updated body).
-func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool) (url string, number int, err error) {
+// closesIssue only ever applies on the FRESH-open branch: an update means head
+// already had a PR (a fix/continuation of that same PR, never a new one closing
+// some other issue - #575).
+func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool, closesIssue int) (url string, number int, err error) {
 	if num, _, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
 		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
 	} else if ok {
@@ -600,7 +671,54 @@ func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, h
 			"component", "github", "repo", owner+"/"+repo, "pr", num, "url", u)
 		return u, num, nil
 	}
+	body = a.withClosesTrailer(ctx, owner, repo, closesIssue, body)
 	return a.openPullRequest(ctx, owner, repo, title, head, base, body, labels, draft)
+}
+
+// closesKeywordRe/closesReferences detect whether body already references
+// issueNum with a GitHub closing keyword (any tense, and the broken
+// "Closes #50, #51, #52" comma-list form - GitHub only honors the keyword
+// against the number right after it, but for OUR purposes any keyword on the
+// same line as #issueNum means the model already tried, and a second
+// trailer would only add noise, not fix the list).
+var closesKeywordRe = regexp.MustCompile(`(?i)\b(close[sd]?|fixe?[sd]?|resolve[sd]?)\b`)
+
+func closesReferences(body string, issueNum int) bool {
+	numRe := regexp.MustCompile(fmt.Sprintf(`#%d\b`, issueNum))
+	for _, line := range strings.Split(body, "\n") {
+		if closesKeywordRe.MatchString(line) && numRe.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// withClosesTrailer deterministically appends `Closes #N` to a freshly-opened
+// PR's body, rather than trusting the worker's prose to include it - the
+// model dropped it roughly one implement PR in three (#575). Left alone when:
+// issueNum is 0 (no originating issue - e.g. a UI-initiated run), the body
+// already references it, issueNum turns out to be a PULL REQUEST rather than
+// an issue (a PR-scoped chat id whose branch's original PR was closed/merged
+// takes the fresh-open path too - findOpenPR only rules out an OPEN PR on that
+// branch, not "this number is a PR at all" - closing another PR is never the
+// intent), or the issue currently carries the partial-fix label (a
+// maintainer's explicit "this PR does not close it" signal, which must never
+// be overridden). An issueMeta failure fails safe - no trailer, same as
+// today's behavior - rather than risk closing something against that signal.
+func (a *App) withClosesTrailer(ctx context.Context, owner, repo string, issueNum int, body string) string {
+	if issueNum == 0 || closesReferences(body, issueNum) {
+		return body
+	}
+	_, _, _, labels, isPR, err := a.issueMeta(ctx, owner, repo, issueNum)
+	if err != nil {
+		slog.Warn("github: delivery: couldn't check the partial-fix label before appending Closes #N; leaving the body as-is",
+			"component", "github", "repo", owner+"/"+repo, "issue", issueNum, "err", err)
+		return body
+	}
+	if isPR || hasLabel(labels, a.partialFixLabel) {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + fmt.Sprintf("\n\nCloses #%d\n", issueNum)
 }
 
 // Deliver is the vetting.DeliverFunc this extension provides (wired in
@@ -819,7 +937,10 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		}
 		// A gate FAIL still delivers (a human decides), but as a DRAFT: the
 		// caveat banner explains, the draft state stops an accidental merge.
-		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil, !dc.GatePassed)
+		// dc.IssueNumber doubles as the closing target here (Deliver backfills it
+		// from the chat id for every kind) - openOrUpdatePullRequest only acts on
+		// it when this is a genuinely NEW PR (#575).
+		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil, !dc.GatePassed, dc.IssueNumber)
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: open pull request: %w", err)
 		}

@@ -109,7 +109,7 @@ func (e *Extension) fetchSnapshot(ctx context.Context, owner, repo string, numbe
 		snap.Title, snap.Body, snap.State, snap.Labels = m.Title, m.Body, m.State, m.Labels
 		snap.HeadRef, snap.HeadSHA, snap.BaseRef = m.HeadRef, m.HeadSHA, m.BaseRef
 	} else {
-		title, body, state, labels, err := e.app.issueMeta(ctx, owner, repo, number)
+		title, body, state, labels, _, err := e.app.issueMeta(ctx, owner, repo, number)
 		if err != nil {
 			return snap, fmt.Errorf("github: issueMeta: %w", err)
 		}

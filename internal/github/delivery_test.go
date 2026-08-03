@@ -559,6 +559,8 @@ func TestDeliverFailedGateOpensDraftPR(t *testing.T) {
 			io.WriteString(w, `{"user":{"login":"alice"}}`) // prAuthor: a human, not the bot → normal review path
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
 			io.WriteString(w, `[]`) // no existing open PR
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/3"):
+			io.WriteString(w, `{"title":"t","body":"b","state":"open","labels":[]}`) // withClosesTrailer's partial-fix check
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
 			prBody, _ = io.ReadAll(r.Body)
 			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/8","number":8}`)
@@ -590,5 +592,169 @@ func TestDeliverFailedGateOpensDraftPR(t *testing.T) {
 	}
 	if !strings.Contains(posted.Body, "did NOT pass") {
 		t.Fatalf("caveat banner missing from body: %s", posted.Body)
+	}
+	// #575: a fresh PR opened for a chat tied to issue #3 closes it deterministically.
+	if !strings.Contains(posted.Body, "Closes #3") {
+		t.Fatalf("delivered PR body missing deterministic Closes trailer: %s", posted.Body)
+	}
+}
+
+// TestDeliverSuppressesClosesTrailerWhenPartialFix pins #575's "Done when":
+// the quack:partial-fix label on the originating issue must suppress the
+// deterministic trailer - a maintainer's explicit "this PR does not close it"
+// signal, never overridden.
+func TestDeliverSuppressesClosesTrailerWhenPartialFix(t *testing.T) {
+	var prBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[]`) // no existing open PR
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/9"):
+			io.WriteString(w, `{"title":"t","body":"b","state":"open","labels":[{"name":"quack:partial-fix"}]}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			prBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/10","number":10}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "github-acme-widgets-9",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "quack/partial",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Partial fix", Body: "does part of it"}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(prBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(posted.Body, "Closes #9") {
+		t.Fatalf("partial-fix issue must not get an unconditional Closes trailer: %s", posted.Body)
+	}
+}
+
+// TestDeliverSkipsClosesTrailerWhenChatIDResolvesToAPR covers the edge case
+// findOpenPR alone can't catch: a PR-scoped chat id (github-owner-repo-<PR
+// number>) whose branch's ORIGINAL PR was since closed/merged also takes the
+// fresh-open path (no OPEN PR on that branch), and the chat id's number is
+// still a pull request, not an issue - GitHub's issues endpoint returns PRs
+// too, so a body-less partial-fix check alone would wrongly close #92 by
+// naming another pull request.
+func TestDeliverSkipsClosesTrailerWhenChatIDResolvesToAPR(t *testing.T) {
+	var prBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[]`) // no OPEN PR on this branch - the original PR #92 was closed/merged
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/92"):
+			// GitHub marks an issues-endpoint response as actually being a PR via
+			// the pull_request field.
+			io.WriteString(w, `{"title":"t","body":"b","state":"closed","pull_request":{},"labels":[]}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			prBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/93","number":93}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "github-acme-widgets-92",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "quack/fix-92",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Redo the fix", Body: "the fix"}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(prBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(posted.Body, "Closes") {
+		t.Fatalf("chat id resolving to a PULL REQUEST must never get a Closes trailer: %s", posted.Body)
+	}
+}
+
+// TestDeliverDoesNotAppendClosesOnPRUpdate pins the other half of #575: a PR
+// update (an already-open PR on this branch - a fix/continuation run, not a
+// fresh issue-implement run) must never get a Closes trailer, even when the
+// chat id encodes a number - that number is the PR's own, not a distinct
+// issue to close.
+func TestDeliverDoesNotAppendClosesOnPRUpdate(t *testing.T) {
+	var patchedBody map[string]string
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[{"number":11,"html_url":"https://github.com/acme/widgets/pull/11"}]`)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/pulls/11"):
+			data, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(data, &patchedBody)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/11"}`)
+		case strings.HasSuffix(r.URL.Path, "/issues/11"):
+			t.Error("an update to an existing PR must never look up the partial-fix label")
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "github-acme-widgets-11", // same number as the PR itself
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "fix/11-something",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Fix it", Body: "the fix"}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if strings.Contains(patchedBody["body"], "Closes") {
+		t.Fatalf("PR update must never gain a Closes trailer: %+v", patchedBody)
+	}
+}
+
+// TestDeliverClosesTrailerNotDuplicated pins the other "Done when": a body
+// that already references the issue with a closing keyword is left alone -
+// no second trailer, and no partial-fix lookup needed to decide that.
+func TestDeliverClosesTrailerNotDuplicated(t *testing.T) {
+	var prBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[]`)
+		case strings.HasSuffix(r.URL.Path, "/issues/5"):
+			t.Error("a body that already closes the issue must not trigger a partial-fix lookup")
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			prBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/6","number":6}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "github-acme-widgets-5",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "quack/fix5",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Fix it", Body: "does the work.\n\nCloses #5\n"}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(prBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(posted.Body, "Closes #5"); n != 1 {
+		t.Fatalf("Closes #5 appears %d times, want exactly 1: %s", n, posted.Body)
 	}
 }

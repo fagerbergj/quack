@@ -309,3 +309,102 @@ func TestValidCommentsDropsDuplicatesAcrossPathSpellings(t *testing.T) {
 		t.Fatalf("validComments kept %d, want 1 (cross-spelling dup dropped): %+v", len(got), got)
 	}
 }
+
+// TestSanitizeCommentBody pins #581: a delivered plan comment must not carry
+// a leading narration line standing in for the answer, or the whole body
+// wrapped in an outer ```markdown fence (renders as one literal code block on
+// GitHub - no headings, no tables, no rendered mermaid).
+func TestSanitizeCommentBody(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "narration lead is dropped, the plan is kept",
+			in:   "I need to fix the mermaid diagrams — let me replace them.\n\n## Plan\n\nDo the thing.",
+			want: "## Plan\n\nDo the thing.",
+		},
+		{
+			name: "second narration form",
+			in:   "I've read all the relevant files. Here is the implementation plan.\n\n## Plan\n\nStep one.",
+			want: "## Plan\n\nStep one.",
+		},
+		{
+			name: "outer markdown fence is unwrapped",
+			in:   "```markdown\n## Plan\n\nDo the thing.\n```",
+			want: "## Plan\n\nDo the thing.",
+		},
+		{
+			name: "outer md fence, case-insensitive",
+			in:   "```MD\n## Plan\n```",
+			want: "## Plan",
+		},
+		{
+			name: "both defects together",
+			in:   "```markdown\nLet me lay out the plan.\n\n## Plan\n\nDo it.\n```",
+			want: "## Plan\n\nDo it.",
+		},
+		{
+			name: "a legitimate inner code fence is left alone",
+			in:   "## Plan\n\nRun:\n\n```go\nfmt.Println(\"hi\")\n```\n",
+			want: "## Plan\n\nRun:\n\n```go\nfmt.Println(\"hi\")\n```",
+		},
+		{
+			name: "clean body is untouched",
+			in:   "## Plan\n\nDo the thing.",
+			want: "## Plan\n\nDo the thing.",
+		},
+		{
+			name: "narration-only body ships as-is rather than going empty",
+			in:   "I'll just say hi.",
+			want: "I'll just say hi.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strings.TrimSpace(sanitizeCommentBody(tt.in))
+			if got != tt.want {
+				t.Errorf("sanitizeCommentBody(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDeliverStagedCommentSanitizesBody is the integration-level pin: the
+// POSTED comment (marker included) carries neither defect, exercised through
+// the real deliverStagedComment path a plan delivery uses.
+func TestDeliverStagedCommentSanitizesBody(t *testing.T) {
+	var posted string
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			io.WriteString(w, `[]`) // no prior quack comment for this slot
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			b, _ := io.ReadAll(r.Body)
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.Unmarshal(b, &body)
+			posted = body.Body
+			io.WriteString(w, `{}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	raw := "```markdown\nI've read the repo. Here is the plan.\n\n## Plan\n\nDo the thing.\n```"
+	if err := app.deliverStagedComment(context.Background(), "acme", "widgets", 7, "plan", raw); err != nil {
+		t.Fatalf("deliverStagedComment: %v", err)
+	}
+	if strings.Contains(posted, "```markdown") {
+		t.Errorf("posted comment still carries the outer fence: %q", posted)
+	}
+	if strings.Contains(posted, "Here is the plan") {
+		t.Errorf("posted comment still carries the narration lead: %q", posted)
+	}
+	if !strings.Contains(posted, "## Plan") || !strings.Contains(posted, "Do the thing.") {
+		t.Errorf("posted comment lost the actual plan content: %q", posted)
+	}
+}

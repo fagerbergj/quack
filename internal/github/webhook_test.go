@@ -1444,6 +1444,76 @@ func TestRunMessageLabelTriggerNeverClassifies(t *testing.T) {
 	}
 }
 
+// TestRunMessageLabelTriggerDoesNotClaimMention pins #619 defect 1: a
+// label-driven run (auto-review, quack:plan, quack:implement) never had a
+// mention, and its task is a synthesized instruction, not the user's own
+// words - the preamble must not fabricate either.
+func TestRunMessageLabelTriggerDoesNotClaimMention(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("unused"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	pr.isLabelTrigger = true
+	msg := ext.runMessage(context.Background(), pr, autoReviewTask, seedGC(Snapshot{IsPR: true}, 0))
+	for _, forbidden := range []string{"mentioned you", "Their request"} {
+		if strings.Contains(msg, forbidden) {
+			t.Errorf("label-triggered message fabricates a mention (%q found):\n%s", forbidden, msg)
+		}
+	}
+	if !strings.Contains(msg, autoReviewTask) {
+		t.Errorf("label-triggered message should still carry the synthesized task text:\n%s", msg)
+	}
+}
+
+// TestRunMessagePlanOnlyNoDuplicateBodyOrDeliveryVocab pins #619 defects 2
+// and 3 together, on the real planTask→runMessage composition: the issue body
+// must appear exactly once (planTask's own copy dropped in favor of the #459
+// context block), and the composed message must carry zero commit/push/PR/
+// branch/merge vocabulary - the plan-only invariant its own closing paragraph
+// already states.
+func TestRunMessagePlanOnlyNoDuplicateBodyOrDeliveryVocab(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	const body = "Widgets are refetched on every request."
+	up := issuesPayload{}
+	up.Issue.Number = 7
+	up.Issue.Title = "Add widget cache"
+	up.Issue.Body = body
+	task := planTask(up)
+
+	var synthetic issueCommentPayload
+	synthetic.Issue.Number = 7
+	synthetic.Comment.User.Login = "alice"
+	synthetic.Repository.Name = "widgets"
+	synthetic.Repository.Owner.Login = "acme"
+	synthetic.planOnly = true
+	synthetic.isLabelTrigger = true
+
+	msg := ext.runMessage(context.Background(), synthetic, task, seedGC(Snapshot{Body: body}, 0))
+
+	if n := strings.Count(msg, body); n != 1 {
+		t.Errorf("issue body appears %d times in the plan-only message, want exactly 1:\n%s", n, msg)
+	}
+	// The shared repo paragraph's OWN commit/push/PR vocabulary (#619 defect 3)
+	// - not the later plan-only block's unrelated "discarded file" warning,
+	// which legitimately says "commit" in a different sentence.
+	for _, forbidden := range []string{
+		"work_branch=a new branch name for this change",
+		"delivery pushes the branch and opens the PR",
+		"no node ever pushes or opens a PR itself",
+	} {
+		if strings.Contains(msg, forbidden) {
+			t.Errorf("plan-only message still carries delivery vocabulary %q:\n%s", forbidden, msg)
+		}
+	}
+	if !strings.Contains(msg, "setup is optional for a read-only plan") {
+		t.Errorf("plan-only message missing the trigger-aware setup guidance:\n%s", msg)
+	}
+	if !strings.Contains(msg, "PLANNING-ONLY") {
+		t.Errorf("plan-only message not framed planning-only:\n%s", msg)
+	}
+}
+
 // TestIsWorkRequestFailsSafe pins the fail-safe direction: a nil classifier,
 // a classifier error, or an unparseable answer must all resolve to
 // conversational (false), never work - a wrong WORK verdict forces a
@@ -2430,6 +2500,24 @@ func TestDispatchCollapsesPriorPlanComment(t *testing.T) {
 	}
 	if minimizedID != "PLAN1" {
 		t.Errorf("minimizeComment subjectId = %q; want the prior plan comment's node_id PLAN1", minimizedID)
+	}
+}
+
+// TestPlanTaskNoIssueBodyDuplicate pins #619 defect 2: planTask must not
+// embed the issue body - runMessage's #459 context block (gh.text) already
+// carries it verbatim, so planTask's own copy is a straight duplicate of the
+// same text in the same prompt.
+func TestPlanTaskNoIssueBodyDuplicate(t *testing.T) {
+	var p issuesPayload
+	p.Issue.Number = 7
+	p.Issue.Title = "Add widget cache"
+	p.Issue.Body = "Widgets are refetched on every request."
+	msg := planTask(p)
+	if !strings.Contains(msg, "Add widget cache") {
+		t.Errorf("planTask missing the issue title:\n%s", msg)
+	}
+	if strings.Contains(msg, p.Issue.Body) {
+		t.Errorf("planTask embeds the issue body itself - runMessage's context block already carries it:\n%s", msg)
 	}
 }
 
