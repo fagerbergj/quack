@@ -151,7 +151,7 @@ const runGraphNodeID = "n1"
 // passed to both dag.NewExecutor's session.Service and tools.Deps.Sessions).
 func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, sessions session.Service, plan dag.Plan, content *genai.Content, resumeNodes []string) (paused bool, outputs map[string]string, events []stream.SSEEvent) {
 	t.Helper()
-	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil,
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil, nil,
 		vetting.NewJudgeFactory(judgeModel, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs = map[string]string{}
@@ -586,7 +586,7 @@ func TestAskAdvisor_ConcurrentNodesIsolatedThreads(t *testing.T) {
 		{ID: "nb", AgentName: "blk-b", Task: "TASK-B", Rubric: "rb"},
 		{ID: "synth", AgentName: "blk-s", Task: "synth", DependsOn: []string{"na", "nb"}},
 	}}
-	ex := dag.NewExecutor(sessions, agents, nil,
+	ex := dag.NewExecutor(sessions, agents, nil, nil,
 		vetting.NewJudgeFactory(stubA, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs := map[string]string{}

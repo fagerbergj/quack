@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	otellog "go.opentelemetry.io/otel/log"
 	"google.golang.org/adk/v2/agent"
@@ -29,8 +30,14 @@ const toolsScope = "quack.tools"
 // inference.tracedModel.SetLedgerCoords works around for the model call
 // also loses a context.WithValue stamp before it reaches a tool call. Zero
 // value falls back to ctx (ledger.CoordsFromContext, via otelobs.EmitLog).
+// Mutable (SetLedgerCoords), not just constructor-set: a builtin tool is
+// built ONCE per configured agent (tools.Build, at server startup) and
+// reused by every DAG node that agent runs - a node's identity isn't known
+// until it actually runs, long after the tool exists.
 type emitTool struct {
-	inner  runnableTool
+	inner runnableTool
+
+	mu     sync.Mutex
 	coords ledger.Coords
 }
 
@@ -52,6 +59,22 @@ func emitWrap(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
 // when non-zero, is stamped the same way Deps.LedgerCoords would be.
 func EmitWrapForTesting(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
 	return emitWrap(t, coords)
+}
+
+// SetLedgerCoords updates the coordinates every SUBSEQUENT call stamps -
+// implements ledger.CoordSetter, the runtime twin of Deps.LedgerCoords/the
+// emitWrap constructor argument, for a caller (dag.buildGateNodes, via
+// ledger.StampCoords) that only learns a node's identity when the node
+// actually runs, after Build already built this tool. Same mechanism and
+// the same known ceiling as inference.tracedModel.SetLedgerCoords: correct
+// for one node's own sequential rounds; a shared tool instance used by two
+// DIFFERENT DAG nodes running CONCURRENTLY (same agent, parallel plan
+// nodes, or two chats at once) can still race - see that method's doc
+// comment.
+func (e *emitTool) SetLedgerCoords(c ledger.Coords) {
+	e.mu.Lock()
+	e.coords = c
+	e.mu.Unlock()
 }
 
 func (e *emitTool) Name() string        { return e.inner.Name() }
@@ -76,9 +99,12 @@ func (e *emitTool) ProcessRequest(ctx agent.Context, req *model.LLMRequest) erro
 
 func (e *emitTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	result, err := e.inner.Run(ctx, args)
+	e.mu.Lock()
+	coords := e.coords
+	e.mu.Unlock()
 	emitCtx := context.Context(ctx)
-	if e.coords != (ledger.Coords{}) {
-		emitCtx = ledger.WithCoords(ctx, e.coords)
+	if coords != (ledger.Coords{}) {
+		emitCtx = ledger.WithCoords(ctx, coords)
 	}
 	emitToolEvent(emitCtx, e.Name(), args, result, err)
 	return result, err

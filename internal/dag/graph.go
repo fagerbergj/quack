@@ -8,8 +8,10 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/workflow"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -27,8 +29,13 @@ const (
 // buildGateNodes builds one gated-worker node per plan node (node ID → node),
 // shared by BuildWorkflow (edge graph) and the single-runner runDAG path. Also
 // returns the deduped worker agents (for BuildWorkflow's author resolution;
-// runDAG ignores them).
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
+// runDAG ignores them). toolsByAgent is agent name → its built tool list
+// (tools.Build's return value at server startup) - needed to re-stamp
+// ledger coordinates (ledger.StampCoords) each time one of that agent's
+// nodes actually runs, the same reason models is passed alongside agents;
+// nil/empty skips tool-side ledger stamping entirely (e.g. a caller with
+// no tools configured for that agent).
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, toolsByAgent map[string][]tool.Tool, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -124,7 +131,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 				cfg.Deliver = nil
 			}
 		}
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], judge, cfg, mediaAgents, controls, chatID, recordGate)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, models[node.AgentName], toolsByAgent[node.AgentName], judge, cfg, mediaAgents, controls, chatID, recordGate)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -134,7 +141,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 // FAILS (marks the node) on an empty answer. The
 // same node works whether it's scheduled by BuildWorkflow's edges or RunNode'd
 // directly by an orchestration node (single-runner path).
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			// Register a per-node control so CancelNode/PauseNode/QueueNodeMessage
@@ -251,6 +258,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if !mediaAgents[node.AgentName] {
 				atts = nil
 			}
+			// Re-stamp this node's ledger coordinates onto its (shared,
+			// built-once) tools before every activation - the worker model
+			// gets the same treatment per ROUND, inside RunGatedRefine
+			// itself (vetting/node.go), because tools have no per-round
+			// hook (see ledger.CoordSetter's doc comment).
+			ledger.StampCoords(workerTools, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				// Empty → the node FAILS. The DAG continues (dependents see the gap via
