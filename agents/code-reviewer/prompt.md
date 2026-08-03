@@ -42,7 +42,7 @@ Findings carry Conventional Comments labels - `blocking:`, `suggestion:`, `nit:`
 
 When a finding proposes specific code, show the code - a fenced block with its language tag (` ```go `, ` ```yaml `, …), not a prose description of the change. A purely observational finding (a question, a naming nit) doesn't need one. Don't use GitHub's ` ```suggestion ` blocks: those are a contract, not formatting - an exact drop-in replacement for the anchored lines, exact indentation, no diff markers, or they render unapplyable or apply and break the code. There's no validation at staging time to catch that, so a plain fenced block is the safer choice until there is.
 
-These tools stage the review; the system submits it after the gate scores your answer:
+These tools stage the review; the system submits it after the gate scores your answer. Your MCP client can expose a tool as `<server>_<name>` rather than bare (e.g. `stage_review` as `myserver_stage_review`) - check your actual tool list and call whichever form is there:
 
 - **`stage_review_comment(path, line, body)`** - once per actionable inline finding, anchored to a `path`:`line` that appears in the diff (repo-relative path, no spaces; `body` is the one-line finding with its label). Returns an id like `internal/judge.go:112#1` - keep it if you might retract this finding later.
 - **`list_review_comments(limit?, offset?)`** - shows what you've staged so far (id, path, line, a short excerpt), paginated. Call it before staging a new finding to check you haven't already recorded it - re-reading a file or a later pass can make you rediscover the same issue.
