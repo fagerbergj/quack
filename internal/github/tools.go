@@ -425,12 +425,80 @@ func (a *App) findQuackComment(ctx context.Context, owner, repo string, number i
 	return 0, false, nil
 }
 
+// narrationLeadRe matches a worker's process narration standing in for the
+// actual first line of an answer ("I need to fix the mermaid diagrams... Let
+// me replace them", "I've read all the relevant files. Here is the plan.") -
+// writing.md already asks agents not to open with narration, and #581 found
+// it slips through anyway.
+var narrationLeadRe = regexp.MustCompile(`(?i)^(I've|I have|I need to|I'll|I will|Let me|Here's|Here is)\b`)
+
+// sanitizeCommentBody strips the two staged-comment defects #581 found in
+// delivered plan comments: a leading narration line, and the whole body
+// wrapped in an outer ```markdown/```md fence (renders as one literal code
+// block on GitHub - no headings, no tables, no rendered mermaid). Detection
+// only ever touches the OUTER wrapper/lead line - it never tries to parse or
+// rebalance fences deeper in the body.
+func sanitizeCommentBody(body string) string {
+	lines := strings.Split(body, "\n")
+	lines = stripFenceWrapper(lines)
+	lines = stripNarrationLead(lines)
+	return strings.Join(lines, "\n")
+}
+
+// stripFenceWrapper drops a leading ```markdown/```md fence line and its
+// matching trailing bare ``` line, when the body's first and last non-blank
+// lines are exactly that pair - i.e. the ENTIRE body is one outer fence, not
+// a fence used legitimately partway through.
+func stripFenceWrapper(lines []string) []string {
+	start, end := 0, len(lines)-1
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	for end >= 0 && strings.TrimSpace(lines[end]) == "" {
+		end--
+	}
+	if start >= end {
+		return lines
+	}
+	switch strings.ToLower(strings.TrimSpace(lines[start])) {
+	case "```markdown", "```md":
+	default:
+		return lines
+	}
+	if strings.TrimSpace(lines[end]) != "```" {
+		return lines
+	}
+	return lines[start+1 : end]
+}
+
+// stripNarrationLead drops the body's first non-blank line when it reads as
+// process narration, leaving the rest untouched - unless nothing would be
+// left, in which case the (still-imperfect) original ships rather than an
+// empty comment.
+func stripNarrationLead(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	if start >= len(lines) || !narrationLeadRe.MatchString(strings.TrimSpace(lines[start])) {
+		return lines
+	}
+	rest := lines[start+1:]
+	for len(rest) > 0 && strings.TrimSpace(rest[0]) == "" {
+		rest = rest[1:]
+	}
+	if len(rest) == 0 {
+		return lines
+	}
+	return rest
+}
+
 // deliverStagedComment posts (or, if a prior quack comment for this SAME slot
 // already exists, edits) a staged comment - the marker makes a revise-before-
 // post re-run idempotent instead of piling up duplicates.
 func (a *App) deliverStagedComment(ctx context.Context, owner, repo string, number int, slot, bodyText string) error {
 	marker := deliveryMarker("comment:" + slot)
-	withMarker := strings.TrimSpace(bodyText) + "\n\n" + marker
+	withMarker := strings.TrimSpace(sanitizeCommentBody(bodyText)) + "\n\n" + marker
 	id, found, err := a.findQuackComment(ctx, owner, repo, number, marker)
 	if err != nil {
 		slog.Warn("github: find prior comment failed; posting fresh", "component", "github", "repo", owner+"/"+repo, "issue", number, "slot", slot, "err", err)
