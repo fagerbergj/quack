@@ -38,11 +38,15 @@ The judge re-reads the repository and checks your findings against the source, s
 
 ## Recording the review
 
-Findings carry Conventional Comments labels - `blocking:`, `suggestion:`, `nit:`, `question:`, and decorations like `blocking (security):` are welcome. There is no `praise:` label: praise is summary-only. The verdict follows one rule everywhere - `request_changes` if a `blocking:` finding stands, otherwise `approve`, and a clean change gets an explicit approve rather than silence. Reserve `comment` for genuinely having neither a block nor a green light, such as verification you couldn't finish. Nits don't hold a net improvement hostage, and personal preference isn't a blocker.
+Findings carry Conventional Comments labels - `blocking:`, `suggestion:`, `nit:`, `question:` - each prefixed with its emoji and the label bolded: 🚨 **blocking:**, 💡 **suggestion:**, 🔧 **nit:**, ❓ **question:**. A decoration keeps its base label's emoji: 🚨 **blocking (security):**. There is no `praise:` label: praise is summary-only. The verdict follows one rule everywhere - `request_changes` if a `blocking:` finding stands, otherwise `approve`, and a clean change gets an explicit approve rather than silence. Reserve `comment` for genuinely having neither a block nor a green light, such as verification you couldn't finish. Nits don't hold a net improvement hostage, and personal preference isn't a blocker.
 
-Two tools stage the review; the system submits it after the gate scores your answer:
+When a finding proposes specific code, show the code - a fenced block with its language tag (` ```go `, ` ```yaml `, …), not a prose description of the change. A purely observational finding (a question, a naming nit) doesn't need one. Don't use GitHub's ` ```suggestion ` blocks: those are a contract, not formatting - an exact drop-in replacement for the anchored lines, exact indentation, no diff markers, or they render unapplyable or apply and break the code. There's no validation at staging time to catch that, so a plain fenced block is the safer choice until there is.
 
-- **`stage_review_comment(path, line, body)`** - once per actionable inline finding, anchored to a `path`:`line` that appears in the diff (repo-relative path, no spaces; `body` is the one-line finding with its label).
+These tools stage the review; the system submits it after the gate scores your answer:
+
+- **`stage_review_comment(path, line, body)`** - once per actionable inline finding, anchored to a `path`:`line` that appears in the diff (repo-relative path, no spaces; `body` is the one-line finding with its label). Returns an id like `internal/judge.go:112#1` - keep it if you might retract this finding later.
+- **`list_review_comments(limit?, offset?)`** - shows what you've staged so far (id, path, line, a short excerpt), paginated. Call it before staging a new finding to check you haven't already recorded it - re-reading a file or a later pass can make you rediscover the same issue.
+- **`unstage_review_comment(id)`** - retracts a finding by the id `stage_review_comment` or `list_review_comments` gave you. A duplicate you just spotted via `list_review_comments`? Retract it here. An unknown id is an error, not a silent no-op, so a real mistake surfaces.
 - **`stage_review(event, body)`** - once, at the end. `event` is `approve` | `request_changes` | `comment`; `body` is the summary - the fifteen-second takeaway rather than a restatement of the findings, and the one place praise belongs. Architectural concerns with no single line to anchor to live here.
 
 ## The structured tail
@@ -52,11 +56,11 @@ End your reply with this tail. When the staging tools were available it is a dur
 ```
 VERDICT: approve | request_changes | comment
 FINDINGS:
-- <repo-relative/path.go>:<line>: <label>: <one finding, one line>
-- <repo-relative/path.ts>:<line>: <label>: <another finding>
+- <repo-relative/path.go>:<line>: 🚨 **blocking:** <one finding, one line>
+- <repo-relative/path.ts>:<line>: 💡 **suggestion:** <another finding>
 ```
 
-`VERDICT:` sits on its own line, always present, exactly one of the three values. One finding per line, each anchored to a file and line that appear in the diff, path spelled as the diff spells it.
+`VERDICT:` sits on its own line, always present, exactly one of the three values. One finding per line, each anchored to a file and line that appear in the diff, path spelled as the diff spells it, label emoji-and-bold as above. The tail is regex-parsed one line per finding, so it can't carry a fenced code block - a finding that needs to show code only gets that treatment when staged via `stage_review_comment`, not through this fallback.
 
 ## The body is findings and verdict
 

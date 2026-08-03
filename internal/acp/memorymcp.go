@@ -77,7 +77,7 @@ func memoryMCPURL() string {
 func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		secret := strings.Trim(r.URL.Path, "/")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "quack-memory", Version: "0.1.0"}, nil)
+		srv := mcp.NewServer(&mcp.Implementation{Name: "quack", Version: "0.1.0"}, nil)
 		sess, ok := vetting.LookupMemSession(secret)
 		if !ok {
 			return srv
@@ -138,8 +138,11 @@ func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer
 	// killed the subprocess, breaking every ACP node. Declare the loopback
 	// memory server as SSE with explicit type + empty headers.
 	return []sdk.McpServer{{Sse: &sdk.McpServerSseInline{
-		Type:    "sse",
-		Name:    "quack-memory",
+		Type: "sse",
+		// opencode namespaces tools as "<Name>_<tool>" - "quack", not
+		// "quack-memory", since this one server also carries the review (#451)
+		// and PR-staging surfaces, not just memory (#558).
+		Name:    "quack",
 		Url:     base + "/" + secret,
 		Headers: []sdk.HttpHeader{},
 	}}}

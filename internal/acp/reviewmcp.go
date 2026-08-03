@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,25 +26,105 @@ type stageReviewCommentInput struct {
 	Body string `json:"body" jsonschema:"the inline finding at that line"`
 }
 
+// listReviewCommentsInput is list_review_comments' input: plain limit/offset
+// pagination - this repo's convention for bounding a response rather than
+// trusting it stays small (see judge.go's changedFilesBudget, workspace's
+// max_read_kb). No cursor: a review node stages at most a few dozen findings.
+type listReviewCommentsInput struct {
+	Limit  int `json:"limit,omitempty" jsonschema:"max comments to return (default 50)"`
+	Offset int `json:"offset,omitempty" jsonschema:"how many staged comments to skip, in stage order (default 0)"`
+}
+
+// unstageReviewCommentInput is unstage_review_comment's input: the id
+// stage_review_comment (or list_review_comments) returned for the finding.
+type unstageReviewCommentInput struct {
+	ID string `json:"id" jsonschema:"the id of the staged comment to remove, from stage_review_comment or list_review_comments"`
+}
+
 // stageReviewInput is stage_review's input: the overall verdict + summary.
 type stageReviewInput struct {
 	Event string `json:"event" jsonschema:"overall verdict: approve, request_changes, or comment"`
 	Body  string `json:"body" jsonschema:"the review summary posted alongside the verdict"`
 }
 
-// registerReviewTools adds stage_review_comment + stage_review to a per-node
-// server, landing calls in the node's ReviewStage. The gate snapshots that
-// buffer into the staged review after the answer passes (vetting).
+// defaultListLimit and listExcerptLen bound list_review_comments' response:
+// a page of results, and a short excerpt per body rather than the full text -
+// just enough for the reviewer to recognize a finding it already staged and
+// grab the id to retract it with, not to reproduce the finding verbatim
+// (unstage_review_comment takes the id, not the body, so it never needs to).
+const (
+	defaultListLimit = 50
+	listExcerptLen   = 120
+)
+
+// excerpt truncates s to n runes, marking truncation with a trailing "…".
+func excerpt(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// registerReviewTools adds stage_review_comment + list_review_comments +
+// unstage_review_comment + stage_review to a per-node server, landing calls
+// in the node's ReviewStage. The gate snapshots that buffer into the staged
+// review after the answer passes (vetting). The three staging-buffer tools
+// are CRUD-shaped: stage creates (returns an id), list reads (paginated,
+// excerpted), unstage deletes by id - so a reviewer can check what it already
+// staged before adding a possible duplicate, and retract precisely (#562).
 func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "stage_review_comment",
-		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes.",
+		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(args.Path) == "" || args.Line <= 0 || strings.TrimSpace(args.Body) == "" {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review_comment needs a path, a positive line, and a non-empty body"}}}, nil, nil
 		}
-		review.AddComment(strings.TrimSpace(args.Path), args.Line, strings.TrimSpace(args.Body))
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
+		id := review.AddComment(strings.TrimSpace(args.Path), args.Line, strings.TrimSpace(args.Body))
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("staged as id %s", id)}}}, nil, nil
+	})
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_review_comments",
+		Description: "List comments staged so far, in stage order, paginated (default 50 per page). Each entry has an id, path, line, and a short excerpt of the body. Call this before staging a new finding to check you haven't already recorded it; retract a duplicate with unstage_review_comment(id).",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args listReviewCommentsInput) (*mcp.CallToolResult, any, error) {
+		limit := args.Limit
+		if limit <= 0 {
+			limit = defaultListLimit
+		}
+		offset := args.Offset
+		if offset < 0 {
+			offset = 0
+		}
+		all := review.ListComments()
+		total := len(all)
+		var page []vetting.StagedReviewComment
+		if offset < total {
+			end := offset + limit
+			if end > total {
+				end = total
+			}
+			page = all[offset:end]
+		}
+		if total == 0 {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "no comments staged yet"}}}, nil, nil
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "showing %d of %d staged comments (offset %d):\n", len(page), total, offset)
+		for _, c := range page {
+			fmt.Fprintf(&b, "id=%s path=%s line=%d excerpt=%q\n", c.ID, c.Path, c.Line, excerpt(c.Body, listExcerptLen))
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: b.String()}}}, nil, nil
+	})
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "unstage_review_comment",
+		Description: "Retract a previously staged inline comment by id (from stage_review_comment or list_review_comments) - e.g. after re-reading the file and deciding the finding doesn't hold, or because it duplicates one already staged. An unknown id is an error, not a silent no-op.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args unstageReviewCommentInput) (*mcp.CallToolResult, any, error) {
+		id := strings.TrimSpace(args.ID)
+		if id == "" || !review.RemoveComment(id) {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("no staged comment with id %q", id)}}}, nil, nil
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("unstaged %s", id)}}}, nil, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "stage_review",
