@@ -399,13 +399,13 @@ func implementTask(p issuesPayload, labels []string, partialFixLabel string) str
 }
 
 // planTask synthesizes the planning request for a plan-labeled issue - there is
-// no human comment to extract a task from, only the issue itself.
+// no human comment to extract a task from, only the issue itself. The issue
+// BODY is deliberately not embedded here: runMessage's #459 context block
+// (gh.text) already carries it verbatim, and embedding it again duplicated the
+// same text twice in the same prompt (#619).
 func planTask(p issuesPayload) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Produce an implementation plan for issue #%d: %s\n", p.Issue.Number, strings.TrimSpace(p.Issue.Title))
-	if body := strings.TrimSpace(p.Issue.Body); body != "" {
-		fmt.Fprintf(&b, "\nIssue description:\n%s\n", truncate(body, 4000))
-	}
 	b.WriteString("\nInvestigate the repository first, then lay out a concrete plan: the approach, the files to change, and how to verify it. A maintainer will review the plan before any implementation happens. Load and follow the `present-coding-plan` skill (load_skill) for how to structure and format the plan comment.")
 	return b.String()
 }
@@ -1430,9 +1430,23 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 		headSHA = "HEAD"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are handling a request from GitHub user @%s, who mentioned you on %s/%s %s #%d.\n\n",
-		p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
-	fmt.Fprintf(&b, "Their request:\n%s\n\n", task)
+	// A label-driven run (quack:plan, quack:implement, auto-review) never had a
+	// mention, and `task` is a synthesized instruction, not the user's own words -
+	// claiming otherwise fabricates an attribution and quotes prose nobody wrote (#619).
+	switch {
+	case p.planOnly:
+		fmt.Fprintf(&b, "A maintainer applied the planning label to %s/%s %s #%d.\n\n", owner, repo, kind, p.Issue.Number)
+	case p.isLabelTrigger:
+		fmt.Fprintf(&b, "This is an automated run on %s/%s %s #%d, triggered by a label (not a mention).\n\n", owner, repo, kind, p.Issue.Number)
+	default:
+		fmt.Fprintf(&b, "You are handling a request from GitHub user @%s, who mentioned you on %s/%s %s #%d.\n\n",
+			p.Comment.User.Login, owner, repo, kind, p.Issue.Number)
+	}
+	if p.isLabelTrigger {
+		fmt.Fprintf(&b, "Task:\n%s\n\n", task)
+	} else {
+		fmt.Fprintf(&b, "Their request:\n%s\n\n", task)
+	}
 	// An issue's loaded context: the full thread on first load, just the delta
 	// on resume (#459) - injected the SAME way for every trigger (mention,
 	// quack:plan, quack:implement), unlike the old issueThreadContext/
@@ -1444,20 +1458,33 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 	// head, never a new branch (#622) - state the ref so the model never has to
 	// ask for it or invent one, which either stalls the run on needs_input or
 	// opens a second, duplicate PR.
-	workBranchGuidance := "work_branch=a new branch name for this change"
+	// setupGuidance/deliveryClause vary by trigger: a plan-only run must carry
+	// ZERO commit/push/PR vocabulary, or the vetting completion gate reads a
+	// phantom delivery demand off the task and loops the worker (#619) -
+	// matching plan_judge criterion 6 (plan-only ⇒ delivery.kind "comment",
+	// setup optional).
+	setupGuidance := fmt.Sprintf("base_ref=%q, work_branch=a new branch name for this change", base)
+	deliveryClause := "Repo-changing work is committed locally; delivery pushes the branch and opens the PR after the " +
+		"trust gate passes - no node ever pushes or opens a PR itself. "
 	if isPR && !reviewOnly && !p.planOnly && snap.HeadRef != "" {
-		workBranchGuidance = fmt.Sprintf("work_branch=%q (this PR's EXISTING head branch - land your commits there, never on a new branch)", snap.HeadRef)
+		setupGuidance = fmt.Sprintf("base_ref=%q, work_branch=%q (this PR's EXISTING head branch - land your commits there, never on a new branch)", base, snap.HeadRef)
+	}
+	if p.planOnly {
+		// Zero commit/push/PR words, even negated - the planner can echo this
+		// paragraph's vocabulary into a node's task regardless of the sentence
+		// around it.
+		setupGuidance = fmt.Sprintf("base_ref=%q; setup is optional for a read-only plan", base)
+		deliveryClause = "This is a plan-only run: its output is a written plan, nothing more. "
 	}
 	fmt.Fprintf(&b, "The repository is %s/%s (default branch %q, clone URL %s). Declare it in your plan's `setup` "+
-		"(repo=the clone URL above, base_ref=%q, %s) - the harness "+
-		"clones it and checks out that branch for you, BEFORE any node runs, AT THE ROOT of each repo-touching "+
+		"(repo=the clone URL above, %s) - the harness "+
+		"clones it and checks it out for you, BEFORE any node runs, AT THE ROOT of each repo-touching "+
 		"node's own working directory: the repo IS that node's working directory, not a subdirectory inside it. "+
 		"That node's task must refer to files by plain repo-relative path (internal/foo.go, never ./repo/… or "+
 		"/workspace/…). A node whose job is to examine a DIFFERENT repository (a comparison target, a dependency) "+
 		"SHOULD be told to clone that other repo into its own working directory itself - that is allowed and "+
-		"expected. Repo-changing work is committed locally; delivery pushes the branch and opens the PR after the "+
-		"trust gate passes - no node ever pushes or opens a PR itself. ",
-		owner, repo, base, p.Repository.CloneURL, base, workBranchGuidance)
+		"expected. %s",
+		owner, repo, base, p.Repository.CloneURL, setupGuidance, deliveryClause)
 	if isPR {
 		fmt.Fprintf(&b, "This is pull request #%d (pull_number=%d).\n\n", p.Issue.Number, p.Issue.Number)
 		if t := strings.TrimSpace(snap.Title); t != "" {
