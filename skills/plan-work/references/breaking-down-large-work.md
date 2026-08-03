@@ -20,7 +20,7 @@ Cut where coupling is naturally low and cohesion high. Look for seams in this or
 
 ## 2. Size each node to one coherent unit
 
-Aim for the atomic sweet spot: big enough to deliver something demonstrable, small enough to implement and verify cleanly.
+Aim for the atomic sweet spot: big enough to deliver something demonstrable, small enough to implement and verify cleanly. Size against what the REQUEST asks for, not the repo's total size - a request already narrowed to a specific fix, file, or check stays that size regardless of how large the surrounding codebase is (same rule as SKILL.md's "Reviewing a PR" - ask-scope first, size heuristics second).
 
 - **Shippability is the real test.** A node is correctly sized if its output can compile, pass its tests, and stand on its own without breaking the build. If it can't be shown working at the end of the run, it's either too small (a layer fragment) or sliced wrong. [Stacked Pull Requests](https://www.michaelagreiler.com/stacked-pull-requests/)
 - **Rough upper bound.** Changesets past ~**400 lines** degrade review quality and hide defects; treat a node whose task clearly implies more than that as a candidate to split along a feature seam. [Pull Request Size Matters](https://bssw.io/items/pull-request-size-matters)
