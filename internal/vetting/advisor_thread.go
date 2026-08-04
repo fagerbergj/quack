@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sync"
 
@@ -358,16 +359,47 @@ func LookupMemSession(secret string) (MemSession, bool) {
 	return s, ok
 }
 
+// memSessionsConnected records which secrets a loopback MCP request has ever
+// actually landed for (memoryMCPHandler, via MarkMemSessionConnected) -
+// SEPARATE from memSessions so "registered" and "connected" stay
+// distinguishable: #640 was exactly a session that was registered, offered,
+// and negotiated successfully, yet nothing ever connected to it.
+var memSessionsConnected sync.Map
+
+// MarkMemSessionConnected records that secret's loopback MCP server actually
+// received a request - called from memoryMCPHandler on every resolved
+// session, idempotent. A no-op for an empty secret.
+func MarkMemSessionConnected(secret string) {
+	if secret == "" {
+		return
+	}
+	memSessionsConnected.Store(secret, struct{}{})
+}
+
 // UnregisterMemSession removes a secret's entry - called the moment the gate
 // has drained its staging buffer (node.go) so a straggler MCP call arriving
 // after the node's own commit decision fails outright instead of writing into
-// a buffer nobody will ever drain again. A no-op for an empty/already-removed
-// secret.
+// a buffer nobody will ever drain again. Callers double as a backstop
+// (dag.buildGateNodes defers this on top of node.go's own explicit call, for
+// early-return paths that skip the drain point) - a no-op for an
+// empty/already-removed secret, INCLUDING the connected-check below, so the
+// backstop's redundant call never re-evaluates and can't produce a second,
+// misleading warning.
+//
+// Warns if the session was registered but MarkMemSessionConnected was never
+// called for it (#640): the surface was offered and negotiated but nothing
+// ever attached to it - the exact failure mode that survived a full day of
+// dogfooding because it looks identical to a working, unused surface.
 func UnregisterMemSession(secret string) {
 	if secret == "" {
 		return
 	}
-	memSessions.Delete(secret)
+	if _, existed := memSessions.LoadAndDelete(secret); !existed {
+		return
+	}
+	if _, connected := memSessionsConnected.LoadAndDelete(secret); !connected {
+		slog.Warn("acp: loopback MCP session torn down having never connected - tools were offered but unreachable", "component", "vetting")
+	}
 }
 
 // advisorThreads is the process-local token → AdvisorTask registry. Written
