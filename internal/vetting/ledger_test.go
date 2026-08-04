@@ -187,7 +187,7 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 	act := workerActivity{workspace: []wsOp{
 		{tool: "read_file", detail: `read_file(path="README.md")`, sample: "# Real README"},
 	}}
-	got := buildJudgePrompt("", "rubric text", "", questionContent("do the task"), "the answer", "", act)
+	got := buildJudgePrompt("", "rubric text", "", questionContent("do the task"), "the answer", "", act, "")
 	if !strings.Contains(got, "Workspace activity") || !strings.Contains(got, `read_file(path="README.md")`) {
 		t.Errorf("judge prompt missing the workspace ledger:\n%s", got)
 	}
@@ -196,7 +196,7 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 	}
 	// A web-research node (no workspace ops) leaves the judge prompt exactly
 	// as before - no empty header.
-	got = buildJudgePrompt("", "rubric text", "", questionContent("q"), "a", "", workerActivity{})
+	got = buildJudgePrompt("", "rubric text", "", questionContent("q"), "a", "", workerActivity{}, "")
 	if strings.Contains(got, "Workspace activity") {
 		t.Errorf("judge prompt should carry no workspace section without ops:\n%s", got)
 	}

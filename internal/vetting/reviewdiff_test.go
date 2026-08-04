@@ -106,7 +106,7 @@ func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 				t.Fatalf("missing %q in:\n%s", want, got)
 			}
 
-			prompt := buildJudgePrompt("", "rubric text", "", questionContent("review this"), "looks good", got, act)
+			prompt := buildJudgePrompt("", "rubric text", "", questionContent("review this"), "looks good", got, act, "")
 			if !strings.Contains(prompt, want) {
 				t.Fatalf("judge prompt missing %q:\n%s", want, prompt)
 			}

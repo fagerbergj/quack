@@ -225,15 +225,16 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 
 // buildJudgePrompt is the user message handed to the agentic judge: the
 // constitution + rubric, the question, the worker's WORKSPACE ledger (when it
-// performed any fs/git/run_command operations - see ledger.go), and the answer
-// to judge. The judge does NOT see the worker's web retrieval, so the rubric
-// tells it to judge grounding by the presence of inline citations and never to
-// treat unfamiliar/recent cited facts as fabricated - its own world knowledge
-// is stale. Workspace operations are different: the ledger IS ground truth
+// performed any fs/git/run_command operations - see ledger.go), any criteria
+// already decided deterministically (knownFailures), and the answer to judge.
+// The judge does NOT see the worker's web retrieval, so the rubric tells it to
+// judge grounding by the presence of inline citations and never to treat
+// unfamiliar/recent cited facts as fabricated - its own world knowledge is
+// stale. Workspace operations are different: the ledger IS ground truth
 // (reconstructed from session events, not from the worker's narration), so a
 // claims_match_activity rubric criterion can hard-fail an answer asserting an
 // operation the ledger doesn't contain (the live-e2e fabricated-commit hole).
-func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity) string {
+func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
 	var sb strings.Builder
 	if constitution != "" {
 		sb.WriteString("Principles:\n")
@@ -263,8 +264,36 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 		sb.WriteString("\n\n")
 		sb.WriteString(changedFiles)
 	}
+	if knownFailures != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(knownFailures)
+	}
 	sb.WriteString("\n\nAnswer to judge:\n")
 	sb.WriteString(answer)
+	return sb.String()
+}
+
+// judgeKnownFailuresHeader tells the judge not to re-score already-failed criteria.
+const judgeKnownFailuresHeader = "The following criteria already FAILED a deterministic, code-owned check before you were asked to judge - they are decided, not yours to score. Do not re-score them and do not let them stand in for the rest of your assessment: judge everything else on its own merits, and make sure your feedback addresses what's left.\n"
+
+// judgeKnownFailuresSection formats det's below-threshold entries for the
+// judge prompt. "" when nothing in det is failing.
+func judgeKnownFailuresSection(det map[string]criterionScore, threshold float64) string {
+	var names []string
+	for name, c := range det {
+		if c.Score < threshold {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names) // stable order across runs (map iteration is random)
+	var sb strings.Builder
+	sb.WriteString(judgeKnownFailuresHeader)
+	for _, name := range names {
+		fmt.Fprintf(&sb, "- %s: %s\n", name, strings.TrimSpace(det[name].Reason))
+	}
 	return sb.String()
 }
 
@@ -410,9 +439,9 @@ func judgeCharBudget(cfg Config) int {
 // already capped), so it's what gets trimmed. shrinkFactor < 1.0 clamps
 // harder than the budget alone requires, for a retry after a call still fails
 // (the byte/4 estimate can undercount a dense answer).
-func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles string, act workerActivity, shrinkFactor float64) string {
+func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, shrinkFactor float64) string {
 	budget := judgeCharBudget(cfg)
-	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)
+	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
 	over := len(full) - budget
 	if over <= 0 && shrinkFactor >= 1.0 {
 		return answer
@@ -458,16 +487,19 @@ func isTransientJudgeErr(err error) bool {
 // runJudgeAgent budgets the judge prompt to the context window (fitJudgeAnswer),
 // retries a transient endpoint fault with backoff (#572), then falls back to
 // ONE harder-clamped retry for whatever's left (e.g. an unpredicted 400). The
-// caller (node.go) treats any remaining error as a failed-closed gate.
-func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) (verdict, error) {
+// caller (node.go) treats any remaining error as a failed-closed gate. det is
+// the deterministic criteria computed before this call; its below-threshold
+// entries reach the judge via judgeKnownFailuresSection.
+func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, emit func(*genai.Part) bool) (verdict, error) {
 	changedFiles := changedFilesSection(cfg, act)
-	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, act, 1.0)
+	known := judgeKnownFailuresSection(det, cfg.Threshold)
+	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
 
 	var v verdict
 	var readc *readCounter
 	var err error
 	for attempt := 1; attempt <= judgeRetryAttempts; attempt++ {
-		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, act, emit)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit)
 		if err == nil || ctx.Err() != nil || !isTransientJudgeErr(err) || attempt == judgeRetryAttempts {
 			break
 		}
@@ -487,7 +519,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 			slog.Warn("judge passed without reading the repo; re-judging once",
 				"component", "vetting", "agent", cfg.Agent, "score", v.Score)
 			v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
-				fitted+"\n\n"+unreadPassFeedback, changedFiles, act, emit)
+				fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, emit)
 			if err2 == nil {
 				if unreadPass(readc2, v2) {
 					slog.Warn("judge passed without reading the repo again; accepting the verdict",
@@ -499,11 +531,11 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		}
 		return v, err
 	}
-	retryAnswer := fitJudgeAnswer(cfg, question, fitted, changedFiles, act, 0.5)
+	retryAnswer := fitJudgeAnswer(cfg, question, fitted, changedFiles, known, act, 0.5)
 	if retryAnswer == fitted {
 		return verdict{}, err // nothing left to shrink; the retry would repeat the same call
 	}
-	v, _, err = runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, act, emit)
+	v, _, err = runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, known, act, emit)
 	return v, err
 }
 
@@ -516,7 +548,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 // The verdict is captured structurally via submit_verdict (sink). If the judge
 // ends without calling it, runJudgeRound falls back to parsing any text it
 // emitted, and failing that returns an error so the gate degrades gracefully.
-func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles string, act workerActivity, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
+func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
 	var sink verdict
 	judgeAgent, reads, err := factory(&sink)
 	if err != nil {
@@ -540,7 +572,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	promptText := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act)
+	promptText := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
 	// Stamp the node's advisor-thread token onto the judge's OWN content,
 	// trailing - the same placement AdvisorThreadMarker uses for a worker's
 	// continuation/revise prompt (see node.go's markerLine) - so the judge's

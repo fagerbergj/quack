@@ -71,7 +71,7 @@ func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
 	cfg := Config{Rubric: "score 0-10", IsReviewer: true, Threshold: 0.7}
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review this PR"}}}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "LGTM.", act, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "LGTM.", act, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
 	cfg := Config{Rubric: "score 0-10", IsReviewer: true, Threshold: 0.7}
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review this PR"}}}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "LGTM.", act, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "LGTM.", act, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestJudgeFindings_ContextDependentRefutationReachesRelatedFile(t *testing.T
 	cfg := Config{Rubric: "score 0-10", IsReviewer: true, Threshold: 0.7}
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review this PR"}}}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "See findings.", act, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "See findings.", act, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}

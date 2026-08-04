@@ -565,7 +565,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// uses for the worker, just via plain context.WithValue here since
 			// runJudgeAgent already takes a context.Context, not an adkagent.Context.
 			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID})
-			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, question, answer, act, judgePartEmitter(sink, nodeID, runID))
+			// Cheapest-first: compute before the judge runs, so it can be told
+			// what's already decided instead of scoring blind.
+			det := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
+			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, question, answer, act, det, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
 				// ERROR, not Warn: a judge failure means the answer is going out
 				// UNVETTED - that must be loud in the logs, not buried.
@@ -589,7 +592,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// refuted by independent skeptics sharing the SAME repo access - a
 			// no-op when cfg.Skeptic is unset (the default).
 			v = adversarialVerify(judgeCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
-			v = foldDeterministic(judgeCtx, v, answer, act, cfg)
+			v = mergeDeterministic(v, det)
 			feedback := composeFeedback(v, cfg.Threshold)
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitEvaluationResults(ledgerCtx, runID, v)
@@ -1184,15 +1187,13 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 	}
 }
 
-// foldDeterministic folds the code-owned criteria (citation backing, answer
-// length, retrieval grounding) into the judge's verdict and re-aggregates
-// (weakest-link). Mirrors the deterministic fold in gate.run's judge stage.
-func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
-	if v.Criteria == nil {
-		v.Criteria = map[string]criterionScore{}
-	}
+// computeDeterministicCriteria computes the code-owned criteria (citation
+// backing, length, retrieval grounding, checks, answer-shape, delivery) on
+// their own, with no verdict involved - callable before the judge runs.
+func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config) map[string]criterionScore {
+	det := map[string]criterionScore{}
 	if ls := lengthScore(answer); ls < 1.0 {
-		v.Criteria["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf("deterministic: %d chars", len(strings.TrimSpace(answer)))}
+		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf("deterministic: %d chars", len(strings.TrimSpace(answer)))}
 	}
 	// A retrieval agent that performed ZERO retrieval cannot have a grounded
 	// answer - it either answered from model memory (its citations, if any, are
@@ -1204,7 +1205,7 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	// a coding node that consulted the repo on disk instead of the web is not
 	// answering from model memory.
 	if cfg.RequireRetrieval && len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(act.paths) == 0 {
-		v.Criteria["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session - " +
+		det["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session - " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
 	// A read-only EXTERNAL agent (code-explorer/code-reviewer) that cloned a
@@ -1217,45 +1218,64 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	// node (synthesis, a code-implementer working in a pre-provisioned setup
 	// clone it never re-clones) is untouched.
 	if cfg.ExternalWorker && cfg.ReadOnly && len(act.clonedRepos) > 0 && len(act.paths) == 0 && act.greps == 0 {
-		v.Criteria["exploration_grounded"] = criterionScore{Score: 0, Reason: "deterministic: repo cloned but zero read_file/grep calls - " +
+		det["exploration_grounded"] = criterionScore{Score: 0, Reason: "deterministic: repo cloned but zero read_file/grep calls - " +
 			"the answer's findings are not grounded in anything actually read; explore the clone (read_file/grep) before reporting"}
 	}
-	if det, details, hasCites := citationScore(answer, act, resolveCiteCloneRoots(cfg, act)); hasCites {
-		v.Criteria["cites_sources"] = criterionScore{Score: det, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), det)}
+	if cs, details, hasCites := citationScore(answer, act, resolveCiteCloneRoots(cfg, act)); hasCites {
+		det["cites_sources"] = criterionScore{Score: cs, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), cs)}
 	}
 	// §4: deterministic gate checks - the planner's `checks` when it set them,
 	// else the ones derived from the repo on disk (checks.go). Untouched for a
 	// node that has neither (research, synthesis).
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
-		v.Criteria["checks_pass"] = c
+		det["checks_pass"] = c
 	}
 	// Mermaid validity (#448): checked against the answer AND every currently
 	// staged delivery body - whichever is about to ship to GitHub. Only added
 	// on a failure (mirrors sufficient_length above): a clean diagram, or no
 	// diagram at all, needs no entry.
 	if c, ok := mermaidCriterion(answer, act); ok {
-		v.Criteria["mermaid_valid"] = c
+		det["mermaid_valid"] = c
 	}
 	// Answer-shape check (#565): a leaked or malformed tool-call fragment in a
 	// deliverable is broken by construction, same family and fold as
 	// mermaid_valid above.
 	if c, ok := toolCallSyntaxCriterion(answer, act); ok {
-		v.Criteria["no_tool_call_syntax"] = c
+		det["no_tool_call_syntax"] = c
 	}
 	// Answer-shape check (#569): a pointer to a file this run wrote but never
 	// committed is broken by construction - the working directory holding it
 	// is discarded when the run ends.
 	if c, ok := danglingDeliverablePathCriterion(answer, act); ok {
-		v.Criteria["no_dangling_deliverable_path"] = c
+		det["no_dangling_deliverable_path"] = c
 	}
 	// Delivery: a node whose task says commit/push/PR cannot pass unless the
 	// ledger shows it did, and one told to POST a review on a PR cannot pass
 	// unless it submitted one (delivery.go). Untouched for a node whose task
 	// demands neither.
 	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly, cfg.IsReviewer) {
+		det[name] = c
+	}
+	return det
+}
+
+// mergeDeterministic folds a computed deterministic criteria map (see
+// computeDeterministicCriteria) into the judge's verdict and re-aggregates
+// (weakest-link).
+func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
+	if v.Criteria == nil {
+		v.Criteria = map[string]criterionScore{}
+	}
+	for name, c := range det {
 		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)
+}
+
+// foldDeterministic computes then merges in one step, for callers that don't
+// need the deterministic results before the judge runs.
+func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
+	return mergeDeterministic(v, computeDeterministicCriteria(ctx, answer, act, cfg))
 }
 
 // resolveCiteCloneRoots resolves every ABSOLUTE clone-dir root citationScore
