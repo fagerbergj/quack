@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // IntentClassifier is a single model round-trip: prompt in, raw text out.
@@ -61,5 +63,64 @@ func (e *Extension) isWorkRequest(ctx context.Context, task string) bool {
 	default:
 		slog.Warn("github: intent classifier returned an unparseable answer; treating mention as conversational", "component", "github", "answer", answer)
 		return false
+	}
+}
+
+// deliverablePrompt asks a bounded question: given the message, is the asker
+// after a review or a code change? Only reachable when the grant permits
+// BOTH (#689) - the prompt never offers a choice the grant would refuse, so
+// an answer this classifier accepts is safe by construction.
+const deliverablePrompt = `You classify a single GitHub PR comment as REVIEW or COMMIT.
+
+REVIEW means the asker wants the code assessed - e.g. "review this", "take another look", "double check the auth path".
+
+COMMIT means the asker wants a code change made and delivered - e.g. "fix this", "address these findings", "make sure that's valid, then fix it", "implement what we discussed". A request to verify findings before acting is still COMMIT if it ends in an ask to act on them.
+
+Reply with exactly one word: REVIEW or COMMIT. No punctuation, no explanation.
+
+Message:
+%s`
+
+// classifyPRDeliverable picks which of the grant's permitted PR deliverables
+// (review, commit) a message is asking for - the bounded question #689 uses
+// in place of vetting.ImplementationIntent's regex guess, for a genuine PR
+// work request. ok=false leaves the caller to fall back to that regex:
+// covers a grant permitting neither (nothing to classify between), the
+// classifier being unset/erroring/timing out, and an unparseable answer.
+//
+// When the grant permits only ONE of the two, that's the answer by
+// construction - no model call needed. Logged anyway (Debug): the grant, not
+// the message, decided, and that's worth being able to find in a trace.
+func (e *Extension) classifyPRDeliverable(ctx context.Context, task string, grant vetting.Grant) (kind string, ok bool) {
+	canReview, canCommit := grant.PostReview, grant.PushCommitsToPR
+	switch {
+	case canReview && !canCommit:
+		slog.Debug("github: PR deliverable bounded to the sole granted option", "component", "github", "kind", "review")
+		return "review", true
+	case canCommit && !canReview:
+		slog.Debug("github: PR deliverable bounded to the sole granted option", "component", "github", "kind", "commit")
+		return "commit", true
+	case !canReview && !canCommit:
+		return "", false
+	}
+
+	if e.intentClassifier == nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(ctx, intentClassifierTimeout)
+	defer cancel()
+	answer, err := e.intentClassifier.Classify(ctx, fmt.Sprintf(deliverablePrompt, task))
+	if err != nil {
+		slog.Warn("github: deliverable classifier failed; falling back to the implement/review wording heuristic", "component", "github", "err", err)
+		return "", false
+	}
+	switch up := strings.ToUpper(strings.TrimSpace(answer)); {
+	case strings.Contains(up, "COMMIT"):
+		return "commit", true
+	case strings.Contains(up, "REVIEW"):
+		return "review", true
+	default:
+		slog.Warn("github: deliverable classifier returned an unparseable answer; falling back to the implement/review wording heuristic", "component", "github", "answer", answer)
+		return "", false
 	}
 }
