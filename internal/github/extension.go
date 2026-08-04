@@ -16,6 +16,7 @@ import (
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // WebhookPath is where the inbound webhook receiver is mounted.
@@ -83,13 +84,33 @@ type Extension struct {
 	// conversational - the safe default, and what every construction that
 	// doesn't call SetIntentClassifier gets for free.
 	intentClassifier IntentClassifier
+	// jail + workspaceUserID resolve the sibling context directory (#659/#660,
+	// workspace.ContextDirScope) dispatch writes before a run - the SAME
+	// (userID, chatID) coordinate internal/acp's resolveNode independently
+	// re-derives to grant it read-only. nil jail (a test harness that never
+	// calls SetJail) skips context-dir writing entirely - best effort, same as
+	// every other e.store == nil guard in this package.
+	jail            *workspace.Jail
+	workspaceUserID string
 }
 
-// SetIntentClassifier wires the mention intent classifier used by runMessage.
-// Optional: an Extension with none set treats every PR mention as
-// conversational, same as before this classifier existed.
+// SetIntentClassifier wires the mention intent classifier used by the
+// envelope builder. Optional: an Extension with none set treats every PR
+// mention as conversational, same as before this classifier existed.
 func (e *Extension) SetIntentClassifier(c IntentClassifier) {
 	e.intentClassifier = c
+}
+
+// SetJail wires the workspace jail dispatch uses to write the GitHub trigger
+// envelope's sibling context directory (#660) - workspaceUserID must be the
+// SAME fixed identity every other filesystem/git tool resolves under
+// (internal/serve's localUserID), not the per-commenter GitHub login, so the
+// path an ACP round's resolveNode independently re-derives (internal/acp)
+// agrees with the one dispatch wrote. Optional: unset, dispatch skips writing
+// a context directory entirely.
+func (e *Extension) SetJail(j *workspace.Jail, workspaceUserID string) {
+	e.jail = j
+	e.workspaceUserID = workspaceUserID
 }
 
 // NewExtension wraps an already-built App (serve constructs the App early so it

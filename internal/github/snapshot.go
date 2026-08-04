@@ -24,6 +24,7 @@ type snapshotComment struct {
 	NodeID    string `json:"node_id,omitempty"`
 	Body      string `json:"body"`
 	User      string `json:"user"`
+	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 	// Hidden marks a minimized comment (GraphQL isMinimized) - kept in the
 	// snapshot but filtered out of the rendered context (renderSeedContext).
@@ -127,7 +128,7 @@ func (e *Extension) fetchSnapshot(ctx context.Context, owner, repo string, numbe
 	} else {
 		snap.Comments = make([]snapshotComment, 0, len(comments))
 		for _, c := range comments {
-			snap.Comments = append(snap.Comments, snapshotComment{ID: c.ID, NodeID: c.NodeID, Body: c.Body, User: c.User, UpdatedAt: c.UpdatedAt})
+			snap.Comments = append(snap.Comments, snapshotComment{ID: c.ID, NodeID: c.NodeID, Body: c.Body, User: c.User, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt})
 		}
 	}
 
@@ -329,100 +330,6 @@ func diffSnapshots(old, cur Snapshot, excludeCommentID int64) Delta {
 	d.FilesChanged = len(old.Files) != len(cur.Files)
 
 	return d
-}
-
-// renderDeltaDetail renders a delta as prose ready to inject as the turn's
-// context - the "resume" half of #459 §3 ("resume injects only the delta").
-// "" when the delta is empty.
-func renderDeltaDetail(d Delta) string {
-	if d.Empty() {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("Since your last look at this thread, the following changed on GitHub:\n")
-	if d.TitleChanged {
-		fmt.Fprintf(&b, "- Title changed: %q → %q\n", d.OldTitle, d.NewTitle)
-	}
-	if d.BodyChanged {
-		b.WriteString("- The description was edited.\n")
-	}
-	if d.StateChanged {
-		fmt.Fprintf(&b, "- State changed: %s → %s\n", d.OldState, d.NewState)
-	}
-	if len(d.LabelsAdded) > 0 {
-		fmt.Fprintf(&b, "- Labels added: %s\n", strings.Join(d.LabelsAdded, ", "))
-	}
-	if len(d.LabelsRemoved) > 0 {
-		fmt.Fprintf(&b, "- Labels removed: %s\n", strings.Join(d.LabelsRemoved, ", "))
-	}
-	for _, c := range d.CommentsAdded {
-		fmt.Fprintf(&b, "- New comment from @%s: %s\n", c.User, truncate(c.Body, 2000))
-	}
-	for _, c := range d.CommentsEdited {
-		fmt.Fprintf(&b, "- Edited comment from @%s (now reads): %s\n", c.User, truncate(c.Body, 2000))
-	}
-	for _, c := range d.CommentsDeleted {
-		fmt.Fprintf(&b, "- Deleted comment from @%s (was): %s\n", c.User, truncate(c.Body, 300))
-	}
-	for _, r := range d.ReviewsAdded {
-		fmt.Fprintf(&b, "- New review from @%s [%s]: %s\n", r.User, r.State, truncate(r.Body, 500))
-	}
-	for _, c := range d.ReviewCommentsAdded {
-		fmt.Fprintf(&b, "- New inline comment from @%s on %s:%d: %s\n", c.User, c.Path, c.Line, truncate(c.Body, 500))
-	}
-	for _, c := range d.NewCommits {
-		fmt.Fprintf(&b, "- New commit %s: %s\n", shortSHA(c.SHA), truncate(c.Message, 200))
-	}
-	return b.String()
-}
-
-// renderSeedContext renders a snapshot's full non-hidden context - the
-// "first load seeds the session" half of #459 §3. excludeCommentID drops the
-// triggering comment (already quoted separately as the request).
-func renderSeedContext(snap Snapshot, excludeCommentID int64) string {
-	var b strings.Builder
-	if body := strings.TrimSpace(snap.Body); body != "" {
-		fmt.Fprintf(&b, "Description:\n%s\n\n", truncate(body, 4000))
-	}
-	visible := make([]commentView, 0, len(snap.Comments))
-	for _, c := range snap.Comments {
-		if c.Hidden || (excludeCommentID != 0 && c.ID == excludeCommentID) {
-			continue
-		}
-		visible = append(visible, commentView{ID: c.ID, Body: c.Body, User: c.User})
-	}
-	if len(visible) > 0 {
-		const maxComments = 40
-		b.WriteString("Comments so far (oldest first):\n")
-		start := 0
-		if len(visible) > maxComments {
-			fmt.Fprintf(&b, "  … %d earlier comments omitted\n", len(visible)-maxComments)
-			start = len(visible) - maxComments
-		}
-		for _, c := range visible[start:] {
-			fmt.Fprintf(&b, "  @%s: %s\n", c.User, truncate(c.Body, 2000))
-		}
-	}
-	if snap.IsPR {
-		// Files are NOT rendered here - runMessage renders the CURRENT changed
-		// files list itself, every dispatch (not just first load): it's
-		// operational "what's in this diff" data for the reviewer, not part of
-		// the conversation history this function seeds.
-		disc := prDiscussion{}
-		for _, r := range snap.Reviews {
-			disc.Reviews = append(disc.Reviews, reviewView{Body: r.Body, State: r.State, User: r.User, SubmittedAt: r.SubmittedAt})
-		}
-		for _, c := range snap.ReviewComments {
-			if c.Resolved {
-				continue
-			}
-			disc.ReviewComments = append(disc.ReviewComments, reviewCommentView{Path: c.Path, Line: c.Line, Body: c.Body, User: c.User})
-		}
-		if s := discussionSummary(disc); s != "" {
-			b.WriteString("\nExisting discussion - take it into account, do NOT repeat it:\n" + s)
-		}
-	}
-	return b.String()
 }
 
 // shortSHA truncates a commit SHA to its conventional 7-char display form;

@@ -624,6 +624,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int) (handler
 		if judgeModel != nil {
 			ghExt.SetIntentClassifier(&modelIntentClassifier{model: judgeModel})
 		}
+		// The SAME (jail, localUserID) coordinate every filesystem/git tool
+		// resolves under (see WorkspaceUserID above) - so the context directory
+		// dispatch writes lands exactly where an ACP round's resolveNode
+		// independently re-derives it (internal/acp) to grant it read-only.
+		ghExt.SetJail(jail, localUserID)
 		extensions = append(extensions, ghExt)
 	}
 

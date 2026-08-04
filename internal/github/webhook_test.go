@@ -26,6 +26,7 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 const testSecret = "shhh-webhook-secret"
@@ -295,8 +296,8 @@ func TestHandleWebhookPROpenedTrigger(t *testing.T) {
 			if tt.wantRun {
 				select {
 				case msg := <-runner.gotMessage:
-					if !strings.Contains(msg, "acme/widgets") || !strings.Contains(msg, "pull_number=7") {
-						t.Errorf("run message missing repo/pull_number: %q", msg)
+					if !strings.Contains(msg, `<pull_request number="7">`) || !strings.Contains(msg, `"name":"widgets"`) {
+						t.Errorf("run message missing the hoisted PR ask / repo event: %q", msg)
 					}
 				case <-time.After(2 * time.Second):
 					t.Fatal("pr_opened trigger did not dispatch a run")
@@ -433,7 +434,7 @@ func TestHandleWebhookMentionTriggersRun(t *testing.T) {
 
 	select {
 	case msg := <-runner.gotMessage:
-		if !strings.Contains(msg, "add a feature") || !strings.Contains(msg, "acme/widgets") {
+		if !strings.Contains(msg, "add a feature") || !strings.Contains(msg, `"name":"widgets"`) {
 			t.Errorf("run message missing task or repo: %q", msg)
 		}
 	case <-time.After(2 * time.Second):
@@ -513,7 +514,7 @@ func TestHandleWebhookRequestChangesEngagesOwnPR(t *testing.T) {
 	}
 	select {
 	case msg := <-runner.gotMessage:
-		for _, want := range []string{"requested changes", "@alice"} {
+		for _, want := range []string{"requested changes", `"login":"alice"`} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("engagement message missing %q: %q", want, msg)
 			}
@@ -1128,10 +1129,12 @@ func TestAckReactionFailureDoesNotBlockRun(t *testing.T) {
 	}
 }
 
-// seedGC builds a first-load githubContext from a snapshot - runMessage's
-// most common test fixture (no store, no prior snapshot to diff against).
+// seedGC builds a first-load githubContext from a snapshot - buildEnvelope's
+// most common test fixture (no store, no prior snapshot to diff against, so
+// delta stays nil and the envelope seeds everything).
 func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
-	return githubContext{snap: snap, firstLoad: true, text: renderSeedContext(snap, excludeCommentID)}
+	_ = excludeCommentID // exclusion is now the caller's issueCommentPayload.Comment.ID, read by commentsBlock
+	return githubContext{snap: snap, firstLoad: true}
 }
 
 // fakeIntentClassifier is a fixed-verdict IntentClassifier double: tests
@@ -1152,170 +1155,106 @@ func (f *fakeIntentClassifier) Classify(_ context.Context, _ string) (string, er
 	return f.verdict, nil
 }
 
-func TestRunMessageReviewAwareForPR(t *testing.T) {
+// TestBuildEnvelopeDeliverableClassification pins the classification
+// buildEnvelope keeps from the old prose builder: a PR mention with genuine
+// review intent gets the review deliverable; one with implement intent
+// (vetting.ImplementationIntent) gets the generic implement deliverable; a
+// plain issue mention never mentions review at all.
+func TestBuildEnvelopeDeliverableClassification(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	// Every case below is a genuine work request; drive the framing decision
-	// with a fixed classifier verdict rather than tuning task prose.
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0))
-	for _, want := range []string{
-		"focusing on the auth path", // user's verbatim request preserved
-		"pull_number=7",             // the PR/issue number surfaced for the review tools
-		"github_add_review_comment",
-		"stage_review",
-		"github_list_pr_comments",
-		"REVIEW-ONLY", // a review carries no delivery path
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("PR review message missing %q\n---\n%s", want, msg)
-		}
+	env := ext.buildEnvelope(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(env, "<deliverable>a review with inline comments and a verdict</deliverable>") {
+		t.Errorf("review-intent PR envelope missing the review deliverable:\n%s", env)
 	}
-	// A review must carry NO delivery language, or the vetting gate reads a phantom
-	// commit/push demand off the node task and loops the worker (re-cloning,
-	// re-reviewing) to no end. This is the regression that made a review take 30+ min.
-	for _, forbidden := range []string{"stage_pr", "git_push", "commit your work"} {
-		if strings.Contains(msg, forbidden) {
-			t.Errorf("PR review message must not mention delivery (%q):\n%s", forbidden, msg)
-		}
+	if !strings.Contains(env, `<pull_request number="7">`) {
+		t.Errorf("envelope missing the hoisted pull_request ask block:\n%s", env)
 	}
 
-	// With the PR's refs known, the reviewer is told the clone is ALREADY on the
-	// head branch (setup's CheckoutExistingHead - see internal/tools/setup.go)
-	// with the diff ready - no checkout needed, and no stale "empty diff" claim.
-	withRefs := ext.runMessage(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main"}, 0))
-	for _, want := range []string{"already checked out on the PR's head branch `feat/x`", "git_diff main...feat/x"} {
-		if !strings.Contains(withRefs, want) {
-			t.Errorf("PR review message missing diff-ready guidance %q\n---\n%s", want, withRefs)
-		}
-	}
-	if strings.Contains(withRefs, "git_checkout") {
-		t.Errorf("PR review message should no longer tell the reviewer to check out the head - setup does it now:\n%s", withRefs)
+	// A PR request that DOES ask to change code gets the implement deliverable.
+	implEnv := ext.buildEnvelope(context.Background(), pr, "fix the null dereference in the auth path and open a PR", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(implEnv, "<deliverable>a commit addressing the requested change</deliverable>") {
+		t.Errorf("implement-intent PR envelope missing the implement deliverable:\n%s", implEnv)
 	}
 
-	// A PR request that DOES ask to change code keeps the implement path.
-	impl := ext.runMessage(context.Background(), pr, "fix the null dereference in the auth path and open a PR", seedGC(Snapshot{IsPR: true}, 0))
-	if !strings.Contains(impl, "stage_pr") {
-		t.Errorf("implement-intent PR message should keep the implement path:\n%s", impl)
-	}
-
-	// A non-PR issue stays implement-capable: no review-tool guidance.
+	// A non-PR issue mention never mentions review, and hoists <issue> not <pull_request>.
 	var issue issueCommentPayload
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.runMessage(context.Background(), issue, "add a feature", seedGC(Snapshot{}, 0))
-	if strings.Contains(imsg, "stage_review") || strings.Contains(imsg, "pull_number=") {
-		t.Errorf("issue run message should not mention the review tools:\n%s", imsg)
+	imsg := ext.buildEnvelope(context.Background(), issue, "add a feature", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil)
+	if strings.Contains(imsg, "a review with inline comments") {
+		t.Errorf("issue envelope should not mention the review deliverable:\n%s", imsg)
 	}
-	if !strings.Contains(imsg, "stage_pr") {
-		t.Errorf("issue run message should keep implement-path guidance:\n%s", imsg)
-	}
-}
-
-// TestRunMessageStatesHeadBranchForPRFix pins the #622 fix: a request to fix
-// an already-open PR (the pr_fix/ci_fix trigger shape) must state the PR's
-// real head branch explicitly, so the model never has to ask for it
-// (needs_input) or invent a new one (which would open a duplicate PR). Before
-// this fix the generic setup guidance always said "work_branch=a new branch
-// name for this change", contradicting fixTask's own "do not start a new
-// branch" instruction.
-func TestRunMessageStatesHeadBranchForPRFix(t *testing.T) {
-	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	// A fix run is dispatched with isLabelTrigger=false (session reuse - see
-	// cifix.go), so it goes through the same WORK/CONVERSATIONAL classifier as
-	// a mention; drive that verdict directly rather than tuning task prose.
-	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
-
-	var pr issueCommentPayload
-	if err := json.Unmarshal(pullCommentBody("@quack fix the failing checks"), &pr); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	task := fixTask("CI is failing on this pull request (auto-heal attempt 1 of 3).", "- go-test (https://ci/42)\n  1 test failed\n")
-	gh := seedGC(Snapshot{IsPR: true, HeadRef: "fix/622-something", HeadSHA: "abc123", BaseRef: "main"}, 0)
-	msg := ext.runMessage(context.Background(), pr, task, gh)
-
-	for _, want := range []string{
-		`work_branch="fix/622-something"`, // the real head, not an invented name
-		"this PR's EXISTING head branch",
-		"never on a new branch",
-		"UPDATES pull request #7",
-		"it does not open a new one",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("PR-fix message missing %q\n---\n%s", want, msg)
-		}
-	}
-	if strings.Contains(msg, "work_branch=a new branch name for this change") {
-		t.Errorf("PR-fix message should not fall back to the generic new-branch guidance:\n%s", msg)
+	if !strings.Contains(imsg, `<issue number="7">`) {
+		t.Errorf("issue envelope missing the hoisted issue ask block:\n%s", imsg)
 	}
 }
 
-// TestSeedContextInMention pins the first-load-seeds-the-session half of #459
-// §3 for a plain issue mention: the issue body plus prior comments (quack's
-// own included), triggering comment excluded (it's quoted as the request).
-func TestSeedContextInMention(t *testing.T) {
+// TestBuildEnvelopeSeedsFullOnFirstLoad pins the seed half of #666's session
+// model: session creation seeds the whole comment thread as <comments
+// count="N">, triggering comment excluded (it's already inside the <event>
+// block's own comment.body).
+func TestBuildEnvelopeSeedsFullOnFirstLoad(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-
 	var issue issueCommentPayload
 	issue.Issue.Number = 269
 	issue.Issue.Title = "Evaluate mem0"
-	issue.Issue.Body = "We should evaluate mem0 as a memory backend."
 	issue.Comment.ID = 999 // the triggering comment
-	issue.Repository.Name, issue.Repository.Owner.Login = "quack", "acme"
-	issue.Repository.CloneURL = "https://github.com/acme/quack.git"
 
 	snap := Snapshot{
 		Body: "We should evaluate mem0 as a memory backend.",
 		Comments: []snapshotComment{
-			{ID: 100, User: "hegu-1", Body: "The gate should stay the authority."},
-			{ID: 200, User: "quack-jason[bot]", Body: "# Implementation Plan: mem0 as a vector store"},
-			{ID: 999, User: "fagerbergj", Body: "rework it - mem0 is not a store"}, // the trigger; must be excluded
+			{ID: 100, User: "hegu-1", Body: "The gate should stay the authority.", CreatedAt: "t0"},
+			{ID: 200, User: "quack-jason[bot]", Body: "# Implementation Plan: mem0 as a vector store", CreatedAt: "t1"},
+			{ID: 999, User: "fagerbergj", Body: "rework it - mem0 is not a store", CreatedAt: "t2"},
 		},
 	}
-
-	msg := ext.runMessage(context.Background(), issue, "rework it - mem0 is not a store", seedGC(snap, issue.Comment.ID))
-	for _, want := range []string{
-		"evaluate mem0 as a memory backend",        // issue body
-		"hegu-1", "gate should stay the authority", // a prior participant
-		"Implementation Plan: mem0 as a vector store", // quack's own prior plan
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("mention prompt missing seeded context %q:\n%s", want, msg)
-		}
+	env := ext.buildEnvelope(context.Background(), issue, "rework it - mem0 is not a store", seedGC(snap, issue.Comment.ID), vetting.Grant{}, "", nil)
+	if !strings.Contains(env, "evaluate mem0 as a memory backend") {
+		t.Errorf("envelope missing the seeded issue body:\n%s", env)
 	}
-	// The triggering comment is quoted as the request, not duplicated in the thread.
-	if strings.Count(msg, "rework it - mem0 is not a store") != 1 {
-		t.Errorf("triggering comment should appear exactly once (as the request), not in the thread dump:\n%s", msg)
+	if !strings.Contains(env, `<comments count="2">`) {
+		t.Errorf("envelope missing the full first-load comment seed (2, excluding the trigger):\n%s", env)
+	}
+	if strings.Contains(env, "hegu-1") == false || strings.Contains(env, "Implementation Plan: mem0 as a vector store") == false {
+		t.Errorf("envelope missing seeded comment content:\n%s", env)
+	}
+	// The triggering comment is quoted once, inside the event block - not
+	// duplicated into the seeded comments array too.
+	if n := strings.Count(env, "rework it - mem0 is not a store"); n != 0 {
+		t.Errorf("triggering comment should not appear in the seeded comments array (n=%d):\n%s", n, env)
 	}
 }
 
-// TestResumeInjectsOnlyTheDelta pins #459's core behavior: a resume (a prior
-// snapshot exists) injects ONLY what changed, not the whole thread again - and
-// an unchanged snapshot injects an empty/no-op delta.
-func TestResumeInjectsOnlyTheDelta(t *testing.T) {
+// TestBuildEnvelopeResumeSeedsOnlyDelta pins the resume half of #666: a
+// later run seeds only what changed - new/edited/deleted comments - never
+// the whole thread again.
+func TestBuildEnvelopeResumeSeedsOnlyDelta(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	var issue issueCommentPayload
 	issue.Issue.Number = 7
-	issue.Repository.Name, issue.Repository.Owner.Login = "widgets", "acme"
 
-	old := Snapshot{Body: "desc", Comments: []snapshotComment{{ID: 1, User: "bob", Body: "first comment"}}}
+	old := Snapshot{Body: "desc", Comments: []snapshotComment{{ID: 1, User: "bob", Body: "first comment", CreatedAt: "t0"}}}
 	cur := Snapshot{Body: "desc", Comments: []snapshotComment{
-		{ID: 1, User: "bob", Body: "first comment"},
-		{ID: 2, User: "carol", Body: "a brand new comment"},
+		{ID: 1, User: "bob", Body: "first comment", CreatedAt: "t0"},
+		{ID: 2, User: "carol", Body: "a brand new comment", CreatedAt: "t1"},
 	}}
 	delta := diffSnapshots(old, cur, 0)
-	gh := githubContext{snap: cur, text: renderDeltaDetail(delta)}
-	msg := ext.runMessage(context.Background(), issue, "what's new?", gh)
-	if !strings.Contains(msg, "a brand new comment") {
-		t.Errorf("resume message missing the new comment:\n%s", msg)
+	env := ext.buildEnvelope(context.Background(), issue, "what's new?", githubContext{snap: cur, delta: &delta}, vetting.Grant{}, "", nil)
+	if !strings.Contains(env, "a brand new comment") {
+		t.Errorf("resume envelope missing the new comment:\n%s", env)
 	}
-	if strings.Contains(msg, "first comment") {
-		t.Errorf("resume message re-injected an UNCHANGED comment (should only carry the delta):\n%s", msg)
+	if strings.Contains(env, "first comment") {
+		t.Errorf("resume envelope re-injected an UNCHANGED comment (should only carry the delta):\n%s", env)
+	}
+	if !strings.Contains(env, `<comments new="1" edited="0" deleted="0">`) {
+		t.Errorf("resume envelope missing the delta attributes:\n%s", env)
 	}
 
 	// An unchanged snapshot: the delta is empty, nothing extra is injected.
@@ -1323,16 +1262,17 @@ func TestResumeInjectsOnlyTheDelta(t *testing.T) {
 	if !unchanged.Empty() {
 		t.Fatalf("diffSnapshots(cur, cur) = %+v; want an empty delta", unchanged)
 	}
-	ghNoop := githubContext{snap: cur, text: renderDeltaDetail(unchanged)}
-	noopMsg := ext.runMessage(context.Background(), issue, "anything new?", ghNoop)
-	if strings.Contains(noopMsg, "a brand new comment") || strings.Contains(noopMsg, "first comment") {
-		t.Errorf("an unchanged-snapshot resume should inject no comment content:\n%s", noopMsg)
+	noopEnv := ext.buildEnvelope(context.Background(), issue, "anything new?", githubContext{snap: cur, delta: &unchanged}, vetting.Grant{}, "", nil)
+	if strings.Contains(noopEnv, "a brand new comment") || strings.Contains(noopEnv, "first comment") {
+		t.Errorf("an unchanged-snapshot resume should inject no comment content:\n%s", noopEnv)
 	}
 }
 
-// The plan-time PR context (title, changed files, discussion) is folded into the
-// run message so the orchestrator can slice the review without a node fetching it.
-func TestRunMessageIncludesReviewContext(t *testing.T) {
+// TestBuildEnvelopeChangedFilesOnPRRuns pins the scope note: <changed_files>
+// is seeded on PR runs only, with GitHub's own filename/additions/deletions
+// shape (no reshaping needed - changedFile already matches pulls/{n}/files
+// field-for-field).
+func TestBuildEnvelopeChangedFilesOnPRRuns(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 	var pr issueCommentPayload
@@ -1340,33 +1280,29 @@ func TestRunMessageIncludesReviewContext(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	snap := Snapshot{
-		IsPR: true, HeadRef: "feat/x", HeadSHA: "abc123", BaseRef: "main",
-		Title: "Add widget", Body: "This adds a widget.",
-		Files:          []changedFile{{Filename: "a.go", Additions: 10, Deletions: 2}, {Filename: "b.go", Additions: 1}},
-		Comments:       []snapshotComment{{User: "bob", Body: "looks good"}},
-		ReviewComments: []snapshotReviewComment{{User: "carol", Path: "a.go", Line: 5, Body: "nit"}},
+		IsPR:  true,
+		Files: []changedFile{{Filename: "a.go", Additions: 10, Deletions: 2}, {Filename: "b.go", Additions: 1}},
 	}
-	msg := ext.runMessage(context.Background(), pr, "review this", seedGC(snap, 0))
-	for _, want := range []string{
-		"PR title: Add widget", "This adds a widget", // intent
-		"Changed files (2)", "a.go (+10/-2)", "b.go (+1/-0)", // slicing data
-		"@bob: looks good",   // conversation, don't repeat
-		"@carol a.go:5: nit", // inline comment, don't repeat
-		"already checked out on the PR's head branch `feat/x`", // diff-ready guidance
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("run message missing %q\n---\n%s", want, msg)
-		}
+	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(snap, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(env, `<changed_files count="2" additions="11" deletions="2">`) {
+		t.Errorf("envelope missing the changed_files summary attributes:\n%s", env)
+	}
+	if !strings.Contains(env, `"filename":"a.go"`) || !strings.Contains(env, `"additions":10`) {
+		t.Errorf("envelope missing per-file churn in GitHub's own field names:\n%s", env)
+	}
+
+	var issue issueCommentPayload
+	issue.Issue.Number = 7
+	issueEnv := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil)
+	if strings.Contains(issueEnv, "<changed_files") {
+		t.Errorf("an issue-scoped envelope should carry no changed_files block:\n%s", issueEnv)
 	}
 }
 
-// #506: a review request whose discussion already contains a prior review
-// (quack's own, or - the broader trigger reported in dogfooding - a human's)
-// must still tell the orchestrator to post a FRESH review. Without an explicit
-// override, "Existing discussion - do NOT repeat it" plus a prior review already
-// answering the PR reads as "already handled" and the run produces no reviewer
-// node at all (empty answer).
-func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
+// TestBuildEnvelopeIncrementalReviewScoping pins #459 §5 under the envelope:
+// a resume with new commits gets the "what's new" deliverable; a resume with
+// none says a full review is not owed either.
+func TestBuildEnvelopeIncrementalReviewScoping(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 	var pr issueCommentPayload
@@ -1374,184 +1310,83 @@ func TestRunMessageReviewRequiredDespitePriorReview(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	cases := []struct {
-		name string
-		snap Snapshot
-	}{
-		{"prior human review", Snapshot{IsPR: true, Reviews: []snapshotReview{
-			{User: "fagerbergj", State: "APPROVED", Body: "LGTM"},
-		}}},
-		{"prior quack review", Snapshot{IsPR: true, Reviews: []snapshotReview{
-			{User: "quack-jason[bot]", State: "COMMENTED", Body: "Two blockers in the auth path."},
-		}}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			msg := ext.runMessage(context.Background(), pr, "review this", seedGC(c.snap, 0))
-			if !strings.Contains(msg, "fresh review") && !strings.Contains(msg, "not a reason to skip") {
-				t.Errorf("review message with a prior review present must explicitly require a fresh review regardless:\n%s", msg)
-			}
-		})
+	// First-time review: no prior baseline, the full-review deliverable.
+	first := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(first, "<deliverable>a review with inline comments and a verdict</deliverable>") {
+		t.Errorf("first-time review should get the full-review deliverable:\n%s", first)
 	}
 
-	// The override is review-intent-gated: an implement task ("fix the review
-	// feedback and push") on a PR with a prior review must NOT be told to stage
-	// a review instead of implementing.
-	implTask := "fix the review feedback and push"
-	implMsg := ext.runMessage(context.Background(), pr, implTask, seedGC(Snapshot{IsPR: true, Reviews: []snapshotReview{
-		{User: "fagerbergj", State: "REQUEST_CHANGES", Body: "fix the auth bug"},
-	}}, 0))
-	for _, absent := range []string{"fresh review", "REQUEST FOR A REVIEW"} {
-		if strings.Contains(implMsg, absent) {
-			t.Errorf("implement task with a prior review present must not carry the review override (%q):\n%s", absent, implMsg)
-		}
+	// Resume with new commits: the incremental deliverable, naming the SHA.
+	withNew := ext.buildEnvelope(context.Background(), pr, "review this", githubContext{
+		snap:       Snapshot{IsPR: true},
+		newCommits: []snapshotCommit{{SHA: "abc1234567", Message: "fix the bug"}},
+	}, vetting.Grant{}, "", nil)
+	if !strings.Contains(withNew, "a review of what is new since the last one") || !strings.Contains(withNew, "abc1234") {
+		t.Errorf("incremental review envelope missing the scoped deliverable naming the new commit:\n%s", withNew)
+	}
+
+	// Resume with zero new commits still reads as "scoped to what's new" (a
+	// review baseline exists), not the first-time framing.
+	noneNew := ext.buildEnvelope(context.Background(), pr, "review this", githubContext{snap: Snapshot{IsPR: true}, newCommits: []snapshotCommit{}}, vetting.Grant{}, "", nil)
+	if !strings.Contains(noneNew, "already looked at every commit") {
+		t.Errorf("zero-new-commits resume should say there's nothing new, not the first-time framing:\n%s", noneNew)
 	}
 }
 
-// A conversational follow-up on a PR is answered from the session - the message
-// must NOT hand over the clone-and-review playbook, or the orchestrator re-reviews
-// instead of answering.
-func TestRunMessageConversationalFollowup(t *testing.T) {
+// TestBuildEnvelopeConversationalFollowup pins that a PR mention classified
+// CONVERSATIONAL gets the reply deliverable, never review/implement
+// language - and a genuine work request still gets the work deliverable.
+func TestBuildEnvelopeConversationalFollowup(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most? No need to re-review."), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(context.Background(), pr, "which finding matters most? No need to re-review.", seedGC(Snapshot{IsPR: true}, 0))
-	for _, want := range []string{"conversational follow-up", "Answer it directly", "Do NOT clone"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("conversational message missing %q\n---\n%s", want, msg)
-		}
+	env := ext.buildEnvelope(context.Background(), pr, "which finding matters most? No need to re-review.", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(env, "<deliverable>a reply to their message, posted as a comment") {
+		t.Errorf("conversational envelope missing the reply deliverable:\n%s", env)
 	}
-	for _, absent := range []string{"git_clone", "stage_review", "git_checkout"} {
-		if strings.Contains(msg, absent) {
-			t.Errorf("conversational message must not carry the review playbook (%q)\n---\n%s", absent, msg)
-		}
-	}
-	// A genuine review request, classified as a work request, gets the full playbook.
+
+	// A genuine review request, classified as a work request, gets the work deliverable.
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
-	if rev := ext.runMessage(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0)); !strings.Contains(rev, "stage_review") {
-		t.Errorf("a review request must still carry the review tools:\n%s", rev)
+	rev := ext.buildEnvelope(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(rev, "<deliverable>a review with inline comments and a verdict</deliverable>") {
+		t.Errorf("a classified work request must still get the review deliverable:\n%s", rev)
 	}
 }
 
-// A PR follow-up must get the discussion injected (not depend on session
-// continuity alone), with the triggering comment excluded - #456 extended to
-// PRs, now via the unified snapshot seed (#459).
-func TestPRFollowupInjectsDiscussion(t *testing.T) {
-	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	var pr issueCommentPayload
-	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most?"), &pr); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	pr.Comment.ID = 555
-	snap := Snapshot{
-		IsPR:    true,
-		Reviews: []snapshotReview{{User: "quack-jason[bot]", State: "COMMENTED", Body: "Two blockers in the auth path."}},
-		Comments: []snapshotComment{
-			{ID: 300, User: "hegu-1", Body: "Agree, the second one is the real issue."},
-			{ID: 555, User: "fagerbergj", Body: "which finding matters most?"}, // the trigger; must be excluded
-		},
-	}
-	msg := ext.runMessage(context.Background(), pr, "which finding matters most?", seedGC(snap, pr.Comment.ID))
-	for _, want := range []string{
-		"conversation so far on this pull request",
-		"Two blockers in the auth path", // quack's own prior review
-		"hegu-1", "the real issue",      // another participant
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("PR follow-up missing injected discussion %q:\n%s", want, msg)
-		}
-	}
-	if strings.Count(msg, "which finding matters most?") != 1 {
-		t.Errorf("triggering comment should appear once (as the message), not duplicated in the thread:\n%s", msg)
-	}
-	for _, absent := range []string{"git_clone", "stage_review"} {
-		if strings.Contains(msg, absent) {
-			t.Errorf("PR follow-up must not carry the review playbook (%q):\n%s", absent, msg)
-		}
-	}
-}
-
-// TestRunMessageIncrementalReviewScoping pins #459 §5: a resume with new
-// commits scopes the review to just those; a resume with none says so
-// explicitly instead of triggering a full re-review.
-func TestRunMessageIncrementalReviewScoping(t *testing.T) {
-	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
-	var pr issueCommentPayload
-	if err := json.Unmarshal(pullCommentBody("@quack review this"), &pr); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	// First-time review: no scoping language, full playbook.
-	first := ext.runMessage(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true}, 0))
-	for _, absent := range []string{"Focus your review on what's NEW", "already looked at every commit"} {
-		if strings.Contains(first, absent) {
-			t.Errorf("first-time review should not carry incremental-review framing (%q):\n%s", absent, first)
-		}
-	}
-
-	// Resume with new commits: scoped to exactly those, by SHA, not a re-review.
-	withNew := ext.runMessage(context.Background(), pr, "review this", githubContext{
-		snap:       Snapshot{IsPR: true},
-		newCommits: []snapshotCommit{{SHA: "abc1234567", Message: "fix the bug"}},
-	})
-	for _, want := range []string{"Focus your review on what's NEW", "abc1234", "git show"} {
-		if !strings.Contains(withNew, want) {
-			t.Errorf("incremental review message missing %q:\n%s", want, withNew)
-		}
-	}
-
-	// Resume with zero new commits (e.g. a rebase with no new work): says so,
-	// does not trigger a full re-review.
-	noneNew := ext.runMessage(context.Background(), pr, "review this", githubContext{snap: Snapshot{IsPR: true}, newCommits: []snapshotCommit{}})
-	if !strings.Contains(noneNew, "already looked at every commit") {
-		t.Errorf("zero-new-commits resume should say there's nothing new:\n%s", noneNew)
-	}
-}
-
-// TestRunMessageMentionClassifiedAsWork: a PR mention the classifier calls a
-// work request gets the review/work framing, not the conversational one.
-func TestRunMessageMentionClassifiedAsWork(t *testing.T) {
+// TestBuildEnvelopeMentionClassifiedAsWork/Conversational pin that the
+// classifier's verdict (not task wording) decides the deliverable.
+func TestBuildEnvelopeMentionClassifiedAsWork(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0))
-	if !strings.Contains(msg, "stage_review") {
-		t.Errorf("a mention classified WORK should get the review framing:\n%s", msg)
-	}
-	if strings.Contains(msg, "conversational follow-up") {
-		t.Errorf("a mention classified WORK should not get the conversational framing:\n%s", msg)
+	env := ext.buildEnvelope(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if strings.Contains(env, "a reply to their message") {
+		t.Errorf("a mention classified WORK should not get the conversational deliverable:\n%s", env)
 	}
 }
 
-// TestRunMessageMentionClassifiedAsConversational: a PR mention the classifier
-// calls conversational gets the answer-from-context framing, not the review
-// playbook.
-func TestRunMessageMentionClassifiedAsConversational(t *testing.T) {
+func TestBuildEnvelopeMentionClassifiedAsConversational(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "CONVERSATIONAL"})
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack what did you mean by that finding?"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(context.Background(), pr, "what did you mean by that finding?", seedGC(Snapshot{IsPR: true}, 0))
-	if !strings.Contains(msg, "conversational follow-up") {
-		t.Errorf("a mention classified CONVERSATIONAL should get the conversational framing:\n%s", msg)
-	}
-	if strings.Contains(msg, "stage_review") {
-		t.Errorf("a mention classified CONVERSATIONAL should not carry the review playbook:\n%s", msg)
+	env := ext.buildEnvelope(context.Background(), pr, "what did you mean by that finding?", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(env, "a reply to their message") {
+		t.Errorf("a mention classified CONVERSATIONAL should get the reply deliverable:\n%s", env)
 	}
 }
 
-// TestRunMessageLabelTriggerNeverClassifies pins rule 1: a label trigger is
-// work by construction, so runMessage must never call the classifier for it -
-// not even to double-check.
-func TestRunMessageLabelTriggerNeverClassifies(t *testing.T) {
+// TestBuildEnvelopeLabelTriggerNeverClassifies pins rule 1: a label trigger
+// is work by construction, so buildEnvelope must never call the classifier
+// for it - not even to double-check.
+func TestBuildEnvelopeLabelTriggerNeverClassifies(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	classifier := &fakeIntentClassifier{verdict: "CONVERSATIONAL"} // even a "no" verdict must not flip a label trigger
 	ext.SetIntentClassifier(classifier)
@@ -1561,44 +1396,44 @@ func TestRunMessageLabelTriggerNeverClassifies(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	pr.isLabelTrigger = true
-	msg := ext.runMessage(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true}, 0))
-	if !strings.Contains(msg, "stage_review") {
-		t.Errorf("a label-triggered PR request should keep the review/work framing:\n%s", msg)
+	env := ext.buildEnvelope(context.Background(), pr, autoReviewTask, seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if strings.Contains(env, "a reply to their message") {
+		t.Errorf("a label-triggered PR request should never get the conversational deliverable:\n%s", env)
 	}
 	if calls := atomic.LoadInt32(&classifier.calls); calls != 0 {
 		t.Errorf("classifier called %d times for a label trigger, want 0 (work by construction)", calls)
 	}
 }
 
-// TestRunMessageLabelTriggerDoesNotClaimMention pins #619 defect 1: a
-// label-driven run (auto-review, quack:plan, quack:implement) never had a
-// mention, and its task is a synthesized instruction, not the user's own
-// words - the preamble must not fabricate either.
-func TestRunMessageLabelTriggerDoesNotClaimMention(t *testing.T) {
+// TestBuildEnvelopePartialFixOmitsClosesKeyword pins the partial-fix
+// deliverable distinction: quack:partial-fix suppresses the Closes keyword
+// language, read off the FRESHLY FETCHED snapshot labels (gh.snap.Labels),
+// never a separately-threaded flag.
+func TestBuildEnvelopePartialFixOmitsClosesKeyword(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	var pr issueCommentPayload
-	if err := json.Unmarshal(pullCommentBody("unused"), &pr); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	ext.labels.PartialFix = "quack:partial-fix"
+	var issue issueCommentPayload
+	issue.Issue.Number = 42
+	issue.isLabelTrigger = true
+
+	full := ext.buildEnvelope(context.Background(), issue, "implement it", seedGC(Snapshot{Labels: []string{"quack:implement"}}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(full, "Closes #42") {
+		t.Errorf("a non-partial implement envelope should ask for a Closes keyword:\n%s", full)
 	}
-	pr.isLabelTrigger = true
-	msg := ext.runMessage(context.Background(), pr, autoReviewTask, seedGC(Snapshot{IsPR: true}, 0))
-	for _, forbidden := range []string{"mentioned you", "Their request"} {
-		if strings.Contains(msg, forbidden) {
-			t.Errorf("label-triggered message fabricates a mention (%q found):\n%s", forbidden, msg)
-		}
+
+	partial := ext.buildEnvelope(context.Background(), issue, "implement it", seedGC(Snapshot{Labels: []string{"quack:implement", "quack:partial-fix"}}, 0), vetting.Grant{}, "", nil)
+	if strings.Contains(partial, "Closes #42") {
+		t.Errorf("a partial-fix envelope must not ask for a Closes keyword:\n%s", partial)
 	}
-	if !strings.Contains(msg, autoReviewTask) {
-		t.Errorf("label-triggered message should still carry the synthesized task text:\n%s", msg)
+	if !strings.Contains(partial, "partial fix") {
+		t.Errorf("a partial-fix envelope should say so:\n%s", partial)
 	}
 }
 
-// TestRunMessagePlanOnlyNoDuplicateBodyOrDeliveryVocab pins #619 defects 2
-// and 3 together, on the real planTask→runMessage composition: the issue body
-// must appear exactly once (planTask's own copy dropped in favor of the #459
-// context block), and the composed message must carry zero commit/push/PR/
-// branch/merge vocabulary - the plan-only invariant its own closing paragraph
-// already states.
-func TestRunMessagePlanOnlyNoDuplicateBodyOrDeliveryVocab(t *testing.T) {
+// TestBuildEnvelopePlanOnlyDeliverable pins the plan-only deliverable and
+// that the issue body appears exactly once (planTask never embeds it; only
+// the hoisted <issue><description> does - #619's duplicate-body defect).
+func TestBuildEnvelopePlanOnlyDeliverable(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	const body = "Widgets are refetched on every request."
 	up := issuesPayload{}
@@ -1615,37 +1450,21 @@ func TestRunMessagePlanOnlyNoDuplicateBodyOrDeliveryVocab(t *testing.T) {
 	synthetic.planOnly = true
 	synthetic.isLabelTrigger = true
 
-	msg := ext.runMessage(context.Background(), synthetic, task, seedGC(Snapshot{Body: body}, 0))
+	env := ext.buildEnvelope(context.Background(), synthetic, task, seedGC(Snapshot{Body: body}, 0), vetting.Grant{}, "", nil)
 
-	if n := strings.Count(msg, body); n != 1 {
-		t.Errorf("issue body appears %d times in the plan-only message, want exactly 1:\n%s", n, msg)
+	if n := strings.Count(env, body); n != 1 {
+		t.Errorf("issue body appears %d times in the plan-only envelope, want exactly 1:\n%s", n, env)
 	}
-	// The shared repo paragraph's OWN commit/push/PR vocabulary (#619 defect 3)
-	// - not the later plan-only block's unrelated "discarded file" warning,
-	// which legitimately says "commit" in a different sentence.
-	for _, forbidden := range []string{
-		"work_branch=a new branch name for this change",
-		"delivery pushes the branch and opens the PR",
-		"no node ever pushes or opens a PR itself",
-	} {
-		if strings.Contains(msg, forbidden) {
-			t.Errorf("plan-only message still carries delivery vocabulary %q:\n%s", forbidden, msg)
+	if !strings.Contains(env, "PLANNING-ONLY") || !strings.Contains(env, "ANSWER TEXT is the plan") {
+		t.Errorf("plan-only envelope missing the plan deliverable:\n%s", env)
+	}
+	for _, banned := range []string{"git_push", "github_pull_request", "create a branch"} {
+		if strings.Contains(env, banned) {
+			t.Errorf("plan-only envelope contains delivery instruction %q:\n%s", banned, env)
 		}
-	}
-	if !strings.Contains(msg, "setup is optional for a read-only plan") {
-		t.Errorf("plan-only message missing the trigger-aware setup guidance:\n%s", msg)
-	}
-	if !strings.Contains(msg, "PLANNING-ONLY") {
-		t.Errorf("plan-only message not framed planning-only:\n%s", msg)
 	}
 }
 
-// TestIsWorkRequestFailsSafe pins the fail-safe direction: a nil classifier,
-// a classifier error, or an unparseable answer must all resolve to
-// conversational (false), never work - a wrong WORK verdict forces a
-// re-review and discards a reply already written, while a wrong
-// CONVERSATIONAL verdict merely leaves it to the orchestrator, which can
-// still plan if the user explicitly asks.
 // TestIsWorkRequestTolerantOfWrappedVerdict: a small instruct model rarely
 // answers with a bare word. Exact matching made "**WORK**" unparseable, which
 // fails safe to conversational - so every genuine "@quack review this" would
@@ -1718,14 +1537,14 @@ func TestIsWorkRequestTimeoutFailsSafe(t *testing.T) {
 	}
 }
 
-// TestRunMessageQuotedCodeCorrectionNotWorkRequest is the regression test for
-// the bug this classifier replaced: workVerbRe read a method call quoted
+// TestBuildEnvelopeQuotedCodeCorrectionNotWorkRequest is the regression test
+// for the bug this classifier replaced: workVerbRe read a method call quoted
 // inside code (it.migrate(connection)) as the imperative "migrate", which
 // armed the no-plan nudge and forced a whole re-review that discarded the
 // reply the model had already written. A real model should call this
 // CONVERSATIONAL (a correction, not an instruction); this pins that the
-// framing follows the classifier's verdict end to end.
-func TestRunMessageQuotedCodeCorrectionNotWorkRequest(t *testing.T) {
+// deliverable follows the classifier's verdict end to end.
+func TestBuildEnvelopeQuotedCodeCorrectionNotWorkRequest(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	classifier := &fakeIntentClassifier{verdict: "CONVERSATIONAL"}
 	ext.SetIntentClassifier(classifier)
@@ -1735,12 +1554,9 @@ func TestRunMessageQuotedCodeCorrectionNotWorkRequest(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody(task), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	msg := ext.runMessage(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0))
-	if !strings.Contains(msg, "conversational follow-up") {
-		t.Errorf("a correction quoting code must be conversational, not a work request:\n%s", msg)
-	}
-	if strings.Contains(msg, "stage_review") || strings.Contains(msg, "stage_pr") {
-		t.Errorf("a correction quoting code must not carry the review/implement playbook:\n%s", msg)
+	env := ext.buildEnvelope(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	if !strings.Contains(env, "a reply to their message") {
+		t.Errorf("a correction quoting code must be conversational, not a work request:\n%s", env)
 	}
 	if calls := atomic.LoadInt32(&classifier.calls); calls != 1 {
 		t.Errorf("classifier called %d times, want exactly 1 for a mention", calls)
@@ -2526,7 +2342,7 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 			// is posted - the orchestrator's initial response serves as the ack.
 			select {
 			case msg := <-runner.gotMessage:
-				for _, want := range []string{"Implement issue #7", "Closes #7", "stage_pr", "Never merge"} {
+				for _, want := range []string{"Closes #7", `<issue number="7">`} {
 					if !strings.Contains(msg, want) {
 						t.Errorf("implement message missing %q: %q", want, msg)
 					}
@@ -3095,8 +2911,8 @@ func TestHandleWebhookMergeLabelQueuesAndDispatchesReview(t *testing.T) {
 	}
 	select {
 	case msg := <-runner.gotMessage:
-		if !strings.Contains(msg, "Review this pull request") {
-			t.Errorf("dispatched task = %q; want the auto-review task", msg)
+		if !strings.Contains(msg, "<deliverable>a review with inline comments and a verdict</deliverable>") {
+			t.Errorf("dispatched envelope = %q; want the auto-review deliverable", msg)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no review was auto-dispatched for the unreviewed PR")

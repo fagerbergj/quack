@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -222,27 +221,6 @@ func TestDiffSnapshotsCommentLifecycle(t *testing.T) {
 	// -new case (#459's "injects an empty delta, not the whole thread again").
 	if noop := diffSnapshots(cur, cur, 0); !noop.Empty() {
 		t.Errorf("diffSnapshots(cur, cur) = %+v; want Empty()", noop)
-	}
-}
-
-// TestRenderDeltaDetailOmitsUnchanged pins that the rendered delta text only
-// ever mentions what actually changed.
-func TestRenderDeltaDetailOmitsUnchanged(t *testing.T) {
-	d := diffSnapshots(
-		Snapshot{Comments: []snapshotComment{{ID: 1, User: "alice", Body: "old"}}},
-		Snapshot{Comments: []snapshotComment{{ID: 1, User: "alice", Body: "old"}, {ID: 2, User: "bob", Body: "new one"}}},
-		0,
-	)
-	text := renderDeltaDetail(d)
-	if !strings.Contains(text, "new one") {
-		t.Errorf("delta text missing the new comment:\n%s", text)
-	}
-	if strings.Contains(text, "old") {
-		t.Errorf("delta text should not mention the unchanged comment:\n%s", text)
-	}
-
-	if got := renderDeltaDetail(Delta{}); got != "" {
-		t.Errorf("renderDeltaDetail(Delta{}) = %q; want \"\"", got)
 	}
 }
 

@@ -124,7 +124,7 @@ func testAgent(t *testing.T, mode string) *Agent {
 func TestRound_FullPromptRound(t *testing.T) {
 	a := testAgent(t, "happy")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", "add the feature", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, "add the feature", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -159,7 +159,7 @@ func TestRound_CancelGraceful(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", "loop forever", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", nil, "loop forever", func(eventSpec) bool { return true })
 	if err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("want context cancellation, got %v", err)
 	}
@@ -179,7 +179,7 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", "loop forever", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", nil, "loop forever", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error from a cancelled round")
 	}
@@ -201,7 +201,7 @@ func TestRound_IdleTimeout(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		result <- a.round(context.Background(), t.TempDir(), "", "wedge forever", func(eventSpec) bool { return true })
+		result <- a.round(context.Background(), t.TempDir(), "", nil, "wedge forever", func(eventSpec) bool { return true })
 	}()
 
 	select {
@@ -221,7 +221,7 @@ func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
 	a.opts.IdleTimeout = 150 * time.Millisecond // each update gap is 80ms
 
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", "take your time", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, "take your time", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})

@@ -57,7 +57,7 @@ func TestFork_MissFallsThroughToARealSubprocess(t *testing.T) {
 	ctx := ledger.WithCoords(context.Background(), coords)
 
 	var specs []eventSpec
-	if err := a.round(ctx, t.TempDir(), "", "add the feature", func(s eventSpec) bool {
+	if err := a.round(ctx, t.TempDir(), "", nil, "add the feature", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	}); err != nil {
@@ -100,7 +100,7 @@ func TestFork_StrictModeStillNeverSpawns(t *testing.T) {
 
 	coords := ledger.Coords{ChatID: "c1", Node: "n1", Agent: "code-implementer", Round: "worker-r0"}
 	ctx := ledger.WithCoords(context.Background(), coords)
-	err = a.round(ctx, t.TempDir(), "", "add the feature", func(eventSpec) bool { return true })
+	err = a.round(ctx, t.TempDir(), "", nil, "add the feature", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error - strict mode must never fall through to a live spawn")
 	}
