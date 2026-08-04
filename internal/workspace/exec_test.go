@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +138,35 @@ func TestRunArgvMissingBinaryErrors(t *testing.T) {
 	_, err := RunArgv(context.Background(), t.TempDir(), []string{"this-binary-does-not-exist-xyz"}, DefaultCaps())
 	if err == nil {
 		t.Fatal("RunArgv: want error for a missing binary")
+	}
+}
+
+// TestRunArgvResolvesRepoRelativeExecutable pins #638: a plain exec.LookPath
+// on "./gradlew" resolves against THIS PROCESS's cwd (the package dir), not
+// dir - so without ResolveExecutable, a repo-relative wrapper is never found
+// unless the test happens to run from the repo itself.
+func TestRunArgvResolvesRepoRelativeExecutable(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "gradlew")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho wrapper-ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := RunArgv(context.Background(), dir, []string{"./gradlew"}, DefaultCaps())
+	if err != nil {
+		t.Fatalf("RunArgv: %v", err)
+	}
+	if !strings.Contains(res.Output, "wrapper-ran") {
+		t.Errorf("Output = %q, want to contain wrapper-ran", res.Output)
+	}
+}
+
+func TestResolveExecutableRejectsNonExecutableRepoRelativeFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gradlew"), []byte("not executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveExecutable(dir, "./gradlew"); err == nil {
+		t.Fatal("ResolveExecutable: want error for a non-executable repo-relative file")
 	}
 }
 

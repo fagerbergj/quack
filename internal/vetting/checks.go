@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -328,7 +327,7 @@ func deriveChecks(dir string, allow []string) []string {
 	}
 	var out []string
 	for _, c := range cands {
-		if workspace.MatchesCheckPrefix(c, allow) && toolchainPresent(c) {
+		if workspace.MatchesCheckPrefix(c, allow) && toolchainPresent(dir, c) {
 			out = append(out, c)
 		}
 	}
@@ -337,7 +336,7 @@ func deriveChecks(dir string, allow []string) []string {
 	// (which must be declared by the repo), Prettier is an external formatter
 	// whose presence alone signals intent — if npx is on PATH and "npx prettier"
 	// is allowed, run it. Never waive: formatting violations cannot pre-exist.
-	if fileExists(dir, "package.json") && toolchainPresent("npx prettier") && workspace.MatchesCheckPrefix("npx prettier", allow) {
+	if fileExists(dir, "package.json") && toolchainPresent(dir, "npx prettier") && workspace.MatchesCheckPrefix("npx prettier", allow) {
 		out = append(out, "npx prettier --check")
 	}
 	return out
@@ -367,17 +366,19 @@ func unsupportedBuildSystem(dir string) string {
 	return ""
 }
 
-// toolchainPresent reports whether a derived check's binary exists on the
-// server (the ambient PATH - the same lookup RunArgv resolves argv[0] with).
-// This is what makes a default-ON check_commands allowlist safe: a host
-// without go/npm derives no go/npm checks instead of failing every node with
-// exit 127s.
-func toolchainPresent(check string) bool {
+// toolchainPresent reports whether a derived check's binary exists - a bare
+// name (go, npm, make) via the server's ambient PATH, a repo-relative one
+// (./gradlew) via dir - exactly as workspace.RunPipeline will resolve it
+// (workspace.ResolveExecutable, the same lookup newChildCmd uses). This is
+// what makes a default-ON check_commands allowlist safe: a host without
+// go/npm, or a repo without a gradlew wrapper, derives no such checks instead
+// of failing every node with exit 127.
+func toolchainPresent(dir, check string) bool {
 	f := strings.Fields(check)
 	if len(f) == 0 {
 		return false
 	}
-	_, err := exec.LookPath(f[0])
+	_, err := workspace.ResolveExecutable(dir, f[0])
 	return err == nil
 }
 
