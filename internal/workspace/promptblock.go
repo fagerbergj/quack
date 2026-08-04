@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // PromptBlock renders the deployment-constant workspace/toolchain facts
@@ -79,6 +81,9 @@ var promptToolchains = []struct {
 	{"python3", []string{"--version"}, extractMajorMinor("python")},
 }
 
+// toolchainProbeTimeout bounds each startup version probe.
+const toolchainProbeTimeout = 3 * time.Second
+
 var versionNumRe = regexp.MustCompile(`(\d+)\.(\d+)(?:\.(\d+))?`)
 
 func extractGoVersion(out string) string {
@@ -113,7 +118,12 @@ func toolchainLine(caps Caps) string {
 		if err != nil {
 			continue
 		}
-		out, err := exec.Command(bin, tc.argv...).CombinedOutput()
+		// Bounded: this runs at startup, and a hung probe would block the
+		// server from ever serving (cf. #316 - a child holding the pipe makes
+		// Wait block forever). An unprobeable toolchain is simply absent.
+		ctx, cancel := context.WithTimeout(context.Background(), toolchainProbeTimeout)
+		out, err := exec.CommandContext(ctx, bin, tc.argv...).CombinedOutput()
+		cancel()
 		if err != nil {
 			continue
 		}
