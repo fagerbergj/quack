@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -226,24 +228,51 @@ func childEnv(dir string, caps Caps) []string {
 	return env
 }
 
+// ResolveExecutable finds argv[0]'s absolute path exactly as newChildCmd is
+// about to exec it: a bare name (e.g. "go") resolves against the server's own
+// ambient PATH via exec.LookPath, unchanged. A name containing a path
+// separator (e.g. "./gradlew") is a REPO-relative executable and resolves
+// against dir instead - never this process's cwd, which is what a plain
+// exec.LookPath("./gradlew") would consult and, for any dir other than the
+// process's own, silently fail to find (#638). Also shared by
+// vetting.toolchainPresent so "will this run" and "did we predict it would
+// run" can't drift apart.
+func ResolveExecutable(dir, name string) (string, error) {
+	if !strings.ContainsRune(name, '/') {
+		return exec.LookPath(name)
+	}
+	p := name
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		return "", err
+	}
+	if fi.IsDir() || fi.Mode()&0o111 == 0 {
+		return "", fmt.Errorf("not executable: %s", p)
+	}
+	return p, nil
+}
+
 // newChildCmd is the ONE place a child process is constructed - RunArgv and
 // every stage of RunPipeline go through it, so the OS sandbox and the resource
 // limits cannot be forgotten on one path and applied on the other.
 //
-// argv[0] is resolved via the server process's own (ambient) PATH - exactly
-// like gitBinaryPath does for `git` - BEFORE the child's argv is constructed;
-// exec.Command would otherwise resolve a bare name using the CALLING process's
-// PATH regardless of what cmd.Env sets, silently ignoring our scrub. Passing
-// the already-resolved absolute path means no further lookup happens, so
-// cmd.Env's PATH only governs the child's OWN nested lookups (see execEnvPath).
-// Under SandboxBwrap the resolved path is valid INSIDE the sandbox too: the
-// system dirs and the configured exec_path toolchains are bound at their own
-// paths (see sandbox.go).
+// argv[0] is resolved via ResolveExecutable BEFORE the child's argv is
+// constructed - exactly like gitBinaryPath does for `git` - so cmd.Env's PATH
+// only governs the child's OWN nested lookups (see execEnvPath), never argv[0]
+// itself. Under SandboxBwrap the resolved path is valid INSIDE the sandbox for
+// a PATH toolchain (the system dirs and configured exec_path toolchains are
+// bound at their own paths - see sandbox.go), but NOT yet for a repo-relative
+// binary (e.g. "./gradlew"): bwrap remaps dir under SandboxWorkRoot, so the
+// resolved host path won't exist inside the namespace. SandboxNone and
+// SandboxLandlock (paths not remapped there) are unaffected.
 func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*exec.Cmd, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("workspace: empty command")
 	}
-	bin, err := exec.LookPath(argv[0])
+	bin, err := ResolveExecutable(dir, argv[0])
 	if err != nil {
 		return nil, fmt.Errorf("workspace: %q not found: %w", argv[0], err)
 	}
