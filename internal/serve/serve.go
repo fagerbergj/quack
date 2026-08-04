@@ -140,7 +140,9 @@ var Version string
 // path; logs to stdout so a container/supervisor collects them.
 func Run(ctx context.Context, configPath string, port int) error {
 	setupLoggingTo(os.Stdout, slog.LevelInfo)
-	handler, cleanup, addr, err := build(ctx, configPath, port)
+	// true: this is the one process meant to own the DAG run loop, so
+	// startup orphan reconciliation is its job (see build's reconcile param).
+	handler, cleanup, addr, err := build(ctx, configPath, port, true)
 	if err != nil {
 		return err
 	}
@@ -202,7 +204,12 @@ func InProcess(ctx context.Context, configPath string) (baseURL string, stop fun
 // entirely.
 func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL string, stop func() error, err error) {
 	setupLoggingTo(os.Stderr, slog.LevelWarn)
-	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0)
+	// false: an in-process boot is a CLI helper, not the run loop's owner -
+	// it must never reconcile a possibly-live server's nodes (#683). Its own
+	// DAG turns (e.g. interactive `quack chat` with no separate `server run`)
+	// still work; they just leave any of THEIR OWN mid-run rows for a real
+	// server's next restart, or staleNodeCeiling, to clean up.
+	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0, false)
 	if err != nil {
 		return "", nil, err
 	}
@@ -231,18 +238,22 @@ func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL strin
 // agents + SPA), shared by Run and InProcess. It returns the handler, a cleanup
 // func (close A2A servers; note managed stores), and the listen addr. On any
 // error it runs the cleanups registered so far and returns the error.
-func build(ctx context.Context, configPath string, port int) (handler http.Handler, cleanup func(), addr string, err error) {
+func build(ctx context.Context, configPath string, port int, reconcile bool) (handler http.Handler, cleanup func(), addr string, err error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
 	}
-	return buildFromConfig(ctx, cfg, port)
+	return buildFromConfig(ctx, cfg, port, reconcile)
 }
 
 // buildFromConfig is build for an already-loaded *config.Config - see
 // InProcessFromConfig for why a caller would have one of those instead of a
-// path.
-func buildFromConfig(ctx context.Context, cfg *config.Config, port int) (handler http.Handler, cleanup func(), addr string, err error) {
+// path. reconcile gates startup orphan reconciliation (FailStaleDagNodes,
+// #683): true only for the process meant to own the DAG run loop
+// (`quack server run`) - an ephemeral CLI bootstrap (InProcess) passes
+// false, since it can't tell a live server's in-flight nodes from an actual
+// orphan and must never guess by failing them.
+func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool) (handler http.Handler, cleanup func(), addr string, err error) {
 	var cleanups []func()
 	runCleanups := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -332,10 +343,20 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int) (handler
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("store open failed: %w", err)
 	}
-	if n, err := st.FailStaleDagNodes(context.Background()); err != nil {
-		slog.Error("fail stale dag nodes", "component", "store", "err", err)
-	} else if n > 0 {
-		slog.Info("marked orphaned dag nodes failed (previous process killed mid-run)", "component", "store", "count", n)
+	if reconcile {
+		// A persisted identity (not New()'s random default) so a restart of
+		// THIS deployment recognizes its own prior incarnation's rows; an
+		// ephemeral CLI bootstrap never reaches this branch at all (#683).
+		id, err := store.LoadOrCreateInstanceID(cfg.Workspace.Root)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("instance id init failed: %w", err)
+		}
+		st.SetInstanceID(id)
+		if n, err := st.FailStaleDagNodes(context.Background()); err != nil {
+			slog.Error("fail stale dag nodes", "component", "store", "err", err)
+		} else if n > 0 {
+			slog.Info("marked orphaned dag nodes failed (previous process killed mid-run)", "component", "store", "count", n)
+		}
 	}
 
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
