@@ -84,7 +84,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	// `git commit` (not just the git_commit tool, which passes its own via -c)
 	// can commit - a fresh clone has none, and a raw commit without one fails
 	// exit 128 ("Author identity unknown"). Same identity the git_commit tool uses.
-	for _, kv := range [][2]string{{"user.name", gitCommitAuthorName}, {"user.email", gitCommitAuthorEmail}} {
+	for _, kv := range [][2]string{{"user.name", GitCommitAuthorName}, {"user.email", GitCommitAuthorEmail}} {
 		if _, _, err := runGit(ctx, target, []string{"config", kv[0], kv[1]}, b.caps, nil); err != nil {
 			return "", fmt.Errorf("setup: git config %s: %w", kv[0], err)
 		}

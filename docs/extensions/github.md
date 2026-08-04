@@ -1,6 +1,6 @@
 # GitHub extension
 
-Quack can run as a **GitHub App**. Installed on a repo, it turns labels and `@quack` comments into orchestrator runs, and replies on the issue or PR - posting plans, opening PRs, and leaving reviews as itself.
+Quack can run as a **GitHub App**. Installed on a repo, it turns labels and `/quack` comments into orchestrator runs, and replies on the issue or PR - posting plans, opening PRs, and leaving reviews as itself.
 
 The whole loop, driven by a label:
 
@@ -16,27 +16,34 @@ someone applies quack:implement to an approved issue
 or by mentioning it in a comment:
 
 ```text
-"@quack add a Flappy Bird game and open a PR"
+"/quack add a Flappy Bird game and open a PR"
   → quack clones the repo, writes the code, commits, and opens a PR
   → the final answer is posted back as a comment
 ```
 
 ## Two ways to drive it
 
-**Labels** are the primary interface - deterministic, and the label itself doubles as the permission model (applying one needs repo write access):
+**Labels are persistent capability FLAGS, not one-shot triggers.** A label's initial action fires once when applied; the capability it names stays live for as long as the label is present, and removing it turns that capability off. Applying one needs repo write access, so the label itself doubles as the permission model:
 
 | Label (default name) | What it does |
 |---|---|
-| `quack:plan` | Investigates the issue and posts an implementation plan as a comment. No code changes. |
-| `quack:implement` | Implements the approved plan, commits locally, and opens a PR pre-labeled for review. Add `quack:partial-fix` first if the PR shouldn't auto-close the issue. |
-| `quack-auto-review` (configurable) | Reviews the PR and posts one review with inline comments and a verdict. Also fires automatically on PR open if the `pr_opened` trigger is enabled. |
+| `quack:plan` | Plans once when applied. While present, revises the plan on an explicit `/quack …` address or quote-reply. |
+| `quack:implement` | Implements the approved plan once, commits locally, and opens a PR pre-labeled for review. Add `quack:partial-fix` first if the PR shouldn't auto-close the issue. |
+| `quack:review` (configurable) | Reviews the PR once. Also fires automatically on PR open if the `pr_opened` trigger is enabled. |
+| `quack:fix` | Keeps the PR green: fixes it on **any** CI/CD failure while it carries this label, not only when freshly applied - re-applying it re-arms after a stop and, if CI is already failing, fixes it immediately. One fix attempt per failure (see "CI auto-heal" below). |
 | `quack:merge` | Squash-merges the PR - but only at the intersection of a human applying this label **and** quack's own latest review having approved it. Anything else gets an explanatory comment instead of a merge. |
 
 Every label handler reacts with 👀 the instant it fires, before the run even starts.
 
-**`@quack <request>`** is the conversational path - free-form, for anything that doesn't fit a label: "review this PR", "what did you mean by that finding?", "fix the typo in the README". A mention on a PR that isn't asking for work (a question, a clarification) is answered directly from the conversation so far; it never re-triggers a review. A mention that does ask for review or code changes runs the same way a label would.
+**`/quack <request>`, at the START of a line,** is the conversational path - free-form, for anything that doesn't fit a label: "review this PR", "what did you mean by that finding?", "fix the typo in the README". The token must open a line (leading whitespace is fine); it does not match inside a sentence, and it does not match a quoted `> /quack …` reply, so replying to an earlier mention never re-fires it. A mention on a PR that isn't asking for work (a question, a clarification) is answered directly from the conversation so far; it never re-triggers a review. A mention that does ask for review or code changes runs the same way a label would.
 
-Both paths share one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step. Only one run is ever in flight per thread - a trigger that arrives mid-run is deduplicated with a 👀 rather than started concurrently.
+**Authorship is the flag on PRs quack opened itself.** No label is needed: quack replies on its own PRs, and a `request_changes` review on one it authored engages it to address the findings - the same "keep it green" treatment `quack:fix` gives a labeled PR, just triggered by having written the PR rather than by a label.
+
+Every path shares one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step. Only one run is ever in flight per thread - a trigger that arrives mid-run is deduplicated with a 👀 rather than started concurrently.
+
+### CI auto-heal (`quack:fix`)
+
+While a PR carries `quack:fix` - or quack itself authored the PR - any CI/CD failure dispatches a fix run on the PR's existing session: it diagnoses the failing checks, makes the smallest fix, and the trust gate re-pushes the PR in place. **One fix attempt per failure**: if quack's own fix push also fails CI, it stops and comments why instead of trying again - the guard checks whether the commit that just failed CI is one quack itself made (every quack commit carries a fixed system identity), not a counter, so a later failure caused by a genuinely new (human) commit heals again with no relabeling and nothing to reset. Re-applying `quack:fix` clears a prior stop and, if CI is currently failing, fixes it right away.
 
 ### How review actually works
 
@@ -79,7 +86,7 @@ Grant nothing else.
 
 ### 3. Subscribe to events
 
-Under **Subscribe to events**, check: **Issue comment**, **Issues**, **Pull request**. (Issue comment alone is enough if you only want the `@quack` mention path - the label workflow needs all three.)
+Under **Subscribe to events**, check: **Issue comment**, **Issues**, **Pull request**, **Pull request review** (for `quack:fix`'s CI auto-heal, also check **Workflow run**). Issue comment alone is enough if you only want the `/quack` mention path - the label workflow needs the rest, and the authorship-based engagement on quack's own PRs needs Pull request review.
 
 ### 4. Generate the private key
 
@@ -101,14 +108,15 @@ extensions:
     private_key: ${QUACK_GITHUB_PRIVATE_KEY}          # PEM contents via env, OR:
     # private_key_path: /run/secrets/quack-github.pem # path to the .pem
     webhook_secret: ${QUACK_GITHUB_WEBHOOK_SECRET}
-    mention: "@quack"                    # default
+    mention: "/quack"                    # default; must open a line - see "Two ways to drive it"
     allowed_users: [yourgithublogin]      # empty denies every human-invoked trigger
-    triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
+    triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix]
     # labels:                            # defaults shown; override any of them
     #   plan: "quack:plan"
     #   implement: "quack:implement"
     #   review: "quack-auto-review"
     #   merge: "quack:merge"
+    #   fix: "quack:fix"
 
 # For code tasks the agent must be allowed to push:
 workspace:
@@ -152,7 +160,7 @@ npx smee-client --url https://smee.io/<channel> \
 ### 8. Verify it works
 
 1. Start quack with the config above; the log shows `github extension enabled`.
-2. On an installed repo, open an issue and comment `@quack say hello`.
+2. On an installed repo, open an issue and comment `/quack say hello` (the token must open the line).
 3. Watch the logs: `github webhook received` → `github run dispatched` → `github comment posted`.
 4. The App replies on the issue with the run's answer.
 

@@ -152,13 +152,18 @@ type GitHubExtensionConfig struct {
 	PrivateKey     string `yaml:"private_key"`      // PEM contents via ${VAR}
 	PrivateKeyPath string `yaml:"private_key_path"` // path to a .pem file (alternative to private_key)
 	WebhookSecret  string `yaml:"webhook_secret"`   // ${VAR}
-	Mention        string `yaml:"mention"`          // trigger phrase, default "@quack"
+	// Mention is the trigger token a comment must carry to dispatch a run. It
+	// must appear at the START OF A LINE (leading whitespace only - a
+	// blockquoted "> /quack …" quote-reply does NOT match, so replying to an
+	// earlier mention never re-fires it). Default "/quack".
+	Mention string `yaml:"mention"`
 
 	// Triggers selects which webhook events fire a run: "mention" (default),
 	// "pr_opened" (auto-review on PR open), "label" (auto-review when
 	// Labels.Review is applied), "issue_plan" (plan an issue when Labels.Plan is
-	// applied), "ci_fix" (auto-heal a Labels.Monitor PR when CI fails),
-	// "pr_fix" (fix a PR when Labels.Fix is applied).
+	// applied), "ci_fix" (keep a PR green: fixes it on ANY CI/CD failure and
+	// engages it on a request_changes review, for as long as Labels.Fix is
+	// present OR quack itself authored the PR - see internal/github/cifix.go).
 	Triggers        []string `yaml:"triggers"`
 	AutoReviewLabel string   `yaml:"auto_review_label"` // deprecated alias for labels.review
 
@@ -174,11 +179,6 @@ type GitHubExtensionConfig struct {
 	// Labels names the labels that drive the label-based workflow. Each label
 	// only acts when its trigger is enabled (see Triggers).
 	Labels GitHubLabels `yaml:"labels"`
-
-	// FixAttempts bounds the CI auto-heal loop ("ci_fix" trigger): how many fix
-	// runs quack dispatches per red streak on one PR before it comments and
-	// stops. Re-applying Labels.Monitor resets the counter. Default 3.
-	FixAttempts int `yaml:"fix_attempts"`
 
 	// RunTimeoutMinutes bounds a single webhook-driven run. Default 120. Size it
 	// to the DEPLOYMENT's model speed: a ~30 tok/s local coder with judge+revise
@@ -197,12 +197,19 @@ type GitHubLabels struct {
 	Review     string `yaml:"review"`      // on a PR: review it once ("label" trigger; alias auto_review_label)
 	Merge      string `yaml:"merge"`       // on a PR: merge IF quack's latest review approved ("merge" trigger)
 	PartialFix string `yaml:"partial_fix"` // signals a partial fix — suppresses unconditional Closes #N in acks and PR bodies
-	Monitor    string `yaml:"monitor"`     // on a PR: opt in to CI auto-heal ("ci_fix" trigger); no label = never auto-heal
-	Fix        string `yaml:"fix"`         // on a PR: fix the currently-failing checks once ("pr_fix" trigger)
+	// Fix is a PERSISTENT capability flag, not a one-shot trigger (#656): while
+	// present on a PR, quack fixes it on ANY CI/CD failure - not only when the
+	// label is freshly applied - one attempt per failure ("ci_fix" trigger).
+	// Absorbs the deleted quack:monitor label.
+	Fix string `yaml:"fix"`
 }
 
-// defaultMention is the trigger phrase when github.mention is unset.
-const defaultMention = "@quack"
+// defaultMention is the trigger phrase when github.mention is unset. A
+// leading slash (not "@") - "@quack" collided with a real GitHub account, and
+// matching bare "quack" anywhere in a comment fired on ordinary prose
+// ("quack's gate did not pass"). triggerTask requires it at the START of a
+// line, so a quoted "> /quack …" reply never re-fires it.
+const defaultMention = "/quack"
 
 // defaultAutoReviewLabel is the label name when github.auto_review_label is unset.
 const defaultAutoReviewLabel = "quack-auto-review"
@@ -218,20 +225,14 @@ const defaultMergeLabel = "quack:merge"
 
 const defaultPartialFixLabel = "quack:partial-fix"
 
-// defaultMonitorLabel is the label name when github.labels.monitor is unset.
-const defaultMonitorLabel = "quack:monitor"
-
 // defaultFixLabel is the label name when github.labels.fix is unset.
 const defaultFixLabel = "quack:fix"
-
-// defaultFixAttempts bounds the CI auto-heal loop when github.fix_attempts is unset.
-const defaultFixAttempts = 3
 
 // validGitHubTriggers is the whitelist for github.triggers entries.
 var validGitHubTriggers = map[string]bool{
 	"mention": true, "pr_opened": true, "label": true,
 	"issue_plan": true, "issue_implement": true, "merge": true,
-	"ci_fix": true, "pr_fix": true,
+	"ci_fix": true,
 }
 
 // Workspace defaults (see WorkspaceConfig). Every field is optional; a
@@ -1189,7 +1190,7 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	}
 	for _, t := range g.Triggers {
 		if !validGitHubTriggers[t] {
-			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix, or pr_fix)", t)
+			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, issue_plan, issue_implement, merge, or ci_fix)", t)
 		}
 	}
 	// labels.review supersedes auto_review_label; the old key wins only when the
@@ -1212,14 +1213,8 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	if g.Labels.PartialFix == "" {
 		g.Labels.PartialFix = defaultPartialFixLabel
 	}
-	if g.Labels.Monitor == "" {
-		g.Labels.Monitor = defaultMonitorLabel
-	}
 	if g.Labels.Fix == "" {
 		g.Labels.Fix = defaultFixLabel
-	}
-	if g.FixAttempts <= 0 {
-		g.FixAttempts = defaultFixAttempts
 	}
 	if len(g.AllowedUsers) == 0 {
 		slog.Warn("config: extensions.github.allowed_users is empty; DENYING every human-invoked trigger " +

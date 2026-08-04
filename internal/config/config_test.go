@@ -994,8 +994,8 @@ extensions:
 	if c.Extensions.GitHub == nil || c.Extensions.GitHub.AppID != 12345 {
 		t.Fatal("github extension not parsed")
 	}
-	if c.Extensions.GitHub.Mention != "@quack" {
-		t.Errorf("mention default = %q; want @quack", c.Extensions.GitHub.Mention)
+	if c.Extensions.GitHub.Mention != "/quack" {
+		t.Errorf("mention default = %q; want /quack", c.Extensions.GitHub.Mention)
 	}
 	// app_id only ⇒ Issuer is the stringified App ID.
 	if got := c.Extensions.GitHub.Issuer(); got != "12345" {
@@ -1004,16 +1004,14 @@ extensions:
 	if l := c.Extensions.GitHub.Labels; l.Plan != "quack:plan" || l.Review != "quack-auto-review" {
 		t.Errorf("labels defaults = %+v; want plan quack:plan, review quack-auto-review", l)
 	}
-	if l := c.Extensions.GitHub.Labels; l.Monitor != "quack:monitor" || l.Fix != "quack:fix" {
-		t.Errorf("labels defaults = %+v; want monitor quack:monitor, fix quack:fix", l)
-	}
-	if got := c.Extensions.GitHub.FixAttempts; got != 3 {
-		t.Errorf("fix_attempts default = %d; want 3", got)
+	if l := c.Extensions.GitHub.Labels; l.Fix != "quack:fix" {
+		t.Errorf("labels defaults = %+v; want fix quack:fix", l)
 	}
 }
 
-// The ci_fix/pr_fix triggers (#254) must pass the triggers whitelist; an
-// unknown entry must still be rejected.
+// The ci_fix trigger (#254, redesigned #656) must pass the triggers
+// whitelist; an unknown entry (including the removed pr_fix) must still be
+// rejected.
 func TestGitHubExtensionFixTriggers(t *testing.T) {
 	t.Setenv("QUACK_GH_KEY", "pem")
 	t.Setenv("QUACK_GH_SECRET", "s3cret")
@@ -1023,20 +1021,15 @@ extensions:
     app_id: 1
     private_key: ${QUACK_GH_KEY}
     webhook_secret: ${QUACK_GH_SECRET}
-    fix_attempts: 5
-    triggers: [ci_fix, pr_fix]
+    triggers: [ci_fix]
     labels:
-      monitor: watch-me
       fix: fix-me
 `))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := c.Extensions.GitHub.FixAttempts; got != 5 {
-		t.Errorf("fix_attempts = %d; want 5", got)
-	}
-	if l := c.Extensions.GitHub.Labels; l.Monitor != "watch-me" || l.Fix != "fix-me" {
-		t.Errorf("labels = %+v; want monitor watch-me, fix fix-me", l)
+	if l := c.Extensions.GitHub.Labels; l.Fix != "fix-me" {
+		t.Errorf("labels = %+v; want fix fix-me", l)
 	}
 
 	_, err = Load(writeTemp(t, baseConfig+`
@@ -1049,6 +1042,18 @@ extensions:
 `))
 	if err == nil || !strings.Contains(err.Error(), "unknown entry") {
 		t.Fatalf("err = %v; want an unknown-trigger rejection", err)
+	}
+
+	_, err = Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+    triggers: [pr_fix]
+`))
+	if err == nil || !strings.Contains(err.Error(), "unknown entry") {
+		t.Fatalf("err = %v; want pr_fix rejected (absorbed into ci_fix, #656)", err)
 	}
 }
 

@@ -37,7 +37,7 @@ A2A is currently an **internal** orchestrator↔agent protocol, not something an
 
 ## GitHub App
 
-A fourth client sits in front of the REST API over its own webhook, not one of the above: the [GitHub App](extensions/github.md). It drives runs via the `quack:plan` / `quack:implement` / `quack:review` / `quack:merge` label workflow and `@quack` mentions, and replies on the issue/PR when the run completes.
+A fourth client sits in front of the REST API over its own webhook, not one of the above: the [GitHub App](extensions/github.md). It drives runs via the `quack:plan` / `quack:implement` / `quack:review` / `quack:merge` / `quack:fix` label workflow, `/quack` mentions, and (on PRs it authored itself) review engagement with no label at all - replying on the issue/PR when the run completes.
 
 ## Auth
 

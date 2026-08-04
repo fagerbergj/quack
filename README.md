@@ -47,7 +47,7 @@ flowchart TB
     OC["Opencode"]
     CC["Claude Code"]
     SPA["Web SPA"]
-    GH["GitHub App<br/>labels + @quack"]
+    GH["GitHub App<br/>labels + /quack"]
   end
 
   subgraph GW["Gateway (OIDC)"]

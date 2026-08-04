@@ -481,12 +481,14 @@ const (
 // git_commit
 // ---------------------------------------------------------------------------
 
-// gitCommitAuthorName/Email fix every quack commit's author AND committer to
+// GitCommitAuthorName/Email fix every quack commit's author AND committer to
 // a system identity - commits are attributable to the system, not
-// impersonating the user (see the design doc).
+// impersonating the user (see the design doc). Exported: internal/github's
+// CI auto-heal reads this back off a failing commit to tell its own fix
+// apart from a human's (see cifix.go's one-attempt guard).
 const (
-	gitCommitAuthorName  = "quack"
-	gitCommitAuthorEmail = "agent@quack.local"
+	GitCommitAuthorName  = "quack"
+	GitCommitAuthorEmail = "agent@quack.local"
 )
 
 // maxAddAllFiles is the bulk-commit sanity wall: a blind `git add -A` that
