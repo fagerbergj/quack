@@ -118,6 +118,13 @@ type seededComment struct {
 		Login string `json:"login"`
 	} `json:"user"`
 	Body string `json:"body"`
+	// Status is quack's own field (explicitly namespaced, like
+	// quack_reviewed_through), set only in delta mode: "new" | "edited" |
+	// "deleted". Without it a deleted comment's body reads exactly like a live
+	// one and the model has to infer which is which by counting positions
+	// against the block's attributes - miscount once and a RETRACTED statement
+	// is treated as current.
+	Status string `json:"quack_status,omitempty"`
 }
 
 func toSeededComment(c snapshotComment) seededComment {
@@ -127,6 +134,27 @@ func toSeededComment(c snapshotComment) seededComment {
 	sc.User.Login = c.User
 	sc.Body = c.Body
 	return sc
+}
+
+// seededCommentsWithStatus marshals a delta's comments with each item marked
+// new/edited/deleted, so the split is per-item rather than positional.
+func seededCommentsWithStatus(groups ...struct {
+	status string
+	cs     []snapshotComment
+}) string {
+	out := []seededComment{}
+	for _, g := range groups {
+		for _, c := range g.cs {
+			sc := toSeededComment(c)
+			sc.Status = g.status
+			out = append(out, sc)
+		}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // seededCommentsJSON marshals cs to the seeded four-field shape - "[]" (never
@@ -171,12 +199,17 @@ func commentsBlock(gh githubContext, excludeCommentID int64) string {
 		return fmt.Sprintf("<comments count=\"%d\">%s</comments>\n", len(visible), seededCommentsJSON(visible))
 	}
 	d := gh.delta
-	all := make([]snapshotComment, 0, len(d.CommentsAdded)+len(d.CommentsEdited)+len(d.CommentsDeleted))
-	all = append(all, d.CommentsAdded...)
-	all = append(all, d.CommentsEdited...)
-	all = append(all, d.CommentsDeleted...)
+	type group = struct {
+		status string
+		cs     []snapshotComment
+	}
+	body := seededCommentsWithStatus(
+		group{"new", d.CommentsAdded},
+		group{"edited", d.CommentsEdited},
+		group{"deleted", d.CommentsDeleted},
+	)
 	return fmt.Sprintf("<comments new=\"%d\" edited=\"%d\" deleted=\"%d\">%s</comments>\n",
-		len(d.CommentsAdded), len(d.CommentsEdited), len(d.CommentsDeleted), seededCommentsJSON(all))
+		len(d.CommentsAdded), len(d.CommentsEdited), len(d.CommentsDeleted), body)
 }
 
 // changedFilesBlock renders a PR's current file list - GitHub's own

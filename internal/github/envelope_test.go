@@ -280,3 +280,33 @@ func truncateForLog(s string) string {
 	}
 	return s[:max] + "…(truncated for log)"
 }
+
+// A deleted comment's body reads exactly like a live one, so the delta must
+// mark each item rather than leaving the split positional: miscount the
+// attribute counts once and a RETRACTED statement is treated as current.
+func TestCommentsBlockMarksEachDeltaItem(t *testing.T) {
+	gh := githubContext{delta: &Delta{
+		CommentsAdded:   []snapshotComment{{ID: 1, User: "a", Body: "new one"}},
+		CommentsEdited:  []snapshotComment{{ID: 2, User: "b", Body: "edited one"}},
+		CommentsDeleted: []snapshotComment{{ID: 3, User: "c", Body: "retracted one"}},
+	}}
+	got := commentsBlock(gh, 0)
+	for _, want := range []string{
+		`"id":1,`, `"quack_status":"new"`,
+		`"id":2,`, `"quack_status":"edited"`,
+		`"id":3,`, `"quack_status":"deleted"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("commentsBlock missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Full-seed mode has no delta, so no item carries a status - the field is
+// omitempty precisely so a seed stays GitHub's own shape.
+func TestCommentsBlockSeedHasNoStatus(t *testing.T) {
+	gh := githubContext{snap: Snapshot{Comments: []snapshotComment{{ID: 1, User: "a", Body: "hi"}}}}
+	if got := commentsBlock(gh, 0); strings.Contains(got, "quack_status") {
+		t.Errorf("full seed must not mark items:\n%s", got)
+	}
+}
