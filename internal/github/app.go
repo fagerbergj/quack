@@ -1022,6 +1022,10 @@ type prMeta struct {
 	// snapshot fetch doesn't need issueMeta's separate /issues/{n} call for a PR.
 	State  string
 	Labels []string
+	// Fork is true when the PR's head repo differs from its base repo -
+	// quack cannot push to a fork's branch (see cifix.go), and the
+	// permission grant must never offer push_commits_to_pr for one (#662).
+	Fork bool
 }
 
 // pullMeta fetches a PR's head ref/sha, base ref, title, description,
@@ -1037,11 +1041,17 @@ func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prM
 		Body  string `json:"body"`
 		State string `json:"state"`
 		Head  struct {
-			Ref string `json:"ref"`
-			SHA string `json:"sha"`
+			Ref  string `json:"ref"`
+			SHA  string `json:"sha"`
+			Repo struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
 		} `json:"head"`
 		Base struct {
-			Ref string `json:"ref"`
+			Ref  string `json:"ref"`
+			Repo struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
 		} `json:"base"`
 		Labels []struct {
 			Name string `json:"name"`
@@ -1058,6 +1068,9 @@ func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prM
 	return prMeta{
 		HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref,
 		Title: out.Title, Body: out.Body, State: out.State, Labels: labels,
+		// head.repo is null for a deleted fork - treat that as a fork too
+		// (quack certainly cannot push to it either).
+		Fork: out.Head.Repo.FullName != out.Base.Repo.FullName,
 	}, nil
 }
 

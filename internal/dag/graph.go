@@ -114,6 +114,10 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.NodeID = workspaceNodeID(plan, node)
 		// Carried only for observability (span/metric attribute) - see vetting.Config.Agent.
 		cfg.Agent = node.AgentName
+		// The trigger's permission grant (#657, #662), threaded through as
+		// information (see Plan.Grant) - commitDelivery is where it is
+		// actually enforced.
+		cfg.Grant = plan.Grant
 		// The structural review-delivery signal (#482): a code-reviewer node IS a
 		// review-delivery node by construction, independent of how its task is
 		// worded - see vetting.Config.IsReviewer.

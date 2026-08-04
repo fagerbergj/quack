@@ -22,7 +22,7 @@ func TestBuildValidatesAndStamps(t *testing.T) {
 		{ID: "n1", Agent: "web-researcher", Task: "a"},
 		{ID: "n2", Agent: "web-researcher", Task: "b"},
 		{ID: "n3", Agent: "synthesizer", Task: "combine"},
-	}, nil, nil, []HistoryTurn{{Role: "user", Text: "hi"}}, "do it", nil)
+	}, nil, nil, []HistoryTurn{{Role: "user", Text: "hi"}}, "do it", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestBuildRejectsBadPlans(t *testing.T) {
 		"cycle":         {{ID: "n1", Agent: "web-researcher", DependsOn: []string{"n2"}}, {ID: "n2", Agent: "web-researcher", DependsOn: []string{"n1"}}},
 	}
 	for name, nodes := range cases {
-		if _, err := p.Build(context.Background(), nodes, nil, nil, nil, "m", nil); err == nil {
+		if _, err := p.Build(context.Background(), nodes, nil, nil, nil, "m", nil, nil); err == nil {
 			t.Errorf("%s: expected error, got nil", name)
 		}
 	}
@@ -67,7 +67,7 @@ func TestBuildAppendsMissingSynthesizer(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "a", Agent: "web-researcher", Task: "research A"},
 		{ID: "b", Agent: "web-researcher", Task: "research B"},
-	}, nil, nil, nil, "compare", nil)
+	}, nil, nil, nil, "compare", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "a", Agent: "web-researcher", Task: "research"},
 		{ID: "b", Agent: "web-researcher", Task: "refine", DependsOn: []string{"a"}},
-	}, nil, nil, nil, "x", nil)
+	}, nil, nil, nil, "x", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,22 +110,22 @@ func TestReviewFanoutBackstop(t *testing.T) {
 	largeMsg := "Review PR #3.\n\nChanged files (3):\n  a.ts (+600/-0)\n  b.ts (+400/-10)\n  c.ts (+50/-5)\n" // churn 1065 > 800
 	smallMsg := "Review PR #7.\n\nChanged files (1):\n  a.ts (+100/-20)\n"                                    // churn 120
 
-	if _, err := p.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review the PR and post."}}, nil, nil, nil, largeMsg, nil); err == nil {
+	if _, err := p.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review the PR and post."}}, nil, nil, nil, largeMsg, nil, nil); err == nil {
 		t.Error("a lone code-reviewer for a large PR must be rejected (fan out expected)")
 	}
 	if _, err := p.Build(context.Background(), []RawNode{
 		{ID: "e1", Agent: "code-explorer", Task: "Review a.ts, gather findings."},
 		{ID: "e2", Agent: "code-explorer", Task: "Review b.ts and c.ts, gather findings."},
 		{ID: "r", Agent: "code-reviewer", Task: "Validate the pooled findings and post.", DependsOn: []string{"e1", "e2"}},
-	}, nil, nil, nil, largeMsg, nil); err != nil {
+	}, nil, nil, nil, largeMsg, nil, nil); err != nil {
 		t.Errorf("a fanned-out large review (explorers → reviewer) must pass: %v", err)
 	}
-	if _, err := p.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, nil, nil, smallMsg, nil); err != nil {
+	if _, err := p.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, nil, nil, smallMsg, nil, nil); err != nil {
 		t.Errorf("a small PR as one reviewer node must pass: %v", err)
 	}
 	// No code-explorer in the roster ⇒ backstop inert (can't fan out).
 	p2 := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, nil)
-	if _, err := p2.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, nil, nil, largeMsg, nil); err != nil {
+	if _, err := p2.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review and post."}}, nil, nil, nil, largeMsg, nil, nil); err != nil {
 		t.Errorf("no code-explorer in the roster ⇒ backstop must be inert: %v", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestReviewFanoutBackstopInertWhenJudgePresent(t *testing.T) {
 
 	if _, err := p.Build(context.Background(), []RawNode{
 		{ID: "r", Agent: "code-reviewer", Task: "Verify commit 8e50447 resolves the blocking finding; re-check the three named threads only."},
-	}, nil, nil, nil, largeMsg, nil); err != nil {
+	}, nil, nil, nil, largeMsg, nil, nil); err != nil {
 		t.Errorf("a judge-accepted scoped single-reviewer plan on a large PR must pass: %v", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestBuildAcceptsImplementerNodeWithoutChecks(t *testing.T) {
 	p := testPlanner("npx tsc", "npx vitest")
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR."},
-	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: a code-implementer node with NO checks must be accepted (the gate derives them): %v", err)
 	}
@@ -175,7 +175,7 @@ func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "Clone, implement, commit, push, open PR.",
 			Checks: []string{"npx tsc", "npx vitest run"}, Workdir: "repo"},
-	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: a code-implementer node WITH checks must pass: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestJudgeRoutingAcceptsPlanOnlyPlan(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "explore", Agent: "web-researcher", Task: "Study the repo's conventions."},
 		{ID: "write-plan", Agent: "synthesizer", Task: "Write the plan document.", DependsOn: []string{"explore"}},
-	}, nil, nil, nil, msg, nil)
+	}, nil, nil, nil, msg, nil, nil)
 	if err != nil {
 		t.Fatalf("Build: a judge-accepted plan-only plan must pass: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestJudgeRoutingRejectsImplementWithoutImplementerNode(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "code-implementer"}}, nil, judge)
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
-	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil, nil)
 	if err == nil {
 		t.Fatal("Build: expected rejection from the judge")
 	}
@@ -265,7 +265,7 @@ func TestJudgeRoutingRejectsReviewWithoutReviewerNode(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "code-reviewer"}}, nil, judge)
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "explore", Agent: "web-researcher", Task: "Summarize the PR diff."},
-	}, nil, nil, nil, "Review PR #5 and post your findings as inline comments.", nil)
+	}, nil, nil, nil, "Review PR #5 and post your findings as inline comments.", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), reason) {
 		t.Fatalf("Build error = %v, want it to carry the judge's reason %q", err, reason)
 	}
@@ -277,7 +277,7 @@ func TestJudgeRoutingAcceptsReviewWithReviewerNode(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, judge)
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "review", Agent: "code-reviewer", Task: "Review PR #5 and post inline comments."},
-	}, nil, nil, nil, "Review PR #5 and post your findings as inline comments.", nil)
+	}, nil, nil, nil, "Review PR #5 and post your findings as inline comments.", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: a judge-accepted review plan must pass: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestJudgeRoutingNoopWhenJudgeNil(t *testing.T) {
 	p := testPlanner() // testPlanner wires judge=nil
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
-	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: a nil judge must never block plan validation: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestJudgeRoutingDegradesGracefullyOnJudgeError(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, judge)
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
-	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil)
+	}, nil, nil, nil, "Add a Flappy Bird game to the repo and open it as a pull request.", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: a judge error must degrade gracefully (allow), not block: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestBuildAcceptsChecksMatchingConfiguredPrefix(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "fix it",
 			Checks: []string{"go test ./..."}, Workdir: "repo"},
-	}, nil, nil, nil, "fix the bug", nil)
+	}, nil, nil, nil, "fix the bug", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestBuildAcceptsCheckEqualToBarePrefix(t *testing.T) {
 	p := testPlanner("go build", "go test")
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test"}, Workdir: "repo"},
-	}, nil, nil, nil, "m", nil)
+	}, nil, nil, nil, "m", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestBuildRejectsCheckNotMatchingAnyPrefix(t *testing.T) {
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"rm -rf /"}, Workdir: "repo"},
-	}, nil, nil, nil, "m", nil)
+	}, nil, nil, nil, "m", nil, nil)
 	if err == nil {
 		t.Fatal("Build: expected error for a check with no matching configured prefix")
 	}
@@ -359,7 +359,7 @@ func TestBuildAcceptsCheckWithQuotedMetachar(t *testing.T) {
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test -run 'Test(Foo)'"}, Workdir: "repo"},
-	}, nil, nil, nil, "m", nil)
+	}, nil, nil, nil, "m", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: quoted-metachar check should validate: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestBuildAcceptsPipedCheckUnderMatchingPrefix(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x",
 			Checks: []string{"go vet ./... | head -50"}, Workdir: "repo"},
-	}, nil, nil, nil, "m", nil)
+	}, nil, nil, nil, "m", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: piped check should validate: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestBuildRejectsChecksLookingLikeAPrefixButNotSeparated(t *testing.T) {
 	p := testPlanner("go test")
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go testing ./..."}, Workdir: "repo"},
-	}, nil, nil, nil, "m", nil)
+	}, nil, nil, nil, "m", nil, nil)
 	if err == nil {
 		t.Fatal("Build: expected error - \"go testing\" must not match the \"go test\" prefix")
 	}
@@ -400,7 +400,7 @@ func TestBuildRejectsChecksWhenAllowlistEmpty(t *testing.T) {
 	p := testPlanner() // no check_commands configured
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test ./..."}, Workdir: "repo"},
-	}, nil, nil, nil, "m", nil)
+	}, nil, nil, nil, "m", nil, nil)
 	if err == nil {
 		t.Fatal("Build: expected error - checks unavailable when workspace.check_commands is empty")
 	}
@@ -412,7 +412,7 @@ func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
 	p := testPlanner()
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x"},
-	}, nil, nil, nil, "m", nil)
+	}, nil, nil, nil, "m", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: unexpected error for a node with no checks: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestBuildStampsSetupAndDeliveryOntoPlan(t *testing.T) {
 	delivery := &Delivery{Kind: "pull_request"}
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "add the widget"},
-	}, setup, delivery, nil, "add a widget and open a PR", nil)
+	}, setup, delivery, nil, "add a widget and open a PR", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestBuildAllowsNilSetupAndDelivery(t *testing.T) {
 	p := testPlanner()
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "r", Agent: "web-researcher", Task: "research"},
-	}, nil, nil, nil, "what's the weather", nil)
+	}, nil, nil, nil, "what's the weather", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: nil setup/delivery must be accepted: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestBuildRejectsUnknownDeliveryKind(t *testing.T) {
 	p := testPlanner()
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x"},
-	}, nil, &Delivery{Kind: "push_directly_to_main"}, nil, "m", nil)
+	}, nil, &Delivery{Kind: "push_directly_to_main"}, nil, "m", nil, nil)
 	if err == nil {
 		t.Fatal("Build: expected error for a delivery.kind outside pull_request/review/comment")
 	}
@@ -469,7 +469,7 @@ func TestBuildAcceptsEachValidDeliveryKind(t *testing.T) {
 	for _, kind := range []string{"pull_request", "review", "comment"} {
 		if _, err := p.Build(context.Background(), []RawNode{
 			{ID: "impl", Agent: "code-implementer", Task: "x"},
-		}, nil, &Delivery{Kind: kind}, nil, "m", nil); err != nil {
+		}, nil, &Delivery{Kind: kind}, nil, "m", nil, nil); err != nil {
 			t.Errorf("Build: delivery.kind %q must be accepted: %v", kind, err)
 		}
 	}
@@ -484,7 +484,7 @@ func TestBuildRejectsConcurrentRepoTouchingNodesWithSetup(t *testing.T) {
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
 		{ID: "impl2", Agent: "code-implementer", Task: "part two"},
-	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two independent things", nil)
+	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two independent things", nil, nil)
 	if err == nil {
 		t.Fatal("Build: expected an error - two repo-touching nodes with setup declared but no depends_on chain")
 	}
@@ -501,7 +501,7 @@ func TestBuildAllowsChainedRepoTouchingNodesWithSetup(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
 		{ID: "impl2", Agent: "code-implementer", Task: "part two", DependsOn: []string{"impl1"}},
-	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two sequential things", nil)
+	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two sequential things", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: a depends_on chain of repo-touching nodes must be accepted: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestBuildAllowsConcurrentExplorerNodesWithSetup(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "explore1", Agent: "code-explorer", Task: "survey the auth package"},
 		{ID: "explore2", Agent: "code-explorer", Task: "survey the storage package"},
-	}, setup, nil, nil, "explore two independent packages", nil)
+	}, setup, nil, nil, "explore two independent packages", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: concurrent explorer nodes with setup must be accepted, not forced into a chain: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestBuildAllowsConcurrentReviewerNodesWithSetup(t *testing.T) {
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "review1", Agent: "code-reviewer", Task: "review the auth changes"},
 		{ID: "review2", Agent: "code-reviewer", Task: "review the storage changes"},
-	}, setup, nil, nil, "review two independent changes", nil)
+	}, setup, nil, nil, "review two independent changes", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: concurrent reviewer nodes with setup must be accepted, not forced into a chain: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestBuildRejectsConcurrentImplementerNodesEvenWithExplorerPresent(t *testin
 		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
 		{ID: "impl2", Agent: "code-implementer", Task: "part two"},
 		{ID: "explore", Agent: "code-explorer", Task: "survey the repo"},
-	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two independent things plus explore", nil)
+	}, setup, &Delivery{Kind: "pull_request"}, nil, "do two independent things plus explore", nil, nil)
 	if err == nil {
 		t.Fatal("Build: expected an error - impl1/impl2 still need a depends_on chain, an unrelated explorer doesn't change that")
 	}
@@ -574,7 +574,7 @@ func TestBuildAllowsConcurrentRepoTouchingNodesWithoutSetup(t *testing.T) {
 	_, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl1", Agent: "code-implementer", Task: "part one"},
 		{ID: "impl2", Agent: "code-implementer", Task: "part two"},
-	}, nil, nil, nil, "do two independent things", nil)
+	}, nil, nil, nil, "do two independent things", nil, nil)
 	if err != nil {
 		t.Fatalf("Build: concurrent repo-touching nodes without setup must be accepted: %v", err)
 	}

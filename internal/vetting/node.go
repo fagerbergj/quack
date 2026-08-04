@@ -882,6 +882,26 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// gate-failed draft, same as any other unmet deterministic criterion).
 	// Nothing left to strip or repair here.
 
+	// The permission boundary (#657, #662): drop any staged item the
+	// trigger's grant does not permit BEFORE it reaches cfg.Deliver - the
+	// only enforcement point, since this is the only path to GitHub (ACP
+	// workers can't git push; native write-side tools were deleted in
+	// 0.6.0). A refusal is loud - logged and surfaced as a failed
+	// delivery_result - never a silently dropped item.
+	if allowed, refused, reasons := partitionByGrant(dc.Items, cfg.Grant); len(refused) > 0 {
+		for i, item := range refused {
+			slog.Error("delivery refused: ungranted kind", "component", "vetting",
+				"node", nodeID, "kind", item.Kind, "reason", reasons[i])
+			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
+				item.Kind, "", "delivery refused: "+reasons[i], traceID))
+		}
+		dc.Items = allowed
+		if len(dc.Items) == 0 {
+			recordDeliveryOutcomeMetric(cfg, res, true, false)
+			return
+		}
+	}
+
 	kinds := make([]string, len(dc.Items))
 	for i, item := range dc.Items {
 		kinds[i] = item.Kind
@@ -928,6 +948,22 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		return
 	}
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
+}
+
+// partitionByGrant splits staged items into what g permits and what it
+// refuses, pairing each refused item with why (same index as refused) - the
+// gate's actual permission boundary (#662). A nil grant (no GitHub trigger
+// governs this run) permits everything.
+func partitionByGrant(items []StagedDelivery, g *Grant) (allowed, refused []StagedDelivery, reasons []string) {
+	for _, item := range items {
+		if ok, reason := g.allows(item.Kind); ok {
+			allowed = append(allowed, item)
+		} else {
+			refused = append(refused, item)
+			reasons = append(reasons, reason)
+		}
+	}
+	return allowed, refused, reasons
 }
 
 // emitDeliveryResult sends a delivery_result SSE event, if a sink is present

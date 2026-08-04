@@ -77,15 +77,20 @@ type snapshotCommit struct {
 // stored whole; cherry-picking (which comments matter, which are stale)
 // happens only when RENDERING context, never here.
 type Snapshot struct {
-	Title          string                  `json:"title"`
-	Body           string                  `json:"body"`
-	State          string                  `json:"state"`
-	Labels         []string                `json:"labels,omitempty"`
-	Comments       []snapshotComment       `json:"comments,omitempty"`
-	IsPR           bool                    `json:"is_pr,omitempty"`
-	HeadRef        string                  `json:"head_ref,omitempty"`
-	HeadSHA        string                  `json:"head_sha,omitempty"`
-	BaseRef        string                  `json:"base_ref,omitempty"`
+	Title    string            `json:"title"`
+	Body     string            `json:"body"`
+	State    string            `json:"state"`
+	Labels   []string          `json:"labels,omitempty"`
+	Comments []snapshotComment `json:"comments,omitempty"`
+	IsPR     bool              `json:"is_pr,omitempty"`
+	HeadRef  string            `json:"head_ref,omitempty"`
+	HeadSHA  string            `json:"head_sha,omitempty"`
+	BaseRef  string            `json:"base_ref,omitempty"`
+	// Fork is true when this PR's head repo differs from its base repo -
+	// carried through to computeGrant, which must never offer
+	// push_commits_to_pr for one (#662). Always false for an issue (IsPR
+	// false).
+	Fork           bool                    `json:"fork,omitempty"`
 	Reviews        []snapshotReview        `json:"reviews,omitempty"`
 	ReviewComments []snapshotReviewComment `json:"review_comments,omitempty"`
 	Commits        []snapshotCommit        `json:"commits,omitempty"`
@@ -108,6 +113,7 @@ func (e *Extension) fetchSnapshot(ctx context.Context, owner, repo string, numbe
 		}
 		snap.Title, snap.Body, snap.State, snap.Labels = m.Title, m.Body, m.State, m.Labels
 		snap.HeadRef, snap.HeadSHA, snap.BaseRef = m.HeadRef, m.HeadSHA, m.BaseRef
+		snap.Fork = m.Fork
 	} else {
 		title, body, state, labels, _, err := e.app.issueMeta(ctx, owner, repo, number)
 		if err != nil {

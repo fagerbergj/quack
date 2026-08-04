@@ -28,7 +28,7 @@ func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { retur
 // #661 deterministic-setup tests below.
 func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, existingHeadRef string, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", existingHeadRef, githubSetup)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", existingHeadRef, githubSetup, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 
 func TestNewPlanToolMetadata(t *testing.T) {
 	planner := dag.NewPlanner(nil, nil, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", "", nil)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)
 	}

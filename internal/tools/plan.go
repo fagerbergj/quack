@@ -15,6 +15,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 type planArgs struct {
@@ -51,8 +52,11 @@ type planResult struct {
 // non-nil it REPLACES whatever the planner declared wholesale, so a
 // GitHub-triggered plan never depends on the model getting repo/base_ref
 // right (#661); nil for a non-GitHub run, which keeps getting Setup from the
-// planner as before.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup) (tool.Tool, error) {
+// planner as before. grant is the trigger's computed permission set (#662,
+// nil for a non-GitHub turn) - stamped onto the plan as information for the
+// gate to enforce (vetting.commitDelivery); this tool never rejects a plan
+// over it.
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, grant *vetting.Grant) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -90,7 +94,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			// chat instead of "unscoped" while staying part of the root stream
 			// (Node/Agent/Round empty - #617), same stamp emitPlanEvent below uses.
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
-			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments)
+			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments, grant)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
