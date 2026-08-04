@@ -79,6 +79,12 @@ var promptToolchains = []struct {
 	{"go", []string{"version"}, extractGoVersion},
 	{"node", []string{"--version"}, extractMajorMinor("node")},
 	{"python3", []string{"--version"}, extractMajorMinor("python")},
+	// "ast-grep", never its `sg` alias - sg collides with util-linux's
+	// setgid(1) already on PATH and would resolve to the wrong binary. This
+	// only tells a coding agent the tool exists (it already has bash access
+	// to invoke it); the trust gate's own use of it is gated separately, by
+	// workspace.check_commands (vetting.packageDeclarationCriterion).
+	{"ast-grep", []string{"--version"}, extractMajorMinor("ast-grep")},
 }
 
 // toolchainProbeTimeout bounds each startup version probe.

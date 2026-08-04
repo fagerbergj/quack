@@ -47,6 +47,18 @@ FROM debian:bookworm-slim AS opencode
 ADD https://github.com/sst/opencode/releases/download/v1.18.3/opencode-linux-x64.tar.gz /tmp/opencode.tar.gz
 RUN tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode
 
+# 2c) ast-grep (#684): a Rust single binary (MIT) the trust gate's
+# package-declaration check (internal/vetting/packagecheck.go) shells out to,
+# and that the coding agents' own bash access can already reach once it's on
+# PATH. PINNED - bump deliberately. The release archive also ships `sg`, a
+# short alias - never extracted: `sg` is already util-linux's setgid(1) on
+# this image's PATH, and shadowing it would resolve to the wrong binary.
+FROM debian:bookworm-slim AS ast-grep
+RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ADD https://github.com/ast-grep/ast-grep/releases/download/0.45.0/app-x86_64-unknown-linux-gnu.zip /tmp/ast-grep.zip
+RUN unzip -o /tmp/ast-grep.zip ast-grep -d /usr/local/bin && chmod +x /usr/local/bin/ast-grep
+
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
 # binary, which dynamically links against libcurl/libssl/libpcre2/zlib - those
 # don't exist in distroless/static (no libc at all) and hand-copying git's
@@ -85,6 +97,7 @@ COPY --from=backend /usr/local/go /usr/local/go
 # $HOME quack sets (the jail home on the workspace volume), and its first round
 # fetches the @ai-sdk provider package over the network into that cache.
 COPY --from=opencode /usr/local/bin/opencode /usr/local/bin/opencode
+COPY --from=ast-grep /usr/local/bin/ast-grep /usr/local/bin/ast-grep
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \

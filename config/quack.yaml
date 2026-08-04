@@ -359,7 +359,13 @@ workspace:
   # the host, so a runtime without go/npm (the shipped Docker image has git
   # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
   # disables checks entirely.
-  check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
+  #
+  # "ast-grep" is not planner- or derive-writable - it gates a fixed,
+  # code-owned check (#684: a Kotlin/Java/Go file's `package` must match its
+  # own directory) rather than a repo-declared build/test command. It shares
+  # this allowlist purely so an operator can turn it off the same way as
+  # every other check; removing it disables ONLY that check, not the others.
+  check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "ast-grep"]
 
   # Deployment-level per-host HTTPS git credentials - ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos

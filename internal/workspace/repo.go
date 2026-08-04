@@ -49,6 +49,11 @@ func FindRepos(root string) []string {
 // skipDir names the directories a repo search must never descend into.
 func skipDir(name string) bool { return SkipDir(name) }
 
+// skipDirNames are the fixed vendored/generated directory names SkipDir
+// matches exactly (dot-dirs are handled separately, by prefix). The single
+// source of truth for both SkipDir and SkipGlobs, so the two can't drift.
+var skipDirNames = []string{"node_modules", "vendor", "target", "dist", "build", "__pycache__"}
+
 // SkipDir reports whether a directory is vendored or generated - a tree no search
 // should descend into. It covers dot-dirs (.git, .next, .venv), dependency trees
 // (node_modules, vendor) and the conventional build outputs.
@@ -59,11 +64,26 @@ func skipDir(name string) bool { return SkipDir(name) }
 // the node. Every other harness gets this for free by shelling out to ripgrep, which
 // honours .gitignore.
 func SkipDir(name string) bool {
-	switch name {
-	case "node_modules", "vendor", "target", "dist", "build", "__pycache__":
-		return true
+	for _, n := range skipDirNames {
+		if name == n {
+			return true
+		}
 	}
 	return strings.HasPrefix(name, ".")
+}
+
+// SkipGlobs renders SkipDir's boundary as ast-grep/ripgrep-style `!**/name/**`
+// exclude globs, for a scanner that walks paths itself via a tool's own
+// --globs flag rather than pruning directories entry-by-entry (see the
+// package-declaration check, vetting/packagecheck.go) - same tree, one
+// definition.
+func SkipGlobs() []string {
+	globs := make([]string, 0, len(skipDirNames)+1)
+	globs = append(globs, "!**/.*/**")
+	for _, n := range skipDirNames {
+		globs = append(globs, "!**/"+n+"/**")
+	}
+	return globs
 }
 
 func isRepo(dir string) bool {

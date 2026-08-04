@@ -271,7 +271,10 @@ const (
 // `check_commands: []` still means "checks disabled". "./gradlew" covers every
 // derived gradle task (MatchesCheckPrefix is a prefix match) - without it a
 // Gradle/Kotlin repo derives checks that the allowlist then drops (#638).
-var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew"}
+// "ast-grep" gates the fixed package-declaration check (#684), not a
+// derived build/test command - see config/quack.yaml's own check_commands
+// comment.
+var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew", "ast-grep"}
 
 // WorkspaceConfig is the agents' working disk: one configured root, with a
 // per-user jail under it (<root>/<user_id>/ — see internal/workspace.Jail)

@@ -104,6 +104,29 @@ func TestPromptBlockToolchainRemovalRemovesLine(t *testing.T) {
 	}
 }
 
+// TestPromptBlockAstGrepRemovalRemovesLine mirrors
+// TestPromptBlockToolchainRemovalRemovesLine for ast-grep specifically (#684):
+// the gate's own use of it is a separate, allowlist-gated path
+// (vetting.packageDeclarationCriterion) - this only covers the coding
+// agents' PROMPT line, which must vanish exactly when the binary isn't
+// actually resolvable, never claim a tool a round can't run.
+func TestPromptBlockAstGrepRemovalRemovesLine(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeBinary(t, dir, "ast-grep", "ast-grep 0.45.0")
+	t.Setenv("PATH", dir)
+
+	present := PromptBlock(Caps{}, nil)
+	if !strings.Contains(present, "ast-grep 0.45") {
+		t.Fatalf("with ast-grep on PATH, want ast-grep 0.45 in the toolchain line, got %q", present)
+	}
+
+	t.Setenv("PATH", t.TempDir())
+	absent := PromptBlock(Caps{}, nil)
+	if strings.Contains(absent, "ast-grep") {
+		t.Errorf("with ast-grep not resolvable, want no mention of it, got %q", absent)
+	}
+}
+
 func TestPromptBlockMultipleToolchains(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeBinary(t, dir, "go", "go version go1.24.2 linux/amd64")

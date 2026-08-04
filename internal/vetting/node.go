@@ -1229,6 +1229,13 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
 		v.Criteria["checks_pass"] = c
 	}
+	// Package/directory consistency (#684): a Kotlin/Java/Go file whose
+	// `package` doesn't match its own directory, found by anchoring to each
+	// language's grammar (ast-grep) rather than scanning the answer's prose
+	// (#685, reverted in #695 for false-positiving on non-paths).
+	if c, ok := packageDeclarationCriterion(ctx, cfg); ok {
+		v.Criteria["package_declaration"] = c
+	}
 	// Mermaid validity (#448): checked against the answer AND every currently
 	// staged delivery body - whichever is about to ship to GitHub. Only added
 	// on a failure (mirrors sufficient_length above): a clean diagram, or no

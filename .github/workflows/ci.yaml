@@ -27,6 +27,10 @@ jobs:
           cache-dependency-path: scripts/package-lock.json
       - run: npm ci
         working-directory: scripts
+      # internal/vetting's package-declaration tests (#684) shell out to
+      # ast-grep - scripts/package.json's devDependency, put on PATH so that
+      # coverage runs for real instead of skipping.
+      - run: echo "$PWD/scripts/node_modules/.bin" >> "$GITHUB_PATH"
       - run: go vet ./...
       - run: go test ./...
 
