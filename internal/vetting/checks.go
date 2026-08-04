@@ -28,6 +28,10 @@ const (
 	skipReasonNoWorkspace     = "no_workspace"      // no workspace wired up and nothing to derive from
 	skipReasonNoRepo          = "no_repo"           // no single repo found to derive checks from
 	skipReasonNoChecksDerived = "no_checks_derived" // a repo was found but nothing recognisable to check
+	// skipReasonUnsupportedBuild is skipReasonNoChecksDerived's LOUD case: the
+	// repo plainly has a build system we cannot derive checks for, so "nothing
+	// verified" must not read as "verified and passed" (#638).
+	skipReasonUnsupportedBuild = "unsupported_build_system"
 )
 
 // skipChecks records that the deterministic checks criterion did NOT apply -
@@ -104,6 +108,13 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 	if len(checks) == 0 {
 		checks = deriveChecks(dir, cfg.CheckCommands)
 		if len(checks) == 0 {
+			if bs := unsupportedBuildSystem(dir); bs != "" {
+				// Loud: this node was gated on NOTHING. Silence here reads as a
+				// clean bill of health and shipped non-compiling code once (#638).
+				slog.Warn("repo has a build system but no checks could be derived; this node is gated on NOTHING",
+					"component", "vetting", "node", cfg.NodeID, "dir", dir, "build_system", bs)
+				return skipChecks(ctx, skipReasonUnsupportedBuild)
+			}
 			slog.Info("no checks derived from the repo; skipping checks", "component", "vetting", "node", cfg.NodeID, "dir", dir)
 			return skipChecks(ctx, skipReasonNoChecksDerived)
 		}
@@ -301,6 +312,12 @@ func deriveChecks(dir string, allow []string) []string {
 		// workspace.SplitPipeline supports the former, not the latter.
 		cands = append(cands, "gofmt -l . | wc -l | grep -q ^0$")
 	}
+	// Gradle: the wrapper is the entry point every Android/Kotlin repo ships,
+	// and compiling is the check that matters most - the gate approved
+	// non-compiling Kotlin because none of these existed (#638).
+	if fileExists(dir, "gradlew") {
+		cands = append(cands, "./gradlew compileDebugKotlin", "./gradlew testDebugUnitTest")
+	}
 	if fileExists(dir, "Makefile") {
 		targets := makeTargets(dir)
 		for _, t := range makeCheckTargets {
@@ -324,6 +341,30 @@ func deriveChecks(dir string, allow []string) []string {
 		out = append(out, "npx prettier --check")
 	}
 	return out
+}
+
+// unsupportedBuildSystem names the build system a repo obviously HAS when
+// deriveChecks produced nothing for it - the difference between "there is
+// nothing to verify here" and "we verified nothing". Markers deliberately
+// include systems deriveChecks does not support: that is the whole point.
+func unsupportedBuildSystem(dir string) string {
+	for _, m := range []struct{ file, name string }{
+		{"Cargo.toml", "cargo"},
+		{"pom.xml", "maven"},
+		{"build.gradle", "gradle"},
+		{"build.gradle.kts", "gradle"},
+		{"pyproject.toml", "python"},
+		{"setup.py", "python"},
+		{"Gemfile", "bundler"},
+		{"composer.json", "composer"},
+		{"CMakeLists.txt", "cmake"},
+		{"BUILD.bazel", "bazel"},
+	} {
+		if fileExists(dir, m.file) {
+			return m.name
+		}
+	}
+	return ""
 }
 
 // toolchainPresent reports whether a derived check's binary exists on the

@@ -372,3 +372,44 @@ func TestGofmtCheckGatesAWorkerIntroducedViolation(t *testing.T) {
 		t.Errorf("want the worker's own formatting violation to gate; got applies=%v score=%v %s", applies, sc.Score, sc.Reason)
 	}
 }
+
+// TestDeriveChecksGradle pins #638: a Gradle/Android repo derived NOTHING, so
+// the gate approved Kotlin that didn't compile (NightsOut#93). The wrapper is
+// the marker every such repo ships.
+func TestDeriveChecksGradle(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gradlew"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := deriveChecks(dir, []string{"./gradlew"})
+	if len(got) == 0 {
+		t.Fatal("deriveChecks found no gradle checks - the gate would run nothing and pass anything")
+	}
+	var compiles bool
+	for _, c := range got {
+		if strings.Contains(c, "compile") {
+			compiles = true
+		}
+	}
+	if !compiles {
+		t.Errorf("derived %v - want a compile check, the one that would have caught #93", got)
+	}
+}
+
+// TestUnsupportedBuildSystemIsNamed pins the root-cause half of #638: a repo
+// that plainly HAS a build system we can't derive for must be distinguishable
+// from one with nothing to verify, so "gated on nothing" can be said out loud.
+func TestUnsupportedBuildSystemIsNamed(t *testing.T) {
+	for file, want := range map[string]string{"Cargo.toml": "cargo", "pom.xml": "maven", "pyproject.toml": "python"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, file), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := unsupportedBuildSystem(dir); got != want {
+			t.Errorf("unsupportedBuildSystem(%s) = %q, want %q", file, got, want)
+		}
+	}
+	if got := unsupportedBuildSystem(t.TempDir()); got != "" {
+		t.Errorf("empty dir named %q - a repo with no build system must stay quiet", got)
+	}
+}
