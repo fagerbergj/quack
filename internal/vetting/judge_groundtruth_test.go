@@ -148,7 +148,7 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
 
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, question,
-		"I implemented Play() in game.go", workerActivity{}, func(*genai.Part) bool { return true })
+		"I implemented Play() in game.go", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
 	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
 
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10", AdvisorToken: token}, question,
-		"I implemented Play() in game.go", workerActivity{}, func(*genai.Part) bool { return true })
+		"I implemented Play() in game.go", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}

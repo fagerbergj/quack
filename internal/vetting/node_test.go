@@ -116,6 +116,101 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 }
 
+// stubFixedAnswerModel is a worker stub that always returns the same text with
+// no tool calls - for tests that need deterministic zero-retrieval activity.
+type stubFixedAnswerModel struct{ text string }
+
+func (m stubFixedAnswerModel) Name() string { return "stub-fixed" }
+
+func (m stubFixedAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(stubText(m.text), nil)
+	}
+}
+
+// judgePromptCapturingModel is a judge stub that records every prompt it
+// scores and always submits a high, "flawless" verdict of its own.
+type judgePromptCapturingModel struct{ prompts []string }
+
+func (m *judgePromptCapturingModel) Name() string { return "capturing-judge" }
+
+func (m *judgePromptCapturingModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		m.prompts = append(m.prompts, stubAllText(req))
+		yield(stubCall(submitVerdictTool, map[string]any{
+			"criteria": map[string]any{"accuracy": map[string]any{"score": 1.0, "reason": "solid"}},
+			"feedback": "The answer is flawless.",
+		}), nil)
+	}
+}
+
+// TestRunGatedRefine_DeterministicFailureReachesJudgeBeforeVerdict asserts a
+// deterministic failure is present in the FIRST judge round's own prompt, and
+// that the verdict still fails via weakest-link despite the judge's own
+// criterion passing at 1.0.
+func TestRunGatedRefine_DeterministicFailureReachesJudgeBeforeVerdict(t *testing.T) {
+	judgeStub := &judgePromptCapturingModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stubFixedAnswerModel{text: "The city's downtown core is walkable."},
+		Description: "researcher", Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10", RequireRetrieval: true}
+	var res GateResult
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(judgeStub, nil, nil), cfg, &res)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Which city are you moving to?"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	if len(judgeStub.prompts) == 0 {
+		t.Fatal("judge was never called")
+	}
+	first := judgeStub.prompts[0]
+	if !strings.Contains(first, "grounded_in_retrieval") {
+		t.Errorf("first judge round's prompt does not mention the already-failing deterministic criterion:\n%s", first)
+	}
+	if !strings.Contains(first, "Do not re-score") {
+		t.Errorf("first judge round's prompt does not tell the judge the criterion is already decided:\n%s", first)
+	}
+	if res.Passed || res.Score != 0 {
+		t.Errorf("GateResult = %+v, want Passed=false Score=0 (weakest-link on grounded_in_retrieval, despite the judge's own 1.0 criterion)", res)
+	}
+}
+
+// TestMergeDeterministic_WeakestLinkUnchanged pins that folding a computed
+// deterministic map into a verdict still takes the lowest criterion overall,
+// and never touches the judge's own criteria scores.
+func TestMergeDeterministic_WeakestLinkUnchanged(t *testing.T) {
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}, "clarity": {Score: 0.9}}, Score: 0.9}
+	det := map[string]criterionScore{"mermaid_valid": {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"}}
+	got := mergeDeterministic(v, det)
+	if got.Score != 0 {
+		t.Fatalf("score = %v, want 0 (weakest-link on the deterministic failure)", got.Score)
+	}
+	if got.Criteria["accuracy"].Score != 0.95 || got.Criteria["clarity"].Score != 0.9 {
+		t.Errorf("judge criteria altered by the merge: %+v", got.Criteria)
+	}
+}
+
 // TestGateReattachesAdvisorMarkerOnRevise pins the workspace-scope fix: a revise
 // round builds a fresh prompt from cfg.Task and would drop the advisor-thread
 // marker that carries the worker's per-node clone/cwd scope - so the marker must

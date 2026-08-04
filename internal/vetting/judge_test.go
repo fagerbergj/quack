@@ -104,7 +104,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 			factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{readTool}, nil)
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
-				"I implemented game.go", workerActivity{}, func(*genai.Part) bool { return true })
+				"I implemented game.go", workerActivity{}, nil, func(*genai.Part) bool { return true })
 			if err != nil {
 				t.Fatalf("runJudgeAgent: %v", err)
 			}
@@ -147,7 +147,7 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	hugeAnswer := strings.Repeat("the worker wrote a very long answer. ", 15_000)
 	cfg := Config{Rubric: "score 0-10", JudgeContextWindow: 8_000} // small window forces a real clamp
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, hugeAnswer, workerActivity{}, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, hugeAnswer, workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 2}
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
-	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestRunJudgeAgent_PermanentTransientErrorFailsClosed(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 100} // never recovers
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
-	_, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, func(*genai.Part) bool { return true })
+	_, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if err == nil {
 		t.Fatal("runJudgeAgent: expected an error when the judge model never recovers, got nil")
 	}
@@ -349,7 +349,7 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 			factory := NewJudgeFactory(skillJudge{}, nil, []tool.Toolset{ts})
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
-				"I implemented game.go", workerActivity{}, func(*genai.Part) bool { return true })
+				"I implemented game.go", workerActivity{}, nil, func(*genai.Part) bool { return true })
 			if err != nil {
 				t.Fatalf("runJudgeAgent: %v", err)
 			}
@@ -382,7 +382,7 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 	factory := NewJudgeFactory(oneShotJudge{}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
-		"Paris.", workerActivity{}, func(*genai.Part) bool { return true })
+		"Paris.", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "irrelevant outer question"}}}
 	changedFiles := "diff --git a/internal/foo.go b/internal/foo.go\n--- a/internal/foo.go\n+++ b/internal/foo.go\n@@ -1,1 +1,1 @@\n-old\n+new\n"
 
-	prompt := buildJudgePrompt("", "rubric text", nodeTask, question, "answer text", changedFiles, workerActivity{})
+	prompt := buildJudgePrompt("", "rubric text", nodeTask, question, "answer text", changedFiles, workerActivity{}, "")
 
 	if !strings.Contains(prompt, changedFiles) {
 		t.Errorf("judge prompt missing the actual diff content:\n%s", prompt)
@@ -445,5 +445,45 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	}
 	if !strings.Contains(prompt, nodeTask) {
 		t.Errorf("judge prompt must score against exactly the node's own task, verbatim:\n%s", prompt)
+	}
+}
+
+// TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted checks the
+// section names every below-threshold criterion, sorted, and skips a passing one.
+func TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted(t *testing.T) {
+	det := map[string]criterionScore{
+		"mermaid_valid":     {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"},
+		"sufficient_length": {Score: 0, Reason: "deterministic: 0 chars"},
+		"checks_pass":       {Score: 1, Reason: "deterministic: all checks passed"}, // passing - must not appear
+	}
+	got := judgeKnownFailuresSection(det, 0.7)
+	if !strings.Contains(got, "mermaid_valid") || !strings.Contains(got, "invalid mermaid diagram") {
+		t.Errorf("missing the mermaid_valid failure: %q", got)
+	}
+	if !strings.Contains(got, "sufficient_length") {
+		t.Errorf("missing the sufficient_length failure: %q", got)
+	}
+	if strings.Contains(got, "checks_pass") {
+		t.Errorf("a passing criterion must not appear in the known-failures section: %q", got)
+	}
+	if strings.Index(got, "mermaid_valid") > strings.Index(got, "sufficient_length") {
+		t.Errorf("criteria should be listed alphabetically: %q", got)
+	}
+}
+
+// TestBuildJudgePrompt_NoKnownFailuresOmitsSection checks the prompt is
+// unchanged when nothing has failed deterministically.
+func TestBuildJudgePrompt_NoKnownFailuresOmitsSection(t *testing.T) {
+	det := map[string]criterionScore{"checks_pass": {Score: 1.0, Reason: "deterministic: all checks passed"}}
+	known := judgeKnownFailuresSection(det, 0.7)
+	if known != "" {
+		t.Fatalf("judgeKnownFailuresSection = %q, want \"\" when every criterion passes", known)
+	}
+
+	q := questionContent("do the task")
+	withoutArg := buildJudgePrompt("", "rubric text", "", q, "the answer", "", workerActivity{}, "")
+	withEmptyKnown := buildJudgePrompt("", "rubric text", "", q, "the answer", "", workerActivity{}, known)
+	if withEmptyKnown != withoutArg {
+		t.Errorf("prompt changed even though nothing failed deterministically:\n--- want ---\n%s\n--- got ---\n%s", withoutArg, withEmptyKnown)
 	}
 }

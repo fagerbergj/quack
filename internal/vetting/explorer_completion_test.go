@@ -77,7 +77,7 @@ func TestJudgeIsScopedToTheNodesOwnTask(t *testing.T) {
 	const fullPrompt = "BACKGROUND - the user's full request.\nImplement code mode in quack. " +
 		"Commit on a branch, push it, and open a pull request.\n\n---\n\nYOUR TASK:\n" + explorerTask
 
-	got := buildJudgePrompt("", "rubric", explorerTask, questionContent(fullPrompt), "goose uses ExtensionManager…", "", workerActivity{})
+	got := buildJudgePrompt("", "rubric", explorerTask, questionContent(fullPrompt), "goose uses ExtensionManager…", "", workerActivity{}, "")
 
 	if !strings.Contains(got, "this node's own task") {
 		t.Error("the judge is not told WHAT it is scoring; it will grade the explorer against the whole request")
