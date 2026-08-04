@@ -798,6 +798,13 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 		}
 		if res.prNumber != 0 {
 			detail.prNumber, detail.prURL = res.prNumber, res.prURL
+			// A review/comment staged in the SAME delivery belongs on the PR we
+			// just opened - NOT on dc.IssueNumber, which for an issue-scoped run
+			// is the ISSUE the chat id names. Posting a review to
+			// pulls/<issue-number> 404s and the review is lost silently (#652).
+			// Deliver opens the PR before submitting the review precisely so this
+			// number exists by now.
+			dc.IssueNumber = res.prNumber
 		}
 		if item.Kind == "review" {
 			detail.reviewDelivered = true
