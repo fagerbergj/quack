@@ -1140,17 +1140,32 @@ func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
 // fakeIntentClassifier is a fixed-verdict IntentClassifier double: tests
 // express "this is a work request" by setting verdict, not by tuning prose to
 // trip a regex. errAlways, when set, simulates the classifier failing outright
-// (model error/timeout) regardless of verdict.
+// (model error/timeout) regardless of prompt. The two prompts this one
+// double answers (isWorkRequest's WORK/CONVERSATIONAL and
+// classifyPRDeliverable's REVIEW/COMMIT, intent.go) are distinguished by
+// content, not a second field on Extension - deliverable answers the
+// latter, deliverableErr fails only that call (so a test can prove the
+// deliverable classifier degrades independently of the work-request one). A
+// test that never sets deliverable exercises the deliverable-choice
+// unparseable-answer fallback for free.
 type fakeIntentClassifier struct {
-	verdict   string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
-	errAlways error
-	calls     int32
+	verdict        string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
+	deliverable    string // "REVIEW" or "COMMIT", or any other/blank to test the unparseable path
+	errAlways      error
+	deliverableErr error
+	calls          int32
 }
 
-func (f *fakeIntentClassifier) Classify(_ context.Context, _ string) (string, error) {
+func (f *fakeIntentClassifier) Classify(_ context.Context, prompt string) (string, error) {
 	atomic.AddInt32(&f.calls, 1)
 	if f.errAlways != nil {
 		return "", f.errAlways
+	}
+	if strings.Contains(prompt, "REVIEW or COMMIT") {
+		if f.deliverableErr != nil {
+			return "", f.deliverableErr
+		}
+		return f.deliverable, nil
 	}
 	return f.verdict, nil
 }
@@ -1193,6 +1208,83 @@ func TestBuildEnvelopeDeliverableClassification(t *testing.T) {
 	}
 	if !strings.Contains(imsg, `<issue number="7">`) {
 		t.Errorf("issue envelope missing the hoisted issue ask block:\n%s", imsg)
+	}
+}
+
+// TestBuildEnvelopeDeliverableClassifierResolvesFindingsAddress pins #689's
+// exact production failure: "please address these findings" has no delivery
+// word and its impl verb isn't clause-initial, so
+// vetting.ImplementationIntent misreads it as review-only. With both
+// post_review and push_commits_to_pr granted (the real ledger's permission
+// set) the classifier - not the regex - picks the deliverable, and gets this
+// one right.
+func TestBuildEnvelopeDeliverableClassifierResolvesFindingsAddress(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK", deliverable: "COMMIT"})
+	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: true}
+
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack please address these findings make sure they are valid first"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	env := ext.buildEnvelope(context.Background(), pr, "please address these findings make sure they are valid first", seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	if !strings.Contains(env, "<deliverable>a commit addressing the requested change</deliverable>") {
+		t.Errorf("a findings-address request with push_commits_to_pr granted should get the commit deliverable, not a second review:\n%s", env)
+	}
+
+	// Same grant, a genuine review ask still gets the review deliverable.
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK", deliverable: "REVIEW"})
+	revEnv := ext.buildEnvelope(context.Background(), pr, "take another look at the auth changes", seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	if !strings.Contains(revEnv, "<deliverable>a review with inline comments and a verdict</deliverable>") {
+		t.Errorf("a genuine review ask should still get the review deliverable:\n%s", revEnv)
+	}
+}
+
+// TestBuildEnvelopeDeliverableBoundedBySoleGrant pins #689's case 3: when the
+// grant permits only ONE of review/commit, that's the deliverable regardless
+// of what the message reads like - the classifier is never even consulted
+// (nothing to choose between), so it cannot hand back an ungranted plan.
+func TestBuildEnvelopeDeliverableBoundedBySoleGrant(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	classifier := &fakeIntentClassifier{verdict: "WORK", deliverable: "COMMIT"} // even a COMMIT verdict must not surface without push_commits_to_pr
+	ext.SetIntentClassifier(classifier)
+	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: false}
+
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack please address these findings"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	env := ext.buildEnvelope(context.Background(), pr, "please address these findings", seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	if !strings.Contains(env, "<deliverable>a review with inline comments and a verdict</deliverable>") {
+		t.Errorf("with only post_review granted, the deliverable must fall back to review even though the message asks for a fix:\n%s", env)
+	}
+	// One call total: isWorkRequest's WORK/CONVERSATIONAL check. The
+	// deliverable prompt is never sent - there was nothing to choose between.
+	if calls := atomic.LoadInt32(&classifier.calls); calls != 1 {
+		t.Errorf("classifier called %d times, want 1 (deliverable choice is bounded to the sole grant, no model call needed)", calls)
+	}
+}
+
+// TestBuildEnvelopeDeliverableClassifierFailureFallsBack pins #689's case 4:
+// a classifier error (or timeout, same path) falls back to
+// vetting.ImplementationIntent, exactly as if no classifier were wired at
+// all - a hung/erroring model must not stall or corrupt the deliverable
+// choice.
+func TestBuildEnvelopeDeliverableClassifierFailureFallsBack(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK", deliverableErr: errors.New("model unavailable")})
+	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: true}
+
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("@quack please address these findings"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	env := ext.buildEnvelope(context.Background(), pr, "please address these findings", seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	// vetting.ImplementationIntent("please address these findings") is false (no
+	// delivery word) - the same regex-driven review deliverable a classifier
+	// failure must fall back to, not silently drop into panic or default-commit.
+	if !strings.Contains(env, "<deliverable>a review with inline comments and a verdict</deliverable>") {
+		t.Errorf("classifier failure should fall back to vetting.ImplementationIntent's reading:\n%s", env)
 	}
 }
 

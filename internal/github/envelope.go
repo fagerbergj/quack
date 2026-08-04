@@ -370,7 +370,7 @@ func contextBlock(dir string, files []ContextFile) string {
 // text, not a second gate).
 func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, ctxDir string, ctxFiles []ContextFile) string {
 	isPR := p.Issue.PullRequest != nil
-	deliverable := e.deliverableText(ctx, p, task, gh, isPR)
+	deliverable := e.deliverableText(ctx, p, task, gh, grant, isPR)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "<permissions>%s</permissions>\n", permissionsText(grant))
@@ -398,7 +398,7 @@ func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, ta
 // evidence lives there to read on demand.
 func (e *Extension) buildWorkerAsk(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, ctxDir string) string {
 	isPR := p.Issue.PullRequest != nil
-	deliverable := e.deliverableText(ctx, p, task, gh, isPR)
+	deliverable := e.deliverableText(ctx, p, task, gh, grant, isPR)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "<permissions>%s</permissions>\n", permissionsText(grant))
@@ -412,24 +412,50 @@ func (e *Extension) buildWorkerAsk(ctx context.Context, p issueCommentPayload, t
 	return b.String()
 }
 
+// reviewDeliverableText is the review branch of deliverableText, split out so
+// both the classifier path and its regex fallback render the SAME incremental
+// scoping (#459 §5): a review already delivered on this chat scopes the ask
+// to commits not seen before, by content, never the general context delta.
+func reviewDeliverableText(gh githubContext) string {
+	if gh.newCommits != nil {
+		if len(gh.newCommits) == 0 {
+			return "a review of what is new since the last one - you have already looked at every commit currently on this pull request (by content - a rebase or force-push may have changed their SHAs without changing what they do); only respond to any new discussion"
+		}
+		shas := make([]string, 0, len(gh.newCommits))
+		for _, c := range gh.newCommits {
+			shas = append(shas, shortSHA(c.SHA))
+		}
+		return fmt.Sprintf("a review of what is new since the last one - Focus your review on what's NEW since you last looked: commit(s) not seen before: %s",
+			strings.Join(shas, ", "))
+	}
+	return "a review with inline comments and a verdict"
+}
+
 // deliverableText classifies the run exactly as the old prose builder did -
 // planOnly / label-triggered implement / a plain issue mention / a PR
-// conversational follow-up (isWorkRequest, intent.go) / reviewOnly
-// (vetting.ImplementationIntent, the SAME discriminator the planner backstop
-// uses) - and states the ONE thing this run is asked to produce. Permissions
-// and the ask+event blocks carry everything else; this never repeats them.
-func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, task string, gh githubContext, isPR bool) string {
+// conversational follow-up (isWorkRequest, intent.go) - and states the ONE
+// thing this run is asked to produce. Permissions and the ask+event blocks
+// carry everything else; this never repeats them.
+//
+// A genuine PR work request (mentionIsWork) picks between review and commit
+// with classifyPRDeliverable (#689): the grant, not a regex, bounds the
+// choice, so an ungranted deliverable can never be picked. vetting.
+// ImplementationIntent is now only the FALLBACK for that choice - a grant
+// permitting neither, an unset/erroring/timed-out classifier, or an
+// unparseable answer - and stays the primary discriminator for every path
+// that was never a human mention at all (label triggers, synthetic hints).
+func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, isPR bool) string {
 	// A mention on a PR defaults to CONVERSATIONAL unless the classifier calls
 	// it a work request - fails safe to conversational, since a wrong WORK
 	// verdict re-reviews and discards a written reply. deliverableHint == ""
 	// excludes a SYNTHETIC system trigger (CI auto-heal, own-PR
 	// review-response): those never had a human mention to classify at all,
 	// and are unambiguously work by construction, same as a label trigger.
-	if isPR && !p.isLabelTrigger && p.deliverableHint == "" && !e.isWorkRequest(ctx, task) {
+	mentionIsWork := isPR && !p.isLabelTrigger && p.deliverableHint == ""
+	if mentionIsWork && !e.isWorkRequest(ctx, task) {
 		return "a reply to their message, posted as a comment - no new work unless they explicitly ask for it"
 	}
 
-	reviewOnly := isPR && !vetting.ImplementationIntent(task)
 	switch {
 	case p.planOnly:
 		// PLANNING-ONLY: read the repo, change nothing, deliver nothing else to
@@ -448,28 +474,21 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 	case p.deliverableHint != "":
 		// A SYNTHETIC system trigger's deliverable is fixed by which webhook
 		// dispatched it (CI auto-heal, own-PR review-response) - authoritative,
-		// ahead of the fuzzy review/implement wording heuristic below, which a
-		// "read the review comments... make the fix... commit" sentence can
-		// misclassify as review-only (its impl verbs aren't clause-initial).
+		// ahead of the classifier and its regex fallback below, both of which
+		// exist only for a genuine human mention.
 		return p.deliverableHint
-	case reviewOnly:
-		if gh.newCommits != nil {
-			// A review has already been delivered on this chat (reviewScope) -
-			// scope the ask to what's new since then, by content (patch-id),
-			// never off the general context delta (that would under-scope
-			// whenever a conversational dispatch landed between two reviews).
-			if len(gh.newCommits) == 0 {
-				return "a review of what is new since the last one - you have already looked at every commit currently on this pull request (by content - a rebase or force-push may have changed their SHAs without changing what they do); only respond to any new discussion"
-			}
-			shas := make([]string, 0, len(gh.newCommits))
-			for _, c := range gh.newCommits {
-				shas = append(shas, shortSHA(c.SHA))
-			}
-			return fmt.Sprintf("a review of what is new since the last one - Focus your review on what's NEW since you last looked: commit(s) not seen before: %s",
-				strings.Join(shas, ", "))
-		}
-		return "a review with inline comments and a verdict"
-	default:
-		return "a commit addressing the requested change"
 	}
+
+	if mentionIsWork {
+		if kind, ok := e.classifyPRDeliverable(ctx, task, grant); ok {
+			if kind == "commit" {
+				return "a commit addressing the requested change"
+			}
+			return reviewDeliverableText(gh)
+		}
+	}
+	if isPR && !vetting.ImplementationIntent(task) {
+		return reviewDeliverableText(gh)
+	}
+	return "a commit addressing the requested change"
 }
