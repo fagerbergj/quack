@@ -146,6 +146,14 @@ func SetupCloneDir(nodeID string) string {
 // chosen node ID, so it can't collide with one.
 const SharedRepoScope = "quack-shared-repo"
 
+// ContextDirScope is the reserved "node" identifier a GitHub-triggered plan's
+// context directory (#660) resolves into - a SIBLING of SharedRepoScope's
+// clone under the same chat scope (jail.Resolve(userID, chatID,
+// ContextDirScope)), never inside it: nothing to gitignore, nothing
+// accidentally committable. Fixed and quack-authored, like SharedRepoScope,
+// so it can't collide with a planner-chosen node ID.
+const ContextDirScope = "quack-context"
+
 // WorktreeBranch derives the unique branch name a read-only qualifying node's
 // linked git worktree is checked out on - git refuses to check the same
 // branch out in two worktrees at once, and node IDs are already unique within

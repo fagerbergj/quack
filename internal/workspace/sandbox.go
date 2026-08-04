@@ -237,6 +237,7 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	args := bwrapSystemArgs()
 	args = append(args, tmpArgs(caps)...)
 	args = append(args, toolchainArgs(caps)...)
+	args = append(args, extraROArgs(caps)...)
 	// The only writable paths: the node's own directory (Caps.WorkRoot) and its
 	// isolated $HOME. NOT the whole workspace root - a node's child still cannot
 	// reach another node's clone, another chat's tree, or another user's jail.
@@ -339,6 +340,9 @@ func reservedRoots(dir string, caps Caps, extra ...string) map[string]bool {
 	for _, p := range caps.ExtraPath {
 		add(p)
 	}
+	for _, p := range caps.ExtraRO {
+		add(p)
+	}
 	for _, p := range extra {
 		add(p)
 	}
@@ -433,6 +437,20 @@ func toolchainArgs(caps Caps) []string {
 			sibling := filepath.Join(prefix, sib)
 			args = append(args, "--ro-bind-try", sibling, sibling)
 		}
+	}
+	return args
+}
+
+// extraROArgs bwrap-binds each Caps.ExtraRO entry read-only, --ro-bind-try so
+// a path that doesn't exist on this host is skipped rather than failing the
+// whole sandbox setup (a context dir a run never wrote, e.g.).
+func extraROArgs(caps Caps) []string {
+	var args []string
+	for _, p := range caps.ExtraRO {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		args = append(args, "--ro-bind-try", p, p)
 	}
 	return args
 }
@@ -558,6 +576,11 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	ro = append(ro, wtRO...)
 	ro = append(ro, landlockSystemDirs()...)
 	ro = append(ro, toolchainROPaths(caps)...)
+	for _, p := range caps.ExtraRO {
+		if strings.TrimSpace(p) != "" {
+			ro = append(ro, p)
+		}
+	}
 	return rw, ro
 }
 

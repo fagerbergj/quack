@@ -342,6 +342,31 @@ func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	}
 }
 
+// TestLandlockGrantsIncludesCapsExtraRO is a pure computation check (no
+// Landlock kernel support needed): Caps.ExtraRO (#660's hook for a GitHub
+// context dir sibling to the node's own WorkRoot) lands in the read-only
+// grant set, never the read-write one.
+func TestLandlockGrantsIncludesCapsExtraRO(t *testing.T) {
+	dir := t.TempDir()
+	ctxDir := t.TempDir()
+	caps := Caps{WorkRoot: dir, ExtraRO: []string{ctxDir}}
+	rw, ro := landlockGrants(dir, caps)
+	found := false
+	for _, p := range ro {
+		if p == ctxDir {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("landlockGrants ro = %v, missing %q", ro, ctxDir)
+	}
+	for _, p := range rw {
+		if p == ctxDir {
+			t.Errorf("landlockGrants rw = %v, %q must be read-only, not read-write", rw, ctxDir)
+		}
+	}
+}
+
 // TestSandboxExecStampsTheEnvMarker pins the observability marker: a confined
 // process is indistinguishable from a bare one in `ps` (syscall.Exec replaces the
 // image) and kernels through 6.8 expose no Landlock field in /proc, so the marker

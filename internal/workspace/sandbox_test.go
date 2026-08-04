@@ -261,6 +261,20 @@ func TestSandboxBlocksWritesOutsideTheJail(t *testing.T) {
 	}
 }
 
+// TestChildArgvBwrapGrantsExtraROReadOnly is a pure argv-assembly check (no
+// bwrap install needed): Caps.ExtraRO (#660's hook for a GitHub context dir
+// sibling to the node's own WorkRoot) lands as a read-only bwrap bind.
+func TestChildArgvBwrapGrantsExtraROReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	ctxDir := t.TempDir()
+	caps := Caps{Sandbox: SandboxBwrap, ExtraRO: []string{ctxDir}}
+	got := childArgv(dir, "/bin/echo", []string{"/bin/echo", "hi"}, caps)
+	joined := strings.Join(got, "\x00")
+	if !strings.Contains(joined, "--ro-bind-try\x00"+ctxDir+"\x00"+ctxDir) {
+		t.Errorf("childArgv(bwrap) = %v, missing a read-only bind of %q", got, ctxDir)
+	}
+}
+
 // TestResolveSandbox covers the loud-failure contract: an unknown mode is a
 // startup error, and `bwrap` with no bwrap on PATH refuses to start rather than
 // silently running children unconfined.
