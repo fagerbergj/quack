@@ -156,6 +156,14 @@ type Config struct {
 	// like a nil Memory disables the memory-commit path.
 	Deliver DeliverFunc
 
+	// Grant is the trigger's computed permission set (#657, #662), stamped
+	// per-node from dag.Plan.Grant. commitDelivery refuses any staged item
+	// whose Kind the grant does not permit - the one enforcement point,
+	// since delivery is the one place a run can actually mutate GitHub (ACP
+	// workers can't git push; native write-side tools were deleted in
+	// 0.6.0). nil means no GitHub trigger governs this run (unrestricted).
+	Grant *Grant
+
 	// ExternalWorker marks an ACP-backed agent (internal/acp): the worker has
 	// none of quack's tools, so the gate supplements the session ledger with
 	// ground truth it gathers itself - the git disk probe (augmentFromRepo) and

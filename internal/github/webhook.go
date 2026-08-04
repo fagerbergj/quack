@@ -961,9 +961,24 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// branch (never the model's own say-so; see tools.WithGitHubPR). Only for a
 	// PR (not a plain issue): there is no finding to correct, or head branch to
 	// override, on an issue thread.
-	if p.Issue.PullRequest != nil {
+	isPR := p.Issue.PullRequest != nil
+	if isPR {
 		runCtx = tools.WithGitHubPR(runCtx, owner, repo, number, gh.snap.HeadRef)
 	}
+	// Compute this run's permission grant (#657, #662) ONCE here, from the
+	// labels currently on the thread, authorship, and the fork check - the
+	// planner and the gate trust this, never a re-derivation of their own. An
+	// authorship-check failure denies rather than grants (fail closed).
+	authored := false
+	if isPR {
+		if a, aerr := e.authoredByQuack(ctx, owner, repo, number); aerr != nil {
+			slog.Warn("github: authorship check failed computing this run's grant; treating as not-authored",
+				"component", "github", "repo", owner+"/"+repo, "issue", number, "err", aerr)
+		} else {
+			authored = a
+		}
+	}
+	runCtx = tools.WithGrant(runCtx, computeGrant(e.labels, gh.snap.Labels, isPR, authored, gh.snap.Fork))
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
 	// stays INLINE - wrapping it in another goroutine would let this function's

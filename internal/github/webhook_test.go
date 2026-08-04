@@ -1999,6 +1999,8 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/app": // botLogin, called computing this run's permission grant (#662)
+			fmt.Fprint(w, `{"slug":"quack"}`)
 		case strings.HasSuffix(r.URL.Path, "/installation"):
 			fmt.Fprint(w, `{"id":5}`)
 		case strings.HasSuffix(r.URL.Path, "/access_tokens"):

@@ -6,6 +6,8 @@ package dag
 
 import (
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // HistoryTurn is one prior conversation turn, passed to nodes as native ADK
@@ -34,6 +36,12 @@ type Plan struct {
 	Attachments []*genai.Part
 	Setup       *Setup
 	Delivery    *Delivery
+	// Grant is the trigger's computed permission set (#657, #662), carried
+	// through as INFORMATION for buildGateNodes to stamp onto every node's
+	// gate Config - the gate's commitDelivery is where it is actually
+	// enforced (the one mutation chokepoint), not here. nil for a plan with
+	// no GitHub trigger involved.
+	Grant *vetting.Grant
 }
 
 // Setup is the plan's declared PRE-step: the working clone + branch the

@@ -177,6 +177,54 @@ func TestListReviews(t *testing.T) {
 	}
 }
 
+// pullMeta's Fork detection (#662) feeds computeGrant's fork check directly -
+// a wrong read here silently over-grants push_commits_to_pr on a fork PR
+// quack cannot push to.
+func TestPullMetaDetectsFork(t *testing.T) {
+	keyPEM, _ := testKeyPEM(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/7"):
+			fmt.Fprint(w, `{"title":"t","body":"","state":"open",
+				"head":{"ref":"feature","sha":"h1","repo":{"full_name":"mallory/widgets"}},
+				"base":{"ref":"main","repo":{"full_name":"acme/widgets"}},"labels":[]}`)
+		case strings.HasSuffix(r.URL.Path, "/8"):
+			fmt.Fprint(w, `{"title":"t","body":"","state":"open",
+				"head":{"ref":"feature","sha":"h1","repo":{"full_name":"acme/widgets"}},
+				"base":{"ref":"main","repo":{"full_name":"acme/widgets"}},"labels":[]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+
+	fork, err := app.pullMeta(context.Background(), "acme", "widgets", 7)
+	if err != nil {
+		t.Fatalf("pullMeta: %v", err)
+	}
+	if !fork.Fork {
+		t.Errorf("fork PR (head mallory/widgets != base acme/widgets): Fork = false, want true")
+	}
+
+	sameRepo, err := app.pullMeta(context.Background(), "acme", "widgets", 8)
+	if err != nil {
+		t.Fatalf("pullMeta: %v", err)
+	}
+	if sameRepo.Fork {
+		t.Errorf("same-repo PR: Fork = true, want false")
+	}
+}
+
 func TestLastReviewedSHAPrefersOwnBotLogin(t *testing.T) {
 	keyPEM, _ := testKeyPEM(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

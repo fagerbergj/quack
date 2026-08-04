@@ -114,13 +114,16 @@ type RawNode struct {
 // media - all threaded to every node by the executor. ctx bounds the
 // (optional) plan-judge call and carries its ledger Coords (the caller
 // stamps ChatID - see tools.NewPlanTool's emitPlanEvent for the same
-// pattern). Returns an error (no silent fallback) so the orchestrator can
-// fix and re-submit.
-func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part) (plan *Plan, err error) {
+// pattern). grant is the trigger's computed permission set (#662, nil for a
+// non-GitHub turn) - stamped onto the plan as information for the gate to
+// enforce; Build never rejects a node over it (see vetting.commitDelivery).
+// Returns an error (no silent fallback) so the orchestrator can fix and
+// re-submit.
+func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, grant *vetting.Grant) (plan *Plan, err error) {
 	ctx, span := otelobs.Start(ctx, "plan")
 	defer func() { otelobs.End(span, err) }()
 
-	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery)
+	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, grant)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +275,9 @@ func AttachmentDesc(parts []*genai.Part) string {
 
 // assemble validates nodes against the agent roster, hardens the synthesizer's
 // dependencies, checks acyclicity, and validates the declared delivery kind.
-func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery) (*Plan, error) {
+// grant is stamped onto the returned plan unchanged (see Plan.Grant) - it is
+// not consulted here.
+func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery, grant *vetting.Grant) (*Plan, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
 	}
@@ -284,7 +289,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		known[a.Name] = true
 	}
 	ids := make(map[string]bool, len(nodes))
-	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery}
+	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, Grant: grant}
 	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")
