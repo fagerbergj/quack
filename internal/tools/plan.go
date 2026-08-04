@@ -46,8 +46,13 @@ type planResult struct {
 // output) - ANY plan bound to a real existing PR (review, fix, or implement
 // alike) has its Setup.WorkBranch forced to it and checked out as-is, never
 // branched fresh off base, overriding whatever the planner invented or
-// picked as a new-branch name (#520, #625).
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string) (tool.Tool, error) {
+// picked as a new-branch name (#520, #625). githubSetup is the deterministic
+// Setup for a GitHub-originated run (from tools.GitHubSetupFromContext) - when
+// non-nil it REPLACES whatever the planner declared wholesale, so a
+// GitHub-triggered plan never depends on the model getting repo/base_ref
+// right (#661); nil for a non-GitHub run, which keeps getting Setup from the
+// planner as before.
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -88,6 +93,12 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
+			}
+			// GitHub already told us repo/base_ref/branch - never trust the
+			// planner's guess over it (#661).
+			if githubSetup != nil {
+				setup := *githubSetup
+				p.Setup = &setup
 			}
 			if err := dag.OverrideExistingPRHead(p, existingHeadRef); err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)

@@ -25,6 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 )
 
 const testSecret = "shhh-webhook-secret"
@@ -35,10 +36,13 @@ const testSecret = "shhh-webhook-secret"
 type fakeRunner struct {
 	gotMessage   chan string
 	gotSessionID chan string
-	answer       string
-	block        chan struct{}
-	calls        int32
-	noPlan       bool // when true, emit no dag_plan event (simulates a narration-only turn)
+	// gotCtx, when non-nil, receives the run ctx Run was called with - lets a
+	// test inspect what dispatch stamped onto it (e.g. tools.GitHubSetupFromContext).
+	gotCtx chan context.Context
+	answer string
+	block  chan struct{}
+	calls  int32
+	noPlan bool // when true, emit no dag_plan event (simulates a narration-only turn)
 	// judgePassed simulates a node's trust gate clearing its judge round (a
 	// node_done event with JudgePassed) - dispatch's fallback proxy for
 	// "delivery was attempted" when nothing recorded an authoritative outcome
@@ -71,9 +75,15 @@ func (f *fakeRunner) ResetSession(context.Context, string, string) error {
 	return nil
 }
 
-func (f *fakeRunner) Run(_ context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+func (f *fakeRunner) Run(ctx context.Context, _, sessionID, message string, _ []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		calls := atomic.AddInt32(&f.calls, 1)
+		if f.gotCtx != nil {
+			select {
+			case f.gotCtx <- ctx:
+			default:
+			}
+		}
 		if calls > 1 && f.revisedAnswer != "" {
 			f.answer = f.revisedAnswer
 		}
@@ -2395,6 +2405,44 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 				t.Fatal("no session id recorded")
 			}
 		})
+	}
+}
+
+// TestDispatchAttachesDeterministicGitHubSetup is #661: an issue-implement
+// label run must carry repo/base_ref/work_branch off the webhook event
+// itself, so the plan tool never has to ask the planner for them.
+func TestDispatchAttachesDeterministicGitHubSetup(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubGitHub(t, posted)
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), gotCtx: make(chan context.Context, 1), answer: "done"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_implement"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:implement", "alice", false)))
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	var runCtx context.Context
+	select {
+	case runCtx = <-runner.gotCtx:
+	case <-time.After(2 * time.Second):
+		t.Fatal("implement label did not dispatch a run")
+	}
+	setup, ok := tools.GitHubSetupFromContext(runCtx)
+	if !ok {
+		t.Fatal("no deterministic Setup attached to the run context")
+	}
+	if setup.Repo != "https://github.com/acme/widgets.git" {
+		t.Errorf("Repo = %q, want the repository's clone_url", setup.Repo)
+	}
+	if setup.BaseRef != "main" {
+		t.Errorf("BaseRef = %q, want the repository's default_branch", setup.BaseRef)
+	}
+	if setup.WorkBranch != "quack/issue-7" {
+		t.Errorf("WorkBranch = %q, want quack/issue-7 (issue #7, no PR yet)", setup.WorkBranch)
 	}
 }
 

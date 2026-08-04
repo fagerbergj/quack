@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -947,6 +948,16 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// either). Registered synchronously (before the goroutine gets to run) so
 	// the cancel endpoint can never miss the run.
 	runCtx, cancelRun := context.WithCancel(ctx)
+	// Stamp the deterministic Setup facts (#661): repo + base_ref are ground
+	// truth off the webhook event for EVERY GitHub-originated run, so the
+	// planner is never asked for them. WorkBranch defaults to a fresh
+	// per-issue name; WithGitHubPR below (via OverrideExistingPRHead)
+	// replaces it with the PR's real head when this run is bound to one.
+	runCtx = tools.WithGitHubSetup(runCtx, dag.Setup{
+		Repo:       p.Repository.CloneURL,
+		BaseRef:    setupBaseRef(p, gh),
+		WorkBranch: fmt.Sprintf("quack/issue-%d", number),
+	})
 	// Stamp the AUTHORITATIVE repo/PR this run is on - the only source
 	// correct_review_finding trusts for where a conversational correction may
 	// write, and the only source the plan tool trusts for a review's real head
@@ -1702,4 +1713,17 @@ func (e *Extension) runMessage(ctx context.Context, p issueCommentPayload, task 
 	b.WriteString("Your final answer is posted back automatically. ")
 	b.WriteString("Answer concisely and reference any branch, PR, or review you staged.")
 	return b.String()
+}
+
+// setupBaseRef is base_ref for a GitHub-originated run's deterministic Setup
+// (#661): the PR's own base branch when this run is on a PR, else the repo's
+// default branch - same fallback runMessage's own diffBase uses.
+func setupBaseRef(p issueCommentPayload, gh githubContext) string {
+	if gh.snap.BaseRef != "" {
+		return gh.snap.BaseRef
+	}
+	if p.Repository.DefaultBranch != "" {
+		return p.Repository.DefaultBranch
+	}
+	return "main"
 }

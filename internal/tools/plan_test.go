@@ -9,14 +9,131 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"google.golang.org/adk/v2/tool/toolconfirmation"
+
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
+// planToolCtx supplies a nil ToolConfirmation (no pending confirm) - the
+// functiontool runner consults it on every call, and StrictContextMock alone
+// panics ("not implemented"). Mirrors hostpath_test.go's confirmlessCtx.
+type planToolCtx struct{ *fakeCtx }
+
+func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
+
+// buildPlan runs the plan tool exactly as the model would - through Run, with
+// JSON-shaped args - and returns the resulting cached plan. Shared by the
+// #661 deterministic-setup tests below.
+func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, existingHeadRef string, githubSetup *dag.Setup, args map[string]any) dag.Plan {
+	t.Helper()
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", existingHeadRef, githubSetup)
+	if err != nil {
+		t.Fatalf("NewPlanTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatalf("plan tool is not runnable")
+	}
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, args)
+	if err != nil {
+		t.Fatalf("plan tool Run: %v", err)
+	}
+	planID, _ := res["plan_id"].(string)
+	p, ok := cache.Get(planID)
+	if !ok {
+		t.Fatalf("plan %q not found in cache", planID)
+	}
+	return p
+}
+
+// implementNode is a minimal, valid single-node plan args payload for a
+// code-implementer run - just enough to exercise Setup handling.
+func implementNode() []map[string]any {
+	return []map[string]any{{"id": "impl", "agent": "code-implementer", "task": "implement the feature", "depends_on": []string{}}}
+}
+
+// TestGitHubSetupOverridesPlannerSetupNoRoundTrip is issue #661's first test
+// case: an issue-implement run gets a deterministic work_branch even when the
+// model never declares `setup` at all (no planner round-trip).
+func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	githubSetup := &dag.Setup{
+		Repo:       "https://github.com/fagerbergj/quack.git",
+		BaseRef:    "main",
+		WorkBranch: "quack/issue-65",
+	}
+	p := buildPlan(t, planner, NewPlanCache(), "", githubSetup, map[string]any{"nodes": implementNode()})
+	if p.Setup == nil {
+		t.Fatal("plan.Setup is nil, want it filled from the trigger")
+	}
+	if p.Setup.WorkBranch != "quack/issue-65" {
+		t.Errorf("WorkBranch = %q, want %q", p.Setup.WorkBranch, "quack/issue-65")
+	}
+	if p.Setup.Repo != githubSetup.Repo || p.Setup.BaseRef != githubSetup.BaseRef {
+		t.Errorf("Setup = %+v, want repo/base_ref from the trigger %+v", p.Setup, githubSetup)
+	}
+}
+
+// TestGitHubSetupWholesaleReplacesPlannerSetup is issue #661's second test
+// case, the PR-scoped half: a planner-supplied setup (repo/base_ref/branch
+// all different from the trigger's) must not survive - the trigger's values
+// win entirely, and the existing-PR-head override still lands on top of them.
+func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	githubSetup := &dag.Setup{
+		Repo:       "https://github.com/fagerbergj/quack.git",
+		BaseRef:    "main",
+		WorkBranch: "quack/issue-97", // default, overridden below by the real PR head
+	}
+	args := map[string]any{
+		"nodes": implementNode(),
+		"setup": map[string]any{
+			"repo": "https://example.com/planner-invented.git", "base_ref": "other",
+			"work_branch": "planner-invented-branch",
+		},
+	}
+	p := buildPlan(t, planner, NewPlanCache(), "feat/real-pr-head", githubSetup, args)
+	if p.Setup == nil {
+		t.Fatal("plan.Setup is nil")
+	}
+	if p.Setup.WorkBranch != "feat/real-pr-head" {
+		t.Errorf("WorkBranch = %q, want the real PR head %q, not the planner's invented branch",
+			p.Setup.WorkBranch, "feat/real-pr-head")
+	}
+	if !p.Setup.CheckoutExistingHead {
+		t.Error("CheckoutExistingHead = false, want true for an existing PR head")
+	}
+	if p.Setup.Repo != githubSetup.Repo || p.Setup.BaseRef != githubSetup.BaseRef {
+		t.Errorf("Setup = %+v, want repo/base_ref from the trigger, not the planner's", p.Setup)
+	}
+}
+
+// TestNonGitHubRunKeepsPlannerSetup is issue #661's third test case: a plain
+// (non-GitHub) run has no trigger Setup to draw from, so the planner's own
+// declaration must pass through untouched.
+func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	args := map[string]any{
+		"nodes": implementNode(),
+		"setup": map[string]any{
+			"repo": "https://example.com/some-other-repo.git", "base_ref": "main",
+			"work_branch": "feat/planner-chosen",
+		},
+	}
+	p := buildPlan(t, planner, NewPlanCache(), "", nil, args)
+	if p.Setup == nil {
+		t.Fatal("plan.Setup is nil, want the planner's declared setup")
+	}
+	if p.Setup.WorkBranch != "feat/planner-chosen" || p.Setup.Repo != "https://example.com/some-other-repo.git" {
+		t.Errorf("Setup = %+v, want the planner's own declared values", p.Setup)
+	}
+}
+
 func TestNewPlanToolMetadata(t *testing.T) {
 	planner := dag.NewPlanner(nil, nil, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", "")
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", "", nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)
 	}

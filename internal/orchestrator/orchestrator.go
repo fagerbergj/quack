@@ -354,7 +354,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		// Read ONCE, at the top, per GitHubPRFromContext's contract - reused below
 		// for both the plan tool's existing-PR-head override and correct_review_finding.
 		githubPR, hasGitHubPR := tools.GitHubPRFromContext(ctx)
-		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubPR.HeadRef)
+		var githubSetup *dag.Setup
+		if s, ok := tools.GitHubSetupFromContext(ctx); ok {
+			githubSetup = &s
+		}
+		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubPR.HeadRef, githubSetup)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
