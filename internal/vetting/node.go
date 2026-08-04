@@ -1236,6 +1236,13 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	if c, ok := mermaidCriterion(answer, act); ok {
 		v.Criteria["mermaid_valid"] = c
 	}
+	// Path resolution (#684): a path the answer names must resolve against the
+	// CLONE, not merely be faithful to a verification report that may itself
+	// carry the same typo - the exact way the judge waved through 39 of 40
+	// misspelled package paths as "grounded". Same fold as mermaid_valid.
+	if c, ok := repoPathsResolveCriterion(answer, act, cfg); ok {
+		v.Criteria["repo_paths_resolve"] = c
+	}
 	// Answer-shape check (#565): a leaked or malformed tool-call fragment in a
 	// deliverable is broken by construction, same family and fold as
 	// mermaid_valid above.
