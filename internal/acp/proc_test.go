@@ -43,7 +43,7 @@ func TestWrappedArgvLandlock(t *testing.T) {
 		Caps:    workspace.Caps{Sandbox: workspace.SandboxLandlock},
 		ExtraRO: []string{"/skills"},
 	}}
-	argv := a.wrappedArgv(cwd)
+	argv := a.wrappedArgv(cwd, nil)
 	if len(argv) < 2 || argv[1] != workspace.SandboxExecArg {
 		t.Fatalf("wrappedArgv landlock = %v, want argv[1] == %q", argv, workspace.SandboxExecArg)
 	}
@@ -62,7 +62,7 @@ func TestWrappedArgvLandlock(t *testing.T) {
 func TestWrappedArgvUnwrappedOutsideLandlock(t *testing.T) {
 	for _, mode := range []workspace.SandboxMode{workspace.SandboxNone, workspace.SandboxBwrap, ""} {
 		a := &Agent{opts: Options{Command: []string{"opencode", "acp"}, Caps: workspace.Caps{Sandbox: mode}}}
-		argv := a.wrappedArgv(t.TempDir())
+		argv := a.wrappedArgv(t.TempDir(), nil)
 		if len(argv) != 2 || argv[0] != "opencode" || argv[1] != "acp" {
 			t.Errorf("mode %q: wrappedArgv = %v, want unchanged [opencode acp]", mode, argv)
 		}

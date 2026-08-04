@@ -28,7 +28,7 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err == nil {
 		t.Fatal("resolveNode: want an error - the node needs a worktree but none is configured")
 	}
@@ -75,7 +75,7 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -85,5 +85,60 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	}
 	if cwd != want {
 		t.Errorf("cwd = %q, want the jail-resolved node dir %q", cwd, want)
+	}
+}
+
+// TestResolveNodeGrantsContextDir pins the #659/#660 wiring: resolveNode
+// derives the GitHub trigger's sibling context directory from the SAME
+// (UserID, SessionID) coordinate the dispatch side writes it under - no
+// separate registry field needed - so the sandbox actually grants it.
+func TestResolveNodeGrantsContextDir(t *testing.T) {
+	dir := t.TempDir()
+	jail, err := workspace.NewJail(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{opts: Options{UserID: "u1", Jail: jail}}
+	token := vetting.AdvisorThreadToken("plan-1", "impl1")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+		NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1",
+	})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	_, _, ctxDir, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	if err != nil {
+		t.Fatalf("resolveNode: %v", err)
+	}
+	want, err := jail.Resolve("u1", "chat1", workspace.ContextDirScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctxDir != want {
+		t.Errorf("ctxDir = %q, want the jail-resolved context dir %q", ctxDir, want)
+	}
+}
+
+// TestResolveNodeNoJailNoContextDir: a test harness Agent with no Jail
+// configured (see the WorktreeParent tests above) must not panic resolving
+// ctxDir - it degrades to "" (no extra grant), never a nil-pointer crash.
+func TestResolveNodeNoJailNoContextDir(t *testing.T) {
+	a := &Agent{opts: Options{
+		UserID: "u1",
+		Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
+			return "/resolved/worktree/dir", nil
+		},
+	}}
+	token := vetting.AdvisorThreadToken("plan-1", "review1")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, SessionID: "chat1",
+	})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	_, _, ctxDir, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	if err != nil {
+		t.Fatalf("resolveNode: %v", err)
+	}
+	if ctxDir != "" {
+		t.Errorf("ctxDir = %q, want \"\" with no Jail configured", ctxDir)
 	}
 }

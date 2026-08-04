@@ -119,7 +119,7 @@ func (e *Extension) handleWorkflowRun(w http.ResponseWriter, body []byte) {
 		"conclusion", p.WorkflowRun.Conclusion, "head_sha", p.WorkflowRun.HeadSHA,
 		"installation", p.Installation.ID)
 	for _, pr := range p.WorkflowRun.PullRequests {
-		go e.autoHeal(p, pr.Number)
+		go e.autoHeal(p, pr.Number, body)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -129,7 +129,7 @@ func (e *Extension) handleWorkflowRun(w http.ResponseWriter, body []byte) {
 // dedup, then the one-attempt guard - state is persisted BEFORE the run so a
 // crash mid-run never refunds it. Every store/API failure fails CLOSED (skip
 // the run): an unbounded loop is worse than a missed heal.
-func (e *Extension) autoHeal(p workflowRunPayload, number int) {
+func (e *Extension) autoHeal(p workflowRunPayload, number int, rawBody []byte) {
 	ri := p.repoInfo()
 	sessionID := fmt.Sprintf("github-%s-%s-%d", ri.Owner, ri.Name, number)
 	sha := p.WorkflowRun.HeadSHA
@@ -213,7 +213,7 @@ func (e *Extension) autoHeal(p workflowRunPayload, number int) {
 	slog.Info("github: auto-heal dispatching fix run", "component", "github",
 		"repo", ri.Owner+"/"+ri.Name, "pr", number, "sha", sha)
 	comment(fmt.Sprintf("🔧 CI failed on `%s` - attempting an automatic fix.", shortSHA(sha)))
-	e.beginFix(ctx, ri, number, sha, "CI is failing on this pull request.", checksText)
+	e.beginFix(ctx, ri, number, sha, "CI is failing on this pull request.", checksText, rawBody, "workflow_run.completed")
 }
 
 // fixLabelApplied handles quack:fix's "labeled" action: it re-arms auto-heal
@@ -221,7 +221,7 @@ func (e *Extension) autoHeal(p workflowRunPayload, number int) {
 // CI is CURRENTLY failing on the PR's head, fixes it right away - otherwise
 // the flag just stays armed for the next failure (#655: applying it to a
 // GREEN PR must do nothing, never plan a phantom review).
-func (e *Extension) fixLabelApplied(p pullRequestPayload) {
+func (e *Extension) fixLabelApplied(p pullRequestPayload, rawBody []byte) {
 	ri := p.repoInfo()
 	number := p.Number
 	sessionID := fmt.Sprintf("github-%s-%s-%d", ri.Owner, ri.Name, number)
@@ -248,14 +248,17 @@ func (e *Extension) fixLabelApplied(p pullRequestPayload) {
 	}
 	e.beginFix(ctx, ri, number, sha,
 		fmt.Sprintf("@%s asked me (via the `%s` label) to fix this pull request's currently-failing checks.", p.Sender.Login, e.labels.Fix),
-		renderFailingChecks(checks))
+		renderFailingChecks(checks), rawBody, "pull_request.labeled")
 }
 
 // beginFix persists the attempt BEFORE dispatch (a crash mid-run must never
 // leave the guard unrecorded), then dispatches a fix run on the PR's existing
 // session - the shared tail of both the automatic (workflow_run) and explicit
-// (labeled) fix paths.
-func (e *Extension) beginFix(ctx context.Context, ri repoInfo, number int, sha, intro, checksText string) {
+// (labeled) fix paths. rawBody/eventName carry the ORIGINATING webhook
+// (workflow_run.completed or pull_request.labeled) into the envelope's
+// <event> block; sha doubles as the context directory's check-runs scope
+// (#660's ContextRequest.CheckSHA).
+func (e *Extension) beginFix(ctx context.Context, ri repoInfo, number int, sha, intro, checksText string, rawBody []byte, eventName string) {
 	sessionID := fmt.Sprintf("github-%s-%s-%d", ri.Owner, ri.Name, number)
 	if err := e.store.SetGithubFixState(ctx, store.GithubFixState{ChatID: sessionID, LastSHA: sha}); err != nil {
 		slog.Error("github: fix-state persist failed; refusing to run without a durable bound",
@@ -276,6 +279,10 @@ func (e *Extension) beginFix(ctx context.Context, ri repoInfo, number int, sha, 
 	synthetic.Repository.DefaultBranch = ri.DefaultBranch
 	synthetic.Installation.ID = ri.InstallationID
 	// isLabelTrigger stays false: a fix continues the PR's session, it never resets it.
+	synthetic.rawEvent = json.RawMessage(rawBody)
+	synthetic.eventName = eventName
+	synthetic.checkSHA = sha
+	synthetic.deliverableHint = "commits on this PR's head branch that make the failing checks pass"
 
 	e.dispatch(synthetic, fixTask(intro, checksText))
 }
@@ -318,10 +325,12 @@ func hasLabel(labels []string, label string) bool {
 	return false
 }
 
-// fixTask frames a fix run's task. The wording is implement-and-deliver on
-// purpose (fix + commit/branch) so vetting.ImplementationIntent routes it as an
-// implement run, and dispatch's runMessage appends the stage_pr delivery
-// guidance - the fix rides the existing spine, push and PR update included.
+// fixTask frames a fix run's internal classification signal (fed to
+// vetting.ImplementationIntent) and the chat-title fallback - never rendered
+// into the envelope itself (beginFix's deliverableHint states the ask
+// directly, #659). The wording stays implement-and-deliver on purpose (fix +
+// commit/branch) so ImplementationIntent still routes it as an implement run
+// if the hint is ever unset.
 func fixTask(intro, checksText string) string {
 	var b strings.Builder
 	b.WriteString(intro)

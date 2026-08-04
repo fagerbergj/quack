@@ -150,7 +150,7 @@ func TestWorkflowRunAutoHealEligibility(t *testing.T) {
 			if tt.wantRun {
 				select {
 				case msg := <-runner.gotMessage:
-					for _, want := range []string{"pull_number=7", "go-test", "TestFoo failed"} {
+					for _, want := range []string{`<pull_request number="7">`, "commits on this PR's head branch that make the failing checks pass", `"conclusion":"failure"`} {
 						if !strings.Contains(msg, want) {
 							t.Errorf("fix run message missing %q: %q", want, msg)
 						}
@@ -371,8 +371,8 @@ func TestFixLabelReapplyRearms(t *testing.T) {
 
 	select {
 	case msg := <-runner.gotMessage:
-		if !strings.Contains(msg, "go-test") {
-			t.Errorf("re-armed run message = %q; want the currently-failing checks", msg)
+		if !strings.Contains(msg, "commits on this PR's head branch that make the failing checks pass") {
+			t.Errorf("re-armed run message = %q; want the fix deliverable", msg)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("re-armed auto-heal did not dispatch")
@@ -418,7 +418,7 @@ func TestFixLabelApplied(t *testing.T) {
 		}
 		select {
 		case msg := <-runner.gotMessage:
-			for _, want := range []string{"pull_number=7", "go-test", "quack:fix", "@alice"} {
+			for _, want := range []string{`<pull_request number="7">`, "commits on this PR's head branch that make the failing checks pass", `"name":"quack:fix"`, `"login":"alice"`} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("fix run message missing %q: %q", want, msg)
 				}

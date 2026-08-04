@@ -162,38 +162,50 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 	return a.runPrompt(ctx, inputText(nodeInput))
 }
 
-// resolveNode derives the node's working directory AND its memory-MCP
-// credential from the advisor-thread marker in the prompt - the ONE channel
-// that carries (chat, workspace-node) scope to a worker (the same one
-// internal/tools uses). The setup clone lands AT the node root
-// (workspace.SetupCloneDir == NodeDir), so this dir IS the repo for a
-// setup-provisioned node. A read-only qualifying node (at.WorktreeParent set
-// - reviewer, explorer) gets its dir provisioned as a linked git worktree of
-// the parent clone instead (Options.Worktree) - the worktree-per-node
-// follow-up .quack/specs/sandbox-acp-landlock.md's "Out" section named.
+// resolveNode derives the node's working directory, its memory-MCP
+// credential, and its GitHub context-dir grant from the advisor-thread
+// marker in the prompt - the ONE channel that carries (chat, workspace-node)
+// scope to a worker (the same one internal/tools uses). The setup clone
+// lands AT the node root (workspace.SetupCloneDir == NodeDir), so this dir
+// IS the repo for a setup-provisioned node. A read-only qualifying node
+// (at.WorktreeParent set - reviewer, explorer) gets its dir provisioned as a
+// linked git worktree of the parent clone instead (Options.Worktree) - the
+// worktree-per-node follow-up .quack/specs/sandbox-acp-landlock.md's "Out"
+// section named.
 //
 // memSecret rides this SAME lookup (AdvisorTask.MemSecret) but is looked up
 // in the SEPARATE memSessions registry when actually used (memoryMCPServers)
 // - the advisor-thread token itself must never double as the memory MCP
 // bearer credential; see vetting.AdvisorTask.MemSecret.
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret string, err error) {
+//
+// ctxDir is the sibling context directory a GitHub-triggered run's dispatch
+// may have written (#659/#660, workspace.ContextDirScope) - derived from the
+// SAME (UserID, SessionID) coordinate the dispatch side resolves it under, so
+// no extra registry field is needed. "" (ignored error) for a non-GitHub
+// session, or one that never wrote one; round's sandbox grant uses
+// --ro-bind-try, so a "" or missing dir is silently skipped, never a hard
+// failure.
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
+	}
+	if a.opts.Jail != nil {
+		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.SessionID, workspace.ContextDirScope)
 	}
 	if at.WorktreeParent != "" {
 		if a.opts.Worktree == nil {
-			return "", "", fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+			return "", "", "", fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
 		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.SessionID, at.WorktreeParent, at.WorkspaceNodeID)
-		return cwd, at.MemSecret, err
+		return cwd, at.MemSecret, ctxDir, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.SessionID, workspace.NodeDir(at.WorkspaceNodeID))
-	return cwd, at.MemSecret, err
+	return cwd, at.MemSecret, ctxDir, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, translate the update
@@ -204,7 +216,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, ctxDir, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -217,8 +229,12 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		if a.opts.Preamble != "" {
 			outbound = a.opts.Preamble + "\n\n" + outbound
 		}
+		var extraRO []string
+		if ctxDir != "" {
+			extraRO = []string{ctxDir}
+		}
 		stopped := false
-		err = a.round(ctx, cwd, memSecret, outbound, func(spec eventSpec) bool {
+		err = a.round(ctx, cwd, memSecret, extraRO, outbound, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
 				stopped = true
 				return false
@@ -241,14 +257,16 @@ type promptDone struct {
 // through the translator into emit, and emit the final answer spec last.
 // Separated from runPrompt so it is drivable with a plain context in tests.
 // memSecret is this node's memory-MCP credential ("" disables the surface for
-// the round); it never rides outbound - see resolveNode.
-func (a *Agent) round(ctx context.Context, cwd, memSecret, outbound string, emit func(eventSpec) bool) (err error) {
+// the round); it never rides outbound - see resolveNode. extraRO adds
+// per-round read-only sandbox grants on top of Options.ExtraRO - today just
+// the GitHub context dir (resolveNode), nil for everything else.
+func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, outbound string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
 	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String("agent", a.name))
 	_ = spawnCtx
-	h, err := a.start(ctx, cwd)
+	h, err := a.start(ctx, cwd, extraRO)
 	otelobs.End(spawnSpan, err)
 	if err != nil {
 		return err
