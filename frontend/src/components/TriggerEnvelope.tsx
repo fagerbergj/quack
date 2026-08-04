@@ -114,6 +114,24 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
   )
 }
 
+// StatusBadge marks a delta comment's quack_status (edited/deleted) - a
+// deleted comment's body reads identically to a live one otherwise, and
+// treating a retracted comment as current is the exact failure this prevents.
+function StatusBadge({ status }: { status: string }) {
+  const deleted = status === 'deleted'
+  return (
+    <span
+      className={`px-1 rounded text-[10px] font-medium uppercase tracking-wide ${
+        deleted
+          ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+          : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+      }`}
+    >
+      {status}
+    </span>
+  )
+}
+
 // CommentsSection - collapsed, header is the count or new/edited/deleted
 // delta; expands to the thread. Expandable caps the opened thread's height so
 // a 40-comment backlog doesn't wall off the message (#667 test case).
@@ -124,12 +142,18 @@ function CommentsSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'com
         <Expandable maxHeight={360} fade="from-white dark:from-gray-800">
           <ul className="space-y-3">
             {block.comments.map((c, i) => (
-              <li key={c.id ?? i} className="border-l-2 border-gray-200 dark:border-gray-700 pl-3">
+              <li
+                key={c.id ?? i}
+                className={`border-l-2 pl-3 ${c.quackStatus === 'deleted' ? 'border-red-300 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`}
+              >
                 <div className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500 mb-0.5">
                   {c.author && <span className="font-medium text-gray-600 dark:text-gray-300">{c.author}</span>}
                   {c.createdAt && <span>{formatTimestamp(c.createdAt)}</span>}
+                  {c.quackStatus && c.quackStatus !== 'new' && <StatusBadge status={c.quackStatus} />}
                 </div>
-                <AssistantText text={c.body} />
+                <div className={c.quackStatus === 'deleted' ? 'opacity-60 line-through decoration-red-400' : undefined}>
+                  <AssistantText text={c.body} />
+                </div>
               </li>
             ))}
           </ul>

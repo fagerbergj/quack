@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { createElement } from 'react'
+// @vitest-environment jsdom
+import { describe, it, expect, afterEach } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel } from './envelope'
 import { TriggerMessage } from './TriggerEnvelope'
@@ -155,5 +157,73 @@ describe('TriggerMessage', () => {
     const detailsTags = out.match(/<details[^>]*>/g) ?? []
     expect(detailsTags.length).toBeGreaterThan(0)
     for (const tag of detailsTags) expect(tag).not.toContain('open') // collapsed by default
+  })
+})
+
+// renderToStaticMarkup proves the collapsed markup exists; it never runs a
+// click. These mount into real jsdom (Expandable.test.ts's pattern - no
+// testing-library in this repo) and dispatch an actual click on <summary>, so
+// what's asserted is the native <details> `open` toggle actually firing, the
+// same mechanism the browser's UA stylesheet uses to show/hide the content.
+describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  function mount(content: string) {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    act(() => root!.render(createElement(TriggerMessage, { content })))
+    return host
+  }
+
+  it('a click on <summary> actually opens its <details>, not just markup that claims to be collapsible', () => {
+    const el = mount(CI_FIX_ENVELOPE)
+    const details = el.querySelectorAll('details')
+    expect(details.length).toBeGreaterThanOrEqual(4)
+    for (const d of details) expect(d.open).toBe(false)
+    const commentsDetails = [...details].find(d => d.querySelector('summary')?.textContent?.includes('new'))!
+    act(() => commentsDetails.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(commentsDetails.open).toBe(true)
+    // Only the clicked section opened - the others stay collapsed.
+    for (const d of details) if (d !== commentsDetails) expect(d.open).toBe(false)
+  })
+
+  it('never throws when actually mounted (layout effects run) on malformed input', () => {
+    const brokenInputs = [
+      '<permissions>join_issue_conversation<deliverable>a plan</deliverable>',
+      '<<<not a tag at all',
+      '<permissions',
+      '<comments count="1">not json</comments>',
+    ]
+    for (const input of brokenInputs) {
+      expect(() => mount(input)).not.toThrow()
+      act(() => root!.unmount())
+      host!.remove()
+    }
+  })
+
+  it('a deleted comment is visibly distinguishable from a live one once its section is opened', () => {
+    const envelope = `<permissions>join_pr_conversation</permissions>
+<deliverable>a review</deliverable>
+<comments new="0" edited="0" deleted="1">${JSON.stringify([
+      { id: 1, created_at: '2026-08-04T00:00:00Z', user: { login: 'carol' }, body: 'retracted statement' },
+    ].map(c => ({ ...c, quack_status: 'deleted' })))}</comments>`
+    const el = mount(envelope)
+    const details = el.querySelector('details')!
+    act(() => details.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(details.open).toBe(true)
+    expect(details.textContent).toContain('deleted')
+    // Ignoring quack_status entirely would render this identically to a live comment.
+    expect(details.innerHTML).toMatch(/line-through/)
   })
 })

@@ -14,6 +14,9 @@ export interface Comment {
   createdAt?: string
   author?: string
   body: string
+  // quack_status (delta mode only): "new" | "edited" | "deleted" - a retracted
+  // comment's body reads identically to a live one, so this is the only signal.
+  quackStatus?: string
 }
 
 export interface ChangedFile {
@@ -132,6 +135,7 @@ function toComment(item: unknown): Comment {
     createdAt: str(item, 'created_at'),
     author: str(user, 'login'),
     body: str(item, 'body') ?? '',
+    quackStatus: str(item, 'quack_status'),
   }
 }
 
