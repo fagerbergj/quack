@@ -1,12 +1,7 @@
-// The deterministic delivery check: a node whose task says "commit / push /
-// open a PR" cannot pass unless the workspace ledger shows it actually did.
-//
-// The rubric's task_completeness criterion is an LLM judgment and it is flaky
-// (a live implementer "delivered" a markdown code block of the file it never
-// wrote, and passed). Delivery is mechanically checkable, so it is checked
-// mechanically, in the cheap deterministic stage, where a failure drives a
-// targeted revise round BEFORE the judge and sinks the round on its own
-// (weakest-link) no matter what the judge thinks.
+// delivery.go: a node whose task says commit/push/open-a-PR cannot pass
+// unless the workspace ledger shows it actually did. LLM task_completeness
+// judgment is flaky here, so delivery is checked mechanically in the cheap
+// deterministic stage, before the judge, weakest-link.
 package vetting
 
 import (
@@ -56,16 +51,11 @@ var (
 	prRe     = regexp.MustCompile(`(?i)(pull[ -]?requests?|\bPRs?\b)`)
 )
 
-// ImplementationIntent reports whether text asks for code to be implemented AND
-// delivered - an imperative code verb plus a version-control term. Conservative
-// by construction (both must match, and the two guards below only ever say NO).
-// Shared with internal/dag's planner backstop so there is ONE delivery
-// vocabulary, not two that drift.
-//
-// Verbs are looked for in prose only - identifiers and URLs are dropped (a
-// delivery verb inside a branch name once forced a code-implementer node onto a
-// read-only review) - and a request whose instruction is to REVIEW is not a
-// request to change.
+// ImplementationIntent reports whether text asks for code to be implemented
+// AND delivered - conservative by construction (both regexes must match).
+// Shared with internal/dag's planner backstop so there's ONE delivery
+// vocabulary. Verbs are looked for in prose only, dropping identifiers/URLs
+// (a verb inside a branch name is not an instruction); REVIEW alone is not.
 func ImplementationIntent(text string) bool {
 	if !deliveryRe.MatchString(text) {
 		return false
@@ -98,25 +88,14 @@ func demandedDelivery(task string) deliveryDemand {
 	return d
 }
 
-// deliveryCriterion scores `delivery_complete` for a node: 0 when the task
-// demands the work be committed/pushed and the worker's ledger holds no such
-// SUCCESSFUL call (act.committed/act.pushed - see activityFromSession), 1 when it
-// does. ok=false ⇒ the criterion does not apply at all (the task asks for no
-// delivery: research, analysis, synthesis), leaving those nodes untouched.
-//
-// The hard requirement stops at git_push on purpose. Committing and pushing are
-// mechanically universal (every code-implementer has the git tools). Opening
-// the PR itself goes through
-// github_pull_request, an OPTIONAL extension tool (a deployment without the
-// GitHub App installed has no way to call it) - hard-requiring it would deadlock
-// such a node in revise rounds it can never satisfy. It is recorded
-// (act.prOpened) and named in the feedback, and the ledger shows the judge
-// whether it happened.
-// hasStagedPR reports whether the worker has a live stage_pr call (handed the
-// PR intent off to the gate - see StagedDelivery/commitDelivery). A
-// worker that CAN still push/open a PR directly (act.pushed/act.prOpened,
-// legacy toolset) satisfies delivery either way - staging is the new path,
-// not a replacement requirement.
+// deliveryCriterion scores `delivery_complete`: 0 when the task demands a
+// commit/push and the ledger shows neither succeeded, 1 when it did; ok=false
+// when the task demands no delivery. Stops at git_push on purpose -
+// github_pull_request is an OPTIONAL extension tool, so hard-requiring it
+// would deadlock a node whose deployment has no GitHub App installed.
+// hasStagedPR reports whether the worker handed PR intent to the gate via
+// stage_pr (StagedDelivery/commitDelivery) - not a replacement requirement,
+// a legacy worker that pushes/opens the PR directly still satisfies delivery.
 func hasStagedPR(act workerActivity) bool {
 	_, ok := act.stagedDelivery["pr"]
 	return ok
@@ -149,19 +128,11 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 		deliveryWording(d), strings.Join(missing, " and "), want)}, true
 }
 
-// reviewCriterion scores `review_posted` for a node: 0 when the node IS a
-// code-reviewer (isReviewer - a review-delivery node by construction, see
-// Config.IsReviewer) and the worker's ledger shows no SUCCESSFUL
-// github_submit_review, 1 when it does. ok=false ⇒ the criterion does not apply
-// (not a reviewer node), leaving every other node untouched.
-//
-// A non-empty answer with nothing posted otherwise reads as "done" to
-// workIncomplete. Posting a review is mechanically checkable, so it is checked
-// mechanically, exactly like a commit/push.
-//
-// The submit is the whole requirement: github_add_review_comment only accumulates
-// a process-local DRAFT (see internal/github) - nothing is on the PR until
-// github_submit_review succeeds.
+// reviewCriterion scores `review_posted`: 0 when the node is a code-reviewer
+// (isReviewer) and the ledger shows no successful github_submit_review, 1
+// when it does; ok=false for a non-reviewer node. github_add_review_comment
+// only accumulates a process-local DRAFT - nothing posts to the PR until
+// github_submit_review succeeds, so the submit is the whole requirement.
 func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterionScore, bool) {
 	if !isReviewer {
 		return criterionScore{}, false
@@ -192,26 +163,11 @@ func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterio
 			"(or call `github_submit_review` yourself, if you have that tool) - then report what you actually did.", drafted)}, true
 }
 
-// workIncomplete reports whether the worker's turn left the WORK unfinished - the
-// gate's continuation condition (RunGatedRefine). Three mechanical signals, no LLM
-// judgment:
-//
-// - an EMPTY answer: a reasoning model that spends its whole output budget on
-// thinking returns no content. ADK ends the run there, and "the model emitted
-// no text" is indistinguishable from "the model is done" - except that it
-// almost always means the opposite (mid-task, out of road).
-// - an UNDELIVERED implement-and-deliver task: the task demanded a commit/push
-// and the ledger holds none, so whatever the worker wrote is a description of
-// work it never shipped.
-// - an UNPOSTED review task: the task demanded a review be posted on a PR and
-// the ledger holds no submit, so the "review" exists only as prose in the
-// answer - the reviewer's exact analogue of the undelivered commit.
-// - an UNVERIFIED review task: the task was to review a code change and the
-// ledger holds no successful run_command, so the reviewer never executed the
-// thing it is passing judgment on (behaviourCriterion).
-//
-// Everything else (research, analysis, synthesis; a delivered coding task) is
-// complete as far as the gate is concerned - the judge takes it from here.
+// workIncomplete reports whether the worker's turn left the WORK unfinished -
+// the gate's continuation condition, from four mechanical signals only: an
+// empty answer, an undelivered implement-and-deliver task, an unposted
+// review, or an unverified review (no run_command). Everything else counts
+// as complete; the judge takes it from there.
 func workIncomplete(answer, task string, act workerActivity, readOnly, isReviewer bool) bool {
 	if strings.TrimSpace(answer) == "" {
 		return true
@@ -244,21 +200,11 @@ func noRunnableSurface(act workerActivity) bool {
 	return true
 }
 
-// behaviourCriterion scores `behaviour_verified` for a node: 0 when the node IS
-// a code-reviewer (isReviewer) and the worker's ledger holds no SUCCESSFUL
-// run_command - no test run, no build, no probe - 1 when it does. ok=false ⇒ the
-// criterion does not apply (not a reviewer node, or nothing runnable in the
-// change), leaving every other node untouched.
-//
-// Merely prompting a reviewer to run the code works about half the time (a live
-// probe caught a show-stopper that a read-only review of the same PR then called
-// "fully functional"). Prompt guidance is not reliability, so the execution is
-// required mechanically: a read-only review is INCOMPLETE work (workIncomplete),
-// which hands the reviewer its tools back in a continuation round.
-//
-// Deliberately weak on WHAT ran: any successful run_command counts (the test
-// suite, a build, a probe). Grading the command itself would be an LLM judgment,
-// which is the very thing this check exists to stop relying on.
+// behaviourCriterion scores `behaviour_verified`: 0 when the node is a
+// code-reviewer (isReviewer) with no successful run_command, 1 when it does;
+// ok=false for a non-reviewer or nothing-runnable change. Prompting alone
+// isn't reliable, so execution is required mechanically - a read-only review
+// counts as incomplete work, and it's deliberately weak on WHAT ran.
 func behaviourCriterion(task string, act workerActivity, isReviewer bool) (criterionScore, bool) {
 	if !isReviewer || noRunnableSurface(act) {
 		return criterionScore{}, false

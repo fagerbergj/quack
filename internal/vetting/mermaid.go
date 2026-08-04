@@ -1,21 +1,8 @@
-// A deterministic scan of every ```mermaid fenced block bound for delivery
-// (#448): GitHub renders an invalid diagram as a broken box, and nothing
-// upstream checks the syntax before it ships. This package used to STRIP an
-// invalid block to plain text (#371) - reversed by #448: stripping hides the
-// defect instead of fixing it, and the agent that wrote the bad diagram is
-// the one who can fix it. So this now only DETECTS and reports; mermaidCriterion
-// (checks.go-adjacent, wired in node.go's foldDeterministic) fails the
-// deterministic gate with the concrete error, feeding a revise round instead
-// of silently degrading. #358 argued a bare "write valid mermaid" instruction
-// is exactly what a model ignores intermittently - true, but irrelevant here:
-// the feedback below always names the actual parse error and which block,
-// which is the actionable instruction #358 didn't have.
-//
-// #574: validation used to run through github.com/sammcj/mermaid-check, a Go
-// REIMPLEMENTATION of mermaid's grammar - looser than the real thing (0 of 7
-// real plan diagrams flagged; GitHub's own jison-generated parser rejected
-// 5). This now shells out to scripts/mermaid-validate.mjs, the real
-// mermaid.parse() - the same parser GitHub renders with.
+// mermaid.go deterministically scans every ```mermaid fenced block bound for
+// delivery: GitHub renders an invalid diagram as a broken box, and nothing
+// upstream checks the syntax. Detects and reports rather than stripping, so
+// the revise round gets the concrete parse error. Validates via
+// scripts/mermaid-validate.mjs, the real mermaid.parse() GitHub renders with.
 package vetting
 
 import (

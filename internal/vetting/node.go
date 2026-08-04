@@ -46,19 +46,11 @@ type GateResult struct {
 	Rounds   int
 }
 
-// RunGatedRefine runs the trust-gate refine loop against an already-built worker
-// node: worker draft → deterministic citation/length checks → independent judge →
-// revise, until the score clears cfg.Threshold or cfg.JudgeRounds is exhausted.
-// It is the reusable core shared by NewGatedWorkerNode and the DAG graph builder
-// (dag.BuildWorkflow); callable from inside any dynamic-node body since it drives
-// the worker via RunNode. prompt is the fully-assembled worker instruction.
-//
-// Returns (answer, result, err); result carries the final verdict (score/passed/
-// feedback/rounds) so the graph can persist it for node_done + continue-but-warn.
-// ErrNodeEmpty is returned by RunGatedRefine when the worker produced no answer
-// even after the empty-recovery retry. The node body catches it to pause the run
-// for a human steer (re-run with guidance) or cancel, instead of silently
-// emitting an empty output that cascades into empty dependents.
+// RunGatedRefine runs the trust-gate refine loop: draft → deterministic
+// checks → independent judge → revise, until the score clears cfg.Threshold
+// or cfg.JudgeRounds is exhausted. Returns (answer, result, err) for
+// node_done + continue-but-warn. ErrNodeEmpty means no answer even after the
+// empty-recovery retry - callers pause rather than cascade an empty output.
 var ErrNodeEmpty = errors.New("vetting: node produced no answer")
 
 // ErrNodePaused is returned by RunGatedRefine when the user paused the node
@@ -70,20 +62,11 @@ var ErrNodeEmpty = errors.New("vetting: node produced no answer")
 var ErrNodePaused = errors.New("vetting: node paused")
 
 // NodeControl lets a caller cancel, pause, or queue a message for a running
-// gate between its stages. nil = no control. Cooperative: checked at
-// gate-stage boundaries (before each judge round), not mid-model-call:
-// mid-call per-node cancel isn't possible on ADK v2 without breaking event
-// streaming (the nodes of one plan share a runner and its event stream;
-// cancelling that context would take out the siblings).
-//
-// That makes this check the BACKSTOP, not the whole story for Cancelled: it is
-// what actually ends the node and keeps its partial answer (continue-but-warn),
-// but a worker deep in a tool loop can be minutes from the next stage boundary.
-// The TOOL layer closes that window - a cancelled node's next tool call is
-// refused outright (tools.Deps.NodeCancelled / cancelguard.go), so the worker
-// gives up its turn and arrives here promptly. Paused and a queued message have
-// no such shortcut by design - a queued message must NEVER interrupt mid-turn
-// (that was the old steer's mistake); it only ever lands at a stage boundary.
+// gate, checked cooperatively at stage boundaries only - mid-call cancel
+// isn't possible on ADK v2 since a plan's nodes share one runner/event
+// stream. Cancelled is a BACKSTOP: the TOOL layer (cancelguard.go) refuses
+// its next tool call so it arrives here promptly; Paused/queued get no such
+// shortcut by design - neither may interrupt mid-turn.
 type NodeControl interface {
 	// Cancelled reports whether this node should stop (keep its current answer).
 	Cancelled() bool
@@ -432,31 +415,20 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 		}
 
-		// HITL / guard pause: the worker's just-finished turn may have raised a
-		// fresh ask_user question or a guard-ladder confirmation (beyond what the
-		// gate already paused for) and ended without a real answer. Park the NODE
-		// so ADK routes the human's answer/decision back here on the next turn.
-		//
-		// Runs REGARDLESS of whether the draft is empty - a chatty model asks and
-		// writes draft text in the same turn. Draft text from this turn is
-		// discarded on the pause (it was written without the user's answer; the
-		// resume path re-runs the worker with the Q&A folded in). The same check
-		// runs after every revise round below.
+		// HITL / guard pause: park the NODE when the worker's turn raised a fresh
+		// ask_user question or guard confirmation, so ADK routes the human's answer
+		// back here next turn - regardless of draft emptiness (a chatty model asks
+		// and writes in the same turn); this turn's draft is discarded, since resume
+		// re-runs the worker with the Q&A folded in. Repeated after every revise round.
 		if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
 			return "", GateResult{}, ierr // ErrNodeInterrupted → park
 		}
 
 		// Continuation loop: keep giving the worker TOOL-BEARING turns until the
-		// WORK is done (workIncomplete) - not until the model happens to emit text:
-		// a turn that spends its whole output budget on reasoning is not "done",
-		// and a tool-less writer must never substitute for unfinished work. The
-		// continuation prompt rides the same delivery path as a revise round;
-		// bounded by maxContinueRounds.
-		//
-		// The completion test reads the node's OWN task (cfg.Task) - NEVER `prompt`,
-		// which carries the user's verbatim request as background: judged against
-		// that, every node in a "commit and open a PR" plan is forever incomplete,
-		// including the read-only explorers.
+		// WORK is done (workIncomplete), not until the model emits text - a
+		// reasoning-only turn is not "done". Tested against the node's OWN task
+		// (cfg.Task), never `prompt` - judged against the whole user request, every
+		// node, even read-only explorers, would stay forever incomplete.
 		if workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer) {
 			_, contSpan := otelobs.Start(nodeCtx, "gate.continuation",
 				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
@@ -671,20 +643,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	}
 }
 
-// pauseIfWorkerRaisedHITL parks the node when the worker's latest turn raised a
-// NEW ask_user question or guard-ladder confirmation beyond what the gate has
-// already paused for. It re-derives the FULL ask/confirm history from session
-// events (scanNodeAsks/scanNodeConfirms), so "new" is len(turns) > pauses -
-// robust to node-ID reuse and resume re-entry. Returns paused=true (with the
-// ErrNodeInterrupted sentinel to propagate) when it parked, false otherwise.
-//
-// It MUST run after EVERY worker run - the initial draft, each resume run, AND
-// each revise round: a worker frequently proposes its guard-confirmed delivery
-// step (git_commit + git_push) only during a late revision, and a draft-only
-// check lets that operation go unapproved.
-//
-// ask_user is checked before the guard confirmation: the more specific signal,
-// and no worker prompt raises both in one turn.
+// pauseIfWorkerRaisedHITL parks the node when the worker's latest turn
+// raised a NEW ask_user/guard confirmation - re-derived from session events
+// (len(turns) > pauses), robust to node-ID reuse and resume re-entry. MUST
+// run after EVERY worker run: guard-confirmed delivery is often proposed
+// only during a late revision. ask_user is checked first (more specific).
 func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*session.Event) error, log *slog.Logger) (bool, error) {
 	if emit == nil {
 		return false, nil
@@ -785,16 +748,11 @@ func stagedDeliveryTarget(fc *genai.FunctionCall) (target string, item StagedDel
 	return "", StagedDelivery{}, false, false
 }
 
-// commitMemoryOnPass fires the agent's staged knowledge (plus consolidation from
-// the accepted answer) into shared memory - only on a gate pass, so nothing is
-// remembered from a failed answer. Fire-and-forget: memory is best-effort and
-// never blocks or fails the node. Commit also runs with empty staged (its
-// answer-extraction still mines the accepted answer), matching the M6 design.
-//
-// The write is bucketed by SUBJECT (memory.Scope): the repo the node is working in,
-// the agent's role family, or the user - never the agent's own name. The gate is the
-// right place to resolve that scope: it runs workflow-side, so it holds the real user
-// id and the jail coordinates the node's repo was cloned into.
+// commitMemoryOnPass fires staged knowledge (plus answer-mined
+// consolidation) into shared memory - only on a gate pass, fire-and-forget,
+// never blocking or failing the node. Runs even with empty staged. Bucketed
+// by SUBJECT (repo/role/user), never the agent's own name - resolved here
+// because the gate is workflow-side and holds the real user id + jail coords.
 func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Config, author, answer string, staged []memory.Candidate) {
 	if cfg.Memory == nil || !cfg.CommitMemory || strings.TrimSpace(answer) == "" {
 		return
@@ -825,18 +783,12 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	}()
 }
 
-// commitDelivery posts the node's FINAL staged delivery set. Unlike memory
-// (pass-only), delivery fires REGARDLESS of the judge verdict - graceful
-// degradation: the work is done, so the PR/review/comment is delivered either
-// way, but on a FAIL the gate's score+feedback ride along (dc.GatePassed /
-// dc.GateFeedback) so App.Deliver can attach a caveat and a human decides. An
-// item staged then unstaged never reaches GitHub; this runs EXACTLY ONCE per
-// node, right here, never mid-run.
-//
-// It BLOCKS (no goroutine): a delivery failure is user-visible (the extension's
-// dispatch falls back to an honest comment when nothing was delivered - see
-// internal/github/webhook.go), which needs delivery to have actually been
-// attempted before the node - and so the run - completes.
+// commitDelivery posts the node's FINAL staged delivery set, exactly once,
+// regardless of judge verdict (graceful degradation) - a FAIL rides its
+// score+feedback along (dc.GatePassed/dc.GateFeedback) so App.Deliver
+// attaches a caveat instead of blocking delivery. BLOCKS (no goroutine): a
+// delivery failure is user-visible, so it must be attempted before the run
+// completes.
 func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
 	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
 		recordDeliveryOutcomeMetric(cfg, res, false, false)
@@ -1102,21 +1054,10 @@ func modelName(m model.LLM) string {
 }
 
 // runWorkerNodeTraced wraps runWorkerNode with a "quack.worker.round" span
-// (parented under spanCtx, the node's span-carrying context - NOT ctx, which
-// stays the plain ADK context runWorkerNode itself needs) and the
-// round-duration metric. The single seam every worker round - draft,
-// HITL/guard resume, continuation, revise - passes through, so it is also
-// the ONE place that stamps this round's replay-ledger coordinates
-// (ledger.Coords: chat/node/agent/round) onto ctx via WithAgentContext - the
-// ADK-documented seam for overriding a Context's embedded context.Context
-// (see agent.Context.WithAgentContext) - so every model and tool call this
-// round makes, however deep in ADK's own call tree, can read them back via
-// ledger.CoordsFromContext without a signature change of its own.
-//
-// The duration recorded is TimedSpan's own window (span start → span end),
-// not a separately-tracked timer: the two can never disagree (see #354,
-// where a hand-rolled t0 sitting next to - but not derived from - the span
-// drifted from what Tempo showed for the same round).
+// and duration metric. Every worker round passes through here, so this is
+// the ONE place that stamps this round's replay-ledger coordinates onto ctx
+// via WithAgentContext, readable downstream via ledger.CoordsFromContext.
+// Duration is the span's own window, not a separate timer.
 func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Config, workerModel model.LLM, workerNode workflow.Node, input any, runID, stage string, emit func(*session.Event) error) (string, error) {
 	_, ts := otelobs.StartTimedSpan(spanCtx, "worker.round",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
@@ -1358,17 +1299,14 @@ func citationOnlyFailure(v verdict, threshold float64) bool {
 	return citesFailed && failing == 1
 }
 
-// activityFromSession reconstructs the worker's retrieval activity (web_search
-// queries, fetched URLs, searched URLs) AND its workspace-operation ledger
-// (fs/git/run_command calls - see ledger.go) from the workflow session events.
-// It replaces the legacy live-stream capture in gate.runWorker: calls are
-// paired to their responses by call ID, and web_search results feed the "seen"
-// set. Consumed by the deterministic citation check, the judge prompt's
-// workspace section (claims-vs-activity), and the revise/finalize prompts.
-// joinWritten resolves a path argument against the cwd in effect at the time of
-// the call - the read-side mirror of tools.joinCwd (kept here to avoid a
-// vetting→tools dependency): a leading "/" ignores the cwd, everything else is
-// relative to it.
+// activityFromSession reconstructs the worker's retrieval activity AND its
+// workspace-operation ledger (fs/git/run_command calls - ledger.go) from the
+// workflow session events, pairing calls to responses by call ID. Consumed
+// by the citation check, the judge's workspace section, and the
+// revise/finalize prompts.
+// joinWritten resolves a path argument against the cwd at call time - the
+// read-side mirror of tools.joinCwd (kept here to avoid a vetting→tools
+// dependency). A leading "/" ignores the cwd.
 func joinWritten(cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")
@@ -1379,18 +1317,11 @@ func joinWritten(cwd, p string) string {
 	return filepath.Join(cwd, p)
 }
 
-// writtenRel resolves a worker's write/edit path argument to a CHAT-relative path
-// for Jail.Resolve - the read-side mirror of tools.jailPath. The worker's own paths
-// (and the cwd its `cd` reports) are NODE-relative, because the node dir is an
-// invisible root the model never sees; the node dir is re-applied here, at the one
-// resolution boundary, exactly as the tools do it. A leading "/" is the chat-root
-// escape hatch: cwd AND node dir ignored. The result feeds Jail.Resolve, which
-// re-verifies containment.
-//
-// The two namespaces must match. If the worker records paths in one and the judge
-// resolves them in another, buildChangedFilesSection silently reads NOTHING and the
-// judge degrades to trusting the answer's self-report - this exact regression has
-// bitten twice.
+// writtenRel resolves a worker's write/edit path to a CHAT-relative path for
+// Jail.Resolve - the read-side mirror of tools.jailPath. Worker paths are
+// NODE-relative (the node dir is invisible to the model), re-applied here; a
+// leading "/" is the chat-root escape hatch, ignoring both. Must match the
+// judge's resolution, or it silently reads NOTHING (has bitten twice).
 func writtenRel(nodeDir, cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")

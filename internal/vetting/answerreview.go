@@ -1,21 +1,8 @@
-// The answer-derived review probe: the fallback for when an EXTERNAL (ACP)
-// reviewer's round never lands a stage_review call - the MCP surface wasn't
-// offered, or the agent just didn't use it - so its deliverable - the posted
-// review - must be recovered from its ANSWER instead. The reviewer's preamble
-// (agents/code-reviewer/prompt.md) instructs a structured tail for exactly
-// this case:
-//
-//	VERDICT: approve | request_changes | comment
-//	FINDINGS:
-//	- path/to/file.go:42: the finding text
-//	- other/file.ts:7: another finding
-//
-// augmentFromAnswer parses that into a staged review (with line-anchored
-// inline comments) exactly as if the worker had called stage_review - the
-// delivery spine (commitDelivery → github Deliver) stays gate-owned and
-// unchanged. The companion of the git disk probe (gitprobe.go). Unlike the
-// tool path, this is a RECOVERY, not a clean pass (#688) - it stages a
-// Recovered delivery, and reviewCriterion words it accordingly.
+// answerreview.go recovers a posted review from an ACP reviewer's answer when
+// stage_review was never called: parses the fallback tail
+// (agents/code-reviewer/prompt.md - "VERDICT:" + "FINDINGS:" bullets of
+// "path:line: text") into a staged review. A RECOVERY, not a clean pass -
+// reviewCriterion scores it accordingly.
 package vetting
 
 import (

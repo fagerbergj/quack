@@ -156,20 +156,11 @@ type verdict struct {
 // factory is shared across concurrent nodes, so the tally cannot live on it.
 type JudgeFactory func(sink *verdict) (adkagent.Agent, *readCounter, error)
 
-// NewJudgeFactory returns a JudgeFactory that builds the agentic judge as an ADK
-// llmagent with judgeModel, the supplied read-only workspace tools (read_file,
-// list_dir, glob, grep - so the judge can OPEN the files a coding worker wrote
-// and score code quality from the real source, not the worker's self-report),
-// the supplied skill toolsets (load_skill / list_skills / load_skill_resource -
-// the SAME skills the worker had, so the judge can pull up a relevant quality/
-// review skill and score against the same principles the worker followed), and a
-// per-round submit_verdict tool bound to the caller's sink. Pass no read tools
-// and no skillsets for a pure-research deployment: the judge then scores one-shot
-// from the answer text alone. Passing nil/empty for either behaves exactly as if
-// that capability were absent. The read tools MUST be read-only - never wire
-// write_file, edit_file, delete_path, git_*, or run_command; the judge must not
-// mutate the workspace or run anything. Skill lookups are read-only content
-// fetches, so they are safe in the judge's isolated runner.
+// NewJudgeFactory returns a JudgeFactory building the agentic judge with
+// judgeModel, read-only workspace tools (real source, not the worker's
+// self-report), the worker's own skill toolsets, and a submit_verdict tool
+// bound to the sink. Nil/empty behaves as absent (one-shot answer-only
+// scoring). Read tools MUST stay read-only: never wire write/delete/git/run.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
 	return func(sink *verdict) (adkagent.Agent, *readCounter, error) {
@@ -223,17 +214,12 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	})
 }
 
-// buildJudgePrompt is the user message handed to the agentic judge: the
-// constitution + rubric, the question, the worker's WORKSPACE ledger (when it
-// performed any fs/git/run_command operations - see ledger.go), any criteria
-// already decided deterministically (knownFailures), and the answer to judge.
-// The judge does NOT see the worker's web retrieval, so the rubric tells it to
-// judge grounding by the presence of inline citations and never to treat
-// unfamiliar/recent cited facts as fabricated - its own world knowledge is
-// stale. Workspace operations are different: the ledger IS ground truth
-// (reconstructed from session events, not from the worker's narration), so a
-// claims_match_activity rubric criterion can hard-fail an answer asserting an
-// operation the ledger doesn't contain (the live-e2e fabricated-commit hole).
+// buildJudgePrompt assembles the judge's user message: constitution + rubric,
+// question, the worker's WORKSPACE ledger, any criteria already decided
+// deterministically (knownFailures), and the answer. The judge never sees web
+// retrieval, so grounding is judged by citation presence, not the judge's own
+// stale world knowledge. The ledger IS ground truth, so claims_match_activity
+// can hard-fail a claimed operation it doesn't contain.
 func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
 	var sb strings.Builder
 	if constitution != "" {
@@ -309,15 +295,10 @@ const (
 )
 
 // changedFilesSection picks the judge prompt's changedFiles source: a review
-// node's act.written is always empty (read-only), so it sources the actual PR
-// diff off the clone instead (#498 step 1), prefixed with the reviewer's
-// resolved structured verdict (#520). An implement node keeps its
-// act.written-based full-content section (still the best source for
-// code-quality criteria that need the whole file), with the actual base..HEAD
-// diff prepended when a setup clone is available - the diff is what the
-// change-SHAPE criteria (diff_minimality, commit_hygiene, ...) need and full
-// content alone can't show for an edit inside a large pre-existing file
-// (#498 residual: "OUTPUT = the staged PR + the diff" for an implement).
+// node's act.written is always empty (read-only), so it sources the PR diff
+// off the clone, prefixed with the resolved verdict. An implement node keeps
+// its full-content section (best for code-quality) with the base..HEAD diff
+// prepended, since full content alone can't show change-SHAPE criteria.
 func changedFilesSection(cfg Config, act workerActivity) string {
 	if cfg.IsReviewer {
 		return reviewVerdictLine(act) + stagedFindingsSection(act) + buildReviewDiffSection(cfg)
@@ -348,20 +329,11 @@ func reviewVerdictLine(act workerActivity) string {
 	return "Staged review verdict: " + sd.Event + "\n\n"
 }
 
-// buildChangedFilesSection re-reads the files the worker actually wrote/edited
-// (act.written) off disk through the SAME jail its tools used and formats them
-// for the judge prompt, so a judge that (being a small model) won't tool-call
-// still scores the REAL post-edit source instead of the worker's self-report.
-// Returns "" when there are no
-// written files or no jail is wired (pure-research nodes, unjailed deployments).
-// Best-effort: a path that fails to resolve/read is skipped, degrading to
-// today's no-injection behaviour rather than erroring.
-//
-// chatID is the per-chat workspace scope (the run's chat/session id) the worker
-// actually wrote under (<root>/<userID>/<chatID>/<rel>) - WITHOUT it the judge
-// would re-read from the per-user root where nothing was written, silently
-// no-op'ing this whole "judge reads the real files" fix. "" falls back to the
-// per-user root (unjailed/legacy - see Jail.Resolve).
+// buildChangedFilesSection re-reads the worker's written files off disk
+// through the SAME jail its tools used, so a judge that won't tool-call
+// still scores the REAL post-edit source, not a self-report. "" when nothing
+// was written or no jail is wired. chatID scopes the read to where the
+// worker wrote - omit it and the judge silently reads an empty root.
 func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, chatID string) string {
 	if len(act.written) == 0 || jail == nil {
 		return ""
@@ -665,47 +637,36 @@ var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 // address (a@b.com) for a citation.
 var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(?:-\d+)?))?`)
 
-// citationScore deterministically grades how well each cited link target in
-// the answer is backed - no model involved, so it can't "reason wrong" about a
-// string match the way a small judge model does. Two kinds of target are
-// graded differently:
+// citationScore deterministically grades each cited link target - no model
+// involved. Two kinds of target:
 //
-//   - A web URL (http/https) is graded against what the worker's OWN session
-//     retrieved or cloned this run - see the layer table below. A URL can't be
-//     re-fetched at gate time, so this stays ledger-based.
-//   - A LOCAL code citation - a scheme-less Markdown link, or the
-//     code-explorer's inline "<repo>@path[:lines]" format - is verified
-//     against the clone(s) actually on disk (cloneRoots), NOT the worker's
-//     ledger. The ledger is empty for a harness-provisioned setup clone
-//     (cfg.Setup, never a tracked git_clone), for an external ACP agent (its
-//     own bash/read tools aren't tracked), and for a synthesizer re-citing an
-//     upstream path - a ledger check on any of those scores a REAL file 0.00
-//     (#437). Disk verification: the path resolves, CONTAINED, under a clone
-//     root, the file exists, and - when a line range is cited - the file has
-//     at least the range's end line → 1.00, else 0.00.
+//   - A web URL is graded against what the worker's OWN session
+//     retrieved/cloned this run (layer table below) - it can't be re-fetched
+//     at gate time, so this stays ledger-based.
+//   - A LOCAL code citation (a scheme-less Markdown link, or the
+//     code-explorer's "<repo>@path[:lines]" format) is verified against the
+//     clone(s) on disk (cloneRoots), NOT the ledger - the ledger is empty for
+//     a harness-provisioned clone, an external ACP agent, or a synthesizer
+//     re-citing an upstream path, and a ledger check there would score a
+//     REAL file 0.00. Disk verification: the path resolves under a clone
+//     root, the file exists, and any cited line range is in bounds.
 //
 // Web URL layers:
 //
-//	exact URL fetched   → 1.00   (the worker read this exact page)
-//	at/under a cloned repo → 1.00 (the whole repo is on local disk - every
-//	                              blob/tree/file link under it is retrieved
-//	                              material by construction)
-//	exact URL searched  → 0.75   (this exact URL appeared in search results)
-//	same host fetched   → 0.50   (a different page on this host was fetched)
-//	same host searched  → 0.25   (the host showed up in search results)
-//	neither             → 0.00   (the worker never encountered this URL or host)
+//	exact URL fetched      → 1.00
+//	at/under a cloned repo → 1.00 (the whole repo is retrieved material)
+//	exact URL searched     → 0.75
+//	same host fetched      → 0.50
+//	same host searched     → 0.25
+//	neither                → 0.00
 //
-// Non-web schemes (mailto:) and pure in-document anchors are skipped: not
-// citations we can grade. URLs are normalized (lowercased scheme+host,
-// fragment dropped, trailing slash trimmed) before matching so cosmetic
-// differences don't cost points. cloneRoots are the ABSOLUTE clone-dir roots to
-// disk-verify local citations under (see resolveCiteCloneRoots in node.go) -
-// nil/empty when the node has no clone. The returned score is the mean across
-// distinct cited targets; details carries the per-target breakdown for
-// logging/feedback. ok is false only when the answer cites nothing gradeable
-// AND the node has neither retrieval activity nor a clone root to verify
-// against - a node WITH a clone root disk-verifies even off a completely empty
-// ledger (the #437 fix).
+// Non-web schemes and in-document anchors are skipped. URLs are normalized
+// (lowercased scheme+host, fragment dropped, trailing slash trimmed) first.
+// cloneRoots are the clone-dir roots to disk-verify local citations under;
+// nil/empty when the node has no clone. Score is the mean across distinct
+// cited targets. ok is false only when nothing is gradeable AND the node has
+// neither retrieval activity nor a clone root - WITH a clone root it
+// disk-verifies even off an empty ledger.
 func citationScore(answer string, act workerActivity, cloneRoots []string) (score float64, details []citationDetail, ok bool) {
 	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(cloneRoots) == 0 {
 		return 0, nil, false
@@ -796,16 +757,12 @@ func citationScore(answer string, act workerActivity, cloneRoots []string) (scor
 // entire file to confirm that ten cited lines are in range.
 const maxCiteLineScanBytes = 512 * 1024
 
-// diskCiteScore verifies a code citation against the clone(s) actually on
-// disk: 1.0 when ANY candidate path resolves, path-contained, under one of
-// cloneRoots, the file exists there, and - when lineRange is set - the file
-// has at least its end line; else 0.0. candidates lets the caller offer both a
-// bare repo-relative form and a clone-dir-prefixed form without needing to
-// know which one the clone root actually corresponds to; diskCiteScore also
-// tries each candidate with a matched clone root's own base name stripped
-// (a cited "games-repo/app/x.ts" against a clone root that IS ".../games-repo"),
-// since a citation and act.clonedDirs disagree on whether the clone dir's own
-// name is part of the cited path.
+// diskCiteScore verifies a code citation against the clone(s) on disk: 1.0
+// when ANY candidate path resolves, contained, under a cloneRoot with the
+// file present (and any cited line range in bounds); else 0.0. Tries each
+// candidate both as-is and with a matched root's own base name stripped,
+// since a citation and act.clonedDirs disagree on whether the clone dir's
+// own name is part of the cited path.
 func diskCiteScore(cloneRoots []string, candidates []string, lineRange string) float64 {
 	endLine := 0
 	if lineRange != "" {
@@ -1147,17 +1104,11 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 	return sb.String()
 }
 
-// normalizeScale converts a verdict's scores from the rubric's 0–10 integer
-// scale to the internal 0.0–1.0 axis the gate, deterministic criteria, and
-// threshold all use. The rubric asks the judge for whole numbers 0–10 (an LLM
-// scores more reliably on a coarse integer scale than on fine decimals, per
-// G-Eval practice), but everything downstream works in 0–1.
-//
-// The scale is DETECTED rather than always divided: if no score exceeds 1.0 the
-// judge answered in 0–1 (some models ignore the 0–10 instruction), so we leave
-// it untouched. The one ambiguous case - a genuine 0–10 verdict whose every
-// score is ≤1 (a uniformly catastrophic answer) - fails the gate under either
-// reading, so the ambiguity is harmless. Idempotent: a second call is a no-op.
+// normalizeScale converts a verdict's scores from the rubric's 0–10 scale (an
+// LLM scores more reliably on integers, per G-Eval practice) to the internal
+// 0–1 axis. The scale is DETECTED, not always divided: if no score exceeds
+// 1.0 the judge already answered 0–1, left untouched - the one ambiguous
+// case (a genuine 0–10 verdict all ≤1) fails the gate either way. Idempotent.
 func normalizeScale(v *verdict) {
 	maxScore := v.Score
 	for _, c := range v.Criteria {
@@ -1236,21 +1187,11 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 	}
 }
 
-// parseVerdict reads the judge's JSON, tolerating a ```json fenced block. It is
-// the fallback path for when the agentic judge ends without calling the
-// submit_verdict tool but leaves a parseable verdict in its text.
-//
-// It handles two known model failure modes:
-//   - Truncated JSON: the model emits score/passed/feedback inside the criteria
-//     object, leaving the outer object unclosed. We try appending one or two
-//     closing braces before giving up.
-//   - Misplaced top-level fields: after brace repair, score/passed/feedback
-//     appear as keys inside criteria (not valid criterionScore objects). We
-//     skip non-object entries and recover feedback/passed from them directly.
-//
-// Scores are normalised from the rubric's 0–10 scale to 0–1 (normalizeScale),
-// then the overall score is set to the LOWEST criterion (weakest-link gating, no
-// averaging and no caps) and clamped to [0,1] by aggregateVerdict.
+// parseVerdict reads the judge's JSON (tolerating a ```json fence) - the
+// fallback for when the judge ends without calling submit_verdict but leaves
+// parseable text. Repairs two known failure modes: truncated JSON (appends
+// closing braces) and top-level fields misplaced as keys inside criteria.
+// Scores normalize 0–10→0–1; overall score is the LOWEST criterion.
 func parseVerdict(raw string) (verdict, error) {
 	s := strings.TrimSpace(raw)
 	// Strip any prefix before the first '{' (e.g. ```json fences).

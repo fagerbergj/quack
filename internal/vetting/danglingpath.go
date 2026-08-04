@@ -6,18 +6,11 @@ import (
 	"strings"
 )
 
-// danglingDeliverablePathCriterion is the GATE side of #569: a plan-only run
-// commits nothing, so any file the worker wrote (act.written) is discarded
-// with the node's working directory the moment the run ends. An answer that
-// then points to one of those exact paths as where the deliverable lives -
-// "the plan is complete at PLAN_58_....md" - is broken by construction the
-// instant it's written, since nothing downstream can ever reach that file.
-//
-// Scoped to act.written (paths THIS run's own write_file/edit_file calls
-// touched) rather than any path-shaped text in the answer, so a legitimate
-// citation of a file the worker only read - never wrote - is never flagged.
-// !act.committed is what makes the file unreachable: a committed write ships
-// on the branch/PR the delivery step pushes, so referencing it is fine.
+// danglingDeliverablePathCriterion catches an answer pointing to a path this
+// run wrote but never committed (act.written, !act.committed) - the node's
+// working directory is discarded at run end, so nothing downstream can ever
+// reach that file. Scoped to the run's OWN writes, never any path-shaped
+// text, so a legitimate citation of a file only read stays unflagged.
 func danglingDeliverablePathCriterion(answer string, act workerActivity) (criterionScore, bool) {
 	if act.committed {
 		return criterionScore{}, false
