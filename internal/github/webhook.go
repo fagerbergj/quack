@@ -854,9 +854,13 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 
 	// Dedup: one active run per issue/PR thread. A second trigger that arrives
-	// while a run is in-flight (same sessionID) is silently skipped with a
+	// while a run is in-flight (same sessionID) is DROPPED - not queued - with a
 	// best-effort 👀 reaction on the triggering event - it never panics even
-	// if the GitHub API call fails.
+	// if the GitHub API call fails. Queueing was considered and rejected: two
+	// runs on one session would either corrupt each other if run concurrently,
+	// or, if serialised, the second would consume a conversation-watermark delta
+	// the first run's context already captured (#665, #668) - dropping and
+	// waiting for the next trigger avoids both.
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
 	if _, inflight := e.inflight.LoadOrStore(sessionID, struct{}{}); inflight {
 		slog.Info("deduplicated trigger", "sessionID", sessionID)
@@ -866,11 +870,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 	// No deadline here. The run deadline is the ORCHESTRATOR's (SetRunDeadline,
 	// applied once a run slot is held) so that queueing is not charged against
-	// it: this context covers the session lock and the server-wide run queue,
-	// where a run can legitimately wait hours on a serial deployment. Starting
-	// the clock here killed three implement runs at the 4h wall having
-	// delivered nothing - they spent the budget waiting. Post-run GitHub calls
-	// use their own short contexts (see tailCtx, reactionTimeout).
+	// it: this context covers the server-wide run queue, where a run can
+	// legitimately wait hours on a serial deployment. Starting the clock here
+	// killed three implement runs at the 4h wall having delivered nothing -
+	// they spent the budget waiting. Post-run GitHub calls use their own short
+	// contexts (see tailCtx, reactionTimeout).
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -878,13 +882,6 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 	e.persistGithubLink(ctx, sessionID, login, owner, repo, number, p.Issue.PullRequest != nil)
 	e.ensureTitle(ctx, sessionID, p, task)
-	// Serialise runs on one PR: a follow-up that lands while a review is still
-	// running must WAIT, not run concurrently on the same session (concurrent runs
-	// corrupt each other - the answer skip and cross-run tool events seen in
-	// dogfooding). The webhook already 202'd, so blocking this goroutine is fine.
-	lock := e.sessionLock(sessionID)
-	lock.Lock()
-	defer lock.Unlock()
 
 	// A LABEL-driven work request starts a FRESH session: unlike a conversational
 	// @mention (kept for continuity), a new attempt must not inherit a prior
@@ -970,8 +967,8 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
 	// stays INLINE - wrapping it in another goroutine would let this function's
-	// `defer cancel()` (run ctx) and `defer lock.Unlock()` (session lock) fire the
-	// moment it spawned, before the run finished. Deregister LAST (deferred
+	// `defer cancel()` (run ctx) and `defer e.inflight.Delete` (dedup claim) fire
+	// the moment it spawned, before the run finished. Deregister LAST (deferred
 	// cancel+unregister, then hub.Close) so a viewer sees the stream close only
 	// after the run is already off the registry (cancelling it then 404s/no-ops).
 	defer e.hub.Close(sessionID)
@@ -1050,6 +1047,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		}
 	}
 	if delivered {
+		e.persistGithubSnapshot(sessionID, gh)
 		slog.Info("github: work delivered on the PR; skipping the duplicate summary comment",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
 		return
@@ -1096,6 +1094,10 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		var tailCancel context.CancelFunc
 		tailCtx, tailCancel = context.WithTimeout(context.Background(), time.Minute)
 		defer tailCancel()
+	} else {
+		// Reached the natural end of the run (not cancelled, not deadlined) -
+		// genuine completion, whether or not it produced a useful answer.
+		e.persistGithubSnapshot(sessionID, gh)
 	}
 	answer := strings.TrimSpace(e.runner.LatestAnswer(tailCtx, login, sessionID))
 	if timedOut {
@@ -1304,16 +1306,21 @@ type githubContext struct {
 	newCommits []snapshotCommit
 }
 
-// loadGithubContext is the ONE fetch-diff-persist path every dispatch goes
-// through, issue or PR, work request or conversational follow-up (#459's
-// "one unified path" - replaces gatherReviewContext/issueThreadContext/
-// discussionSummary cherry-picking, and #457/#458's inject-everything
-// interim). It fetches the CURRENT full GitHub state, diffs it against the
-// snapshot stored from the last dispatch (or seeds, on first load), persists
-// the new snapshot, and returns the rendered context ready to inject as a
-// session EVENT via runMessage → e.runner.Run's message argument - never as
-// bare UserContent (llmagent builds its request from Session().Events()
-// only; a fresh prompt passed any other way is silently dropped).
+// loadGithubContext is the ONE fetch-diff path every dispatch goes through,
+// issue or PR, work request or conversational follow-up (#459's "one unified
+// path" - replaces gatherReviewContext/issueThreadContext/discussionSummary
+// cherry-picking, and #457/#458's inject-everything interim). It fetches the
+// CURRENT full GitHub state, diffs it against the snapshot stored from the
+// last dispatch (or seeds, on first load), and returns the rendered context
+// ready to inject as a session EVENT via runMessage → e.runner.Run's message
+// argument - never as bare UserContent (llmagent builds its request from
+// Session().Events() only; a fresh prompt passed any other way is silently
+// dropped).
+//
+// It does NOT persist the new snapshot - that's persistGithubSnapshot,
+// called by dispatch only once the run actually completes (#665: persisting
+// here, before the run, meant a crashed/cancelled run permanently lost the
+// delta it never got to act on).
 //
 // forceReseed treats this dispatch as a first load regardless of what's
 // stored: a label-driven work request resets the ADK session (T4 hygiene)
@@ -1369,15 +1376,36 @@ func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, rep
 		gh.newCommits = e.reviewScope(ctx, sessionID, snap)
 	}
 
-	if e.store != nil {
-		if j, merr := marshalSnapshot(snap); merr != nil {
-			slog.Warn("github: marshal snapshot failed; not persisted", "component", "github", "chat", sessionID, "err", merr)
-		} else if serr := e.store.SetGithubSnapshot(ctx, sessionID, j); serr != nil {
-			slog.Warn("github: SetGithubSnapshot failed; next resume may re-see this turn's changes",
-				"component", "github", "chat", sessionID, "err", serr)
-		}
-	}
 	return gh
+}
+
+// persistGithubSnapshot upserts the snapshot this dispatch already fetched
+// (gh.snap, captured by loadGithubContext before the run) as the new
+// conversation watermark - called by dispatch ONLY once the run reaches
+// genuine completion, never on cancellation, timeout, or HITL pause, so a
+// run that doesn't finish leaves its delta for the next trigger to see
+// (#665). Deliberately re-persists the SAME pre-run snapshot rather than
+// re-fetching a fresh one: a fresh fetch would mark comments that arrived
+// mid-run as "seen" without the model ever having been shown them, which
+// combined with drop-not-queue dedup (#668) would lose them for good.
+//
+// A fresh short-lived context: runCtx may already be past its deadline on a
+// slow run, the same reason the tail-comment logic uses its own.
+func (e *Extension) persistGithubSnapshot(sessionID string, gh githubContext) {
+	if e.store == nil || gh.contextUnavailable {
+		return
+	}
+	j, err := marshalSnapshot(gh.snap)
+	if err != nil {
+		slog.Warn("github: marshal snapshot failed; not persisted", "component", "github", "chat", sessionID, "err", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := e.store.SetGithubSnapshot(ctx, sessionID, j); err != nil {
+		slog.Warn("github: SetGithubSnapshot failed; next resume may re-see this turn's changes",
+			"component", "github", "chat", sessionID, "err", err)
+	}
 }
 
 // reviewScope returns the PR commits not yet covered by quack's last

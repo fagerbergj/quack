@@ -88,7 +88,14 @@ func (f *fakeRunner) Run(ctx context.Context, _, sessionID, message string, _ []
 			f.answer = f.revisedAnswer
 		}
 		if f.block != nil {
-			<-f.block
+			// Also unblocks on ctx cancellation, simulating a run KILLED mid-flight
+			// (as opposed to `block` closing, which simulates one finishing normally) -
+			// needed by tests that cancel via the hub rather than closing block.
+			select {
+			case <-f.block:
+			case <-ctx.Done():
+				return
+			}
 		}
 		if !f.noPlan {
 			yield(stream.SSEEvent{Name: stream.EventDagPlan}, nil) // a real run executes a plan
@@ -889,8 +896,8 @@ func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 }
 
 // Two runs on the SAME PR session are deduped: the second trigger finds the
-// sessionID in the inflight set and returns early (dedup guard fires before
-// the session lock). After the first run completes, a third dispatch succeeds.
+// sessionID in the inflight set and returns early, dropped rather than queued.
+// After the first run completes, a third dispatch succeeds.
 // waitInflightClear blocks until the dedup claim for sessionID is released (the
 // dispatch goroutine's deferred inflight.Delete has run), failing after 2s.
 func waitInflightClear(t *testing.T, ext *Extension, sessionID string) {
@@ -1840,6 +1847,135 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 	}
 	if strings.Contains(secondMsg, "the original comment") {
 		t.Errorf("resume dispatch re-injected the UNCHANGED comment - should carry only the delta:\n%s", secondMsg)
+	}
+}
+
+// TestKilledRunPreservesWatermarkDelta is the regression test for #665: the
+// conversation watermark must advance on run COMPLETION, not at dispatch. A
+// run cancelled mid-flight (hub.CancelRun, the same path DELETE/stop and a
+// superseding run use) must NOT persist the snapshot it fetched before
+// running - so the delta it never got to act on survives for the next
+// trigger to see, on top of whatever lands after it.
+//
+// Three dispatches, one store, a fresh *Extension per dispatch (mirrors
+// TestReviewBaselineDecoupledFromGeneralSnapshot): #1 completes normally and
+// establishes the baseline watermark at c1. #2 is killed mid-flight after c2
+// lands - its delta (c2) must NOT be marked seen. #3, after c3 also lands,
+// must see BOTH c2 and c3 - proof the killed run's delta was never consumed.
+func TestKilledRunPreservesWatermarkDelta(t *testing.T) {
+	var commentsJSON atomic.Value
+	commentsJSON.Store(`[{"id":1,"body":"first comment","user":{"login":"bob"},"updated_at":"t0"}]`)
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, commentsJSON.Load().(string))
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Evaluate widgets","body":"Should we use widgets?","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = gh.URL
+
+	const sessionID = "github-acme-widgets-7"
+	newExt := func(runner *fakeRunner) *Extension {
+		return NewExtension(app, config.GitHubExtensionConfig{
+			WebhookSecret: testSecret, Mention: "@quack", AllowedUsers: []string{"alice"},
+		}, runner, st, nil)
+	}
+
+	// #1: baseline dispatch, completes normally, persists the watermark at
+	// "first comment".
+	runner1 := &fakeRunner{gotMessage: make(chan string, 1), answer: "ok"}
+	ext1 := newExt(runner1)
+	rec1 := httptest.NewRecorder()
+	ext1.handleWebhook(rec1, signedRequest("issue_comment", issueCommentBody("@quack hello")))
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("dispatch #1 status = %d; want 202", rec1.Code)
+	}
+	select {
+	case <-runner1.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatch #1 never reached the orchestrator")
+	}
+	waitInflightClear(t, ext1, sessionID)
+
+	// c2 lands.
+	commentsJSON.Store(`[
+		{"id":1,"body":"first comment","user":{"login":"bob"},"updated_at":"t0"},
+		{"id":2,"body":"second comment landed","user":{"login":"carol"},"updated_at":"t1"}
+	]`)
+
+	// #2: killed mid-flight (cancelled via the hub, the same mechanism
+	// DELETE/stop and a superseding run use) before it can persist anything.
+	runner2 := &fakeRunner{gotMessage: make(chan string, 1), answer: "ok", block: make(chan struct{})}
+	ext2 := newExt(runner2)
+	rec2 := httptest.NewRecorder()
+	ext2.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack anything new?")))
+	if rec2.Code != http.StatusAccepted {
+		t.Fatalf("dispatch #2 status = %d; want 202", rec2.Code)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&runner2.calls) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&runner2.calls); got != 1 {
+		t.Fatalf("dispatch #2 never started its run (calls=%d)", got)
+	}
+	if !ext2.hub.CancelRun(sessionID) {
+		t.Fatal("could not cancel dispatch #2's run - was it not registered?")
+	}
+	waitInflightClear(t, ext2, sessionID)
+
+	// c3 lands.
+	commentsJSON.Store(`[
+		{"id":1,"body":"first comment","user":{"login":"bob"},"updated_at":"t0"},
+		{"id":2,"body":"second comment landed","user":{"login":"carol"},"updated_at":"t1"},
+		{"id":3,"body":"third comment landed","user":{"login":"dave"},"updated_at":"t2"}
+	]`)
+
+	// #3: completes normally. Its delta must contain BOTH c2 (which #2 never
+	// got to mark as seen) and c3.
+	runner3 := &fakeRunner{gotMessage: make(chan string, 1), answer: "ok"}
+	ext3 := newExt(runner3)
+	rec3 := httptest.NewRecorder()
+	ext3.handleWebhook(rec3, signedRequest("issue_comment", issueCommentBody("@quack anything new now?")))
+	if rec3.Code != http.StatusAccepted {
+		t.Fatalf("dispatch #3 status = %d; want 202", rec3.Code)
+	}
+	var msg3 string
+	select {
+	case msg3 = <-runner3.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatch #3 never reached the orchestrator")
+	}
+	if !strings.Contains(msg3, "second comment landed") {
+		t.Errorf("dispatch #2's delta was lost - the watermark advanced before it completed:\n%s", msg3)
+	}
+	if !strings.Contains(msg3, "third comment landed") {
+		t.Errorf("dispatch #3 missing the newest comment:\n%s", msg3)
 	}
 }
 
