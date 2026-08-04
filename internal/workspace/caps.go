@@ -72,6 +72,13 @@ type Caps struct {
 	// Limits are the per-child resource limits (RLIMIT_AS/NPROC/FSIZE - see
 	// Limits). Configured via workspace.limits. Zero = inherit the server's.
 	Limits Limits
+	// ExtraRO grants additional read-only directories to every sandboxed
+	// RunArgv/RunPipeline child, on top of ExtraPath's PATH-scoped toolchain
+	// binds - e.g. a GitHub context directory (#660) that sits OUTSIDE the
+	// node's own WorkRoot (a sibling of the clone, not a subdirectory) and so
+	// needs its own grant. Absolute host paths; SandboxNone ignores it (no
+	// boundary to grant against).
+	ExtraRO []string
 }
 
 // DefaultCaps returns the isolation model's documented defaults.
@@ -91,5 +98,6 @@ func DefaultCaps() Caps {
 func (c Caps) IsZero() bool {
 	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
 		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 &&
-		len(c.ExtraPath) == 0 && len(c.Env) == 0 && c.HomeDir == "" && c.Sandbox == "" && c.Limits == Limits{}
+		len(c.ExtraPath) == 0 && len(c.Env) == 0 && c.HomeDir == "" && c.Sandbox == "" && c.Limits == Limits{} &&
+		len(c.ExtraRO) == 0
 }
