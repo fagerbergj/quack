@@ -212,6 +212,11 @@ type StagedDelivery struct {
 	// an external reviewer's structured answer (augmentFromAnswer) - delivery
 	// posts them as line-anchored review comments.
 	Comments []ReviewComment
+	// Recovered is true when this delivery was reconstructed from the answer's
+	// tail-parse (augmentFromAnswer) rather than staged via the round's own
+	// tools (#688) - reviewCriterion reads it so a recovered review is never
+	// worded identically to a tool-staged one.
+	Recovered bool
 }
 
 // ReviewComment is one inline, line-anchored review finding.

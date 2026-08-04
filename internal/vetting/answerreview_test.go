@@ -1,6 +1,8 @@
 package vetting
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -72,12 +74,41 @@ func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	if st.Event != "request_changes" || len(st.Comments) != 2 || st.Body != reviewAnswer {
 		t.Fatalf("staged review wrong: event=%q comments=%d", st.Event, len(st.Comments))
 	}
+	if !st.Recovered {
+		t.Error("a review staged by augmentFromAnswer must be marked Recovered (#688)")
+	}
 
 	// A verdict-less answer still stages a comment-review (never a deadlock).
 	act = workerActivity{}
 	augmentFromAnswer(&act, cfg, "findings in prose only")
 	if st := act.stagedDelivery["review"]; st.Event != "comment" {
 		t.Fatalf("verdict-less answer should stage a comment review, got %+v", st)
+	}
+}
+
+// TestAugmentFromAnswer_WarnsLoudly pins #688's third fix: taking over the
+// review means the staging mechanism didn't run this round, which must be
+// loud (Warn), not the silent Debug/nothing it was before.
+func TestAugmentFromAnswer_WarnsLoudly(t *testing.T) {
+	cfg := Config{
+		ExternalWorker: true, ReadOnly: true, IsReviewer: true, NodeID: "review-node-1",
+		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"},
+		Task:  "Review PR #7 and post your findings as inline review comments",
+	}
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(restore)
+
+	act := workerActivity{}
+	augmentFromAnswer(&act, cfg, reviewAnswer)
+
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") {
+		t.Fatalf("expected a WARN-level log when the tail fallback takes over, got: %s", out)
+	}
+	if !strings.Contains(out, "review-node-1") {
+		t.Errorf("expected the log to name the node, got: %s", out)
 	}
 }
 

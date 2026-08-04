@@ -38,6 +38,9 @@ func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 	if len(st.Comments) != 1 || st.Comments[0].Path != "internal/foo.go" || st.Comments[0].Line != 12 {
 		t.Fatalf("tool-staged inline comments lost: %+v", st.Comments)
 	}
+	if st.Recovered {
+		t.Fatal("a tool-staged review must not be marked Recovered (#688)")
+	}
 }
 
 // TestReviewStage_SnapshotVerdictless proves comments without an explicit

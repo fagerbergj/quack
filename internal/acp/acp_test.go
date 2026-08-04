@@ -9,6 +9,7 @@ import (
 
 	sdk "github.com/coder/acp-go-sdk"
 
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -37,7 +38,13 @@ type fakeAgent struct {
 }
 
 func (f *fakeAgent) Initialize(ctx context.Context, _ sdk.InitializeRequest) (sdk.InitializeResponse, error) {
-	return sdk.InitializeResponse{ProtocolVersion: sdk.ProtocolVersionNumber}, nil
+	return sdk.InitializeResponse{
+		ProtocolVersion: sdk.ProtocolVersionNumber,
+		// http:true mirrors a real opencode negotiation - lets a test with a
+		// registered MemSecret exercise the actual mcpServers/mcpToolNames
+		// path (acp.go's round) instead of it short-circuiting to "none".
+		AgentCapabilities: sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}},
+	}, nil
 }
 
 func (f *fakeAgent) NewSession(ctx context.Context, _ sdk.NewSessionRequest) (sdk.NewSessionResponse, error) {
@@ -49,6 +56,17 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		_ = f.conn.SessionUpdate(ctx, sdk.SessionNotification{SessionId: p.SessionId, Update: u})
 	}
 	switch f.mode {
+	case "echo":
+		// Sends back exactly what it received (over the wire, a real
+		// subprocess boundary) - tests assert on the emitted text to prove
+		// what the harness actually assembled and sent (#688's MCP tools
+		// block), not just what a helper function would produce in isolation.
+		var text string
+		if len(p.Prompt) > 0 && p.Prompt[0].Text != nil {
+			text = p.Prompt[0].Text.Text
+		}
+		send(sdk.UpdateAgentMessageText(text))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "hang":
 		// Cooperative: the SDK cancels this ctx on session/cancel.
 		<-ctx.Done()
@@ -151,6 +169,56 @@ func TestRound_FullPromptRound(t *testing.T) {
 	}
 	if !sawThought || !sawPair {
 		t.Fatalf("stream incomplete: thought=%v durable run_command pair=%v", sawThought, sawPair)
+	}
+}
+
+// TestRound_MCPToolsBlockLeadsThePrompt pins #688 end to end: what the
+// subprocess actually receives (via the echo fake agent, over a real stdio
+// round-trip) opens with the exact, generated tool names for a registered
+// review session - not a naming convention the agent has to go verify.
+func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
+	a := testAgent(t, "echo")
+	secret, err := vetting.NewMemSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}})
+	defer vetting.UnregisterMemSession(secret)
+
+	var specs []eventSpec
+	err = a.round(context.Background(), t.TempDir(), secret, nil, "review this PR", func(s eventSpec) bool {
+		specs = append(specs, s)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	got := specs[len(specs)-1].parts[0].Text
+	if !strings.HasPrefix(got, "MCP tools available to you this round:") {
+		t.Fatalf("tools block must lead the round's whole message, got: %q", got)
+	}
+	for _, want := range []string{"quackmcp_stage_review_comment", "quackmcp_list_review_comments", "quackmcp_unstage_review_comment", "quackmcp_stage_review"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt sent to the subprocess is missing tool name %q: %q", want, got)
+		}
+	}
+}
+
+// TestRound_MCPToolsBlockSaysNoneWhenNoSurface proves the block is rendered
+// (loud) rather than omitted (silent) when the round has no MCP participant.
+func TestRound_MCPToolsBlockSaysNoneWhenNoSurface(t *testing.T) {
+	a := testAgent(t, "echo")
+	var specs []eventSpec
+	err := a.round(context.Background(), t.TempDir(), "", nil, "add the feature", func(s eventSpec) bool {
+		specs = append(specs, s)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	got := specs[len(specs)-1].parts[0].Text
+	if !strings.Contains(got, "MCP tools available to you this round: none.") {
+		t.Fatalf("expected an explicit \"none\" tools block, got: %q", got)
 	}
 }
 

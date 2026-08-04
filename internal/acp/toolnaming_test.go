@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -12,39 +13,55 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestBundlePromptsCallableUnderOpencodeNamespacing pins #630's fix: opencode
-// namespaces an MCP server's tools as "<serverName>_<toolName>" on its OWN
-// side before ever handing them to the model - quack's server (memoryMCPHandler)
-// registers bare names and knows nothing about that prefix. Seen live in a
-// recorded ACP session ("quack-memory_load_memory") and documented at
-// https://opencode.ai/docs/mcp-servers/ ("MCP server tools are registered with
-// server name as prefix"). A bundle prompt that only ever names the bare form
-// leaves an agent unable to find its tools by that name, exactly as #630
-// diagnosed - the fix is telling the agent to expect the prefixed form.
-//
-// This derives the server name and the real registered tool names from the
-// SAME live server production code builds, never hardcoded, so a future
-// rename (#628) can't silently desync this test from reality: it proves each
-// documented tool (a) is actually registered and working, and (b) the
-// bundle's prompt explicitly warns that opencode may hand it back prefixed.
-func TestBundlePromptsCallableUnderOpencodeNamespacing(t *testing.T) {
+// forbiddenToolCheckWording pins #688: no ACP bundle prompt may still tell an
+// agent to check whether its tools exist (a bash probe can never see an MCP
+// tool - see internal/acp/toolnaming_test.go's package doc history and #630).
+// The round preamble now asserts the exact offered names as fact
+// (mcpToolNames/mcpToolsBlock, acp.go), so a prompt reasoning about a naming
+// convention or an existence check is instructing the exact failure mode #688
+// caught in production.
+var forbiddenToolCheckWording = regexp.MustCompile(`(?i)check your (actual )?tool list|not in your tool list`)
+
+// TestBundlePromptsDoNotAskAgentToCheckToolExistence pins #688: an ACP
+// subprocess cannot prove an MCP tool absent (bash sees nothing; #630's
+// prefix confusion is one way that misfires), so no bundle prompt may invite
+// the agent to self-verify its tool list. The round preamble states the exact
+// offered names as fact instead (mcpToolNames/mcpToolsBlock in acp.go).
+func TestBundlePromptsDoNotAskAgentToCheckToolExistence(t *testing.T) {
+	for _, bundle := range []string{"agents/code-reviewer", "agents/code-implementer", "agents/code-explorer"} {
+		b, err := agent.LoadBundle(bundle)
+		if err != nil {
+			t.Fatalf("LoadBundle(%q): %v", bundle, err)
+		}
+		if forbiddenToolCheckWording.MatchString(b.Prompt) {
+			t.Errorf("%s/prompt.md: still tells the agent to check its own tool list - the generated preamble should state the fact instead (#688)", bundle)
+		}
+	}
+}
+
+// TestMCPToolNamesMatchTheLiveServer proves mcpToolNames (acp.go) - what the
+// round preamble asserts - names exactly the tools memoryMCPHandler actually
+// registers for the SAME session, so a future reviewmcp.go/memorymcp.go
+// rename (#628) can't silently desync the generated preamble from reality.
+func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
 	review := &vetting.ReviewStage{}
 	pr := &vetting.PRStage{}
-	vetting.RegisterMemSession(secret, vetting.MemSession{Review: review, PRStage: pr})
+	sess := vetting.MemSession{Review: review, PRStage: pr}
+	vetting.RegisterMemSession(secret, sess)
 	defer vetting.UnregisterMemSession(secret)
 
 	ts := httptest.NewServer(memoryMCPHandler())
 	t.Cleanup(func() { ts.Close() })
 	cs := connectMCP(t, ts, secret)
 
-	// The server's own advertised name is what opencode would prefix onto
-	// every tool it exposes for this session (memoryMCPServers hands opencode
-	// the SAME name via session/new's mcpServers - see memorymcp.go).
+	// The server's own advertised name is what opencode prefixes onto every
+	// tool it exposes for this session (memoryMCPServers hands opencode the
+	// SAME name via session/new's mcpServers - see memorymcp.go).
 	serverName := cs.InitializeResult().ServerInfo.Name
-	if serverName == "" {
-		t.Fatal("server advertised no name in the initialize handshake")
+	if serverName != mcpServerName {
+		t.Fatalf("server advertised name %q, want the mcpServerName const %q", serverName, mcpServerName)
 	}
 
 	toolsRes, err := cs.ListTools(ctx, nil)
@@ -56,24 +73,32 @@ func TestBundlePromptsCallableUnderOpencodeNamespacing(t *testing.T) {
 		registered[tool.Name] = true
 	}
 
-	prefixNote := regexp.MustCompile("(?i)<server>_<name>")
-
-	// Every bundle whose prompt.md instructs the agent to call one of these
-	// bare-named tools must ALSO warn it that opencode may expose the tool
-	// prefixed - so a model reasoning from the prompt alone still finds it.
-	for _, bundle := range []string{"agents/code-reviewer", "agents/code-implementer"} {
-		b, err := agent.LoadBundle(bundle)
-		if err != nil {
-			t.Fatalf("LoadBundle(%q): %v", bundle, err)
+	names := mcpToolNames(sess, true)
+	if len(names) == 0 {
+		t.Fatal("mcpToolNames returned no tools for a session with Review and PRStage set")
+	}
+	for _, name := range names {
+		bare := strings.TrimPrefix(name, mcpServerName+"_")
+		if bare == name {
+			t.Errorf("generated name %q does not carry the %q prefix", name, mcpServerName)
 		}
-		if !prefixNote.MatchString(b.Prompt) {
-			t.Errorf("%s/prompt.md: missing the note that a tool can appear as <server>_<name> (opencode's real exposure format) - see #630", bundle)
+		if !registered[bare] {
+			t.Errorf("mcpToolNames names %q (bare %q) but the server never registers it; check internal/acp/reviewmcp.go", name, bare)
 		}
 	}
 
-	// Every tool the prompts document by bare name must really be registered -
-	// this is what would catch reviewmcp.go/memorymcp.go renaming a tool
-	// without the prompt text following.
+	// mcpToolNames must return nil, and the rendered block must say "none",
+	// when the surface wasn't offered - loud, not silently omitted (#688).
+	if got := mcpToolNames(sess, false); got != nil {
+		t.Errorf("mcpToolNames(offered=false) = %v, want nil", got)
+	}
+	if got := mcpToolsBlock(nil); !strings.Contains(got, "none") {
+		t.Errorf("mcpToolsBlock(nil) = %q, want it to say none", got)
+	}
+
+	// Every tool the bundle prompts document by bare name must really be
+	// registered - this is what would catch reviewmcp.go/memorymcp.go
+	// renaming a tool without the prompt text following.
 	documented := []string{"stage_review_comment", "stage_review", "stage_pr"}
 	for _, name := range documented {
 		if !registered[name] {

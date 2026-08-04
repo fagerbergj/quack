@@ -91,8 +91,9 @@ func TestCodeReviewerBundlePrefersStaging(t *testing.T) {
 		}
 	}
 
-	// The tail is gated behind a condition (tools absent), not unconditional.
-	if !strings.Contains(prompt, "are not in your tool list") {
+	// The tail is gated behind a condition (tools absent from the round's
+	// generated MCP list, #688), not unconditional.
+	if !strings.Contains(prompt, "has no `stage_review_comment`/`stage_review`") {
 		t.Error("prompt does not condition the structured tail on the staging tools being unavailable")
 	}
 	if strings.Contains(prompt, "the two never conflict") {
