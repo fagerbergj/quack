@@ -96,7 +96,7 @@ export function AssistantText({ text }: { text: string }) {
     },
   }), [trailingOpen, docEnd])
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none">
+    <div className="prose prose-sm dark:prose-invert max-w-none break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}

@@ -94,3 +94,75 @@ export const PlainMessage: Story = {
     content: 'Can you help me refactor this component to use hooks?',
   },
 }
+
+// Delta comments carrying quack_status (internal/github/envelope.go): a
+// deleted comment must read as retracted, not as a live one (#667's
+// quack_status field exists specifically so a miscount can't hide this).
+export const CommentStatuses: Story = {
+  args: {
+    content: `<permissions>join_pr_conversation</permissions>
+<deliverable>a review of what is new since the last one</deliverable>
+<comments new="1" edited="1" deleted="1">${JSON.stringify([
+      { id: 1, created_at: '2026-08-04T10:00:00Z', user: { login: 'alice' }, body: 'This looks good to me.', quack_status: 'new' },
+      { id: 2, created_at: '2026-08-04T10:05:00Z', user: { login: 'bob' }, body: 'Actually, please also update the docs.', quack_status: 'edited' },
+      { id: 3, created_at: '2026-08-04T10:10:00Z', user: { login: 'carol' }, body: 'Wait, ignore my earlier comment.', quack_status: 'deleted' },
+    ])}</comments>`,
+  },
+}
+
+// <event> whose body isn't valid JSON - degrades to the raw text instead of
+// throwing or dropping the block (#667).
+export const InvalidEventJson: Story = {
+  args: {
+    content: `<permissions>join_issue_conversation</permissions>
+<deliverable>an answer to their message, posted to the issue as a comment</deliverable>
+<event name="issue_comment.created">{not valid json at all</event>`,
+  },
+}
+
+// A comment body and PR description containing a literal "<" (the envelope
+// seeds GitHub bodies verbatim, unescaped - envelope.ts's own rationale for
+// hand-rolled tag matching over a real XML/HTML parser).
+export const LiteralAngleBracketInBody: Story = {
+  args: {
+    content: `<permissions>join_pr_conversation</permissions>
+<deliverable>a review with inline comments and a verdict</deliverable>
+<pull_request number="41">
+  <title>Add generic Result<T, E> type</title>
+  <description>Introduces \`Result<T, E>\` for fallible ops. See \`if x < y { ... }\` in the diff.</description>
+</pull_request>
+<comments count="1">${JSON.stringify([
+      { id: 1, created_at: '2026-08-04T10:00:00Z', user: { login: 'dave' }, body: 'Why not use `Option<T>` here? Also check `a<b && c>d` in the old code.' },
+    ])}</comments>`,
+  },
+}
+
+// Truncated/unterminated tags at multiple levels - takes the rest of the
+// string as that block's content and stops, rather than throwing or blanking
+// the whole message (envelope.ts's parseTopLevel).
+export const TruncatedTags: Story = {
+  args: {
+    content: `<permissions>join_pr_conversation</permissions>
+<deliverable>a review</deliverable>
+<pull_request number="9"><title>Unterminated title and no closing tags at all`,
+  },
+}
+
+// Wide, unbroken content (a long nested file path, a JSON payload with a long
+// single-token value) must scroll inside its own container - never make the
+// page itself scroll sideways. Verified at a narrow (~380px) viewport too.
+export const WideContent: Story = {
+  args: {
+    content: `<permissions>push_commits_to_pr</permissions>
+<deliverable>commits on this PR's head branch that make the failing checks pass</deliverable>
+<pull_request number="200"><title>Refactor</title><description>See app/src/main/java/com/example/nightsout/features/theming/dynamic/color/extraction/palette/generator/DynamicPaletteGenerator.kt</description></pull_request>
+<changed_files count="1" additions="1" deletions="1">[{"filename":"app/src/main/java/com/example/nightsout/features/theming/dynamic/color/extraction/palette/generator/DynamicPaletteGenerator.kt","additions":1,"deletions":1}]</changed_files>
+<comments count="1">${JSON.stringify([
+      { id: 1, created_at: '2026-08-04T10:00:00Z', user: { login: 'ci-bot' }, body: 'Failing at app/src/main/java/com/example/nightsout/features/theming/dynamic/color/extraction/palette/generator/DynamicPaletteGeneratorVeryLongTestClassNameThatWontBreak.kt:142' },
+    ])}</comments>
+<event name="workflow_run.completed">{"action":"completed","note":"aVeryLongUnbrokenSingleTokenValueThatCouldForceThePageToScrollSidewaysIfNotContainedProperlyWithinItsOwnScrollableCodeBlockContainer"}</event>
+<context dir="/workspace/ctx-github-nightsout-200">
+  <file name="check-runs.json">GET /repos/fagerbergj/NightsOut/commits/9c8d7e6f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/check-runs?status=completed&per_page=100&some_extra_query_param=verylongvalue</file>
+</context>`,
+  },
+}
