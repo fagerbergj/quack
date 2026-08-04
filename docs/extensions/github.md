@@ -45,6 +45,18 @@ Every path shares one session per issue/PR thread, so context (a plan, a prior r
 
 While a PR carries `quack:fix` - or quack itself authored the PR - any CI/CD failure dispatches a fix run on the PR's existing session: it diagnoses the failing checks, makes the smallest fix, and the trust gate re-pushes the PR in place. **One fix attempt per failure**: if quack's own fix push also fails CI, it stops and comments why instead of trying again - the guard checks whether the commit that just failed CI is one quack itself made (every quack commit carries a fixed system identity), not a counter, so a later failure caused by a genuinely new (human) commit heals again with no relabeling and nothing to reset. Re-applying `quack:fix` clears a prior stop and, if CI is currently failing, fixes it right away.
 
+### What a triggered run sees
+
+Every dispatch builds a structured envelope, not a hand-assembled paragraph: `<permissions>` (this run's grant, below), `<deliverable>` (the one thing this run should produce), the hoisted `<issue>`/`<pull_request>` title and description, `<comments>` (every comment on first load, only what's new, edited, or deleted since the last dispatch on resume), `<changed_files>` on a PR (name/additions/deletions - no patches; agents read those off the clone), and the triggering `<event>` - GitHub's own webhook JSON, filtered by a fixed drop-list (`node_id`, every `*_url`, `avatar_url`, `reactions`) and nothing else: fields are dropped, never renamed or reshaped, so the model sees the same GitHub shape it's seen a million times in training.
+
+A `<context dir>` in the envelope points at a directory, sibling to the working clone, of the untruncated GitHub API responses the envelope itself only summarizes or caps: `issue.json`, `comments.json`, `pull.json`, `files.json`, `commits.json`, `reviews.json`, `review-comments.json`, `check-runs.json` (plus `annotations-*.json` for any failing check, on a CI-triggered run), `linked-issue-*.json`, `timeline.json`. Sandboxed agents get it mounted read-only.
+
+The orchestrator gets the full envelope above. A plan's individual nodes get a narrower ask-only slice instead - permissions, deliverable, the hoisted title/description, comments, and (on a CI-fix run) that node's own failing-check detail - never the full file list or the raw event, so a node's own task isn't crowded out by planning-scale evidence it has no use for.
+
+### Permissions (the grant)
+
+Computed once per dispatch, from the labels currently on the issue/PR, whether quack itself authored the PR, and a fork check (quack can't push to a fork head): `join_issue_conversation`, `open_pr`, `post_review`, `join_pr_conversation`, `push_commits_to_pr`. It rides along in the envelope's `<permissions>` block as information for the model, but the model stating a permission doesn't grant it - the trust gate's delivery step is the actual enforcement point. A staged PR, review, or comment the grant doesn't cover is refused, logged, and reported as a failed delivery; it never ships and never gets silently dropped without a trace.
+
 ### How review actually works
 
 The code-reviewer is an **external ACP agent** (opencode, spawned per round) - it has no quack tools of its own, so it can't build up a review with API calls. Instead it reads the diff with its own tools and ends its answer with a structured tail:
