@@ -1,9 +1,11 @@
 package acp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"iter"
+	"log/slog"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -319,6 +321,32 @@ func TestMemoryMCP_UnregisteredSecret_FailsLoudly(t *testing.T) {
 	}
 }
 
+// TestMemoryMCP_ConnectMarksSessionConnected pins #640's observability fix
+// end to end: a real client connecting through memoryMCPHandler must mark the
+// session connected (vetting.MarkMemSessionConnected), so UnregisterMemSession
+// stays silent on teardown - the same silent "offered but unreachable" gap
+// that let the #628 rename go unnoticed for a full day now warns instead (see
+// vetting.TestUnregisterMemSession_WarnsWhenNeverConnected for the negative
+// case, which can't be driven here since the handler always connects).
+func TestMemoryMCP_ConnectMarksSessionConnected(t *testing.T) {
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}})
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	connectMCP(t, ts, secret)
+
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	vetting.UnregisterMemSession(secret)
+	slog.SetDefault(restore)
+
+	if strings.Contains(buf.String(), "never connected") {
+		t.Errorf("a real MCP connection should have marked the session connected; got warning: %s", buf.String())
+	}
+}
+
 // TestMemoryMCPURL_LoopbackOnly confirms the server binds 127.0.0.1, never a
 // wildcard address that would make it reachable off-host.
 func TestMemoryMCPURL_LoopbackOnly(t *testing.T) {
@@ -335,13 +363,17 @@ func TestMemoryMCPURL_LoopbackOnly(t *testing.T) {
 	}
 }
 
-// TestMemoryMCP_NamespaceIsSurfaceNeutral pins #558: the shared per-node
-// server (memory + review + PR surfaces) advertises itself as "quack", not
-// "quack-memory" - opencode namespaces tools as "<Name>_<tool>", and a review
-// tool should never read as a memory tool. Checks both names that matter: the
-// server's own identity (the initialize handshake) and the Name handed to
-// opencode in session/new (memoryMCPServers - the one that actually drives the
-// prefix).
+// TestMemoryMCP_NamespaceIsSurfaceNeutral pins #558/#640: the shared per-node
+// server (memory + review + PR surfaces) advertises itself as "quackmcp" -
+// surface-neutral like #558 required (not "quack-memory": a review tool
+// should never read as a memory tool), and NOT bare "quack" (#628's choice):
+// opencode's own config names quack's LLM provider "quack" in the SAME
+// config (internal/serve's opencodeEnv), and a live ACP round driven for
+// #640 confirmed opencode never surfaced a single quack_* tool once the
+// server shared that name - "quackmcp" cannot collide with the provider ID.
+// Checks both names that matter: the server's own identity (the initialize
+// handshake) and the Name handed to opencode in session/new (memoryMCPServers
+// - the one that actually drives the tool prefix).
 func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})
@@ -351,8 +383,8 @@ func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	t.Cleanup(func() { ts.Close() })
 	cs := connectMCP(t, ts, secret)
 
-	if got := cs.InitializeResult().ServerInfo.Name; got != "quack" {
-		t.Errorf("server identity = %q, want \"quack\" (not memory-prefixed)", got)
+	if got := cs.InitializeResult().ServerInfo.Name; got != "quackmcp" {
+		t.Errorf("server identity = %q, want \"quackmcp\" (not memory-prefixed, not colliding with the \"quack\" LLM provider)", got)
 	}
 
 	caps := sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}}
@@ -360,8 +392,8 @@ func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	if len(servers) != 1 || servers[0].Sse == nil {
 		t.Fatalf("expected one SSE server, got %#v", servers)
 	}
-	if got := servers[0].Sse.Name; got != "quack" {
-		t.Errorf("session/new server name = %q, want \"quack\" - this is what opencode prefixes tool names with", got)
+	if got := servers[0].Sse.Name; got != "quackmcp" {
+		t.Errorf("session/new server name = %q, want \"quackmcp\" - this is what opencode prefixes tool names with", got)
 	}
 }
 

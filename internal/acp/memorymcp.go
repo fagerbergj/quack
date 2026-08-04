@@ -77,11 +77,22 @@ func memoryMCPURL() string {
 func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		secret := strings.Trim(r.URL.Path, "/")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "quack", Version: "0.1.0"}, nil)
+		srv := mcp.NewServer(&mcp.Implementation{Name: "quackmcp", Version: "0.1.0"}, nil)
 		sess, ok := vetting.LookupMemSession(secret)
 		if !ok {
+			// Never silent (#640): an unrecognized secret means either a stale/
+			// wrong URL or a session that already unregistered - both worth
+			// seeing, since the caller gets a tool-less server with no other signal.
+			slog.Warn("acp: loopback MCP request for unknown/expired session", "component", "acp")
 			return srv
 		}
+		// #640: the surface being OFFERED (session/new accepted it) is not proof
+		// anything ever CONNECTED - that gap is exactly how a broken/renamed
+		// server survived a full day of dogfooding unnoticed. Mark + log the
+		// first real request against a known secret; UnregisterMemSession warns
+		// if a session tears down having never reached this line.
+		vetting.MarkMemSessionConnected(secret)
+		slog.Info("acp: loopback MCP session connected", "component", "acp")
 		// Each tool group is registered independently on the SAME per-node server,
 		// gated on the session carrying its buffer: memory (#344) rides Memory, the
 		// review surface (#451) rides Review. A review-only node (no memory) still
@@ -139,10 +150,14 @@ func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer
 	// memory server as SSE with explicit type + empty headers.
 	return []sdk.McpServer{{Sse: &sdk.McpServerSseInline{
 		Type: "sse",
-		// opencode namespaces tools as "<Name>_<tool>" - "quack", not
-		// "quack-memory", since this one server also carries the review (#451)
-		// and PR-staging surfaces, not just memory (#558).
-		Name:    "quack",
+		// opencode namespaces tools as "<Name>_<tool>" - surface-neutral, since
+		// this one server also carries the review (#451) and PR-staging
+		// surfaces, not just memory (#558). NOT "quack": opencodeEnv (serve.go)
+		// names quack's own LLM provider "quack" in the SAME opencode config, so
+		// a same-named MCP server collides with it in a registry we don't
+		// control the internals of (#640) - "quackmcp" avoids the collision
+		// outright rather than relying on opencode never minding it.
+		Name:    "quackmcp",
 		Url:     base + "/" + secret,
 		Headers: []sdk.HttpHeader{},
 	}}}
