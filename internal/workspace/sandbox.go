@@ -656,17 +656,53 @@ func SandboxTmpDir(caps Caps) string {
 }
 
 // SandboxJavaToolOptions is the JAVA_TOOL_OPTIONS a sandboxed child needs ("" when
-// none). TMPDIR does not reach a JVM: java.io.tmpdir is hardcoded to /tmp on Linux,
-// the same blind spot user.home has, so under landlock every JVM tool writes to an
-// ungranted path (Room's KSP processor died with ExceptionInInitializerError when
-// sqlite-jdbc could not extract its native lib there). JAVA_TOOL_OPTIONS is the one
-// lever every JVM in the tree honours, including Gradle's forked daemon and workers.
+// none) - the union of every JVM concern the sandbox creates, since a second
+// JAVA_TOOL_OPTIONS entry does not merge with the first, it REPLACES it (the JVM
+// honours the last occurrence in envp). TMPDIR does not reach a JVM: java.io.tmpdir
+// is hardcoded to /tmp on Linux, the same blind spot user.home has, so under
+// landlock every JVM tool writes to an ungranted path (Room's KSP processor died
+// with ExceptionInInitializerError when sqlite-jdbc could not extract its native
+// lib there). JAVA_TOOL_OPTIONS is the one lever every JVM in the tree honours,
+// including Gradle's forked daemon and workers.
 func SandboxJavaToolOptions(caps Caps) string {
-	if caps.Sandbox != SandboxLandlock {
+	var parts []string
+	if caps.Sandbox == SandboxLandlock {
+		parts = append(parts, "-Djava.io.tmpdir="+landlockTmpDir(caps))
+	}
+	if opts := javaAddressSpaceOptions(caps.Limits.AddressSpaceMB); opts != "" {
+		parts = append(parts, opts)
+	}
+	return strings.Join(parts, " ")
+}
+
+// javaAddressSpaceOptions bounds a JVM to fit inside asMB of RLIMIT_AS ("" when
+// asMB is unset) - a JVM sizes its ergonomic heap, metaspace, compressed class
+// space, code cache, and thread pools off the HOST's real RAM/core count, never
+// off an rlimit the process merely inherits (#647), and bounding heap alone
+// isn't enough (reproduced: a build already run with -Xmx1536m still crashed
+// "allocation.cpp:44" under an 8GB limit).
+//
+// Splits asMB 35/10/8/8 across heap/metaspace/class-space/code-cache, leaving a
+// deliberately large ~39% margin: a live repro still crashed on native thread
+// creation with only 15% held back, even with none of the four caps close to
+// its own ceiling - a real daemon's baseline footprint (native libs, socket
+// buffers, its own thread pools) claims address space none of these four
+// account for. ActiveProcessorCount caps the core count a JVM sees, which is
+// what actually drives GC/JIT/common-pool thread counts.
+func javaAddressSpaceOptions(asMB int) string {
+	if asMB <= 0 {
 		return ""
 	}
-	return "-Djava.io.tmpdir=" + landlockTmpDir(caps)
+	return fmt.Sprintf(
+		"-Xmx%dm -XX:MaxMetaspaceSize=%dm -XX:CompressedClassSpaceSize=%dm -XX:ReservedCodeCacheSize=%dm -XX:ActiveProcessorCount=%d",
+		asMB*35/100, asMB*10/100, asMB*8/100, asMB*8/100, javaBuildProcessors,
+	)
 }
+
+// javaBuildProcessors caps the core count a sandboxed JVM sees (see
+// javaAddressSpaceOptions) - plenty of parallelism for one gate-check build,
+// regardless of how many cores the host actually has.
+const javaBuildProcessors = 4
 
 // ChildPath is the hermetic PATH any subprocess built OUTSIDE RunArgv/
 // RunPipeline should run with (internal/acp's ACP agent, which constructs its

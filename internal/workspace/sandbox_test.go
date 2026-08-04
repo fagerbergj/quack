@@ -302,3 +302,45 @@ func TestLimitsApplyToChildren(t *testing.T) {
 		t.Fatalf("RLIMIT_FSIZE did not reach the child: an 8MB write succeeded under a 1MB limit: %q", res.Output)
 	}
 }
+
+// TestSandboxJavaToolOptionsBoundsAddressSpace: the JVM memory bound (#647)
+// applies whenever AddressSpaceMB is set, in EVERY sandbox mode - unlike the
+// tmpdir pin (landlock-only), a JVM's ergonomics ignore RLIMIT_AS regardless
+// of which OS boundary wraps it.
+func TestSandboxJavaToolOptionsBoundsAddressSpace(t *testing.T) {
+	for _, mode := range []SandboxMode{SandboxNone, SandboxBwrap, SandboxLandlock} {
+		caps := Caps{Sandbox: mode, Limits: Limits{AddressSpaceMB: 8192}, HomeDir: t.TempDir()}
+		got := SandboxJavaToolOptions(caps)
+		for _, want := range []string{
+			"-Xmx2867m", "-XX:MaxMetaspaceSize=819m",
+			"-XX:CompressedClassSpaceSize=655m", "-XX:ReservedCodeCacheSize=655m",
+			"-XX:ActiveProcessorCount=4",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("mode %q: SandboxJavaToolOptions() = %q, want it to contain %q", mode, got, want)
+			}
+		}
+	}
+}
+
+// TestSandboxJavaToolOptionsNoLimitIsEmpty: AddressSpaceMB unset must not grow
+// JAVA_TOOL_OPTIONS at all outside landlock (whose own tmpdir pin still fires).
+func TestSandboxJavaToolOptionsNoLimitIsEmpty(t *testing.T) {
+	if got := SandboxJavaToolOptions(Caps{Sandbox: SandboxBwrap}); got != "" {
+		t.Errorf("SandboxJavaToolOptions() = %q, want empty with no AddressSpaceMB set", got)
+	}
+}
+
+// TestSandboxJavaToolOptionsCombinesLandlockTmpdirAndMemoryBound: under
+// landlock with a limit set, both concerns must land in the SAME string - a
+// second JAVA_TOOL_OPTIONS entry would replace the first rather than merge
+// (the JVM honours only the last occurrence in envp), so childEnv/spawnEnv can
+// only ever append one.
+func TestSandboxJavaToolOptionsCombinesLandlockTmpdirAndMemoryBound(t *testing.T) {
+	home := t.TempDir()
+	caps := Caps{Sandbox: SandboxLandlock, Limits: Limits{AddressSpaceMB: 1024}, HomeDir: home}
+	got := SandboxJavaToolOptions(caps)
+	if !strings.HasPrefix(got, "-Djava.io.tmpdir="+SandboxTmpDir(caps)+" -Xmx") {
+		t.Errorf("SandboxJavaToolOptions() = %q, want the tmpdir pin first and the memory bound appended", got)
+	}
+}

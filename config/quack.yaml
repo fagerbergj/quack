@@ -313,6 +313,9 @@ workspace:
     address_space_mb: 8192   # RLIMIT_AS, PER PROCESS. Do not tighten much: node's V8
                              # reserves a huge VIRTUAL region at startup, so a small
                              # limit doesn't slim a build, it stops node running at all.
+                             # A JVM has the same failure mode, but sizes off the HOST's
+                             # real RAM/cores rather than this limit - quack bounds it
+                             # explicitly via JAVA_TOOL_OPTIONS instead (see #647).
     max_procs: 512           # RLIMIT_NPROC - only applied inside the bwrap user namespace
                              # (it is counted per-UID system-wide, so outside one it would
                              # break every fork). --unshare-pid contains fork bombs anyway.
