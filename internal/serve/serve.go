@@ -605,8 +605,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// The run deadline belongs here, not at the webhook: applied once a run
 	// holds a slot, so the wait for one is not charged against it. Sourced from
 	// the GitHub extension's run_timeout_minutes, today's only configured bound.
-	if m := cfg.Extensions.GitHub.RunTimeoutMinutes; m > 0 {
-		orch.SetRunDeadline(time.Duration(m) * time.Minute)
+	// Nil-guarded: extensions.github is optional (a *GitHubExtensionConfig),
+	// absent in the default config and in every non-GitHub deployment - and in
+	// `quack replay`, which builds this same server in-process.
+	if gh := cfg.Extensions.GitHub; gh != nil && gh.RunTimeoutMinutes > 0 {
+		orch.SetRunDeadline(time.Duration(gh.RunTimeoutMinutes) * time.Minute)
 	}
 
 	// End-of-turn user-memory hook (#262): a dedicated extraction agent, built
