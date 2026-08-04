@@ -68,3 +68,54 @@ func TestWrappedArgvUnwrappedOutsideLandlock(t *testing.T) {
 		}
 	}
 }
+
+// TestSpawnEnvPinsJavaTmpDir: the JVM ignores TMPDIR (java.io.tmpdir is /tmp on
+// Linux), and landlock never grants the real /tmp - so without JAVA_TOOL_OPTIONS
+// every JVM build the agent runs dies in a static initialiser writing there
+// (Room's KSP: "AccessDeniedException: /tmp/...libsqlitejdbc.so.lck" surfacing as
+// ExceptionInInitializerError). Only landlock needs it: bwrap remaps /tmp and
+// none leaves the real one reachable.
+func TestSpawnEnvPinsJavaTmpDir(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		mode workspace.SandboxMode
+		want bool
+	}{{workspace.SandboxLandlock, true}, {workspace.SandboxBwrap, false}, {workspace.SandboxNone, false}} {
+		caps := workspace.Caps{Sandbox: tc.mode, HomeDir: home}
+		a := &Agent{opts: Options{Caps: caps, Home: home}}
+		var got string
+		for _, e := range a.spawnEnv() {
+			if strings.HasPrefix(e, "JAVA_TOOL_OPTIONS=") {
+				got = e
+			}
+		}
+		if tc.want {
+			if want := "JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=" + workspace.SandboxTmpDir(caps); got != want {
+				t.Errorf("mode %q: got %q, want %q", tc.mode, got, want)
+			}
+		} else if got != "" {
+			t.Errorf("mode %q: JAVA_TOOL_OPTIONS should not be set, got %q", tc.mode, got)
+		}
+	}
+}
+
+// TestSpawnEnvOperatorOverridesJavaToolOptions: opts.Env (workspace.env) comes
+// last so an operator who sets JAVA_TOOL_OPTIONS themselves still wins.
+func TestSpawnEnvOperatorOverridesJavaToolOptions(t *testing.T) {
+	home := t.TempDir()
+	a := &Agent{opts: Options{
+		Caps: workspace.Caps{Sandbox: workspace.SandboxLandlock, HomeDir: home},
+		Home: home,
+		Env:  []string{"JAVA_TOOL_OPTIONS=-Xmx512m"},
+	}}
+	env := a.spawnEnv()
+	var last string
+	for _, e := range env {
+		if strings.HasPrefix(e, "JAVA_TOOL_OPTIONS=") {
+			last = e
+		}
+	}
+	if last != "JAVA_TOOL_OPTIONS=-Xmx512m" {
+		t.Errorf("operator JAVA_TOOL_OPTIONS did not win: got %q", last)
+	}
+}
