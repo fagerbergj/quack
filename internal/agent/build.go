@@ -51,7 +51,10 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 		Description: desc,
 		Model:       m,
 		InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-			return promptbuilder.Agent(name, desc, tools, skills, behaviour, grading), nil
+			// "" workspace: native bundles are never a coding agent (those run
+			// as external ACP subprocesses - see internal/serve's ACP branch),
+			// so there is no sandboxed clone/toolchain to state facts about.
+			return promptbuilder.Agent(name, desc, tools, skills, behaviour, grading, ""), nil
 		},
 		Tools:    tools,
 		Toolsets: toolsets,
