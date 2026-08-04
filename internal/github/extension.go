@@ -81,9 +81,6 @@ type Extension struct {
 	inflight sync.Map
 	// runTimeout bounds one webhook-driven run (extensions.github.run_timeout_minutes).
 	runTimeout time.Duration
-	// fixAttempts bounds the CI auto-heal loop per red streak on one PR
-	// (extensions.github.fix_attempts).
-	fixAttempts int
 	// intentClassifier classifies a PR mention as a work request or
 	// conversational (see isWorkRequest, intent.go). nil degrades to
 	// conversational - the safe default, and what every construction that
@@ -139,9 +136,6 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 	if labels.PartialFix == "" {
 		labels.PartialFix = "quack:partial-fix"
 	}
-	if labels.Monitor == "" {
-		labels.Monitor = "quack:monitor"
-	}
 	if labels.Fix == "" {
 		labels.Fix = "quack:fix"
 	}
@@ -155,10 +149,6 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 	runTimeout := defaultRunTimeout
 	if cfg.RunTimeoutMinutes > 0 {
 		runTimeout = time.Duration(cfg.RunTimeoutMinutes) * time.Minute
-	}
-	fixAttempts := cfg.FixAttempts
-	if fixAttempts <= 0 {
-		fixAttempts = 3 // config.applyDefaults normally does this; re-default for direct construction (tests)
 	}
 	allowedUsers := make(map[string]bool, len(cfg.AllowedUsers))
 	for _, u := range cfg.AllowedUsers {
@@ -176,7 +166,6 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 		hub:          hub,
 		eventLog:     eventLog,
 		runTimeout:   runTimeout,
-		fixAttempts:  fixAttempts,
 	}
 }
 

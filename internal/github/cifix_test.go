@@ -17,10 +17,18 @@ import (
 )
 
 // stubFixGitHub is stubGitHub plus the checks API (commits/{sha}/check-runs,
-// check-runs/{id}/annotations) and configurable PR labels - what the #254
-// auto-heal path reads. failing toggles whether the head commit has a failed
-// check run.
+// check-runs/{id}/annotations), configurable PR labels, and a configurable PR
+// author - what the #254/#656 auto-heal + authorship paths read. failing
+// toggles whether the head commit has a failed check run; commitAuthorEmail
+// is the /commits/{sha} author email the ONE-attempt guard reads (default
+// "" - a human commit); prAuthorLogin is the /pulls/{n} author login (default
+// "someone-else" - not quack).
 func stubFixGitHub(t *testing.T, posted chan<- string, prLabels []string, failing bool) *httptest.Server {
+	t.Helper()
+	return stubFixGitHubFull(t, posted, prLabels, failing, "", "someone-else")
+}
+
+func stubFixGitHubFull(t *testing.T, posted chan<- string, prLabels []string, failing bool, commitAuthorEmail, prAuthorLogin string) *httptest.Server {
 	t.Helper()
 	labelsJSON := make([]string, 0, len(prLabels))
 	for _, l := range prLabels {
@@ -47,6 +55,10 @@ func stubFixGitHub(t *testing.T, posted chan<- string, prLabels []string, failin
 			fmt.Fprint(w, `[]`)
 		case strings.HasSuffix(r.URL.Path, "/reviews"):
 			fmt.Fprint(w, `[]`)
+		case strings.Contains(r.URL.Path, "/commits/"):
+			// commitAuthorEmail (the one-attempt guard) - matched before the bare
+			// "/commits" list below.
+			fmt.Fprintf(w, `{"commit":{"author":{"email":%q}}}`, commitAuthorEmail)
 		case strings.HasSuffix(r.URL.Path, "/commits"):
 			fmt.Fprint(w, `[]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -57,7 +69,7 @@ func stubFixGitHub(t *testing.T, posted chan<- string, prLabels []string, failin
 		case strings.HasSuffix(r.URL.Path, "/comments"):
 			fmt.Fprint(w, `[]`)
 		case strings.Contains(r.URL.Path, "/pulls/"):
-			fmt.Fprint(w, `{"title":"Test PR","body":"A test PR.","state":"open","head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"}}`)
+			fmt.Fprintf(w, `{"title":"Test PR","body":"A test PR.","state":"open","head":{"ref":"feature-branch","sha":"headsha1"},"base":{"ref":"main"},"user":{"login":%q}}`, prAuthorLogin)
 		case isIssueMetaPath(r.URL.Path):
 			fmt.Fprintf(w, `{"title":"Test PR","body":"A test PR.","state":"open","labels":[%s]}`, strings.Join(labelsJSON, ","))
 		default:
@@ -76,7 +88,7 @@ func newFixExtension(t *testing.T, runner Runner, apiBase string, st *store.Stor
 	app.apiBase = apiBase
 	return NewExtension(app, config.GitHubExtensionConfig{
 		WebhookSecret: testSecret,
-		Mention:       "@quack",
+		Mention:       "@quack", // this file doesn't exercise mention matching; keep the literal "@quack review this" bodies elsewhere valid
 		Triggers:      triggers,
 		AllowedUsers:  []string{"alice"},
 	}, runner, st, nil)
@@ -104,24 +116,26 @@ func newFixTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-// The label gate: a failing workflow_run only dispatches a fix run when the PR
-// carries the monitor label AND the ci_fix trigger is on. No label ⇒ no
-// auto-heal, ever.
-func TestWorkflowRunAutoHealLabelGate(t *testing.T) {
+// Eligibility (#656): a failing workflow_run only dispatches a fix run when
+// the PR carries quack:fix OR quack itself authored the PR - either is
+// sufficient, neither requires the label to have just been (re-)applied.
+func TestWorkflowRunAutoHealEligibility(t *testing.T) {
 	tests := []struct {
-		name     string
-		triggers []string
-		prLabels []string
-		wantRun  bool
+		name          string
+		triggers      []string
+		prLabels      []string
+		prAuthorLogin string
+		wantRun       bool
 	}{
-		{"monitor label + ci_fix trigger fires", []string{"ci_fix"}, []string{"quack:monitor"}, true},
-		{"no monitor label never heals", []string{"ci_fix"}, []string{"enhancement"}, false},
-		{"trigger not enabled is a no-op", []string{"mention"}, []string{"quack:monitor"}, false},
+		{"fix label + ci_fix trigger fires", []string{"ci_fix"}, []string{"quack:fix"}, "someone-else", true},
+		{"no label, not quack's PR never heals", []string{"ci_fix"}, []string{"enhancement"}, "someone-else", false},
+		{"no label, but quack authored the PR heals (authorship is the flag)", []string{"ci_fix"}, nil, "quack[bot]", true},
+		{"trigger not enabled is a no-op", []string{"mention"}, []string{"quack:fix"}, "someone-else", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			posted := make(chan string, 4)
-			gh := stubFixGitHub(t, posted, tt.prLabels, true)
+			gh := stubFixGitHubFull(t, posted, tt.prLabels, true, "", tt.prAuthorLogin)
 			defer gh.Close()
 
 			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
@@ -136,7 +150,7 @@ func TestWorkflowRunAutoHealLabelGate(t *testing.T) {
 			if tt.wantRun {
 				select {
 				case msg := <-runner.gotMessage:
-					for _, want := range []string{"pull_number=7", "attempt 1 of 3", "go-test", "TestFoo failed"} {
+					for _, want := range []string{"pull_number=7", "go-test", "TestFoo failed"} {
 						if !strings.Contains(msg, want) {
 							t.Errorf("fix run message missing %q: %q", want, msg)
 						}
@@ -145,9 +159,9 @@ func TestWorkflowRunAutoHealLabelGate(t *testing.T) {
 					t.Fatal("auto-heal did not dispatch a fix run")
 				}
 			} else {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(150 * time.Millisecond)
 				if atomic.LoadInt32(&runner.calls) != 0 {
-					t.Error("auto-heal must not dispatch without the monitor label + ci_fix trigger")
+					t.Error("auto-heal must not dispatch when ineligible")
 				}
 			}
 		})
@@ -171,7 +185,7 @@ func TestWorkflowRunIgnored(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			posted := make(chan string, 4)
-			gh := stubFixGitHub(t, posted, []string{"quack:monitor"}, true)
+			gh := stubFixGitHub(t, posted, []string{"quack:fix"}, true)
 			defer gh.Close()
 
 			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
@@ -195,10 +209,10 @@ func TestWorkflowRunIgnored(t *testing.T) {
 }
 
 // Loop prevention: several failing workflows on ONE head commit (CI usually
-// runs a few) dispatch exactly one fix run and consume exactly one attempt.
+// runs a few) dispatch exactly one fix run.
 func TestWorkflowRunSameSHADeduped(t *testing.T) {
 	posted := make(chan string, 8)
-	gh := stubFixGitHub(t, posted, []string{"quack:monitor"}, true)
+	gh := stubFixGitHub(t, posted, []string{"quack:fix"}, true)
 	defer gh.Close()
 
 	runner := &fakeRunner{gotMessage: make(chan string, 2), answer: "fixed"}
@@ -224,115 +238,160 @@ func TestWorkflowRunSameSHADeduped(t *testing.T) {
 	if err != nil || fs == nil {
 		t.Fatalf("fix state = %v, %v; want a persisted row", fs, err)
 	}
-	if fs.Attempts != 1 || fs.LastSHA != "sha1" {
-		t.Errorf("fix state = %+v; want Attempts=1 LastSHA=sha1", fs)
+	if fs.LastSHA != "sha1" || fs.Stopped {
+		t.Errorf("fix state = %+v; want LastSHA=sha1 Stopped=false", fs)
 	}
 }
 
-// Retry-bound exhaustion: past the bound quack posts ONE honest stop comment
-// and goes silent - and the state survives a process restart (a fresh
-// Extension over the same database stays exhausted).
-func TestWorkflowRunRetryExhaustion(t *testing.T) {
+// The Forbidden section's ONE rule: if quack's OWN fix push also fails CI, it
+// must NOT fix again - it stops and comments why, and the state survives a
+// process restart. A LATER failure caused by a NEW (human) commit heals again
+// with no human action required - the guard is keyed on the failing commit's
+// actual author, not a counter that needs resetting.
+func TestAutoHealOneAttemptGuard(t *testing.T) {
 	posted := make(chan string, 4)
-	gh := stubFixGitHub(t, posted, []string{"quack:monitor"}, true)
+	// commitAuthorEmail "agent@quack.local" - the failing commit IS quack's own.
+	gh := stubFixGitHubFull(t, posted, []string{"quack:fix"}, true, "agent@quack.local", "someone-else")
 	defer gh.Close()
 
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
 	st := newFixTestStore(t)
+	// Seed the state a REAL prior failure/fix cycle would have left: sha1 (a
+	// human commit) already failed once and quack already dispatched a fix for
+	// it - sha2 below is that fix's own CI run failing.
 	sessionID := "github-acme-widgets-7"
-	if err := st.SetGithubFixState(context.Background(), store.GithubFixState{ChatID: sessionID, Attempts: 3, LastSHA: "sha3"}); err != nil {
+	if err := st.SetGithubFixState(context.Background(), store.GithubFixState{ChatID: sessionID, LastSHA: "sha1"}); err != nil {
 		t.Fatalf("seed fix state: %v", err)
 	}
-
-	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
 	ext := newFixExtension(t, runner, gh.URL, st, "ci_fix")
 
 	rec := httptest.NewRecorder()
-	ext.handleWebhook(rec, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha4", 7)))
-
-	select {
-	case c := <-posted:
-		for _, want := range []string{"Auto-heal stopped", "3 fix attempt", "quack:monitor"} {
-			if !strings.Contains(c, want) {
-				t.Errorf("exhaustion comment missing %q: %q", want, c)
-			}
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no exhaustion comment posted")
-	}
-	time.Sleep(100 * time.Millisecond)
-	if atomic.LoadInt32(&runner.calls) != 0 {
-		t.Error("exhausted auto-heal must not dispatch a run")
-	}
-
-	// "Restart": a fresh Extension over the same store. A further failure on a
-	// NEW commit stays silent - the one honest comment already happened.
-	runner2 := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
-	ext2 := newFixExtension(t, runner2, gh.URL, st, "ci_fix")
-	rec2 := httptest.NewRecorder()
-	ext2.handleWebhook(rec2, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha5", 7)))
-	time.Sleep(200 * time.Millisecond)
-	if atomic.LoadInt32(&runner2.calls) != 0 {
-		t.Error("exhausted state must survive a restart; no run may dispatch")
-	}
-	select {
-	case c := <-posted:
-		t.Errorf("exhausted auto-heal posted again after restart: %q", c)
-	default:
-	}
-}
-
-// Re-applying the monitor label is the retry convention: it deletes the fix
-// state, so the next CI failure heals again.
-func TestMonitorLabelReapplyRearms(t *testing.T) {
-	posted := make(chan string, 4)
-	gh := stubFixGitHub(t, posted, []string{"quack:monitor"}, true)
-	defer gh.Close()
-
-	st := newFixTestStore(t)
-	sessionID := "github-acme-widgets-7"
-	if err := st.SetGithubFixState(context.Background(), store.GithubFixState{ChatID: sessionID, Attempts: 3, LastSHA: "sha3", Exhausted: true}); err != nil {
-		t.Fatalf("seed fix state: %v", err)
-	}
-
-	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
-	ext := newFixExtension(t, runner, gh.URL, st, "ci_fix")
-
-	rec := httptest.NewRecorder()
-	ext.handleWebhook(rec, signedRequest("pull_request", pullRequestBody("labeled", "quack:monitor")))
+	ext.handleWebhook(rec, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha2", 7)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d; want 202", rec.Code)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		fs, err := st.GetGithubFixState(context.Background(), sessionID)
-		if err != nil {
-			t.Fatalf("GetGithubFixState: %v", err)
+
+	select {
+	case c := <-posted:
+		for _, want := range []string{"Auto-heal stopped", "won't attempt a second fix"} {
+			if !strings.Contains(c, want) {
+				t.Errorf("stop comment missing %q: %q", want, c)
+			}
 		}
-		if fs == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("fix state = %+v; want deleted after monitor label re-apply", fs)
-		}
-		time.Sleep(10 * time.Millisecond)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no stop comment posted")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if atomic.LoadInt32(&runner.calls) != 0 {
+		t.Error("must not dispatch a second fix for its own failing commit")
 	}
 
+	fs, err := st.GetGithubFixState(context.Background(), "github-acme-widgets-7")
+	if err != nil || fs == nil || !fs.Stopped || fs.LastSHA != "sha2" {
+		t.Fatalf("fix state = %+v, %v; want Stopped=true LastSHA=sha2", fs, err)
+	}
+
+	// "Restart": a fresh Extension over the same store. A sibling workflow
+	// failing on the SAME commit stays silent (dedup, not a second stop comment).
+	runner2 := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
+	ext2 := newFixExtension(t, runner2, gh.URL, st, "ci_fix")
 	rec2 := httptest.NewRecorder()
-	ext.handleWebhook(rec2, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha4", 7)))
+	ext2.handleWebhook(rec2, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha2", 7)))
+	time.Sleep(150 * time.Millisecond)
+	if atomic.LoadInt32(&runner2.calls) != 0 {
+		t.Error("stopped state must survive a restart; no run may dispatch")
+	}
+	select {
+	case c := <-posted:
+		t.Errorf("stopped auto-heal posted a second comment for the same commit: %q", c)
+	default:
+	}
+
+	// A NEW commit (a human's, not quack's) fails - auto-heal resumes with no
+	// relabeling and no counter to reset.
+	gh3 := stubFixGitHubFull(t, posted, []string{"quack:fix"}, true, "", "someone-else")
+	defer gh3.Close()
+	runner3 := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
+	ext3 := newFixExtension(t, runner3, gh3.URL, st, "ci_fix")
+	rec3 := httptest.NewRecorder()
+	ext3.handleWebhook(rec3, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha3", 7)))
+	select {
+	case <-runner3.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a NEW human-authored failure should heal again with no re-labelling")
+	}
+}
+
+// On a PR quack itself authored, EVERY commit is quack's, including the very
+// first one it opened the PR with - the FIRST-ever CI failure must still get
+// a fix attempt, not read as "my own fix already failed" (see autoHeal's
+// st != nil gate on the one-attempt guard).
+func TestAutoHealAuthoredPRFirstFailureGetsAFix(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubFixGitHubFull(t, posted, nil, true, "agent@quack.local", "quack[bot]")
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
+	ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "ci_fix")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha1", 7)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case <-runner.gotMessage:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first CI failure on a PR quack authored itself must still get a fix attempt")
+	}
+}
+
+// Re-applying quack:fix is the retry convention: it re-arms auto-heal (clears
+// a prior stop) and, since CI is still failing, fixes it immediately - no
+// waiting for the next CI event.
+func TestFixLabelReapplyRearms(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubFixGitHub(t, posted, []string{"quack:fix"}, true)
+	defer gh.Close()
+
+	st := newFixTestStore(t)
+	sessionID := "github-acme-widgets-7"
+	if err := st.SetGithubFixState(context.Background(), store.GithubFixState{ChatID: sessionID, LastSHA: "headsha1", Stopped: true}); err != nil {
+		t.Fatalf("seed fix state: %v", err)
+	}
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
+	ext := newFixExtension(t, runner, gh.URL, st, "ci_fix")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("pull_request", pullRequestBody("labeled", "quack:fix")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+
 	select {
 	case msg := <-runner.gotMessage:
-		if !strings.Contains(msg, "attempt 1 of 3") {
-			t.Errorf("re-armed run message = %q; want a fresh attempt 1 of 3", msg)
+		if !strings.Contains(msg, "go-test") {
+			t.Errorf("re-armed run message = %q; want the currently-failing checks", msg)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("re-armed auto-heal did not dispatch")
 	}
+
+	fs, err := st.GetGithubFixState(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("GetGithubFixState: %v", err)
+	}
+	if fs == nil || fs.Stopped {
+		t.Errorf("fix state = %+v; want the prior Stopped=true cleared", fs)
+	}
 }
 
-// The explicit fix label: an allowlisted human applying it dispatches one fix
-// run whose task is the currently-failing checks; with nothing failing quack
-// says so instead of running blind; a non-allowlisted sender is refused.
-func TestFixLabelDispatch(t *testing.T) {
+// The label event's other half: an allowlisted human applying quack:fix to a
+// PR with nothing currently failing does NOTHING observable - no phantom
+// review, no comment - the flag just arms silently for the next CI failure
+// (#655). A non-allowlisted sender is refused outright.
+func TestFixLabelApplied(t *testing.T) {
 	fixLabelBody := func(sender string) []byte {
 		return []byte(fmt.Sprintf(`{
 			"action":"labeled",
@@ -350,7 +409,7 @@ func TestFixLabelDispatch(t *testing.T) {
 		gh := stubFixGitHub(t, posted, nil, true)
 		defer gh.Close()
 		runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
-		ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "pr_fix")
+		ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "ci_fix")
 
 		rec := httptest.NewRecorder()
 		ext.handleWebhook(rec, signedRequest("pull_request", fixLabelBody("alice")))
@@ -369,25 +428,26 @@ func TestFixLabelDispatch(t *testing.T) {
 		}
 	})
 
-	t.Run("nothing failing comments instead of running", func(t *testing.T) {
+	t.Run("nothing failing arms the flag silently, no phantom review", func(t *testing.T) {
 		posted := make(chan string, 4)
 		gh := stubFixGitHub(t, posted, nil, false)
 		defer gh.Close()
 		runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
-		ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "pr_fix")
+		ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "ci_fix")
 
 		rec := httptest.NewRecorder()
 		ext.handleWebhook(rec, signedRequest("pull_request", fixLabelBody("alice")))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d; want 202", rec.Code)
+		}
+		time.Sleep(150 * time.Millisecond)
+		if atomic.LoadInt32(&runner.calls) != 0 {
+			t.Error("no run should dispatch when nothing is failing (#655)")
+		}
 		select {
 		case c := <-posted:
-			if !strings.Contains(c, "Nothing is failing") {
-				t.Errorf("comment = %q; want a nothing-is-failing explanation", c)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("no comment posted")
-		}
-		if atomic.LoadInt32(&runner.calls) != 0 {
-			t.Error("no run should dispatch when nothing is failing")
+			t.Errorf("no comment should be posted on a green PR: %q", c)
+		default:
 		}
 	})
 
@@ -396,7 +456,7 @@ func TestFixLabelDispatch(t *testing.T) {
 		gh := stubFixGitHub(t, posted, nil, true)
 		defer gh.Close()
 		runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "fixed"}
-		ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "pr_fix")
+		ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "ci_fix")
 
 		rec := httptest.NewRecorder()
 		ext.handleWebhook(rec, signedRequest("pull_request", fixLabelBody("mallory")))

@@ -160,6 +160,8 @@ func (e *Extension) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		e.handleIssueComment(w, body)
 	case "pull_request":
 		e.handlePullRequest(w, body)
+	case "pull_request_review":
+		e.handlePullRequestReview(w, body)
 	case "issues":
 		e.handleIssues(w, body)
 	case "workflow_run":
@@ -231,21 +233,13 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 		return
 	}
 
-	// (Re-)applying the monitor label re-arms auto-heal: a deterministic
-	// counter reset, no model run. Not allowlist-gated - the ci_fix gate reads
-	// the label's PRESENCE regardless of who applied it (write access is the
-	// permission), so gating only the reset would secure nothing.
-	if p.Action == "labeled" && e.triggers["ci_fix"] && p.Label.Name == e.labels.Monitor &&
+	// quack:fix is a PERSISTENT capability flag (#656), not a one-shot trigger:
+	// (Re-)applying it re-arms auto-heal and, if CI is CURRENTLY failing,
+	// fixes it right away - otherwise it just stays armed for the next CI
+	// failure (see handleWorkflowRun/autoHeal, which needs no "labeled" event
+	// at all). Bot senders never chain label workflows.
+	if p.Action == "labeled" && e.triggers["ci_fix"] && p.Label.Name == e.labels.Fix &&
 		!strings.HasSuffix(p.Sender.Login, "[bot]") && e.store != nil {
-		go e.resetFixState(p)
-		w.WriteHeader(http.StatusAccepted)
-		return
-	}
-
-	// The fix label is an explicit human work request: fix the currently
-	// failing checks, once. Bot senders never chain label workflows.
-	if p.Action == "labeled" && e.triggers["pr_fix"] && p.Label.Name == e.labels.Fix &&
-		!strings.HasSuffix(p.Sender.Login, "[bot]") {
 		if !e.isInvokerAllowed(p.Sender.Login) {
 			slog.Warn("github webhook: invoker not in allowed_users; ignoring", "component", "github",
 				"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
@@ -256,7 +250,7 @@ func (e *Extension) handlePullRequest(w http.ResponseWriter, body []byte) {
 		slog.Info("github webhook received", "component", "github",
 			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.Number,
 			"label", p.Label.Name, "user", p.Sender.Login, "installation", p.Installation.ID)
-		go e.runFixLabel(p)
+		go e.fixLabelApplied(p)
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -293,6 +287,109 @@ func autoReviewPayload(p pullRequestPayload) issueCommentPayload {
 	synthetic.Installation.ID = p.Installation.ID
 	synthetic.isLabelTrigger = true // auto-review, never a mention (T4)
 	return synthetic
+}
+
+// pullRequestReviewPayload is the subset of GitHub's pull_request_review
+// webhook we use: a submitted request_changes review engages quack on a PR IT
+// AUTHORED to address the findings (#656, closes #655) - "authorship IS the
+// flag", no label needed.
+type pullRequestReviewPayload struct {
+	Action string `json:"action"`
+	Review struct {
+		State string `json:"state"` // "approved" | "changes_requested" | "commented"
+		User  struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	} `json:"review"`
+	PullRequest struct {
+		Number int `json:"number"`
+	} `json:"pull_request"`
+	Repository struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		CloneURL      string `json:"clone_url"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"repository"`
+	Installation struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
+}
+
+// handlePullRequestReview engages quack on a request_changes review, but ONLY
+// on a PR it authored itself - a review on anyone else's PR is left to the
+// label/mention triggers, which already cover it. Gated on the ci_fix
+// trigger: this and CI auto-heal are the same "quack maintains what it's
+// responsible for, autonomously" capability.
+func (e *Extension) handlePullRequestReview(w http.ResponseWriter, body []byte) {
+	var p pullRequestReviewPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	if p.Action != "submitted" || p.Review.State != "changes_requested" || !e.triggers["ci_fix"] {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasSuffix(p.Review.User.Login, "[bot]") {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if !e.isInvokerAllowed(p.Review.User.Login) {
+		slog.Warn("github webhook: invoker not in allowed_users; ignoring", "component", "github",
+			"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.PullRequest.Number, "user", p.Review.User.Login)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	slog.Info("github webhook received", "component", "github",
+		"repo", p.Repository.Owner.Login+"/"+p.Repository.Name, "pr", p.PullRequest.Number,
+		"user", p.Review.User.Login, "installation", p.Installation.ID)
+	go e.engageOwnPRReview(p)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// engageOwnPRReview dispatches a fix-the-findings run on the PR's existing
+// session, continuing rather than resetting it - the review itself, its
+// inline comments, and everything else on the thread are already what
+// loadGithubContext injects every dispatch (#459), so nothing needs to be
+// copied out of the review payload here.
+func (e *Extension) engageOwnPRReview(p pullRequestReviewPayload) {
+	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.PullRequest.Number
+	ctx, cancel := context.WithTimeout(context.Background(), fixContextTimeout)
+	defer cancel()
+
+	authored, err := e.authoredByQuack(ctx, owner, repo, number)
+	if err != nil {
+		slog.Warn("github: own-PR authorship check failed; not engaging", "component", "github",
+			"repo", owner+"/"+repo, "pr", number, "err", err)
+		return
+	}
+	if !authored {
+		return // not quack's PR - the label/mention triggers already cover it
+	}
+
+	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
+	login := p.Review.User.Login
+	if e.store != nil {
+		login = e.store.SessionUserForChat(ctx, sessionID)
+	}
+
+	synthetic := issueCommentPayload{Action: "created"}
+	synthetic.Issue.Number = number
+	synthetic.Issue.PullRequest = &struct{}{}
+	synthetic.Comment.User.Login = login
+	synthetic.Repository.Name = repo
+	synthetic.Repository.Owner.Login = owner
+	synthetic.Repository.CloneURL = p.Repository.CloneURL
+	synthetic.Repository.DefaultBranch = p.Repository.DefaultBranch
+	synthetic.Installation.ID = p.Installation.ID
+	// isLabelTrigger stays false: this continues the PR's existing session.
+
+	slog.Info("github: engaging own PR after requested changes", "component", "github", "repo", owner+"/"+repo, "pr", number)
+	e.dispatch(synthetic, fmt.Sprintf(
+		"@%s requested changes on this pull request, which you authored. Address every finding: read the review comments and the current diff, make the fix, run the repo's own checks to verify, and commit the change on this PR's existing head branch.",
+		p.Review.User.Login))
 }
 
 // handleIssues drives the label-driven issue workflow: applying the configured
@@ -675,8 +772,14 @@ func (e *Extension) ackDedup(owner, repo string, number int) {
 }
 
 // triggerTask decides whether a comment triggers a run and extracts the task
-// text after the mention. The trigger is: a created issue_comment whose body
-// contains the configured mention. Returns ("", false) otherwise.
+// text. The trigger is a created issue_comment carrying the configured
+// mention token at the START OF A LINE (leading spaces/tabs only) - not
+// anywhere in the body. This is what makes a quote-reply safe: GitHub quotes
+// an earlier line as "> /quack …", and the leading "> " means that line does
+// NOT start with the token, so it never re-fires. It also means ordinary
+// prose that happens to contain the word ("quack's gate did not pass") never
+// dispatches - only a line that OPENS with it does. Returns ("", false) when
+// no line qualifies.
 func (e *Extension) triggerTask(p issueCommentPayload) (string, bool) {
 	if !e.triggers["mention"] {
 		return "", false
@@ -684,16 +787,37 @@ func (e *Extension) triggerTask(p issueCommentPayload) (string, bool) {
 	if p.Action != "created" {
 		return "", false
 	}
-	body := p.Comment.Body
-	i := strings.Index(strings.ToLower(body), strings.ToLower(e.mention))
-	if i < 0 {
-		return "", false
+	lines := strings.Split(p.Comment.Body, "\n")
+	mentionLower := strings.ToLower(e.mention)
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if len(trimmed) < len(e.mention) || !strings.HasPrefix(strings.ToLower(trimmed), mentionLower) {
+			continue
+		}
+		// A word boundary right after the token: "/quackers" is not "/quack".
+		if len(trimmed) > len(e.mention) && isTokenRune(trimmed[len(e.mention)]) {
+			continue
+		}
+		task := strings.TrimSpace(trimmed[len(e.mention):])
+		if rest := strings.TrimSpace(strings.Join(lines[i+1:], "\n")); rest != "" {
+			if task != "" {
+				task += "\n" + rest
+			} else {
+				task = rest
+			}
+		}
+		if task == "" {
+			return "", false
+		}
+		return task, true
 	}
-	task := strings.TrimSpace(body[i+len(e.mention):])
-	if task == "" {
-		return "", false
-	}
-	return task, true
+	return "", false
+}
+
+// isTokenRune reports whether b could continue an identifier - used to reject
+// a mention token match that's actually a prefix of a longer word.
+func isTokenRune(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // verifySignature checks GitHub's X-Hub-Signature-256 (HMAC-SHA256 of the raw

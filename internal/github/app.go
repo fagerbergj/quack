@@ -1106,6 +1106,30 @@ func (a *App) prAuthor(ctx context.Context, owner, repo string, number int) (str
 	return out.User.Login, nil
 }
 
+// commitAuthorEmail returns one commit's git author email - used to tell a
+// commit quack itself made apart from a human's. Every quack commit's
+// author/committer email is fixed to tools.GitCommitAuthorEmail (set once per
+// clone by internal/tools/setup.go), so this reads the fact directly off the
+// commit rather than needing quack to remember which SHAs it pushed.
+func (a *App) commitAuthorEmail(ctx context.Context, owner, repo, sha string) (string, error) {
+	tok, err := a.tokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Commit struct {
+			Author struct {
+				Email string `json:"email"`
+			} `json:"author"`
+		} `json:"commit"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s/commits/%s", owner, repo, sha)
+	if err := a.doJSON(ctx, http.MethodGet, path, "token "+tok, nil, &out); err != nil {
+		return "", err
+	}
+	return out.Commit.Author.Email, nil
+}
+
 // botLogin returns quack's own commenting identity ("{app-slug}[bot]"),
 // fetched once via GET /app (App-JWT authed, not an installation token) and
 // cached for the process lifetime - an App's slug never changes.

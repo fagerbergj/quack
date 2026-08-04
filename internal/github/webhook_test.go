@@ -246,7 +246,8 @@ func pullRequestBody(action, labelName string) []byte {
 		"number":7,
 		"label":{"name":%q},
 		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
-		"installation":{"id":5}
+		"installation":{"id":5},
+		"sender":{"login":"alice"}
 	}`, action, labelName))
 }
 
@@ -429,6 +430,114 @@ func TestHandleWebhookMentionTriggersRun(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no comment posted back")
+	}
+}
+
+// TestTriggerTaskLineStart pins #656 test cases 4 and 5: the mention token
+// must open a LINE, not just appear anywhere in the body - prose containing
+// "quack" never dispatches, and a quoted "> /quack …" (GitHub's quote-reply
+// markdown) never re-fires an earlier mention.
+func TestTriggerTaskLineStart(t *testing.T) {
+	ext := &Extension{mention: "/quack", triggers: map[string]bool{"mention": true}}
+	tests := []struct {
+		name     string
+		body     string
+		wantTask string
+		wantOK   bool
+	}{
+		{"line-start token dispatches", "/quack address finding 1", "address finding 1", true},
+		{"leading spaces still count as line start", "  /quack fix the typo", "fix the typo", true},
+		{"prose containing the bare word does not dispatch", "quack's gate did not pass", "", false},
+		{"prose mentioning the token mid-sentence does not dispatch", "please run /quack fix this", "", false},
+		{"a quoted reply does not re-fire", "> /quack address finding 1\n\nlooks good", "", false},
+		{"a quoted reply followed by a real request still dispatches from its own line", "> /quack old request\n\n/quack new request", "new request", true},
+		{"a longer word sharing the prefix does not match", "/quackers is not a command", "", false},
+		{"empty task after the token does not dispatch", "/quack", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := issueCommentPayload{Action: "created"}
+			p.Comment.Body = tt.body
+			task, ok := ext.triggerTask(p)
+			if ok != tt.wantOK || task != tt.wantTask {
+				t.Errorf("triggerTask(%q) = (%q, %v); want (%q, %v)", tt.body, task, ok, tt.wantTask, tt.wantOK)
+			}
+		})
+	}
+}
+
+// pullRequestReviewBody is the pull_request_review webhook payload for a
+// submitted review.
+func pullRequestReviewBody(state, reviewer string, prNumber int) []byte {
+	return []byte(fmt.Sprintf(`{
+		"action":"submitted",
+		"review":{"state":%q,"user":{"login":%q}},
+		"pull_request":{"number":%d},
+		"repository":{"name":"widgets","owner":{"login":"acme"},"clone_url":"https://github.com/acme/widgets.git","default_branch":"main"},
+		"installation":{"id":5}
+	}`, state, reviewer, prNumber))
+}
+
+// TestHandleWebhookRequestChangesEngagesOwnPR pins #656 test case 3 (closes
+// #655): a request_changes review on a PR quack authored engages it to
+// address the findings - authorship IS the flag, no label on the PR at all.
+func TestHandleWebhookRequestChangesEngagesOwnPR(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubFixGitHubFull(t, posted, nil, false, "", "quack[bot]") // no labels; PR authored by quack itself
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "addressed"}
+	ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "ci_fix")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("pull_request_review", pullRequestReviewBody("changes_requested", "alice", 7)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case msg := <-runner.gotMessage:
+		for _, want := range []string{"requested changes", "@alice"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("engagement message missing %q: %q", want, msg)
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("request_changes review on quack's own PR did not engage it")
+	}
+}
+
+// TestHandleWebhookRequestChangesIgnoresOtherPRs proves the label/mention
+// triggers, not this path, still own a PR quack did NOT author - and an
+// approving/commented review never engages regardless of authorship.
+func TestHandleWebhookRequestChangesIgnoresOtherPRs(t *testing.T) {
+	tests := []struct {
+		name          string
+		state         string
+		prAuthorLogin string
+	}{
+		{"not quack's PR", "changes_requested", "someone-else"},
+		{"quack's PR but an approval, not changes requested", "approved", "quack[bot]"},
+		{"quack's PR but a plain comment review", "commented", "quack[bot]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			posted := make(chan string, 4)
+			gh := stubFixGitHubFull(t, posted, nil, false, "", tt.prAuthorLogin)
+			defer gh.Close()
+
+			runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "addressed"}
+			ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "ci_fix")
+
+			rec := httptest.NewRecorder()
+			ext.handleWebhook(rec, signedRequest("pull_request_review", pullRequestReviewBody(tt.state, "alice", 7)))
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			time.Sleep(150 * time.Millisecond)
+			if atomic.LoadInt32(&runner.calls) != 0 {
+				t.Error("must not engage")
+			}
+		})
 	}
 }
 

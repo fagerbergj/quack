@@ -83,16 +83,20 @@ type GithubReviewBaseline struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// GithubFixState tracks the bounded CI auto-heal loop (#254) for one PR chat.
-// Durable on purpose: quack's own fix push re-runs CI and the next failure
-// arrives as a fresh webhook, possibly after a process restart - an in-memory
-// counter would reset and thrash forever. LastSHA dedups multiple failing
-// workflows on one head commit; Exhausted makes the give-up comment fire once.
+// GithubFixState tracks the CI auto-heal loop bound (#254, redesigned #656)
+// for one PR chat. Durable on purpose: quack's own fix push re-runs CI and
+// the next failure arrives as a fresh webhook, possibly after a process
+// restart - in-memory state would reset and thrash forever. LastSHA dedups
+// multiple failing workflows on one head commit (CI usually runs several).
+// Stopped marks the ONE-attempt guard having tripped: the commit that just
+// failed CI was itself a fix quack pushed, so it stops rather than fix the
+// fix (see internal/github/cifix.go's autoHeal) - cleared the moment a NEW
+// (non-quack) commit fails, which is what re-arms auto-heal without needing
+// a human to re-apply anything.
 type GithubFixState struct {
 	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
-	Attempts  int       `json:"attempts"`
 	LastSHA   string    `gorm:"column:last_sha" json:"last_sha"`
-	Exhausted bool      `json:"exhausted"`
+	Stopped   bool      `json:"stopped"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -602,12 +606,12 @@ func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error 
 	st.UpdatedAt = time.Now().UTC()
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "chat_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"attempts", "last_sha", "exhausted", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"last_sha", "stopped", "updated_at"}),
 	}).Create(&st).Error
 }
 
 // DeleteGithubFixState re-arms auto-heal for a PR chat - called when a human
-// (re-)applies the monitor label, the documented retry convention.
+// (re-)applies the fix label, the documented retry convention.
 func (s *Store) DeleteGithubFixState(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubFixState{}).Error
 }
