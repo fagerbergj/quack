@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -406,5 +407,51 @@ func TestDeliverStagedCommentSanitizesBody(t *testing.T) {
 	}
 	if !strings.Contains(posted, "## Plan") || !strings.Contains(posted, "Do the thing.") {
 		t.Errorf("posted comment lost the actual plan content: %q", posted)
+	}
+}
+
+// TestDeliverReviewTargetsCreatedPRNotIssue pins #652: an ISSUE-scoped run that
+// opens a PR and stages a review in the same delivery must submit that review
+// against the PR it just created. Before this, dc.IssueNumber (the issue number
+// recovered from the chat id) was used, so the review POSTed to
+// pulls/<issue-number>, 404'd, and was lost with only a server-side log.
+func TestDeliverReviewTargetsCreatedPRNotIssue(t *testing.T) {
+	const issueNum, createdPR = 61, 96
+	var reviewPaths []string
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pulls") && r.URL.Query().Get("head") != "":
+			io.WriteString(w, `[]`) // no existing PR for the branch
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			fmt.Fprintf(w, `{"number":%d,"html_url":"https://github.com/acme/widgets/pull/%d"}`, createdPR, createdPR)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/files"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			reviewPaths = append(reviewPaths, r.URL.Path)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/96#pullrequestreview-1"}`)
+		default:
+			io.WriteString(w, `{}`)
+		}
+	})
+	dc := vetting.DeliveryContext{
+		ChatID: "github-acme-widgets-61", IssueNumber: issueNum, CloneURL: "https://github.com/acme/widgets.git",
+		Branch:     "feat/migrate", // no CloneDir, so Deliver skips the push and goes straight to the items
+		GatePassed: true,
+		Items: []vetting.StagedDelivery{
+			{Kind: "pull_request", Title: "migrate", Body: "body"},
+			{Kind: "review", Event: "comment", Body: "findings"},
+		},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(reviewPaths) != 1 {
+		t.Fatalf("review submitted %d times, want 1: %v", len(reviewPaths), reviewPaths)
+	}
+	if want := fmt.Sprintf("/pulls/%d/reviews", createdPR); !strings.HasSuffix(reviewPaths[0], want) {
+		t.Errorf("review posted to %q, want it to end %q - posting to the ISSUE number 404s and loses the review (#652)",
+			reviewPaths[0], want)
 	}
 }
