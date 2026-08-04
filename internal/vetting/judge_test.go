@@ -419,3 +419,31 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 		t.Errorf("no-skills behaviour must not mention skill tools: %q", without)
 	}
 }
+
+// TestJudgePromptScopedToNodeNotOrchestratorFileCount pins #664's test case
+// 3: the judge is handed exactly what the node it judges saw (nodeTask, which
+// after the consumer split carries the node's own scoped ask+task, never the
+// orchestrator's <changed_files count=...> summary) plus changedFiles sourced
+// from the actual clone diff (buildImplementDiffSection/buildChangedFilesSection,
+// verified by inspection - neither reads plan.UserMessage or any orchestrator
+// count). The judge prompt must reflect the real diff, and must not manufacture
+// or otherwise surface an orchestrator-style file count it was never given.
+func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
+	nodeTask := "<permissions>push_commits_to_pr</permissions>\n<deliverable>a commit</deliverable>\n" +
+		"<issue number=\"7\"><title>t</title><description>d</description></issue>\n\n" +
+		"YOUR TASK - do this, and ONLY this:\nFix the failing build check in internal/foo.go."
+	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "irrelevant outer question"}}}
+	changedFiles := "diff --git a/internal/foo.go b/internal/foo.go\n--- a/internal/foo.go\n+++ b/internal/foo.go\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+
+	prompt := buildJudgePrompt("", "rubric text", nodeTask, question, "answer text", changedFiles, workerActivity{})
+
+	if !strings.Contains(prompt, changedFiles) {
+		t.Errorf("judge prompt missing the actual diff content:\n%s", prompt)
+	}
+	if strings.Contains(prompt, `<changed_files count=`) {
+		t.Errorf("judge prompt must never surface an orchestrator-style file count it was never given:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, nodeTask) {
+		t.Errorf("judge prompt must score against exactly the node's own task, verbatim:\n%s", prompt)
+	}
+}
