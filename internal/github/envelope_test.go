@@ -310,3 +310,64 @@ func TestCommentsBlockSeedHasNoStatus(t *testing.T) {
 		t.Errorf("full seed must not mark items:\n%s", got)
 	}
 }
+
+// TestNoTriggerOutputNamesSkillOrToolMechanics pins #662: constant
+// instructions - which skill to load, how stage_pr/stage_review work - are
+// bundle-prompt content now, never trigger prose. Covers every deliverableText
+// branch (plan-only, label-implement, review-only, conversational reply).
+func TestNoTriggerOutputNamesSkillOrToolMechanics(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
+
+	var issue issueCommentPayload
+	issue.Issue.Number = 7
+	issue.Repository.Name, issue.Repository.Owner.Login = "widgets", "acme"
+
+	var planOnly issueCommentPayload
+	planOnly.Issue.Number = 7
+	planOnly.planOnly = true
+	planOnly.isLabelTrigger = true
+
+	var implement issueCommentPayload
+	implement.Issue.Number = 7
+	implement.isLabelTrigger = true
+
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("please review this PR"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	cases := map[string]string{
+		"plan-only":      ext.buildEnvelope(context.Background(), planOnly, "plan it", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil),
+		"implement":      ext.buildEnvelope(context.Background(), implement, "implement it", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil),
+		"review-only":    ext.buildEnvelope(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0), vetting.Grant{}, "", nil),
+		"conversational": ext.buildEnvelope(context.Background(), issue, "what changed?", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil),
+	}
+	for name, env := range cases {
+		for _, banned := range []string{"present-coding-plan", "stage_pr", "stage_review", "github_add_review_comment"} {
+			if strings.Contains(env, banned) {
+				t.Errorf("%s envelope names %q - tool/skill mechanics belong in the agent bundle prompt, not the trigger:\n%s", name, banned, truncateForLog(env))
+			}
+		}
+	}
+}
+
+// TestOrchestratorPromptCarriesMovedPlanOnlyCautions pins #662's "don't lose
+// a caution by moving it" constraint: the file-path (#569) and stale-version
+// cautions dropped from the plan-only deliverable text must land in the
+// orchestrator bundle, the agent that actually answers a plan-only run.
+func TestOrchestratorPromptCarriesMovedPlanOnlyCautions(t *testing.T) {
+	raw, err := os.ReadFile("../../agents/orchestrator/prompt.md")
+	if err != nil {
+		t.Fatalf("reading agents/orchestrator/prompt.md: %v", err)
+	}
+	prompt := string(raw)
+	for _, want := range []string{"dangling pointer", "current stable"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("agents/orchestrator/prompt.md missing the moved caution %q", want)
+		}
+	}
+	if strings.Contains(prompt, "present-coding-plan") {
+		t.Error("agents/orchestrator/prompt.md hardcodes the present-coding-plan skill name - state the goal, let load_skill pick it (#636)")
+	}
+}

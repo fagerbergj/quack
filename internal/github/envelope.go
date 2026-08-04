@@ -408,11 +408,10 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 	switch {
 	case p.planOnly:
 		// PLANNING-ONLY: read the repo, change nothing, deliver nothing else to
-		// GitHub. The two clauses below are both incident scars (#569, and a
-		// stale-dependency-version assertion) with no other home under the
-		// envelope - #662a (moving constant instructions into bundle prompts)
-		// is a separate, later PR.
-		return "a PLANNING-ONLY implementation plan: your ANSWER TEXT is the plan, posted to the issue verbatim - never a file path (any file this run writes is discarded with its working directory when the run ends, so a path reference is a dangling pointer to nothing). Do not assert a dependency version, action tag, or API detail from memory as if it were current - say \"the current stable X\" rather than naming a version you have not verified this session."
+		// GitHub. The never-write-to-a-file and stale-version cautions (#569)
+		// are constant, not per-event - they live in agents/orchestrator/prompt.md
+		// (#662), keyed off this same "PLANNING-ONLY" wording.
+		return "a PLANNING-ONLY implementation plan: your ANSWER TEXT is the plan, posted to the issue verbatim."
 	case !isPR && p.isLabelTrigger:
 		// quack:implement applied to the issue.
 		if hasPartialFix(e.labels.PartialFix, gh.snap.Labels) {

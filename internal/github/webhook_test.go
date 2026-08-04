@@ -2246,13 +2246,14 @@ func TestHandleWebhookIssuePlanLabel(t *testing.T) {
 				if !strings.Contains(msg, "ANSWER TEXT is the plan") {
 					t.Errorf("plan message does not state the answer text is the deliverable: %q", msg)
 				}
-				if !strings.Contains(msg, "discarded") {
-					t.Errorf("plan message does not warn that written files are discarded: %q", msg)
-				}
-				// A related finding from the same milestone: don't assert an
-				// unverified dependency version/tag as if it were current.
-				if !strings.Contains(msg, "current stable") {
-					t.Errorf("plan message does not caution against asserting unverified versions: %q", msg)
+				// #662: the file-path and stale-version cautions are constant, not
+				// per-event - they moved to agents/orchestrator/prompt.md, so the
+				// trigger itself no longer carries them (see
+				// TestOrchestratorPromptCarriesMovedPlanOnlyCautions).
+				for _, moved := range []string{"discarded", "current stable"} {
+					if strings.Contains(msg, moved) {
+						t.Errorf("plan message still carries the %q caution - it should have moved to agents/orchestrator/prompt.md: %q", moved, msg)
+					}
 				}
 				// The vetting completion gate reads delivery demands off the task text:
 				// a planning run must carry no push/PR instructions.
