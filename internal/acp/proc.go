@@ -44,12 +44,16 @@ func (a *Agent) wrappedArgv(cwd string) []string {
 // RUN is covered by Caps.ExtraPath + the system dirs already in ChildPath, so
 // ambient added no reach a leak couldn't also use.
 func (a *Agent) spawnEnv() []string {
-	return append([]string{
+	env := []string{
 		"PATH=" + workspace.ChildPath(a.opts.Caps),
 		"HOME=" + a.opts.Home,
 		"TMPDIR=" + workspace.SandboxTmpDir(a.opts.Caps),
 		"NO_COLOR=1",
-	}, a.opts.Env...)
+	}
+	if opts := workspace.SandboxJavaToolOptions(a.opts.Caps); opts != "" {
+		env = append(env, "JAVA_TOOL_OPTIONS="+opts)
+	}
+	return append(env, a.opts.Env...)
 }
 
 // start spawns the agent subprocess rooted at cwd and wires the ACP connection.

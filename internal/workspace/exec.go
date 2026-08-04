@@ -220,6 +220,9 @@ func childEnv(dir string, caps Caps) []string {
 	if caps.Sandbox == SandboxLandlock {
 		env = append(env, "TMPDIR="+landlockTmpDir(caps))
 	}
+	if opts := SandboxJavaToolOptions(caps); opts != "" {
+		env = append(env, "JAVA_TOOL_OPTIONS="+opts)
+	}
 	for _, k := range sortedEnvKeys(caps.Env) {
 		env = append(env, k+"="+caps.Env[k])
 	}

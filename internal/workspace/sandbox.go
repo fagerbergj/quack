@@ -655,6 +655,19 @@ func SandboxTmpDir(caps Caps) string {
 	return os.TempDir()
 }
 
+// SandboxJavaToolOptions is the JAVA_TOOL_OPTIONS a sandboxed child needs ("" when
+// none). TMPDIR does not reach a JVM: java.io.tmpdir is hardcoded to /tmp on Linux,
+// the same blind spot user.home has, so under landlock every JVM tool writes to an
+// ungranted path (Room's KSP processor died with ExceptionInInitializerError when
+// sqlite-jdbc could not extract its native lib there). JAVA_TOOL_OPTIONS is the one
+// lever every JVM in the tree honours, including Gradle's forked daemon and workers.
+func SandboxJavaToolOptions(caps Caps) string {
+	if caps.Sandbox != SandboxLandlock {
+		return ""
+	}
+	return "-Djava.io.tmpdir=" + landlockTmpDir(caps)
+}
+
 // ChildPath is the hermetic PATH any subprocess built OUTSIDE RunArgv/
 // RunPipeline should run with (internal/acp's ACP agent, which constructs its
 // own exec.Cmd) - caps.ExtraPath first, then the same fixed system
