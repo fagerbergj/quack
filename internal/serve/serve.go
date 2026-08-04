@@ -1046,7 +1046,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if g := strings.TrimSpace(memGuidance); g != "" {
 				behaviour += "\n\n" + g
 			}
-			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading)
+			// The workspace/toolchain block (#663): generated from the SAME
+			// caps/allowlist every check/run_command child actually uses, so it
+			// states only what this deployment can prove, never a hand-written
+			// claim that drifts from what's really installed.
+			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
+			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
 			env := opencodeEnv(prov, ac, acpSkillPaths())
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			// The ACP permission judge: the same safety-judge tier the native

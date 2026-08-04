@@ -15,7 +15,9 @@
 //  5. Grading - the trust-gate contract that actually applies to this agent
 //     (weakest-link threshold, retrieval/delivery requirements), sourced from
 //     vetting.Config so no number is invented in a bundle's prompt.md
-//  6. Environment - contextual facts injected at startup (current date)
+//  6. Environment - contextual facts injected at startup (current date, and
+//     for a coding agent, the workspace/toolchain block - workspace.PromptBlock,
+//     #663)
 package promptbuilder
 
 import (
@@ -40,8 +42,10 @@ var writing string
 // toolLines then renders nothing rather than fabricating a list). name and
 // description come from agent-card.json; tools from the registered tool list;
 // skills from this agent's declared scope; behaviour from prompt.md (plus
-// memory.md, appended by the caller); grading from GradingFacts.
-func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, behaviour, grading string) string {
+// memory.md, appended by the caller); grading from GradingFacts; workspace
+// from workspace.PromptBlock - "" for a non-coding agent, which has no clone
+// or sandboxed toolchain to state facts about.
+func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, behaviour, grading, workspace string) string {
 	var caps strings.Builder
 	if tl := toolLines(tools); tl != "" {
 		caps.WriteString("### Tools\n\n")
@@ -54,7 +58,7 @@ func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmat
 		caps.WriteString("### Skills\n\n")
 		caps.WriteString(sl)
 	}
-	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Capabilities", caps.String(), behaviour, grading)
+	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Capabilities", caps.String(), behaviour, grading, workspace)
 }
 
 // Judge assembles the layered system prompt for the trust gate's independent
@@ -63,7 +67,7 @@ func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmat
 // submit_verdict; behaviour is the judging instructions. The judge itself is
 // never graded, so it carries no Grading layer.
 func Judge(tools []tool.Tool, behaviour string) string {
-	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "Tools", toolLines(tools), behaviour, "")
+	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "Tools", toolLines(tools), behaviour, "", "")
 }
 
 // Orchestrator assembles the system prompt for the orchestrator. agentRoster is
@@ -82,7 +86,7 @@ func Orchestrator(agentRoster string, skills []*skill.Frontmatter, behaviour str
 		caps.WriteString("\n### Skills\n\n")
 		caps.WriteString(sl)
 	}
-	return layered("You are Quack's orchestrator. You understand what the user needs, coordinate specialist agents, and apply skills to improve your output before responding.", "Capabilities", caps.String(), behaviour, "")
+	return layered("You are Quack's orchestrator. You understand what the user needs, coordinate specialist agents, and apply skills to improve your output before responding.", "Capabilities", caps.String(), behaviour, "", "")
 }
 
 // GradingFacts renders the trust-gate contract that actually applies to one
@@ -108,8 +112,9 @@ func GradingFacts(threshold float64, judgeRounds int, readOnly, requireRetrieval
 // layered assembles the prompt layers, ordered most-stable-first for prompt
 // caching: identity, an optional capabilities section (## header + body),
 // behaviour (prompt.md), the writing ruleset, an optional grading section, and
-// the environment footer.
-func layered(identity, capsHeader, capsBody, behaviour, grading string) string {
+// the environment footer - the date, plus workspaceFacts (workspace.PromptBlock)
+// when the caller is a coding agent.
+func layered(identity, capsHeader, capsBody, behaviour, grading, workspaceFacts string) string {
 	var sb strings.Builder
 	sb.WriteString(identity)
 	sb.WriteString("\n")
@@ -130,6 +135,11 @@ func layered(identity, capsHeader, capsBody, behaviour, grading string) string {
 		fmt.Fprintf(&sb, "\n## Grading\n\n%s\n", g)
 	}
 	fmt.Fprintf(&sb, "\n## Environment\n\nToday is %s.\n", today())
+	if wf := strings.TrimSpace(workspaceFacts); wf != "" {
+		sb.WriteString("\n")
+		sb.WriteString(wf)
+		sb.WriteString("\n")
+	}
 	return strings.TrimSpace(sb.String())
 }
 
