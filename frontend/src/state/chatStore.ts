@@ -764,10 +764,16 @@ export class ChatStore {
           // Only an answer-stage run's text belongs in the node's answer box. The
           // judge is internal gate commentary shown as its own run - without this,
           // it leaked into the answer (e.g. a failed node still displayed the
-          // judge's critique as its "answer").
+          // judge's critique as its "answer"). It still belongs in the judge's OWN
+          // card though: judgePartEmitter only routes a part to agent_thinking when
+          // the model marks it Thought, and local models mostly don't - so returning
+          // here discarded nearly all of the judge's reasoning (#696).
           const st = this.states.get(chatId)
           const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
-          if (run && !ANSWER_STAGES.has(run.stage)) return
+          if (run && !ANSWER_STAGES.has(run.stage)) {
+            updateNodeRuns(nid, r => appendRunThinking(r, runId, text))
+            return
+          }
           updateNodeAnswer(nid, text)
         },
         onAgentComplete: d => {

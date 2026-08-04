@@ -358,6 +358,37 @@ describe('ChatStore - mid-node steering', () => {
     await store.submit('c', 'go')
     const answer = store.get('c').live?.dag?.nodeAnswer['a']
     expect(answer).toBe('REVISED ANSWER (sourced)')
+
+    // #696: keeping judge text OUT of the answer must not throw it away - it
+    // belongs in the judge's own card. judgePartEmitter only emits
+    // agent_thinking for parts the model marks Thought, and local models
+    // mostly don't, so dropping agent_token discarded nearly all of it.
+    const judgeRun = store.get('c').live?.dag?.nodeRuns?.['a']?.find(r => r.runId === 'judge-r1')
+    expect(judgeRun?.activity).toContainEqual({ kind: 'thinking', text: 'Feedback: needs more sourcing.' })
+  })
+
+  // The other half of #696: a revise run IS an answer stage, so its text goes to
+  // the answer box and must NOT also be duplicated into its own card.
+  it("a revise run's text goes to the answer box, not into its card's activity", async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r1","agent":"researcher","stage":"revise","round":1}',
+      '',
+      'event: agent_token',
+      'data: {"node_id":"a","run_id":"worker-r1","text":"REVISED TEXT"}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r1","stage":"revise","round":1}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    expect(store.get('c').live?.dag?.nodeAnswer['a']).toBe('REVISED TEXT')
+    const rev = store.get('c').live?.dag?.nodeRuns?.['a']?.find(r => r.runId === 'worker-r1')
+    expect(rev?.activity).toEqual([])
   })
 
   // #387: narration a worker emits BEFORE a tool call ("I'll check X first...")
