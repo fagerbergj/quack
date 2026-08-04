@@ -19,6 +19,16 @@ import (
 // carries a ReviewStage - minted exclusively for a review-delivery node, so the
 // implementer/explorer and every native agent never see these tools.
 
+// Bare tool names, shared between the mcp.AddTool registrations below and
+// mcpToolNames (acp.go, #688) - see memorymcp.go's matching const block.
+const (
+	toolStageReviewComment   = "stage_review_comment"
+	toolListReviewComments   = "list_review_comments"
+	toolUnstageReviewComment = "unstage_review_comment"
+	toolStageReview          = "stage_review"
+	toolStagePR              = "stage_pr"
+)
+
 // stageReviewCommentInput is stage_review_comment's input: one inline finding.
 type stageReviewCommentInput struct {
 	Path string `json:"path" jsonschema:"repo-relative path of the file the comment anchors to"`
@@ -75,7 +85,7 @@ func excerpt(s string, n int) string {
 // staged before adding a possible duplicate, and retract precisely (#562).
 func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "stage_review_comment",
+		Name:        toolStageReviewComment,
 		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(args.Path) == "" || args.Line <= 0 || strings.TrimSpace(args.Body) == "" {
@@ -85,7 +95,7 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("staged as id %s", id)}}}, nil, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "list_review_comments",
+		Name:        toolListReviewComments,
 		Description: "List comments staged so far, in stage order, paginated (default 50 per page). Each entry has an id, path, line, and a short excerpt of the body. Call this before staging a new finding to check you haven't already recorded it; retract a duplicate with unstage_review_comment(id).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args listReviewCommentsInput) (*mcp.CallToolResult, any, error) {
 		limit := args.Limit
@@ -117,7 +127,7 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: b.String()}}}, nil, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "unstage_review_comment",
+		Name:        toolUnstageReviewComment,
 		Description: "Retract a previously staged inline comment by id (from stage_review_comment or list_review_comments) - e.g. after re-reading the file and deciding the finding doesn't hold, or because it duplicates one already staged. An unknown id is an error, not a silent no-op.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args unstageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		id := strings.TrimSpace(args.ID)
@@ -127,7 +137,7 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("unstaged %s", id)}}}, nil, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "stage_review",
+		Name:        toolStageReview,
 		Description: "Stage the overall review verdict (approve | request_changes | comment) and summary. Call once, after your inline comments; the gate submits the review after your answer passes.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewInput) (*mcp.CallToolResult, any, error) {
 		event := strings.ToLower(strings.TrimSpace(args.Event))
@@ -153,7 +163,7 @@ type stagePRInput struct {
 // synthesis. Registered only on an implement-delivery node (PRStage non-nil).
 func registerPRTool(srv *mcp.Server, pr *vetting.PRStage) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "stage_pr",
+		Name:        toolStagePR,
 		Description: "Stage the pull request title and description for this change, authored per the pr-authoring skill. Call once, after committing; the gate opens the PR with exactly this after your work passes review. You never push or open the PR yourself.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stagePRInput) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(args.Title) == "" || strings.TrimSpace(args.Body) == "" {

@@ -1,7 +1,9 @@
-// The answer-derived review probe: an EXTERNAL (ACP) reviewer has no
-// stage_review tool, so its deliverable - the posted review - must come out of
-// its ANSWER. The reviewer's preamble (agents/code-reviewer/prompt.md)
-// instructs a structured tail:
+// The answer-derived review probe: the fallback for when an EXTERNAL (ACP)
+// reviewer's round never lands a stage_review call - the MCP surface wasn't
+// offered, or the agent just didn't use it - so its deliverable - the posted
+// review - must be recovered from its ANSWER instead. The reviewer's preamble
+// (agents/code-reviewer/prompt.md) instructs a structured tail for exactly
+// this case:
 //
 //	VERDICT: approve | request_changes | comment
 //	FINDINGS:
@@ -11,10 +13,13 @@
 // augmentFromAnswer parses that into a staged review (with line-anchored
 // inline comments) exactly as if the worker had called stage_review - the
 // delivery spine (commitDelivery → github Deliver) stays gate-owned and
-// unchanged. The companion of the git disk probe (gitprobe.go).
+// unchanged. The companion of the git disk probe (gitprobe.go). Unlike the
+// tool path, this is a RECOVERY, not a clean pass (#688) - it stages a
+// Recovered delivery, and reviewCriterion words it accordingly.
 package vetting
 
 import (
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -166,10 +171,16 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if act.stagedDelivery == nil {
 		act.stagedDelivery = map[string]StagedDelivery{}
 	}
+	// Loud, not silent (#688): this means the review MCP surface either wasn't
+	// offered this round or the reviewer never called stage_review/
+	// stage_review_comment against it - the whole staging mechanism didn't run.
+	slog.Warn("review recovered from the answer's VERDICT/FINDINGS tail, not staged via the review MCP tools",
+		"component", "vetting", "node", cfg.NodeID)
 	act.stagedDelivery["review"] = StagedDelivery{
-		Kind:     "review",
-		Event:    event,
-		Body:     answer,
-		Comments: comments,
+		Kind:      "review",
+		Event:     event,
+		Body:      answer,
+		Comments:  comments,
+		Recovered: true,
 	}
 }

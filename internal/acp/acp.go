@@ -298,12 +298,20 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	// siblings' node IDs in its own prompt, and the advisor-thread token those
 	// IDs would let it reconstruct must never double as a bearer credential.
 	mcpServers := memoryMCPServers(memSecret, initResp.AgentCapabilities)
-	// #482: the negotiated caps decide whether load_memory/stage_memory/
-	// stage_review reach this subprocess at all - log them so a "tools
-	// unavailable" report is diagnosable from prod logs instead of guessed at.
-	a.log.Debug("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
+	// #688: the round's actual tool NAMES, not just whether the surface was
+	// offered - a bash probe can never see an MCP tool, so the agent needs the
+	// exact list as an asserted fact rather than a naming convention to go
+	// verify. memSession is resolved from the SAME secret the loopback server
+	// (memorymcp.go) would resolve at connection time - in-process, so no
+	// round-trip needed to know it here.
+	memSession, _ := vetting.LookupMemSession(memSecret)
+	toolNames := mcpToolNames(memSession, len(mcpServers) > 0)
+	// #482/#688: log at Info (not Debug) - "tools were unavailable" is exactly
+	// the kind of report that needs to be diagnosable from prod logs, not
+	// guessed at after the fact.
+	a.log.Info("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
 		"mcp_sse", initResp.AgentCapabilities.McpCapabilities.Sse, "mcp_acp", initResp.AgentCapabilities.McpCapabilities.Acp,
-		"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "")
+		"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "", "mcp_tools", toolNames)
 	sess, err := h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
 	if err != nil {
 		otelobs.End(handshakeSpan, err)
@@ -312,6 +320,11 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	handshakeSpan.SetAttributes(attribute.String("session_id", string(sess.SessionId)))
 	otelobs.End(handshakeSpan, nil)
 	a.log.Info("acp round started", "cwd", cwd, "session", sess.SessionId)
+
+	// The tools block leads the round's whole message (#688) - the round-start
+	// fact the agent most needs before it reasons about anything else, ahead
+	// of the preamble/environment/task outbound already built by runPrompt.
+	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 
 	done := make(chan promptDone, 1)
 	_, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String("agent", a.name), attribute.String("session_id", string(sess.SessionId)))
@@ -323,7 +336,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 		// still opened above, against ctx, so it nests correctly regardless.
 		resp, perr := h.conn.Prompt(context.Background(), sdk.PromptRequest{
 			SessionId: sess.SessionId,
-			Prompt:    []sdk.ContentBlock{sdk.TextBlock(outbound)},
+			Prompt:    []sdk.ContentBlock{sdk.TextBlock(finalPrompt)},
 		})
 		done <- promptDone{resp, perr}
 	}()
@@ -397,6 +410,46 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 			return fmt.Errorf("acp: no activity for %s - treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
 		}
 	}
+}
+
+// mcpToolNames lists the exact, opencode-prefixed MCP tool names this round
+// actually offers (#688) - derived from the SAME MemSession the loopback
+// server resolves per-request (memorymcp.go), never guessed or hand-typed.
+// offered is false when the agent negotiated neither http nor sse MCP
+// transport (memoryMCPServers) - the round then legitimately has none, and
+// this returns nil rather than the would-be list.
+func mcpToolNames(sess vetting.MemSession, offered bool) []string {
+	if !offered {
+		return nil
+	}
+	var names []string
+	add := func(tool string) { names = append(names, mcpServerName+"_"+tool) }
+	if sess.Memory != nil {
+		add(toolLoadMemory)
+		add(toolStageMemory)
+	}
+	if sess.Review != nil {
+		add(toolStageReviewComment)
+		add(toolListReviewComments)
+		add(toolUnstageReviewComment)
+		add(toolStageReview)
+	}
+	if sess.PRStage != nil {
+		add(toolStagePR)
+	}
+	return names
+}
+
+// mcpToolsBlock renders names as the round-start FACT an ACP subprocess
+// cannot otherwise establish (#688) - a bash probe can never see an MCP
+// tool, so the prompt asserts the exact offered list instead of describing a
+// naming convention to go verify. An empty list renders too, loud rather
+// than silently omitted.
+func mcpToolsBlock(names []string) string {
+	if len(names) == 0 {
+		return "MCP tools available to you this round: none."
+	}
+	return "MCP tools available to you this round:\n  " + strings.Join(names, ", ")
 }
 
 // gracefulCancel sends session/cancel and waits up to cancelGrace for the

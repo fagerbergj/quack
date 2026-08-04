@@ -30,6 +30,20 @@ import (
 // vetting.LookupMemSession - a registry SEPARATE from the advisor-thread one.
 // Nothing about scope ever rides a tool argument.
 
+// mcpServerName is the loopback server's advertised name (both here and in
+// memoryMCPServers' McpServer.Name) - opencode prefixes every tool it exposes
+// with "<name>_" (see memoryMCPServers), so this is also the prefix
+// mcpToolNames (acp.go, #688) renders into the round preamble.
+const mcpServerName = "quackmcp"
+
+// Bare tool names, shared between the mcp.AddTool registrations below/in
+// reviewmcp.go and mcpToolNames (acp.go) - one definition each, so the
+// preamble can never name a tool this server doesn't actually register.
+const (
+	toolLoadMemory  = "load_memory"
+	toolStageMemory = "stage_memory"
+)
+
 // loadMemoryInput is the load_memory tool's input.
 type loadMemoryInput struct {
 	Query string `json:"query" jsonschema:"what to recall (a topic, not a document)"`
@@ -77,7 +91,7 @@ func memoryMCPURL() string {
 func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		secret := strings.Trim(r.URL.Path, "/")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "quackmcp", Version: "0.1.0"}, nil)
+		srv := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: "0.1.0"}, nil)
 		sess, ok := vetting.LookupMemSession(secret)
 		if !ok {
 			// Never silent (#640): an unrecognized secret means either a stale/
@@ -99,7 +113,7 @@ func memoryMCPHandler() http.Handler {
 		// gets its review tools, and a memory-only node never sees the review ones.
 		if sess.Memory != nil {
 			mcp.AddTool(srv, &mcp.Tool{
-				Name:        "load_memory",
+				Name:        toolLoadMemory,
 				Description: "Recall relevant notes from shared memory about this repository/task family.",
 			}, func(ctx context.Context, _ *mcp.CallToolRequest, args loadMemoryInput) (*mcp.CallToolResult, any, error) {
 				text := sess.Memory.Recall(ctx, sess.Scope, args.Query)
@@ -109,7 +123,7 @@ func memoryMCPHandler() http.Handler {
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 			})
 			mcp.AddTool(srv, &mcp.Tool{
-				Name:        "stage_memory",
+				Name:        toolStageMemory,
 				Description: "Stage a durable fact learned this run for shared memory. It is written only if this node's work is accepted.",
 			}, func(ctx context.Context, _ *mcp.CallToolRequest, args stageMemoryInput) (*mcp.CallToolResult, any, error) {
 				if sess.Staged == nil || strings.TrimSpace(args.Content) == "" {
@@ -157,7 +171,7 @@ func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer
 		// a same-named MCP server collides with it in a registry we don't
 		// control the internals of (#640) - "quackmcp" avoids the collision
 		// outright rather than relying on opencode never minding it.
-		Name:    "quackmcp",
+		Name:    mcpServerName,
 		Url:     base + "/" + secret,
 		Headers: []sdk.HttpHeader{},
 	}}}

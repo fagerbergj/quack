@@ -218,6 +218,56 @@ func TestReviewCriterionPassesWhenReviewSubmitted(t *testing.T) {
 	}
 }
 
+// TestReviewCriterionDistinguishesRecoveredFromStaged pins #688: a review
+// recovered from the answer's VERDICT/FINDINGS tail must not read identically
+// to one staged via the review MCP tools, in the gate criteria - both are a
+// real pass (the fallback keeps the node moving), but the Reason must say
+// which path produced it.
+func TestReviewCriterionDistinguishesRecoveredFromStaged(t *testing.T) {
+	staged := workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"review": {Kind: "review", Event: "approve", Recovered: false},
+	}}
+	got, ok := reviewCriterion(reviewTask, staged, true)
+	if !ok || got.Score != 1 {
+		t.Fatalf("tool-staged review: got %+v (applies=%v), want Score 1", got, ok)
+	}
+	if strings.Contains(got.Reason, "RECOVERED") || strings.Contains(got.Reason, "tail") {
+		t.Errorf("tool-staged Reason reads like a recovery: %q", got.Reason)
+	}
+	if !strings.Contains(got.Reason, "review MCP tools") {
+		t.Errorf("tool-staged Reason should name the MCP tools path: %q", got.Reason)
+	}
+
+	recovered := workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"review": {Kind: "review", Event: "approve", Recovered: true},
+	}}
+	got, ok = reviewCriterion(reviewTask, recovered, true)
+	if !ok || got.Score != 1 {
+		t.Fatalf("recovered review: got %+v (applies=%v), want Score 1 (the fallback still keeps working)", got, ok)
+	}
+	if !strings.Contains(got.Reason, "RECOVERED") {
+		t.Errorf("recovered Reason should flag the recovery: %q", got.Reason)
+	}
+}
+
+// TestReviewCriterionDirectSubmitReasonDiffersFromStaging proves the three
+// review_posted paths (direct github_submit_review, tool-staged, tail-
+// recovered) each carry their own Reason text - never collapsed to one
+// "submitted (or staged for delivery)" wording that can't tell them apart.
+func TestReviewCriterionDirectSubmitReasonDiffersFromStaging(t *testing.T) {
+	direct, _ := reviewCriterion(reviewTask, workerActivity{reviewSubmitted: true}, true)
+	staged, _ := reviewCriterion(reviewTask, workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"review": {Kind: "review", Recovered: false},
+	}}, true)
+	recovered, _ := reviewCriterion(reviewTask, workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"review": {Kind: "review", Recovered: true},
+	}}, true)
+	if direct.Reason == staged.Reason || staged.Reason == recovered.Reason || direct.Reason == recovered.Reason {
+		t.Fatalf("the three review_posted paths must carry distinct reasons:\ndirect=%q\nstaged=%q\nrecovered=%q",
+			direct.Reason, staged.Reason, recovered.Reason)
+	}
+}
+
 // Drafted comments are not a posted review: github_add_review_comment only
 // accumulates a draft (see internal/github) - the review exists on the PR only
 // after github_submit_review.

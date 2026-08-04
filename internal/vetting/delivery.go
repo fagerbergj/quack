@@ -162,20 +162,23 @@ func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
 // The submit is the whole requirement: github_add_review_comment only accumulates
 // a process-local DRAFT (see internal/github) - nothing is on the PR until
 // github_submit_review succeeds.
-// hasStagedReview reports whether the worker has a live stage_review call
-// (handed the submit intent off to the gate). A worker that can still submit
-// directly (act.reviewSubmitted, legacy toolset) satisfies review either way.
-func hasStagedReview(act workerActivity) bool {
-	_, ok := act.stagedDelivery["review"]
-	return ok
-}
-
 func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterionScore, bool) {
 	if !isReviewer {
 		return criterionScore{}, false
 	}
-	if act.reviewSubmitted || hasStagedReview(act) {
-		return criterionScore{Score: 1, Reason: "deterministic: the review was submitted (or staged for delivery) on the pull request"}, true
+	if act.reviewSubmitted {
+		return criterionScore{Score: 1, Reason: "deterministic: the review was submitted directly on the pull request (`github_submit_review`)"}, true
+	}
+	// #688: a review recovered from the answer's VERDICT/FINDINGS tail is
+	// distinguished from one staged via the review MCP tools - both are a
+	// genuine pass (the fallback keeps the node moving), but they must never
+	// read identically, or nothing can ever see the staging mechanism failed.
+	if sd, staged := act.stagedDelivery["review"]; staged {
+		if sd.Recovered {
+			return criterionScore{Score: 1, Reason: "deterministic: the review was RECOVERED from the answer's VERDICT/FINDINGS tail - " +
+				"the review MCP tools (stage_review/stage_review_comment) were not used this round"}, true
+		}
+		return criterionScore{Score: 1, Reason: "deterministic: the review was staged for delivery via the review MCP tools (stage_review/stage_review_comment)"}, true
 	}
 	drafted := "the ledger shows no successful `github_add_review_comment` either"
 	if act.reviewCommented {
