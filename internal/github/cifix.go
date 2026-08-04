@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/tools"
 )
@@ -390,6 +391,22 @@ func (e *Extension) failingChecks(ctx context.Context, owner, repo, sha string) 
 	return out, nil
 }
 
+// renderOneCheck renders a single failing check's summary + annotations -
+// shared by renderFailingChecks (all of them, for the orchestrator's
+// classification text) and #664's per-node CI detail (dag.CICheck.Detail),
+// which must render exactly one check in isolation.
+func renderOneCheck(c failingCheck) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "- %s (%s)\n", c.Name, c.URL)
+	if c.Summary != "" {
+		fmt.Fprintf(&b, "  %s\n", truncate(c.Summary, 600))
+	}
+	for _, a := range c.Annotations {
+		fmt.Fprintf(&b, "  %s\n", a)
+	}
+	return b.String()
+}
+
 // renderFailingChecks renders the failing checks as prompt context, bounded.
 func renderFailingChecks(checks []failingCheck) string {
 	var b strings.Builder
@@ -398,15 +415,21 @@ func renderFailingChecks(checks []failingCheck) string {
 			fmt.Fprintf(&b, "… and %d more failing checks\n", len(checks)-maxFailingChecks)
 			break
 		}
-		fmt.Fprintf(&b, "- %s (%s)\n", c.Name, c.URL)
-		if c.Summary != "" {
-			fmt.Fprintf(&b, "  %s\n", truncate(c.Summary, 600))
-		}
-		for _, a := range c.Annotations {
-			fmt.Fprintf(&b, "  %s\n", a)
-		}
+		b.WriteString(renderOneCheck(c))
 	}
 	return truncate(b.String(), maxChecksContextRunes)
+}
+
+// ciChecksForNodes converts failingChecks' output into dag.CICheck (#664):
+// one entry per failing check, each rendered in ISOLATION (renderOneCheck),
+// never the combined renderFailingChecks text - a node matched to one check
+// must never inherit another's annotations via a shared blob.
+func ciChecksForNodes(checks []failingCheck) []dag.CICheck {
+	out := make([]dag.CICheck, 0, len(checks))
+	for _, c := range checks {
+		out = append(out, dag.CICheck{Name: c.Name, Detail: truncate(renderOneCheck(c), maxChecksContextRunes)})
+	}
+	return out
 }
 
 // failingChecksText is failingChecks+render with a graceful fallback: if the

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/tools"
 )
 
 // stubFixGitHub is stubGitHub plus the checks API (commits/{sha}/check-runs,
@@ -468,4 +469,49 @@ func TestFixLabelApplied(t *testing.T) {
 			t.Error("non-allowlisted sender must not dispatch")
 		}
 	})
+}
+
+// TestWorkflowRunAttachesWorkerAskAndCIChecks pins #664: a CI-fix run's
+// context carries the ask-only worker background (never the orchestrator's
+// own evidence) and the ONE failing check's own annotation detail - go-test
+// fails, lint is green, so exactly one CICheck should reach the plan tool.
+func TestWorkflowRunAttachesWorkerAskAndCIChecks(t *testing.T) {
+	posted := make(chan string, 4)
+	gh := stubFixGitHubFull(t, posted, []string{"quack:fix"}, true, "", "someone-else")
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), gotCtx: make(chan context.Context, 1), answer: "fixed"}
+	ext := newFixExtension(t, runner, gh.URL, newFixTestStore(t), "ci_fix")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha1", 7)))
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	var runCtx context.Context
+	select {
+	case runCtx = <-runner.gotCtx:
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto-heal did not dispatch a fix run")
+	}
+
+	ask := tools.WorkerAskFromContext(runCtx)
+	if strings.Contains(ask, "changed_files") {
+		t.Errorf("worker ask must not carry the orchestrator's evidence:\n%s", ask)
+	}
+	if !strings.Contains(ask, `<pull_request number="7">`) {
+		t.Errorf("worker ask missing the PR ask:\n%s", ask)
+	}
+
+	checks := tools.CIChecksFromContext(runCtx)
+	if len(checks) != 1 {
+		t.Fatalf("CIChecks = %d entries, want exactly the one failing check (go-test; lint is green)", len(checks))
+	}
+	if checks[0].Name != "go-test" {
+		t.Errorf("CIChecks[0].Name = %q, want go-test", checks[0].Name)
+	}
+	if !strings.Contains(checks[0].Detail, "TestFoo failed") {
+		t.Errorf("CIChecks[0].Detail missing the check's own annotation:\n%s", checks[0].Detail)
+	}
 }

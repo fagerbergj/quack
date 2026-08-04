@@ -387,6 +387,31 @@ func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, ta
 	return b.String()
 }
 
+// buildWorkerAsk is the consumer split's other half (#664): what a plan's
+// NODES get as their BACKGROUND (dag.Plan.WorkerBackground), in place of
+// buildEnvelope's full output. The ask is inlined whole here too - the split
+// applies to EVIDENCE only - but changed_files, the raw event, and the
+// context directory's per-file listing are all left out: a node reads its
+// OWN slice (the files/check/thread its task names) off the clone and the
+// context directory itself, guided by its task text, never the orchestrator's
+// planning-scale summaries. ctxDir, when set, is still named so a node knows
+// evidence lives there to read on demand.
+func (e *Extension) buildWorkerAsk(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, ctxDir string) string {
+	isPR := p.Issue.PullRequest != nil
+	deliverable := e.deliverableText(ctx, p, task, gh, isPR)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "<permissions>%s</permissions>\n", permissionsText(grant))
+	fmt.Fprintf(&b, "<deliverable>%s</deliverable>\n", deliverable)
+	b.WriteString(askBlock(p, gh, isPR))
+	b.WriteString(commentsBlock(gh, p.Comment.ID))
+	if ctxDir != "" {
+		fmt.Fprintf(&b, "<context dir=%q>Evidence for your task - diffs, CI annotations, review threads, linked issues - lives here as GitHub's own JSON, one file per endpoint. Read what your task needs.</context>\n",
+			filepath.ToSlash(ctxDir))
+	}
+	return b.String()
+}
+
 // deliverableText classifies the run exactly as the old prose builder did -
 // planOnly / label-triggered implement / a plain issue mention / a PR
 // conversational follow-up (isWorkRequest, intent.go) / reviewOnly

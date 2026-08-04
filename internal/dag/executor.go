@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -607,16 +608,21 @@ func toInt(v any) int {
 
 // buildTask assembles a node's worker prompt: the verbatim user request, each
 // dependency's output (prefixed with a ⚠ warning when it failed vetting), then the
-// node's own task. A leaf with no upstream is just its task.
+// node's own task, then any CI check detail this node's own task claims (#664).
+// A leaf with no upstream and no background is just its task.
 func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool) string {
+	background := plan.WorkerBackground
+	if background == "" {
+		background = plan.UserMessage
+	}
 	var sb strings.Builder
-	if plan.UserMessage != "" {
+	if background != "" {
 		// The verbatim request is BACKGROUND, and must say so - handed over bare, a
 		// node reads the whole brief as its own to-do list and does its siblings'
 		// work, which is discarded and paid for twice.
 		sb.WriteString("BACKGROUND - the user's full request, verbatim. This is CONTEXT ONLY, so you " +
 			"understand what the overall job is and how your piece fits. MOST OF IT IS NOT YOURS TO DO.\n\n")
-		sb.WriteString(plan.UserMessage)
+		sb.WriteString(background)
 		sb.WriteString("\n\n---\n\n")
 		if others := siblingIDs(plan, node.ID); others != "" {
 			sb.WriteString("The other parts of that request are ALREADY ASSIGNED to these nodes, " +
@@ -638,11 +644,29 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer - it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
 		}
 	}
-	if sb.Len() == 0 {
+	ciDetail := matchedCIChecks(plan.CIChecks, node.Task)
+	if sb.Len() == 0 && ciDetail == "" {
 		return node.Task
 	}
 	sb.WriteString("YOUR TASK - do this, and ONLY this:\n")
 	sb.WriteString(node.Task)
+	sb.WriteString(ciDetail)
+	return sb.String()
+}
+
+// matchedCIChecks renders the detail for whichever plan.CIChecks a node's own
+// task names by check name - never the others, so sibling fix nodes working
+// different failing checks don't see each other's annotations (#664). "" when
+// nothing matches (task text doesn't name a known check, or the plan has none).
+func matchedCIChecks(checks []CICheck, task string) string {
+	lower := strings.ToLower(task)
+	var sb strings.Builder
+	for _, c := range checks {
+		if c.Name == "" || !strings.Contains(lower, strings.ToLower(c.Name)) {
+			continue
+		}
+		fmt.Fprintf(&sb, "\n\nCI DETAIL for the %q check your task names (other failing checks, if any, belong to other nodes and are not shown here):\n%s", c.Name, c.Detail)
+	}
 	return sb.String()
 }
 

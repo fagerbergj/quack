@@ -55,8 +55,12 @@ type planResult struct {
 // planner as before. grant is the trigger's computed permission set (#662,
 // nil for a non-GitHub turn) - stamped onto the plan as information for the
 // gate to enforce (vetting.commitDelivery); this tool never rejects a plan
-// over it.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, grant *vetting.Grant) (tool.Tool, error) {
+// over it. workerAsk and ciChecks are the consumer split (#664): workerAsk
+// ("" for a non-GitHub turn) replaces message as what every node's BACKGROUND
+// carries, dropping the orchestrator's evidence (full file list, CI/review
+// summaries) that a node has no use for; ciChecks hands a CI-fix run's
+// per-check annotation detail to whichever node's own task names that check.
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, grant *vetting.Grant, workerAsk string, ciChecks []dag.CICheck) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -104,6 +108,10 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				setup := *githubSetup
 				p.Setup = &setup
 			}
+			// #664: nodes get the ask-only background and per-check CI detail
+			// computed at dispatch, never the orchestrator's own evidence.
+			p.WorkerBackground = workerAsk
+			p.CIChecks = ciChecks
 			if err := dag.OverrideExistingPRHead(p, existingHeadRef); err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}

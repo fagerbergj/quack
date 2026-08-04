@@ -272,6 +272,64 @@ func TestBuildEnvelopeNoContextBlockWithoutDir(t *testing.T) {
 	}
 }
 
+// TestBuildEnvelopeFortyFilePRHasChurnAndFullListNoContentButFullDescription
+// pins #664's test case 1: the orchestrator's envelope for a large PR carries
+// the churn summary and the full file list (names only, no patch content -
+// changedFile has no patch field to begin with), while the PR description
+// still reaches it in full - the split applies to evidence, never the ask.
+func TestBuildEnvelopeFortyFilePRHasChurnAndFullListNoContentButFullDescription(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	body := strings.Repeat("this PR description matters. ", 50)
+	files := make([]changedFile, 40)
+	for i := range files {
+		files[i] = changedFile{Filename: fmt.Sprintf("internal/pkg%d/file.go", i), Additions: 10, Deletions: 5, Status: "modified"}
+	}
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body, Files: files}, 0), vetting.Grant{}, "", nil)
+
+	if !strings.Contains(env, `<changed_files count="40" additions="400" deletions="200">`) {
+		t.Errorf("envelope missing the churn summary for a 40-file PR:\n%s", truncateForLog(env))
+	}
+	for i := range files {
+		if !strings.Contains(env, fmt.Sprintf("internal/pkg%d/file.go", i)) {
+			t.Fatalf("envelope missing changed file %d of 40 - the orchestrator needs the FULL list to cluster by subsystem:\n%s", i, truncateForLog(env))
+		}
+	}
+	if !strings.Contains(env, body) {
+		t.Errorf("envelope missing the full PR description:\n%s", truncateForLog(env))
+	}
+}
+
+// TestBuildWorkerAskOmitsEvidenceKeepsAsk pins #664's other half: a node's
+// background (buildWorkerAsk) carries permissions, deliverable and the ask in
+// full, but never the orchestrator's changed_files evidence.
+func TestBuildWorkerAskOmitsEvidenceKeepsAsk(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	body := "the worker still needs the full description"
+	files := []changedFile{{Filename: "a.go", Additions: 1, Deletions: 1, Status: "modified"}}
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody("review this"), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	grant := vetting.Grant{PostReview: true, JoinPRConversation: true}
+
+	ask := ext.buildWorkerAsk(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body, Files: files}, 0), grant, "")
+
+	if strings.Contains(ask, "changed_files") {
+		t.Errorf("worker ask must not carry the orchestrator's changed_files evidence:\n%s", truncateForLog(ask))
+	}
+	if !strings.Contains(ask, body) {
+		t.Errorf("worker ask missing the full description:\n%s", truncateForLog(ask))
+	}
+	if !strings.Contains(ask, "post_review") {
+		t.Errorf("worker ask missing its permissions:\n%s", truncateForLog(ask))
+	}
+}
+
 // truncateForLog keeps a failed test's diagnostic readable.
 func truncateForLog(s string) string {
 	const max = 4000

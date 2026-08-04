@@ -998,6 +998,21 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 
 	message := e.buildEnvelope(ctx, p, task, gh, grant, ctxDir, ctxFiles)
+	// #664 consumer split: nodes get the ask-only text, never the
+	// orchestrator's evidence - workerAsk replaces `message` as what
+	// dag.Plan.WorkerBackground carries. A CI-fix run's per-check detail
+	// (ciChecks) is fetched here too, once, and handed only to whichever
+	// node's own task names that check (dag.buildTask).
+	workerAsk := e.buildWorkerAsk(ctx, p, task, gh, grant, ctxDir)
+	var ciChecks []dag.CICheck
+	if p.checkSHA != "" {
+		if checks, cerr := e.failingChecks(ctx, owner, repo, p.checkSHA); cerr != nil {
+			slog.Warn("github: CI-check fetch for node-scoped detail failed; nodes get none", "component", "github",
+				"repo", owner+"/"+repo, "issue", number, "err", cerr)
+		} else {
+			ciChecks = ciChecksForNodes(checks)
+		}
+	}
 
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 
@@ -1043,6 +1058,10 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// planner and the gate trust the SAME value the envelope's <permissions>
 	// stated, never a re-derivation of their own.
 	runCtx = tools.WithGrant(runCtx, grant)
+	// #664: workerAsk/ciChecks were also already computed above, alongside
+	// the orchestrator's own envelope - never re-derived from model output.
+	runCtx = tools.WithWorkerAsk(runCtx, workerAsk)
+	runCtx = tools.WithCIChecks(runCtx, ciChecks)
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	// dispatch is ALREADY a goroutine (handleIssues calls it via `go`), so the run
 	// stays INLINE - wrapping it in another goroutine would let this function's

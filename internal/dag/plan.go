@@ -42,6 +42,28 @@ type Plan struct {
 	// enforced (the one mutation chokepoint), not here. nil for a plan with
 	// no GitHub trigger involved.
 	Grant *vetting.Grant
+	// WorkerBackground is what buildTask hands each node as its BACKGROUND
+	// (#664, consumer split): for a GitHub-triggered plan, the ask alone
+	// (permissions, deliverable, title/body/comments) - never the
+	// orchestrator's evidence (full file list, CI/review summaries, raw
+	// event), which a node has no use for and which crowds out its own task.
+	// Empty means "same as UserMessage" - every non-GitHub caller, and any
+	// test that builds a Plan directly, is unaffected.
+	WorkerBackground string
+	// CIChecks are the failing GitHub checks for a CI-fix run, each with its
+	// OWN rendered annotation detail (#664) - the orchestrator only ever saw
+	// their names (deciding how many fix nodes to plan), never this detail.
+	// buildTask hands a check's Detail to a node ONLY when the node's own
+	// Task names that check, so sibling fix nodes never see each other's
+	// annotations. nil for anything but a CI-triggered plan.
+	CIChecks []CICheck
+}
+
+// CICheck is one failing GitHub check, scoped at buildTask time to whichever
+// node's Task names it - see Plan.CIChecks.
+type CICheck struct {
+	Name   string
+	Detail string
 }
 
 // Setup is the plan's declared PRE-step: the working clone + branch the
