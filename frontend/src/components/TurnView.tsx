@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { AssistantText, ActivityList, BubbleHeader } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
+import { TriggerMessage } from './TriggerEnvelope'
 import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, type DagTurnState } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn, DagOutputItem } from '../generated'
@@ -93,13 +94,7 @@ export const TurnView = memo(function TurnView({
           turn has no typed message, just its synthesized task (rendered in
           the DAG bubble below), so there's nothing for this bubble to show. */}
       {!isChoiceAnswer && turn.input.content && (
-        <div className="flex justify-end mb-3">
-          <div className="max-w-2xl ml-auto">
-            <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-              {turn.input.content}
-            </div>
-          </div>
-        </div>
+        <TriggerMessage content={turn.input.content} />
       )}
       {/* Assistant response: DAG bubble → answer bubble, as siblings */}
       <div className="flex justify-start">

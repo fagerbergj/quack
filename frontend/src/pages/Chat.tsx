@@ -12,6 +12,7 @@ import { activityFromTurn, isTurnInProgress, terminalNodeId, pendingNodeQuestion
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
+import { TriggerMessage } from '../components/TriggerEnvelope'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
 // This IS the DAG turn's answer - never mix in the orchestrator's own top-level
@@ -489,14 +490,10 @@ export default function Chat() {
                     (rendered in the DAG bubble below), so there's nothing for this
                     bubble to show. */}
                 {!isChoiceAnswer && (live.userText || liveAttachmentPreviews.length > 0) && (
-                  <div className="flex justify-end mb-3">
-                    <div className="max-w-2xl ml-auto">
-                      <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-                        <AttachmentPreviews previews={liveAttachmentPreviews} />
-                        {live.userText}
-                      </div>
-                    </div>
-                  </div>
+                  <TriggerMessage
+                    content={live.userText}
+                    attachments={<AttachmentPreviews previews={liveAttachmentPreviews} />}
+                  />
                 )}
                 {/* Assistant response: DAG bubble → node question → answer bubble, as siblings */}
                 <div className="flex justify-start">

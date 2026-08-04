@@ -1,0 +1,213 @@
+import { useMemo } from 'react'
+import type { ReactNode } from 'react'
+import { AssistantText } from './AgentParts'
+import { Expandable } from './Expandable'
+import {
+  parseEnvelope,
+  commentsSummaryLabel,
+  changedFilesSummaryLabel,
+  type EnvelopeBlock,
+} from './envelope'
+
+// Re-export the parser so import sites that only need the data (tests) don't
+// have to pull in JSX.
+export * from './envelope'
+
+// TriggerMessage renders the user-turn bubble for a GitHub-triggered chat: the
+// XML-ish envelope (design: .quack/trigger-prompts-v2.md) as collapsible
+// structured sections, permissions/deliverable/ask always visible, everything
+// else collapsed. `content` that doesn't parse as an envelope (a plain typed
+// message, or malformed input) renders exactly as it always has - the plain
+// blue bubble, never a blank message (#667).
+export function TriggerMessage({ content, attachments }: { content: string; attachments?: ReactNode }) {
+  const blocks = useMemo(() => parseEnvelope(content), [content])
+  if (blocks) {
+    return (
+      <div className="flex justify-end mb-3">
+        <div className="max-w-3xl w-full ml-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tr-sm px-5 py-4 space-y-2.5">
+          {blocks.map((b, i) => <EnvelopeBlockView key={i} block={b} />)}
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="flex justify-end mb-3">
+      <div className="max-w-2xl ml-auto">
+        <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+          {attachments}
+          {content}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EnvelopeBlockView({ block }: { block: EnvelopeBlock }) {
+  switch (block.kind) {
+    case 'permissions': return <InfoLine label="Permissions" text={block.text} />
+    case 'deliverable': return <InfoLine label="Deliverable" text={block.text} />
+    case 'ask': return <AskSection block={block} />
+    case 'comments': return <CommentsSection block={block} />
+    case 'changed_files': return <ChangedFilesSection block={block} />
+    case 'event': return <EventSection block={block} />
+    case 'context': return <ContextSection block={block} />
+    case 'unknown': return <UnknownSection block={block} />
+  }
+}
+
+// InfoLine is the always-visible, one-line permissions/deliverable row - the
+// two things a human scanning a run wants first, so they're never behind a click.
+function InfoLine({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="text-xs">
+      <span className="font-semibold text-gray-500 dark:text-gray-400 mr-1">{label}:</span>
+      <span className="text-gray-700 dark:text-gray-200">{text}</span>
+    </div>
+  )
+}
+
+// CollapsibleSection is the shared shell for every collapsed-by-default block
+// - native <details>/<summary>, matching the disclosure pattern already used
+// for tool calls/reasoning (AgentParts) and the DAG "Steps" toggle (TurnView),
+// rather than a second collapse mechanism. Long content inside is separately
+// height-locked with Expandable (below) so a big body can't wall off the page
+// even once opened.
+function CollapsibleSection({ summary, children }: { summary: ReactNode; children: ReactNode }) {
+  return (
+    <details className="rounded-lg border border-gray-200 dark:border-gray-700 not-prose">
+      <summary className="cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
+        {summary}
+      </summary>
+      <div className="px-3 pb-2.5 pt-1">{children}</div>
+    </details>
+  )
+}
+
+// RawFallback is the degrade-gracefully view for a block whose body didn't
+// parse the way this section expects (bad JSON, missing child tags, an
+// unknown tag) - the raw text, never dropped.
+function RawFallback({ text }: { text: string }) {
+  if (!text) return <span className="text-[11px] text-gray-400 dark:text-gray-500 italic">(empty)</span>
+  return (
+    <Expandable maxHeight={240} fade="from-gray-50 dark:from-gray-900">
+      <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-gray-700 dark:text-gray-200">{text}</pre>
+    </Expandable>
+  )
+}
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
+}
+
+// AskSection - <issue>/<pull_request>: title as a heading, description as
+// markdown. Always visible (not collapsible) - it's the thing being worked on.
+function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> }) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+        {block.number && <span className="text-gray-400 dark:text-gray-500 font-normal mr-1">#{block.number}</span>}
+        {block.title || '(untitled)'}
+      </h3>
+      {block.description && <AssistantText text={block.description} />}
+    </div>
+  )
+}
+
+// CommentsSection - collapsed, header is the count or new/edited/deleted
+// delta; expands to the thread. Expandable caps the opened thread's height so
+// a 40-comment backlog doesn't wall off the message (#667 test case).
+function CommentsSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'comments' }> }) {
+  return (
+    <CollapsibleSection summary={commentsSummaryLabel(block)}>
+      {block.comments ? (
+        <Expandable maxHeight={360} fade="from-white dark:from-gray-800">
+          <ul className="space-y-3">
+            {block.comments.map((c, i) => (
+              <li key={c.id ?? i} className="border-l-2 border-gray-200 dark:border-gray-700 pl-3">
+                <div className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500 mb-0.5">
+                  {c.author && <span className="font-medium text-gray-600 dark:text-gray-300">{c.author}</span>}
+                  {c.createdAt && <span>{formatTimestamp(c.createdAt)}</span>}
+                </div>
+                <AssistantText text={c.body} />
+              </li>
+            ))}
+          </ul>
+        </Expandable>
+      ) : <RawFallback text={block.raw} />}
+    </CollapsibleSection>
+  )
+}
+
+// ChangedFilesSection - collapsed, header is "N files, +A/-D"; expands to the
+// per-file churn list.
+function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'changed_files' }> }) {
+  return (
+    <CollapsibleSection summary={changedFilesSummaryLabel(block)}>
+      {block.files ? (
+        <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
+          <ul className="space-y-0.5 text-[11px] font-mono">
+            {block.files.map((f, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span className="truncate text-gray-700 dark:text-gray-200">{f.filename}</span>
+                <span className="ml-auto shrink-0 tabular-nums space-x-1.5">
+                  {f.additions != null && <span className="text-green-600 dark:text-green-400">+{f.additions}</span>}
+                  {f.deletions != null && <span className="text-red-500 dark:text-red-400">-{f.deletions}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Expandable>
+      ) : <RawFallback text={block.raw} />}
+    </CollapsibleSection>
+  )
+}
+
+// EventSection - collapsed, header is the event name; expands to
+// pretty-printed JSON. Routed through AssistantText's own ```json fence so it
+// gets the same rehype-highlight syntax colouring as any other code block,
+// rather than a second highlighter.
+function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event' }> }) {
+  const body = block.pretty ?? block.raw
+  return (
+    <CollapsibleSection summary={<code className="font-mono">{block.name ?? 'event'}</code>}>
+      <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
+        <AssistantText text={'```json\n' + body + '\n```'} />
+      </Expandable>
+    </CollapsibleSection>
+  )
+}
+
+// ContextSection - collapsed, header is the file count; expands to filenames
+// with the endpoint each came from.
+function ContextSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'context' }> }) {
+  const n = block.files.length
+  return (
+    <CollapsibleSection summary={`${n} file${n === 1 ? '' : 's'}`}>
+      {n === 0 ? (
+        <span className="text-[11px] text-gray-400 dark:text-gray-500 italic">no context files</span>
+      ) : (
+        <ul className="space-y-0.5 text-[11px] font-mono">
+          {block.files.map((f, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="text-gray-700 dark:text-gray-200 shrink-0">{f.name}</span>
+              <span className="text-gray-400 dark:text-gray-500 truncate">{f.endpoint}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </CollapsibleSection>
+  )
+}
+
+// UnknownSection - a block type this view doesn't recognise renders as a
+// labelled collapsed section with its raw content rather than being dropped
+// (#667's hardest requirement: a viewer silently missing part of the trigger
+// is worse than an ugly one).
+function UnknownSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'unknown' }> }) {
+  return (
+    <CollapsibleSection summary={<code className="font-mono">{`<${block.tag}>`}</code>}>
+      <RawFallback text={block.raw} />
+    </CollapsibleSection>
+  )
+}
