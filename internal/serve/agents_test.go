@@ -73,3 +73,40 @@ func TestCodeImplementerBundle(t *testing.T) {
 		}
 	}
 }
+
+// TestCodeReviewerBundlePrefersStaging pins #639: staging the review must be
+// the imperative and the structured tail a conditional fallback, not a
+// standing instruction that invites writing every finding twice.
+func TestCodeReviewerBundlePrefersStaging(t *testing.T) {
+	b, err := agent.LoadBundle("../../agents/code-reviewer")
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	prompt := b.Prompt
+
+	// Staging is commanded, not merely described.
+	for _, marker := range []string{"Stage the review as you go", "call `stage_review_comment`"} {
+		if !strings.Contains(prompt, marker) {
+			t.Errorf("prompt missing staging imperative %q", marker)
+		}
+	}
+
+	// The tail is gated behind a condition (tools absent), not unconditional.
+	if !strings.Contains(prompt, "are not in your tool list") {
+		t.Error("prompt does not condition the structured tail on the staging tools being unavailable")
+	}
+	if strings.Contains(prompt, "the two never conflict") {
+		t.Error("prompt still invites writing both the staged review and the tail")
+	}
+
+	// The summary must not restate findings already staged inline, and must
+	// not open with process narration.
+	if !strings.Contains(prompt, "restatement of findings already staged inline") {
+		t.Error("prompt does not forbid restating staged findings in the summary")
+	}
+	for _, narration := range []string{"Now I have a complete picture", "Let me compile my findings"} {
+		if !strings.Contains(prompt, narration) {
+			t.Errorf("prompt does not name and forbid the process-narration lead %q", narration)
+		}
+	}
+}
