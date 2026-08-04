@@ -46,7 +46,7 @@ The Planner optionally carries a `PlanJudge` instance (`vetting.PlanJudge`). The
 
 [`internal/dag/nativegraph.go`](/internal/dag/nativegraph.go) constructs the ADK workflow graph:
 
-1. **Setup phase** - `runPlanSetup` provisions clones per the plan's declared Setup (repo URL, base ref). Nodes that share a repo chain resolve to `SharedRepoScope`; each independent node gets its own `NodeDir`.
+1. **Setup phase** - `runPlanSetup` provisions clones per the plan's declared Setup (repo URL, base ref). Nodes that share a repo chain resolve to `SharedRepoScope`; each independent node gets its own `NodeDir`. For a GitHub-originated run, the plan tool replaces whatever Setup the planner declared with deterministic facts (repo/base_ref) the webhook dispatch already stamped off the triggering event - a GitHub-triggered plan's Setup never depends on the model getting them right.
 2. **BuildGateNodes** - wraps each node's worker in `vetting.RunGatedRefine`. This is where every agent output passes the trust gate before propagating downstream.
 3. **Topological execution** - the plan runs as ONE native ADK workflow graph under one runner with `WithMaxConcurrency`. All nodes share one workflow session (id = chatID), isolated by branch + isolation scope.
 
@@ -70,10 +70,12 @@ See also: [Streaming Vocabulary](/architecture/overview.md#streaming-vocabulary)
 |---------|---------|
 | `delivered` | Work reached its destination (PR pushed, review posted) |
 | `draft` | Judge passed but a gate-failed dependency carried through; PR opened as draft |
-| `failed` | Delivery attempt failed (push rejected, API error) |
+| `failed` | Delivery attempt failed (push rejected, API error, or refused by the trigger's permission grant) |
 | `none` | Phantom-success class - judge passed but no delivery attempt was recorded at all |
 
 The gate owns delivery (`commitDelivery` → GitHub extension). It fires exactly once per work item, and a gate-failed PR opens as a draft rather than being discarded. Ground-truth probes in [`internal/vetting/gitprobe.go`](/internal/vetting/gitprobe.go) (`augmentFromRepo`) read commits/changed files off the clone to synthesize staged PRs; [`internal/vetting/answerreview.go`](/internal/vetting/answerreview.go) (`augmentFromAnswer`) parses a reviewer's `VERDICT:`/`FINDINGS:` tail into staged reviews with inline comments.
+
+For a GitHub-triggered run, `commitDelivery` also partitions staged items against `Plan.Grant` (`vetting.Grant`, computed once at webhook dispatch from labels, PR authorship, and a fork check) before any of them reach the extension - this is the run's ONE actual permission enforcement point, not the DAG plan or the worker's own staging calls. An item the grant doesn't cover is refused, logged at error level, and reported as a `failed` `delivery_result`; a plan with no GitHub trigger carries a nil `Grant`, which permits everything.
 
 ## Human-in-the-Loop (HITL)
 
@@ -83,6 +85,8 @@ Workers can pause execution by calling the `ask_user` tool. The gate detects thi
 
 - **Plan judge plan scoring** (commit 30fefb4): Tightened the plan quality rubric for verification, actionability, and honesty; replaced regex routing backstop with `vetting.PlanJudge`.
 - **Delivery result as OTel signal** (commit be43498): `delivery_result` is now emitted as a durable stream event independent of the judge verdict, distinguishing phantom "gate passed" successes from actual delivery outcomes.
+- **Trigger permission grants enforced at delivery** (#675): `commitDelivery` now refuses any staged item the run's `Plan.Grant` doesn't cover, closing a hole where a GitHub-triggered plan could stage (and ship) a review or PR push nothing had actually authorized.
+- **Consumer split for GitHub trigger evidence** (#679): `Plan.WorkerBackground` and `Plan.CIChecks` give individual nodes an ask-only slice of a GitHub trigger's context, separate from the orchestrator's full-scale envelope (`internal/github/envelope.go`) - see [`docs/extensions/github.md`](/docs/extensions/github.md) for the envelope shape.
 
 ## Related Concepts
 

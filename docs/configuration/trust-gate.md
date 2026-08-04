@@ -60,3 +60,5 @@ Independence still holds: the planner writes the rubric, a different model does 
 ## Delivery
 
 For a code-implementer node, the gate - not the worker - owns delivery: `commitDelivery` pushes the work branch and opens the PR exactly once, after the gate is satisfied. A gate-failed node still opens its PR, but as a draft, so a human reviewer can see what was attempted without it looking like a finished, self-approved change.
+
+On a GitHub-triggered run, `commitDelivery` is also where the trigger's computed permission grant (see [extensions/github.md](../extensions/github.md#permissions-the-grant)) is actually enforced: it's the one place a run can reach GitHub at all, so a staged item outside the grant - a review on a run never granted `post_review`, say - is refused there regardless of what the plan declared or the worker staged. The refusal is loud: logged at error level and reported as a failed delivery, never a silent drop.
