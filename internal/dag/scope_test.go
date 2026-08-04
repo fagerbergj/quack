@@ -5,19 +5,11 @@ import (
 	"testing"
 )
 
-// A node must be told that the verbatim user request is BACKGROUND, and that the rest
-// of it belongs to its siblings.
-//
-// The live failure (code-mode dogfood, 2026-07-13): every node is handed the user's
-// full request as context. The request spelled out three phases - research OpenHands,
-// goose and quack; synthesize a design for quack; implement it. The `goose` explorer
-// finished reading goose, then read the brief it had been given "for context", saw
-// "PHASE 2 - SYNTHESIZE A PLAN FOR QUACK … quack is Go, its tools are in internal/tools",
-// and went off and cloned quack - which was the concurrently-running `quack-repo` node's
-// entire job. Two nodes, one job; the duplicate work is discarded.
-//
-// Nothing in the prompt marked the request as background, and nothing told the node its
-// siblings existed. It was being helpful.
+// A node must be told that the verbatim user request is BACKGROUND, and that
+// the rest of it belongs to its siblings. Regression: an explorer read the
+// full multi-phase request "for context," saw a later phase's instructions,
+// and went off and did a sibling node's job. Nothing marked the request as
+// background, and nothing told the node its siblings existed.
 func TestBuildTaskMarksTheRequestAsBackgroundAndNamesTheSiblings(t *testing.T) {
 	plan := Plan{
 		UserMessage: "Research OpenHands, goose and quack. PHASE 2 - synthesize a plan for quack. PHASE 3 - implement it.",

@@ -15,20 +15,14 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// TestConsultAdvisor_ConcurrentSameThreadDBService pins the live 2026-07-09
-// stale-session fix: ADK executes a model turn's function calls in CONCURRENT
-// goroutines (llminternal/base_flow.go handleFunctionCalls), so two
-// ask_advisor calls for the SAME thread can run at once. Each consult spins
-// its own runner lifecycle (Get/Create → append) holding its own localSession
-// snapshot of the one advisor session row; the database service's optimistic
-// stale check (session/database/service.go applyEvent) rejects the loser's
-// append ("stale session error"). InMemoryService has no such check - which
-// is why the original tests missed it; this test runs against the REAL
-// database-backed service (sqlite dialect of the production Postgres one).
-//
-// With the per-thread serialization + stale retry in consultAdvisor, every
-// concurrent consult must succeed and all requests must land in the ONE
-// advisor session, in some order.
+// TestConsultAdvisor_ConcurrentSameThreadDBService pins a real bug: ADK runs
+// a turn's function calls in CONCURRENT goroutines, so two ask_advisor calls
+// for the SAME thread can race - each spins its own runner lifecycle holding
+// a stale localSession snapshot, and the database service's optimistic check
+// rejects the loser's append ("stale session error"); InMemoryService has no
+// such check, which is why earlier tests missed it. With per-thread
+// serialization + stale retry in consultAdvisor, every concurrent consult
+// must succeed and land in the ONE advisor session.
 func TestConsultAdvisor_ConcurrentSameThreadDBService(t *testing.T) {
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

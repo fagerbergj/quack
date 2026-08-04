@@ -6,17 +6,13 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// validateRepoChain rejects a plan that declares Setup (a shared clone+branch,
-// see runPlanSetup) but whose WRITER nodes (implementer - the only agent that
-// still resolves directly into the shared clone, see workspaceNodeID) are not
-// totally ordered by depends_on: two such nodes that could run concurrently
-// would both write to the ONE shared working tree and corrupt it. A
-// read-only qualifying node (reviewer, explorer) never shares that risk - it
-// gets its own linked git worktree (see worktreeParentID) - so it needs no
-// ordering here regardless of how many run concurrently. A plan with fewer
-// than 2 writer nodes is always fine; a plan.Setup == nil plan is untouched -
-// each repo-touching node still gets its own independent clone
-// (setupQualifyingNodes), so concurrent ones don't share anything to corrupt.
+// validateRepoChain rejects a plan that declares Setup (a shared clone+branch)
+// whose WRITER nodes (implementer, the only agent resolving into the shared
+// clone) aren't totally ordered by depends_on: concurrent writers would both
+// mutate the ONE shared working tree and corrupt it. Read-only nodes
+// (reviewer, explorer) are exempt - each gets its own linked worktree. A
+// plan.Setup == nil plan is untouched: every repo-touching node gets its own
+// independent clone, so concurrency there is safe.
 func validateRepoChain(plan Plan) error {
 	if plan.Setup == nil {
 		return nil
@@ -63,17 +59,13 @@ func ancestors(nodes []Node, id string) map[string]bool {
 	return out
 }
 
-// workspaceNodeID returns the workspace-relative "node" identifier a plan
-// node's fs/git tools and deterministic checks resolve into (see
-// workspace.NodeDir, vetting.Config.NodeID). The plan's WRITER
-// (implementerAgent - the only setup-qualifying agent left that mutates the
-// shared branch) resolves directly into the ONE shared clone
+// workspaceNodeID returns the workspace-relative "node" identifier a node's
+// fs/git tools and deterministic checks resolve into. The WRITER
+// (implementerAgent) resolves directly into the ONE shared clone
 // (workspace.SharedRepoScope); validateRepoChain guarantees at most one
-// writer runs at a time. A read-only qualifying node (reviewer, explorer)
-// keeps its own dir (node.ID) here too, exactly like every other node - but
-// that dir is provisioned as a linked git worktree off the shared clone, not
-// an independent one, when worktreeParentID says so (internal/acp's
-// resolveNode is what actually creates it).
+// writer runs at a time. A read-only node (reviewer, explorer) keeps its own
+// dir (node.ID) but that dir is provisioned as a linked worktree off the
+// shared clone, not an independent one, when worktreeParentID says so.
 func workspaceNodeID(plan Plan, node Node) string {
 	if plan.Setup != nil && node.AgentName == implementerAgent {
 		return workspace.SharedRepoScope

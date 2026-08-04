@@ -1,19 +1,18 @@
-// Package tools' guard ladder (see .quack/plan-pr5-tool-schemas.md §4b): a
-// wrapper applied at tool-registration time (registry.go's Build) around any
-// tool named in workspace.guards, escalating a risky call through up to two
-// tiers above the deterministic Tier-0 walls (the fs/git tools' path jail, and
-// the OS sandbox + rlimits around their child processes - unconditional, never
-// bypassed by a guard result). "No shell" is NOT one of those walls: a
-// sandboxed run_command takes a real shell command line (workspace.RunShell),
-// and the judge tier is what decides what that command may do:
+// Package tools' guard ladder: a wrapper applied at tool-registration time
+// around any tool named in workspace.guards, escalating a risky call through
+// up to two tiers above the deterministic Tier-0 walls (the fs/git tools'
+// path jail, and the OS sandbox + rlimits around child processes -
+// unconditional, never bypassed by a guard result). "No shell" is NOT one of
+// those walls: run_command takes a real shell command line
+// (workspace.RunShell), and the judge tier is what decides what that command
+// may do.
 //
-//   - judge   - an independent safety-judge model call decides allow/deny.
-//     Deny returns the refusal AS THE TOOL'S RESULT; the tool never executes.
-//   - confirm - the node pauses for a human approve/deny, riding the exact
-//     node-level pause/resume mechanism ask_user already proves out
-//     (workflow.ResumeOrRequestInput; see internal/vetting/confirm.go).
+//   - judge   - an independent safety-judge model call decides allow/deny;
+//     a deny returns the refusal AS THE TOOL'S RESULT, never executing.
+//   - confirm - the node pauses for human approve/deny, riding ask_user's
+//     pause/resume mechanism (workflow.ResumeOrRequestInput).
 //
-// judge+confirm runs both: judge first (a denial short-circuits before ever
+// judge+confirm runs both: judge first (a denial short-circuits before
 // asking a human), confirm second.
 package tools
 
@@ -147,15 +146,13 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	if g.tier.Confirm {
 		// ADK-NATIVE confirmation request: RequestConfirmation records the
 		// pending confirmation on this call's EventActions, and the llm flow
-		// then emits an `adk_request_confirmation` FunctionCall event
-		// (toolconfirmation.FunctionCallName) carrying the original call -
-		// which is what the trust gate's scanNodeConfirms watches for to park
-		// the NODE (internal/vetting/confirm.go). Returning
-		// tool.ErrConfirmationRequired (the same sentinel functiontool's own
-		// RequireConfirmation path uses) makes this call's own response the
-		// standard "requires confirmation" error, and SkipSummarization ends
-		// the worker's turn so the gate sees an empty draft + the pending
-		// confirmation, exactly like an ask_user pause.
+		// emits an adk_request_confirmation FunctionCall event that
+		// scanNodeConfirms watches for to park the NODE. Returning
+		// tool.ErrConfirmationRequired (functiontool's own sentinel) makes
+		// this call's response the standard "requires confirmation" error,
+		// and SkipSummarization ends the worker's turn so the gate sees an
+		// empty draft + the pending confirmation, exactly like an ask_user
+		// pause.
 		hint := fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", g.Name())
 		if mismatch {
 			hint = fmt.Sprintf("Approve running %s? NOTE: this operation DIFFERS from the one you previously "+
@@ -176,21 +173,17 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 }
 
 // confirmDecision fetches the WORKFLOW session - where every confirm event
-// lives (the adk_request_confirmation calls, the human's resume
-// FunctionResponse, and the GuardResolvedKey consumption markers) - and asks
-// vetting.ConfirmDecision whether the CURRENT call (this exact tool name +
-// arguments) is the resolution of a just-answered confirm pause. mismatched
-// reports a live decision pinned to DIFFERENT arguments (see Run).
+// lives - and asks vetting.ConfirmDecision whether the CURRENT call is the
+// resolution of a just-answered confirm pause. mismatched reports a live
+// decision pinned to DIFFERENT arguments (see Run).
 //
 // The session coordinates come from the guard-thread registry (guardSession),
-// NEVER from this tool context's own AppName()/UserID()/SessionID(): over the
-// A2A hop the tool executes inside the A2A server's runner, where those name
-// the A2A context session - a fresh per-round session that holds none of the
-// gate's events. Scanning it found nothing, so every approved re-issue looked
-// like a brand-new proposal and re-asked for confirmation forever (a live
-// failure). The gate registers the workflow coordinates per thread token at
-// node entry (dag.newGatedNode → vetting.RegisterAdvisorThread), for
-// co-located and A2A workers alike - one lookup path.
+// NEVER from this tool context's own AppName()/UserID()/SessionID(): over
+// the A2A hop those name the A2A context session, a fresh per-round session
+// holding none of the gate's events - scanning it would re-ask for
+// confirmation on every approved re-issue. The gate registers the workflow
+// coordinates per thread token at node entry (dag.newGatedNode →
+// vetting.RegisterAdvisorThread), for co-located and A2A workers alike.
 func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (approved, matched, mismatched bool) {
 	if g.sessions == nil {
 		return false, false, false

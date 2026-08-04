@@ -19,19 +19,17 @@ const (
 )
 
 // transitions is the legal edge set of the node-status state machine. Every
-// status write in the system (executor, gate, control, store) routes through
-// CanTransition - an edge missing here is a bug (logged), not a silent write.
+// status write routes through CanTransition - a missing edge is a bug
+// (logged), not a silent write.
 //
-//	queued      → running (node dispatched), cancelled (user cancel), failed (stale-on-restart)
-//	running     → paused (user pause), needs_input (HITL pause), done, failed, cancelled
-//	paused      → running (resume: a fresh re-run, like retry), cancelled
-//	needs_input → running (resumed with the user's answer), cancelled
-//	done        → queued (retry)
-//	failed      → queued (retry)
-//	cancelled   → queued (retry)
+//	queued      → running, cancelled, failed (stale-on-restart)
+//	running     → paused, needs_input (HITL), done, failed, cancelled
+//	paused      → running (resume = fresh re-run), cancelled
+//	needs_input → running (resumed with answer), cancelled
+//	done/failed/cancelled → queued (retry)
 //
-// A running node no longer self-loops on "running" - steering it is now
-// queueing a message (POST .../queue), which doesn't change its status.
+// A running node no longer self-loops on "running" - steering it is queueing
+// a message, which doesn't change its status.
 var transitions = map[NodeStatus]map[NodeStatus]bool{
 	StatusQueued: {
 		StatusQueued:    true, // idempotent re-queue (initial persist, retry fan-out)

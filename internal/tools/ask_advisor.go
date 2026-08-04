@@ -71,34 +71,20 @@ type askAdvisorResult struct {
 }
 
 // NewAskAdvisorTool returns ask_advisor: a worker consults its advisor at
-// its own discretion, as many times as it likes. Construction
-// takes the advisor agent and the shared session.Service; a nil advisor is
-// tolerated defensively (production never registers the tool in that case -
-// see resolveToolNames in internal/serve) and always yields empty advice.
+// its own discretion. A nil advisor is tolerated defensively (production
+// never registers the tool in that case) and always yields empty advice.
 //
 // The handler derives the calling node's identity from the advisor-thread
-// marker the gate stamps into every worker prompt (dag.newGatedNode →
-// vetting.AdvisorThreadMarker), read back out of tc.UserContent(). That is
-// the ONLY channel that survives the production A2A hop: the tool executes
-// inside the worker's A2A server runner (internal/agent.Serve), where the
-// calling runner's session, state, NodeInfo, and branch are all invisible -
-// but the prompt IS the inbound A2A message, and UserContent is fixed before
-// the model ever runs, so the read is deterministic and race-free. The token keys a
-// persistent PER-NODE advisor session (`<plan>/<node>:advisor`), so the
-// mentor's memory survives gate rounds (draft → revision), steered re-runs,
-// and HITL pause/resume - the gate re-derives the same token from plan+node
-// every round - but never interleaves between concurrent nodes or across
-// plans. On a thread's first consult the session opens with the node's task +
-// acceptance rubric (from the registry dag.newGatedNode fills - see
-// vetting/advisor_thread.go), so the mentor knows the desired outcome from
-// its very first reply.
+// marker the gate stamps into every worker prompt, read back out of
+// tc.UserContent() - the ONLY channel that survives the production A2A hop,
+// where the calling runner's session/state/NodeInfo are invisible. The
+// token keys a persistent PER-NODE advisor session, so the mentor's memory
+// survives gate rounds, steered re-runs, and HITL pause/resume, but never
+// interleaves across nodes or plans. A prompt without a marker (un-gated
+// invocation) falls back to a per-conversation thread, unseeded.
 //
-// A prompt WITHOUT a marker (the agent invoked directly, outside any gated
-// node) falls back to a per-conversation thread keyed by the calling app +
-// session - the mentor still works, it just isn't task-seeded.
-//
-// Errors (a broken session store, an advisor model failure) return empty
-// advice with a logged warning - best-effort, never fails the calling worker.
+// Errors return empty advice with a logged warning - best-effort, never
+// fails the calling worker.
 func NewAskAdvisorTool(advisor adkagent.Agent, sessions session.Service) (tool.Tool, error) {
 	return functiontool.New[askAdvisorArgs, askAdvisorResult](
 		functiontool.Config{
@@ -151,18 +137,13 @@ func contentText(c *genai.Content) string {
 	return sb.String()
 }
 
-// advisorThreadLocks serializes consults PER THREAD TOKEN. ADK executes a
-// model turn's function calls in concurrent goroutines (llminternal/
-// base_flow.go handleFunctionCalls), so one worker turn can fire two
-// ask_advisor calls at once - two runner lifecycles (Get/Create → append)
-// each holding its own localSession snapshot of the SAME advisor session row.
-// Under the database service's optimistic locking the loser's append dies
-// with "stale session error", the create race dies
-// with a UNIQUE violation, and a double Get-miss double-seeds the thread.
-// Serializing per token removes all three at the source and is the right
-// conversation shape anyway (two simultaneous questions to one mentor are
-// sequential turns); consults on DIFFERENT threads (concurrent nodes) don't
-// contend. Entries are tiny and reusable; they are not deleted.
+// advisorThreadLocks serializes consults PER THREAD TOKEN. ADK runs a
+// model turn's function calls in concurrent goroutines, so one worker turn
+// can fire two ask_advisor calls at once, racing the same advisor session
+// row (stale-session error, UNIQUE violation on create, or a double seed).
+// Serializing per token removes all three and matches the natural
+// conversation shape; different threads (concurrent nodes) never contend.
+// Entries are tiny and reusable; never deleted.
 var advisorThreadLocks sync.Map
 
 func advisorThreadLock(token string) *sync.Mutex {

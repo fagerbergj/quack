@@ -13,17 +13,14 @@ import (
 )
 
 // repeatGuard breaks identical-call loops: a model that re-issues the exact
-// same tool call (name + args) consecutively is not gathering new information -
-// it has wedged on a repetition attractor. Measured in dogfooding with full
-// request-tail instrumentation: the harness delivered every result and the
-// model repeated anyway (611× `git log`, 26× the same read_file), wedging nodes
-// for hours. Sampling penalties can't reliably reach across large tool results
-// (one 20 KB read ≈ 5K tokens vs a finite penalty window), so the backstop
-// lives here: from the third consecutive identical call, the call is REFUSED
-// with a steering error instead of executed. The refusal text changes each time
-// (attempt counter), so the refusals themselves never form an identical loop.
-// The gate's node-level caps remain the hard stop; this guard exists to steer
-// the model out of the loop while its context is still small.
+// same tool call (name + args) consecutively is not gathering new
+// information - it has wedged on a repetition attractor (a live case wedged
+// nodes for hours: 611 identical `git log` calls in a row). Sampling
+// penalties can't reliably reach across large tool results, so from the
+// third consecutive identical call, the call is REFUSED with a steering
+// error (refusal text varies, so refusals themselves never loop). The
+// gate's node-level caps remain the hard stop; this steers the model out
+// while its context is still small.
 type repeatGuard struct {
 	inner  runnableTool
 	states *repeatStates
@@ -125,21 +122,16 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 }
 
 // pathFailThreshold is the consecutive-FAILED-call count against the same
-// (tool, resource) - regardless of the other args - a resource may accumulate
-// before the NEXT call against it is refused outright. Catches the
-// semantic-churn case the byte-identical guard above misses: an agent
-// re-reading/re-grepping the same path with a varying offset/pattern/line
-// number each try, never repeating the exact args, but never learning the
-// path itself is the problem (#306). A failed call always runs (its result -
-// the actual error - is informative); only once pathFailThreshold of them
-// have run consecutively does the guard step in and refuse the next one
-// without executing it, so a genuinely stuck loop costs at most
-// pathFailThreshold wasted calls before it's caught. Deliberately narrower
-// than fuzzy call-similarity (rejected: false-positive risk on legitimate
-// paging/iteration). Resource extraction only covers tools with a `path` or
-// `url` arg (fs/fetch tools); tools without one are simply not covered by
-// this check. Upgrade path if a false positive shows up: require the
-// failure's error text to repeat too, not just the (tool, resource) pair.
+// (tool, resource) - regardless of other args - before the NEXT call
+// against it is refused outright. Catches the semantic-churn case the
+// byte-identical guard misses: varying args each try, never repeating
+// exactly, but never learning the resource itself is the problem. A failed
+// call always runs (its error is informative); only once pathFailThreshold
+// have run consecutively does the guard refuse the next one unexecuted.
+// Deliberately narrower than fuzzy call-similarity (rejected: false-positive
+// risk on legitimate paging/iteration); only covers tools with a `path` or
+// `url` arg. Upgrade path on a false positive: also require the failure's
+// error text to repeat, not just the (tool, resource) pair.
 const pathFailThreshold = 3
 
 // Run executes the call unless it trips one of two loop breakers:

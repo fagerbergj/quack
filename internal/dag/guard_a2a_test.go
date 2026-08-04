@@ -1,15 +1,12 @@
 package dag_test
 
-// Guard-ladder confirm tier over the A2A hop - the boundary that already bit
-// ask_advisor twice (see TestAskAdvisor_OverA2A) and then bit the guard live:
-// a guarded tool executes inside the A2A SERVER's runner, whose own context
-// session (AppName = the agent name, fresh per gate round) holds NONE of the
-// confirm pause/resume events. The guard used to scan THAT session, found
-// nothing, and re-requested confirmation on every approved re-issue - the
-// approval could never be consumed. These tests run the full production
-// shape: gated node → A2A client → loopback A2A server → worker llmagent with
-// a REAL confirm-guarded tool (delete_path via tools.Build) → pause → human
-// decision → resume, over the durable DB-backed session service.
+// Guard-ladder confirm tier over the A2A hop: a guarded tool executes inside
+// the A2A server's own runner session, which holds none of the confirm
+// pause/resume events - scanning it found nothing and re-requested
+// confirmation on every approved re-issue, so the approval could never be
+// consumed. Exercises the full production shape: gated node → A2A
+// client/server → confirm-guarded tool → pause → resume, over the durable
+// DB-backed session service.
 
 import (
 	"context"
@@ -285,17 +282,11 @@ func TestGuardConfirm_OverA2A_ApprovalConsumed(t *testing.T) {
 }
 
 // guardReviseA2AStub raises the guard confirmation only during a JUDGE-FAIL
-// REVISION, not on the initial draft - mirroring the live safety bug
-// (2026-07-12): the code-implementer wrote code on its first draft, the judge
-// flagged it incomplete ("not delivered"), and only THEN, in the revise round
-// (worker-r3), did the worker commit and call git_push (the confirm-tiered
-// tool). The gate's pause check ran solely after the initial draft, so the
-// confirmation was never surfaced and the unconfirmed answer sailed to the
-// judge, which passed it. This stub reproduces that shape over A2A:
-//   - judge round 1 FAILS (forcing a revision); later rounds pass;
-//   - the DRAFT worker turn writes a plain answer with NO guarded op;
-//   - the REVISION worker turn proposes delete_path (→ confirm pause);
-//   - post-approval, the same call re-issues and executes; then a final answer.
+// REVISION, not the initial draft - reproducing the bug where the gate's
+// pause check ran only after the initial draft, so a confirm-tiered op first
+// proposed during revision never surfaced and sailed to the judge unconfirmed.
+// Shape: draft turn writes plain text (no guarded op) → judge fails →
+// revision turn proposes delete_path (confirm pause) → approval → re-issue.
 type guardReviseA2AStub struct {
 	mu     sync.Mutex
 	calls  int

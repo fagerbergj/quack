@@ -1,19 +1,9 @@
 package dag_test
 
 // Concurrent plan nodes that share ONE agent must each get their OWN task over
-// the A2A hop.
-//
-// The live bug: a plan with five concurrent code-explorer nodes (one repo each)
-// had the OpenHands node run `git_clone https://github.com/block/goose` - the
-// goose node's task. Cause (ADK v2.0.0
-// agent/remoteagent/v2/utils.go:93, toMissingRemoteSessionParts): the remote
-// agent picks which remote A2A session to continue by scanning the ADK session
-// backward for the first event whose Author == ctx.Agent().Name() and reusing
-// THAT event's A2A contextID. Every node running the same agent authors its
-// events with the same plain agent name, and all plan nodes share ONE workflow
-// session, so a node's scan matches a SIBLING's event and adopts the sibling's
-// remote session - inheriting its task and history (and truncating its own
-// prompt out of the outbound message).
+// the A2A hop: ADK's remote-agent scans the shared workflow session backward
+// for the first event authored by the agent's name and reuses that event's
+// A2A session, so same-agent siblings can adopt each other's remote task.
 
 import (
 	"context"

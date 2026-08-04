@@ -20,20 +20,16 @@ import (
 const toolsScope = "quack.tools"
 
 // emitTool is the OUTERMOST wrapper on every tool this registry builds: it
-// records one execute_tool ledger event per call, capturing what actually
-// ran (including a guard denial or cancel refusal - final observable
-// behavior, the same thing replay needs to reproduce).
+// records one execute_tool ledger event per call, capturing the final
+// observable behavior (including a guard denial or cancel refusal) - the
+// same thing replay needs to reproduce.
 //
-// coords, when set, stamps node/agent (never round - a tool is built once
-// per agent, before any round exists, and reused across every round of
-// it), taking precedence over ctx: the same context-reconstruction issue
-// inference.tracedModel.SetLedgerCoords works around for the model call
-// also loses a context.WithValue stamp before it reaches a tool call. Zero
-// value falls back to ctx (ledger.CoordsFromContext, via otelobs.EmitLog).
-// Mutable (SetLedgerCoords), not just constructor-set: a builtin tool is
-// built ONCE per configured agent (tools.Build, at server startup) and
-// reused by every DAG node that agent runs - a node's identity isn't known
-// until it actually runs, long after the tool exists.
+// coords, when set, stamps node/agent (never round) and takes precedence
+// over ctx: a context.WithValue stamp doesn't survive to a tool call any
+// more than it does to a model call (see inference.tracedModel). It's
+// mutable (SetLedgerCoords), not constructor-set, because a tool is built
+// ONCE per configured agent at server startup and reused by every DAG node
+// that agent runs - a node's identity isn't known until it actually runs.
 type emitTool struct {
 	inner runnableTool
 
@@ -61,16 +57,12 @@ func EmitWrapForTesting(t tool.Tool, coords ledger.Coords) (tool.Tool, error) {
 	return emitWrap(t, coords)
 }
 
-// SetLedgerCoords updates the coordinates every SUBSEQUENT call stamps -
-// implements ledger.CoordSetter, the runtime twin of Deps.LedgerCoords/the
-// emitWrap constructor argument, for a caller (dag.buildGateNodes, via
-// ledger.StampCoords) that only learns a node's identity when the node
-// actually runs, after Build already built this tool. Same mechanism and
-// the same known ceiling as inference.tracedModel.SetLedgerCoords: correct
-// for one node's own sequential rounds; a shared tool instance used by two
-// DIFFERENT DAG nodes running CONCURRENTLY (same agent, parallel plan
-// nodes, or two chats at once) can still race - see that method's doc
-// comment.
+// SetLedgerCoords updates the coordinates every SUBSEQUENT call stamps, for
+// a caller that only learns a node's identity when the node runs, after
+// Build already built this tool. Same known ceiling as
+// inference.tracedModel.SetLedgerCoords: correct for one node's own
+// sequential rounds, but a shared tool used by two DIFFERENT DAG nodes
+// running CONCURRENTLY can still race.
 func (e *emitTool) SetLedgerCoords(c ledger.Coords) {
 	e.mu.Lock()
 	e.coords = c

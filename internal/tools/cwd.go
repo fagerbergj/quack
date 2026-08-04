@@ -11,16 +11,12 @@ import (
 )
 
 // CwdKey is the session-state key the `cd` tool stores the agent's working
-// directory under: a NODE-relative, slash-separated path ("" or "." = the node's
-// own root, where every worker starts).
-//
-// NODE-relative, not chat-relative: the node's directory is an INVISIBLE ROOT,
-// applied exactly once at the final jail join (jailPath), so the model speaks
-// exactly ONE namespace in every tool's arguments and results. (A chat-relative
-// cwd once leaked the node dir and split the namespace in two.)
-//
-// It lives in ctx.State(), not an in-process field, so it survives compaction and
-// reconnect and never leaks across sessions.
+// directory under: a NODE-relative, slash-separated path ("" or "." = the
+// node's own root). NODE-relative, not chat-relative: the node dir is an
+// INVISIBLE ROOT applied once at the final jail join (jailPath), so the
+// model speaks ONE namespace in every tool's arguments and results. Lives
+// in ctx.State(), not an in-process field, so it survives compaction and
+// reconnect.
 const CwdKey = "workspace.cwd"
 
 // cwdFromState reads the session working directory (CwdKey) from ctx's state.
@@ -71,21 +67,14 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 	return at.SessionID, workspace.NodeDir(wsID)
 }
 
-// jailPath turns a path the MODEL wrote (node-relative, or "/"-prefixed) into the
-// chat-relative path Jail.Resolve takes. It is the ONE place the node dir - the
-// invisible root - is applied, which is what keeps it out of every tool argument
-// and every tool result. Precedence (predictable and jail-safe):
-//
-//   - a path beginning with "/" is absolute WITHIN THE NODE'S OWN WORKSPACE: the cwd
-//     is ignored, the node dir is still applied. (It used to mean the CHAT root -
-//     the last way one node could reach a sibling's clone, and it made a reported
-//     absolute cwd un-echoable. One root, one namespace.)
-//   - every other path is node-relative: applied to the cwd (joinCwd), then rooted
-//     at the node dir.
-//
-// The result still flows through Jail.Resolve, which re-verifies containment (and
-// resolves symlinks), so NO nodeDir + cwd + path combination can escape the jail -
-// a `..` that climbs above the chat scope is caught there, escape hatch or not.
+// jailPath turns a path the MODEL wrote (node-relative, or "/"-prefixed) into
+// the chat-relative path Jail.Resolve takes - the ONE place the invisible
+// node-dir root is applied, keeping it out of every tool argument/result.
+// A "/"-prefixed path is absolute WITHIN THE NODE'S OWN workspace (cwd
+// ignored, node dir still applied) - it used to mean the chat root, which
+// let one node reach a sibling's clone. Every other path is cwd-relative,
+// then rooted at the node dir. Jail.Resolve re-verifies containment
+// (symlinks included), so no combination can escape the jail.
 func jailPath(nodeDir, cwd, p string) string {
 	p = stripSandboxRoot(p)
 	if strings.HasPrefix(p, "/") {

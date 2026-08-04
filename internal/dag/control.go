@@ -208,16 +208,11 @@ func (r *runControls) resetCancelled(chatID string) {
 	delete(r.overrides, chatID)
 }
 
-// registerAndTakeOverride registers a live control for the node and, in the
-// SAME critical section, does an atomic, ONE-SHOT read of any pending task
-// override for it - so a SetNodeTaskOverride call racing this node's start
-// either lands strictly before (the node body sees it) or is rejected
-// outright (setOverrideIfNotStarted sees the now-live control), never a
-// lost-update in between. The override is consumed (deleted) here, not just
-// read: a node invoked again later (HITL resume, a fresh retry
-// re-registering the same node ID) must fall back to the plan's own
-// node.Task, not keep silently reapplying a one-time edit. ok reports
-// whether an override was present.
+// registerAndTakeOverride registers the node and, in the SAME critical
+// section, does a one-shot read+delete of any pending task override - a
+// racing SetNodeTaskOverride either lands before start or is rejected, never
+// lost mid-update. Deleting (not just reading) stops a re-registered node
+// (HITL resume, retry) from replaying a stale one-time edit.
 func (r *runControls) registerAndTakeOverride(chatID, nodeID string) (c *nodeControl, override string, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -255,18 +250,11 @@ func (r *runControls) get(chatID, nodeID string) *nodeControl {
 	return nil
 }
 
-// setOverrideIfNotStarted stashes a not-yet-started node's edited task text,
-// read by graph.go's node body (effectiveTask) at registerAndTakeOverride
-// instead of the plan's own node.Task. In-memory only - it applies to the
-// CURRENT run's already-built graph, not a future turn's fresh plan, which
-// would carry the edit moot anyway.
-//
-// The "not started" check (no live control registered) and the write happen
-// under the SAME lock as register/registerAndTakeOverride, closing the race
-// where a node starts between a separate check-then-set: either this call
-// sees the control already live and rejects (false), or it wins and the
-// override is guaranteed visible to the node's own registerAndTakeOverride
-// (which cannot have run yet - this call and register share one mutex).
+// setOverrideIfNotStarted stashes a not-yet-started node's edited task,
+// consumed by registerAndTakeOverride instead of node.Task. In-memory only -
+// scoped to this run's already-built graph, not a future plan. The
+// not-started check and the write share the SAME lock as register, so this
+// either wins outright or sees the node already live and rejects (false).
 func (r *runControls) setOverrideIfNotStarted(chatID, nodeID, task string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -311,20 +299,11 @@ func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID)
 }
 
-// PauseNode suspends one running node of a chat's active run at its next
-// gate-stage boundary, keeping its accumulated answer (see
-// vetting.ErrNodePaused). Returns false if no such node is running.
-//
-// ponytail note on the checkpoint: ADK v2's workflow graph is static, so the
-// gate-node's own return is what unblocks its dependents - there is no way to
-// literally freeze the graph mid-flight the way an ask_user HITL pause does.
-// Pause therefore behaves like cancel (the node's current attempt ends,
-// dependents proceed continue-but-warn on its partial answer) but is
-// RESUMABLE: resuming re-runs the node as a fresh retry (paused → running,
-// see the REST handler), reusing the rest of the plan's stored outputs. It
-// is not a frozen mid-tool-call checkpoint; a true one would need the same
-// ResumeOrRequestInput machinery ask_user uses, keyed by a user-triggered
-// (not worker-raised) interrupt - a larger lift left for a follow-up.
+// PauseNode suspends one running node at its next gate-stage boundary,
+// keeping its accumulated answer (vetting.ErrNodePaused); returns false if
+// not running. ADK v2's workflow graph is static (no mid-flight freeze), so
+// pause behaves like cancel but is RESUMABLE via a fresh retry re-run - a
+// true mid-tool-call checkpoint would need ask_user's HITL machinery instead.
 func (e *Executor) PauseNode(chatID, nodeID string) bool {
 	c := e.controls.get(chatID, nodeID)
 	if c == nil {

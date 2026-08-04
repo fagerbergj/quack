@@ -11,15 +11,10 @@ import (
 
 // SetupClone is the harness-executed twin of a worker's own git_clone plus a
 // branch checkout - dag.Plan's declared Setup PRE-step, run once before any
-// node. Authenticated via the SAME credential/tokenSource path
-// git_clone/PushBranch use. repoURL must be a plain https:// URL
-// (validateCloneURL) - a plan's Setup.Repo is orchestrator-declared, not
-// operator-trusted, exactly like a worker's git_clone url. dir is
-// workspace-relative (jail.Resolve-ready - see workspace.SetupCloneDir, which
-// lands the clone AT the node's own root, unlike a worker's own git_clone,
-// which typically lands one level under it). checkoutExistingHead selects
-// which of the two branch checkouts setupCloneAndBranch runs (see its doc).
-// Returns the resolved absolute clone dir.
+// node. repoURL must be a plain https:// URL (validateCloneURL): a plan's
+// Setup.Repo is orchestrator-declared, not operator-trusted, exactly like a
+// worker's git_clone url. dir lands the clone AT the node's own root, unlike
+// a worker's own git_clone, which typically lands one level under it.
 func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource) (string, error) {
 	if _, err := validateCloneURL(repoURL); err != nil {
 		return "", err
@@ -30,19 +25,17 @@ func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, 
 }
 
 // setupCloneAndBranch is SetupClone past URL validation - split out so tests
-// can drive it against a local (file://) remote, exactly like cloneRepo's own
-// test seam (see cloneIntoJail in git_test.go).
+// can drive it against a local (file://) remote.
 //
 // checkoutExistingHead distinguishes an IMPLEMENT setup from a REVIEW one:
-//   - false (implement): workBranch is a NEW branch to create off baseRef -
-//     `checkout -b`, unchanged from before this existed. A re-run/supersede
-//     must start fresh from base, never continue a stale remote branch.
+//   - false (implement): workBranch is a NEW branch off baseRef (`checkout
+//     -b`) - a re-run must start fresh from base, never continue a stale
+//     remote branch.
 //   - true (review): workBranch is an EXISTING remote branch (a PR head) -
 //     `checkout -b` off baseRef would create an empty LOCAL branch shadowing
-//     the real remote one, leaving the reviewer looking at base with no diff
-//     (the bug this guards against). Instead, fetch the real branch and check
-//     it out, and unshallow so `git diff baseRef...HEAD` (three-dot, needs the
-//     merge-base) is computable.
+//     the real remote one, leaving the reviewer looking at base with no
+//     diff. Instead, fetch and check out the real branch, and unshallow so
+//     `git diff baseRef...HEAD` (needs the merge-base) is computable.
 func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool) (string, error) {
 	if strings.TrimSpace(baseRef) == "" {
 		return "", fmt.Errorf("setup: base_ref must not be empty")

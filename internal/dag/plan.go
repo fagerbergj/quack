@@ -18,16 +18,14 @@ type HistoryTurn struct {
 	Text string
 }
 
-// Plan is a DAG of agent tasks for one user request. UserMessage is the user's
-// request verbatim and History the prior conversation - both flow to every
-// node so specialists see the full context, not just the planner's compressed
-// task description. Attachments carries media parts (images, audio) from the
-// current turn; they are threaded to nodes whose agents declare image/audio inputs.
+// Plan is a DAG of agent tasks for one user request. UserMessage and History
+// flow to every node so specialists see full context, not just the planner's
+// compressed task description; Attachments threads media parts to nodes
+// whose agents declare image/audio inputs.
 //
 // Setup and Delivery are the orchestrator's DECLARED pre/post steps - the
-// harness EXECUTES them, deterministically and App-authed; no node runs git,
-// push, or GitHub-mutating calls itself. Both are optional: a plan with no
-// GitHub repo involved (plain research/chat) sets neither.
+// harness EXECUTES them deterministically and App-authed; no node runs git,
+// push, or GitHub-mutating calls itself. Both optional.
 type Plan struct {
 	ID          string
 	Nodes       []Node

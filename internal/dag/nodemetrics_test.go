@@ -7,21 +7,11 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// A finished node must report what it cost: how long it took, and what the trust gate
-// said. All three numbers were broken at once, and together they made a node's
-// performance invisible - which is why "the explorers run for hours" went unnoticed for
-// so long.
-//
-// Live (2026-07-13), a node whose judge PASSED at 1.0 persisted:
-//
-//		explorer-goose | done | duration_ms=0 | judge_rounds=0 | judge_final_score=0 | started_at=NULL
-//
-//	  - duration_ms was never assigned in nodeDoneData at all - structurally always 0.
-//	  - the judge fields were read back with a fresh sessions.Get, but the gated node
-//	    writes them as a STATE DELTA that has not been appended when node_done is built,
-//	    so the read saw nothing. (Confirmed: no session in the database contained a
-//	    gate_score key.)
-//	  - started_at was nulled by the node_done upsert (see store.UpsertDagNode).
+// A finished node must report its cost: duration and what the trust gate said.
+// Regression: duration_ms was never assigned in nodeDoneData (structurally
+// always 0); judge fields were read back via a fresh sessions.Get before the
+// gated node's state delta had appended, so the read saw nothing; started_at
+// was nulled by the node_done upsert (store.UpsertDagNode).
 func TestNodeDoneReportsDurationAndGateResult(t *testing.T) {
 	const node = "explorer-goose"
 
