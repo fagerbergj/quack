@@ -67,14 +67,11 @@ type Extension struct {
 	store        *store.Store     // nil in tests that don't need URL persistence
 	hub          *stream.Hub      // shared with the REST handler, nil when store is nil
 	eventLog     *runlog.EventLog // nil when store is nil (no durable persistence to do)
-	// runLocks serialises dispatches per PR session: a follow-up (or a rapid
-	// re-label) that arrives while a run on the same PR is in flight WAITS instead
-	// of running concurrently on the same session - concurrent runs on one session
-	// corrupt each other (garbled answers, cross-run tool events). sessionID →
-	// *sync.Mutex.
-	runLocks sync.Map
-	// inflight tracks sessionIDs that currently have a dispatch in-flight to
-	// dedup near-simultaneous triggers (issue_comment + label within ~1s).
+	// inflight dedups concurrent triggers on one session: a follow-up that
+	// lands while a run is in-flight is DROPPED (best-effort 👀 ack), never
+	// queued - concurrent runs on one session corrupt each other (garbled
+	// answers, cross-run tool events), and queueing would let two runs
+	// consume the same conversation-watermark delta (#665, #668).
 	// LoadOrStore at the top of dispatch() claims it; defer Delete releases
 	// it when the run completes. sessionID -> struct{}{} (a zero-size sentinel;
 	// only key presence matters).
@@ -93,12 +90,6 @@ type Extension struct {
 // conversational, same as before this classifier existed.
 func (e *Extension) SetIntentClassifier(c IntentClassifier) {
 	e.intentClassifier = c
-}
-
-// sessionLock returns the per-session mutex, creating it on first use.
-func (e *Extension) sessionLock(sessionID string) *sync.Mutex {
-	m, _ := e.runLocks.LoadOrStore(sessionID, &sync.Mutex{})
-	return m.(*sync.Mutex)
 }
 
 // NewExtension wraps an already-built App (serve constructs the App early so it
