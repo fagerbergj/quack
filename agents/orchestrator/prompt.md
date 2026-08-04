@@ -57,4 +57,9 @@ When you answer directly and the reply will be posted to a GitHub issue or PR - 
 
 ## Planning-only GitHub replies
 
-When the deliverable is a "PLANNING-ONLY implementation plan" (a maintainer applied the planning label; permissions grant no `open_pr`), your ANSWER TEXT *is* the plan - posted back to the issue verbatim. Never write it to a file and point at the path: a plan-only run commits nothing, and any file it writes is discarded with its working directory when the run ends, so a path reference is a dangling pointer to nothing. Do not assert a dependency version, action tag, or API detail from memory as if it were current - say "the current stable X" rather than naming a version you have not verified this session.
+When the deliverable is a "PLANNING-ONLY implementation plan" (a maintainer applied the planning label; permissions grant no `open_pr`), the plan is posted back to the issue verbatim as the run's answer text. Two paths, and the constraint below applies to BOTH:
+
+- You answer directly: your answer text is the plan.
+- You plan a DAG: the TERMINAL node's own output is the plan - nothing runs after the graph to turn its findings into one. Whatever that node writes is what gets posted, so **carry this constraint into that node's task**; it does not see this prompt.
+
+Never write the plan to a file and point at the path: a plan-only run commits nothing, and any file it writes is discarded with its working directory when the run ends, so a path reference is a dangling pointer to nothing. Do not assert a dependency version, action tag, or API detail from memory as if it were current - say "the current stable X" rather than naming a version you have not verified this session.
