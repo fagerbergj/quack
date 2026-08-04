@@ -161,6 +161,16 @@ type DagNode struct {
 	JudgeRounds      int32      `json:"judge_rounds"`
 	JudgeFinalScore  float64    `json:"judge_final_score"`
 	JudgePassed      bool       `json:"judge_passed"`
+	// InstanceID is the writing Store's own identity (Store.instanceID),
+	// stamped when a node is queued or starts running - see UpsertDagNode and
+	// FailStaleDagNodes. Empty on a row written before this column existed;
+	// treated the same as "no live owner" so an upgrading database doesn't
+	// grow immortal rows (#683).
+	InstanceID string `gorm:"column:instance_id" json:"-"`
+	// UpdatedAt is bumped on every UpsertDagNode write (queued, running, or
+	// terminal) - the dead-man's-switch FailStaleDagNodes falls back to when
+	// a node's owning instance never returns to reconcile it by InstanceID.
+	UpdatedAt *time.Time `json:"-"`
 }
 
 // TurnContent is the fully-joined view of one turn used to build API responses.
@@ -326,6 +336,11 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 type Store struct {
 	db       *gorm.DB
 	Sessions session.Service
+	// instanceID identifies this Store to node-ownership tracking (InstanceID
+	// column, FailStaleDagNodes): random per New() call, so a fresh process
+	// never matches an existing row unless SetInstanceID overrides it with a
+	// persisted identity (LoadOrCreateInstanceID) - see instance.go.
+	instanceID string
 }
 
 // New opens the persistence store for the given backend kind ("postgres" or
@@ -362,8 +377,20 @@ func New(kind, url string) (*Store, error) {
 	if err := database.AutoMigrate(sessions); err != nil {
 		return nil, err
 	}
-	return &Store{db: db, Sessions: sessions}, nil
+	return &Store{db: db, Sessions: sessions, instanceID: uuid.NewString()}, nil
 }
+
+// InstanceID is this Store's own identity, stamped onto every DAG node it
+// writes to running/queued (UpsertDagNode) and used by FailStaleDagNodes to
+// tell "my own prior incarnation" apart from a peer's live rows.
+func (s *Store) InstanceID() string { return s.instanceID }
+
+// SetInstanceID overrides the random default New() assigned. Call it once,
+// before any node writes, with a persisted identity (LoadOrCreateInstanceID)
+// - only a process that means to own the DAG run loop should: an ephemeral
+// CLI bootstrap has no prior incarnation to reconcile against, so it should
+// keep the random default (which can never collide with an existing row).
+func (s *Store) SetInstanceID(id string) { s.instanceID = id }
 
 // dialectorFor returns a factory that yields a GORM dialector for kind+url. The
 // dialector is consumed twice - once for the app handle, once for ADK's session
@@ -702,10 +729,17 @@ func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	db := s.db.WithContext(ctx)
 	// Save() writes EVERY column, so a later event that doesn't carry StartedAt
 	// (node_done, node_failed) would erase the start time recorded at node_start.
-	// Never let a nil StartedAt erase a real one.
+	// Never let a nil StartedAt erase a real one. Same for InstanceID: only the
+	// queued/running claim stamps it (see runlog.PersistNodeEvent), so a later
+	// event must not blank out who claimed the node.
 	if node.StartedAt == nil {
 		db = db.Omit("started_at")
 	}
+	if node.InstanceID == "" {
+		db = db.Omit("instance_id")
+	}
+	t := time.Now().UTC()
+	node.UpdatedAt = &t
 	return db.Save(&node).Error
 }
 
@@ -738,16 +772,31 @@ func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64
 	return s.db.WithContext(ctx).Where("chat_id = ? AND seq <= ?", chatID, upToSeq).Delete(&ChatEvent{}).Error
 }
 
-// FailStaleDagNodes marks any node still queued/running as failed. Called at
-// server startup: a fresh process has no in-flight runs, so such rows are
-// orphans from a previous process killed mid-run - without this they show as
-// running forever in the UI. queued→failed and running→failed are both legal
-// per dag.CanTransition; a bulk SQL UPDATE can't invoke it per row, so the
-// source/target statuses are named via the dag constants instead of literals
-// to keep the one enum as the single source of truth.
+// staleNodeCeiling is the dead-man's-switch: a queued/running node untouched
+// this long is failed regardless of InstanceID, so a node whose owning
+// instance never comes back (its persisted identity lost, not merely
+// restarted - see LoadOrCreateInstanceID) doesn't stay in-flight forever.
+// Generous on purpose - real runs finish in minutes; webhook runs are capped
+// at RunTimeoutMinutes (config default 120).
+const staleNodeCeiling = 12 * time.Hour
+
+// FailStaleDagNodes marks failed any node still queued/running that (a) was
+// written before InstanceID existed, (b) belongs to THIS Store's own
+// instance (a restart reconciling what it left mid-run last time), or (c)
+// has been untouched past staleNodeCeiling. It never touches a node another
+// live instance currently owns - #683: a read-only CLI subcommand sharing
+// the same database used to infer "orphaned" from status alone, which failed
+// a node a running server was actively updating. queued→failed and
+// running→failed are both legal per dag.CanTransition; a bulk SQL UPDATE
+// can't invoke it per row, so the statuses are named via the dag constants
+// instead of literals to keep the one enum as the single source of truth.
 func (s *Store) FailStaleDagNodes(ctx context.Context) (int64, error) {
+	cutoff := time.Now().UTC().Add(-staleNodeCeiling)
 	res := s.db.WithContext(ctx).Model(&DagNode{}).
 		Where("status IN ?", []string{string(dag.StatusQueued), string(dag.StatusRunning)}).
+		// instance_id IS NULL covers a bare ALTER TABLE ADD COLUMN (no default
+		// applied to existing rows on some backends) as well as instance_id = ''.
+		Where("instance_id IS NULL OR instance_id = ? OR instance_id = ? OR updated_at < ?", "", s.instanceID, cutoff).
 		Updates(map[string]any{"status": string(dag.StatusFailed), "error": "server restarted mid-run"})
 	return res.RowsAffected, res.Error
 }

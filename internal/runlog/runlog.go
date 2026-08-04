@@ -136,11 +136,12 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	case stream.NodeQueuedData:
 		// Persist the row at queue time so a reloaded chat (and `chat show`)
 		// sees the node as queued rather than status-less until it starts.
+		// InstanceID claims the node for this Store (see FailStaleDagNodes).
 		nodeID, to = d.NodeID, dag.StatusQueued
-		n.NodeID, n.Status = d.NodeID, string(to)
+		n.NodeID, n.Status, n.InstanceID = d.NodeID, string(to), st.InstanceID()
 	case stream.NodeStartData:
 		nodeID, to = d.NodeID, dag.StatusRunning
-		n.NodeID, n.Status, n.StartedAt = d.NodeID, string(to), &t
+		n.NodeID, n.Status, n.StartedAt, n.InstanceID = d.NodeID, string(to), &t, st.InstanceID()
 	case stream.NodeDoneData:
 		nodeID, to = d.NodeID, dag.StatusDone
 		n.NodeID, n.Status, n.FinishedAt = d.NodeID, string(to), &t
