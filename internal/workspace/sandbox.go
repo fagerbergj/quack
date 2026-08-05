@@ -65,15 +65,10 @@ const (
 )
 
 // SandboxWorkRoot is the ONE path a sandboxed child's workspace appears at,
-// whatever the host calls it: Caps.WorkRoot is bind-mounted here and the child
-// chdir'd relative to it. Never varies by host, chat, or node - the shell half
-// of the one-namespace invariant (a `pwd` that prints the host path hands the
-// model two names for one place).
-//
-// Not "/" itself because the child still needs /usr, /proc, /dev to exist, and
-// making the node dir the root would create those mountpoints inside it where
-// the fs tools would show them. Cost: a top-level entry literally named
-// "workspace" is shadowed in the ABSOLUTE spelling only.
+// whatever the host calls it - never varies by host/chat/node, so a `pwd`
+// inside matches what the fs tools call cwd. Not "/" itself: the child still
+// needs /usr, /proc, /dev to exist, which would otherwise mount inside the
+// node dir and become visible to the fs tools.
 const SandboxWorkRoot = "/workspace"
 
 // Limits are the per-child-PROCESS resource limits (setrlimit), applied via
@@ -159,36 +154,24 @@ func probeBwrap() error {
 }
 
 // bwrapSystemArgs is the host-independent half of the sandbox: the namespaces
-// and the read-only system view. Every bind is here because something a coding
-// agent routinely runs needs it - discovered by running `go build`, `go test`,
-// `npm install`, `npm test`, `npx`, and `git` inside the sandbox until they all
-// passed:
+// and the read-only system view. Every bind exists because some routine coding-
+// agent workflow (build/test/npm/git) needs it:
 //
-//   - --unshare-user: the whole reason this needs no root or daemon.
-//   - --unshare-pid: the child can neither see nor signal the server's own
-//     processes, and a fork bomb dies with its namespace.
-//   - --unshare-ipc / --unshare-uts: no shared SysV IPC, no hostname games.
-//   - --die-with-parent: a killed/timed-out run leaves nothing behind.
-//   - --new-session: no controlling terminal to inject keystrokes into (TIOCSTI).
-//   - /usr, /bin, /lib, /lib64, /sbin (ro): the toolchains and their shared
-//     libraries. git links against libcurl/libssl/libpcre2/zlib; node and go
-//     live here too. Read-only: a child cannot patch the system it runs on.
-//   - /etc/ssl + /etc/ca-certificates (ro): TLS trust - `npm install` and
-//     `git clone` over HTTPS fail without it.
-//   - /etc/resolv.conf, /etc/hosts, /etc/nsswitch.conf (ro): DNS. The network
-//     namespace is deliberately NOT unshared - agents legitimately fetch
-//     dependencies (npm ci, go mod download) - so name resolution must work.
-//   - /etc/passwd, /etc/group (ro): getpwuid()/getgrgid() - npm and git both
-//     look the running user up and misbehave when it doesn't exist.
-//   - /etc/alternatives (ro): on Debian, /usr/bin/<tool> is often a symlink
-//     into here (java, editor, …).
-//   - /etc/localtime (ro): sane timestamps in build/test output.
-//   - --proc /proc: required with --unshare-pid; every language runtime reads it.
-//   - --dev /dev: a minimal device set (/dev/null, /dev/urandom, /dev/tty) -
-//     NOT the host's /dev.
+//   - unshare user/pid/ipc/uts + die-with-parent + new-session: no root/daemon
+//     required, no visibility into the server's own processes, nothing left
+//     behind on kill, no TTY to inject keystrokes into.
+//   - /usr,/bin,/lib,/lib64,/sbin (ro): toolchains + shared libs, read-only so
+//     a child can't patch the system it runs on.
+//   - /etc/ssl, /etc/ca-certificates, /etc/resolv.conf, /etc/hosts,
+//     /etc/nsswitch.conf (ro): TLS + DNS. The network namespace is
+//     DELIBERATELY NOT unshared - agents legitimately run `npm ci`/`go mod
+//     download` - so name resolution and HTTPS must keep working.
+//   - /etc/passwd, /etc/group, /etc/alternatives, /etc/localtime (ro): npm/git
+//     call getpwuid()/getgrgid(); Debian tool symlinks; sane timestamps.
+//   - --proc /proc, --dev /dev (minimal, not the host's): required with
+//     --unshare-pid.
 //
-// Everything NOT listed is absent from the child's filesystem - including all
-// of $HOME, /root, /etc/shadow, and the rest of /etc.
+// Everything else - all of $HOME, /root, /etc/shadow, the rest of /etc - is absent.
 func bwrapSystemArgs() []string {
 	return []string{
 		"--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
@@ -212,16 +195,15 @@ func bwrapSystemArgs() []string {
 	}
 }
 
-// childArgv is the ONE place a child's real argv is assembled: rlimits wrap the
-// program, and the sandbox wraps that. bin is the already-resolved absolute
-// path of argv[0] (see RunArgv), dir the jail-resolved working directory.
+// childArgv is the ONE place a child's real argv is assembled: rlimits wrap
+// the program, and the sandbox wraps that; bin must already be RunArgv's
+// resolved absolute path.
 //
 //	bwrap <system view> <toolchains ro> <workspace + HOME rw> <root aliases>
-//	      --remount-ro / --chdir <workspace path of dir> -- prlimit … -- <bin> <args>
+//	      --chdir <workspace path> -- prlimit … -- <bin> <args>
 //
-// prlimit goes INSIDE bwrap on purpose: RLIMIT_NPROC is counted per-UID
-// system-wide, so it is only meaningful (and only safe) inside the sandbox's
-// own user namespace.
+// prlimit goes INSIDE bwrap: RLIMIT_NPROC is counted per-UID system-wide, so
+// it's only safe inside the sandbox's own user namespace.
 func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	inner := append([]string{bin}, argv[1:]...)
 	switch caps.Sandbox {
@@ -413,15 +395,11 @@ func homeTmpDir(caps Caps) string {
 }
 
 // toolchainArgs read-only-binds the operator's configured exec_path entries
-// (workspace.exec_path - the real toolchain dirs, e.g. nvm's node bin), which
-// live outside the system directories bwrapSystemArgs covers.
-//
-// A bin/ entry gets its FHS siblings (lib, libexec, share) bound too: a prefix
-// toolchain keeps its libraries next to its binaries and its bin entries are
-// symlinks into them (nvm's `npm` is a symlink to ../lib/node_modules/npm/…),
-// so binding bin/ alone yields a working `node` and a broken `npm`. Only those
-// three siblings - never the parent directory itself, which for a `~/bin` entry
-// would be the operator's whole home directory.
+// (workspace.exec_path), which live outside the system dirs bwrapSystemArgs
+// covers. A bin/ entry also gets its FHS siblings (lib, libexec, share)
+// bound - a prefix toolchain's bin/ symlinks into them (nvm's `npm` →
+// ../lib/...) - but never the parent dir, which for `~/bin` would be the
+// operator's whole home directory.
 func toolchainArgs(caps Caps) []string {
 	var args []string
 	for _, p := range caps.ExtraPath {
@@ -699,19 +677,10 @@ func SandboxJavaToolOptions(caps Caps) string {
 }
 
 // javaAddressSpaceOptions bounds a JVM to fit inside asMB of RLIMIT_AS ("" when
-// asMB is unset) - a JVM sizes its ergonomic heap, metaspace, compressed class
-// space, code cache, and thread pools off the HOST's real RAM/core count, never
-// off an rlimit the process merely inherits (#647), and bounding heap alone
-// isn't enough (reproduced: a build already run with -Xmx1536m still crashed
-// "allocation.cpp:44" under an 8GB limit).
-//
-// Splits asMB 35/10/8/8 across heap/metaspace/class-space/code-cache, leaving a
-// deliberately large ~39% margin: a live repro still crashed on native thread
-// creation with only 15% held back, even with none of the four caps close to
-// its own ceiling - a real daemon's baseline footprint (native libs, socket
-// buffers, its own thread pools) claims address space none of these four
-// account for. ActiveProcessorCount caps the core count a JVM sees, which is
-// what actually drives GC/JIT/common-pool thread counts.
+// unset): a JVM sizes heap/metaspace/etc. off the HOST's real RAM, not an
+// inherited rlimit, so bounding heap alone still crashes it. Splits asMB
+// 35/10/8/8 across heap/metaspace/class-space/code-cache with a deliberate
+// ~39% margin - a live repro still crashed on native thread creation at 15%.
 func javaAddressSpaceOptions(asMB int) string {
 	if asMB <= 0 {
 		return ""
@@ -763,16 +732,11 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 }
 
 // ---------------------------------------------------------------------------
-// Linked-worktree grants: dag's read-only-node isolation (worktree per
-// reviewer/explorer node) gives each such node its own `git worktree`, linked
-// off the plan's ONE shared setup clone rather than an independent clone. A
-// linked worktree's OWN ".git" is a pointer FILE (not a directory) reading
-// "gitdir: <parent>/.git/worktrees/<name>" - the actual object database,
-// refs, and per-worktree index/HEAD/logs all live under the PARENT clone's
-// ".git", found via that gitdir's own "commondir" file. Granting only the
-// worktree's own directory leaves every git command inside it unable to see
-// its own history ("not a git repository" or worse, a silent empty log) -
-// this resolves the one extra grant that fixes it, for both sandbox modes.
+// Linked-worktree grants: a linked git worktree's OWN ".git" is a pointer
+// FILE naming <parent>/.git/worktrees/<name> - the object database, refs, and
+// index/HEAD/logs live under the PARENT clone's ".git". Granting only the
+// worktree's own dir leaves git inside it unable to see its history; this
+// section resolves the one extra grant that fixes it, for both sandbox modes.
 // ---------------------------------------------------------------------------
 
 // WorktreeCommonGitDir resolves the shared ".git" directory a linked git
@@ -814,19 +778,11 @@ func worktreeGitDirs(dir string) (gitdir, common string) {
 	return filepath.Clean(gitdir), filepath.Clean(common)
 }
 
-// worktreeGrants splits the linked-worktree grants for paths (typically (work,
-// dir), often the same directory) into the WRITABLE per-worktree gitdirs and
-// the READ-ONLY shared common dirs, deduped.
-//
-// The split is the point: granting the common dir read-write would let a
-// read-only node (a reviewer or explorer in its own worktree) rewrite the
-// IMPLEMENTER's refs and object store - the very sharing the worktree
-// isolation exists to end. Measured: with the common dir read-only and only
-// the per-worktree gitdir writable, `git status`, `git log` and `git diff` all
-// still work inside the worktree, while writing <common>/refs/heads/X is
-// denied. Landlock applies the most specific enclosing rule, and bwrap's later
-// binds layer over earlier ones, so the writable gitdir nested inside the
-// read-only common dir works in both modes.
+// worktreeGrants splits linked-worktree grants into WRITABLE per-worktree
+// gitdirs and READ-ONLY shared common dirs, deduped. The split is the point:
+// granting the common dir read-write would let a read-only node rewrite the
+// IMPLEMENTER's refs and object store. Both sandbox modes respect it - landlock
+// applies the most-specific rule, bwrap's later binds layer over earlier ones.
 func worktreeGrants(paths ...string) (rw, ro []string) {
 	seenRW, seenRO := map[string]bool{}, map[string]bool{}
 	for _, p := range paths {

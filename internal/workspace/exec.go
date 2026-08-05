@@ -28,17 +28,11 @@ func MatchesCheckPrefix(check string, prefixes []string) bool {
 	return false
 }
 
-// SplitArgv splits s into an argv array WITHOUT invoking a shell: fields are
-// whitespace-separated; a single- or double-quoted span is kept as one field
-// (quotes stripped); a backslash escapes the next character outside single
-// quotes. This is a deliberate SUBSET of shell word-splitting - no globbing,
-// no variable expansion, no command substitution, since those are exactly the
-// shell semantics argv-only execution exists to avoid - just enough to carry
-// a quoted argument (a commit message, a grep pattern with spaces) through a
-// single command string. Used by the trust gate's `checks` (an operator
-// allowlist that must stay argv-only - internal/vetting/checks.go); run_command
-// hands its command line to a real shell instead (RunShell) and never reaches
-// this parser (#277).
+// SplitArgv splits s into argv WITHOUT invoking a shell: whitespace-separated
+// fields, quoted spans as one field, backslash escapes outside single quotes.
+// Deliberately a SUBSET of shell word-splitting (no globbing/expansion/
+// substitution) because it feeds the trust gate's argv-only `checks`
+// allowlist (internal/vetting/checks.go); run_command uses RunShell instead.
 func SplitArgv(s string) ([]string, error) {
 	var argv []string
 	var cur strings.Builder
@@ -162,15 +156,10 @@ type ExecResult struct {
 }
 
 // execEnvPath is the PATH every RunArgv child sees IN ITS OWN ENVIRONMENT -
-// mirrors runGit's "hermetic, behavior never depends on the host" discipline
-// (internal/tools/git.go's gitEnv), extended with the common toolchain
-// locations the shipped check_commands prefixes need (go, npm/npx) for their
-// OWN nested lookups (e.g. `go build` finding a linker, `npm test` finding a
-// locally-installed runner). It does NOT affect how RunArgv finds argv[0]
-// itself - that resolution uses the server process's real, ambient PATH (see
-// exec.LookPath below), exactly like gitBinaryPath does for the git binary;
-// scrubbing only the CHILD's env (no inherited secrets, no host-dependent
-// PATH) is the isolation goal, not hiding the toolchain from itself.
+// hermetic like gitEnv (internal/tools/git.go), extended with common
+// toolchain dirs (go, npm/npx) so checks can find their OWN nested tools.
+// It does NOT affect how RunArgv resolves argv[0] itself - that uses the
+// server's real ambient PATH (see exec.LookPath below), same as gitBinaryPath.
 const execEnvPath = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 // childPath is execEnvPath plus the operator-configured extra directories
@@ -258,19 +247,11 @@ func ResolveExecutable(dir, name string) (string, error) {
 	return p, nil
 }
 
-// newChildCmd is the ONE place a child process is constructed - RunArgv and
-// every stage of RunPipeline go through it, so the OS sandbox and the resource
-// limits cannot be forgotten on one path and applied on the other.
-//
-// argv[0] is resolved via ResolveExecutable BEFORE the child's argv is
-// constructed - exactly like gitBinaryPath does for `git` - so cmd.Env's PATH
-// only governs the child's OWN nested lookups (see execEnvPath), never argv[0]
-// itself. Under SandboxBwrap the resolved path is valid INSIDE the sandbox for
-// a PATH toolchain (the system dirs and configured exec_path toolchains are
-// bound at their own paths - see sandbox.go), but NOT yet for a repo-relative
-// binary (e.g. "./gradlew"): bwrap remaps dir under SandboxWorkRoot, so the
-// resolved host path won't exist inside the namespace. SandboxNone and
-// SandboxLandlock (paths not remapped there) are unaffected.
+// newChildCmd is the ONE place a child process is constructed, so sandboxing
+// and resource limits can't be applied on one path and forgotten on another.
+// argv[0] resolves via ResolveExecutable before argv is built, so PATH never
+// governs it - except under SandboxBwrap, where a repo-relative binary (e.g.
+// "./gradlew") resolves to a host path bwrap's remap won't find in the namespace.
 func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*exec.Cmd, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("workspace: empty command")
@@ -310,25 +291,11 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 // hang the call past this. A package var so a test can shorten it.
 var childWaitDelay = 10 * time.Second
 
-// RunArgv executes argv[0] with argv[1:] as a subprocess: exec.Command argv
-// arrays ONLY, never a shell. cwd is pinned to dir (callers resolve it through
-// a Jail first), the child's environment is scrubbed (execEnvPath +
-// HOME=childHome(dir,caps)), a per-call timeout comes from caps (DefaultCaps
-// when unset), and output is tail-capped. Shared by run_command
-// (internal/tools) and the trust gate's per-node deterministic `checks`
-// (internal/vetting/checks.go) - ONE runner, two consumers.
-//
-// The REAL containment is caps.Sandbox (SandboxBwrap: an OS mount/pid/user
-// namespace - see sandbox.go), because the argv-only rule never was one: a
-// child's ARGUMENTS are not path-checked, and `sh -c "…"` contains no rejected
-// metacharacter. Not opening a shell here still matters (it keeps the model
-// from expressing shell semantics quack never validated), but it is a habit
-// guard; the namespace is the wall.
-//
-// err is reserved for a launch failure (binary not found, bad cwd) or a
-// timeout; a non-zero exit from the command itself is reported via
-// ExecResult.ExitCode with a nil error, so callers can surface "the test
-// failed" to the model without it looking like a tool malfunction.
+// RunArgv executes argv[0] with argv[1:] via exec.Command arrays ONLY, never
+// a shell; cwd pinned, env scrubbed, timeout-bounded, output tail-capped.
+// caps.Sandbox is the REAL containment - argv-only is a habit guard since
+// arguments aren't path-checked, not a boundary. A non-zero exit reports via
+// ExitCode with a nil error; err itself means launch failure or timeout.
 func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecResult, error) {
 	timeout := caps.Timeout
 	if timeout <= 0 {
@@ -378,26 +345,11 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 	return ExecResult{ExitCode: exitCode, Output: out}, nil
 }
 
-// RunShell runs command as a REAL shell command line - `/bin/sh -c "<command>"`
-// - unconditionally, whatever caps.Sandbox is set to (run_command's only
-// runner; see internal/tools/run_command.go). Pipes, redirects, globs, `$(…)`,
-// `&&`, quoting: all of it just works, because sh is doing it. sh is just
-// another argv, so childArgv (sandbox.go) decides the boundary exactly as it
-// does for any other child:
-//
-//   - caps.Sandbox == SandboxBwrap: sh runs INSIDE the bwrap namespace, and is
-//     safe *because* the namespace is real - a shell cannot widen it: outside
-//     its own cwd and its isolated $HOME nothing is writable, and outside the
-//     read-only system view nothing EXISTS. `> /etc/passwd` from in there fails
-//     like any other write to a read-only mount.
-//   - anything else (SandboxNone): sh runs directly, with the server user's own
-//     filesystem authority - exactly the authority a child already had on the
-//     argv-only path this replaces, so offering it a shell adds no new reach,
-//     only working `&&`/globs/redirects/`$(…)` (#277).
-//
-// RunArgv supplies everything else unchanged: the resolved binary, the
-// scrubbed env, cwd=dir, the timeout, the output cap, and the "a non-zero exit
-// is a result, not an error" contract.
+// RunShell runs command as a REAL shell command line unconditionally - sh is
+// just another argv, so the sandbox boundary (childArgv, sandbox.go) applies
+// to it like any other child. Under SandboxBwrap that's safe because nothing
+// is writable outside cwd/$HOME and nothing else exists; under SandboxNone a
+// shell adds no new reach over the argv-only path it replaces.
 func RunShell(ctx context.Context, dir, command string, caps Caps) (ExecResult, error) {
 	if strings.TrimSpace(command) == "" {
 		return ExecResult{}, fmt.Errorf("workspace: empty command")
@@ -405,26 +357,11 @@ func RunShell(ctx context.Context, dir, command string, caps Caps) (ExecResult, 
 	return RunArgv(ctx, dir, []string{"sh", "-c", command}, caps)
 }
 
-// RunPipeline executes stages as a native pipeline: each stage is a plain
-// argv process (exec.CommandContext - still never a shell), stage N's stdout
-// connected to stage N+1's stdin by a real pipe. All stages share the jailed
-// cwd, the scrubbed env, and ONE overall timeout (a deadline kills the whole
-// pipeline). A single-stage pipeline delegates to RunArgv - one runner.
-//
-// Semantics chosen deliberately:
-//   - Exit code is PIPEFAIL: the LAST non-zero stage's code; 0 only when every
-//     stage succeeds (bash's `set -o pipefail` - a failing producer can't be
-//     masked by a succeeding tail like `| head`).
-//   - Output is the LAST stage's stdout plus every stage's stderr (each
-//     prefixed with its stage when non-empty), tail-capped; failing stages are
-//     named ("[pipeline] stage N of M (cmd) exited K") so the model sees WHICH
-//     program failed, not just a code.
-//   - A SIGPIPE-shaped death (a producer killed because its consumer exited
-//     early, e.g. `grep -r … | head -5`) is still just an exit code here; the
-//     model sees it named and can judge whether it mattered.
-//
-// Like RunArgv, err is reserved for launch failures and timeouts; stage exit
-// codes are results, not errors.
+// RunPipeline executes stages as a native pipeline (real pipes between plain
+// argv processes, never a shell); a single stage delegates to RunArgv. Exit
+// code is PIPEFAIL: the LAST non-zero stage, 0 only if all succeed. Output is
+// the last stage's stdout plus every stage's stderr, with each failing stage
+// named ("stage N of M (cmd) exited K") so the model sees WHICH program failed.
 func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) (ExecResult, error) {
 	if len(stages) == 0 {
 		return ExecResult{}, fmt.Errorf("workspace: empty pipeline")

@@ -733,21 +733,13 @@ func TestHandleWebhookNoAnswerFailsLoudly(t *testing.T) {
 	}
 }
 
-// The plan/answer comment path (dispatch posting e.runner.LatestAnswer directly)
-// is separate from the trust gate's commitDelivery, which only strips staged
-// PR/review bodies (#371) - this proves dispatch ALSO strips an invalid
-// ```mermaid block from the answer before it's posted, not just delivered PRs.
-// #448 reversed the prior design (#371): an invalid ```mermaid block is no
-// longer silently stripped from the answer before it's posted - that's now a
-// deterministic gate criterion (vetting.mermaidCriterion) that fails the
-// node and feeds the concrete error back to the worker as revise feedback,
-// so dispatch here just posts whatever the run produced, verbatim.
-// #480 regression (#483): the orchestrator's plan/research write-up never ran
-// through mermaidCriterion, so an invalid diagram shipped unchecked. Fixed
-// answer: the revise round should land it verbatim, valid, un-degraded.
-// mermaidValidateTestTimeout bounds the two tests below, which exercise a
-// path that calls the real mermaid.js validator (#574) up to 3 times
-// end-to-end (cold node+jsdom+mermaid import measures ~1-1.5s each).
+// dispatch posts whatever the run produced verbatim: an invalid ```mermaid
+// block is a deterministic gate criterion (vetting.mermaidCriterion) that
+// fails the node and feeds the error back to the worker as revise feedback,
+// not something stripped here.
+//
+// mermaidValidateTestTimeout bounds the two tests below, which exercise the
+// real mermaid.js validator up to 3 times end-to-end (~1-1.5s each cold).
 const mermaidValidateTestTimeout = 10 * time.Second
 
 func TestHandleWebhookInvalidMermaidRevisedFixesDiagram(t *testing.T) {
@@ -1137,17 +1129,12 @@ func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
 	return githubContext{snap: snap, firstLoad: true}
 }
 
-// fakeIntentClassifier is a fixed-verdict IntentClassifier double: tests
-// express "this is a work request" by setting verdict, not by tuning prose to
-// trip a regex. errAlways, when set, simulates the classifier failing outright
-// (model error/timeout) regardless of prompt. The two prompts this one
-// double answers (isWorkRequest's WORK/CONVERSATIONAL and
-// classifyPRDeliverable's REVIEW/COMMIT, intent.go) are distinguished by
-// content, not a second field on Extension - deliverable answers the
-// latter, deliverableErr fails only that call (so a test can prove the
-// deliverable classifier degrades independently of the work-request one). A
-// test that never sets deliverable exercises the deliverable-choice
-// unparseable-answer fallback for free.
+// fakeIntentClassifier is a fixed-verdict IntentClassifier double: tests set
+// verdict directly instead of tuning prose to trip a regex. errAlways
+// simulates the classifier failing outright. The two prompts it answers
+// (isWorkRequest's WORK/CONVERSATIONAL and classifyPRDeliverable's
+// REVIEW/COMMIT) are distinguished by content; deliverable/deliverableErr let
+// a test degrade that classifier independently of the work-request one.
 type fakeIntentClassifier struct {
 	verdict        string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
 	deliverable    string // "REVIEW" or "COMMIT", or any other/blank to test the unparseable path
@@ -1758,18 +1745,15 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 	}
 }
 
-// TestKilledRunPreservesWatermarkDelta is the regression test for #665: the
-// conversation watermark must advance on run COMPLETION, not at dispatch. A
-// run cancelled mid-flight (hub.CancelRun, the same path DELETE/stop and a
-// superseding run use) must NOT persist the snapshot it fetched before
-// running - so the delta it never got to act on survives for the next
-// trigger to see, on top of whatever lands after it.
+// TestKilledRunPreservesWatermarkDelta pins that the conversation watermark
+// advances on run COMPLETION, not at dispatch: a run cancelled mid-flight
+// (hub.CancelRun) must NOT persist the snapshot it fetched, so the delta it
+// never acted on survives for the next trigger.
 //
-// Three dispatches, one store, a fresh *Extension per dispatch (mirrors
-// TestReviewBaselineDecoupledFromGeneralSnapshot): #1 completes normally and
-// establishes the baseline watermark at c1. #2 is killed mid-flight after c2
-// lands - its delta (c2) must NOT be marked seen. #3, after c3 also lands,
-// must see BOTH c2 and c3 - proof the killed run's delta was never consumed.
+// Three dispatches, one store: #1 completes and establishes the watermark at
+// c1. #2 is killed mid-flight after c2 lands - c2 must NOT be marked seen.
+// #3 must see BOTH c2 and c3, proving the killed run's delta was never
+// consumed.
 func TestKilledRunPreservesWatermarkDelta(t *testing.T) {
 	var commentsJSON atomic.Value
 	commentsJSON.Store(`[{"id":1,"body":"first comment","user":{"login":"bob"},"updated_at":"t0"}]`)

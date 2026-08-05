@@ -547,24 +547,18 @@ func planTask(p issuesPayload) string {
 // mergeTimeout bounds the deterministic merge-label handler (a few API calls).
 const mergeTimeout = 2 * time.Minute
 
-// mergeIfApproved is the merge-label handler: merge ONLY at the intersection
-// of a human's label (repo write access) and quack's own approving review
-// verdict - a formal APPROVED review, or (on a PR quack authored, where
-// GitHub forbids a formal self-review) the verdict marker in quack's own-PR
-// comment-review.
+// mergeIfApproved is the merge-label handler: merges ONLY at the intersection
+// of a human's label and quack's own approving verdict (a formal APPROVED
+// review, or - on a PR quack authored, where GitHub forbids self-review - the
+// verdict marker in quack's own-PR comment-review).
 //
-// An approving review already on the PR merges immediately (unchanged). Any
-// other verdict ("", "comment", "request_changes") turns the label into a
-// STANDING INTENT (store.GithubMergeIntent, durable across a restart):
-// tryMergeStandingIntent consumes it and merges the moment a quack review
-// later lands approving, so the human never has to come back and re-apply the
-// label. request_changes deliberately leaves the intent standing rather than
-// clearing it - a later approving review after fixes should still authorize
-// the merge; the label already said "merge once you approve", and a request
-// for changes doesn't withdraw that, it just isn't satisfied yet. An unseen
-// PR (verdict == "") also triggers a review run itself, unless one is already
-// in flight - "apply merge" alone is a useless no-op otherwise, since nothing
-// else would ever ask quack to look at it.
+// An approving review already on the PR merges immediately. Any other verdict
+// turns the label into a STANDING INTENT (store.GithubMergeIntent, durable
+// across a restart), consumed the moment a later quack review lands
+// approving - so the human never re-applies the label. request_changes
+// deliberately leaves the intent standing, not cleared: a later approval
+// after fixes should still authorize the merge. An unseen PR also triggers a
+// review run itself, unless one is already in flight.
 func (e *Extension) mergeIfApproved(p pullRequestPayload, rawBody []byte) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Number
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
@@ -705,21 +699,16 @@ func (e *Extension) latestQuackVerdict(ctx context.Context, owner, repo string, 
 }
 
 // tryMergeStandingIntent consumes a merge intent recorded by mergeIfApproved
-// (quack:merge applied before an approving review existed) once a review has
-// actually been POSTED to GitHub this dispatch - called from dispatch only
-// when the delivery outcome's reviewDelivered is true, never on a merely
-// staged review. Re-reads the verdict fresh (latestQuackVerdict, the same
-// source mergeIfApproved uses) rather than trusting the caller's own
-// judgment of what it just posted, so this and the immediate-merge path can
-// never disagree about what "approved" means.
+// once a review has actually been POSTED this dispatch (reviewDelivered,
+// never a merely staged review). It re-reads the verdict fresh rather than
+// trusting the caller, so this and the immediate-merge path can never
+// disagree about what "approved" means. A request_changes/comment verdict
+// leaves the intent standing, same as mergeIfApproved.
 //
-// A request_changes/comment verdict leaves the intent standing for a later
-// review, same as mergeIfApproved's own decision. headSHA pins the merge to
-// the commit this review was actually against (the dispatch's own snapshot,
-// taken before the run - a review never pushes, so the head cannot have
-// moved during it): GitHub 409s the merge if the PR's head has since moved
-// past it, rather than merging commits nobody's approval covers under
-// someone else's standing authorization.
+// headSHA pins the merge to the commit the review was actually against (the
+// dispatch's pre-run snapshot - a review never pushes, so head can't move
+// during it): GitHub 409s if the PR's head has since moved past it, rather
+// than merging commits nobody's approval covers.
 func (e *Extension) tryMergeStandingIntent(ctx context.Context, owner, repo string, number int, sessionID, headSHA string) {
 	if e.store == nil {
 		return
@@ -1076,17 +1065,12 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}()
 
 	// A WORK request (review/implement) always runs as a plan. A mid-tier
-	// orchestrator model sometimes answers in prose without calling plan - "Let me
-	// start by cloning the repo…" - and that preamble would be posted as if it were
-	// the review. So if a LABEL-triggered run produced no plan, nudge once to
-	// actually run it: a label is an unambiguous work request, and its task text
-	// is synthesized here rather than written by a human.
-	//
-	// A mention is never nudged. Whether it wants work is the orchestrator's call
-	// - it either plans or answers - and second-guessing that from the prose was
-	// worse than trusting it: matching work verbs read `it.migrate(connection)` in
-	// a quoted snippet as "migrate something", so correcting a review forced a
-	// whole re-review and discarded the reply the model had already written.
+	// orchestrator model sometimes answers in prose without calling plan, so a
+	// LABEL-triggered run with no plan gets nudged once - a label is an
+	// unambiguous work request. A mention is never nudged: whether it wants work
+	// is the orchestrator's call, and second-guessing from the prose was worse
+	// than trusting it (a quoted snippet like `it.migrate(connection)` once read
+	// as "migrate something," discarding a good reply for a needless re-review).
 	planRan, judgePassed, paused, needsInput := e.drive(runCtx, login, sessionID, message, owner, repo, number, turnID, pub)
 	if !planRan && !paused && p.isLabelTrigger {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
@@ -1100,18 +1084,12 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 
 	// A judge-passed work request already had its staged review/PR posted by the
-	// trust gate itself (commitDelivery) - posting the run's text summary too would
-	// duplicate it. Only fall back to a summary comment when nothing was delivered.
-	// takeDeliveryDetail is AUTHORITATIVE when present (the delivery call's own
-	// outcome, not a proxy): a gate that passed but whose push then failed must NOT
-	// read as delivered. A plan-only run NEVER delivers a PR/review - its
-	// deliverable is the plan comment - so it must never read as delivered no
-	// matter how work-verby the task text is.
-	// No delivery record means NOTHING was delivered: since the native
-	// delivery tools were deleted (0.6.0), the gate's commitDelivery is the
-	// only path to GitHub, and it always records its outcome. (The old
-	// judge-passed default dates from workers that pushed via their own tools
-	// recordlessly - kept, it masked a staged-nothing run as delivered.)
+	// trust gate (commitDelivery); posting a text summary too would duplicate it.
+	// Only fall back to a summary when nothing was delivered. takeDeliveryDetail
+	// is AUTHORITATIVE when present - a gate that passed but whose push then
+	// failed must NOT read as delivered, and a plan-only run never delivers a
+	// PR/review either. No delivery record means nothing was delivered: the
+	// gate's commitDelivery is the only path to GitHub, and always records its outcome.
 	delivered := false
 	if d, ok := takeDeliveryDetail(sessionID); ok {
 		delivered = d.err == nil
@@ -1324,24 +1302,19 @@ func (e *Extension) ensureTitle(ctx context.Context, sessionID string, p issueCo
 const runNudge = "You answered without running anything. Do NOT reply in prose: use the plan and execute tools NOW to actually clone the repo, read the change, and carry out the review (or the requested change). Nothing has run yet and the user is waiting."
 
 // drive runs one orchestrator turn to completion and reports whether it
-// EXECUTED a plan (a dag_plan event) and whether ANY node's trust gate PASSED
-// its judge round. paused indicates the run hit a HITL pause (node_needs_input)
-// - in that case, no answer was produced yet and dispatch must NOT post the
-// default tail comment; instead it posts the question as a GitHub comment so
-// the maintainer can answer on-thread which resumes the same session.
-// A run with no plan produced only a direct-text answer (the work never
-// happened). judgePassed is dispatch's proxy for "the staged delivery set was
-// posted": commitDelivery runs synchronously inside the gate, strictly before
-// node_done fires (see internal/vetting/node.go), so by the time node_done
-// reports a pass here, delivery has already been attempted - a failed delivery
-// is still logged loudly (slog.Error) even though this proxy can't distinguish
-// it from "nothing was staged" (a conversational node gated the same way).
-// dispatch only trusts this proxy for a LABEL-triggered run, which demanded
-// delivery in the first place - see its caller.
+// EXECUTED a plan (dag_plan event) and whether ANY node's trust gate PASSED
+// its judge round. paused means a HITL pause (node_needs_input): dispatch
+// must NOT post the default tail comment, posting the question instead so
+// the maintainer can resume on-thread.
 //
-// pub is nil when the extension has no store (test harnesses that don't need
-// persistence) - every persistence step below is then a no-op, matching drive's
-// old behavior exactly.
+// judgePassed is dispatch's proxy for "the staged delivery set was posted":
+// commitDelivery runs synchronously inside the gate before node_done fires,
+// so a failed delivery is still logged loudly even though this proxy can't
+// distinguish it from "nothing was staged." Only trusted for a
+// LABEL-triggered run, which demanded delivery in the first place.
+//
+// pub is nil in test harnesses without a store; every persistence step below
+// is then a no-op.
 func (e *Extension) drive(ctx context.Context, uid, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool, paused bool, needsInput stream.NodeNeedsInputData) {
 	var planID string
 	for ev, err := range e.runner.Run(ctx, uid, sessionID, message, nil) {
@@ -1407,26 +1380,20 @@ type githubContext struct {
 	newCommits []snapshotCommit
 }
 
-// loadGithubContext is the ONE fetch-diff path every dispatch goes through,
-// issue or PR, work request or conversational follow-up (#459's "one unified
-// path" - replaces gatherReviewContext/issueThreadContext/discussionSummary
-// cherry-picking, and #457/#458's inject-everything interim). It fetches the
-// CURRENT full GitHub state, diffs it against the snapshot stored from the
-// last dispatch (or seeds, on first load), and returns it ready for
-// buildEnvelope to render as a session EVENT via e.runner.Run's message
-// argument - never as bare UserContent (llmagent builds its request from
-// Session().Events() only; a fresh prompt passed any other way is silently
-// dropped).
+// loadGithubContext is the ONE fetch-diff path every dispatch goes through:
+// it fetches the CURRENT full GitHub state, diffs it against the last
+// dispatch's stored snapshot (or seeds, on first load), and returns it ready
+// for buildEnvelope to render as a session EVENT - never bare UserContent
+// (llmagent builds its request from Session().Events() only; anything else is
+// silently dropped).
 //
-// It does NOT persist the new snapshot - that's persistGithubSnapshot,
-// called by dispatch only once the run actually completes (#665: persisting
-// here, before the run, meant a crashed/cancelled run permanently lost the
-// delta it never got to act on).
+// It does NOT persist the new snapshot - persistGithubSnapshot does that,
+// only once the run completes, so a crashed/cancelled run doesn't lose a
+// delta it never acted on.
 //
-// forceReseed treats this dispatch as a first load regardless of what's
-// stored: a label-driven work request resets the ADK session (T4 hygiene)
-// before this runs, and a fresh session needs the FULL context, not a delta
-// against a snapshot from a conversation the reset just erased.
+// forceReseed treats this dispatch as a first load regardless of stored
+// state: a label-driven work request resets the ADK session first, and needs
+// the FULL context, not a delta against a conversation the reset erased.
 func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, repo string, number int, isPR bool, triggerCommentID int64, forceReseed bool) githubContext {
 	snap, err := e.fetchSnapshot(ctx, owner, repo, number, isPR)
 	if err != nil {
@@ -1479,17 +1446,16 @@ func (e *Extension) loadGithubContext(ctx context.Context, sessionID, owner, rep
 }
 
 // persistGithubSnapshot upserts the snapshot this dispatch already fetched
-// (gh.snap, captured by loadGithubContext before the run) as the new
-// conversation watermark - called by dispatch ONLY once the run reaches
-// genuine completion, never on cancellation, timeout, or HITL pause, so a
-// run that doesn't finish leaves its delta for the next trigger to see
-// (#665). Deliberately re-persists the SAME pre-run snapshot rather than
-// re-fetching a fresh one: a fresh fetch would mark comments that arrived
-// mid-run as "seen" without the model ever having been shown them, which
-// combined with drop-not-queue dedup (#668) would lose them for good.
+// (gh.snap, from loadGithubContext) as the new conversation watermark -
+// called ONLY on genuine completion, never on cancellation/timeout/pause, so
+// an unfinished run leaves its delta for the next trigger to see. It
+// deliberately re-persists the SAME pre-run snapshot rather than re-fetching:
+// a fresh fetch would mark comments that arrived mid-run as "seen" without
+// the model ever having shown them, losing them for good under drop-not-queue
+// dedup.
 //
-// A fresh short-lived context: runCtx may already be past its deadline on a
-// slow run, the same reason the tail-comment logic uses its own.
+// Uses a fresh short-lived context: runCtx may already be past its deadline
+// on a slow run.
 func (e *Extension) persistGithubSnapshot(sessionID string, gh githubContext) {
 	if e.store == nil || gh.contextUnavailable {
 		return

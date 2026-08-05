@@ -44,19 +44,14 @@ type ContextRequest struct {
 	CheckSHA string
 }
 
-// WriteContextDir fetches every endpoint the trigger-prompts-v2 design calls
-// for and writes each as its own file in dir, named by endpoint - the full
-// response, paginated to exhaustion, never field-filtered (filtering only
-// happens in the prompt-facing envelope, #659). dir must already exist as a
-// sibling of the provisioned clone (workspace.ContextDirScope); WriteContextDir
-// never creates or resolves it - the same split SetupClone uses for the clone
-// itself.
+// WriteContextDir fetches every endpoint the trigger envelope needs and writes
+// each as its own file in dir, named by endpoint - the full response,
+// unfiltered (filtering happens in the envelope). dir must already exist;
+// this never creates or resolves it.
 //
-// Fails soft per file (#660 hard requirement): one endpoint failing never
-// stops the rest, and a file is written ONLY on a successful fetch - a
-// missing file reads as "not fetched", an empty one would read as "no data",
-// which is a lie. The only returned error is dir itself being unusable;
-// individual endpoint failures are logged at WARN, not returned.
+// Fails soft per file: a file is written ONLY on success, since a missing
+// file reads as "not fetched" but an empty one would lie as "no data". The
+// only returned error is dir itself being unusable.
 func (a *App) WriteContextDir(ctx context.Context, dir string, req ContextRequest) error {
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return fmt.Errorf("github: context dir %q is not a directory: %w", dir, err)

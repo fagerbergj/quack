@@ -114,16 +114,11 @@ func TestSandboxAllowsWorkInsideTheJail(t *testing.T) {
 	}
 }
 
-// TestSandboxMountsTheWorkRootAtOneFixedPath: the child's view of its own
-// workspace must be the MODEL's view of it. Caps.WorkRoot (the node's own
-// directory - the invisible root every fs tool resolves against) appears inside
-// the namespace at SandboxWorkRoot and nowhere else, so `pwd` in a subdirectory
-// prints the same trailing path the tools use, with no host prefix at all.
-//
-// Before this, the child was chdir'd to the HOST path, so `pwd` printed the
-// server's workspace root, the chat id and the node id - and the model, handed a
-// second name for the one place it already knew as "/quack", went looking for
-// its workspace on the host filesystem (see internal/tools/sandbox_namespace_test.go).
+// TestSandboxMountsTheWorkRootAtOneFixedPath pins that the child's view of its
+// own workspace matches the MODEL's view: Caps.WorkRoot appears inside the
+// namespace at SandboxWorkRoot and nowhere else, so `pwd` prints no host
+// prefix. Before this, `pwd` printed the host path and the model went looking
+// for its workspace on the host filesystem.
 func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
 	requireBwrap(t)
 
@@ -168,17 +163,11 @@ func TestSandboxMountsTheWorkRootAtOneFixedPath(t *testing.T) {
 	}
 }
 
-// TestSandboxToolchainAndHomeSurviveTheFixedMount: remapping the WORKSPACE must not
-// disturb the other two things a real build needs - a toolchain from exec_path
-// (bound read-only at its OWN host path, because RunArgv resolves argv[0] on the
-// host and hands the child that absolute path) and the isolated $HOME the caches
-// land in (npm's _cacache, GOCACHE, ~/.gitconfig).
-//
-// The "toolchain" here is a script in a temp dir on PATH, which is exactly what
-// workspace.exec_path binds (nvm's node bin, an asdf shim dir) minus any dependence
-// on what happens to be installed on the test host. It answers both questions at
-// once: it only runs at all if exec_path reached inside the namespace, and what it
-// prints is the $HOME the child actually got.
+// TestSandboxToolchainAndHomeSurviveTheFixedMount pins that remapping the
+// WORKSPACE doesn't disturb the other two things a build needs: an exec_path
+// toolchain (bound read-only at its own host path) and the isolated $HOME
+// caches land in. The fake "toolchain" doubles as proof of both - it only runs
+// if exec_path reached inside the namespace, and prints the $HOME it got.
 func TestSandboxToolchainAndHomeSurviveTheFixedMount(t *testing.T) {
 	requireBwrap(t)
 

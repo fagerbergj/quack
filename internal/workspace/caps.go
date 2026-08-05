@@ -36,30 +36,15 @@ type Caps struct {
 	// rejects PATH/HOME keys, so this never fights childPath/childHome.
 	Env map[string]string
 	// HomeDir is the $HOME every RunArgv/RunPipeline/git child sees, when set -
-	// a per-user directory OUTSIDE any cloned/target repo tree (see
-	// workspace.Jail.HomeDir), so a toolchain's own cache/config writes (npm's
-	// _cacache, pip's cache, ~/.gitconfig) land there instead of inside a git
-	// working tree. Empty falls back to the child's own cwd (the LIVE bug this
-	// closes: `npm ci` with HOME=cwd wrote its cache straight into a cloned
-	// repo, and git_commit's `add_all` swept up 1,261 cache files alongside 8
-	// real ones - see internal/tools/git.go's bulk-commit sanity wall for the
-	// other half of this fix). Wired once from internal/serve's buildAgents;
-	// nothing here computes it - Caps only carries the resolved value.
+	// kept OUTSIDE any cloned/target repo tree so toolchain cache/config writes
+	// (npm's _cacache, pip's cache, ~/.gitconfig) can't land inside a git working
+	// tree and get swept into a commit. Empty falls back to the child's own cwd.
 	HomeDir string
-	// WorkRoot is the calling node's OWN directory (<root>/<user>/<chat>/<node>/) -
-	// the writable subtree a sandboxed child gets, mounted inside the namespace at
-	// the fixed SandboxWorkRoot. It CONTAINS the child's cwd; the cwd alone is not
-	// enough, because a private /tmp (see sandbox.go tmpArgs) hides a workspace that
-	// lives under /tmp, so anything the child wrote outside the one bound path
-	// silently evaporated.
-	//
-	// It is also the child's NAMESPACE root: the node dir is what the fs tools call
-	// "/" (the invisible root - internal/tools/cwd.go), so mounting it at one fixed
-	// path is what makes a shell's `pwd` and a tool's `cwd` name one place. Every
-	// caller whose child's output the MODEL will read must set it: run_command
-	// (internal/tools) and the gate's deterministic checks (internal/vetting), whose
-	// compiler output lands in the revise prompt. Empty ⇒ no node scope: the cwd is
-	// mounted as the root instead.
+	// WorkRoot is the calling node's OWN directory, mounted inside the sandbox
+	// namespace as the fixed SandboxWorkRoot. It must CONTAIN the child's cwd,
+	// not just equal it - a private /tmp (see tmpArgs) hides writes under /tmp
+	// otherwise. It is also the fs tools' "/" (internal/tools/cwd.go); any caller
+	// whose output the model reads (run_command, gate checks) must set it.
 	WorkRoot string
 	// Sandbox is the OS boundary every RunArgv/RunPipeline child runs inside
 	// (SandboxBwrap | SandboxNone - see sandbox.go). The ZERO value is NO

@@ -82,15 +82,11 @@ Message:
 %s`
 
 // classifyPRDeliverable picks which of the grant's permitted PR deliverables
-// (review, commit) a message is asking for - the bounded question #689 uses
-// in place of vetting.ImplementationIntent's regex guess, for a genuine PR
-// work request. ok=false leaves the caller to fall back to that regex:
-// covers a grant permitting neither (nothing to classify between), the
-// classifier being unset/erroring/timing out, and an unparseable answer.
-//
-// When the grant permits only ONE of the two, that's the answer by
-// construction - no model call needed. Logged anyway (Debug): the grant, not
-// the message, decided, and that's worth being able to find in a trace.
+// (review, commit) a message is asking for, in place of vetting.
+// ImplementationIntent's regex guess. ok=false falls back to that regex
+// (grant permits neither, classifier failed, or unparseable answer).
+// When the grant permits only ONE, that's the answer by construction - no
+// model call needed, but logged anyway (Debug) since the grant decided.
 func (e *Extension) classifyPRDeliverable(ctx context.Context, task string, grant vetting.Grant) (kind string, ok bool) {
 	canReview, canCommit := grant.PostReview, grant.PushCommitsToPR
 	switch {
