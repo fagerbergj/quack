@@ -252,16 +252,6 @@ func validateCloneURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// defaultCloneDir: derives directory name from repo URL.
-func defaultCloneDir(u *url.URL) string {
-	name := strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git")
-	name = filepath.Base(name)
-	if name == "" || name == "." || name == "/" {
-		name = "repo"
-	}
-	return name
-}
-
 // cloneRepo: resolve target, build argv, run clone.
 func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) (gitCloneResult, error) {
 	if err := validateRef(branch, "git_clone"); branch != "" && err != nil {
@@ -370,15 +360,6 @@ const maxAddAllFiles = 100
 
 // Branches agents can never push to. --force is unexpressible.
 var protectedBranches = map[string]bool{"main": true, "master": true}
-
-// gitRemoteURL: reads the origin remote URL.
-func gitRemoteURL(dir string, caps workspace.Caps) (string, error) {
-	out, _, err := runGit(context.Background(), dir, []string{"remote", "get-url", "origin"}, caps, nil)
-	if err != nil {
-		return "", fmt.Errorf("git: no \"origin\" remote configured: %w", err)
-	}
-	return strings.TrimSpace(out), nil
-}
 
 // PushBranch: pushes branch to origin (delivery step, outside agent tool call).
 func PushBranch(ctx context.Context, jailRoot, dir, branch string, cred GitCredential, caps workspace.Caps) (sha string, err error) {

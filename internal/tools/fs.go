@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -524,8 +523,3 @@ func grepFile(path string, re *regexp.Regexp, ctxLines int) ([]grepMatch, error)
 }
 
 // delete_path
-
-func logDeletePath(userID, path string, recursive bool, deleted int) {
-	slog.Info("workspace mutation", "component", "tools", "tool", "delete_path",
-		"user", userID, "path", path, "recursive", recursive, "deleted", deleted)
-}

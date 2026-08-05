@@ -277,14 +277,6 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 	return ExecResult{ExitCode: exitCode, Output: out}, nil
 }
 
-// RunShell runs a shell command line unconditionally. Sandbox boundary applies as with any child.
-func RunShell(ctx context.Context, dir, command string, caps Caps) (ExecResult, error) {
-	if strings.TrimSpace(command) == "" {
-		return ExecResult{}, fmt.Errorf("workspace: empty command")
-	}
-	return RunArgv(ctx, dir, []string{"sh", "-c", command}, caps)
-}
-
 // RunPipeline executes argv stages with real pipes. Exit code is pipefail: last non-zero stage.
 func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) (ExecResult, error) {
 	if len(stages) == 0 {

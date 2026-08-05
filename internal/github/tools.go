@@ -150,14 +150,6 @@ var reviewEvents = map[string]bool{"COMMENT": true, "REQUEST_CHANGES": true, "AP
 
 // Review location: inline comments anchor to (path, line); one bad anchor 422s the whole submit.
 
-// sideOr returns the trimmed upper-cased s, or fallback when s is empty.
-func sideOr(s, fallback string) string {
-	if u := strings.ToUpper(strings.TrimSpace(s)); u != "" {
-		return u
-	}
-	return fallback
-}
-
 // resolvePath maps the agent's workspace-relative path to the PR diff's repo-relative path by suffix matching.
 func resolvePath(positions map[string]diffPositions, path string) (string, error) {
 	p := strings.Trim(strings.TrimPrefix(strings.TrimSpace(path), "./"), "/")

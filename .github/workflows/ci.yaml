@@ -56,7 +56,15 @@ jobs:
       # -test so test-only helpers don't false-positive as unreachable. Package
       # patterns are explicit (not ./...) so a vendored JS package that happens to
       # ship Go source (frontend/node_modules/flatted) never gets pulled in.
-      - run: test -z "$($(go env GOPATH)/bin/deadcode -test ./cmd/... ./internal/... .)"
+      # Print findings before failing - `test -z "$(...)"` swallows them, so a
+      # red build says something is unreachable without ever saying what.
+      - run: |
+          out=$($(go env GOPATH)/bin/deadcode -test ./cmd/... ./internal/... .)
+          if [ -n "$out" ]; then
+            echo "::error::unreachable code found - delete it or wire it up:"
+            echo "$out"
+            exit 1
+          fi
 
   frontend-build:
     runs-on: ubuntu-latest
