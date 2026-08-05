@@ -410,10 +410,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			act := actFor(answer)
 			runID := fmt.Sprintf("judge-r%d", round)
-			judgeCtx, judgeSpan := otelobs.Start(nodeCtx, "gate.judge",
-				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
-				attribute.String("run_id", runID), attribute.String("agent", cfg.Agent), attribute.Int("round", round))
-			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
+			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
 			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID})
 			// Compute deterministic criteria before judge runs.
@@ -422,8 +419,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if jerr != nil {
 				// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
-				emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
-				otelobs.End(judgeSpan, jerr)
+				jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}, jerr)
 				otelobs.RecordJudgeUnavailable(cfg.Agent)
 				// Fail closed but fall through to deliver-with-caveat (only that path writes the review verdict marker).
 				res = GateResult{Score: 0, Passed: false, Feedback: "quack's judge was unavailable, so this answer could not be scored: " + jerr.Error(), Rounds: round}
@@ -435,10 +431,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			feedback := composeFeedback(v, cfg.Threshold)
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitEvaluationResults(ledgerCtx, runID, v)
-			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}})
+			jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}, nil)
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
-			judgeSpan.SetAttributes(attribute.Float64("score", res.Score), attribute.Bool("passed", res.Passed))
-			judgeSpan.End()
 			otelobs.RecordJudgeVerdict(cfg.Agent, res.Score, res.Passed)
 			// Debug: per-criterion reasoning for diagnosable gate failures.
 			if len(v.Criteria) > 0 && log.Enabled(context.Background(), slog.LevelDebug) {
