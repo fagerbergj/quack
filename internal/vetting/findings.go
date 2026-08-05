@@ -1,10 +1,4 @@
-// Per-finding verification (#498 step 2/3): the judge no longer grades a
-// review's findings as prose it takes on faith - each staged inline finding
-// (ReviewStage/StagedDelivery.Comments) is surfaced as an explicit numbered
-// claim, and the judge must independently check each one against the repo
-// with its existing read tools before it may pass claims_grounded. This is
-// the fix for #494: a precise but false "off-by-one" finding passed with
-// claims_grounded=1 because nothing ever verified it against the file.
+// Per-finding verification: staged findings surfaced as numbered claims the judge independently checks.
 package vetting
 
 import (
@@ -12,22 +6,14 @@ import (
 	"strings"
 )
 
-// Per-finding verification outcomes the judge assigns in submit_verdict's
-// findings array. contradicted is the only one that carries a scoring
-// consequence (applyFindingsVerdict) - verified/unsupported are informational,
-// surfaced to the reviewer via composeFindingsFeedback so it can correct or
-// stand by them.
+// Per-finding verification outcomes. Only contradicted carries a scoring consequence.
 const (
 	findingVerified     = "verified"
 	findingUnsupported  = "unsupported"
 	findingContradicted = "contradicted"
 )
 
-// findingVerdict is the judge's independent verification of ONE staged review
-// finding against the actual repo - not the review's own account of it.
-// Index is the finding's 1-based position in stagedFindingsSection's numbered
-// list, so the gate can pair a result back to the exact ReviewComment it
-// judged without a fuzzy text match.
+// findingVerdict: one staged finding's verification. Index is 1-based for pairing.
 type findingVerdict struct {
 	Index  int    `json:"index" jsonschema:"the finding's 1-based position in the numbered list you were given"`
 	Path   string `json:"path,omitempty"`
@@ -36,20 +22,10 @@ type findingVerdict struct {
 	Why    string `json:"why,omitempty" jsonschema:"one or two sentences citing what you actually found when you checked"`
 }
 
-// judgeFindingsInstructions prefixes the numbered findings list
-// (stagedFindingsSection): it tells the judge to verify each claim itself,
-// explicitly permits reading beyond the cited line (a finding can be locally
-// accurate and wrong in context, or refutable only by a file it never
-// mentions - #498's whole point is that the judge's view must NOT be
-// narrowed to path:line), and names the findings array's shape.
+// judgeFindingsInstructions: tells the judge to verify each claim, reading beyond the cited line for context.
 const judgeFindingsInstructions = "STAGED FINDINGS TO VERIFY - each numbered item below is a specific, checkable claim the review makes about this code. Before scoring claims_grounded, independently verify EACH ONE against the repo using your read tools: read the cited path/line AND whatever else you need to judge it in context - a caller, an interface, a test, a related file. Do not stop at the cited line and do not take the finding's word for it; a finding can be locally accurate and wrong in context, or refutable only by a file it never mentions. For EVERY finding, record a result in submit_verdict's `findings` array: {index, path, line, status, why}, where status is `verified` (the code backs the claim), `unsupported` (you could not confirm it either way), or `contradicted` (the code shows the opposite of the claim - use this only when the code plainly disagrees, not for a stylistic difference of opinion; a contradicted finding automatically fails claims_grounded).\n\n"
 
-// stagedFindingsSection renders the reviewer's staged inline findings
-// (act.stagedDelivery["review"].Comments) as an explicit numbered list for
-// the judge prompt, instead of leaving them buried in the review's prose
-// where the judge could only take their plausibility on faith. "" when
-// nothing is staged (a reviewer that hasn't found anything yet, or a
-// non-review node).
+// stagedFindingsSection renders the reviewer's staged findings as a numbered list for the judge.
 func stagedFindingsSection(act workerActivity) string {
 	sd, ok := act.stagedDelivery["review"]
 	if !ok || len(sd.Comments) == 0 {
@@ -64,21 +40,11 @@ func stagedFindingsSection(act workerActivity) string {
 	return sb.String()
 }
 
-// findingsGroundingCriterion is the code-reviewer rubric criterion
-// (agents/code-reviewer/rubric.md's claims_grounded) a contradicted staged
-// finding sinks - the same override pattern foldDeterministic uses for
-// cites_sources: code owns a criterion's score once it holds ground truth
-// (here, the judge's own per-finding check) a holistic guess can't outrank.
+// findingsGroundingCriterion: claims_grounded - sunk by a contradicted finding, same override pattern as cites_sources.
 const findingsGroundingCriterion = "claims_grounded"
 
-// applyFindingsVerdict sinks findingsGroundingCriterion to 0 when ANY staged
-// finding was judged "contradicted" - the code shows the opposite of what the
-// review claims (#498, the #494 regression). Weakest-link gating then does
-// the rest: aggregateVerdict's caller takes the lowest criterion, so this one
-// failure sinks the whole verdict without a parallel pass/fail path.
-// verified/unsupported findings never move the score here - they only feed
-// composeFindingsFeedback. A no-op when there is nothing contradicted (every
-// node but a reviewer with a staged, judge-refuted finding).
+// applyFindingsVerdict sinks findingsGroundingCriterion to 0 when any staged finding is contradicted.
+// verified/unsupported findings never move the score - they only feed composeFindingsFeedback.
 func applyFindingsVerdict(v *verdict) {
 	var bad []findingVerdict
 	for _, f := range v.Findings {
@@ -102,8 +68,7 @@ func applyFindingsVerdict(v *verdict) {
 	}
 }
 
-// findingLoc formats a finding's location for feedback text, tolerating a
-// missing line (path-only claim).
+// findingLoc formats a finding's location for feedback, tolerating a missing line.
 func findingLoc(f findingVerdict) string {
 	if f.Line > 0 {
 		return fmt.Sprintf("%s:%d", f.Path, f.Line)
@@ -111,14 +76,8 @@ func findingLoc(f findingVerdict) string {
 	return f.Path
 }
 
-// composeFindingsFeedback renders the judge's per-finding verdicts as
-// self-contained revise feedback: which finding, at which location, and what
-// the judge found when it independently checked - so the reviewer can act
-// without re-deriving anything. Silent on `verified` findings (no penalty,
-// nothing to fix). Names unstage_review_comment (added for #562, on PR #628 -
-// referenced here in TEXT only, per #498's scope) as how the reviewer
-// retracts a finding it no longer stands behind. "" when there is nothing to
-// report (no findings staged, or all verified).
+// composeFindingsFeedback renders the judge's per-finding verdicts as revise feedback.
+// Silent on verified findings. "" when nothing to report.
 func composeFindingsFeedback(findings []findingVerdict) string {
 	var lines []string
 	for _, f := range findings {

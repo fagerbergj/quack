@@ -8,12 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/bundledir"
 )
 
-// Bundle is a declarative agent definition: an agent-card.json (identity +
-// skills) plus a prompt.md (the system instruction). Config binds the model
-// and the built-in tool selection separately, so defining a new agent is just
-// dropping a bundle directory (under agents/) and adding a config entry - no
-// recompile. Bundles are read from disk in cwd first (live repo edits), then
-// the embedded copy (so an installed binary works from any directory).
+// Bundle is a declarative agent definition: agent-card.json + prompt.md.
+// Read from disk first (live edits), then the embedded copy.
 type Bundle struct {
 	Card   Card
 	Prompt string
@@ -41,8 +37,7 @@ const (
 	memoryFile = "memory.md"
 )
 
-// LoadBundle reads and validates the agent bundle in dir (e.g. "agents/orchestrator").
-// dir is resolved from disk in cwd first, then the embedded copy.
+// LoadBundle reads and validates the agent bundle in dir.
 func LoadBundle(dir string) (*Bundle, error) {
 	rawCard, err := bundledir.ReadFile(bundledir.PathJoin(dir, cardFile))
 	if err != nil {
@@ -68,15 +63,10 @@ func LoadBundle(dir string) (*Bundle, error) {
 	return &Bundle{Card: card, Prompt: prompt}, nil
 }
 
-// LoadBundleMemory reads an optional memory.md from the bundle directory - the
-// agent's "what to remember" guidance (M6). Returns "" if absent or empty. It is
-// appended to the agent's behaviour only when the memory feature is on, so the
-// guidance never dangles (and references no tools) when memory is disabled. This
-// is the second optional bundle file alongside rubric.md.
+// LoadBundleMemory reads an optional memory.md from the bundle directory.
 func LoadBundleMemory(dir string) (string, error) {
 	raw, err := bundledir.ReadFile(bundledir.PathJoin(dir, memoryFile))
 	if err != nil {
-		// Absent on both disk and embedded ⇒ no memory guidance (not an error).
 		if isNotExist(err) {
 			return "", nil
 		}

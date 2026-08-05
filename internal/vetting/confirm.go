@@ -11,15 +11,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 )
 
-// GuardStatusKey / GuardResolvedKey are the wire marker vocabulary a
-// guard-wrapped tool (internal/tools/guard.go, the guard ladder's confirm
-// tier - see .quack/plan-pr5-tool-schemas.md §4b) uses in its
-// FunctionResponse. The PENDING marker itself is ADK-NATIVE: a guarded tool
-// awaiting confirmation calls agent.Context.RequestConfirmation, which makes
-// the llm flow emit an `adk_request_confirmation` FunctionCall event
-// (toolconfirmation.FunctionCallName, carrying the original call) -
-// scanNodeConfirms watches for THAT, mirroring AskToolName's "the gate
-// watches a session-event marker" design.
+// GuardStatusKey / GuardResolvedKey: wire markers for guard-ladder confirm tier (internal/tools/guard.go).
 const (
 	GuardStatusKey = "status"
 	// GuardResolvedKey marks a guarded tool's response as the consumption of a
@@ -28,22 +20,12 @@ const (
 	GuardResolvedKey = "__quack_guard_resolved"
 )
 
-// confirmInterruptID is the STABLE per-node, per-round interrupt key for a
-// guard-ladder confirm pause - the confirm-tier sibling of hitlInterruptID,
-// riding the SAME workflow.ResumeOrRequestInput/ctx.ResumedInput mechanism
-// (see RunGatedRefine) so it reuses ask_user's proven node-level pause/resume
-// path end to end (executor.go's `ev.RequestedInput != nil` handling and
-// orchestrator's latestPendingNodeInterrupt need no confirm-specific code -
-// only hitlIDRe's prefix pattern is widened to recognize "confirm-").
+// confirmInterruptID: stable per-node, per-round confirm-pause key. Reuses the ask_user pause/resume path.
 func confirmInterruptID(nodeID string, round int) string {
 	return fmt.Sprintf("confirm-%s-r%d", nodeID, round)
 }
 
-// confirmTurn is one proposed-operation/decision exchange within a node's
-// confirm history. answer is "" until the corresponding pause is resolved.
-// hint is the guard's human-facing question (internal/tools/guard.go) - it
-// carries e.g. the "this DIFFERS from the previously approved operation"
-// warning, so the node's pause message must prefer it over a generic one.
+// confirmTurn: one proposed-operation/decision exchange. hint is the guard's human-facing question.
 type confirmTurn struct {
 	tool   string
 	args   map[string]any
@@ -51,20 +33,13 @@ type confirmTurn struct {
 	answer string
 }
 
-// confirmScanResult summarizes a node's FULL confirm history within ONE
-// invocation, mirroring hitlScan: every guarded operation proposed so far
-// (turns) and how many of those the gate has already paused for (pauses).
+// confirmScanResult: full confirm history within one invocation, mirroring hitlScan.
 type confirmScanResult struct {
 	turns  []confirmTurn
 	pauses int
 }
 
-// scanNodeConfirms replays session events scoped to nodeID/invocationID,
-// collecting every ADK-native `adk_request_confirmation` FunctionCall the
-// llm flow emitted for a guarded tool under this node (the original call's
-// name/args come from the wrapper call via toolconfirmation.OriginalCallFrom),
-// plus how many confirm pauses the gate already raised, and folding in any
-// already-delivered decisions. Mirrors scanNodeAsks.
+// scanNodeConfirms: replays session events for guarded-tool confirm pauses. Mirrors scanNodeAsks.
 func scanNodeConfirms(sess session.Session, invocationID, nodeID string) confirmScanResult {
 	var s confirmScanResult
 	if sess == nil {
@@ -119,10 +94,7 @@ func scanNodeConfirms(sess session.Session, invocationID, nodeID string) confirm
 	return s
 }
 
-// confirmationHint extracts the guard's human-facing hint from an
-// adk_request_confirmation call's args. The "toolConfirmation" value is the
-// in-memory struct on a live event, or a plain JSON map after a persistence
-// round trip - handle both.
+// confirmationHint extracts the guard's hint from adk_request_confirmation args (handles live and persisted events).
 func confirmationHint(args map[string]any) string {
 	switch tc := args["toolConfirmation"].(type) {
 	case toolconfirmation.ToolConfirmation:
@@ -139,9 +111,7 @@ func confirmationHint(args map[string]any) string {
 	return ""
 }
 
-// confirmApproved parses a human's free-text confirm answer leniently.
-// Anything unrecognized (including empty) is a denial - deny-by-default is
-// the safe direction for an unparseable answer.
+// confirmApproved: lenient parse of human's confirm answer. Deny-by-default.
 func confirmApproved(answer string) bool {
 	switch strings.ToLower(strings.TrimSpace(answer)) {
 	case "y", "yes", "approve", "approved", "allow", "allowed", "confirm", "confirmed":
@@ -151,8 +121,7 @@ func confirmApproved(answer string) bool {
 	}
 }
 
-// countGuardResolutions counts how many of this node's guarded-tool responses
-// already consumed a confirm decision (GuardResolvedKey) - see ConfirmDecision.
+// countGuardResolutions: how many guarded-tool responses consumed a confirm decision.
 func countGuardResolutions(sess session.Session, invocationID, nodeID string) int {
 	if sess == nil {
 		return 0
@@ -174,11 +143,7 @@ func countGuardResolutions(sess session.Session, invocationID, nodeID string) in
 	return n
 }
 
-// ConfirmDecision reports whether the CURRENT guarded-tool call is the
-// resolution of a just-answered confirm pause, PINNED to the exact tool +
-// args (sameArgs) the human saw - different args never consume the approval,
-// so the guard treats it as a new proposal. Stateless: re-derived from
-// session history each call, so it can never drift from what happened.
+// ConfirmDecision: is this guarded-tool call the resolution of a just-answered confirm pause? Pinned to exact tool+args.
 func ConfirmDecision(sess session.Session, invocationID, nodeID, toolName string, args map[string]any) (approved, matched, mismatched bool) {
 	scan := scanNodeConfirms(sess, invocationID, nodeID)
 	consumed := countGuardResolutions(sess, invocationID, nodeID)
@@ -199,20 +164,14 @@ func ConfirmDecision(sess session.Session, invocationID, nodeID, toolName string
 	return false, false, mismatched
 }
 
-// sameArgs compares two tool-argument maps by JSON-normalized deep equality:
-// both sides are round-tripped through json.Marshal/Unmarshal so numeric
-// representation differences from JSON transport (an int pinned at approval
-// time vs the same value arriving as float64 on the re-issued call) can't
-// break - or fake - a match. A side that fails to marshal never matches.
+// sameArgs: JSON-normalized deep equality (handles int/float64 transport variance).
 func sameArgs(a, b map[string]any) bool {
 	na, aok := normalizeJSON(a)
 	nb, bok := normalizeJSON(b)
 	return aok && bok && reflect.DeepEqual(na, nb)
 }
 
-// normalizeJSON canonicalizes m via a marshal/unmarshal round trip (all
-// numbers become float64, nested types collapse to plain JSON shapes, and a
-// nil map unifies with an empty one).
+// normalizeJSON canonicalizes via marshal/unmarshal round trip.
 func normalizeJSON(m map[string]any) (any, bool) {
 	if m == nil {
 		m = map[string]any{}
@@ -228,12 +187,7 @@ func normalizeJSON(m map[string]any) (any, bool) {
 	return v, true
 }
 
-// withConfirmDecision builds the self-contained prompt for the post-decision
-// worker run, folding in the operation that was pending and the human's
-// decision - mirrors withUserAnswer's "fresh prompt, not raw protocol replay"
-// idiom. On approval the worker is told to re-issue the SAME call now; the
-// guard wrapper recognizes that immediately-following call as the approved
-// execution (see internal/tools/guard.go's ConfirmDecision use).
+// withConfirmDecision: builds the post-decision prompt, mirroring withUserAnswer's idiom.
 func withConfirmDecision(prompt string, turns []confirmTurn) string {
 	var b strings.Builder
 	b.WriteString(prompt)

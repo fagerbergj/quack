@@ -9,18 +9,10 @@ import (
 	"time"
 )
 
-// baselineTempPrefix mirrors internal/vetting/baseline.go's
-// os.MkdirTemp("", "quack-base-") prefix - the only name pattern this sweep
-// touches under the real OS temp dir, which lies outside the jail and so
-// gets its own containment story (a fixed glob, nothing broader) instead of
-// jail.Resolve.
+// baselineTempPrefix mirrors vetting's os.MkdirTemp("", "quack-base-") prefix.
 const baselineTempPrefix = "quack-base-"
 
-// GCConfig is the periodic reaper's tunables (workspace.gc in quack.yaml -
-// see internal/config for defaulting/validation). TTL-based, not
-// quota-based: filling the volume inside the TTL window isn't covered here -
-// a high-water-mark pass (evict oldest until usage drops below a threshold)
-// is the upgrade path if that ever bites.
+// GCConfig is the periodic reaper's tunables. TTL-based, not quota-based.
 type GCConfig struct {
 	Enabled bool
 	// ChatTTL/ScratchTTL <= 0 skip that sweep class entirely.
@@ -29,21 +21,13 @@ type GCConfig struct {
 	Interval   time.Duration
 }
 
-// ActiveChatFunc reports whether chatID currently has a run registered
-// (queued or executing) - RunGC's hard stop against reaping a live run's
-// clone mid-round. See stream.Hub.HasRegisteredRun. nil is treated as "can't
-// prove anything is inactive": every chat scope is skipped, never reaped.
+// ActiveChatFunc reports whether chatID has a run in flight. nil skips every chat.
 type ActiveChatFunc func(chatID string) bool
 
-// WorktreePruner detaches a linked git worktree from its parent clone's
-// bookkeeping before GC removes it - see internal/tools.PruneWorktree, the
-// one implementation (git operations don't belong in this dependency-free
-// package). nil degrades to plain removal only: worst case the parent's next
-// `git worktree add`/`prune` just has stale bookkeeping to clear itself.
+// WorktreePruner detaches a linked worktree before GC removes it. nil = remove-only.
 type WorktreePruner func(ctx context.Context, dir string) error
 
-// GCResult summarizes one sweep - RunGC logs it, or stays quiet at Debug when
-// nothing moved so the log isn't noise every interval.
+// GCResult summarizes one sweep.
 type GCResult struct {
 	ChatsRemoved   int
 	ScratchRemoved int
@@ -52,10 +36,7 @@ type GCResult struct {
 
 func (r GCResult) empty() bool { return r.ChatsRemoved == 0 && r.ScratchRemoved == 0 }
 
-// RunGC sweeps once immediately, then on cfg.Interval, until ctx is
-// cancelled. Call it as `go RunGC(...)` - it never returns early on its own,
-// and startup must not block on a sweep of a volume that may hold years of
-// clones.
+// RunGC sweeps once immediately, then on cfg.Interval, until ctx is cancelled.
 func RunGC(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFunc, prune WorktreePruner) {
 	if !cfg.Enabled {
 		return
@@ -88,11 +69,7 @@ func sweepAndLog(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveC
 		"bytes_reclaimed", res.BytesReclaimed)
 }
 
-// Sweep runs one GC pass: chat scopes idle longer than cfg.ChatTTL (skipping
-// any chat isActive reports live), then scratch - the vetting gate's
-// baseline worktrees under the OS temp dir, plus .quack-home/tmp entries -
-// idle longer than cfg.ScratchTTL. Exported so tests (and RunGC) can drive
-// one pass directly, without a ticker.
+// Sweep runs one GC pass: idle chat scopes, then scratch (baseline worktrees + .quack-home/tmp).
 func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFunc, prune WorktreePruner) GCResult {
 	var res GCResult
 	if cfg.ChatTTL > 0 {
@@ -111,13 +88,7 @@ func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFun
 	return res
 }
 
-// sweepChatScopes removes <root>/<userID>/<chatID>/ scopes whose own mtime
-// predates ttl, skipping any chat isActive reports as having a run in flight
-// - the one unacceptable failure here is deleting a live run's clone
-// mid-round. userIDs and chatIDs are read straight off disk (jail.Root()'s
-// own listing), never re-derived, and removal goes through
-// jail.RemoveChatScope - the same containment guard the chat-delete
-// lifecycle path already relies on.
+// sweepChatScopes removes chat scopes whose mtime predates ttl, skipping active chats.
 func sweepChatScopes(ctx context.Context, jail *Jail, ttl time.Duration, isActive ActiveChatFunc, prune WorktreePruner) (removed int, bytes int64) {
 	userEntries, err := os.ReadDir(jail.Root())
 	if err != nil {
@@ -168,10 +139,7 @@ func sweepChatScopes(ctx context.Context, jail *Jail, ttl time.Duration, isActiv
 	return removed, bytes
 }
 
-// sweepBaselineTemp removes orphaned baseline-check worktrees
-// (internal/vetting/baseline.go's os.MkdirTemp("", "quack-base-")) whose
-// mtime predates ttl. These are single-round scratch that baseline.go always
-// cleans up itself; only a crash mid-check leaves one behind.
+// sweepBaselineTemp removes orphaned baseline-check worktrees (quack-base-*) whose mtime predates ttl.
 func sweepBaselineTemp(ctx context.Context, ttl time.Duration, prune WorktreePruner) (removed int, bytes int64) {
 	matches, err := filepath.Glob(filepath.Join(os.TempDir(), baselineTempPrefix+"*"))
 	if err != nil {
@@ -199,11 +167,7 @@ func sweepBaselineTemp(ctx context.Context, ttl time.Duration, prune WorktreePru
 	return removed, bytes
 }
 
-// sweepHomeTmp removes stale entries under each user's private scratch dir
-// (<root>/<userID>/.quack-home/tmp/ - see homeTmpDir in sandbox.go) whose
-// mtime predates ttl. NOT the caches alongside it (npm/go/gradle) - those
-// are left alone by design (a cache TTL would make every subsequent run
-// re-download its world).
+// sweepHomeTmp removes stale .quack-home/tmp entries. Caches (npm/go/gradle) are left alone.
 func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 	userEntries, err := os.ReadDir(jail.Root())
 	if err != nil {
@@ -241,12 +205,7 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 	return removed, bytes
 }
 
-// pruneWorktreesUnder walks root for linked-worktree pointer files (a
-// regular file literally named ".git" - a plain clone's own ".git" is a
-// directory and never matches) and detaches each one from its parent's
-// bookkeeping via prune BEFORE root is removed wholesale - see
-// WorktreePruner's doc. No-op when prune is nil; best-effort otherwise, since
-// the removal that follows must proceed either way.
+// pruneWorktreesUnder detaches linked worktrees before root removal. No-op when prune is nil.
 func pruneWorktreesUnder(ctx context.Context, root string, prune WorktreePruner) {
 	if prune == nil {
 		return
@@ -263,9 +222,7 @@ func pruneWorktreesUnder(ctx context.Context, root string, prune WorktreePruner)
 	})
 }
 
-// dirSize sums regular-file sizes under root, for the sweep's
-// bytes-reclaimed log line - best-effort, an unreadable entry just doesn't
-// count.
+// dirSize sums regular-file sizes under root. Best-effort.
 func dirSize(root string) int64 {
 	var total int64
 	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {

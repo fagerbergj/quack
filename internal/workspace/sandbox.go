@@ -11,49 +11,22 @@ import (
 	"sync"
 )
 
-// SandboxMode selects the OS boundary every RunArgv/RunPipeline child process
-// runs inside. The workspace Jail is a PATH check on the TOOLS; it never
-// constrained a child process - this is the security boundary. SandboxMode
-// only decides whether childArgv wraps that child in a bwrap namespace
-// (SandboxBwrap) or runs it with the server user's own filesystem authority
-// (SandboxNone).
+// SandboxMode: OS boundary for child processes (Jail constrains tools, not processes). bwrap namespace or server user's own filesystem.
 type SandboxMode string
 
 const (
-	// SandboxBwrap wraps each child in a bubblewrap (bwrap) mount/pid/ipc/user
-	// namespace: the host filesystem is replaced by a read-only view of the
-	// system directories the toolchains need, plus exactly two writable paths -
-	// the child's own working directory and its isolated $HOME. Everything else
-	// (~/.ssh, ~/.aws, ~/.config/gh, /etc/shadow, other users' workspaces, the
-	// server's own .env) is not merely un-suggested: it does not exist inside
-	// the child's mount namespace. Needs no daemon and no root.
+	// bwrap mount/pid/ipc/user namespace: host replaced by read-only system dirs + writable cwd/HOME. No daemon, no root.
 	SandboxBwrap SandboxMode = "bwrap"
-	// SandboxNone runs children directly, exactly as quack did before: with the
-	// server user's full filesystem authority. Loudly warned about at startup.
+	// No sandbox: server user's full filesystem authority. Warned at startup.
 	SandboxNone SandboxMode = "none"
-	// SandboxLandlock confines each child with a self-applied Landlock ruleset
-	// (see landlock_linux.go) instead of a constructed mount namespace: no new
-	// PID/mount/user namespace, so paths are NOT remapped (SandboxWorkRoot is
-	// bwrap-only) and /proc stays the server's own (see childArgv's landlock
-	// branch). Chosen for the container deploy, where bwrap cannot nest inside
-	// an unprivileged Docker container but Landlock - a self-restriction, not a
-	// namespace construction - still applies.
+	// Self-applied Landlock ruleset (no new namespace). Chosen for container deploy where bwrap can't nest.
 	SandboxLandlock SandboxMode = "landlock"
 )
 
-// SandboxExecArg is the hidden argv[1] dispatch mode any binary that can
-// resolve its own path (os.Executable) answers: [self, SandboxExecArg, --rw
-// <path>..., --ro <path>..., [--probe], --, <target argv>...]. It is the
-// Landlock analogue of the GIT_ASKPASS self-exec (internal/tools/git.go's
-// GitAskpassLinkName) - never a documented CLI command, dispatched on raw
-// argv before cobra/testing.Main ever runs (see RunSandboxExecIfInvoked and
-// cmd/quack/main.go).
+// SandboxExecArg: hidden argv[1] dispatch for Landlock self-exec (analogue of GIT_ASKPASS). Dispatched before cobra.
 const SandboxExecArg = "__sandbox-exec"
 
-// SandboxEnvMarker names the env var the shim stamps into the process it execs,
-// e.g. "landlock:abi3:rw4:ro9". Observability only - a confined process is
-// otherwise indistinguishable from a bare one from outside (see the shim's
-// comment). Never read it to decide whether something is safe.
+// SandboxEnvMarker: env var the Landlock shim stamps into the process. Observability only - never read for safety decisions.
 const SandboxEnvMarker = "QUACK_SANDBOX"
 
 // bwrapBinary / prlimitBinary are looked up on the SERVER's ambient PATH (like
@@ -63,43 +36,20 @@ const (
 	prlimitBinary = "prlimit"
 )
 
-// SandboxWorkRoot is the ONE path a sandboxed child's workspace appears at,
-// whatever the host calls it - never varies by host/chat/node, so a `pwd`
-// inside matches what the fs tools call cwd. Not "/" itself: the child still
-// needs /usr, /proc, /dev to exist, which would otherwise mount inside the
-// node dir and become visible to the fs tools.
+// Fixed path inside sandbox so `pwd` matches fs tools' cwd regardless of host/chat/node.
 const SandboxWorkRoot = "/workspace"
 
-// Limits are the per-child-PROCESS resource limits (setrlimit), applied via
-// prlimit(1) as the INNERMOST wrapper - Go's os/exec has no setrlimit hook, and
-// setting them in the server process would limit the server itself. Zero means
-// "leave the inherited limit alone". Motivation: a runaway build (`npm ci` on a
-// hostile repo, a `go test` that allocates without bound) can OOM the machine
-// the server runs on; nothing stopped it.
+// Per-child resource limits via prlimit(1). Zero means inherited.
 type Limits struct {
-	// AddressSpaceMB is RLIMIT_AS - per process, not per build. Keep it
-	// generous: Node's V8 reserves a very large VIRTUAL region at startup, so a
-	// too-tight limit does not slim a build down, it makes `node` refuse to
-	// start at all.
+	// RLIMIT_AS - generous: V8 reserves large virtual regions at startup.
 	AddressSpaceMB int
-	// Procs is RLIMIT_NPROC. Applied ONLY under SandboxBwrap: RLIMIT_NPROC is
-	// counted per-UID across the whole system, so outside the sandbox's user
-	// namespace a limit below the server user's existing process count fails
-	// every fork - including bwrap's own (observed: "Creating new namespace
-	// failed: Resource temporarily unavailable"). Inside the namespace the
-	// count starts at ~0 and the limit means what it says. --unshare-pid
-	// already contains a fork bomb's blast radius; this bounds it.
+	// RLIMIT_NPROC - SandboxBwrap only (per-UID system-wide outside user NS).
 	Procs int
-	// FileSizeMB is RLIMIT_FSIZE: a child that writes past it is killed
-	// (SIGXFSZ), so no agent can fill the server's disk with one command.
+	// RLIMIT_FSIZE - child killed (SIGXFSZ) on write past this.
 	FileSizeMB int
 }
 
-// ResolveSandbox validates the configured mode and PROVES it works on this host
-// before the server starts serving. It never falls back: a deployment that asks
-// for a boundary and doesn't get one is exactly the failure this whole change
-// exists to remove, so a missing/broken bwrap is a startup error, and running
-// without a boundary is a WARN that says plainly what it costs.
+// ResolveSandbox validates the mode and proves it works before serving. Fails closed.
 func ResolveSandbox(mode SandboxMode) (SandboxMode, error) {
 	switch mode {
 	case SandboxNone:
@@ -131,13 +81,7 @@ func ResolveSandbox(mode SandboxMode) (SandboxMode, error) {
 	}
 }
 
-// probeBwrap checks that bwrap is installed AND that it can actually create a
-// namespace here - presence is not proof: a container runtime whose seccomp
-// profile blocks unshare(CLONE_NEWUSER) has bwrap on disk and cannot use it,
-// and that must fail at startup, not on the first agent command. The program it
-// runs inside the probe sandbox is bwrap itself (`bwrap --version`): /usr is
-// bound read-only, so it is always present in there, with no dependency on
-// coreutils existing in the image.
+// probeBwrap verifies bwrap is installed AND can create a namespace here (presence != proof).
 func probeBwrap() error {
 	bin, err := exec.LookPath(bwrapBinary)
 	if err != nil {
@@ -152,25 +96,7 @@ func probeBwrap() error {
 	return nil
 }
 
-// bwrapSystemArgs is the host-independent half of the sandbox: the namespaces
-// and the read-only system view. Every bind exists because some routine coding-
-// agent workflow (build/test/npm/git) needs it:
-//
-//   - unshare user/pid/ipc/uts + die-with-parent + new-session: no root/daemon
-//     required, no visibility into the server's own processes, nothing left
-//     behind on kill, no TTY to inject keystrokes into.
-//   - /usr,/bin,/lib,/lib64,/sbin (ro): toolchains + shared libs, read-only so
-//     a child can't patch the system it runs on.
-//   - /etc/ssl, /etc/ca-certificates, /etc/resolv.conf, /etc/hosts,
-//     /etc/nsswitch.conf (ro): TLS + DNS. The network namespace is
-//     DELIBERATELY NOT unshared - agents legitimately run `npm ci`/`go mod
-//     download` - so name resolution and HTTPS must keep working.
-//   - /etc/passwd, /etc/group, /etc/alternatives, /etc/localtime (ro): npm/git
-//     call getpwuid()/getgrgid(); Debian tool symlinks; sane timestamps.
-//   - --proc /proc, --dev /dev (minimal, not the host's): required with
-//     --unshare-pid.
-//
-// Everything else - all of $HOME, /root, /etc/shadow, the rest of /etc - is absent.
+// Host-independent sandbox: NS isolation + read-only system dirs. Network NOT unshared (agents need npm/go mod).
 func bwrapSystemArgs() []string {
 	return []string{
 		"--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
@@ -194,64 +120,36 @@ func bwrapSystemArgs() []string {
 	}
 }
 
-// childArgv is the ONE place a child's real argv is assembled: rlimits wrap
-// the program, and the sandbox wraps that; bin must already be RunArgv's
-// resolved absolute path.
-//
-//	bwrap <system view> <toolchains ro> <workspace + HOME rw> <root aliases>
-//	      --chdir <workspace path> -- prlimit … -- <bin> <args>
-//
-// prlimit goes INSIDE bwrap: RLIMIT_NPROC is counted per-UID system-wide, so
-// it's only safe inside the sandbox's own user namespace.
+// Assembles child argv: rlimits wrap the program, sandbox wraps that. prlimit inside bwrap (RLIMIT_NPROC per-UID).
 func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	inner := append([]string{bin}, argv[1:]...)
 	switch caps.Sandbox {
 	case SandboxLandlock:
 		return landlockArgv(dir, inner, caps)
 	case SandboxBwrap:
-		// falls through to the bwrap assembly below
 	default:
-		// No OS boundary: still bound the damage a runaway build can do, but
-		// leave RLIMIT_NPROC alone (see Limits.Procs).
 		return withLimits(inner, caps.Limits, false)
 	}
 	args := bwrapSystemArgs()
 	args = append(args, tmpArgs(caps)...)
 	args = append(args, toolchainArgs(caps)...)
 	args = append(args, extraROArgs(caps)...)
-	// The only writable paths: the node's own directory (Caps.WorkRoot) and its
-	// isolated $HOME. NOT the whole workspace root - a node's child still cannot
-	// reach another node's clone, another chat's tree, or another user's jail.
-	// Bind the WHOLE node dir, not just the cwd: tmpArgs replaces /tmp wholesale,
-	// so anything the child wrote in its workspace outside the bind would land in
-	// the throwaway mount and evaporate (a live clone vanished exactly that way).
-	// Mounted at SandboxWorkRoot, a FIXED path, so the host path / chat id /
-	// node id never enter the child's view.
 	work := caps.WorkRoot
 	if work == "" || !isDir(work) {
-		work = dir // no node scope (a direct/un-gated call): the cwd is all there is
+		work = dir
 	}
 	args = append(args, "--bind", work, SandboxWorkRoot)
 	chdir := SandboxWorkRoot
 	if rel, ok := relUnder(work, dir); ok {
 		chdir = filepath.Join(SandboxWorkRoot, rel)
 	} else {
-		// A cwd outside the node's own workspace - the gate's baseline worktree
-		// (internal/vetting/baseline.go) is the only one, and no model ever sees
-		// its path. Bind it where it is and run there, exactly as before.
 		args = append(args, "--bind", dir, dir)
 		chdir = dir
 	}
 	if caps.HomeDir != "" && caps.HomeDir != dir {
 		args = append(args, "--bind", caps.HomeDir, caps.HomeDir)
 	}
-	// A linked git worktree's parent .git store lies OUTSIDE work entirely -
-	// bind it at its own real path, same exception as the outside-cwd branch
-	// above, since bwrap cannot remap two disjoint host trees into one mount
-	// without giving the child two names for one place. Read-only for the
-	// shared store, read-write for the worktree's own gitdir nested inside it
-	// (see worktreeGrants) - and in that order, because a later bwrap bind
-	// layers over an earlier one.
+	// Linked worktree: parent .git RO, own gitdir RW (later binds overlay earlier).
 	wtRW, wtRO := worktreeGrants(work, dir)
 	for _, common := range wtRO {
 		args = append(args, "--ro-bind", common, common)
@@ -260,23 +158,14 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 		args = append(args, "--bind", gitdir, gitdir)
 	}
 	args = append(args, rootAliasArgs(work, dir, caps)...)
-	// The sandbox's own root is a throwaway tmpfs: anything written there is gone
-	// when the command exits. That is how we ate the agent's files once already
-	// (#214), and the root aliases below make a stray `cd /repo && cd ..` land
-	// there. Read-only, so a write to the fake root FAILS instead of vanishing;
-	// every real mount (/workspace, $HOME, /tmp, /dev, /proc) keeps its own flags.
+	// Sandbox root RO so a stray `cd /repo && cd ..` fails instead of writing to tmpfs.
 	args = append(args, "--remount-ro", "/")
 	args = append(args, "--chdir", chdir, "--")
 	args = append(args, withLimits(inner, caps.Limits, true)...)
 	return append([]string{bwrapPath()}, args...)
 }
 
-// rootAliasArgs symlinks each top-level entry of the node's workspace to the
-// same name at the sandbox root (/quack → /workspace/quack), so the "/quack"
-// paths the fs tools hand back also work in the shell - the last inch of the one
-// namespace. A symlink holds no data, so a write through the alias lands in the
-// real bind and survives. Entries colliding with a real mount are skipped: the
-// mount must win.
+// Symlinks workspace entries at sandbox root so fs tool paths work in the shell.
 func rootAliasArgs(work, dir string, caps Caps) []string {
 	entries, err := os.ReadDir(work)
 	if err != nil {
@@ -294,17 +183,10 @@ func rootAliasArgs(work, dir string, caps Caps) []string {
 	return args
 }
 
-// maxRootAliases bounds the symlink farm: the node dir holds clones and a handful
-// of files, so this is never reached in practice - it just keeps a pathological
-// directory (an agent that wrote 5,000 files at its root) from building an absurd
-// argv. Beyond it the entries are still reachable at /workspace/<name>.
+// Bounds the symlink farm: prevents a pathological root dir from building absurd argv.
 const maxRootAliases = 100
 
-// reservedRoots are the top-level names inside the sandbox that a workspace entry
-// may NOT shadow: the system view's mountpoints, the workspace mount itself, and
-// the first component of every host path we bind (the isolated $HOME, an outside
-// cwd, the exec_path toolchains, a linked worktree's parent .git store - bwrap
-// creates those parent dirs at the root).
+// Top-level names inside the sandbox a workspace entry may NOT shadow (mountpoints, binds).
 func reservedRoots(dir string, caps Caps, extra ...string) map[string]bool {
 	m := map[string]bool{
 		"usr": true, "bin": true, "lib": true, "lib64": true, "sbin": true,
@@ -330,8 +212,7 @@ func reservedRoots(dir string, caps Caps, extra ...string) map[string]bool {
 	return m
 }
 
-// firstComponent is the first path element of an absolute path ("/home/j/x" →
-// "home"); "" for a relative or empty path.
+// firstComponent returns the first path element of an absolute path, "" otherwise.
 func firstComponent(p string) string {
 	if !filepath.IsAbs(p) {
 		return ""
@@ -340,10 +221,7 @@ func firstComponent(p string) string {
 	return parts[0]
 }
 
-// relUnder reports dir's path RELATIVE to base when dir is base or lies inside it
-// - the mapping from a host path to its place under SandboxWorkRoot. Both paths
-// come from Jail.Resolve (already cleaned and symlink-resolved), so a lexical
-// answer is the true one.
+// relUnder reports dir relative to base (for SandboxWorkRoot mapping). Both from Jail.Resolve so lexical is correct.
 func relUnder(base, dir string) (string, bool) {
 	rel, err := filepath.Rel(base, dir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -355,19 +233,13 @@ func relUnder(base, dir string) (string, bool) {
 	return rel, true
 }
 
-// isDir guards the WorkRoot bind: bwrap fails outright on a bind source that does
-// not exist, and a caller can hand us a node dir that was never created (a gate
-// check on a node whose worker never wrote anything). Falling back to the cwd -
-// which by then has been stat'd by the caller - keeps that a normal run.
+// isDir guards the WorkRoot bind: bwrap fails on a missing bind source.
 func isDir(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
 }
 
-// tmpArgs gives the child a private /tmp. It is backed by a real directory
-// under the isolated $HOME rather than a tmpfs when one is available: a tmpfs
-// lives in RAM, and a `go build`'s temporary objects are exactly the kind of
-// multi-gigabyte write that would then become memory pressure on the server.
+// Private /tmp backed by $HOME/tmp when available (tmpfs = RAM pressure for builds).
 func tmpArgs(caps Caps) []string {
 	if tmp := homeTmpDir(caps); tmp != "" {
 		return []string{"--bind", tmp, "/tmp"}
@@ -375,11 +247,7 @@ func tmpArgs(caps Caps) []string {
 	return []string{"--tmpfs", "/tmp"}
 }
 
-// homeTmpDir is caps.HomeDir/tmp, created on demand - "" when HomeDir is
-// unset or the dir can't be created, so callers fall back to whatever /tmp
-// isolation their sandbox mode offers (bwrap: a tmpfs; landlock: the real
-// /tmp, since it has no mount namespace to privatize one - see
-// landlockTmpDir).
+// homeTmpDir returns caps.HomeDir/tmp (created on demand), "" when unavailable.
 func homeTmpDir(caps Caps) string {
 	if caps.HomeDir == "" {
 		return ""
@@ -393,12 +261,7 @@ func homeTmpDir(caps Caps) string {
 	return tmp
 }
 
-// toolchainArgs read-only-binds the operator's configured exec_path entries
-// (workspace.exec_path), which live outside the system dirs bwrapSystemArgs
-// covers. A bin/ entry also gets its FHS siblings (lib, libexec, share)
-// bound - a prefix toolchain's bin/ symlinks into them (nvm's `npm` →
-// ../lib/...) - but never the parent dir, which for `~/bin` would be the
-// operator's whole home directory.
+// RO-binds operator exec_path entries + a bin/'s FHS siblings (lib, libexec, share).
 func toolchainArgs(caps Caps) []string {
 	var args []string
 	for _, p := range caps.ExtraPath {
@@ -418,9 +281,7 @@ func toolchainArgs(caps Caps) []string {
 	return args
 }
 
-// extraROArgs bwrap-binds each Caps.ExtraRO entry read-only, --ro-bind-try so
-// a path that doesn't exist on this host is skipped rather than failing the
-// whole sandbox setup (a context dir a run never wrote, e.g.).
+// RO-binds Caps.ExtraRO entries (--ro-bind-try: skips missing paths).
 func extraROArgs(caps Caps) []string {
 	var args []string
 	for _, p := range caps.ExtraRO {
@@ -432,11 +293,7 @@ func extraROArgs(caps Caps) []string {
 	return args
 }
 
-// withLimits prefixes argv with prlimit(1) when any limit is set. prlimit is
-// util-linux - present on any Linux userland, including the debian-slim runtime
-// image - but limits are DoS hygiene, not the security boundary, so a host
-// without it gets a one-time WARN and unlimited children rather than a refusal
-// to run (unlike the sandbox itself, which fails closed at startup).
+// Prefixes argv with prlimit(1) when limits are set. Missing prlimit = WARN + unlimited (not a startup error).
 func withLimits(argv []string, lim Limits, inUserNS bool) []string {
 	var flags []string
 	if lim.AddressSpaceMB > 0 {
@@ -467,10 +324,7 @@ func withLimits(argv []string, lim Limits, inUserNS bool) []string {
 
 var warnNoPrlimit sync.Once
 
-// bwrapPath resolves bwrap once. ResolveSandbox already proved it is there and
-// works before any child runs, so a lookup failure here is unreachable in a
-// running server; returning the bare name keeps the failure a clear "bwrap not
-// found" from exec rather than a panic.
+// bwrapPath: ResolveSandbox already proved it exists. Bare name fallback keeps the exec error clear.
 func bwrapPath() string {
 	if p, err := exec.LookPath(bwrapBinary); err == nil {
 		return p
@@ -478,31 +332,18 @@ func bwrapPath() string {
 	return bwrapBinary
 }
 
-// ---------------------------------------------------------------------------
-// Landlock mode: no mount namespace, so paths keep their real host names -
-// the child self-restricts (via the __sandbox-exec re-exec) instead of
-// running inside a constructed filesystem view. See landlock_linux.go for the
-// actual ruleset (build-tagged: Landlock is Linux-only).
-// ---------------------------------------------------------------------------
+// Landlock mode: self-restricts via __sandbox-exec re-exec (Linux-only, see landlock_linux.go).
 
-// probeLandlockHook lets a test simulate an unsupported kernel (ABI < 3)
-// without one - ResolveSandbox's fail-closed path needs exercising even on a
-// host (like CI) that DOES have working Landlock. probeLandlock itself is
-// build-tag-selected (landlock_linux.go / landlock_other.go).
+// probeLandlockHook: test seam for simulating unsupported kernel.
 var probeLandlockHook = probeLandlock
 
-// landlockArgv builds the [self, __sandbox-exec, --rw …, --ro …, --, inner…]
-// argv childArgv's landlock branch execs - the RunArgv/RunPipeline path,
-// which has no extra grants beyond the node's own scope (WrapArgv is the
-// seam for a caller that needs more, e.g. internal/acp's skill paths).
+// landlockArgv builds [self, __sandbox-exec, …] argv for childArgv's landlock branch.
 func landlockArgv(dir string, inner []string, caps Caps) []string {
 	rw, ro := landlockGrants(dir, caps)
 	return assembleSandboxExec(rw, ro, withLimits(inner, caps.Limits, false))
 }
 
-// assembleSandboxExec is the ONE place a __sandbox-exec argv is built from a
-// grant set and a final command - shared by landlockArgv and WrapArgv so the
-// two callers can't drift on flag order or the self-exec path.
+// assembleSandboxExec: shared by landlockArgv and WrapArgv to keep flag order consistent.
 func assembleSandboxExec(rw, ro, inner []string) []string {
 	args := []string{landlockSelfExe(), SandboxExecArg}
 	for _, p := range rw {
@@ -515,12 +356,7 @@ func assembleSandboxExec(rw, ro, inner []string) []string {
 	return append(args, inner...)
 }
 
-// landlockGrants computes the read-write and read-only path grants for a
-// child rooted at dir: RW is the node's own scope (mirrors childArgv's bwrap
-// branch - its own WorkRoot/cwd, the isolated HOME, and tmp), RO is the
-// system view plus the operator's toolchain extras. Landlock can't remap
-// paths (no mount namespace - see SandboxWorkRoot's doc), so unlike bwrap
-// these are the child's REAL host paths, not a fixed mount.
+// RW/RO path grants for a child. Unlike bwrap, paths are real host paths (no mount namespace).
 func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	work := caps.WorkRoot
 	if work == "" || !isDir(work) {
@@ -606,12 +442,7 @@ func landlockTmpDir(caps Caps) string {
 	return os.TempDir()
 }
 
-// landlockSelfExe resolves this binary's own path for the __sandbox-exec
-// self-spawn (os.Executable() - askpass already relies on this working).
-// ResolveSandbox's probe already proved this exact lookup succeeds before any
-// child runs, so a failure here is unreachable in a running server;
-// falling back to argv[0] keeps a would-be failure a clear exec error rather
-// than a panic (mirrors bwrapPath's rationale).
+// landlockSelfExe: ResolveSandbox already proved this succeeds. Bare-name fallback keeps the error clear.
 func landlockSelfExe() string {
 	if p, err := os.Executable(); err == nil {
 		return p
@@ -619,23 +450,12 @@ func landlockSelfExe() string {
 	return os.Args[0]
 }
 
-// RunSandboxExecIfInvoked is the Landlock analogue of the GIT_ASKPASS argv[0]
-// dispatch (internal/tools/git.go's isGitAskpassInvocation / cmd/quack's
-// main): when this process was spawned as [self, SandboxExecArg, …] by
-// landlockArgv/WrapArgv, apply the ruleset and exec the target - never
-// returns on success. Call this at the very top of main() (see
-// cmd/quack/main.go), before cobra/testing.Main ever run; this package's own
-// tests mirror the call in a TestMain for the same reason askpass's do.
+// RunSandboxExecIfInvoked: argv[0] dispatch for Landlock self-exec. Call at top of main() before cobra.
 func RunSandboxExecIfInvoked() {
 	if len(os.Args) < 2 || os.Args[1] != SandboxExecArg {
 		return
 	}
-	// SandboxExecMain only ever RETURNS for --probe (or an error) - a real
-	// target exec's success path replaces this process and never comes back.
-	// Always os.Exit here regardless, so the caller (main, or a test
-	// binary's TestMain) can never fall through into its own normal
-	// execution - which, in a test binary, would silently re-run the whole
-	// suite inside what was meant to be a throwaway probe/shim child.
+	// os.Exit always so main/test can't fall through into its own execution.
 	if err := SandboxExecMain(os.Args[2:]); err != nil {
 		fmt.Fprintln(os.Stderr, "sandbox-exec:", err)
 		os.Exit(1)
@@ -643,11 +463,7 @@ func RunSandboxExecIfInvoked() {
 	os.Exit(0)
 }
 
-// SandboxTmpDir is the TMPDIR a subprocess built OUTSIDE RunArgv/RunPipeline
-// (internal/acp) should be given: the granted tmp dir under landlock (see
-// childEnv's doc - Landlock can't remap /tmp, so a tool must be TOLD where
-// its writable tmp lives), the server's real /tmp otherwise (bwrap remaps it
-// wholesale; none has no grant to honor).
+// TMPDIR for subprocesses outside RunArgv/RunPipeline (ACP). Landlock can't remap /tmp so tools must be told.
 func SandboxTmpDir(caps Caps) string {
 	if caps.Sandbox == SandboxLandlock {
 		return landlockTmpDir(caps)
@@ -655,15 +471,7 @@ func SandboxTmpDir(caps Caps) string {
 	return os.TempDir()
 }
 
-// SandboxJavaToolOptions is the JAVA_TOOL_OPTIONS a sandboxed child needs ("" when
-// none) - the union of every JVM concern the sandbox creates, since a second
-// JAVA_TOOL_OPTIONS entry does not merge with the first, it REPLACES it (the JVM
-// honours the last occurrence in envp). TMPDIR does not reach a JVM: java.io.tmpdir
-// is hardcoded to /tmp on Linux, the same blind spot user.home has, so under
-// landlock every JVM tool writes to an ungranted path (Room's KSP processor died
-// with ExceptionInInitializerError when sqlite-jdbc could not extract its native
-// lib there). JAVA_TOOL_OPTIONS is the one lever every JVM in the tree honours,
-// including Gradle's forked daemon and workers.
+// JAVA_TOOL_OPTIONS a sandboxed child needs. JAVA_TOOL_OPTIONS replaces not merges; java.io.tmpdir is hardcoded to /tmp.
 func SandboxJavaToolOptions(caps Caps) string {
 	var parts []string
 	if caps.Sandbox == SandboxLandlock {
@@ -675,11 +483,7 @@ func SandboxJavaToolOptions(caps Caps) string {
 	return strings.Join(parts, " ")
 }
 
-// javaAddressSpaceOptions bounds a JVM to fit inside asMB of RLIMIT_AS ("" when
-// unset): a JVM sizes heap/metaspace/etc. off the HOST's real RAM, not an
-// inherited rlimit, so bounding heap alone still crashes it. Splits asMB
-// 35/10/8/8 across heap/metaspace/class-space/code-cache with a deliberate
-// ~39% margin - a live repro still crashed on native thread creation at 15%.
+// JVM heap/metaspace/class-space/code-cache to fit inside asMB RLIMIT_AS. ~39% margin.
 func javaAddressSpaceOptions(asMB int) string {
 	if asMB <= 0 {
 		return ""
@@ -690,36 +494,16 @@ func javaAddressSpaceOptions(asMB int) string {
 	)
 }
 
-// javaBuildProcessors caps the core count a sandboxed JVM sees (see
-// javaAddressSpaceOptions) - plenty of parallelism for one gate-check build,
-// regardless of how many cores the host actually has.
+// Core count cap for sandboxed JVM (one gate-check build).
 const javaBuildProcessors = 4
 
-// ChildPath is the hermetic PATH any subprocess built OUTSIDE RunArgv/
-// RunPipeline should run with (internal/acp's ACP agent, which constructs its
-// own exec.Cmd) - caps.ExtraPath first, then the same fixed system
-// directories every other child gets. See childPath.
+// Hermetic PATH for subprocesses outside RunArgv/RunPipeline (ACP agent).
 func ChildPath(caps Caps) string {
 	return childPath(caps)
 }
 
-// WrapArgv wraps argv (already command[0]+args, resolved by the caller) to
-// run confined at dir under caps.Sandbox, with extraRO/extraRW grants added on
-// top of the caller's own scope (internal/acp's skill paths and exec_path) -
-// a linked worktree's parent .git store is granted automatically
-// (worktreeCommonGitDirs via landlockGrants), with no extraRW needed for it.
-// The ONE seam a caller outside RunArgv/newChildCmd routes through.
-//
-// landlock: fully confines, same mechanism as childArgv's landlock branch.
-// none: returns argv unchanged by design - there is no boundary to wrap into.
-// bwrap: ALSO returns argv unchanged for now - ponytail: wiring an ACP
-// subprocess into the SAME bind/remount/chdir machinery childArgv assembles
-// for RunArgv (fixed /workspace, root aliases, the outside-cwd exception) is
-// real work with its own edge cases the ACP spawn shape doesn't share with a
-// gate check; landlock is what the container deploy this spec exists for
-// actually uses, and bwrap's host deploys already ran the ACP agent bare.
-// Ceiling: an ACP round under `sandbox: bwrap` stays unconfined until this is
-// wired.
+// WrapArgv: the ONE seam for callers outside RunArgv/newChildCmd (e.g. ACP).
+// ponytail: bwrap returns argv unchanged - landlock is what containers use.
 func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
 	if len(argv) == 0 || caps.Sandbox != SandboxLandlock {
 		return argv
@@ -730,28 +514,15 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 	return assembleSandboxExec(rw, ro, argv)
 }
 
-// ---------------------------------------------------------------------------
-// Linked-worktree grants: a linked git worktree's OWN ".git" is a pointer
-// FILE naming <parent>/.git/worktrees/<name> - the object database, refs, and
-// index/HEAD/logs live under the PARENT clone's ".git". Granting only the
-// worktree's own dir leaves git inside it unable to see its history; this
-// section resolves the one extra grant that fixes it, for both sandbox modes.
-// ---------------------------------------------------------------------------
+// Linked-worktree grants: a linked worktree's .git is a pointer file; objects/refs live under the parent clone.
 
-// WorktreeCommonGitDir resolves the shared ".git" directory a linked git
-// worktree at dir points at ("" when dir is not a linked worktree at all - a
-// plain clone's own ".git" is a directory, not a pointer file, and this
-// returns "" for it too since a plain clone needs no extra grant).
+// WorktreeCommonGitDir: shared .git dir a linked worktree points at. "" for a plain clone (no extra grant needed).
 func WorktreeCommonGitDir(dir string) string {
 	_, common := worktreeGitDirs(dir)
 	return common
 }
 
-// worktreeGitDirs resolves both halves a linked worktree needs: its OWN gitdir
-// (the "gitdir:" pointer target, .git/worktrees/<name> - HEAD and the index
-// live here, so git writes it on an ordinary `status`) and the shared common
-// dir it nests inside (objects, refs, packed-refs, logs). Both "" when dir is
-// not a linked worktree.
+// Own gitdir + shared common dir for a linked worktree. Both "" when not a linked worktree.
 func worktreeGitDirs(dir string) (gitdir, common string) {
 	data, err := os.ReadFile(filepath.Join(dir, ".git"))
 	if err != nil {
@@ -777,11 +548,7 @@ func worktreeGitDirs(dir string) (gitdir, common string) {
 	return filepath.Clean(gitdir), filepath.Clean(common)
 }
 
-// worktreeGrants splits linked-worktree grants into WRITABLE per-worktree
-// gitdirs and READ-ONLY shared common dirs, deduped. The split is the point:
-// granting the common dir read-write would let a read-only node rewrite the
-// IMPLEMENTER's refs and object store. Both sandbox modes respect it - landlock
-// applies the most-specific rule, bwrap's later binds layer over earlier ones.
+// RW per-worktree gitdirs, RO shared common dirs. Without the split a read-only node could rewrite the implementer's refs.
 func worktreeGrants(paths ...string) (rw, ro []string) {
 	seenRW, seenRO := map[string]bool{}, map[string]bool{}
 	for _, p := range paths {
@@ -801,8 +568,7 @@ func worktreeGrants(paths ...string) (rw, ro []string) {
 	return rw, ro
 }
 
-// worktreeCommonGitDirs is worktreeGrants' read-only half, for callers that
-// only need the paths (rootAliasArgs' reserved-name set).
+// worktreeCommonGitDirs: worktreeGrants' RO half for callers that only need the paths.
 func worktreeCommonGitDirs(paths ...string) []string {
 	_, ro := worktreeGrants(paths...)
 	return ro

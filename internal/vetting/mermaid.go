@@ -1,8 +1,4 @@
-// mermaid.go deterministically scans every ```mermaid fenced block bound for
-// delivery: GitHub renders an invalid diagram as a broken box, and nothing
-// upstream checks the syntax. Detects and reports rather than stripping, so
-// the revise round gets the concrete parse error. Validates via
-// scripts/mermaid-validate.mjs, the real mermaid.parse() GitHub renders with.
+// mermaid.go: scans ```mermaid blocks bound for delivery and validates them via the real mermaid parser.
 package vetting
 
 import (
@@ -20,27 +16,16 @@ import (
 	"time"
 )
 
-// fenceOpenRe matches a fence-opening line - up to 3 leading spaces (CommonMark's
-// indented-code-block cutoff), 3+ backticks or tildes, then an optional info
-// string. Case-insensitive: GitHub renders ```Mermaid / ```MERMAID the same as
-// ```mermaid.
+// fenceOpenRe matches a fence-opening line (CommonMark: 3 leading spaces, 3+ backticks/tildes, optional info).
 var fenceOpenRe = regexp.MustCompile(`(?i)^( {0,3})(` + "`{3,}|~{3,}" + `)[ \t]*(\S*)`)
 
-// mermaidIssue is one invalid top-level ```mermaid block found while scanning
-// markdown: the 1-based line number of its fence-open line (so revise
-// feedback can point at it in a long answer) and the concrete reason it's
-// invalid.
+// mermaidIssue: one invalid top-level ```mermaid block: line number + reason.
 type mermaidIssue struct {
 	line int
 	err  string
 }
 
-// FindInvalidMermaid walks md fence-depth-aware, one line at a time, tracking
-// which code fence (if any) is currently open - a ```mermaid opener only
-// starts a mermaid block when it's a genuine TOP-LEVEL fence, never one
-// merely quoted inside an unrelated fence's body (a ```go block whose content
-// contains the literal text "```mermaid" is never descended into). Detection
-// only - md is never modified; see the package doc for why.
+// FindInvalidMermaid walks md fence-depth-aware, detecting invalid top-level ```mermaid blocks.
 func FindInvalidMermaid(md string) []mermaidIssue {
 	if !strings.Contains(md, "```") && !strings.Contains(md, "~~~") {
 		return nil
@@ -61,10 +46,7 @@ func (i mermaidIssue) Feedback() string {
 	return fmt.Sprintf("line %d: %s", i.line, i.err)
 }
 
-// walkMermaidBlocks is the one fence-walker shared by FindInvalidMermaid and
-// DegradeInvalidMermaid: it visits each genuine top-level ```mermaid block's
-// 0-based fence-open/fence-close line indices plus its body text (fence
-// lines excluded) - validating is entirely up to the caller's visit func.
+// walkMermaidBlocks visits each top-level ```mermaid block with its body text.
 func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, body string)) {
 	for i := 0; i < len(lines); {
 		m := fenceOpenRe.FindStringSubmatch(lines[i])
@@ -75,9 +57,7 @@ func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, body 
 		fenceChar, fenceLen, info := m[2][0], len(m[2]), strings.ToLower(m[3])
 		close := findFenceClose(lines, i+1, fenceChar, fenceLen)
 		if close == -1 {
-			// Unterminated fence: everything to EOF is inside it - nothing here is
-			// a genuine, closed top-level block worth checking.
-			return
+			return // unterminated fence, nothing to check
 		}
 		if info == "mermaid" {
 			visit(i, close, strings.Join(lines[i+1:close], "\n"))
@@ -86,11 +66,7 @@ func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, body 
 	}
 }
 
-// DegradeInvalidMermaid is the plan/research path's last-resort ceiling
-// (github/webhook.go, after one failed revise): rewrites each still-invalid
-// ```mermaid fence into a labeled ```text fence with a visible warning note -
-// a visible degradation, not the old silent strip. Returns md unchanged and
-// issues=nil when nothing is invalid.
+// DegradeInvalidMermaid rewrites invalid ```mermaid fences to ```text with a warning (last-resort ceiling).
 func DegradeInvalidMermaid(md string) (string, []mermaidIssue) {
 	if !strings.Contains(md, "```") && !strings.Contains(md, "~~~") {
 		return md, nil
@@ -119,13 +95,7 @@ func DegradeInvalidMermaid(md string) (string, []mermaidIssue) {
 	return strings.Join(out, "\n"), issues
 }
 
-// findFenceClose returns the index of the line that closes a fence opened
-// with fenceChar repeated fenceLen+ times, searching from start, or -1 if
-// none exists before EOF. A closing line: up to 3 leading spaces, the SAME
-// fence character repeated at least fenceLen times, and nothing but
-// whitespace after - CommonMark's rule, which is also what stops a fence
-// quoted mid-content (e.g. inside a comment, indented, or followed by other
-// text) from ever being mistaken for a real close.
+// findFenceClose searches for a closing fence line from start (CommonMark rules).
 func findFenceClose(lines []string, start int, fenceChar byte, fenceLen int) int {
 	for j := start; j < len(lines); j++ {
 		line := lines[j]
@@ -145,14 +115,7 @@ func findFenceClose(lines []string, start int, fenceChar byte, fenceLen int) int
 	return -1
 }
 
-// mermaidValidatorPath is scripts/mermaid-validate.mjs. In production it's
-// found relative to the server's own CWD - repo root in dev, "/" in the
-// runtime image, same convention as every config/agents/skills path (see the
-// Dockerfile). `go test`'s CWD is instead the package's own directory, which
-// differs per package (internal/vetting vs internal/github, both consumers -
-// see FindInvalidMermaid/DegradeInvalidMermaid) - resolveMermaidValidatorPath
-// falls back to a path relative to THIS source file so every package's tests
-// find the same repo checkout without each needing its own override.
+// mermaidValidatorPath: found relative to CWD (production) or this source file (tests).
 var mermaidValidatorPath = resolveMermaidValidatorPath()
 
 func resolveMermaidValidatorPath() string {
@@ -178,12 +141,7 @@ var warnMermaidValidatorUnavailable = sync.OnceFunc(func() {
 		"component", "vetting")
 })
 
-// mermaidError returns "" if body is valid mermaid per the REAL mermaid.js
-// parser (scripts/mermaid-validate.mjs, run over stdin), else a reason
-// naming the parser's own error. Node absent, or the script missing, derives
-// nothing rather than failing every node with a diagram - mirrors
-// toolchainPresent's posture for derived checks (checks.go) - logged once so
-// an operator can tell "validated clean" from "never validated".
+// mermaidError validates body via the real mermaid.js parser. "" = valid; degrades gracefully when node/script absent.
 func mermaidError(body string) string {
 	if _, err := exec.LookPath("node"); err != nil {
 		warnMermaidValidatorUnavailable()
@@ -200,9 +158,7 @@ func mermaidError(body string) string {
 	out, err := cmd.Output()
 	if err != nil {
 		if _, isExitErr := err.(*exec.ExitError); !isExitErr {
-			// A launch failure, not the script reporting a bad diagram - degrade
-			// like a missing validator rather than mislabel it as invalid mermaid.
-			warnMermaidValidatorUnavailable()
+			warnMermaidValidatorUnavailable() // launch failure, not invalid diagram
 			return ""
 		}
 	}
@@ -219,14 +175,7 @@ func mermaidError(body string) string {
 	return ""
 }
 
-// mermaidCriterion is the GATE side of #448: scans the answer plus every
-// currently staged delivery body (StagedDelivery.Body - the PR/review/comment
-// text about to ship to GitHub) for an invalid ```mermaid block. ok=false
-// means nothing invalid was found (matches sufficient_length's convention
-// above - a passing check adds no entry to v.Criteria). The first offending
-// block's line + reason becomes the Reason, which composeFeedback (node.go)
-// folds into the next revise prompt - the model gets the actual parser error
-// and the block it came from, not a generic "check your mermaid".
+// mermaidCriterion scans the answer and staged delivery bodies for invalid ```mermaid blocks.
 func mermaidCriterion(answer string, act workerActivity) (criterionScore, bool) {
 	for _, t := range deliveryTexts(answer, act) {
 		if issues := FindInvalidMermaid(t); len(issues) > 0 {

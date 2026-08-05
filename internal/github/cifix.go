@@ -1,13 +1,4 @@
-// PR self-heal: quack:fix is a PERSISTENT capability flag (or quack itself
-// authored the PR - authorship IS the flag). While set, any CI/CD failure
-// dispatches a fix run on the PR's EXISTING session, on its head branch.
-//
-// Loop bound: ONE fix attempt per CI failure - quack's own fix push re-runs
-// CI, so the next failure could otherwise BE the retry, forever. autoHeal
-// checks commit authorship to break this, but only AFTER dispatching a first
-// fix (checking on the very first failure would misread ordinary work as an
-// already-failed fix). Once tried, a fresh failure on quack's own commit
-// waits for a human; a HUMAN commit's failure is always eligible again.
+// PR self-heal: quack:fix label or quack-authored PR → CI failure dispatches a fix. ONE fix per failure (authorship breaks the loop; quack's own failures wait for human).
 package github
 
 import (
@@ -24,13 +15,10 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// fixContextTimeout bounds the pre-dispatch API phase of a fix trigger
-// (labels, check runs, annotations) - the run itself gets runTimeout.
+// Bounds pre-dispatch API phase (labels, check runs, annotations).
 const fixContextTimeout = 2 * time.Minute
 
-// workflowRunPayload is the subset of GitHub's workflow_run webhook we use.
-// PullRequests is empty for fork-head PRs - quack cannot push to a fork's
-// branch anyway, so those are simply never auto-healed.
+// workflowRunPayload: subset of GitHub's workflow_run webhook. Fork PRs never auto-healed.
 type workflowRunPayload struct {
 	Action      string `json:"action"`
 	WorkflowRun struct {
@@ -55,9 +43,7 @@ type workflowRunPayload struct {
 	} `json:"installation"`
 }
 
-// repoInfo is the repository/installation identity common to every payload
-// shape this file dispatches a fix from - factored out so beginFix takes one
-// argument regardless of which webhook triggered it.
+// repoInfo: repository/installation identity for fix dispatch.
 type repoInfo struct {
 	Owner, Name, CloneURL, DefaultBranch string
 	InstallationID                       int64
@@ -71,12 +57,7 @@ func (p pullRequestPayload) repoInfo() repoInfo {
 	return repoInfo{p.Repository.Owner.Login, p.Repository.Name, p.Repository.CloneURL, p.Repository.DefaultBranch, p.Installation.ID}
 }
 
-// handleWorkflowRun is the CI auto-heal trigger: a workflow that completed
-// with a failure on an eligible PR (quack:fix label present, or quack itself
-// authored the PR) dispatches a bounded fix run. Deliberately NOT
-// bot-sender-gated: quack's own fix push re-triggers CI and that failure
-// webhook is what autoHeal's one-attempt guard evaluates - the sender was
-// never the loop bound.
+// handleWorkflowRun: CI auto-heal trigger. Not bot-sender-gated (quack's own fix push re-triggers CI).
 func (e *Extension) handleWorkflowRun(w http.ResponseWriter, body []byte) {
 	var p workflowRunPayload
 	if err := json.Unmarshal(body, &p); err != nil {

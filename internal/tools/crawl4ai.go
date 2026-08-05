@@ -9,28 +9,14 @@ import (
 	"strings"
 )
 
-// crawl4ai settle-wait knobs. crawl4ai reads the page HTML with Playwright, and a
-// page that is still redirecting / fetching / mutating its DOM makes that read race
-// the navigation - the backend then 500s with "Page.content: Unable to retrieve
-// content because the page is navigating and changing the content". We defend by
-// telling crawl4ai to wait for the page to settle before grabbing the HTML.
+// crawl4ai settle-wait knobs: network-idle wait, settle delay, page timeout.
 const (
-	// crawl4aiWaitUntil: consider the page "loaded" only once the network has gone
-	// idle, so a page still redirecting or lazy-loading isn't read mid-navigation.
-	crawl4aiWaitUntil = "networkidle"
-	// crawl4aiSettleDelaySeconds: an extra fixed delay after load before the HTML is
-	// grabbed, to let late JS mutations finish.
+	crawl4aiWaitUntil          = "networkidle"
 	crawl4aiSettleDelaySeconds = 2.0
-	// crawl4aiPageTimeoutMS bounds crawl4ai's per-page work *below* the plain HTTP
-	// client's 30s timeout (registry.go), so a stuck page fails fast server-side
-	// (returning a clean error we can degrade on) instead of the Go client dropping
-	// the connection out from under it.
-	crawl4aiPageTimeoutMS = 25000
+	crawl4aiPageTimeoutMS      = 25000
 )
 
-// crawl4aiRenderer is the crawl4ai adapter for the PageRenderer port. crawl4ai is
-// a trusted internal host (plain client); the caller SSRF-validates the URL
-// before calling, because crawl4ai fetches the URL itself server-side.
+// crawl4aiRenderer: crawl4ai adapter for PageRenderer port. Caller SSRF-validates first.
 type crawl4aiRenderer struct {
 	client *http.Client
 	base   string // trimmed of a trailing slash
@@ -40,11 +26,7 @@ func (r *crawl4aiRenderer) Render(ctx context.Context, target string) (string, e
 	return crawl4aiMarkdown(ctx, r.client, r.base, target)
 }
 
-// crawl4aiMarkdown asks the crawl4ai backend to fetch + render the page (real
-// browser, after waiting for it to settle - see the crawl4aiWaitUntil knobs) and
-// return it as Markdown. crawl4ai's /crawl returns both a "fit" markdown
-// (Readability-based, drops chrome) and the raw DOM markdown in one response; we
-// prefer fit and fall back to raw when fit prunes the page to nothing.
+// crawl4aiMarkdown: fetches + renders page via crawl4ai, preferring fit markdown with raw fallback.
 func crawl4aiMarkdown(ctx context.Context, client *http.Client, backend, target string) (string, error) {
 	fit, raw, err := crawl4aiCrawl(ctx, client, backend, target)
 	if err != nil {
@@ -57,12 +39,7 @@ func crawl4aiMarkdown(ctx context.Context, client *http.Client, backend, target 
 	return md, nil
 }
 
-// crawl4aiCrawl POSTs to crawl4ai's /crawl endpoint with a settle-wait
-// crawler_config and returns the page's fit and raw Markdown. The settle-wait
-// (network-idle + a fixed delay) is what avoids reading the page mid-navigation.
-// (The lighter /md endpoint is not used: this crawl4ai version silently ignores
-// unknown fields on /md, so a wait option there would be a no-op - only /crawl's
-// crawler_config actually takes effect.)
+// crawl4aiCrawl: POSTs to /crawl with settle-wait config; /md is unused (ignores wait options).
 func crawl4aiCrawl(ctx context.Context, client *http.Client, backend, target string) (fit, raw string, err error) {
 	body, err := json.Marshal(map[string]any{
 		"urls": []string{target},

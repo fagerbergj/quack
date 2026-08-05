@@ -6,13 +6,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// validateRepoChain rejects a plan that declares Setup (a shared clone+branch)
-// whose WRITER nodes (implementer, the only agent resolving into the shared
-// clone) aren't totally ordered by depends_on: concurrent writers would both
-// mutate the ONE shared working tree and corrupt it. Read-only nodes
-// (reviewer, explorer) are exempt - each gets its own linked worktree. A
-// plan.Setup == nil plan is untouched: every repo-touching node gets its own
-// independent clone, so concurrency there is safe.
+// validateRepoChain: rejects plans with unordered writer nodes.
 func validateRepoChain(plan Plan) error {
 	if plan.Setup == nil {
 		return nil
@@ -36,10 +30,7 @@ func validateRepoChain(plan Plan) error {
 	return nil
 }
 
-// ancestors returns every node id that id transitively DEPENDS ON - the nodes
-// upstream of it. Sibling of descendants (planner.go), walking DependsOn
-// instead of the reverse (dependents) edge. Assumes an acyclic plan (callers
-// run this after topoLayers's cycle check).
+// ancestors: all nodes that id transitively depends on.
 func ancestors(nodes []Node, id string) map[string]bool {
 	byID := make(map[string]Node, len(nodes))
 	for _, n := range nodes {
@@ -59,13 +50,7 @@ func ancestors(nodes []Node, id string) map[string]bool {
 	return out
 }
 
-// workspaceNodeID returns the workspace-relative "node" identifier a node's
-// fs/git tools and deterministic checks resolve into. The WRITER
-// (implementerAgent) resolves directly into the ONE shared clone
-// (workspace.SharedRepoScope); validateRepoChain guarantees at most one
-// writer runs at a time. A read-only node (reviewer, explorer) keeps its own
-// dir (node.ID) but that dir is provisioned as a linked worktree off the
-// shared clone, not an independent one, when worktreeParentID says so.
+// workspaceNodeID: workspace scope a node's fs/git tools resolve into.
 func workspaceNodeID(plan Plan, node Node) string {
 	if plan.Setup != nil && node.AgentName == implementerAgent {
 		return workspace.SharedRepoScope
@@ -73,22 +58,12 @@ func workspaceNodeID(plan Plan, node Node) string {
 	return node.ID
 }
 
-// readOnlyQualifyingAgent reports whether name is a read-only setup-
-// qualifying agent (reviewer, explorer) - the subset of setupQualifyingAgent
-// that never mutates the shared clone (see agents/*/agent-card.json's
-// acp.read_only) and so gets its own linked worktree instead of sharing the
-// implementer's working tree directly.
+// readOnlyQualifyingAgent: true for read-only setup-qualifying agents.
 func readOnlyQualifyingAgent(name string) bool {
 	return name == reviewerAgent || name == explorerAgent
 }
 
-// worktreeParentID returns the WorkspaceNodeID a read-only qualifying node's
-// own directory should be provisioned as a git worktree OF - the plan's one
-// shared setup clone (workspace.SharedRepoScope) - or "" when node isn't such
-// a node (no plan.Setup, or an agent that isn't reviewer/explorer). Threaded
-// onto vetting.AdvisorTask.WorktreeParent (dag/graph.go) so internal/acp's
-// resolveNode knows to link a worktree rather than hand the node a bare
-// directory.
+// worktreeParentID: shared clone scope for worktree provisioning, or "" if N/A.
 func worktreeParentID(plan Plan, node Node) string {
 	if plan.Setup == nil || !readOnlyQualifyingAgent(node.AgentName) {
 		return ""
@@ -96,13 +71,7 @@ func worktreeParentID(plan Plan, node Node) string {
 	return workspace.SharedRepoScope
 }
 
-// nonTerminalRepoChainNode reports whether node is a WRITER node (see
-// workspaceNodeID) in a plan.Setup chain that is NOT the chain's last writer -
-// its branch state isn't final yet, so its delivery must never fire even if
-// it stages one (see buildGateNodes, vetting.commitDelivery). A read-only
-// qualifying node (reviewer, explorer) is never in this set: its own linked
-// worktree is never overwritten by a later chain write, so nothing about its
-// delivery goes stale from chain position.
+// nonTerminalRepoChainNode: true when a writer node is non-terminal in a setup chain.
 func nonTerminalRepoChainNode(plan Plan, node Node) bool {
 	if plan.Setup == nil || node.AgentName != implementerAgent {
 		return false

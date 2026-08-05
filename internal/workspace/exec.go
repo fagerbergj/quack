@@ -14,11 +14,7 @@ import (
 	"time"
 )
 
-// MatchesCheckPrefix reports whether check IS one of prefixes, or extends one
-// with a space-separated continuation (e.g. "go test ./..." extends "go test";
-// "go testing" does not). The check_commands allowlist is the security boundary
-// for gate checks, whether they were written by the planner (dag.validateChecks)
-// or derived from the repo (vetting.deriveChecks) - both funnel through here.
+// MatchesCheckPrefix reports whether check is one of prefixes or extends one with a space.
 func MatchesCheckPrefix(check string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if check == p || strings.HasPrefix(check, p+" ") {
@@ -28,11 +24,7 @@ func MatchesCheckPrefix(check string, prefixes []string) bool {
 	return false
 }
 
-// SplitArgv splits s into argv WITHOUT invoking a shell: whitespace-separated
-// fields, quoted spans as one field, backslash escapes outside single quotes.
-// Deliberately a SUBSET of shell word-splitting (no globbing/expansion/
-// substitution) because it feeds the trust gate's argv-only `checks`
-// allowlist (internal/vetting/checks.go).
+// SplitArgv splits s into argv (whitespace, quotes, backslash escapes), no shell.
 func SplitArgv(s string) ([]string, error) {
 	var argv []string
 	var cur strings.Builder
@@ -91,12 +83,7 @@ func SplitArgv(s string) ([]string, error) {
 	return argv, nil
 }
 
-// SplitPipeline splits s into pipeline stages on UNQUOTED `|` characters -
-// the same quote/escape rules as SplitArgv (a `|` inside quotes, or escaped
-// with a backslash, is a literal argument character) - then word-splits each
-// stage through SplitArgv. An empty stage (leading/trailing/double pipe) is
-// an error. A command with no pipe returns exactly one stage, so callers can
-// use SplitPipeline unconditionally.
+// SplitPipeline splits s on unquoted `|`, then word-splits each stage via SplitArgv.
 func SplitPipeline(s string) ([][]string, error) {
 	var rawStages []string
 	var cur strings.Builder
@@ -145,26 +132,17 @@ func SplitPipeline(s string) ([][]string, error) {
 	return stages, nil
 }
 
-// ExecResult is one argv-only command execution's outcome. A non-zero
-// ExitCode from the command itself is NOT a Go error (see RunArgv's doc) -
-// it's a normal result the caller (run_command, or the gate's checks fold)
-// inspects and reports to the model.
+// ExecResult is one argv-only command execution's outcome. Non-zero exit is not a Go error.
 type ExecResult struct {
 	ExitCode int
 	Output   string // combined stdout+stderr, tail-truncated to caps.MaxOutputBytes
 	TimedOut bool
 }
 
-// execEnvPath is the PATH every RunArgv child sees IN ITS OWN ENVIRONMENT -
-// hermetic like gitEnv (internal/tools/git.go), extended with common
-// toolchain dirs (go, npm/npx) so checks can find their OWN nested tools.
-// It does NOT affect how RunArgv resolves argv[0] itself - that uses the
-// server's real ambient PATH (see exec.LookPath below), same as gitBinaryPath.
+// execEnvPath is the hermetic PATH every RunArgv child sees.
 const execEnvPath = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
 
-// childPath is execEnvPath plus the operator-configured extra directories
-// (Caps.ExtraPath / workspace.exec_path) - extras go FIRST so a configured
-// toolchain (nvm's node) wins over a stale system one.
+// childPath prepends Caps.ExtraPath to execEnvPath so configured toolchains win.
 func childPath(caps Caps) string {
 	if len(caps.ExtraPath) == 0 {
 		return execEnvPath
@@ -172,14 +150,7 @@ func childPath(caps Caps) string {
 	return strings.Join(caps.ExtraPath, ":") + ":" + execEnvPath
 }
 
-// childHome is the $HOME every RunArgv/RunPipeline child sees: caps.HomeDir
-// when the caller wired one up (the isolated per-user home OUTSIDE any cloned
-// repo tree - see Jail.HomeDir), falling back to the task's own cwd only when
-// unset (a caller/test that hasn't wired isolation up). Pinning HOME to dir
-// was the LIVE bug: a coding task's cwd IS the target repo, so a child tool
-// (npm, pip, …) writing its own cache to $HOME wrote it straight into the
-// repo, and git_commit's add_all then swept the cache up as if it were part
-// of the change.
+// childHome returns caps.HomeDir or dir. Repo-relative HOME was a live bug (npm cache swept into commit).
 func childHome(dir string, caps Caps) string {
 	if caps.HomeDir != "" {
 		return caps.HomeDir
@@ -187,8 +158,7 @@ func childHome(dir string, caps Caps) string {
 	return dir
 }
 
-// sortedEnvKeys orders caps.Env deterministically so the child's argv/env is
-// reproducible across runs (and diffable in a test failure).
+// sortedEnvKeys orders caps.Env deterministically for reproducible child env.
 func sortedEnvKeys(env map[string]string) []string {
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -198,14 +168,7 @@ func sortedEnvKeys(env map[string]string) []string {
 	return keys
 }
 
-// childEnv is the full environment every RunArgv/RunPipeline child sees: the
-// fixed PATH/HOME first, then the operator's workspace.env entries - config
-// validation already rejects a PATH/HOME key there, so this never fights them.
-// Under landlock, TMPDIR is pinned to the granted tmp dir too: Landlock can't
-// remap /tmp the way bwrap does, so a tool that defaults to the real /tmp
-// (go build's work dir, mktemp) must be TOLD where its writable tmp actually
-// is, or it hits an ungranted path (observed: `go build` failing to create
-// its work dir under the real /tmp).
+// childEnv builds the child's environment: fixed PATH/HOME, workspace.env entries, landlock TMPDIR.
 func childEnv(dir string, caps Caps) []string {
 	env := []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
 	if caps.Sandbox == SandboxLandlock {
@@ -220,15 +183,7 @@ func childEnv(dir string, caps Caps) []string {
 	return env
 }
 
-// ResolveExecutable finds argv[0]'s absolute path exactly as newChildCmd is
-// about to exec it: a bare name (e.g. "go") resolves against the server's own
-// ambient PATH via exec.LookPath, unchanged. A name containing a path
-// separator (e.g. "./gradlew") is a REPO-relative executable and resolves
-// against dir instead - never this process's cwd, which is what a plain
-// exec.LookPath("./gradlew") would consult and, for any dir other than the
-// process's own, silently fail to find (#638). Also shared by
-// vetting.toolchainPresent so "will this run" and "did we predict it would
-// run" can't drift apart.
+// ResolveExecutable finds argv[0]: bare name via LookPath, path-containing name relative to dir.
 func ResolveExecutable(dir, name string) (string, error) {
 	if !strings.ContainsRune(name, '/') {
 		return exec.LookPath(name)
@@ -247,11 +202,7 @@ func ResolveExecutable(dir, name string) (string, error) {
 	return p, nil
 }
 
-// newChildCmd is the ONE place a child process is constructed, so sandboxing
-// and resource limits can't be applied on one path and forgotten on another.
-// argv[0] resolves via ResolveExecutable before argv is built, so PATH never
-// governs it - except under SandboxBwrap, where a repo-relative binary (e.g.
-// "./gradlew") resolves to a host path bwrap's remap won't find in the namespace.
+// newChildCmd is the single construction point for child processes so sandboxing is never missed.
 func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*exec.Cmd, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("workspace: empty command")
@@ -267,14 +218,7 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	// so the scrub (no inherited secrets, a fixed PATH, the isolated HOME) holds
 	// identically in both modes.
 	cmd.Env = childEnv(dir, caps)
-	// Own process group + kill the WHOLE group on cancel, and a WaitDelay backstop.
-	// A shell child (e.g. `sh -c "cmd &"`) can leave a backgrounded grandchild that
-	// inherits our stdout pipe; exec's default cancel kills only the direct child,
-	// so the grandchild keeps the pipe open, the output-copy goroutine never sees
-	// EOF, and cmd.Wait() blocks forever - even past the context timeout. Setpgid +
-	// a group-kill Cancel reaps the whole tree on timeout; WaitDelay force-closes
-	// the pipe (letting Wait return) if the process exits with a lingering writer.
-	// (a live plan run wedged here - v0.5.2.)
+	// Own process group + group kill + WaitDelay to prevent grandchild hangs.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -286,16 +230,10 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	return cmd, nil
 }
 
-// childWaitDelay bounds how long Wait() will block on pipe I/O after the child
-// has exited or been cancelled - a lingering grandchild holding stdout can't
-// hang the call past this. A package var so a test can shorten it.
+// childWaitDelay bounds Wait() pipe I/O block after child exit. Package var for tests.
 var childWaitDelay = 10 * time.Second
 
-// RunArgv executes argv[0] with argv[1:] via exec.Command arrays ONLY, never
-// a shell; cwd pinned, env scrubbed, timeout-bounded, output tail-capped.
-// caps.Sandbox is the REAL containment - argv-only is a habit guard since
-// arguments aren't path-checked, not a boundary. A non-zero exit reports via
-// ExitCode with a nil error; err itself means launch failure or timeout.
+// RunArgv executes argv via exec.Command (no shell). Non-zero exit returns via ExitCode, not error.
 func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecResult, error) {
 	timeout := caps.Timeout
 	if timeout <= 0 {
@@ -327,29 +265,19 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 			fmt.Errorf("workspace: run %v: timed out after %s", argv, timeout)
 	}
 	if errors.Is(runErr, exec.ErrWaitDelay) {
-		// The command returned but left a background process holding our stdout
-		// pipe; WaitDelay force-closed it and let us stop waiting rather than hang.
-		// Surface the captured output plus a note (not an error) - the command
-		// DID run, it just spawned something that outlives it.
 		return ExecResult{ExitCode: exitCode, Output: out +
 			"\n[run_command: the command left a background process still running; output above may be incomplete]"}, nil
 	}
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
-			// Not a plain non-zero exit (binary not found, permission denied,
-			// …) - a real launch failure, surfaced as an error.
 			return ExecResult{ExitCode: exitCode, Output: out}, fmt.Errorf("workspace: run %v: %w", argv, runErr)
 		}
 	}
 	return ExecResult{ExitCode: exitCode, Output: out}, nil
 }
 
-// RunPipeline executes stages as a native pipeline (real pipes between plain
-// argv processes, never a shell); a single stage delegates to RunArgv. Exit
-// code is PIPEFAIL: the LAST non-zero stage, 0 only if all succeed. Output is
-// the last stage's stdout plus every stage's stderr, with each failing stage
-// named ("stage N of M (cmd) exited K") so the model sees WHICH program failed.
+// RunPipeline executes argv stages with real pipes. Exit code is pipefail: last non-zero stage.
 func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) (ExecResult, error) {
 	if len(stages) == 0 {
 		return ExecResult{}, fmt.Errorf("workspace: empty pipeline")
@@ -364,11 +292,7 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Build every stage up front (newChildCmd resolves the binary and applies
-	// the sandbox + limits - see its doc) so a missing program is one clean
-	// error before anything starts. Each stage is its OWN sandbox; the pipes
-	// between them are inherited file descriptors, which cross the namespace
-	// boundary exactly as they cross a process boundary.
+	// Build every stage up front so a missing binary fails before anything starts.
 	cmds := make([]*exec.Cmd, len(stages))
 	stderrs := make([]*bytes.Buffer, len(stages)) // one buffer per stage: exec copies stderr on its own goroutine, so a shared buffer would race
 	for i, argv := range stages {
@@ -401,9 +325,7 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 		}
 	}
 
-	// Wait in pipeline order. A stage's non-zero exit (including being killed
-	// because its consumer closed the pipe early) is a result, not an error;
-	// only non-exit failures abort.
+	// Wait in pipeline order. Non-zero exit is a result, not an error.
 	exitCode := 0
 	var failNotes []string
 	for i, cmd := range cmds {
@@ -449,10 +371,7 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 	return res, nil
 }
 
-// capTail truncates s to max bytes, keeping the TAIL - a compiler/test
-// failure's most useful line is usually its last one (the assertion, the
-// error summary), unlike git's own capOutput (internal/tools/git.go), which
-// truncates from the head.
+// capTail truncates s to max bytes keeping the tail (most useful for assertion errors).
 func capTail(s string, max int64) string {
 	if int64(len(s)) <= max || max <= 0 {
 		return s

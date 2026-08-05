@@ -17,15 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// needsFormatPass reports whether a plan's terminal output is raw specialist
-// text that never passed through a synthesizer, so the same request could
-// come back formatted or as a bare report purely on planner wording. The
-// plan-work skill guides the planner to add a synthesizer when the
-// deliverable's shape matters; this is the orchestrator-side fallback for
-// when it didn't. Skipped when the plan already ends in a synthesizer, or
-// declares a GitHub delivery (there the terminal node stages its own
-// PR/review per-node via vetting.commitDelivery, and this chat text isn't
-// the deliverable).
+// needsFormatPass: true when raw specialist output needs a format pass (no synthesizer, no GitHub delivery).
 func needsFormatPass(plan dag.Plan) bool {
 	if plan.Delivery != nil {
 		return false
@@ -34,10 +26,7 @@ func needsFormatPass(plan dag.Plan) bool {
 	return term != nil && term.AgentName != "synthesizer"
 }
 
-// terminalNode returns the plan node no other node depends on (nil if nodes
-// is empty). Mirrors dag.terminalIDs/tools.TerminalOutput's own walk, but
-// this package can't import the unexported one and needs the NODE (its
-// AgentName), not just its output text.
+// terminalNode returns the terminal node (nil if empty). Replicates dag.terminalIDs' walk for AgentName.
 func terminalNode(nodes []dag.Node) *dag.Node {
 	hasSuccessor := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
@@ -64,13 +53,7 @@ Rules:
 - Do not narrate your process ("Let me format...", "Here is the reformatted answer:") - output the answer directly, starting with its content.
 - If the input is already clear and well-organized, return it with only minimal changes.`
 
-// formatAnswer runs a tool-less, gate-less pass over a plan's raw terminal
-// output so the deliverable reads as a coherent answer regardless of which
-// specialist produced it. Same recipe as vetting.runWriterFresh: a fresh
-// in-memory runner, no tools, no session persistence - it never redoes the
-// work, only reshapes text already produced. Fails open: any error, or an
-// empty model, returns the raw answer unchanged, since a broken format pass
-// must never block delivery.
+// formatAnswer runs a tool-less/gate-less format pass; fails open (never blocks delivery).
 func formatAnswer(ctx context.Context, m model.LLM, message, answer string) string {
 	answer = strings.TrimSpace(answer)
 	if m == nil || answer == "" {
@@ -114,10 +97,7 @@ func formatAnswer(ctx context.Context, m model.LLM, message, answer string) stri
 	return answer
 }
 
-// finalizeAnswer is the single place every delivery path (Run, RetryNode,
-// resumeNodeRun) turns a finished plan's node outputs into the text that gets
-// persisted and shown to the user - so the format-pass fallback (#430)
-// applies uniformly rather than being wired into each call site separately.
+// finalizeAnswer: single place every delivery path formats node outputs for the user.
 func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string) string {
 	answer := tools.TerminalOutput(plan, nodeOutputs)
 	if !needsFormatPass(plan) {

@@ -1,11 +1,4 @@
-// Package github is quack's GitHub App extension (see docs/extensions/github.md):
-// authenticates as a GitHub App, exposes outbound tools (comments, PRs, review
-// discussion, gate-owned stage_pr/stage_review) plus a git-credential source,
-// and mounts a signature-verified webhook that dispatches orchestrator runs on
-// mentions, labels, and PR events.
-//
-// Auth uses golang-jwt/jwt, not go-github/ghinstallation - one signed JWT plus
-// a handful of REST calls isn't worth a large dependency to save ~80 lines.
+// Package github is quack's GitHub App extension: auth, tools, webhook dispatch.
 package github
 
 import (
@@ -26,44 +19,27 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// defaultAPIBase is GitHub's REST API root; overridable in tests (httptest).
 const defaultAPIBase = "https://api.github.com"
-
-// tokenSkew refreshes an installation token this long before its real expiry,
-// so an in-flight git/REST call never races the boundary.
 const tokenSkew = 60 * time.Second
 
-// App authenticates as a GitHub App and mints/caches per-installation access
-// tokens. Safe for concurrent use.
+// App authenticates as a GitHub App and caches per-installation tokens.
 type App struct {
-	issuer  string // JWT `iss`: the App's Client ID (recommended) or stringified App ID
-	key     *rsa.PrivateKey
-	apiBase string
-	http    *http.Client
-
-	// partialFixLabel suppresses the deterministic `Closes #N` PR trailer
-	// (see withClosesTrailer) - defaults to config.GitHubLabels' own default,
-	// overridable via SetPartialFixLabel to track a custom configured name.
+	issuer          string
+	key             *rsa.PrivateKey
+	apiBase         string
+	http            *http.Client
 	partialFixLabel string
 
 	mu        sync.Mutex
-	tokens    map[int64]cachedToken // installation id → token
-	installs  map[string]int64      // "owner/repo" → installation id (stable; cached forever)
-	noInstall map[string]struct{}   // repos the App is NOT installed on (negative cache)
-	slug      string                // App's own slug (GET /app), cached; "" until first lookup
+	tokens    map[int64]cachedToken
+	installs  map[string]int64
+	noInstall map[string]struct{}
+	slug      string
 
-	// Review-draft state. A PR review is built up comment-by-comment (each
-	// location-validated against the diff at add time) then submitted as one
-	// review - see the github_*_review_comment / github_submit_review tools.
-	// Ceiling: this state is process-local and ephemeral - a review is drafted
-	// and submitted within a single agent run in one process, so a plain
-	// in-memory map is enough. ponytail: the GitHub-native "pending review"
-	// (create-review-without-event, add-comments, submit-later) would survive a
-	// restart / multiple processes - reach for it only if drafts ever need to
-	// outlive a run; don't build it now.
 	reviewMu sync.Mutex
-	drafts   map[string][]reviewComment // "owner/repo#n" → pending inline comments
-	diffs    map[string]cachedDiff      // "owner/repo#n" → parsed commentable positions
+	drafts   map[string][]reviewComment
+	diffs    map[string]cachedDiff
+	// ponytail: use GitHub's native "pending review" if drafts ever need to outlive a single run.
 }
 
 type cachedToken struct {
@@ -71,31 +47,18 @@ type cachedToken struct {
 	expires time.Time
 }
 
-// diffTTL bounds how long a fetched PR diff's commentable positions are reused,
-// so repeated add-comment calls in one review don't re-fetch every time while a
-// PR that gains commits mid-review is still picked up reasonably soon.
 const diffTTL = 30 * time.Second
 
-// cachedDiff holds a PR's commentable line positions per file, plus when it was
-// fetched (for diffTTL expiry).
 type cachedDiff struct {
 	files   map[string]diffPositions
 	fetched time.Time
 }
 
-// diffPositions is the set of lines that can carry an inline review comment on
-// each side of one file's diff: right = new-file line numbers (added + context),
-// left = old-file line numbers (removed + context).
 type diffPositions struct {
 	right map[int]bool
 	left  map[int]bool
 }
 
-// NewApp builds an App from a JWT issuer and a PEM private key (contents, not a
-// path). The issuer is the App's Client ID (GitHub's recommended `iss`) or its
-// stringified App ID - see config.GitHubExtensionConfig.Issuer. GitHub accepts
-// either as the App JWT issuer. The key is parsed once at startup; a bad key is
-// a clear startup error.
 func NewApp(issuer, pemKey string) (*App, error) {
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(pemKey))
 	if err != nil {
@@ -114,21 +77,14 @@ func NewApp(issuer, pemKey string) (*App, error) {
 	}, nil
 }
 
-// defaultPartialFixLabel mirrors config.GitHubLabels' own default value (kept
-// as a literal, not an import, to avoid coupling app.go to internal/config).
 const defaultPartialFixLabel = "quack:partial-fix"
 
-// SetPartialFixLabel overrides the label name withClosesTrailer checks to
-// suppress the deterministic Closes #N trailer, tracking a non-default
-// configured name (config.GitHubLabels.PartialFix). A "" call is a no-op.
 func (a *App) SetPartialFixLabel(label string) {
 	if label != "" {
 		a.partialFixLabel = label
 	}
 }
 
-// LoadPrivateKey returns the PEM key contents from either an inline value or a
-// file path (exactly one of which config guarantees is set).
 func LoadPrivateKey(inline, path string) (string, error) {
 	if inline != "" {
 		return inline, nil
@@ -140,9 +96,7 @@ func LoadPrivateKey(inline, path string) (string, error) {
 	return string(b), nil
 }
 
-// appJWT mints a short-lived (≤10 min) RS256 App JWT: iss = the App's issuer
-// (Client ID or App ID), iat backdated 60s to tolerate clock skew, exp 9 minutes
-// out (under GitHub's 10-minute cap).
+// appJWT mints a short-lived (≤10 min) RS256 App JWT.
 func (a *App) appJWT() (string, error) {
 	now := time.Now()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
@@ -157,9 +111,6 @@ func (a *App) appJWT() (string, error) {
 	return s, nil
 }
 
-// InstallationToken returns a valid access token for an installation, minting
-// (and caching) a fresh one when none is cached or the cached one is within
-// tokenSkew of expiry.
 func (a *App) InstallationToken(ctx context.Context, installationID int64) (string, error) {
 	a.mu.Lock()
 	if ct, ok := a.tokens[installationID]; ok && time.Now().Before(ct.expires.Add(-tokenSkew)) {
@@ -189,14 +140,6 @@ func (a *App) InstallationToken(ctx context.Context, installationID int64) (stri
 	return out.Token, nil
 }
 
-// InstallationForRepo resolves (and caches) the installation id that owns
-// owner/repo, via the App JWT. The mapping is stable, so it is cached for the
-// process lifetime.
-// ErrNoInstallation means the App is not installed on the given repo. It is NOT
-// a failure: a PUBLIC repo the App cannot see still clones fine ANONYMOUSLY. Live
-// failure this guards against - a code-explorer asked to read OpenHands/goose/
-// cloudflare got 404 on every clone because we attached an installation token
-// scoped to the operator's own account, breaking repos that need no auth at all.
 var ErrNoInstallation = errors.New("github: app has no installation for this repo")
 
 func (a *App) InstallationForRepo(ctx context.Context, owner, repo string) (int64, error) {
@@ -221,9 +164,6 @@ func (a *App) InstallationForRepo(ctx context.Context, owner, repo string) (int6
 	}
 	path := fmt.Sprintf("/repos/%s/%s/installation", owner, repo)
 	if err := a.doJSON(ctx, http.MethodGet, path, "Bearer "+jwtStr, nil, &out); err != nil {
-		// 404 = the App simply is not installed on this repo. Cache the miss so we
-		// don't re-ask GitHub on every clone, and report it as ErrNoInstallation so
-		// callers can fall back to an anonymous (public) clone.
 		if strings.Contains(err.Error(), "status 404") {
 			a.mu.Lock()
 			a.noInstall[key] = struct{}{}
@@ -244,9 +184,6 @@ func (a *App) InstallationForRepo(ctx context.Context, owner, repo string) (int6
 	return out.ID, nil
 }
 
-// tokenForRepo resolves the installation owning owner/repo and returns a valid
-// installation token for it - the one call both the git-credential source and
-// the outbound tools go through.
 func (a *App) tokenForRepo(ctx context.Context, owner, repo string) (string, error) {
 	id, err := a.InstallationForRepo(ctx, owner, repo)
 	if err != nil {
@@ -255,26 +192,13 @@ func (a *App) tokenForRepo(ctx context.Context, owner, repo string) (string, err
 	return a.InstallationToken(ctx, id)
 }
 
-// maxGETAttempts bounds the retry loop below: the first try plus up to two
-// retries on a transient failure.
 const maxGETAttempts = 3
-
-// retryBaseDelay is the first backoff sleep; it doubles each subsequent
-// retry (retryBaseDelay, 2*retryBaseDelay, ...).
 const retryBaseDelay = 200 * time.Millisecond
 
-// isRetryableStatus reports whether an HTTP status is a transient GitHub
-// failure worth retrying: 5xx (server-side, including the "no server
-// available" 503 that triggered #467) and 429 (rate limited).
 func isRetryableStatus(code int) bool {
 	return code == http.StatusTooManyRequests || code >= 500
 }
 
-// doJSON performs one authenticated REST call: marshals reqBody, sets auth +
-// GitHub headers, decodes a 2xx JSON response into out (authz is never
-// logged). GET gets a bounded retry on a transient failure since it's
-// idempotent; every other method is tried exactly once - retrying a mutating
-// call risks a duplicate (e.g. a comment posted twice).
 func (a *App) doJSON(ctx context.Context, method, path, authz string, reqBody, out any) error {
 	var bodyBytes []byte
 	if reqBody != nil {
@@ -334,10 +258,6 @@ func (a *App) doJSON(ctx context.Context, method, path, authz string, reqBody, o
 	return lastErr
 }
 
-// retryAfterErr sleeps an exponential backoff (retryBaseDelay * 2^(attempt-1))
-// before a retry, honoring ctx: it returns false (no retry) if ctx is
-// cancelled/expires first, so a caller's deadline is never overrun waiting on
-// a backoff that will lose anyway.
 func retryAfterErr(ctx context.Context, attempt int) bool {
 	d := retryBaseDelay * time.Duration(1<<uint(attempt-1))
 	t := time.NewTimer(d)
@@ -350,8 +270,6 @@ func retryAfterErr(ctx context.Context, attempt int) bool {
 	}
 }
 
-// postIssueComment posts a comment on an issue or PR (GitHub treats PR
-// conversation comments as issue comments) using the repo's installation token.
 func (a *App) postIssueComment(ctx context.Context, owner, repo string, number int, bodyText string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -361,9 +279,6 @@ func (a *App) postIssueComment(ctx context.Context, owner, repo string, number i
 	return a.doJSON(ctx, http.MethodPost, path, "token "+tok, map[string]string{"body": bodyText}, nil)
 }
 
-// editIssueComment overwrites an existing issue/PR comment's body in place -
-// the revise-before-post path for a staged comment carrying a delivery marker
-// already posted by an earlier run.
 func (a *App) editIssueComment(ctx context.Context, owner, repo string, id int64, bodyText string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -373,8 +288,6 @@ func (a *App) editIssueComment(ctx context.Context, owner, repo string, id int64
 	return a.doJSON(ctx, http.MethodPatch, path, "token "+tok, map[string]string{"body": bodyText}, nil)
 }
 
-// createPullRequest opens a PR (head → base) using the repo's installation
-// token and returns the new PR's html_url and number.
 func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, base, bodyText string, draft bool) (string, int, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -395,10 +308,6 @@ func (a *App) createPullRequest(ctx context.Context, owner, repo, title, head, b
 	return out.HTMLURL, out.Number, nil
 }
 
-// findOpenPR looks up an OPEN pull request already open from head branch, via
-// GitHub's own state - not a session's memory of having opened one before -
-// so a re-run's revise lands on the SAME PR instead of a duplicate.
-// ok is false when none is open (not an error).
 func (a *App) findOpenPR(ctx context.Context, owner, repo, branch string) (number int, url string, ok bool, err error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -418,8 +327,6 @@ func (a *App) findOpenPR(ctx context.Context, owner, repo, branch string) (numbe
 	return out[0].Number, out[0].HTMLURL, true, nil
 }
 
-// updatePullRequest edits an existing PR's title/body - the revise-before-post
-// path when findOpenPR finds one already open.
 func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number int, title, bodyText string) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -436,9 +343,6 @@ func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number 
 	return out.HTMLURL, nil
 }
 
-// branchHeadSHA returns the SHA GitHub reports as branch's current head - the
-// ground truth a push must match. A `git push` that exits 0 but the ref never
-// actually updates on GitHub's side must not be read as delivered.
 func (a *App) branchHeadSHA(ctx context.Context, owner, repo, branch string) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -456,14 +360,9 @@ func (a *App) branchHeadSHA(ctx context.Context, owner, repo, branch string) (st
 	return out.Object.SHA, nil
 }
 
-// pushVerifyAttempts/pushVerifyBaseDelay: a 404 right after an accepted push
-// is GitHub's eventual-consistency window (#570), not doJSON's 5xx/429 case
-// (isRetryableStatus deliberately excludes 404 - for most callers it's real).
 const pushVerifyAttempts = 4
 const pushVerifyBaseDelay = 300 * time.Millisecond
 
-// verifyPushedBranch confirms branch's head on GitHub, retrying a 404 with
-// backoff. Any other failure - including a SHA mismatch - fails immediately.
 func (a *App) verifyPushedBranch(ctx context.Context, owner, repo, branch string) (string, error) {
 	var lastErr error
 	for attempt := 1; attempt <= pushVerifyAttempts; attempt++ {
@@ -490,8 +389,6 @@ func (a *App) verifyPushedBranch(ctx context.Context, owner, repo, branch string
 	return "", lastErr
 }
 
-// listIssueComments fetches an issue's conversation comments (where a posted
-// plan lives), flattening the nested user object to a login string.
 func (a *App) listIssueComments(ctx context.Context, owner, repo string, number int) ([]commentView, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -516,14 +413,6 @@ func (a *App) listIssueComments(ctx context.Context, owner, repo string, number 
 	return out, nil
 }
 
-// issueMeta fetches an issue or PR's title/body/state/labels via the issues
-// endpoint (GitHub treats a PR as an issue for this purpose too, but omits PR
-// -only fields like head/base - see pullMeta for those). This is the
-// issue-side half of a snapshot fetch (snapshot.go); pullMeta covers PRs.
-// isPR reports whether `number` is actually a pull request (GitHub marks this
-// by including a `pull_request` field on the issues-endpoint response) -
-// withClosesTrailer needs it: the number a delivery closes must be a real
-// issue, never another pull request.
 func (a *App) issueMeta(ctx context.Context, owner, repo string, number int) (title, body, state string, labels []string, isPR bool, err error) {
 	tok, terr := a.tokenForRepo(ctx, owner, repo)
 	if terr != nil {
@@ -549,15 +438,11 @@ func (a *App) issueMeta(ctx context.Context, owner, repo string, number int) (ti
 	return out.Title, out.Body, out.State, labels, out.PullRequest != nil, nil
 }
 
-// prCommitView is one commit in a PR's commit list (from pulls/{n}/commits) -
-// just enough to derive its rebase-stable patch-id (snapshot.go).
 type prCommitView struct {
 	SHA     string
 	Message string
 }
 
-// listPRCommits fetches a PR's current commit list (per_page=250 - PRs beyond
-// that are rare and the incremental-review delta just sees fewer of them).
 func (a *App) listPRCommits(ctx context.Context, owner, repo string, number int) ([]prCommitView, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -580,11 +465,7 @@ func (a *App) listPRCommits(ctx context.Context, owner, repo string, number int)
 	return out, nil
 }
 
-// commitDiff fetches one commit's unified diff (Accept: vnd.github.v3.diff,
-// not doJSON's usual +json - a raw text response, not a JSON envelope). This
-// is the input `git patch-id` needs to compute a rebase-stable commit
-// identity (snapshot.go) - no local clone required, patch-id reads a diff
-// from stdin.
+// commitDiff fetches one commit's unified diff (Accept: vnd.github.v3.diff) for git patch-id.
 func (a *App) commitDiff(ctx context.Context, owner, repo, sha string) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -610,9 +491,6 @@ func (a *App) commitDiff(ctx context.Context, owner, repo, sha string) (string, 
 	return string(data), nil
 }
 
-// doGraphQL executes one authenticated GraphQL query/mutation against
-// apiBase+"/graphql". GitHub's GraphQL errors surface inside a 200 response
-// body (not the status code), so they're checked explicitly.
 func (a *App) doGraphQL(ctx context.Context, authz, query string, variables map[string]any, out any) error {
 	var raw struct {
 		Data   json.RawMessage `json:"data"`
@@ -633,10 +511,6 @@ func (a *App) doGraphQL(ctx context.Context, authz, query string, variables map[
 	return nil
 }
 
-// minimizeComment marks a minimizable GitHub node (an issue comment, a PR
-// review, a PR review comment - anything with a GraphQL node_id) OUTDATED, so
-// the thread shows current state instead of a pile of dead attempts.
-// Best-effort: callers log a failure and move on, they never fail delivery.
 func (a *App) minimizeComment(ctx context.Context, owner, repo, nodeID string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -650,14 +524,8 @@ func (a *App) minimizeComment(ctx context.Context, owner, repo, nodeID string) e
 	return a.doGraphQL(ctx, "token "+tok, mutation, map[string]any{"id": nodeID}, nil)
 }
 
-// mergePR squash-merges a pull request using the repo's installation token.
-// requiredHeadSHA, when non-empty, is passed as GitHub's own merge-guard
-// "sha" param: GitHub 409s rather than merge if the PR's head has moved past
-// it - used to pin a standing-intent merge to the commit the approving review
-// actually reviewed (see tryMergeStandingIntent). Empty skips the guard.
-// GitHub's error body (branch protection, conflicts, not mergeable, sha
-// mismatch) surfaces verbatim via doJSON.
-// ponytail: squash only; add a merge_method config when someone wants otherwise.
+// mergePR squash-merges a PR. headSHA pins to a specific commit;
+// ponytail: squash only; add merge_method config when someone wants otherwise.
 func (a *App) mergePR(ctx context.Context, owner, repo string, number int, requiredHeadSHA string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -671,9 +539,6 @@ func (a *App) mergePR(ctx context.Context, owner, repo string, number int, requi
 	return a.doJSON(ctx, http.MethodPut, path, "token "+tok, body, nil)
 }
 
-// checkRunView is one check run for a commit (from commits/{sha}/check-runs) -
-// the failure-context source for the CI auto-heal path (#254). This endpoint
-// covers Actions jobs AND any other checks-API CI, unlike the Actions jobs API.
 type checkRunView struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`
@@ -685,9 +550,6 @@ type checkRunView struct {
 	} `json:"output"`
 }
 
-// listCheckRuns fetches the check runs for one commit (per_page=100, one page -
-// a bound, not pagination; repos with more failing checks than that get a
-// truncated but still useful context).
 func (a *App) listCheckRuns(ctx context.Context, owner, repo, sha string) ([]checkRunView, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -703,8 +565,6 @@ func (a *App) listCheckRuns(ctx context.Context, owner, repo, sha string) ([]che
 	return out.CheckRuns, nil
 }
 
-// checkAnnotation is one annotation on a check run - typically the file/line
-// error a CI step reported (the cheap alternative to downloading log archives).
 type checkAnnotation struct {
 	Path      string `json:"path"`
 	StartLine int    `json:"start_line"`
@@ -712,8 +572,6 @@ type checkAnnotation struct {
 	Message   string `json:"message"`
 }
 
-// listCheckAnnotations fetches a check run's annotations (per_page=50 - a
-// bound; anything past that is noise for a fix prompt).
 func (a *App) listCheckAnnotations(ctx context.Context, owner, repo string, checkRunID int64) ([]checkAnnotation, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -727,8 +585,6 @@ func (a *App) listCheckAnnotations(ctx context.Context, owner, repo string, chec
 	return out, nil
 }
 
-// addLabels applies labels to an issue or PR (GitHub's labels endpoint is the
-// issues one for both).
 func (a *App) addLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -738,10 +594,6 @@ func (a *App) addLabels(ctx context.Context, owner, repo string, number int, lab
 	return a.doJSON(ctx, http.MethodPost, path, "token "+tok, map[string][]string{"labels": labels}, nil)
 }
 
-// createReview submits one PR review (a summary body + a verdict event, plus any
-// inline path/line comments) using the repo's installation token. It returns the
-// review's html_url and id. GitHub 422s if an inline comment's path/line isn't
-// part of the PR diff - that message is surfaced verbatim by doJSON.
 func (a *App) createReview(ctx context.Context, owner, repo string, number int, event, bodyText string, comments []reviewComment) (string, int64, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -762,14 +614,10 @@ func (a *App) createReview(ctx context.Context, owner, repo string, number int, 
 	return out.HTMLURL, out.ID, nil
 }
 
-// draftKey is the process-local key for one PR's review draft / cached diff.
 func draftKey(owner, repo string, number int) string {
 	return fmt.Sprintf("%s/%s#%d", owner, repo, number)
 }
 
-// commentablePositions returns the set of commentable inline positions per file
-// for a PR, fetched from GET /pulls/{n}/files and cached for diffTTL so repeated
-// add-comment calls in one review don't re-fetch each time.
 func (a *App) commentablePositions(ctx context.Context, owner, repo string, number int) (map[string]diffPositions, error) {
 	key := draftKey(owner, repo, number)
 	a.reviewMu.Lock()
@@ -783,9 +631,6 @@ func (a *App) commentablePositions(ctx context.Context, owner, repo string, numb
 	if err != nil {
 		return nil, err
 	}
-	// per_page=100 covers all but the largest PRs; a file beyond page 1 simply
-	// won't validate (the add tool then reports it as not in the diff) - an
-	// acceptable ceiling for a self-hosted reviewer.
 	var files []struct {
 		Filename string `json:"filename"`
 		Patch    string `json:"patch"`
@@ -796,7 +641,7 @@ func (a *App) commentablePositions(ctx context.Context, owner, repo string, numb
 	}
 	positions := make(map[string]diffPositions, len(files))
 	for _, f := range files {
-		if f.Patch == "" { // binary / too-large files carry no patch
+		if f.Patch == "" {
 			continue
 		}
 		positions[f.Filename] = parsePatch(f.Patch)
@@ -807,10 +652,6 @@ func (a *App) commentablePositions(ctx context.Context, owner, repo string, numb
 	return positions, nil
 }
 
-// parsePatch turns one file's unified-diff patch (from the pulls/files API) into
-// the set of commentable line numbers on each side. Right = added ('+') and
-// context (' ') lines by new-file number; left = removed ('-') and context lines
-// by old-file number.
 func parsePatch(patch string) diffPositions {
 	pos := diffPositions{right: map[int]bool{}, left: map[int]bool{}}
 	var oldLine, newLine int
@@ -829,8 +670,8 @@ func parsePatch(patch string) diffPositions {
 		case '-':
 			pos.left[oldLine] = true
 			oldLine++
-		case '\\': // "\ No newline at end of file"
-		default: // context line
+		case '\\':
+		default:
 			pos.right[newLine] = true
 			pos.left[oldLine] = true
 			oldLine++
@@ -840,8 +681,6 @@ func parsePatch(patch string) diffPositions {
 	return pos
 }
 
-// parseHunkHeader reads the start lines from a hunk header like
-// "@@ -12,7 +15,8 @@ func foo()" → (12, 15). A missing count ("@@ -1 +1 @@") is fine.
 func parseHunkHeader(h string) (oldStart, newStart int) {
 	for _, f := range strings.Fields(h) {
 		switch {
@@ -862,18 +701,12 @@ func atoiBeforeComma(s string) int {
 	return n
 }
 
-// --- Reading & reacting to existing PR discussion ---
-
-// prDiscussion is a PR's existing conversation, so the reviewer sees prior
-// context before adding its own: inline review comments, top-level conversation
-// comments, and submitted reviews.
 type prDiscussion struct {
 	ReviewComments []reviewCommentView `json:"review_comments"`
 	Comments       []commentView       `json:"comments"`
 	Reviews        []reviewView        `json:"reviews"`
 }
 
-// reviewCommentView is one inline review comment (from pulls/{n}/comments).
 type reviewCommentView struct {
 	ID          int64  `json:"id"`
 	Path        string `json:"path"`
@@ -884,11 +717,6 @@ type reviewCommentView struct {
 	CreatedAt   string `json:"created_at"`
 }
 
-// commentView is one top-level conversation comment (from issues/{n}/comments).
-// NodeID is its GraphQL id, needed only to minimizeComment it; "" for
-// call sites (like listPRDiscussion's) that don't fetch it. UpdatedAt is what
-// the snapshot diff (snapshot.go) uses to detect an edited comment - GitHub
-// bumps it on any body edit, unchanged otherwise.
 type commentView struct {
 	ID        int64  `json:"id"`
 	NodeID    string `json:"node_id,omitempty"`
@@ -898,7 +726,6 @@ type commentView struct {
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
-// reviewView is one submitted review (from pulls/{n}/reviews).
 type reviewView struct {
 	ID          int64  `json:"id"`
 	Body        string `json:"body"`
@@ -907,9 +734,6 @@ type reviewView struct {
 	SubmittedAt string `json:"submitted_at"`
 }
 
-// listPRDiscussion fetches a PR's inline review comments, conversation comments,
-// and submitted reviews (three GETs), flattening GitHub's nested user object to a
-// login string.
 func (a *App) listPRDiscussion(ctx context.Context, owner, repo string, number int) (prDiscussion, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -965,25 +789,19 @@ func (a *App) listPRDiscussion(ctx context.Context, owner, repo string, number i
 	return out, nil
 }
 
-// ghUserRef decodes GitHub's nested user object down to its login.
 type ghUserRef struct {
 	Login string `json:"login"`
 }
 
-// prReview is one submitted PR review, in the order GitHub returns them
-// (chronological). commit_id is GitHub's own durable "reviewed as of" marker -
-// the state conversational follow-up reviews key off, so no local store is needed.
-// NodeID + Body are only needed to find/collapse quack's own prior reviews.
 type prReview struct {
 	NodeID      string    `json:"node_id"`
 	CommitID    string    `json:"commit_id"`
-	State       string    `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED, …
+	State       string    `json:"state"`
 	Body        string    `json:"body"`
 	User        ghUserRef `json:"user"`
 	SubmittedAt string    `json:"submitted_at"`
 }
 
-// listReviews fetches a PR's submitted reviews in API (chronological) order.
 func (a *App) listReviews(ctx context.Context, owner, repo string, number int) ([]prReview, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -997,30 +815,17 @@ func (a *App) listReviews(ctx context.Context, owner, repo string, number int) (
 	return out, nil
 }
 
-// prMeta is a PR's head branch/commit, base branch, title and description. The
-// refs let a reviewer check out the changes (git_clone gives a shallow BASE
-// clone, so `git diff base...HEAD` is EMPTY until the head is fetched and checked
-// out); the title/body give the planner the PR's intent.
 type prMeta struct {
 	HeadRef string
 	HeadSHA string
 	BaseRef string
 	Title   string
 	Body    string
-	// State/Labels round out prMeta into the full PR object a snapshot fetch
-	// needs (snapshot.go) - the pulls/{n} endpoint already returns both, so
-	// snapshot fetch doesn't need issueMeta's separate /issues/{n} call for a PR.
-	State  string
-	Labels []string
-	// Fork is true when the PR's head repo differs from its base repo -
-	// quack cannot push to a fork's branch (see cifix.go), and the
-	// permission grant must never offer push_commits_to_pr for one (#662).
-	Fork bool
+	State   string
+	Labels  []string
+	Fork    bool // head repo differs from base — cannot push to fork branches (#662)
 }
 
-// pullMeta fetches a PR's head ref/sha, base ref, title, description,
-// state and labels - the git coordinates the reviewer needs plus the intent
-// and status the planner/snapshot needs.
 func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prMeta, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -1058,15 +863,10 @@ func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prM
 	return prMeta{
 		HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref,
 		Title: out.Title, Body: out.Body, State: out.State, Labels: labels,
-		// head.repo is null for a deleted fork - treat that as a fork too
-		// (quack certainly cannot push to it either).
 		Fork: out.Head.Repo.FullName != out.Base.Repo.FullName,
 	}, nil
 }
 
-// changedFile is one file in a PR's diff - path + churn, enough for the planner
-// to slice a review by area BEFORE any node clones (the diff itself is not in the
-// webhook payload).
 type changedFile struct {
 	Filename  string `json:"filename"`
 	Additions int    `json:"additions"`
@@ -1074,8 +874,6 @@ type changedFile struct {
 	Status    string `json:"status"`
 }
 
-// pullFiles lists a PR's changed files (per_page=100 - the same large-PR ceiling
-// commentablePositions accepts; beyond it the planner just sees fewer slices).
 func (a *App) pullFiles(ctx context.Context, owner, repo string, number int) ([]changedFile, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -1089,9 +887,6 @@ func (a *App) pullFiles(ctx context.Context, owner, repo string, number int) ([]
 	return out, nil
 }
 
-// prAuthor returns a PR's author login - used to detect quack's OWN PRs
-// (author == botLogin), where GitHub forbids submitting an approve/request-
-// changes review (422 "Can not approve your own pull request").
 func (a *App) prAuthor(ctx context.Context, owner, repo string, number int) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -1109,11 +904,6 @@ func (a *App) prAuthor(ctx context.Context, owner, repo string, number int) (str
 	return out.User.Login, nil
 }
 
-// commitAuthorEmail returns one commit's git author email - used to tell a
-// commit quack itself made apart from a human's. Every quack commit's
-// author/committer email is fixed to tools.GitCommitAuthorEmail (set once per
-// clone by internal/tools/setup.go), so this reads the fact directly off the
-// commit rather than needing quack to remember which SHAs it pushed.
 func (a *App) commitAuthorEmail(ctx context.Context, owner, repo, sha string) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -1133,9 +923,6 @@ func (a *App) commitAuthorEmail(ctx context.Context, owner, repo, sha string) (s
 	return out.Commit.Author.Email, nil
 }
 
-// botLogin returns quack's own commenting identity ("{app-slug}[bot]"),
-// fetched once via GET /app (App-JWT authed, not an installation token) and
-// cached for the process lifetime - an App's slug never changes.
 func (a *App) botLogin(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	if a.slug != "" {
@@ -1164,11 +951,6 @@ func (a *App) botLogin(ctx context.Context) (string, error) {
 	return out.Slug + "[bot]", nil
 }
 
-// lastReviewedSHA returns the commit_id of quack's most recent review of a PR,
-// or "" if quack has never reviewed it (not an error). Prefers a review
-// matching quack's own bot login; falls back to the latest review with any
-// commit_id if the identity lookup fails or no review matches (e.g. slug
-// changed) - still a useful continuation marker.
 func (a *App) lastReviewedSHA(ctx context.Context, owner, repo string, number int) (string, error) {
 	reviews, err := a.listReviews(ctx, owner, repo, number)
 	if err != nil {
@@ -1176,7 +958,7 @@ func (a *App) lastReviewedSHA(ctx context.Context, owner, repo string, number in
 	}
 	login, err := a.botLogin(ctx)
 	if err != nil {
-		login = "" // identity lookup failed; fall back to latest-any below
+		login = ""
 	}
 	var latestAny, latestOwn string
 	for _, r := range reviews {
@@ -1194,9 +976,6 @@ func (a *App) lastReviewedSHA(ctx context.Context, owner, repo string, number in
 	return latestAny, nil
 }
 
-// replyToReviewComment posts an in-thread reply to an existing inline review
-// comment via the dedicated replies endpoint, returning the new comment's id and
-// html_url.
 func (a *App) replyToReviewComment(ctx context.Context, owner, repo string, number int, commentID int64, bodyText string) (int64, string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -1213,9 +992,6 @@ func (a *App) replyToReviewComment(ctx context.Context, owner, repo string, numb
 	return out.ID, out.HTMLURL, nil
 }
 
-// reactToComment adds an emoji reaction to a review comment or a conversation
-// (issue) comment, returning the reaction id. commentPath selects the endpoint
-// family (pulls/comments vs issues/comments).
 func (a *App) reactToComment(ctx context.Context, owner, repo, commentPath string, commentID int64, content string) (int64, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
@@ -1231,9 +1007,6 @@ func (a *App) reactToComment(ctx context.Context, owner, repo, commentPath strin
 	return out.ID, nil
 }
 
-// reactToIssue posts an emoji reaction on the ISSUE itself, returning the
-// reaction id. A label event carries no comment ID, so reactToComment can't be
-// reused: this targets /repos/{owner}/{repo}/issues/{number}/reactions.
 func (a *App) reactToIssue(ctx context.Context, owner, repo string, number int, content string) (int64, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {

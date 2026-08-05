@@ -1,11 +1,4 @@
-// Snapshot-and-diff session context (#459): on every dispatch quack fetches
-// the FULL current GitHub state for the issue/PR, diffs it against the last
-// snapshot stored for this session, and injects only the delta as the turn's
-// message - replacing the per-event, cherry-picked assembly this file used to
-// split across runMessage/gatherReviewContext/issueThreadContext (#457/#458's
-// interim, which re-injected every comment on every run). GitHub stays the
-// source of truth; the stored snapshot is a cache the session's own (trimmed,
-// compacted) event log is never trusted to hold.
+// Snapshot-and-diff session context: fetches full GitHub state, diffs against stored snapshot, injects delta only.
 package github
 
 import (
@@ -18,7 +11,7 @@ import (
 	"strings"
 )
 
-// snapshotComment is one comment as captured in a Snapshot.
+// snapshotComment: one comment in a Snapshot.
 type snapshotComment struct {
 	ID        int64  `json:"id"`
 	NodeID    string `json:"node_id,omitempty"`
@@ -26,15 +19,7 @@ type snapshotComment struct {
 	User      string `json:"user"`
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
-	// Hidden marks a minimized comment (GraphQL isMinimized) - kept in the
-	// snapshot but filtered out of the rendered context (renderSeedContext).
-	// TODO(#459 follow-up): always false today. The REST API this file uses
-	// doesn't expose isMinimized; wiring it needs a GraphQL fetch (query
-	// shape: repository(owner,name){ issue(number){ comments(first:100){
-	// nodes{ databaseId isMinimized } } } }, pullRequest(number) equivalent
-	// for PR comments) - deliberately left as a seam (this field) rather than
-	// half-building it, since the hidden-comment RETRIEVAL tool (native +
-	// MCP, for the ACP agents) is a separate, larger piece of work.
+	// Hidden: minimized comment (TODO: always false, needs GraphQL). Left as a seam.
 	Hidden bool `json:"hidden,omitempty"`
 }
 
@@ -47,7 +32,7 @@ type snapshotReview struct {
 	SubmittedAt string `json:"submitted_at,omitempty"`
 }
 
-// snapshotReviewComment is one inline PR review comment.
+// snapshotReviewComment: inline PR review comment.
 type snapshotReviewComment struct {
 	ID          int64  `json:"id"`
 	Path        string `json:"path"`
@@ -55,28 +40,18 @@ type snapshotReviewComment struct {
 	Body        string `json:"body"`
 	User        string `json:"user"`
 	InReplyToID int64  `json:"in_reply_to_id,omitempty"`
-	// Resolved marks a comment whose review thread is isResolved (GraphQL).
-	// TODO(#459 follow-up): always false today - see snapshotComment.Hidden;
-	// same deferred GraphQL wiring (query shape: pullRequest(number){
-	// reviewThreads(first:100){ nodes{ isResolved comments(first:100){
-	// nodes{ databaseId } } } } }, mapping each thread's databaseId comments
-	// back to this list).
+	// Resolved: review thread isResolved (GraphQL). TODO: always false; needs GraphQL wiring.
 	Resolved bool `json:"resolved,omitempty"`
 }
 
-// snapshotCommit is one PR commit, identified by its rebase-stable patch-id
-// (not its SHA - a rebase/force-push rewrites every SHA even when the actual
-// change is unchanged; see gitPatchID and diffSnapshots).
+// snapshotCommit: identified by rebase-stable patch-id (SHA changes on rebase).
 type snapshotCommit struct {
 	SHA     string `json:"sha"`
 	PatchID string `json:"patch_id"`
 	Message string `json:"message"`
 }
 
-// Snapshot is the full GitHub state for one issue/PR session, as of the last
-// dispatch - the ground truth diffSnapshots compares against. Every field is
-// stored whole; cherry-picking (which comments matter, which are stale)
-// happens only when RENDERING context, never here.
+// Snapshot: full GitHub state for issue/PR session. Cherry-picking at render time only.
 type Snapshot struct {
 	Title    string            `json:"title"`
 	Body     string            `json:"body"`

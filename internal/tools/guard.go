@@ -1,17 +1,4 @@
-// Package tools' guard ladder: a wrapper applied at tool-registration time
-// around any tool named in workspace.guards, escalating a risky call through
-// up to two tiers above the deterministic Tier-0 walls (the fs tools' path
-// jail, and SSRF protection on agent-chosen URLs - unconditional, never
-// bypassed by a guard result). Those walls confine WHERE a call can reach,
-// not WHETHER it serves the task; the judge tier is what decides that:
-//
-//   - judge   - an independent safety-judge model call decides allow/deny;
-//     a deny returns the refusal AS THE TOOL'S RESULT, never executing.
-//   - confirm - the node pauses for human approve/deny, riding ask_user's
-//     pause/resume mechanism (workflow.ResumeOrRequestInput).
-//
-// judge+confirm runs both: judge first (a denial short-circuits before
-// asking a human), confirm second.
+// Guard ladder: judge (model deny) + confirm (human approve/deny). judge+confirm = judge first, short-circuits.
 package tools
 
 import (
@@ -30,11 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// runnableTool is the structural interface a functiontool-built tool.Tool
-// actually satisfies beyond the plain tool.Tool interface (Name/Description/
-// IsLongRunning) - Declaration (the LLM-facing schema) and Run (the actual
-// invocation). guardedTool needs all of it to stand in for inner
-// transparently. Mirrors ADK's own (unexported) tool.runnableTool.
+// runnableTool: tool.Tool extended with Declaration/Run/ProcessRequest.
 type runnableTool interface {
 	tool.Tool
 	Declaration() *genai.FunctionDeclaration
@@ -42,16 +25,13 @@ type runnableTool interface {
 	ProcessRequest(ctx agent.Context, req *model.LLMRequest) error
 }
 
-// guardTier is a parsed workspace.guards value.
+// guardTier: parsed workspace.guards value.
 type guardTier struct {
 	Judge   bool
 	Confirm bool
 }
 
-// parseGuardTier parses a workspace.guards entry. ok is false for "" or
-// "none" (unguarded). config.Load validates guard values at startup (see
-// internal/config), so an unrecognized string here defensively falls back to
-// unguarded rather than silently over-restricting.
+// parseGuardTier: parses guard entry. "" or "none" = unguarded.
 func parseGuardTier(s string) (guardTier, bool) {
 	switch strings.TrimSpace(strings.ToLower(s)) {
 	case "judge":
@@ -65,10 +45,7 @@ func parseGuardTier(s string) (guardTier, bool) {
 	}
 }
 
-// guardedTool wraps a runnableTool with the guard ladder. Constructed once per
-// agent build (registry.go's Build), shared across every invocation of that
-// agent - all bookkeeping is derived fresh from session history per call (see
-// vetting.ConfirmDecision), so sharing is safe across concurrent nodes/runs.
+// guardedTool: wraps a runnableTool with the guard ladder. Shared across invocations (bookkeeping derived fresh).
 type guardedTool struct {
 	inner    runnableTool
 	tier     guardTier
@@ -76,10 +53,7 @@ type guardedTool struct {
 	sessions session.Service
 }
 
-// newGuardedTool wraps inner with tier. inner must be a runnableTool (every
-// tool this registry builds via functiontool.New is); a tool that isn't
-// (a future non-function tool kind) fails loudly at build time rather than
-// silently shipping unguarded.
+// newGuardedTool wraps inner with tier; fails loudly if not runnable.
 func newGuardedTool(inner tool.Tool, tier guardTier, judge SafetyJudge, sessions session.Service) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
@@ -94,11 +68,7 @@ func (g *guardedTool) IsLongRunning() bool { return g.inner.IsLongRunning() }
 
 func (g *guardedTool) Declaration() *genai.FunctionDeclaration { return g.inner.Declaration() }
 
-// ProcessRequest packs the WRAPPER - not the inner tool - into the request's
-// tool map, so the flow dispatches this tool's calls through the guard
-// ladder's Run. Passing g (not g.inner) is the whole point: registering the
-// inner tool under the name would silently bypass every guard. PackTool became
-// public in adk v2.1.0 (tool/toolutils); before that this body hand-replicated it.
+// ProcessRequest: packs the wrapper, not the inner tool, into the request's tool map.
 func (g *guardedTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) error {
 	return toolutils.PackTool(req, g)
 }
@@ -107,11 +77,7 @@ func (g *guardedTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) err
 func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	m, _ := args.(map[string]any)
 
-	// mismatch: a resolved-but-unconsumed decision exists for this tool with
-	// DIFFERENT arguments than this call's. The decision is pinned to the
-	// exact operation the human approved (vetting.ConfirmDecision), so this
-	// call falls through as a brand-new proposal - full judge tier, fresh
-	// confirmation - and the hint below tells the human it differs.
+	// mismatch: resolved decision exists for this tool but with different arguments.
 	var mismatch bool
 	if g.tier.Confirm {
 		approved, matched, mm := g.confirmDecision(ctx, m)
@@ -131,8 +97,7 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	if g.tier.Judge {
 		allow, reason, err := g.runSafetyJudge(ctx, m)
 		if err != nil {
-			// Fail CLOSED: an unavailable safety judge must never silently grant a
-			// guarded operation.
+			// Fail closed: unavailable safety judge must never silently grant.
 			slog.Warn("safety judge unavailable; failing closed", "component", "tools", "tool", g.Name(), "err", err)
 			return guardRefusal("safety check unavailable: " + err.Error()), nil
 		}
@@ -142,15 +107,7 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	}
 
 	if g.tier.Confirm {
-		// ADK-NATIVE confirmation request: RequestConfirmation records the
-		// pending confirmation on this call's EventActions, and the llm flow
-		// emits an adk_request_confirmation FunctionCall event that
-		// scanNodeConfirms watches for to park the NODE. Returning
-		// tool.ErrConfirmationRequired (functiontool's own sentinel) makes
-		// this call's response the standard "requires confirmation" error,
-		// and SkipSummarization ends the worker's turn so the gate sees an
-		// empty draft + the pending confirmation, exactly like an ask_user
-		// pause.
+		// ADK-native confirmation request. Ends the worker's turn until answered.
 		hint := fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", g.Name())
 		if mismatch {
 			hint = fmt.Sprintf("Approve running %s? NOTE: this operation DIFFERS from the one you previously "+
@@ -170,18 +127,7 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	return result, nil
 }
 
-// confirmDecision fetches the WORKFLOW session - where every confirm event
-// lives - and asks vetting.ConfirmDecision whether the CURRENT call is the
-// resolution of a just-answered confirm pause. mismatched reports a live
-// decision pinned to DIFFERENT arguments (see Run).
-//
-// The session coordinates come from the guard-thread registry (guardSession),
-// NEVER from this tool context's own AppName()/UserID()/SessionID(): over
-// the A2A hop those name the A2A context session, a fresh per-round session
-// holding none of the gate's events - scanning it would re-ask for
-// confirmation on every approved re-issue. The gate registers the workflow
-// coordinates per thread token at node entry (dag.newGatedNode →
-// vetting.RegisterAdvisorThread), for co-located and A2A workers alike.
+// confirmDecision: checks if the current call resolves a just-answered confirm pause. Uses guard-thread registry, not tool context.
 func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (approved, matched, mismatched bool) {
 	if g.sessions == nil {
 		return false, false, false
@@ -193,12 +139,7 @@ func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (a
 	return vetting.ConfirmDecision(sess, invocationID, nodeID, g.Name(), args)
 }
 
-// guardSession resolves the calling node's WORKFLOW session + invocation +
-// node ID: the thread token from the prompt marker (guardThread) keys the
-// registry entry the gate wrote at node entry, which carries the workflow
-// session's coordinates. nil session when this call runs outside any gated
-// node (no marker / no registration) - the guard then has no confirm history
-// and no task context, which fails toward MORE restriction, never less.
+// guardSession: resolves the calling node's workflow session from the guard-thread registry.
 func (g *guardedTool) guardSession(ctx agent.Context) (sess session.Session, invocationID, nodeID string) {
 	token, nodeID := guardThread(ctx)
 	if nodeID == "" {
@@ -215,11 +156,7 @@ func (g *guardedTool) guardSession(ctx agent.Context) (sess session.Session, inv
 	return resp.Session, at.InvocationID, nodeID
 }
 
-// runSafetyJudge invokes the judge tier, best-effort-deriving the node's task
-// (session state, seeded by dag.newGatedNode - mirrors ask_advisor.go's
-// seedText) and a short recent-activity summary for context. A nil g.judge
-// (SafetyJudge unconfigured - see registry.go's buildAgents wiring) fails
-// closed rather than skipping the check.
+// runSafetyJudge: invokes judge tier. nil judge fails closed.
 func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (allow bool, reason string, err error) {
 	if g.judge == nil {
 		return false, "", fmt.Errorf("no safety judge configured")
@@ -230,9 +167,7 @@ func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (al
 			if at, found := vetting.LookupAdvisorThread(token); found {
 				task = at.Task
 			}
-			// The activity summary must come from the WORKFLOW session too - the
-			// A2A context session this tool may be running under holds only the
-			// current dispatch (see confirmDecision).
+			// Activity from workflow session, not A2A context session.
 			if sess, invocationID, _ := g.guardSession(ctx); sess != nil {
 				activity = recentActivity(sess, invocationID)
 			}
@@ -241,13 +176,7 @@ func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (al
 	return g.judge(ctx, "", task, g.Name(), args, activity)
 }
 
-// guardThread resolves the gated node this call runs under, from the same
-// prompt marker ask_advisor uses (vetting.AdvisorThreadMarker - the ONE
-// identity channel that survives the A2A hop; see advisor_thread.go). token is
-// the full plan/node thread token (keys the registered task for the safety
-// judge); nodeID is its node segment (keys the confirm scan). Both empty for a
-// direct, un-gated invocation - the guard then runs with no task context and
-// no confirm history, which fails toward MORE restriction, never less.
+// guardThread: resolves the gated node from the prompt marker; ("", "") for un-gated invocations.
 func guardThread(tc agent.Context) (token, nodeID string) {
 	tok, ok := vetting.ParseAdvisorThread(contentText(tc.UserContent()))
 	if !ok {
@@ -259,8 +188,7 @@ func guardThread(tc agent.Context) (token, nodeID string) {
 	return tok, ""
 }
 
-// recentActivity summarizes the last few tool calls this invocation made in
-// the WORKFLOW session (see guardSession), for the safety judge's context.
+// recentActivity: summarizes recent tool calls for the safety judge.
 func recentActivity(sess session.Session, invocationID string) string {
 	var calls []string
 	for ev := range sess.Events().All() {
@@ -283,9 +211,7 @@ func recentActivity(sess session.Session, invocationID string) string {
 	return "  - " + strings.Join(calls, "\n  - ")
 }
 
-// guardRefusal / markResolved build the guard ladder's FunctionResponse
-// results - see vetting/confirm.go for the marker vocabulary the trust gate
-// watches for.
+// guardRefusal / markResolved: build guard ladder's FunctionResponse results.
 func guardRefusal(reason string) map[string]any {
 	return map[string]any{vetting.GuardStatusKey: "denied", "reason": reason}
 }

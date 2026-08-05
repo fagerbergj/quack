@@ -2,10 +2,7 @@ package dag
 
 import "sort"
 
-// NodeStatus is the canonical node lifecycle state, mirroring openapi.yaml's
-// NodeStatus enum (schema.NodeStatus is the generated wire type; this is the
-// server-side domain type every status write routes through - see
-// CanTransition). The store persists its string value directly.
+// NodeStatus is the canonical node lifecycle state, persisted as string.
 type NodeStatus string
 
 const (
@@ -18,18 +15,7 @@ const (
 	StatusCancelled  NodeStatus = "cancelled"
 )
 
-// transitions is the legal edge set of the node-status state machine. Every
-// status write routes through CanTransition - a missing edge is a bug
-// (logged), not a silent write.
-//
-//	queued      → running, cancelled, failed (stale-on-restart)
-//	running     → paused, needs_input (HITL), done, failed, cancelled
-//	paused      → running (resume = fresh re-run), cancelled
-//	needs_input → running (resumed with answer), cancelled
-//	done/failed/cancelled → queued (retry)
-//
-// A running node no longer self-loops on "running" - steering it is queueing
-// a message, which doesn't change its status.
+// transitions: legal node-status state machine.
 var transitions = map[NodeStatus]map[NodeStatus]bool{
 	StatusQueued: {
 		StatusQueued:    true, // idempotent re-queue (initial persist, retry fan-out)
@@ -63,9 +49,7 @@ var transitions = map[NodeStatus]map[NodeStatus]bool{
 	},
 }
 
-// CanTransition reports whether from → to is a legal node-status transition.
-// An empty/unknown `from` (a node with no persisted row yet) is treated as
-// StatusQueued, its implicit default.
+// CanTransition reports whether from → to is a legal transition (empty from defaults to queued).
 func CanTransition(from, to NodeStatus) bool {
 	if from == "" {
 		from = StatusQueued
@@ -73,9 +57,7 @@ func CanTransition(from, to NodeStatus) bool {
 	return transitions[from][to]
 }
 
-// AllowedTargets returns the sorted legal target statuses from a given status,
-// for a 409 response body naming them. Empty/unknown `from` defaults to
-// StatusQueued, matching CanTransition.
+// AllowedTargets returns sorted legal target statuses for 409 responses.
 func AllowedTargets(from NodeStatus) []NodeStatus {
 	if from == "" {
 		from = StatusQueued

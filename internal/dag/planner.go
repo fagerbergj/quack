@@ -17,27 +17,17 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// implementerAgent is the well-known bundle name (config key agents/code-implementer)
-// of the only specialist that can change, commit, and push code. Referenced by name
-// the same way assemble() hardcodes "synthesizer" - the roster is name-keyed and both
-// roles carry a fixed contract the plan validation depends on.
 const implementerAgent = "code-implementer"
 const reviewerAgent = "code-reviewer"
 const explorerAgent = "code-explorer"
 
-// reviewChurnThreshold is the changed-line count above which a single
-// code-reviewer node reliably chokes on the whole diff (compaction churn +
-// slow re-diffing - a live +1271-line PR stalled for 30+ min). Above it, the
-// review must fan out into per-file-group explorers feeding one reviewer.
+// reviewChurnThreshold: max lines before reviewer must fan out.
 const reviewChurnThreshold = 800
 
-// changedChurnRe matches the "(+add/-del)" churn markers the webhook's
-// changed-files summary renders per file, so the backstop can size a PR from the
-// run message without threading the file list through the planner.
+// changedChurnRe: matches "(+add/-del)" churn markers in webhook summaries.
 var changedChurnRe = regexp.MustCompile(`\(\+(\d+)/-(\d+)\)`)
 
-// totalChurn sums the added+deleted lines named in the run message's
-// changed-files summary; 0 when the message carries no such summary.
+// totalChurn: sums added+deleted lines in the changed-files summary.
 func totalChurn(message string) int {
 	sum := 0
 	for _, m := range changedChurnRe.FindAllStringSubmatch(message, -1) {
@@ -48,44 +38,25 @@ func totalChurn(message string) int {
 	return sum
 }
 
-// AgentInfo describes one available agent (name + description) - the roster the
-// orchestrator authors a DAG from.
+// AgentInfo describes one available agent for the orchestrator.
 type AgentInfo struct {
 	Name        string
 	Description string
 }
 
-// Planner validates an orchestrator-authored DAG and stamps the turn's context
-// (verbatim message, history, attachments) onto it for the executor. There is no
-// LLM here: the orchestrator authors the DAG itself, guided by the plan-work
-// skill. This checks it - known agents, unique ids, acyclic - and hardens the
-// synthesizer's dependencies.
+// Planner validates an orchestrator-authored DAG and stamps turn context for the executor.
 type Planner struct {
-	agents []AgentInfo
-	// checkCommands are the allowed check-command PREFIXES (workspace.
-	// check_commands) a node's `checks` may complete into - see §4 of
-	// .quack/plan-pr5-tool-schemas.md. Empty (default) means checks are
-	// unavailable: any node that sets `checks` is rejected at plan time.
+	agents        []AgentInfo
 	checkCommands []string
-	// judge scores a proposed plan against the plan-quality rubric
-	// (vetting.PlanJudge) - replaces the old regex routing backstop. nil when
-	// the judge stage is disabled (config.Gates.JudgeEnabled() == false):
-	// judgeRouting then no-ops rather than blocking plan validation on a
-	// dependency that was never wired.
-	judge vetting.PlanJudge
+	judge         vetting.PlanJudge
 }
 
-// NewPlanner returns a Planner over the available agent roster, the
-// configured check-command prefixes (workspace.check_commands; may be empty),
-// and the plan judge (may be nil - see Planner.judge).
+// NewPlanner: returns a Planner over the agent roster, check prefixes, and plan judge.
 func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
 	return &Planner{agents: agents, checkCommands: checkCommands, judge: judge}
 }
 
-// CheckCommands returns the configured check-command prefixes (may be empty).
-// The plan tool's description (internal/tools/plan.go) reads this to tell the
-// orchestrator model what's available, so a plan node's `checks` are filled
-// in against operator-approved prefixes rather than invented.
+// CheckCommands: configured check-command prefixes.
 func (p *Planner) CheckCommands() []string { return p.checkCommands }
 
 // RawNode is one DAG node the orchestrator submits to the plan tool.
@@ -95,22 +66,11 @@ type RawNode struct {
 	Task      string   `json:"task"`
 	Rubric    string   `json:"rubric,omitempty"`
 	DependsOn []string `json:"depends_on"`
-	// Checks are orchestrator-set deterministic gate commands (§4): each MUST
-	// prefix-match a configured workspace.check_commands entry and contain no
-	// shell metacharacters - validated at plan time (assemble/validateChecks),
-	// never at run time. Typically set only on code-implementer nodes.
-	Checks []string `json:"checks,omitempty"`
-	// Workdir is the workspace-relative directory Checks run in (the node's
-	// repo). Ignored when Checks is empty.
-	Workdir string `json:"workdir,omitempty"`
+	Checks    []string `json:"checks,omitempty"`
+	Workdir   string   `json:"workdir,omitempty"`
 }
 
-// Build validates the submitted nodes into a Plan and stamps the turn
-// context. Build only validates delivery's kind deterministically; whether
-// setup/delivery fit the request type is the plan judge's job (judgeRouting).
-// grant is stamped onto the plan as information for the gate to enforce -
-// Build never rejects a node over it (see vetting.commitDelivery). Returns
-// an error (no silent fallback) so the orchestrator can fix and re-submit.
+// Build: validates submitted nodes into a Plan and stamps turn context.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, grant *vetting.Grant) (plan *Plan, err error) {
 	ctx, span := otelobs.Start(ctx, "plan")
 	defer func() { otelobs.End(span, err) }()
@@ -123,11 +83,6 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	if err = p.judgeRouting(ctx, plan, message); err != nil {
 		return nil, err
 	}
-	// checkReviewFanout is a MECHANICAL fallback for when the judge is disabled
-	// (see its doc comment) - with a judge wired, its ask-fidelity and
-	// decomposition criteria are the authority on review sizing, so an
-	// explicitly narrowed ask isn't force-split just because the PR's TOTAL
-	// diff crosses the line-count threshold.
 	if p.judge == nil {
 		if err = p.checkReviewFanout(plan, message); err != nil {
 			return nil, err
@@ -139,15 +94,7 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	return plan, nil
 }
 
-// judgeRouting scores a plan's SHAPE against the user's actual request via
-// the judge (vetting.PlanJudge) - right terminal deliverable, addresses the
-// ask, grounded, minimal decomposition, verifiable - since verb/delivery-term
-// string matching mis-fired on requests whose injected acceptance text
-// described a later step, not the current one.
-//
-// Graceful degradation: judge==nil or a judge call error both ALLOW the plan
-// rather than blocking it - only an explicit reject from a judge that
-// actually ran turns into an error, so re-planning stays the retry budget.
+// judgeRouting: scores plan shape against request via the plan judge.
 func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
 	if p.judge == nil {
 		return nil
@@ -169,10 +116,7 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	return fmt.Errorf("this plan was rejected: %s\nFix the nodes and call plan again.", reason)
 }
 
-// planSummary renders the plan for the plan judge: each node's id, agent,
-// dependencies, and full task text, plus the declared setup/delivery - enough
-// for the judge to assess the decomposition, terminal deliverable, AND
-// whether setup/delivery match the request type, without re-running anything.
+// planSummary: renders the plan for the plan judge.
 func planSummary(p *Plan) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
@@ -196,16 +140,7 @@ func planSummary(p *Plan) string {
 	return sb.String()
 }
 
-// checkReviewFanout is the deterministic backstop for a large PR review
-// planned as a SINGLE code-reviewer node: the whole diff in one agent's
-// context churns compaction and re-diffs slowly. When churn exceeds
-// reviewChurnThreshold and the plan has a reviewer but no explorer to spread
-// reading across, reject with a fix - fan the changed files into per-group
-// explorers feeding the one reviewer.
-//
-// Only active when the judge is disabled (see Build): it counts the PR's
-// TOTAL churn with no view of the ask's own scope, so a judge that read the
-// request is always the better call on whether a narrow review stays one node.
+// checkReviewFanout: rejects single-reviewer plans for large PRs (judge-disabled fallback).
 func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 	hasExplorer := false
 	for _, a := range p.agents {
@@ -239,9 +174,7 @@ func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 		totalChurn(message), reviewChurnThreshold, reviewerAgent, explorerAgent, reviewerAgent, reviewerAgent)
 }
 
-// AttachmentDesc returns a human-readable description of the attachment list
-// (e.g. "[User attached: 2 file(s): image/jpeg, audio/mp3]") so the text-only
-// orchestrator knows media is present and routes to a media-capable agent.
+// AttachmentDesc: description of attachment MIME types for the text-only orchestrator.
 func AttachmentDesc(parts []*genai.Part) string {
 	if len(parts) == 0 {
 		return ""
@@ -258,10 +191,7 @@ func AttachmentDesc(parts []*genai.Part) string {
 	return fmt.Sprintf("[User attached: %d file(s): %s]", len(mimes), strings.Join(mimes, ", "))
 }
 
-// assemble validates nodes against the agent roster, hardens the synthesizer's
-// dependencies, checks acyclicity, and validates the declared delivery kind.
-// grant is stamped onto the returned plan unchanged (see Plan.Grant) - it is
-// not consulted here.
+// assemble: validates nodes, hardens synthesizer deps, checks acyclicity, validates delivery kind.
 func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery, grant *vetting.Grant) (*Plan, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
@@ -302,14 +232,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		})
 	}
 
-	// Harden: a synthesizer depends on every non-synthesizer node that is NOT
-	// DOWNSTREAM OF IT - the orchestrator frequently omits predecessors, which
-	// would let the synthesizer run before research finishes.
-	//
-	// "Not downstream of it" is load-bearing: a synthesizer isn't always the
-	// terminal fan-in (research → synthesize → implement is valid, with the
-	// implementer depending ON the synthesizer), so blindly wiring every other
-	// node would point it at its own descendant and manufacture a cycle.
+	// Harden: synthesizer depends on every non-synthesizer node NOT downstream of it.
 	if len(plan.Nodes) > 1 {
 		hasSynth := false
 		for _, n := range plan.Nodes {
@@ -332,14 +255,9 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			}
 			plan.Nodes[i].DependsOn = deps
 		}
-		// Harden: a multi-node plan with NO synthesizer and ≥2 terminal nodes
-		// can't run as a native graph (single-terminal rule - nativegraph.go).
-		// The orchestrator sometimes omits the fan-in entirely; append one
-		// rather than failing the whole run. Skipped when the roster has no
-		// synthesizer (the graph build will then reject multi-terminal plans).
+		// Append a synthesizer fan-in when the orchestrator omits it and multi-terminal would fail.
 		if !hasSynth && known["synthesizer"] && len(terminalIDs(plan.Nodes)) > 1 {
-			// Safe to depend on every existing node: this fan-in is APPENDED, so
-			// nothing depends on it and it can have no descendants to cycle into.
+			// Appended fan-in is safe: nothing depends on it, no descendants to cycle into.
 			var all []string
 			for _, n := range plan.Nodes {
 				all = append(all, n.ID)
@@ -362,14 +280,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	return plan, nil
 }
 
-// validateChecks enforces §4's plan-time rule: every check must PREFIX-MATCH a
-// configured workspace.check_commands entry (the planner fills in arguments to
-// an operator-approved prefix; it never invents an executable command). Checks
-// run shell-less (workspace.RunPipeline), so metachars are literal argv content
-// - the prefix allowlist, not a metachar scan, is the boundary. An empty
-// checkCommands (the default) means checks are unavailable at all - a plan node
-// that sets them is rejected with a targeted, fixable error rather than silently
-// dropped or run unchecked.
+// validateChecks: enforces prefix-matching against workspace.check_commands.
 func validateChecks(checks, checkCommands []string) error {
 	if len(checkCommands) == 0 {
 		return fmt.Errorf("checks are unavailable (workspace.check_commands is empty) - omit `checks`")
@@ -379,9 +290,7 @@ func validateChecks(checks, checkCommands []string) error {
 		if c == "" {
 			return fmt.Errorf("empty check command")
 		}
-		// No metachar rejection: checks run shell-less (RunPipeline), so a
-		// metachar is literal argv content, never an operator. The prefix
-		// allowlist below is the real boundary.
+		// No metachar rejection: checks run shell-less, prefix allowlist is the boundary.
 		if !workspace.MatchesCheckPrefix(c, checkCommands) {
 			return fmt.Errorf("check %q does not match any configured workspace.check_commands prefix (%s)",
 				c, strings.Join(checkCommands, ", "))
@@ -390,16 +299,10 @@ func validateChecks(checks, checkCommands []string) error {
 	return nil
 }
 
-// deliveryKinds are the only values the harness knows how to execute post-gate
-// (see the plan tool's description) - a constrained vocabulary the orchestrator
-// picks from, not free text.
+// deliveryKinds: constrained post-gate vocabulary.
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
 
-// validateDelivery rejects a Delivery.Kind outside the constrained vocabulary
-// at plan time - same spirit as validateChecks: a targeted, fixable error
-// rather than the harness later choking on a kind it can't execute. Whether
-// this kind is the RIGHT one for the request type is the plan judge's job,
-// not this deterministic check.
+// validateDelivery: rejects delivery kinds outside the constrained vocabulary.
 func validateDelivery(d *Delivery) error {
 	if d == nil {
 		return nil
@@ -410,9 +313,7 @@ func validateDelivery(d *Delivery) error {
 	return nil
 }
 
-// descendants returns every node that transitively DEPENDS ON id - the nodes
-// downstream of it. A hardening pass must never add an edge from a node to one of
-// its own descendants: that is a cycle by construction.
+// descendants: nodes transitively depending on id (downstream).
 func descendants(nodes []Node, id string) map[string]bool {
 	dependents := map[string][]string{} // dep -> nodes that depend on it
 	for _, n := range nodes {

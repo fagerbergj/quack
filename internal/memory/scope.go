@@ -8,59 +8,35 @@ import (
 	"google.golang.org/adk/v2/session"
 )
 
-// Memory is SHARED and bucketed by SUBJECT, not siloed per agent. A memory
-// belongs to a bucket describing WHAT IT IS ABOUT; an agent reads the union
-// of the buckets it is entitled to:
-//
-//	repo:<repo>   the repo being worked on - conventions, build/test/lint
-//	              commands, reference features, pre-existing failures. Read
-//	              AND written by every coding agent: what one learns, the
-//	              next one gets.
-//	role:<family> a role family's durable tradecraft ("coding" | "research"),
-//	              independent of any one repo.
-//	user:<id>     facts about the user. Read by everyone acting for that user.
-//
-// Before this, memory was keyed by AGENT NAME: the explorer's hard-won repo
-// knowledge never reached the implementer.
+// Memory is SHARED and bucketed by subject, not siloed per agent.
 const (
 	RoleCoding   = "coding"
 	RoleResearch = "research"
 )
 
-// Bucket kinds, as named by stage_memory's `bucket` argument.
+// Bucket kinds.
 const (
 	bucketRepo = "repo"
 	bucketRole = "role"
 	bucketUser = "user"
 )
 
-// Scope is one caller's memory entitlement: the buckets it may read, and the
-// buckets its writes may land in. The zero value entitles nothing.
+// Scope: caller's memory entitlement. Zero = nothing.
 type Scope struct {
-	// Repo identifies the repository the node is working in ("github.com/acme/games").
-	// Empty when the deployment/node has no repo context - writes then fall back to
-	// the role bucket rather than guessing a key.
-	Repo string
-	// Role is the caller's role family (RoleCoding | RoleResearch); empty = none.
-	Role string
-	// User is the real user id; empty = unknown (behind A2A the per-invocation
-	// "A2A_USER_<ctxid>" is NOT a user id - resolve the real one or leave it empty).
-	User string
-	// Legacy is the pre-bucket scope key this caller owned: the agent name (task
-	// memory) or the raw user id (user memory). Read-only, so memories written
-	// before the bucket model still load. No migration, nothing lost - and nothing
-	// new is ever written here.
+	Repo   string
+	Role   string
+	User   string
 	Legacy string
 }
 
-// Buckets returns the bucket keys this scope may READ, most specific first.
+// Buckets returns the keys this scope may READ, most specific first.
 func (s Scope) Buckets() []string {
 	out := make([]string, 0, 4)
 	for _, b := range []string{
 		prefixed(bucketRepo, s.Repo),
 		prefixed(bucketRole, s.Role),
 		prefixed(bucketUser, s.User),
-		s.Legacy, // legacy points carry a raw, unprefixed scope
+		s.Legacy,
 	} {
 		if b != "" {
 			out = append(out, b)
@@ -69,10 +45,7 @@ func (s Scope) Buckets() []string {
 	return out
 }
 
-// writeBucket returns the bucket key a memory tagged `kind` (repo|role|user, or ""
-// for the default) is WRITTEN to. A bucket the caller has no key for degrades to
-// the next-broadest one it does - repo → role → user - so a deployment with no repo
-// context still remembers instead of dropping the write. Never writes to Legacy.
+// writeBucket returns the key for `kind`; degrades repo→role→user so no context doesn't lose writes.
 func (s Scope) writeBucket(kind string) string {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case bucketUser:
@@ -85,7 +58,6 @@ func (s Scope) writeBucket(kind string) string {
 		}
 		return prefixed(bucketUser, s.User)
 	}
-	// repo (explicit) or unspecified: the default ladder.
 	for _, b := range []string{
 		prefixed(bucketRepo, s.Repo),
 		prefixed(bucketRole, s.Role),
@@ -105,16 +77,7 @@ func prefixed(kind, key string) string {
 	return kind + ":" + key
 }
 
-// View is one caller's read view of a Store: a Store bound to a Scope,
-// implementing adkmemory.Service so ADK's preload_memory / load_memory
-// resolve through it. The Store itself is shared by every agent - the View
-// is what makes a caller see only its own buckets.
-//
-// base carries what is known at build time (role family + legacy scope).
-// resolve, when set, supplies what is only knowable per call - the repo and
-// real user id - from the invocation's context. It may return the zero
-// Scope: a caller with no repo context still reads its role and legacy
-// buckets.
+// View is a Store bound to a Scope, implementing adkmemory.Service.
 type View struct {
 	store   *Store
 	base    Scope
@@ -123,7 +86,7 @@ type View struct {
 
 var _ adkmemory.Service = (*View)(nil)
 
-// View binds this store to a caller's scope.
+// View binds this store to a caller's Scope.
 func (s *Store) View(base Scope, resolve func(context.Context) Scope) *View {
 	return &View{store: s, base: base, resolve: resolve}
 }
@@ -146,9 +109,7 @@ func (v *View) Scope(ctx context.Context) Scope {
 	return sc
 }
 
-// SearchMemory recalls across the union of this caller's buckets. The request's
-// AppName/UserID are deliberately ignored: behind A2A they name the agent and a
-// per-invocation user, which is exactly the per-agent siloing this replaces.
+// SearchMemory recalls across the caller's buckets; AppName/UserID is ignored.
 func (v *View) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) (*adkmemory.SearchResponse, error) {
 	if req == nil {
 		return &adkmemory.SearchResponse{}, nil

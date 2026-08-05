@@ -2,35 +2,23 @@ package replay
 
 import "fmt"
 
-// Class classifies one structural divergence between a live call and the
-// recording (.quack/replay-log.md "Replay semantics"). Payload bytes are
-// never matched - only sequence position + shallow identity (model/tool
-// NAME) - so these are the only three ways a live call can fail to line up
-// with the recording.
+// Class classifies one structural divergence. Payload bytes are never matched;
+// only sequence position + shallow identity (model/tool name).
 type Class string
 
 const (
-	// ClassExtra: the live call landed on a stream position the recording
-	// never reached (the stream is exhausted, or was never recorded at all).
-	ClassExtra Class = "extra"
-	// ClassMismatched: the live call's identity (model/tool name) disagrees
-	// with the recorded entry at that exact sequence position.
-	ClassMismatched Class = "mismatched"
+	ClassExtra      Class = "extra"      // recording exhausted or never existed
+	ClassMismatched Class = "mismatched" // identity disagrees at this position
 )
 
-// NearMiss is one recorded entry near a divergence, and which identity
-// field disagreed - vcrpy-style, so a MissError never reads as a bare "not
-// found".
+// NearMiss is one recorded entry near a divergence, vcrpy-style.
 type NearMiss struct {
 	Position int    // sequence position within the stream's op-kind subsequence
 	Name     string // the recorded model/tool name at this position
 	Field    string // which identity field this compares ("model" or "tool")
 }
 
-// MissError is returned by Session.NextChat/NextToolResult on any
-// structural divergence. replay-strict treats it as fatal: the caller (the
-// replay-backed model or tool stub) surfaces it as the call's own error, so
-// the run fails loudly at the exact point of divergence.
+// MissError is returned on any structural divergence. Fatal in strict mode.
 type MissError struct {
 	Class    Class
 	Stream   StreamKey
@@ -55,14 +43,8 @@ func (e *MissError) Error() string {
 	}
 }
 
-// ForkSignal is returned by Session.Next* instead of a *MissError when the
-// session is in fork mode (Session.EnableFork) and coords' stream just went
-// LIVE: the caller (replayModel / replayToolStub / acp.Agent) must answer
-// this call from its own live delegate instead of treating it as a failure
-// (.quack/replay-log.md "fork-replay serves the recorded prefix, then goes
-// live from the first divergent step"). Sticky - every later call in the
-// SAME stream returns a fresh ForkSignal with Reason "sticky" rather than
-// being matched against the recording again.
+// ForkSignal is returned instead of MissError when fork mode goes live.
+// Sticky: every later call in the same stream returns "sticky".
 type ForkSignal struct {
 	Stream StreamKey
 	Reason string     // "fork-from" (explicit --fork-from boundary), "miss" (structural divergence), or "sticky" (already forked)
@@ -76,9 +58,7 @@ func (f *ForkSignal) Error() string {
 	return fmt.Sprintf("replay: fork-replay: stream %s went live (%s)", f.Stream, f.Reason)
 }
 
-// PromptDrift is an INFORMATIONAL divergence: the live system instruction's
-// content hash disagrees with the recorded gen_ai.prompt.version at the same
-// sequence position. Never fails a replay - only structural divergence does.
+// PromptDrift is informational: live system instruction hash disagrees with recorded version.
 type PromptDrift struct {
 	Stream   StreamKey
 	Position int
@@ -86,11 +66,7 @@ type PromptDrift struct {
 	Live     string
 }
 
-// StreamReport is one stream's consumption tally at Report() time.
-// Consumed < Total means the live run never made every call the recording
-// did (a shorter run, or a genuinely missing call) - surfaced here rather
-// than failed loudly, since nothing live actively contradicted the
-// recording.
+// StreamReport is one stream's consumption tally. Consumed < Total means a shorter live run.
 type StreamReport struct {
 	Stream   StreamKey
 	Op       string // "chat", or a tool name
@@ -98,23 +74,16 @@ type StreamReport struct {
 	Total    int
 }
 
-// Report is a session's full divergence accounting: per-stream consumption,
-// informational prompt drift, and every structural MissError encountered
-// along the way (in the order returned to callers, thread-safe accumulation
-// via Session's mutex).
+// Report is a session's full divergence accounting.
 type Report struct {
 	Streams  []StreamReport
 	Drift    []PromptDrift
 	Failures []*MissError
-	// Forked records every stream that switched to live in fork mode - empty
-	// in strict mode (or a fork run that never diverged and had no explicit
-	// --fork-from boundary hit). Informational, like Drift: forking is
-	// fork-replay's whole point, not a failure.
+	// Streams that switched to live in fork mode (informational).
 	Forked []*ForkSignal
 }
 
-// Clean reports whether nothing in r indicates any divergence at all -
-// every stream fully consumed, no prompt drift, no structural failures.
+// Clean reports whether the replay is divergence-free.
 func (r Report) Clean() bool {
 	if len(r.Drift) != 0 || len(r.Failures) != 0 {
 		return false

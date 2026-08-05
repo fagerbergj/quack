@@ -1,9 +1,3 @@
-// Trigger envelope (#659, #666): GitHub's own JSON, filtered by a drop-list -
-// never renamed or flattened - plus the seeded ask and quack's two own
-// concepts, permissions and deliverable. Replaces webhook.go's old prose
-// builder wholesale (design: .quack/trigger-prompts-v2.md). The frontend
-// parser (frontend/src/components/envelope.ts, #671) renders this exact
-// shape - keep the two in sync.
 package github
 
 import (
@@ -18,17 +12,11 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// seedCap bounds a seeded block's byte size so a run can start at all:
-// QUACK_COMPACTION_ENABLED defaults false and a worker's context_window is
-// 65536 tokens, so a 500KB body inlined verbatim is a context-length 400 on
-// the FIRST call - the run never starts. The ONE sanctioned truncation in the
-// trigger path; it always points at the untruncated file in the #660 context
-// directory.
+// Trigger envelope (#659, #666): GitHub's own JSON filtered by drop-list, never renamed.
+
 const seedCap = 32 * 1024
 
-// permissionsText renders a Grant as the envelope's <permissions> vocabulary -
-// the SAME tokens Grant.allows checks against (internal/vetting/grant.go), so
-// this text and enforcement can never name two different things.
+// permissionsText renders a Grant as the envelope's <permissions> vocabulary.
 func permissionsText(g vetting.Grant) string {
 	var perms []string
 	if g.JoinIssueConversation {
@@ -49,10 +37,7 @@ func permissionsText(g vetting.Grant) string {
 	return strings.Join(perms, ", ")
 }
 
-// dropField reports whether key is dropped from a filtered event/comment -
-// GitHub's own noise (node_id, the *_url family, avatar_url, reactions,
-// performed_via_github_app), never a rename or a reshape. A drop-list needs
-// no maintenance when GitHub adds a field.
+// dropField reports keys dropped from filtered event/comment JSON (node_id, *_url, avatar_url, reactions, performed_via_github_app).
 func dropField(key string) bool {
 	switch key {
 	case "node_id", "avatar_url", "reactions", "performed_via_github_app", "url":
@@ -61,11 +46,7 @@ func dropField(key string) bool {
 	return strings.HasSuffix(key, "_url")
 }
 
-// filterGitHubJSON decodes raw (a GitHub webhook payload) and re-marshals it
-// with dropField's keys removed at every nesting level - filtering, never
-// renaming or flattening, so a field the model has seen a million times in
-// training keeps its GitHub shape and meaning. "{}" for empty/unparseable
-// input - the event block degrades rather than breaking the whole envelope.
+// filterGitHubJSON decodes raw and re-marshals with dropField's keys removed. "{}" on failure.
 func filterGitHubJSON(raw []byte) string {
 	if len(raw) == 0 {
 		return "{}"
@@ -81,9 +62,6 @@ func filterGitHubJSON(raw []byte) string {
 	return string(out)
 }
 
-// filterJSONValue recurses through a decoded JSON value dropping fields
-// dropField names, at every level - a top-level key and the SAME key nested
-// three objects deep are both subject to the same rule.
 func filterJSONValue(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
@@ -106,25 +84,15 @@ func filterJSONValue(v any) any {
 	}
 }
 
-// seededComment is a comment's four-field seed (#666): id, created_at,
-// user.login, body - GitHub's own names and nesting, everything else
-// dropped. Bodies stay whole; only the envelope around them goes. id is what
-// lets a seeded comment be cross-referenced to comments.json (#660) and what
-// an agent quotes when replying to a specific comment.
+// seededComment is a comment's four-field seed (#666): id, created_at, user.login, body.
 type seededComment struct {
 	ID        int64  `json:"id"`
 	CreatedAt string `json:"created_at"`
 	User      struct {
 		Login string `json:"login"`
 	} `json:"user"`
-	Body string `json:"body"`
-	// Status is quack's own field (explicitly namespaced, like
-	// quack_reviewed_through), set only in delta mode: "new" | "edited" |
-	// "deleted". Without it a deleted comment's body reads exactly like a live
-	// one and the model has to infer which is which by counting positions
-	// against the block's attributes - miscount once and a RETRACTED statement
-	// is treated as current.
-	Status string `json:"quack_status,omitempty"`
+	Body   string `json:"body"`
+	Status string `json:"quack_status,omitempty"` // "new" | "edited" | "deleted" in delta mode
 }
 
 func toSeededComment(c snapshotComment) seededComment {
@@ -136,8 +104,6 @@ func toSeededComment(c snapshotComment) seededComment {
 	return sc
 }
 
-// seededCommentsWithStatus marshals a delta's comments with each item marked
-// new/edited/deleted, so the split is per-item rather than positional.
 func seededCommentsWithStatus(groups ...struct {
 	status string
 	cs     []snapshotComment
@@ -157,8 +123,6 @@ func seededCommentsWithStatus(groups ...struct {
 	return string(b)
 }
 
-// seededCommentsJSON marshals cs to the seeded four-field shape - "[]" (never
-// "null") for an empty slice, GitHub's own shape for an empty list.
 func seededCommentsJSON(cs []snapshotComment) string {
 	out := make([]seededComment, 0, len(cs))
 	for _, c := range cs {
@@ -171,10 +135,6 @@ func seededCommentsJSON(cs []snapshotComment) string {
 	return string(b)
 }
 
-// visibleComments drops a snapshot's minimized/hidden comments (see
-// snapshotComment.Hidden) and, when set, the triggering comment itself -
-// already quoted verbatim inside the event block's own comment.body, so
-// seeding it again here would just duplicate it.
 func visibleComments(cs []snapshotComment, excludeCommentID int64) []snapshotComment {
 	out := make([]snapshotComment, 0, len(cs))
 	for _, c := range cs {
@@ -186,13 +146,7 @@ func visibleComments(cs []snapshotComment, excludeCommentID int64) []snapshotCom
 	return out
 }
 
-// commentsBlock renders session creation's full seed (every comment) or a
-// later run's delta (new + edited + deleted since the last dispatch) -
-// computed by the EXISTING snapshot diff (diffSnapshots), never GitHub's
-// ?since=: that filters on updated_at, so a deletion produces no signal at
-// all and an edit is indistinguishable from a new comment. Deleted comments
-// are included in the array (their last-known id/created_at/user/body) so
-// the deletion is actually visible, not just an opaque count.
+// commentsBlock renders seed (full) or delta (new + edited + deleted) — uses diffSnapshots, never GitHub's ?since=.
 func commentsBlock(gh githubContext, excludeCommentID int64) string {
 	if gh.delta == nil {
 		visible := visibleComments(gh.snap.Comments, excludeCommentID)
@@ -212,11 +166,6 @@ func commentsBlock(gh githubContext, excludeCommentID int64) string {
 		len(d.CommentsAdded), len(d.CommentsEdited), len(d.CommentsDeleted), body)
 }
 
-// changedFilesBlock renders a PR's current file list - GitHub's own
-// filename/additions/deletions/status shape (changedFile already matches
-// pulls/{n}/files field-for-field), patches omitted (workers have the clone;
-// files.json in the #660 context dir carries patches for anything without
-// one).
 func changedFilesBlock(snap Snapshot) string {
 	var additions, deletions int
 	for _, f := range snap.Files {
@@ -235,10 +184,7 @@ func changedFilesBlock(snap Snapshot) string {
 		len(snap.Files), additions, deletions, string(b))
 }
 
-// truncatedText caps s at seedCap bytes, marking the cut with a plain-text
-// head note that names the untruncated file - the ONE sanctioned truncation
-// in the trigger path. Plain text, not an XML attribute: the model reads
-// prose, and this needs no frontend parser change to stay visible.
+// truncatedText caps at seedCap bytes with a plain-text note naming the full file.
 func truncatedText(s, fullFile string) string {
 	if len(s) <= seedCap {
 		return s
@@ -247,11 +193,6 @@ func truncatedText(s, fullFile string) string {
 		len(s), seedCap, fullFile, s[:seedCap])
 }
 
-// askBlock hoists the issue/PR title and description into their own seeded
-// block (#666), dropped from the event JSON so it appears once. A changed
-// title/description since the last dispatch is marked and quotes the actual
-// change (GitHub's own changes.title.from on an edit event, or simply the
-// fact of the change - see githubContext.delta).
 func askBlock(p issueCommentPayload, gh githubContext, isPR bool) string {
 	tag, fullFile := "issue", "issue.json"
 	if isPR {
@@ -269,8 +210,6 @@ func askBlock(p issueCommentPayload, gh githubContext, isPR bool) string {
 		tag, p.Issue.Number, title, desc, tag)
 }
 
-// eventBlock renders the ORIGINATING webhook's own JSON, filtered but never
-// reshaped - the model has seen these payloads a million times in training.
 func eventBlock(p issueCommentPayload) string {
 	name := p.eventName
 	if name == "" {
@@ -279,17 +218,12 @@ func eventBlock(p issueCommentPayload) string {
 	return fmt.Sprintf("<event name=%q>%s</event>\n", name, filterGitHubJSON(p.rawEvent))
 }
 
-// ContextFile names one file WriteContextDir wrote and the endpoint that
-// produced it - contextDirFiles' return shape, rendered by contextBlock.
+// ContextFile names one file WriteContextDir wrote and the endpoint that produced it.
 type ContextFile struct {
 	Name     string
 	Endpoint string
 }
 
-// contextFileEndpoint labels a #660 context-dir filename with the GitHub
-// endpoint that produced it (display only - WriteContextDir already fetched
-// it; this never makes a second call). Mirrors WriteContextDir's own naming
-// exactly (internal/github/contextdir.go).
 func contextFileEndpoint(name, owner, repo string, number int, checkSHA string) string {
 	base := fmt.Sprintf("/repos/%s/%s", owner, repo)
 	switch {
@@ -324,10 +258,6 @@ func contextFileEndpoint(name, owner, repo string, number int, checkSHA string) 
 	}
 }
 
-// contextDirFiles lists what WriteContextDir actually wrote to dir (fail-soft
-// per file - a skipped fetch just isn't there), labelling each with the
-// endpoint that produced it. nil (no <context> block at all) when dir can't
-// be read.
 func contextDirFiles(dir, owner, repo string, number int, checkSHA string) []ContextFile {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -348,9 +278,6 @@ func contextDirFiles(dir, owner, repo string, number int, checkSHA string) []Con
 	return out
 }
 
-// contextBlock renders the <context> block: the sibling directory's absolute
-// path (sandbox grant covers it read-only - internal/acp's resolveNode) plus
-// one <file> per endpoint dump.
 func contextBlock(dir string, files []ContextFile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<context dir=%q>\n", filepath.ToSlash(dir))
@@ -361,13 +288,7 @@ func contextBlock(dir string, files []ContextFile) string {
 	return b.String()
 }
 
-// buildEnvelope replaces the old prose builder wholesale (#659/#666):
-// permissions, deliverable, the hoisted ask, comments, changed_files (PR
-// runs), the filtered raw event, and the context directory - GitHub's own
-// JSON, filtered by a drop-list, never reshaped. grant was already computed
-// once at dispatch (#657/#662) and is carried here as INFORMATION only -
-// enforcement lives at commitDelivery, never here (permissions ⇒ prompt
-// text, not a second gate).
+// buildEnvelope builds the trigger envelope: permissions, deliverable, ask, comments, changed_files, event, context.
 func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, ctxDir string, ctxFiles []ContextFile) string {
 	isPR := p.Issue.PullRequest != nil
 	deliverable := e.deliverableText(ctx, p, task, gh, grant, isPR)
@@ -387,15 +308,7 @@ func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, ta
 	return b.String()
 }
 
-// buildWorkerAsk is the consumer split's other half (#664): what a plan's
-// NODES get as their BACKGROUND (dag.Plan.WorkerBackground), in place of
-// buildEnvelope's full output. The ask is inlined whole here too - the split
-// applies to EVIDENCE only - but changed_files, the raw event, and the
-// context directory's per-file listing are all left out: a node reads its
-// OWN slice (the files/check/thread its task names) off the clone and the
-// context directory itself, guided by its task text, never the orchestrator's
-// planning-scale summaries. ctxDir, when set, is still named so a node knows
-// evidence lives there to read on demand.
+// buildWorkerAsk is the consumer split for nodes (#664): ask-only text, never orchestrator-level evidence.
 func (e *Extension) buildWorkerAsk(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, ctxDir string) string {
 	isPR := p.Issue.PullRequest != nil
 	deliverable := e.deliverableText(ctx, p, task, gh, grant, isPR)
@@ -412,10 +325,7 @@ func (e *Extension) buildWorkerAsk(ctx context.Context, p issueCommentPayload, t
 	return b.String()
 }
 
-// reviewDeliverableText is the review branch of deliverableText, split out so
-// both the classifier path and its regex fallback render the SAME incremental
-// scoping (#459 §5): a review already delivered on this chat scopes the ask
-// to commits not seen before, by content, never the general context delta.
+// reviewDeliverableText scopes a review to commits not seen before (#459 §5).
 func reviewDeliverableText(gh githubContext) string {
 	if gh.newCommits != nil {
 		if len(gh.newCommits) == 0 {
@@ -431,21 +341,8 @@ func reviewDeliverableText(gh githubContext) string {
 	return "a review with inline comments and a verdict"
 }
 
-// deliverableText classifies the run (planOnly / label-triggered implement /
-// issue mention / PR follow-up) and states the ONE thing this run is asked to
-// produce; permissions and the ask+event blocks carry everything else.
-//
-// A genuine PR work request picks between review and commit via
-// classifyPRDeliverable, bounded by the grant (not a regex). vetting.
-// ImplementationIntent is only the FALLBACK there - it stays primary for
-// every path that was never a human mention (label triggers, synthetic hints).
+// deliverableText classifies the run and states what it produces. Applies classifier or falls back to ImplementationIntent.
 func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, isPR bool) string {
-	// A mention on a PR defaults to CONVERSATIONAL unless the classifier calls
-	// it a work request - fails safe to conversational, since a wrong WORK
-	// verdict re-reviews and discards a written reply. deliverableHint == ""
-	// excludes a SYNTHETIC system trigger (CI auto-heal, own-PR
-	// review-response): those never had a human mention to classify at all,
-	// and are unambiguously work by construction, same as a label trigger.
 	mentionIsWork := isPR && !p.isLabelTrigger && p.deliverableHint == ""
 	if mentionIsWork && !e.isWorkRequest(ctx, task) {
 		return "a reply to their message, posted as a comment - no new work unless they explicitly ask for it"
@@ -453,13 +350,8 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 
 	switch {
 	case p.planOnly:
-		// PLANNING-ONLY: read the repo, change nothing, deliver nothing else to
-		// GitHub. The never-write-to-a-file and stale-version cautions (#569)
-		// are constant, not per-event - they live in agents/orchestrator/prompt.md
-		// (#662), keyed off this same "PLANNING-ONLY" wording.
 		return "a PLANNING-ONLY implementation plan: your ANSWER TEXT is the plan, posted to the issue verbatim."
 	case !isPR && p.isLabelTrigger:
-		// quack:implement applied to the issue.
 		if hasPartialFix(e.labels.PartialFix, gh.snap.Labels) {
 			return "a pull request implementing the changes, without a Closes keyword (this is a partial fix)"
 		}
@@ -467,10 +359,6 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 	case !isPR && !p.isLabelTrigger:
 		return "an answer to their message, posted to the issue as a comment - a revised plan if one is already under discussion"
 	case p.deliverableHint != "":
-		// A SYNTHETIC system trigger's deliverable is fixed by which webhook
-		// dispatched it (CI auto-heal, own-PR review-response) - authoritative,
-		// ahead of the classifier and its regex fallback below, both of which
-		// exist only for a genuine human mention.
 		return p.deliverableHint
 	}
 

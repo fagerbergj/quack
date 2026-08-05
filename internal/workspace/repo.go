@@ -7,15 +7,10 @@ import (
 	"strings"
 )
 
-// repoSearchDepth bounds the walk below the starting directory. git_clone puts a
-// repo at <scope>/<dir> (depth 1); one extra level covers a worker that nested it.
+// git_clone puts repo at depth 1; one extra level for nesting.
 const repoSearchDepth = 2
 
-// FindRepos returns the git repositories at root or beneath it, to
-// repoSearchDepth. Vendored/ignored trees (node_modules, vendor, and dot-dirs -
-// notably .git itself) are skipped: a dependency carrying its own .git must not
-// masquerade as the node's repo, nor make the real one look ambiguous. Once a
-// directory IS a repo, the walk stops there (a submodule is not a second repo).
+// FindRepos returns git repos at root or beneath, to repoSearchDepth. Skips vendored/ignored dirs.
 func FindRepos(root string) []string {
 	if isRepo(root) {
 		return []string{root}
@@ -46,18 +41,9 @@ func FindRepos(root string) []string {
 	return out
 }
 
-// skipDir names the directories a repo search must never descend into.
 func skipDir(name string) bool { return SkipDir(name) }
 
-// SkipDir reports whether a directory is vendored or generated - a tree no search
-// should descend into. It covers dot-dirs (.git, .next, .venv), dependency trees
-// (node_modules, vendor) and the conventional build outputs.
-//
-// Searching these is never what anyone means, and the results are actively harmful:
-// a live `grep` that matched inside a Next.js build dir returned a 48 MB result (the
-// hits were minified .js.map lines), which blew the model's context window and 400'd
-// the node. Every other harness gets this for free by shelling out to ripgrep, which
-// honours .gitignore.
+// Reports whether a directory is vendored/generated (results can be harmful: minified bundles can be MB per match).
 func SkipDir(name string) bool {
 	switch name {
 	case "node_modules", "vendor", "target", "dist", "build", "__pycache__":
@@ -71,11 +57,7 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// RepoKey identifies the repository a chat is working in - the key of its
-// shared memory bucket (memory.Scope.Repo). Derived, not guessed: the chat's
-// jail scope is searched for git repos, and the single one found is keyed by
-// its normalized `origin` remote (host+path, ssh/https/.git folded together).
-// Returns "" (role bucket instead) when there's none, more than one, or no origin.
+// RepoKey: the chat's shared memory bucket key. Single repo in jail scope keyed by normalized origin. "" when none/multiple/no origin.
 func (j *Jail) RepoKey(userID, chatID string) string {
 	root, err := j.Resolve(userID, chatID, "")
 	if err != nil {
@@ -88,14 +70,11 @@ func (j *Jail) RepoKey(userID, chatID string) string {
 	return RepoIdentity(repos[0])
 }
 
-// RepoIdentity is a repo's stable, clone-URL-independent identity, read from its
-// .git/config `origin` remote: "github.com/owner/repo". Empty when dir is not a repo
-// or has no origin. Parsed from the file (no git subprocess): this runs on the recall
-// hot path, once per node turn.
+// Stable, clone-URL-independent identity from .git/config origin remote. Parsed from file (no git subprocess, recall hot path).
 func RepoIdentity(dir string) string {
 	f, err := os.Open(filepath.Join(dir, ".git", "config"))
 	if err != nil {
-		return "" // not a repo, or a worktree/submodule .git file - no identity
+		return ""
 	}
 	defer f.Close()
 
@@ -119,21 +98,19 @@ func RepoIdentity(dir string) string {
 	return ""
 }
 
-// normalizeRepoURL collapses the ways one repo can be addressed -
-// git@github.com:owner/repo.git, https://user@github.com/owner/repo.git,
-// ssh://git@github.com/owner/repo - to one key: "github.com/owner/repo".
+// Collapses git@/https:///ssh:// forms to one key: "github.com/owner/repo".
 func normalizeRepoURL(raw string) string {
 	u := strings.TrimSpace(raw)
 	if u == "" {
 		return ""
 	}
-	if i := strings.Index(u, "://"); i >= 0 { // strip scheme
+	if i := strings.Index(u, "://"); i >= 0 {
 		u = u[i+3:]
 	}
-	if i := strings.Index(u, "@"); i >= 0 { // strip userinfo (git@, token@)
+	if i := strings.Index(u, "@"); i >= 0 {
 		u = u[i+1:]
 	}
-	u = strings.Replace(u, ":", "/", 1) // scp form host:owner/repo → host/owner/repo
+	u = strings.Replace(u, ":", "/", 1)
 	u = strings.TrimSuffix(u, "/")
 	u = strings.TrimSuffix(u, ".git")
 	return strings.ToLower(u)

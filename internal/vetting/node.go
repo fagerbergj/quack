@@ -25,8 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// NewWorkerNode wraps a worker agent as an AgentNode for use as the worker inside
-// a gated refine loop (see RunGatedRefine).
+// NewWorkerNode: wraps worker agent for use inside gated refine loop.
 func NewWorkerNode(worker adkagent.Agent) (workflow.Node, error) {
 	n, err := workflow.NewAgentNode(worker, workflow.NodeConfig{})
 	if err != nil {
@@ -35,10 +34,7 @@ func NewWorkerNode(worker adkagent.Agent) (workflow.Node, error) {
 	return n, nil
 }
 
-// GateResult summarizes a node's trust-gate outcome: whether the final verdict
-// cleared cfg.Threshold, the final score/feedback, and how many judge rounds ran.
-// The DAG builder writes these to session state so Execute can surface the score
-// on node_done and dependents can warn about unvetted upstream (continue-but-warn).
+// GateResult: trust-gate outcome for node_done and continue-but-warn.
 type GateResult struct {
 	Passed   bool
 	Score    float64
@@ -46,70 +42,31 @@ type GateResult struct {
 	Rounds   int
 }
 
-// RunGatedRefine runs the trust-gate refine loop: draft → deterministic
-// checks → independent judge → revise, until the score clears cfg.Threshold
-// or cfg.JudgeRounds is exhausted. Returns (answer, result, err) for
-// node_done + continue-but-warn. ErrNodeEmpty means no answer even after the
-// empty-recovery retry - callers pause rather than cascade an empty output.
 var ErrNodeEmpty = errors.New("vetting: node produced no answer")
 
-// ErrNodePaused is returned by RunGatedRefine when the user paused the node
-// (NodeControl.Paused). The node body catches it and keeps the accumulated
-// answer, same as a cancel, but the DAG marks the node "paused" (resumable)
-// instead of "cancelled" - see dag.Executor.PauseNode's ponytail note on why
-// this is a graceful stop-and-resume-fresh rather than a literal frozen
-// checkpoint.
 var ErrNodePaused = errors.New("vetting: node paused")
 
-// NodeControl lets a caller cancel, pause, or queue a message for a running
-// gate, checked cooperatively at stage boundaries only - mid-call cancel
-// isn't possible on ADK v2 since a plan's nodes share one runner/event
-// stream. Cancelled is a BACKSTOP: the TOOL layer (cancelguard.go) refuses
-// its next tool call so it arrives here promptly; Paused/queued get no such
-// shortcut by design - neither may interrupt mid-turn.
 type NodeControl interface {
-	// Cancelled reports whether this node should stop (keep its current answer).
 	Cancelled() bool
-	// Paused reports whether this node should suspend (keep its current answer,
-	// resumable - see ErrNodePaused).
 	Paused() bool
-	// TakeQueued drains every not-yet-delivered queued message, joined into one
-	// guidance block ("" if the queue had nothing pending).
 	TakeQueued() string
 }
 
-// AskToolName is the mid-node HITL tool a worker calls to ask the user a
-// question. The tool itself only records the question (in its call args) and ends
-// the worker's turn; the GATE detects the call and pauses the node via
-// workflow.ResumeOrRequestInput under a round-stable InterruptID, so ADK routes
-// the user's answer back to this node on the next turn.
 const AskToolName = "ask_user"
 
-// memoryCommitTimeout bounds the consolidation call. Generous because it runs on
-// a local model against a whole answer, and it fires AFTER delivery - the run's
-// output is already on the PR, so waiting costs the user nothing while timing out
-// silently drops the node's durable memory (observed at 60s).
 const memoryCommitTimeout = 3 * time.Minute
 
-// hitlInterruptID is the STABLE per-node, per-round interrupt key for a mid-node
-// HITL pause. Node IDs repeat across plans and rounds repeat within a node, but
-// (invocation, node, round) is unique - and ADK scopes resume rehydration by
-// invocation, so this is collision-free.
+// hitlInterruptID: (invocation, node, round) is unique, so this is collision-free.
 func hitlInterruptID(nodeID string, round int) string {
 	return fmt.Sprintf("hitl-%s-r%d", nodeID, round)
 }
 
-// hitlTurn is one ask/answer exchange within a node's HITL history. answer is ""
-// until the corresponding pause is resolved.
+// hitlTurn: one ask/answer exchange. answer is "" until the pause resolves.
 type hitlTurn struct {
 	question string
 	answer   string
 }
 
-// hitlScan summarizes a node's FULL HITL history within ONE invocation: every
-// question the worker has asked so far (turns, in order) and how many of those
-// the gate has already paused for (pauses). Derived entirely from session events
-// (no state keys) so it survives resume re-entry and node-ID reuse across plans.
 type hitlScan struct {
 	turns  []hitlTurn
 	pauses int
@@ -121,14 +78,11 @@ func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 		return s
 	}
 	prefix := "hitl-" + nodeID + "-r"
-	answers := map[string]string{} // interruptID → the user's answer text
+	answers := map[string]string{}
 	for ev := range sess.Events().All() {
 		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
 			continue
 		}
-		// Resume deliveries are user-authored FunctionResponses, not under the
-		// node's own path - collect them by interrupt ID so each round's answer
-		// can be paired to the question that raised it (round i ↔ turns[i-1]).
 		if ev.Author == "user" {
 			for _, p := range ev.Content.Parts {
 				if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != workflow.WorkflowInputFunctionCallName {
@@ -170,9 +124,7 @@ func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 	return s
 }
 
-// pathHasNode reports whether the event was emitted under the given graph node
-// (NodeInfo.Path segments are "name@run"; the worker's child runs nest below
-// the gated node's segment).
+// pathHasNode: is event under graph node? (NodeInfo.Path: "name@run").
 func pathHasNode(ev *session.Event, nodeID string) bool {
 	if ev.NodeInfo == nil {
 		return false
@@ -188,12 +140,7 @@ func pathHasNode(ev *session.Event, nodeID string) bool {
 	return false
 }
 
-// withUserAnswer builds the self-contained prompt for the post-answer worker run,
-// folding in the FULL Q&A transcript (every round asked so far, not just the
-// latest) so a worker several rounds deep still has what it already asked and was
-// told. The worker runs in a fresh sub-branch each round, so this must ride the
-// prompt - the ask_user calls live in earlier rounds' branches and are filtered
-// from this run's LLM history.
+// withUserAnswer: folds Q&A transcript into prompt.
 func withUserAnswer(prompt string, turns []hitlTurn) string {
 	var b strings.Builder
 	b.WriteString(prompt)
@@ -208,7 +155,7 @@ func withUserAnswer(prompt string, turns []hitlTurn) string {
 	return b.String()
 }
 
-// replyString coerces a resumed HITL payload to text.
+// replyString: coerces HITL payload to text.
 func replyString(reply any) string {
 	if s, ok := reply.(string); ok {
 		return s
@@ -222,11 +169,6 @@ func replyString(reply any) string {
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
-	// nodeCtx is the otel-decorated PLAIN context.Context this node's span tree
-	// nests under; it is never fed back into ADK calls (ctx, the adkagent.Context
-	// param, stays untouched for those) - it exists purely so child spans opened
-	// below (worker round, gate stage, judge round, delivery) parent correctly
-	// under "quack.node" instead of becoming siblings of it.
 	nodeCtx, span := otelobs.StartNode(ctx,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", nodeID),
@@ -242,28 +184,17 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		otelobs.EndNode(span, err)
 	}()
 
-	// Continuation and revise rounds build a FRESH prompt from cfg.Task, dropping
-	// the advisor-thread marker the draft prompt carried. That marker is the ONLY
-	// channel telling the worker's file/git tools their per-node workspace scope
-	// (internal/tools scopeFromContext) - without it a continuation/revise round
-	// re-clones into the bare user root instead of resuming the draft's clone.
-	// Re-attach it to every tool-bearing round.
+	// Re-attach advisor-thread marker for tool-bearing rounds.
 	markerLine := ""
 	advisorToken := ""
 	if token, ok := ParseAdvisorThread(prompt); ok {
 		markerLine = "\n\n" + AdvisorThreadMarker(token)
 		advisorToken = token
 	}
-	// cfg is a per-call copy (RunGatedRefine takes it by value), so stamping it
-	// here only reaches this node's own judge rounds below - see
-	// Config.AdvisorToken.
+	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
 	cfg.AdvisorToken = advisorToken
 
-	// Gate-side recall for an EXTERNAL worker - the preload_memory twin (native
-	// agents get preload via their runner; an ACP subprocess has no runner, so
-	// the gate front-loads the recalled notes into the round-0 prompt). Riding
-	// `prompt` means the notes also reach the judge (its `question` is this
-	// prompt) and every revise round's content. Best-effort by construction.
+	// Memory recall for ACP workers; front-load into round-0 prompt.
 	if cfg.ExternalWorker && cfg.CommitMemory {
 		_, recallSpan := otelobs.Start(nodeCtx, "memory.recall",
 			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
@@ -277,38 +208,21 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 	}
 
-	// Per-NODE workspace scope: a plan's nodes run concurrently in ONE chat, so
-	// each gets its own directory under the chat scope (<root>/<user>/<chat>/
-	// <node>/) - the default cwd its tools resolve relative paths against (they
-	// derive the SAME dir from the advisor-thread marker; see internal/tools
-	// scopeFromContext). Materialised here, at node entry, so the worker's first
-	// `list_dir .` sees an empty dir rather than a "no such file". Best-effort: a
-	// creation failure just means the tools create it on first write.
+	// Per-node workspace dir prevents concurrent node collision.
 	nodeDir := workspace.NodeDir(cfg.NodeID)
 	if cfg.Workspace != nil && nodeDir != "" {
 		if _, err := cfg.Workspace.EnsureDir(cfg.WorkspaceUserID, cfg.ChatID, nodeDir); err != nil {
 			log.Warn("could not create the node's working directory", "dir", nodeDir, "err", err)
 		}
 	}
-	// probeCtx carries this node's replay-ledger coordinates for the gate's OWN
-	// disk probes (augmentFromRepo below, checksPassCriterionTraced) - Round is
-	// a fixed marker, not a worker/judge runID, since a probe re-reads disk
-	// state on every activity() call rather than belonging to one model round
-	// (#604, deferred from #600 because neither probe took a context.Context).
+	// Replay-ledger coords for gate's disk probes.
 	probeCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound})
-	// activity replays the worker's session from that node dir - the cwd its
-	// relative paths (and the judge's re-read of them) resolve against - then
-	// folds in the clone's git state (augmentFromRepo): an external ACP worker
-	// commits outside the tool layer, so the session alone under-reports.
 	activity := func() workerActivity {
 		act := activityFromSessionAt(ctx.Session(), nodeDir)
 		augmentFromRepo(probeCtx, &act, cfg)
 		return act
 	}
-	// actFor additionally folds in the reviewer's staged review: first the tool-
-	// staged one (augmentFromReviewStage, the #451 review MCP surface), then the
-	// answer-tail fallback (augmentFromAnswer) - which no-ops once the tool path
-	// has staged, keeping the fallback for a reviewer that never called the tool.
+	// actFor folds in the staged review (tool-staged first, then answer-tail fallback).
 	actFor := func(answer string) workerActivity {
 		act := activity()
 		augmentFromReviewStage(&act, advisorToken)
@@ -319,26 +233,16 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 
 	cancelled := func() bool { return ctrl != nil && ctrl.Cancelled() }
 	paused := func() bool { return ctrl != nil && ctrl.Paused() }
-	// The judge runs in its own isolated runner (off the workflow event stream), so
-	// its activity can't ride that stream. Forward it to the client as a stage:judge
-	// run via the SSE sink injected on ctx (executor.Execute) - SSE-only, never
-	// written to the session, so it can't re-poison a downstream node's request.
+	// Judge SSE stage:judge (never written to session).
 	sink, _ := stream.YieldFromContext(ctx)
 
-	// promptEmit delivers each worker prompt as a session event, but ONLY for
-	// agents that can't take RunNode input natively (remote A2A workers - see
-	// Config.DeliverPromptEvent). nil disables emitPrompt for local llmagents,
-	// whose single-turn contents a stray user-role event would contaminate.
+	// Session events only for A2A workers.
 	promptEmit := emit
 	if !cfg.DeliverPromptEvent {
 		promptEmit = nil
 	}
 
-	// Per-node cancel/pause/queue (M5b, reworked for #265), cooperative at
-	// gate-stage boundaries: ADK v2 can't cancel a single model call mid-flight
-	// without breaking event streaming, so cancel/pause/a queued message all
-	// land between stages. basePrompt is the un-guided task; a delivered queued
-	// message re-runs the whole gate with it appended.
+	// Gate-stage boundary control check.
 	basePrompt := prompt
 	queueAttempt := 0
 	for {
@@ -348,29 +252,21 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if paused() {
 			return "", GateResult{}, ErrNodePaused // paused before drafting → keep whatever this node has (nothing yet)
 		}
-		// A re-run after a delivered queued message needs fresh RunNode run IDs:
-		// WithRunID replays a completed run (the durable-skip property), so
-		// reusing "worker-r0" would replay the pre-queue draft instead of
-		// re-invoking the worker with the message folded in.
+		// Fresh run ID after queue delivery.
 		sfx := ""
 		if queueAttempt > 0 {
 			sfx = fmt.Sprintf("-s%d", queueAttempt)
 		}
 		question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
-		// HITL resume: if this node previously paused to ask the user and THIS turn
-		// delivered the answer (ADK re-entered the node with a ResumedInput under the
-		// round-stable interrupt ID), skip the normal draft - run the worker once with
-		// the Q&A folded into a self-contained prompt.
+		// HITL resume: ADK re-entered with ResumedInput.
 		var answer string
 		var err error
 		resumed := false
 		if scan := scanNodeAsks(ctx.Session(), ctx.InvocationID(), nodeID); scan.pauses > 0 {
 			if reply, ok := ctx.ResumedInput(hitlInterruptID(nodeID, scan.pauses)); ok {
 				resumed = true
-				// The just-delivered answer may not have landed in session history yet
-				// at scan time (it arrives as this turn's inbound message) - fill it in
-				// from ctx.ResumedInput so the current round is in the transcript too.
+				// Fill in answer from ctx.ResumedInput.
 				turns := scan.turns
 				if n := len(turns); n > 0 && turns[n-1].answer == "" {
 					turns[n-1].answer = replyString(reply)
@@ -407,28 +303,18 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if !resumed {
 			answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, "draft", promptEmit)
 			if err != nil {
-				// Log at our boundary before returning: ADK's scheduler can swallow a
-				// node error into a silent empty completion, so this ERROR line (with the
-				// model's error body) is what makes a failed worker visible in the logs.
+				// Log before returning (ADK swallows node errors into silent empty completion).
 				log.Error("worker draft failed", "run", "worker-r0", "err", err)
 				return "", GateResult{}, err
 			}
 		}
 
-		// HITL / guard pause: park the NODE when the worker's turn raised a fresh
-		// ask_user question or guard confirmation, so ADK routes the human's answer
-		// back here next turn - regardless of draft emptiness (a chatty model asks
-		// and writes in the same turn); this turn's draft is discarded, since resume
-		// re-runs the worker with the Q&A folded in. Repeated after every revise round.
+		// HITL/guard pause: park when ask_user or guard confirmation raised. Draft discarded; resume re-runs with Q&A.
 		if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
 			return "", GateResult{}, ierr // ErrNodeInterrupted → park
 		}
 
-		// Continuation loop: keep giving the worker TOOL-BEARING turns until the
-		// WORK is done (workIncomplete), not until the model emits text - a
-		// reasoning-only turn is not "done". Tested against the node's OWN task
-		// (cfg.Task), never `prompt` - judged against the whole user request, every
-		// node, even read-only explorers, would stay forever incomplete.
+		// Continuation loop: tool-bearing turns until work is done (not until model emits text). Tested against cfg.Task.
 		if workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer) {
 			_, contSpan := otelobs.Start(nodeCtx, "gate.continuation",
 				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
@@ -457,11 +343,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			contSpan.End()
 		}
 
-		// Last resort for a genuinely stuck worker (nothing, on every turn): a
-		// TOOL-LESS writer in a FRESH runner writes up whatever the session shows it
-		// found. Better than an empty node - never a substitute for the work itself,
-		// which is why it now runs only AFTER the worker has been given its
-		// continuation budget.
+		// Last resort: tool-less writer in fresh runner if worker stuck after continuation budget.
 		if strings.TrimSpace(answer) == "" {
 			log.Warn("worker still empty after continuation; falling back to the tool-less writer", "rounds", maxContinueRounds)
 			answer, err = runWriterFresh(ctx, workerModel, buildFinalizeContent(question, activity()))
@@ -494,22 +376,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 		}
 
-		// Judge/revise loop: judge the current answer, fold in the deterministic
-		// citation/length criteria, and on a fail revise via a fresh worker call whose
-		// prompt inlines the feedback + prior answer (buildRevisionContent is
-		// self-contained, so the stateless worker needs no session continuity).
+		// Judge/revise loop: judge, fold deterministic criteria, revise on fail.
 		var res GateResult
 		queuedText := ""
-		// JudgeRounds counts REVISION attempts: round r judges, and on a fail (with
-		// budget left) revises, so N rounds = N revisions / N+1 judgments. The
-		// cfg.JudgeRounds > 0 guard keeps 0 meaning "no judge at all" - judge:false
-		// sets 0 but the global judge factory is non-nil, so only this bound skips it.
+		// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
-			// Cooperative cancel/pause/queue, checked before each judge round AND
-			// before the empty-answer guard below - so an empty node (a reasoning
-			// model that produced nothing) can still be cancelled, paused, or
-			// re-run with a queued message. Cancel/pause stop refining (keep the
-			// current answer); a delivered queued message re-runs the gate.
+			// Cooperative cancel/pause/queue before each judge round.
 			if ctrl != nil {
 				if ctrl.Cancelled() {
 					return answer, res, nil
@@ -531,38 +403,22 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
 				attribute.String("run_id", runID), attribute.String("agent", cfg.Agent), attribute.Int("round", round))
 			emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{RunID: runID, Agent: "judge", Stage: stream.StageJudge, Round: round}})
-			// ledgerCtx carries this round's replay-ledger coordinates
-			// (gen_ai.agent.name: judge, per the design) into every model/tool
-			// call the judge round makes - same WithCoords seam runWorkerNodeTraced
-			// uses for the worker, just via plain context.WithValue here since
-			// runJudgeAgent already takes a context.Context, not an adkagent.Context.
+			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
 			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID})
-			// Cheapest-first: compute before the judge runs, so it can be told
-			// what's already decided instead of scoring blind.
+			// Compute deterministic criteria before judge runs.
 			det := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
 			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, question, answer, act, det, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
-				// ERROR, not Warn: a judge failure means the answer is going out
-				// UNVETTED - that must be loud in the logs, not buried.
+				// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
 				emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}})
 				otelobs.End(judgeSpan, jerr)
-				// No score exists to record here - RecordJudgeVerdict below never
-				// runs for this round, which would otherwise leave this agent's
-				// judge.score/judge.verdict series silently thin whenever its judge
-				// calls error disproportionately (bigger prompts, flakier tool use).
 				otelobs.RecordJudgeUnavailable(cfg.Agent)
-				// Fail closed but fall through to the SAME deliver-with-caveat
-				// path a low score takes (not an early return) - only that path
-				// writes a GitHub review's verdict marker, so returning here
-				// strands it (#572).
+				// Fail closed but fall through to deliver-with-caveat (only that path writes the review verdict marker).
 				res = GateResult{Score: 0, Passed: false, Feedback: "quack's judge was unavailable, so this answer could not be scored: " + jerr.Error(), Rounds: round}
 				break
 			}
-			// Adversarial verify (#370): before folding in the deterministic
-			// criteria, give load-bearing PASSING judge criteria a chance to be
-			// refuted by independent skeptics sharing the SAME repo access - a
-			// no-op when cfg.Skeptic is unset (the default).
+			// Adversarial verify: load-bearing passing criteria get refuted by independent skeptics.
 			v = adversarialVerify(judgeCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
 			v = mergeDeterministic(v, det)
 			feedback := composeFeedback(v, cfg.Threshold)
@@ -573,8 +429,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			judgeSpan.SetAttributes(attribute.Float64("score", res.Score), attribute.Bool("passed", res.Passed))
 			judgeSpan.End()
 			otelobs.RecordJudgeVerdict(cfg.Agent, res.Score, res.Passed)
-			// DEBUG: the per-criterion reasoning + feedback behind that score, so a
-			// failing gate is diagnosable from logs instead of only the UI.
+			// Debug: per-criterion reasoning for diagnosable gate failures.
 			if len(v.Criteria) > 0 && log.Enabled(context.Background(), slog.LevelDebug) {
 				parts := make([]string, 0, len(v.Criteria))
 				for name, cs := range v.Criteria {
@@ -592,13 +447,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
 			}
-			// A revision can ITSELF raise a fresh ask_user or guard-ladder
-			// confirmation - a worker commonly proposes its confirm-tiered delivery
-			// step (git_commit + git_push) only after the judge flags the task
-			// incomplete. Without this check here the unconfirmed operation is
-			// silently skipped and the incomplete answer sails to the next judge
-			// round with no human ever approving the push. Park exactly as the
-			// draft-time check does.
+			// A revision can itself raise ask_user/guard confirmation - park exactly as draft-time check does.
 			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
 				return "", GateResult{}, ierr // ErrNodeInterrupted → park
 			}
@@ -613,14 +462,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			continue // re-run the whole gate with the message folded in (fresh run IDs)
 		}
 		act := actFor(answer)
-		// Fold in whatever the ACP memory MCP surface's stage_memory landed across
-		// every round of this node (#344) - the same pass-gated commit path a
-		// native agent's stage_memory tool call rides via session replay. Looked
-		// up via the node's MemSecret (a SEPARATE, unguessable registry key from
-		// advisorToken - see AdvisorTask.MemSecret), and unregistered the moment
-		// it's drained: a straggler stage_memory call arriving after this point
-		// finds no session and fails outright, rather than writing into a buffer
-		// nobody will ever read again.
+		// Fold in ACP memory MCP stage_memory from all rounds; unregister after drain (straggler calls fail).
 		if advisorToken != "" {
 			if t, ok := LookupAdvisorThread(advisorToken); ok && t.MemSecret != "" {
 				if ms, ok := LookupMemSession(t.MemSecret); ok {
@@ -634,20 +476,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if res.Passed {
 			commitMemoryOnPass(ctx, nodeCtx, cfg, nodeID, answer, act.staged)
 		}
-		// Deliver even on a judge FAIL - graceful degradation: the work is done
-		// (committed + staged), so open the PR / post it, but with the gate's
-		// concerns attached as a caveat (see App.Deliver) so a human decides.
-		// Memory stays pass-only: never persist tradecraft the gate rejected.
+		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
 		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
 		return answer, res, nil
 	}
 }
 
-// pauseIfWorkerRaisedHITL parks the node when the worker's latest turn
-// raised a NEW ask_user/guard confirmation - re-derived from session events
-// (len(turns) > pauses), robust to node-ID reuse and resume re-entry. MUST
-// run after EVERY worker run: guard-confirmed delivery is often proposed
-// only during a late revision. ask_user is checked first (more specific).
+// pauseIfWorkerRaisedHITL: parks node on new ask_user/guard confirmation. Runs after every worker run.
 func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*session.Event) error, log *slog.Logger) (bool, error) {
 	if emit == nil {
 		return false, nil
@@ -661,13 +496,9 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*ses
 		})
 		return true, ierr
 	}
-	// Guard-ladder pause: the worker called a confirm-tiered tool
-	// (internal/tools/guard.go) that returned the pending marker. Same park
-	// mechanism, a distinct interrupt-ID namespace ("confirm-" vs "hitl-").
 	if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); len(cscan.turns) > cscan.pauses {
 		t := cscan.turns[len(cscan.turns)-1]
-		// Prefer the guard's own hint - it carries call-specific warnings
-		// (e.g. "this DIFFERS from the previously approved operation").
+		// Prefer the guard's own hint (carries call-specific warnings).
 		question := t.hint
 		if question == "" {
 			question = fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", t.tool)
@@ -683,11 +514,7 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*ses
 	return false, nil
 }
 
-// stagedCandidate parses a stage_memory tool call's args (content + optional kind
-// and bucket) into a memory candidate; ok=false if there's no usable content. The
-// bucket (repo|role|user) is the agent's own declaration of WHAT the memory is
-// about, and routes the write (memory.Scope.writeBucket); an absent/unknown one
-// takes the caller's default bucket.
+// stagedCandidate: parses stage_memory args into memory candidate. Bucket routes the write.
 func stagedCandidate(fc *genai.FunctionCall) (memory.Candidate, bool) {
 	c, ok := fc.Args["content"].(string)
 	if !ok || strings.TrimSpace(c) == "" {
@@ -710,11 +537,7 @@ func stagedCandidate(fc *genai.FunctionCall) (memory.Candidate, bool) {
 	return cand, true
 }
 
-// stagedDeliveryTarget parses one stage_pr/stage_review/stage_comment/unstage
-// call into its target key ("pr" | "review" | "comment:<slot>") and, for a
-// stage_* call, the item to upsert there. ok=false for a call this scanner
-// doesn't recognise or that carries no usable target (a malformed unstage).
-// unstage=true means DROP the target rather than upsert item.
+// stagedDeliveryTarget: parses stage_*/unstage calls into target key + item. unstage=true means drop.
 func stagedDeliveryTarget(fc *genai.FunctionCall) (target string, item StagedDelivery, unstage bool, ok bool) {
 	switch fc.Name {
 	case "stage_pr":
@@ -748,21 +571,13 @@ func stagedDeliveryTarget(fc *genai.FunctionCall) (target string, item StagedDel
 	return "", StagedDelivery{}, false, false
 }
 
-// commitMemoryOnPass fires staged knowledge (plus answer-mined
-// consolidation) into shared memory - only on a gate pass, fire-and-forget,
-// never blocking or failing the node. Runs even with empty staged. Bucketed
-// by SUBJECT (repo/role/user), never the agent's own name - resolved here
-// because the gate is workflow-side and holds the real user id + jail coords.
+// commitMemoryOnPass: fires staged knowledge into shared memory on gate pass (fire-and-forget).
 func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Config, author, answer string, staged []memory.Candidate) {
 	if cfg.Memory == nil || !cfg.CommitMemory || strings.TrimSpace(answer) == "" {
 		return
 	}
 	sc := MemoryScope(ctx, cfg, author)
-	// The commit is fire-and-forget (best-effort, never blocks the node), so its
-	// span cannot be a normal CHILD of the node span - the node (and its span)
-	// may finish well before this goroutine does. Link it to the node span
-	// instead: a separate trace, cross-referenced, which is OTel's documented
-	// shape for async work triggered by a request that doesn't wait for it.
+	// Fire-and-forget: link span to node span (separate trace, node may finish before goroutine does).
 	parentSC := oteltrace.SpanContextFromContext(spanCtx)
 	go func() {
 		cctx, cancel := context.WithTimeout(context.Background(), memoryCommitTimeout)
@@ -783,17 +598,11 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	}()
 }
 
-// commitDelivery posts the node's FINAL staged delivery set, exactly once,
-// regardless of judge verdict (graceful degradation) - a FAIL rides its
-// score+feedback along (dc.GatePassed/dc.GateFeedback) so App.Deliver
-// attaches a caveat instead of blocking delivery. BLOCKS (no goroutine): a
-// delivery failure is user-visible, so it must be attempted before the run
-// completes.
+// commitDelivery: posts final staged delivery exactly once. Blocking (delivery failure is user-visible).
 func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
 	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
 		recordDeliveryOutcomeMetric(cfg, res, false, false)
-		// The phantom-success class this event exists to surface: a delivery-
-		// capable node's judge-passed work-request that staged nothing at all.
+		// Phantom-success: delivery-capable node with judge-passed work that staged nothing.
 		if !cfg.ReadOnly && res.Passed {
 			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeNone, "", "", "", otelobs.TraceIDOf(ctx)))
 		}
@@ -806,16 +615,11 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 
 	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber, GatePassed: res.Passed, GateFeedback: res.Feedback}
 	if cfg.Setup != nil {
-		// Setup guaranteed this branch exists (or the run errored before any node
-		// ran) - deliver on it, never the worker's own git-tracking ledger, which
-		// a setup-provisioned worker is told not to touch (internal/github/webhook.go).
+		// Deliver on setup branch (worker's git-tracking ledger is off-limits for setup-provisioned workers).
 		dc.Branch = cfg.Setup.WorkBranch
 		dc.CloneURL = cfg.Setup.Repo
 		if cfg.Workspace != nil {
-			// cfg.NodeID, not the nodeID argument: it's the workspace-directory
-			// scope (dag.buildGateNodes stamps it - node.ID normally, or the ONE
-			// shared clone dir for a chained repo-touching node - see
-			// dag.workspaceNodeID), which is where setup actually cloned to.
+			// Use cfg.NodeID (workspace scope), not nodeID argument.
 			if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID)); err == nil {
 				dc.CloneDir = abs
 			}
@@ -831,18 +635,9 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			}
 		}
 	}
-	// Mermaid validity (#448) is now a deterministic GATE criterion
-	// (mermaidCriterion, mermaid.go) checked before this point - a body
-	// reaching commitDelivery has already passed that check (or shipped as a
-	// gate-failed draft, same as any other unmet deterministic criterion).
-	// Nothing left to strip or repair here.
+	// Mermaid validity is checked by mermaidCriterion before this point.
 
-	// The permission boundary (#657, #662): drop any staged item the
-	// trigger's grant does not permit BEFORE it reaches cfg.Deliver - the
-	// only enforcement point, since this is the only path to GitHub (ACP
-	// workers can't git push; native write-side tools were deleted in
-	// 0.6.0). A refusal is loud - logged and surfaced as a failed
-	// delivery_result - never a silently dropped item.
+	// Permission boundary: drop ungranted items before they reach cfg.Deliver. Refusals are loud, never silent.
 	if allowed, refused, reasons := partitionByGrant(dc.Items, cfg.Grant); len(refused) > 0 {
 		for i, item := range refused {
 			slog.Error("delivery refused: ungranted kind", "component", "vetting",
@@ -869,11 +664,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	span.SetAttributes(attribute.Bool("delivered", err == nil))
 	otelobs.End(span, err)
 
-	// The extension's own record (itemOutcomes) is authoritative - a real
-	// PR/review URL or a real per-item error, never the worker's self-report.
-	// Fall back to one synthetic outcome per staged item (the aggregate error)
-	// only when the extension reported nothing at all (e.g. it failed before
-	// reaching any item, such as the branch push).
+	// Extension's record is authoritative; fall back to synthetic outcomes only when extension reported nothing.
 	if len(itemOutcomes) == 0 {
 		itemOutcomes = make([]DeliveryItemOutcome, len(dc.Items))
 		for i, item := range dc.Items {
@@ -905,10 +696,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
 
-// partitionByGrant splits staged items into what g permits and what it
-// refuses, pairing each refused item with why (same index as refused) - the
-// gate's actual permission boundary (#662). A nil grant (no GitHub trigger
-// governs this run) permits everything.
+// partitionByGrant: splits staged items by grant permission. nil grant permits everything.
 func partitionByGrant(items []StagedDelivery, g *Grant) (allowed, refused []StagedDelivery, reasons []string) {
 	for _, item := range items {
 		if ok, reason := g.allows(item.Kind); ok {
@@ -921,23 +709,14 @@ func partitionByGrant(items []StagedDelivery, g *Grant) (allowed, refused []Stag
 	return allowed, refused, reasons
 }
 
-// emitDeliveryResult sends a delivery_result SSE event, if a sink is present
-// - SSE-only, like emitJudge (never written to the session). ev already
-// carries NodeID (set by stream.DeliveryResult); nodeID is accepted for
-// signature symmetry with emitJudge.
+// emitDeliveryResult: sends delivery_result SSE event (SSE-only, never written to session).
 func emitDeliveryResult(sink func(stream.SSEEvent), nodeID string, ev stream.SSEEvent) {
 	if sink != nil {
 		sink(ev)
 	}
 }
 
-// recordDeliveryOutcomeMetric records quack.delivery.outcome - the plan's
-// alertable phantom-success guard. Scoped to delivery-capable agents
-// (!cfg.ReadOnly): a reviewer/explorer never delivers, so it has no signal to
-// contribute either way. "none" is the phantom-success class: a judge-passed
-// work-request that recorded no delivery attempt at all. "draft" mirrors the
-// documented gate-fail behaviour (AGENTS.md: "a gate-failed PR opens as a
-// draft") - a successful delivery riding a failed verdict.
+// recordDeliveryOutcomeMetric: records quack.delivery.outcome. Scoped to delivery-capable agents.
 func recordDeliveryOutcomeMetric(cfg Config, res GateResult, attempted, delivered bool) {
 	if cfg.ReadOnly {
 		return
@@ -954,12 +733,7 @@ func recordDeliveryOutcomeMetric(cfg Config, res GateResult, attempted, delivere
 	}
 }
 
-// MemoryScope is the node's memory entitlement: the repo it is working in (derived
-// from the chat's jail - "" when there is no repo or more than one, in which case the
-// write falls back to the role bucket rather than guessing), its agent's role family,
-// the real user, and its agent name as the legacy read key. Exported so the ACP
-// memory MCP surface (internal/acp) resolves the SAME scope for load_memory that
-// the gate itself recalls with (#344).
+// MemoryScope: node's memory entitlement (repo, role, user, legacy key). Exported for ACP MCP surface.
 func MemoryScope(ctx adkagent.Context, cfg Config, author string) memory.Scope {
 	sc := memory.Scope{Role: cfg.MemoryRole, Legacy: author}
 	if s := ctx.Session(); s != nil {
@@ -971,14 +745,7 @@ func MemoryScope(ctx adkagent.Context, cfg Config, author string) memory.Scope {
 	return sc
 }
 
-// runWorkerNode runs the worker as a sub-branched child with a stable per-run
-// RunID (so a completed run replays from the event log on resume rather than
-// re-executing) and returns its answer with leaked <think> content stripped.
-// workerInput builds a worker node's input: a plain string when there are no
-// attachments, or a *genai.Content carrying the prompt + media parts (image/audio)
-// for a media-capable node. AgentNode's nodeInputToContent accepts either.
-// ponytail: media rides only the initial draft; revisions are text (the prior
-// answer already captured the media reading) - re-attaching each round is costly.
+// runWorkerNode: runs worker as sub-branched child, strips thinking content.
 func workerInput(prompt string, attachments []*genai.Part) any {
 	if len(attachments) == 0 {
 		return prompt
@@ -1022,14 +789,7 @@ func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any
 func runWorkerNode(ctx adkagent.Context, workerNode workflow.Node, input any, runID string, emit func(*session.Event) error) (string, error) {
 	t0 := time.Now()
 	emitPrompt(ctx, emit, input)
-	// WithIsolationScopeFromNodePath: plan nodes share ONE workflow session, and
-	// a local llmagent's current-turn pivot scan is NOT branch-filtered (ADK
-	// v2.0.0), so a concurrent sibling's tail event steals the pivot and leaves
-	// this worker an empty request. The pivot scan does honour isolation scope,
-	// so scoping each run to its own node path hides sibling events. Inert for
-	// remote (A2A) workers - their sibling leak is fixed read-side in
-	// internal/agent/a2a.go. Known quirk: a local llmagent sees its prompt twice
-	// (harmless; local workers exist only in tests).
+	// IsolationScopeFromNodePath hides sibling events from concurrent workers (ADK v2.0 pivot scan unfiltered).
 	out, err := workflow.RunNode[string](ctx, workerNode, input,
 		workflow.WithUseSubBranch(), workflow.WithRunID(runID),
 		workflow.WithIsolationScopeFromNodePath())
@@ -1053,11 +813,7 @@ func modelName(m model.LLM) string {
 	return m.Name()
 }
 
-// runWorkerNodeTraced wraps runWorkerNode with a "quack.worker.round" span
-// and duration metric. Every worker round passes through here, so this is
-// the ONE place that stamps this round's replay-ledger coordinates onto ctx
-// via WithAgentContext, readable downstream via ledger.CoordsFromContext.
-// Duration is the span's own window, not a separate timer.
+// runWorkerNodeTraced: wraps runWorkerNode with "quack.worker.round" span and replay-ledger coords.
 func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Config, workerModel model.LLM, workerNode workflow.Node, input any, runID, stage string, emit func(*session.Event) error) (string, error) {
 	_, ts := otelobs.StartTimedSpan(spanCtx, "worker.round",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
@@ -1069,11 +825,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 	)
 	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
-	// The WithAgentContext stamp above does not survive workflow.RunNode's
-	// dynamic-child scheduling (see inference.tracedModel.SetLedgerCoords) -
-	// a model built via the inference package implements this and gets
-	// stamped directly instead; anything else (a test stub, an ACP worker
-	// with no local model.LLM) just doesn't get per-round ledger coords.
+	// WithAgentContext stamp does not survive RunNode scheduling; inference models get stamped directly.
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
 		cs.SetLedgerCoords(coords)
 	}
@@ -1083,11 +835,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 	return out, err
 }
 
-// checksPassCriterionTraced wraps checksPassCriterion with a "quack.gate.checks"
-// span - the deterministic-checks gate stage - and stamps the SAME fixed-round
-// replay-ledger coordinates node.go's probeCtx uses, so each check's
-// workspace.RunPipeline call records an execute_tool event (checks.go) with
-// proper coords (#604, deferred from #600).
+// checksPassCriterionTraced: wraps checksPassCriterion with gate.checks span and replay coords.
 func checksPassCriterionTraced(ctx context.Context, cfg Config) (criterionScore, bool) {
 	spanCtx, span := otelobs.Start(ctx, "gate.checks",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", cfg.NodeID))
@@ -1098,17 +846,14 @@ func checksPassCriterionTraced(ctx context.Context, cfg Config) (criterionScore,
 	return c, ok
 }
 
-// emitJudge sends a judge-stage SSE event scoped to nodeID, if a sink is present.
+// emitJudge: sends judge-stage SSE event scoped to nodeID.
 func emitJudge(sink func(stream.SSEEvent), nodeID string, ev stream.SSEEvent) {
 	if sink != nil {
 		sink(stream.ScopeToNode(ev, nodeID))
 	}
 }
 
-// judgePartEmitter forwards the judge agent's streamed parts to the SSE sink as
-// stage:judge activity (thinking / tokens / tool calls), scoped to nodeID+runID.
-// nil-sink-safe. It never writes to the workflow session, so it cannot re-poison
-// a downstream node's model request (unlike the v1 orphan-marker approach).
+// judgePartEmitter: forwards judge's streamed parts to SSE sink. nil-sink-safe, never writes to session.
 func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*genai.Part) bool {
 	return func(p *genai.Part) bool {
 		if sink == nil || p == nil {
@@ -1128,36 +873,18 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 	}
 }
 
-// computeDeterministicCriteria computes the code-owned criteria (citation
-// backing, length, retrieval grounding, checks, answer-shape, delivery) on
-// their own, with no verdict involved - callable before the judge runs.
+// computeDeterministicCriteria: computes code-owned criteria before judge runs.
 func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config) map[string]criterionScore {
 	det := map[string]criterionScore{}
 	if ls := lengthScore(answer); ls < 1.0 {
 		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf("deterministic: %d chars", len(strings.TrimSpace(answer)))}
 	}
-	// A retrieval agent that performed ZERO retrieval cannot have a grounded
-	// answer - it either answered from model memory (its citations, if any, are
-	// unverifiable) or wrote a question to the user as answer text instead of
-	// calling ask_user. Hard weakest-link fail with feedback naming both ways
-	// out; citationScore abstains in this case (no activity to grade against),
-	// which previously let exactly these answers sail through to the judge.
-	// A clone or a local file read is retrieval too (cloned-repo grounding):
-	// a coding node that consulted the repo on disk instead of the web is not
-	// answering from model memory.
+	// Zero-retrieval answers are ungrounded (model memory or unverifiable citations). Clone/file reads count as retrieval.
 	if cfg.RequireRetrieval && len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(act.paths) == 0 {
 		det["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session - " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
-	// A read-only EXTERNAL agent (code-explorer/code-reviewer) that cloned a
-	// repo but performed ZERO reads/greps on it did no real exploration - a
-	// clone puts every file on disk, which is enough for grounded_in_retrieval
-	// above, but not evidence anything was actually opened and read. Without
-	// this, a fabricated "survey" of a clone the worker never looked at sails
-	// through on the clone alone (#289). Scoped to ExternalWorker+ReadOnly
-	// nodes that actually cloned something, so a legitimately read-nothing
-	// node (synthesis, a code-implementer working in a pre-provisioned setup
-	// clone it never re-clones) is untouched.
+	// Read-only external agent that cloned but did zero reads/greps: the clone alone is not exploration.
 	if cfg.ExternalWorker && cfg.ReadOnly && len(act.clonedRepos) > 0 && len(act.paths) == 0 && act.greps == 0 {
 		det["exploration_grounded"] = criterionScore{Score: 0, Reason: "deterministic: repo cloned but zero read_file/grep calls - " +
 			"the answer's findings are not grounded in anything actually read; explore the clone (read_file/grep) before reporting"}
@@ -1165,44 +892,30 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	if cs, details, hasCites := citationScore(answer, act, resolveCiteCloneRoots(cfg, act)); hasCites {
 		det["cites_sources"] = criterionScore{Score: cs, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), cs)}
 	}
-	// §4: deterministic gate checks - the planner's `checks` when it set them,
-	// else the ones derived from the repo on disk (checks.go). Untouched for a
-	// node that has neither (research, synthesis).
+	// Deterministic gate checks: planner's checks or derived from repo.
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
 		det["checks_pass"] = c
 	}
-	// Mermaid validity (#448): checked against the answer AND every currently
-	// staged delivery body - whichever is about to ship to GitHub. Only added
-	// on a failure (mirrors sufficient_length above): a clean diagram, or no
-	// diagram at all, needs no entry.
+	// Mermaid validity: checked against answer and staged delivery bodies. Added only on failure.
 	if c, ok := mermaidCriterion(answer, act); ok {
 		det["mermaid_valid"] = c
 	}
-	// Answer-shape check (#565): a leaked or malformed tool-call fragment in a
-	// deliverable is broken by construction, same family and fold as
-	// mermaid_valid above.
+	// Answer-shape check: leaked or malformed tool-call fragment in deliverable.
 	if c, ok := toolCallSyntaxCriterion(answer, act); ok {
 		det["no_tool_call_syntax"] = c
 	}
-	// Answer-shape check (#569): a pointer to a file this run wrote but never
-	// committed is broken by construction - the working directory holding it
-	// is discarded when the run ends.
+	// Answer-shape check: a pointer to a file this run wrote but never committed.
 	if c, ok := danglingDeliverablePathCriterion(answer, act); ok {
 		det["no_dangling_deliverable_path"] = c
 	}
-	// Delivery: a node whose task says commit/push/PR cannot pass unless the
-	// ledger shows it did, and one told to POST a review on a PR cannot pass
-	// unless it submitted one (delivery.go). Untouched for a node whose task
-	// demands neither.
+	// Delivery: commit/push/PR must show in ledger; review must be submitted.
 	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly, cfg.IsReviewer) {
 		det[name] = c
 	}
 	return det
 }
 
-// mergeDeterministic folds a computed deterministic criteria map (see
-// computeDeterministicCriteria) into the judge's verdict and re-aggregates
-// (weakest-link).
+// mergeDeterministic: folds deterministic criteria into verdict and re-aggregates.
 func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
@@ -1213,19 +926,12 @@ func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 	return aggregateVerdict(v)
 }
 
-// foldDeterministic computes then merges in one step, for callers that don't
-// need the deterministic results before the judge runs.
+// foldDeterministic: compute then merge in one step.
 func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
 	return mergeDeterministic(v, computeDeterministicCriteria(ctx, answer, act, cfg))
 }
 
-// resolveCiteCloneRoots resolves every ABSOLUTE clone-dir root citationScore
-// should disk-verify local code citations under: the harness-provisioned
-// setup clone (cfg.Setup, resolved exactly as commitDelivery resolves it)
-// plus every repo the worker itself git_clone'd this session (act.clonedDirs).
-// An entry that can't be resolved (no cfg.Workspace wired, a jail-escape, a
-// dir that was never created) is silently dropped - citationScore just has
-// one fewer root to check, never an error.
+// resolveCiteCloneRoots: resolves clone dir roots for citationScore disk verification.
 func resolveCiteCloneRoots(cfg Config, act workerActivity) []string {
 	if cfg.Workspace == nil {
 		return nil
@@ -1244,12 +950,7 @@ func resolveCiteCloneRoots(cfg Config, act workerActivity) []string {
 	return roots
 }
 
-// composeFeedback merges the judge's own narrative Feedback with the Reasons
-// of any criterion scoring below threshold - a deterministic criterion's
-// Reason (grounded_in_retrieval, checks_pass, …) is set by code the judge
-// never saw, so without this the revise prompt would carry a numeric fail
-// with no explanation of what actually needs to change (see §4: "the revise
-// prompt therefore contains the actual compiler/test failure").
+// composeFeedback: merges judge feedback with below-threshold criterion reasons for the revise prompt.
 func composeFeedback(v verdict, threshold float64) string {
 	var extra []string
 	for name, c := range v.Criteria {
@@ -1280,11 +981,7 @@ func composeFeedback(v verdict, threshold float64) string {
 	return sb.String()
 }
 
-// citationOnlyFailure reports whether the ONLY criterion below threshold is
-// cites_sources - i.e. the answer is substantively fine and just needs its
-// already-retrieved URLs attached to the claims. When true the revise prompt
-// tells the worker to do a formatting pass (attach the URLs it already has),
-// NOT to re-research: extra fetches to fix a pure-citation fail waste tokens.
+// citationOnlyFailure: only cites_sources below threshold - answer is substantively fine, just needs URL formatting.
 func citationOnlyFailure(v verdict, threshold float64) bool {
 	failing := 0
 	citesFailed := false
@@ -1299,14 +996,7 @@ func citationOnlyFailure(v verdict, threshold float64) bool {
 	return citesFailed && failing == 1
 }
 
-// activityFromSession reconstructs the worker's retrieval activity AND its
-// workspace-operation ledger (fs/git/run_command calls - ledger.go) from the
-// workflow session events, pairing calls to responses by call ID. Consumed
-// by the citation check, the judge's workspace section, and the
-// revise/finalize prompts.
-// joinWritten resolves a path argument against the cwd at call time - the
-// read-side mirror of tools.joinCwd (kept here to avoid a vetting→tools
-// dependency). A leading "/" ignores the cwd.
+// activityFromSession: reconstructs worker's retrieval and workspace ledger from session events.
 func joinWritten(cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")
@@ -1329,20 +1019,12 @@ func writtenRel(nodeDir, cwd, p string) string {
 	return joinWritten(nodeDir, joinWritten(cwd, p))
 }
 
-// activityFromSession replays a session with no node scope (an un-gated/legacy
-// worker, and every test that doesn't care about scoping).
+// activityFromSession: replays session with no node scope.
 func activityFromSession(sess session.Session) workerActivity {
 	return activityFromSessionAt(sess, "")
 }
 
-// activityFromSessionAt replays the worker's session inside nodeDir - the node's
-// OWN working dir (workspace.NodeDir) and its invisible root, which every path the
-// worker passed and every cwd its `cd` reported is relative to. The recorded
-// act.written paths come back CHAT-relative (writtenRel), which is what
-// buildChangedFilesSection hands to Jail.Resolve. Getting this wrong silently
-// breaks the judge's changed-file re-read: it would resolve the worker's writes
-// against the wrong root, find nothing, and quietly degrade to scoring the answer's
-// self-report.
+// activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
 func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity {
 	s := &activityScanner{
 		act:         workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}},
@@ -1352,10 +1034,10 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 	if sess == nil {
 		return s.act
 	}
-	pending := map[string]string{}           // web_fetch call ID → URL
-	pendingWs := map[string]map[string]any{} // workspace-tool call ID → args (see ledger.go)
-	pendingWsTool := map[string]string{}     // workspace-tool call ID → tool name
-	pendingCd := map[string]bool{}           // cd call ID → awaiting response (to track cwd)
+	pending := map[string]string{}
+	pendingWs := map[string]map[string]any{}
+	pendingWsTool := map[string]string{}
+	pendingCd := map[string]bool{}
 	for ev := range sess.Events().All() {
 		if ev == nil || ev.Content == nil {
 			continue
@@ -1372,10 +1054,7 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					if u, ok := p.FunctionCall.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
 						pending[p.FunctionCall.ID] = strings.TrimSpace(u)
 					}
-					// ALSO route into the workspace ledger (isWorkspaceTool now
-					// covers web_fetch): a worker that fetched repo files from the
-					// web instead of reading the local clone must leave a visible
-					// trace, or the judge has nothing to catch it with.
+					// Route into workspace ledger (web_fetch signals web-sourced claims).
 					pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args
 					pendingWsTool[p.FunctionCall.ID] = "web_fetch"
 				case "stage_memory":
@@ -1387,9 +1066,7 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 				case "cd":
 					pendingCd[p.FunctionCall.ID] = true
 				case "search":
-					// ACP grep/glob calls (ToolKindSearch) - counted regardless of
-					// success/failure, like recordSearch's web queries: a call that
-					// found nothing is still evidence the worker looked.
+					// ACP grep/glob - counted regardless of success/failure.
 					s.act.greps++
 				default:
 					if isWorkspaceTool(p.FunctionCall.Name) {
@@ -1414,8 +1091,7 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 				}
 			}
 			if p.FunctionResponse != nil && isWorkspaceTool(p.FunctionResponse.Name) {
-				// Only a completed call/response pair enters the ledger - an
-				// operation with no response never happened as far as claims go.
+				// Only completed call/response pairs enter the ledger.
 				if args, known := pendingWs[p.FunctionResponse.ID]; known && pendingWsTool[p.FunctionResponse.ID] == p.FunctionResponse.Name {
 					delete(pendingWs, p.FunctionResponse.ID)
 					delete(pendingWsTool, p.FunctionResponse.ID)
@@ -1427,23 +1103,15 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 	return s.act
 }
 
-// activityScanner accumulates one worker's activity. Every recorder below is
-// reached from BOTH paths - a direct tool call's session events, and a call
-// replayed out of a run_code record - which is what makes the two
-// indistinguishable to the trust gate. There is one implementation of each rule,
-// so the two paths cannot diverge.
+// activityScanner: accumulates one worker's activity. Recorders reached from both session-event and replay paths.
 type activityScanner struct {
-	act     workerActivity
-	nodeDir string
-	// curCwd is the NODE-relative cwd in effect ("" = the node's own root),
-	// updated on each successful cd - including a cd made from inside a script,
-	// since the tool writes the same session state either way.
-	curCwd      string
-	writtenSeen map[string]bool // dedup for act.written
+	act         workerActivity
+	nodeDir     string
+	curCwd      string          // node-relative cwd ("" = node root)
+	writtenSeen map[string]bool // dedup for written
 }
 
-// recordPRNumber captures a github_* call's pull_number arg as the review/
-// comment delivery target - first call wins (a review session targets one PR).
+// recordPRNumber: captures pull_number for delivery target. First call wins.
 func (s *activityScanner) recordPRNumber(args map[string]any) {
 	if s.act.prNumber != 0 {
 		return
@@ -1453,11 +1121,7 @@ func (s *activityScanner) recordPRNumber(args map[string]any) {
 	}
 }
 
-// applyDelivery upserts or drops one target in the worker's staged-delivery
-// set (see stagedDeliveryTarget) - the keyed-set half of the memory-candidate
-// append-log pattern: a later stage_* call for the SAME target replaces the
-// earlier one, and unstage removes it outright, so only what's staged at
-// judge-pass time (commitDelivery) is ever posted.
+// applyDelivery: upserts or drops a delivery target. Later stage_* replaces earlier; unstage removes.
 func (s *activityScanner) applyDelivery(fc *genai.FunctionCall) {
 	target, item, unstage, ok := stagedDeliveryTarget(fc)
 	if !ok {
@@ -1485,9 +1149,7 @@ func (s *activityScanner) recordFetch(url string, resp map[string]any) {
 	}
 }
 
-// recordCd tracks the working directory a later write resolves against. cd
-// reports the new cwd as a NODE-relative slash path ("." = the node's own root);
-// mirror the tool's own storage so writtenRel resolves later writes correctly.
+// recordCd: tracks cwd for writtenRel resolution (node-relative slash path).
 func (s *activityScanner) recordCd(resp map[string]any) {
 	if _, failed := resp["error"]; failed {
 		return
@@ -1500,49 +1162,29 @@ func (s *activityScanner) recordCd(resp map[string]any) {
 	}
 }
 
-// recordWorkspace is the ledger entry plus the structured grounding/delivery
-// capture for one completed workspace operation. Failures ARE recorded
-// (recordWsOp marks them FAILED): "the tests passed" claimed over a failed run
-// must be contradictable.
+// recordWorkspace: ledger entry + grounding/delivery capture. Failures recorded (must be contradictable).
 func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any) {
 	s.act.workspace = append(s.act.workspace, recordWsOp(name, args, resp))
-	// Structured grounding capture (successful ops only - a FAILED clone/read
-	// retrieved nothing and backs no citation, though it stays in the ledger
-	// above for claim-checking).
+	// Grounding capture (successful ops only - failed ops stay in ledger for claim-checking but back no citation).
 	if _, failed := resp["error"]; failed {
 		return
 	}
 	switch name {
-	// Delivery actions (delivery.go): a task that demands the work be
-	// committed/pushed cannot pass without these.
 	case "git_commit":
 		s.act.committed = true
 	case "git_push":
 		s.act.pushed = true
 	case "github_pull_request":
 		s.act.prOpened = true
-	// The reviewer's delivery (delivery.go): a task that demands a POSTED review
-	// cannot pass without a submit. A drafted comment posts nothing on its own -
-	// the draft only becomes a review on the PR when github_submit_review
-	// succeeds (internal/github).
 	case "github_add_review_comment":
 		s.act.reviewCommented = true
 		s.recordPRNumber(args)
 	case "github_submit_review":
 		s.act.reviewSubmitted = true
 		s.recordPRNumber(args)
-	// Execution (delivery.go): a node reviewing a code change cannot pass without
-	// having actually RUN something against it. "run_command" here is the ACP
-	// ledger label for the worker's own shell/execute tool call (internal/acp/
-	// translate.go's mapToolCall), not a quack tool - any successful one counts:
-	// the test suite, a build, or a throwaway probe. A non-zero exit_code still
-	// ran.
 	case "run_command":
 		s.act.ranCommand = true
 	case "git_clone":
-		// A successful clone IS retrieval. citationScore backs the repo URL, URLs
-		// under it, and local paths inside the clone dir - without this, a
-		// clone-and-read node scores near zero on files of its own clone.
 		if u, ok := args["url"].(string); ok && strings.TrimSpace(u) != "" {
 			s.act.clonedRepos = append(s.act.clonedRepos, strings.TrimSpace(u))
 		}
@@ -1550,16 +1192,12 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 		if strings.TrimSpace(dir) == "" {
 			dir, _ = args["dir"].(string)
 		}
-		// Resolved against the cwd in effect at clone time (writtenRel), exactly
-		// like a write/edit path - so a later delivery step can jail.Resolve this
-		// straight to the clone's real location instead of a bare repo-name guess.
+		// Resolved against cwd at clone time via writtenRel.
 		if d := normalizePath(writtenRel(s.nodeDir, s.curCwd, dir)); d != "" {
 			s.act.clonedDirs = append(s.act.clonedDirs, d)
 		}
 	case "git_checkout":
-		// The delivery step (delivery.go/commitDelivery) needs to know
-		// which branch to push - the worker names it by checking it out, but
-		// never pushes it itself.
+		// commitDelivery needs the branch name the worker checked out.
 		if br, ok := resp["branch"].(string); ok && strings.TrimSpace(br) != "" {
 			s.act.currentBranch = strings.TrimSpace(br)
 		}
@@ -1568,10 +1206,7 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 			s.act.currentBranch = strings.TrimSpace(cur)
 		}
 	case "read_file", "write_file", "edit_file", "delete_path":
-		// Repo-exploration/coding answers cite the files they worked on
-		// ([games-repo/app/games.ts](games-repo/app/games.ts)), not web pages -
-		// that's correct behavior, and citationScore backs such a path only if it
-		// appears here or under a cloned dir.
+		// citationScore backs a path only if it appears here or under a cloned dir.
 		pth, ok := args["path"].(string)
 		if !ok {
 			return
@@ -1579,8 +1214,7 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 		if np := normalizePath(pth); np != "" {
 			s.act.paths[np] = true
 		}
-		// write/edit only: record the jail-relative path so the judge can re-read
-		// the real post-edit source (buildChangedFilesSection).
+		// Record jail-relative path for judge re-read (buildChangedFilesSection).
 		if name == "write_file" || name == "edit_file" {
 			if jr := writtenRel(s.nodeDir, s.curCwd, pth); jr != "" && !s.writtenSeen[jr] {
 				s.writtenSeen[jr] = true
