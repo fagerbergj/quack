@@ -8,28 +8,15 @@ import (
 	"google.golang.org/genai"
 )
 
-// eventSpec is one session event to yield: its parts, whether it is a partial
-// (streamed-only, never persisted - the runner drops Partial events from the
-// store) and optional usage for the final event.
+// eventSpec is one session event to yield.
 type eventSpec struct {
 	parts   []*genai.Part
 	partial bool
 	usage   *genai.GenerateContentResponseUsageMetadata
 }
 
-// translator turns ACP session/update notifications into event specs, in
-// quack's tool vocabulary so the DAG stream, the activity ledger and the judge
-// consume them unchanged:
-//
-//	agent_thought_chunk        → Partial thought-text event   (agent_thinking)
-//	agent_message_chunk        → Partial text event           (agent_token), accumulated as the answer since the last tool call
-//	tool_call                  → Partial FunctionCall event   (live agent_tool_call)
-//	tool_call_update terminal  → durable FunctionCall+FunctionResponse pair (ledger + agent_tool_result)
-//	usage_update               → retained, stamped on the final answer event
-//
-// The durable pair is emitted only at the TERMINAL update - opencode often
-// delivers the interesting fields (edit diff, command output) there, and an
-// early call event would freeze the ledger's args half-empty.
+// translator turns ACP session/update notifications into event specs in
+// quack's tool vocabulary.
 type translator struct {
 	cwd     string
 	answer  strings.Builder
@@ -61,8 +48,6 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 			return []eventSpec{{partial: true, parts: []*genai.Part{{Text: txt}}}}
 		}
 	case u.ToolCall != nil:
-		// A tool call means everything narrated so far was pre-action
-		// throat-clearing, not the answer - keep only the text emitted since.
 		t.answer.Reset()
 		c := u.ToolCall
 		id := string(c.ToolCallId)
@@ -73,7 +58,6 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 			delete(t.pending, id)
 			return []eventSpec{t.pairSpec(id, name, args, p, c.Status == sdk.ToolCallStatusFailed, c.RawOutput)}
 		}
-		// Live progress only - the durable pair lands at the terminal update.
 		return []eventSpec{{partial: true, parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: id, Name: name, Args: args}}}}}
 	case u.ToolCallUpdate != nil:
 		up := u.ToolCallUpdate
@@ -104,8 +88,6 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 	case u.UsageUpdate != nil:
 		t.usage = &genai.GenerateContentResponseUsageMetadata{TotalTokenCount: int32(u.UsageUpdate.Used)}
 	}
-	// plan / available_commands / mode / config / session_info and unknown
-	// variants: skipped, never fatal (minor ACP versions add variants).
 	return nil
 }
 
@@ -131,9 +113,7 @@ func (t *translator) pairSpec(id, name string, args map[string]any, p pendingToo
 	}}
 }
 
-// mapToolCall maps one ACP tool call onto quack's tool vocabulary. Only the
-// ledger-relevant kinds are renamed; everything else keeps a kind-derived name
-// that the stream shows and the ledger ignores.
+// mapToolCall maps one ACP tool call onto quack's tool vocabulary.
 func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 	in, _ := p.rawInput.(map[string]any)
 	switch p.kind {
@@ -144,11 +124,6 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 		}
 		return "run_command", map[string]any{"command": cmd}
 	case sdk.ToolKindEdit:
-		// A diff carries the before/after text the frontend's diff view needs
-		// (EditFileView); map to "edit_file" - quack's native name for that
-		// view - so ACP edits render the same as native ones (#388). Without a
-		// diff there's nothing to show a before/after for, so fall back to the
-		// plainer write_file view.
 		if d := firstDiff(p.content); d != nil {
 			old := ""
 			if d.OldText != nil {
@@ -177,8 +152,7 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 	return name, map[string]any{"title": p.title}
 }
 
-// toolResponse builds the FunctionResponse payload. An "error" key marks the
-// operation FAILED to the ledger (recordWsOp), exactly like a native tool.
+// toolResponse builds the FunctionResponse payload.
 func (t *translator) toolResponse(name string, p pendingTool, failed bool, rawOutput any) map[string]any {
 	if failed {
 		msg := outputText(p, rawOutput)
@@ -196,8 +170,6 @@ func (t *translator) toolResponse(name string, p pendingTool, failed bool, rawOu
 		}
 		return resp
 	case "edit_file":
-		// EditFileView renders the diff from args (old/new), so the response
-		// only needs the applied-replacement note it already knows how to show.
 		return map[string]any{"replacements": 1}
 	case "write_file":
 		resp := map[string]any{}
@@ -221,9 +193,7 @@ func (t *translator) toolResponse(name string, p pendingTool, failed bool, rawOu
 	}
 }
 
-// editPath resolves the edited file's path (diff content first, then
-// locations), node-relative - the namespace the ledger and the judge's
-// changed-file re-read resolve against.
+// editPath resolves the edited file's path, node-relative.
 func (t *translator) editPath(p pendingTool) string {
 	if d := firstDiff(p.content); d != nil {
 		return t.rel(d.Path)
@@ -268,8 +238,7 @@ func firstDiff(content []sdk.ToolCallContent) *sdk.ToolCallContentDiff {
 	return nil
 }
 
-// outputText extracts human-readable output from tool content blocks or a raw
-// output payload.
+// outputText extracts human-readable output from tool content or raw output.
 func outputText(p pendingTool, rawOutput any) string {
 	var b strings.Builder
 	for _, c := range p.content {

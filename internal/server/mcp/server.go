@@ -1,7 +1,4 @@
-// Package mcp exposes Quack's orchestrator as an MCP server over the Streamable
-// HTTP transport. M0 provides a single `ask` tool that runs the orchestrator and
-// returns the accumulated answer (it reuses the same orchestrator + event
-// translation as the REST surface).
+// Package mcp exposes the orchestrator as an MCP Streamable-HTTP server (ask tool).
 package mcp
 
 import (
@@ -19,13 +16,10 @@ import (
 
 const userID = "local"
 
-// mrtrAnswerID is the SEP-2322 multi-round-trip input-request ID for ask's
-// free-text follow-up question. One outstanding question at a time, so a
-// constant ID is enough.
+// mrtrAnswerID: SEP-2322 MRTR input-request ID (one outstanding at a time).
 const mrtrAnswerID = "answer"
 
-// mrtrAnswerSchema requests a single free-text string back from the client's
-// elicitation.
+// mrtrAnswerSchema: single free-text string for MRTR elicitation.
 var mrtrAnswerSchema = &jsonschema.Schema{
 	Type:       "object",
 	Properties: map[string]*jsonschema.Schema{"answer": {Type: "string"}},
@@ -52,8 +46,7 @@ func Handler(orch *orchestrator.Orchestrator) http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
 }
 
-// askTool adapts the Orchestrator to newAskHandler's narrow run/pending
-// surface, the only orchestrator behaviour the MRTR round trip needs.
+// askTool adapts Orchestrator to the MRTR run/pending surface.
 func askTool(orch *orchestrator.Orchestrator) mcp.ToolHandlerFor[AskInput, any] {
 	run := func(ctx context.Context, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
 		return orch.Run(ctx, userID, sessionID, message, nil)
@@ -64,15 +57,7 @@ func askTool(orch *orchestrator.Orchestrator) mcp.ToolHandlerFor[AskInput, any] 
 	return newAskHandler(run, pending)
 }
 
-// newAskHandler builds the `ask` tool handler against run/pending rather than
-// *orchestrator.Orchestrator directly, so the MRTR round trip (ask, pause,
-// elicit, retry) is testable without a live Orchestrator.
-//
-// If the orchestrator paused on a clarifying question (the same needs_input
-// check the REST status handler uses), it returns an MRTR input-required
-// result instead of a bogus "done" with a partial answer: SEP-2322 clients
-// retry with the elicited answer; others fall back to the SDK's transparent
-// elicitation or "call ask again with session_id".
+// newAskHandler returns MRTR input-required on pause, testable without a live Orchestrator.
 func newAskHandler(
 	run func(ctx context.Context, sessionID, message string) iter.Seq2[stream.SSEEvent, error],
 	pending func(ctx context.Context, sessionID string) (orchestrator.PendingQuestion, bool),
@@ -81,8 +66,7 @@ func newAskHandler(
 		sessionID := args.SessionID
 		message := args.Query
 
-		// A retry: recover the session from RequestState and answer the
-		// pending question instead of re-asking the original query.
+		// A retry: answer the pending question instead of re-asking.
 		if resp, ok := req.Params.InputResponses[mrtrAnswerID]; ok {
 			if req.Params.RequestState != "" {
 				sessionID = req.Params.RequestState

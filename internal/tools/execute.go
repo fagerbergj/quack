@@ -17,24 +17,15 @@ type executeArgs struct {
 	PlanID string `json:"plan_id"` // the plan_id returned by the plan tool
 }
 
-// executeResult.Status is always "delivered": the plan's answer streams straight to
-// the user from the execute node and the orchestrator stays silent.
+// executeResult.Status: always "delivered".
 type executeResult struct {
 	Status string `json:"status"` // "delivered"
 }
 
-// ExecPlanKey is the session-state key the execute tool stashes the selected plan
-// (full JSON) under. The orchestrator workflow's execute node reads it and runs the
-// DAG in the SAME runner after the llmagent's turn - so a tool (which has no
-// sub-scheduler) never runs the DAG. Storing the whole plan (not just its id) means
-// a retry of a failed node finds it in the persisted session, where the
-// per-run plan cache no longer exists.
+// ExecPlanKey: session-state key for the selected plan (full JSON), so a retry finds it in persisted session.
 const ExecPlanKey = "orch.exec.plan"
 
-// NewExecuteTool returns the execute tool. In the single-runner model it does not
-// run the DAG (a tool context has no sub-scheduler); it validates the plan_id and
-// selects it for the workflow's execute node, then ends the llmagent's turn so it
-// can't chatter over the streamed answer.
+// NewExecuteTool: validates plan_id, selects it, ends the llmagent's turn.
 func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{
@@ -54,13 +45,8 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 			}
 			tc.State().Set(ExecPlanKey, string(planJSON))
 			cache.SetSelected(a.PlanID)
-			// End the llmagent turn structurally so it can't emit a chatty
-			// acknowledgement over the execute node's streamed answer.
-			// ponytail: the plan's synthesizer node IS the loop-back - it folds the
-			// specialist outputs into the final answer, so the plan always delivers
-			// and there is no caller-side "keep the turn open" knob. Add one only
-			// when the orchestrator needs to reshape a result itself, which also
-			// needs its conversation context threaded into that node.
+		// End the llmagent turn to prevent chattering over the streamed answer.
+		// ponytail: synthesizer node IS the loop-back. Add a caller-side knob when orchestrator needs to reshape.
 			tc.Actions().SkipSummarization = true
 			slog.Info("plan selected for execution", "component", "execute", "plan", a.PlanID)
 			return executeResult{Status: "delivered"}, nil
@@ -68,8 +54,7 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 	)
 }
 
-// TerminalOutput returns the output of the plan's terminal node (the one with
-// no successors). Exported for the resume path. Falls back to the last node in slice order.
+// TerminalOutput: returns the output of the terminal node (no successors). Exported for resume path.
 func TerminalOutput(plan dag.Plan, outputs map[string]string) string {
 	hasSuccessor := make(map[string]bool, len(plan.Nodes))
 	for _, n := range plan.Nodes {

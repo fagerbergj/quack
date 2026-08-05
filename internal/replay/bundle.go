@@ -1,8 +1,4 @@
-// Package replay loads a recorded ledger bundle (internal/ledger) and
-// replays it: every model/tool call a live run makes is matched against the
-// recording by sequence + shallow identity, never live network. See
-// .quack/replay-log.md "Replay semantics" for the matching rules this
-// package implements.
+// Package replay loads a recorded ledger bundle and replays it (sequence + shallow identity matching).
 package replay
 
 import (
@@ -17,28 +13,20 @@ import (
 	"time"
 )
 
-// line mirrors the on-disk shape internal/ledger's exporter writes (its own
-// `line` struct is unexported - replay reads what recording writes, so the
-// shape must match; ledger has no reason to expose its file format as API).
+// line mirrors ledger's unexported on-disk shape.
 type line struct {
 	Timestamp time.Time      `json:"timestamp"`
 	Attrs     map[string]any `json:"attributes"`
 }
 
-// Manifest mirrors the bundle header ledger.AssembleBundle writes
-// (manifest.json) - kept as its own small struct rather than importing
-// ledger.Manifest, for the same reason as line above.
+// Manifest mirrors bundle header ledger.AssembleBundle writes (manifest.json).
 type Manifest struct {
 	QuackVersion   string `json:"quack_version"`
 	SemConvVersion string `json:"semconv_version"`
 	SessionID      string `json:"session_id"`
 }
 
-// Load reads a bundle from path: a ZIP produced by ledger.AssembleBundle
-// (manifest.json + entries.jsonl), or - for convenience, e.g. a hand-built
-// test fixture - a bare entries.jsonl file. Either way, Load's only input is
-// the bundle's bytes; it never reaches back into a store or a live
-// collector (.quack/replay-log.md "Forbidden").
+// Load reads a bundle from path (ZIP from ledger.AssembleBundle or bare entries.jsonl).
 func Load(path string) (*Session, error) {
 	if strings.HasSuffix(path, ".zip") {
 		return loadZip(path)
@@ -91,8 +79,7 @@ func loadJSONL(path string) (*Session, error) {
 	return buildSession(f, Manifest{})
 }
 
-// buildSession parses r as newline-delimited ledger entries and indexes
-// them into streams (see Session).
+// buildSession parses r as newline-delimited ledger entries into streams.
 func buildSession(r io.Reader, manifest Manifest) (*Session, error) {
 	s := &Session{manifest: manifest, streams: map[StreamKey]*streamState{}}
 
@@ -116,16 +103,13 @@ func buildSession(r io.Reader, manifest Manifest) (*Session, error) {
 	return s, nil
 }
 
-// attrStr reads a string attribute, "" if absent or the wrong type.
+// attrStr reads a string attribute; "" if absent or wrong type.
 func attrStr(attrs map[string]any, key string) string {
 	s, _ := attrs[key].(string)
 	return s
 }
 
-// attrFirstOf reads the first element of a JSON array attribute as a
-// string - how a single-value semconv "slice" attribute (e.g.
-// gen_ai.response.finish_reasons) round-trips through encoding/json's
-// generic any decoding.
+// attrFirstOf reads first element of a JSON array attribute as string (semconv slice round-trip).
 func attrFirstOf(attrs map[string]any, key string) string {
 	arr, _ := attrs[key].([]any)
 	if len(arr) == 0 {
@@ -135,23 +119,19 @@ func attrFirstOf(attrs map[string]any, key string) string {
 	return s
 }
 
-// attrInt64 reads a numeric attribute - encoding/json decodes a JSON number
-// into an `any` as float64, so that's the only case that matters here.
+// attrInt64 reads a numeric attribute (JSON decodes numbers as float64).
 func attrInt64(attrs map[string]any, key string) int64 {
 	f, _ := attrs[key].(float64)
 	return int64(f)
 }
 
-// attrFloat64 reads a numeric attribute as a float64 (a judge score is
-// already fractional, unlike attrInt64's token counts).
+// attrFloat64 reads a numeric attribute as float64 (judge scores are fractional).
 func attrFloat64(attrs map[string]any, key string) float64 {
 	f, _ := attrs[key].(float64)
 	return f
 }
 
-// sortByTime sorts entries in place by their recorded timestamp - the
-// design's ordering rule ("order within a stream is timestamp order");
-// stable so entries sharing a timestamp keep their append order.
+// sortByTime sorts entries by timestamp; stable so same-timestamp entries keep append order.
 func sortByTime[T any](entries []T, tsOf func(T) time.Time) {
 	sort.SliceStable(entries, func(i, j int) bool { return tsOf(entries[i]).Before(tsOf(entries[j])) })
 }

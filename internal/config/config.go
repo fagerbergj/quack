@@ -1,7 +1,4 @@
-// Package config loads Quack's declarative YAML configuration. Structure
-// (providers, stores, orchestrator model) lives in the YAML; secrets are
-// interpolated from the environment via ${VAR}. Providers and stores are
-// pluggable by a `kind` discriminator; M0 implements only `openai` + `postgres`.
+// Package config loads Quack's YAML configuration. Secrets interpolated from env via ${VAR}.
 package config
 
 import (
@@ -15,52 +12,34 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level declarative configuration.
 type Config struct {
 	Providers     map[string]ProviderConfig `yaml:"providers"`
-	Stores        map[string]StoreConfig    `yaml:"stores"`  // named backend registry (like providers)
-	Session       SessionConfig             `yaml:"session"` // ADK session/chat store + compaction
+	Stores        map[string]StoreConfig    `yaml:"stores"`
+	Session       SessionConfig             `yaml:"session"`
 	Orchestrator  OrchestratorConfig        `yaml:"orchestrator"`
 	Agents        map[string]AgentConfig    `yaml:"agents"`
 	Tools         map[string]ToolConfig     `yaml:"tools"`
 	Gates         GatesConfig               `yaml:"gates"`
 	Dag           DagConfig                 `yaml:"dag"`
 	Server        ServerConfig              `yaml:"server"`
-	Workspace     WorkspaceConfig           `yaml:"workspace"`     // agents' working disk (filesystem/git tools)
-	Extensions    ExtensionsConfig          `yaml:"extensions"`    // bundled inbound+outbound integrations (e.g. GitHub App)
-	Observability ObservabilityConfig       `yaml:"observability"` // OTel tracing/metrics/logs + the replay-ledger recording toggle
-	Auth          *InboundAuthConfig        `yaml:"auth"`          // inbound request auth; nil (section absent) = disabled, open
+	Workspace     WorkspaceConfig           `yaml:"workspace"`
+	Extensions    ExtensionsConfig          `yaml:"extensions"`
+	Observability ObservabilityConfig       `yaml:"observability"`
+	Auth          *InboundAuthConfig        `yaml:"auth"`
 }
 
-// ObservabilityConfig groups OTel wiring (otel:) with the replay-ledger
-// recording toggle (recording:) that rides the same log pipeline - both are
-// "how quack observes its own runs", so they share one top-level section.
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`
 	Recording RecordingConfig `yaml:"recording"`
 }
 
-// RecordingConfig configures the replay ledger: the in-process log exporter
-// that appends every gen_ai.* event to a LedgerStore (see internal/ledger).
-// It rides the SAME OTel logger provider otel: configures, so it can only
-// ever be active when otel is - see IsEnabled.
 type RecordingConfig struct {
-	Enabled *bool `yaml:"enabled"` // unset ⇒ follows otel.enabled
-	// Store names a stores[] entry (kind: filesystem in v1) the ledger
-	// exporter appends into. Required when recording is enabled.
-	Store string `yaml:"store"`
-	// RetentionDays bounds a future GC sweep (whole-session, by last-modified);
-	// 0 ⇒ forever. Not enforced by this PR - config only.
-	RetentionDays int `yaml:"retention_days"`
-	// CloneSnapshot opts a run into bundling a git snapshot (repo + base SHA +
-	// produced commits) alongside its recording. Not implemented by this PR.
-	CloneSnapshot bool `yaml:"clone_snapshot"`
+	Enabled        *bool  `yaml:"enabled"`
+	Store          string `yaml:"store"`
+	RetentionDays  int    `yaml:"retention_days"`
+	CloneSnapshot  bool   `yaml:"clone_snapshot"`
 }
 
-// IsEnabled reports whether the ledger exporter should be wired up. otelEnabled
-// is cfg.Observability.Otel.IsEnabled() - recording rides the same logger
-// provider, so it can never be on when otel itself is off, and an unset
-// recording.enabled inherits otel's value exactly.
 func (r RecordingConfig) IsEnabled(otelEnabled bool) bool {
 	if !otelEnabled {
 		return false
@@ -71,56 +50,32 @@ func (r RecordingConfig) IsEnabled(otelEnabled bool) bool {
 	return *r.Enabled
 }
 
-// InboundAuthConfig gates the API surface (REST + MCP). Absent entirely (nil),
-// auth is disabled — today's behavior. Present, it needs at least one of its
-// two sub-blocks: trusted_headers takes priority per-request over oidc when
-// both are configured, since it's the gateway-fronted path. Named distinctly
-// from the tool-level AuthConfig (ToolConfig.Auth, e.g. web_search's Exa key) —
-// unrelated schemes that happen to share a domain name.
 type InboundAuthConfig struct {
 	OIDC           *OIDCConfig           `yaml:"oidc"`
 	TrustedHeaders *TrustedHeadersConfig `yaml:"trusted_headers"`
 }
 
-// OIDCConfig verifies a bearer token against an OIDC issuer. JWKSURL is an
-// optional override of the jwks_uri that discovery (<issuer>/.well-known/
-// openid-configuration) would otherwise resolve — set it only when discovery
-// is unavailable or blocked.
 type OIDCConfig struct {
 	Issuer   string `yaml:"issuer"`
 	Audience string `yaml:"audience"`
 	JWKSURL  string `yaml:"jwks_url"`
 }
 
-// TrustedHeadersConfig names the headers a forward-auth gateway (e.g. Traefik +
-// Authentik) injects after authenticating the request itself; quack trusts
-// them as-is rather than re-verifying. Groups is optional.
 type TrustedHeadersConfig struct {
 	User   string `yaml:"user"`
 	Groups string `yaml:"groups"`
 }
 
-// OtelConfig configures OTel tracing/metrics — emission-only: quack keeps no
-// local trace/metric store of its own (Tempo/Grafana, the home-server
-// monitoring stack, own trace/metric viewing). Enabled defaults to true
-// (spans/metrics are always recorded against the SDK's providers); set false
-// for a minimal-overhead deployment that wants neither. OTLPEndpoint is what
-// actually ships them anywhere — unset, providers are built but nothing is
-// exported.
 type OtelConfig struct {
-	Enabled      *bool   `yaml:"enabled"`       // default true
-	OTLPEndpoint string  `yaml:"otlp_endpoint"` // OTLP/http endpoint; empty = providers built, nothing exported
-	Sample       float64 `yaml:"sample"`        // trace sample ratio in (0,1]; default 1.0
+	Enabled      *bool   `yaml:"enabled"`
+	OTLPEndpoint string  `yaml:"otlp_endpoint"`
+	Sample       float64 `yaml:"sample"`
 }
 
-// otelDefaultSample is OtelConfig.Sample's default when unset (zero value).
 const otelDefaultSample = 1.0
 
-// IsEnabled reports whether OTel tracing/metrics should be wired up. nil
-// (section absent or enabled unset) defaults to true.
 func (o OtelConfig) IsEnabled() bool { return o.Enabled == nil || *o.Enabled }
 
-// applyDefaults fills in unset OtelConfig fields and validates the ones set.
 func (o *OtelConfig) applyDefaults() error {
 	if o.Sample == 0 {
 		o.Sample = otelDefaultSample
@@ -131,113 +86,49 @@ func (o *OtelConfig) applyDefaults() error {
 	return nil
 }
 
-// ExtensionsConfig holds the optional bundled integrations. Each is off unless
-// its sub-section is present (a nil pointer = not built, no tools, no route).
 type ExtensionsConfig struct {
 	GitHub *GitHubExtensionConfig `yaml:"github"`
 }
 
 // GitHubExtensionConfig configures the GitHub App extension (internal/github).
-// Secrets (private_key, webhook_secret) MUST be ${VAR} env references in the raw
-// YAML — a literal is a startup error (validateNoLiteralTokens). Provide the
-// private key EITHER inline via private_key (${VAR} whose value is the PEM) OR
-// by private_key_path (a filesystem path to the .pem).
+// Secrets (private_key, webhook_secret) must be ${VAR} env references in raw YAML.
 type GitHubExtensionConfig struct {
-	// Exactly one of ClientID or AppID identifies the App as the JWT issuer.
-	// ClientID (e.g. "Iv23li…") is GitHub's recommended issuer and the credential
-	// it surfaces most prominently; AppID (numeric) is the backward-compatible
-	// alternative. Neither is a secret — literals are fine. See Issuer().
-	ClientID       string `yaml:"client_id"`        // GitHub App Client ID; recommended JWT issuer
-	AppID          int64  `yaml:"app_id"`           // numeric App ID; legacy issuer (alternative to client_id)
-	PrivateKey     string `yaml:"private_key"`      // PEM contents via ${VAR}
-	PrivateKeyPath string `yaml:"private_key_path"` // path to a .pem file (alternative to private_key)
-	WebhookSecret  string `yaml:"webhook_secret"`   // ${VAR}
-	// Mention is the trigger token a comment must carry to dispatch a run. It
-	// must appear at the START OF A LINE (leading whitespace only - a
-	// blockquoted "> /quack …" quote-reply does NOT match, so replying to an
-	// earlier mention never re-fires it). Default "/quack".
-	Mention string `yaml:"mention"`
-
-	// Triggers selects which webhook events fire a run: "mention" (default),
-	// "pr_opened" (auto-review on PR open), "label" (auto-review when
-	// Labels.Review is applied), "issue_plan" (plan an issue when Labels.Plan is
-	// applied), "ci_fix" (keep a PR green: fixes it on ANY CI/CD failure and
-	// engages it on a request_changes review, for as long as Labels.Fix is
-	// present OR quack itself authored the PR - see internal/github/cifix.go).
+	ClientID       string `yaml:"client_id"`
+	AppID          int64  `yaml:"app_id"`
+	PrivateKey     string `yaml:"private_key"`
+	PrivateKeyPath string `yaml:"private_key_path"`
+	WebhookSecret  string `yaml:"webhook_secret"`
+	Mention        string `yaml:"mention"`
 	Triggers        []string `yaml:"triggers"`
-	AutoReviewLabel string   `yaml:"auto_review_label"` // deprecated alias for labels.review
-
-	// AllowedUsers is the allowlist of GitHub logins permitted to INVOKE quack
-	// (a mention comment, or a workflow label applied by a human) — matched
-	// case-insensitively. Empty (default) is DENY-ALL, a secure default:
-	// applyDefaults logs a startup WARN so an operator who forgot to seed it
-	// notices before assuming quack "just doesn't run" is a bug. Does NOT gate
-	// the synthetic pr_opened/label auto-review (no human invoker) — see
-	// internal/github/webhook.go's isInvokerAllowed callers.
-	AllowedUsers []string `yaml:"allowed_users"`
-
-	// Labels names the labels that drive the label-based workflow. Each label
-	// only acts when its trigger is enabled (see Triggers).
-	Labels GitHubLabels `yaml:"labels"`
-
-	// RunTimeoutMinutes bounds a single webhook-driven run. Default 120. Size it
-	// to the DEPLOYMENT's model speed: a ~30 tok/s local coder with judge+revise
-	// rounds can legitimately need hours on an implement run — a too-small value
-	// kills the run mid-push (dogfood: died at exactly 2h, before the branch
-	// was pushed).
+	AutoReviewLabel string   `yaml:"auto_review_label"`
+	AllowedUsers    []string `yaml:"allowed_users"`
+	Labels          GitHubLabels `yaml:"labels"`
 	RunTimeoutMinutes int `yaml:"run_timeout_minutes"`
 }
 
-// GitHubLabels names the repo labels that drive quack's label-based workflow.
-// Applying a label requires repo write access, so labels double as the
-// permission model — no separate allowlist.
 type GitHubLabels struct {
-	Plan       string `yaml:"plan"`        // on an issue: post an implementation plan ("issue_plan" trigger)
-	Implement  string `yaml:"implement"`   // on an issue: implement the plan, open a PR ("issue_implement" trigger)
-	Review     string `yaml:"review"`      // on a PR: review it once ("label" trigger; alias auto_review_label)
-	Merge      string `yaml:"merge"`       // on a PR: merge IF quack's latest review approved ("merge" trigger)
-	PartialFix string `yaml:"partial_fix"` // signals a partial fix — suppresses unconditional Closes #N in acks and PR bodies
-	// Fix is a PERSISTENT capability flag, not a one-shot trigger (#656): while
-	// present on a PR, quack fixes it on ANY CI/CD failure - not only when the
-	// label is freshly applied - one attempt per failure ("ci_fix" trigger).
-	// Absorbs the deleted quack:monitor label.
-	Fix string `yaml:"fix"`
+	Plan       string `yaml:"plan"`
+	Implement  string `yaml:"implement"`
+	Review     string `yaml:"review"`
+	Merge      string `yaml:"merge"`
+	PartialFix string `yaml:"partial_fix"`
+	Fix        string `yaml:"fix"`
 }
 
-// defaultMention is the trigger phrase when github.mention is unset. A
-// leading slash (not "@") - "@quack" collided with a real GitHub account, and
-// matching bare "quack" anywhere in a comment fired on ordinary prose
-// ("quack's gate did not pass"). triggerTask requires it at the START of a
-// line, so a quoted "> /quack …" reply never re-fires it.
 const defaultMention = "/quack"
-
-// defaultAutoReviewLabel is the label name when github.auto_review_label is unset.
 const defaultAutoReviewLabel = "quack-auto-review"
-
-// defaultPlanLabel is the label name when github.labels.plan is unset.
 const defaultPlanLabel = "quack:plan"
-
-// defaultImplementLabel is the label name when github.labels.implement is unset.
 const defaultImplementLabel = "quack:implement"
-
-// defaultMergeLabel is the label name when github.labels.merge is unset.
 const defaultMergeLabel = "quack:merge"
-
 const defaultPartialFixLabel = "quack:partial-fix"
-
-// defaultFixLabel is the label name when github.labels.fix is unset.
 const defaultFixLabel = "quack:fix"
 
-// validGitHubTriggers is the whitelist for github.triggers entries.
 var validGitHubTriggers = map[string]bool{
 	"mention": true, "pr_opened": true, "label": true,
 	"issue_plan": true, "issue_implement": true, "merge": true,
 	"ci_fix": true,
 }
 
-// Workspace defaults (see WorkspaceConfig). Every field is optional; a
-// config with no workspace: section at all still gets a working (default)
-// filesystem jail rooted at ./workspace.
 const (
 	defaultWorkspaceRoot           = "./workspace"
 	defaultWorkspaceMaxReadKB      = 256
@@ -245,314 +136,158 @@ const (
 	defaultWorkspaceMaxResults     = 200
 	defaultWorkspaceMaxListEntries = 500
 	defaultWorkspaceTimeoutSeconds = 60
-	// defaultWorkspaceSandbox: children get a real OS boundary unless the
-	// operator explicitly opts out. A host without bubblewrap therefore fails to
-	// START (with an install-it-or-say-none error) rather than quietly running
-	// agent child processes with the server user's full filesystem authority.
-	defaultWorkspaceSandbox = "bwrap"
-	// Per-child resource limits (see workspace.Limits). RLIMIT_AS is generous on
-	// purpose: it is per PROCESS and Node's V8 reserves a huge virtual region at
-	// startup, so a tight limit doesn't shrink a build, it stops `node` running.
+	defaultWorkspaceSandbox        = "bwrap"
 	defaultWorkspaceAddressSpaceMB = 8192
 	defaultWorkspaceMaxProcs       = 512
 	defaultWorkspaceMaxFileSizeMB  = 1024
-	// Workspace GC defaults (see WorkspaceGCConfig) — TTL-based, not
-	// quota-based; filling the volume inside the TTL window isn't covered by
-	// this sweep.
-	defaultGCChatTTLHours    = 168 // 7 days
-	defaultGCScratchTTLHours = 6
-	defaultGCIntervalHours   = 1
+	defaultGCChatTTLHours          = 168
+	defaultGCScratchTTLHours       = 6
+	defaultGCIntervalHours         = 1
 )
 
-// defaultCheckCommands is the check-prefix allowlist an UNSET
-// workspace.check_commands defaults to — the commands vetting.deriveChecks can
-// complete for the repos quack actually builds (go, npm, make, gradle), each
-// further gated on the binary/wrapper existing (toolchainPresent). Explicit
-// `check_commands: []` still means "checks disabled". "./gradlew" covers every
-// derived gradle task (MatchesCheckPrefix is a prefix match) - without it a
-// Gradle/Kotlin repo derives checks that the allowlist then drops (#638).
 var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew"}
 
-// WorkspaceConfig is the agents' working disk: one configured root, with a
-// per-user jail under it (<root>/<user_id>/ — see internal/workspace.Jail)
-// that filesystem and git tools resolve every path through. Only root + the
-// caps are consumed by this PR's filesystem tools; check_commands is parsed
-// and validated for shape here but its ENFORCEMENT (the orchestrator-set
-// deterministic gate checks) is a later PR — see .quack/plan-pr5-tool-schemas.md §4.
 type WorkspaceConfig struct {
-	Root string `yaml:"root"` // default ./workspace (compose: the volume mountpoint)
-	// Caps — all optional with defaults below; a capped result sets
-	// truncated:true, it never errors (write_file is the one exception: an
-	// oversized write errors, since its result carries no truncated field).
-	MaxReadKB      int `yaml:"max_read_kb"`      // default 256
-	MaxWriteKB     int `yaml:"max_write_kb"`     // default 2048
-	MaxResults     int `yaml:"max_results"`      // default 200 (grep/glob hits per call)
-	MaxListEntries int `yaml:"max_list_entries"` // default 500 (list_dir entries per call)
-	TimeoutSeconds int `yaml:"timeout_seconds"`  // default 60; per git/check invocation (later PRs)
-	// CheckCommands are the allowed command PREFIXES the planner may complete
-	// into per-node checks (§4 of the design doc). Empty (default) means checks
-	// are unavailable; consumed by a later PR, not this one.
-	CheckCommands []string `yaml:"check_commands"`
-	// ExecPath lists extra directories appended (first) to the hermetic child
-	// PATH for run_command, gate checks, and git children — the operator's
-	// knob for toolchains living outside the fixed system dirs (nvm, asdf,
-	// custom prefixes). Empty (default) = the fixed PATH alone.
-	ExecPath []string `yaml:"exec_path"`
-	// Env is EXTRA environment handed to every workspace child process (gate
-	// checks, git probes, run_command) AND the ACP coding-agent subprocess —
-	// for a toolchain that must be FOUND, not just be on PATH (JAVA_HOME,
-	// ANDROID_HOME, a GOROOT outside /usr). Deployment-wide; a matching key in
-	// an agent's own acp.env WINS. PATH and HOME are reserved (exec_path and
-	// the jail's per-user home already own those) and rejected here. Not a
-	// secrets vault - values interpolate ${VAR}, but real secrets belong in a
-	// provider/tool's own auth block. Under sandbox: bwrap, a directory an env
-	// value POINTS AT still needs its own exec_path entry to be bind-mounted.
-	Env map[string]string `yaml:"env"`
-	// GitCredentials are deployment-level per-host HTTPS git credentials (one
-	// identity per host — a PAT, configured like every other secret). Empty
-	// (default) ⇒ public repos only. Token MUST be an ${VAR} env reference in
-	// the raw YAML — see validateNoLiteralTokens.
+	Root           string                `yaml:"root"`
+	MaxReadKB      int                   `yaml:"max_read_kb"`
+	MaxWriteKB     int                   `yaml:"max_write_kb"`
+	MaxResults     int                   `yaml:"max_results"`
+	MaxListEntries int                   `yaml:"max_list_entries"`
+	TimeoutSeconds int                   `yaml:"timeout_seconds"`
+	CheckCommands  []string              `yaml:"check_commands"`
+	ExecPath       []string              `yaml:"exec_path"`
+	Env            map[string]string     `yaml:"env"`
 	GitCredentials []GitCredentialConfig `yaml:"git_credentials"`
-	// Guards maps a tool name to its guard-ladder tier: none (default,
-	// unlisted) | judge | confirm | judge+confirm. See §4b of the design doc.
-	Guards map[string]string `yaml:"guards"`
-	// Sandbox is the OS boundary run_command/gate-check/ACP CHILD PROCESSES run
-	// inside: "bwrap" (default — a bubblewrap mount/pid/user namespace: nothing
-	// outside the child's cwd and its isolated $HOME exists in its filesystem),
-	// "landlock" (a self-applied Landlock ruleset — no new namespace, so it
-	// works inside an unprivileged container where bwrap can't nest; requires a
-	// Linux kernel with Landlock ABI >= 3), or "none" (the child runs with the
-	// server user's full filesystem authority). "bwrap"/"landlock" on a host
-	// that can't prove the boundary works is a startup ERROR, never a silent
-	// fallback; "none" logs a loud WARN. See internal/workspace.ResolveSandbox.
-	Sandbox string `yaml:"sandbox"`
-	// Limits are the per-child-process resource limits (setrlimit) — a runaway
-	// build must not be able to take the host down with it.
-	Limits WorkspaceLimits `yaml:"limits"`
-	// GC is the periodic disk reaper (see internal/workspace.RunGC) — nothing
-	// else reclaims a chat's clones, or the gate's scratch worktrees, once a
-	// run finishes, on a volume kept deliberately persistent across rebuilds.
-	GC WorkspaceGCConfig `yaml:"gc"`
+	Guards         map[string]string     `yaml:"guards"`
+	Sandbox        string                `yaml:"sandbox"`
+	Limits         WorkspaceLimits       `yaml:"limits"`
+	GC             WorkspaceGCConfig     `yaml:"gc"`
 }
 
-// WorkspaceGCConfig is the periodic reaper's tunables. Absent entirely, GC
-// still runs with every default below — workspace.gc: {} isn't required.
-//
-// ChatTTLHours/ScratchTTLHours: 0 or absent BOTH mean "use the default" — the
-// same convention every other workspace.* numeric knob in this file already
-// uses (see Limits.AddressSpaceMB). There is no separate "disable just this
-// TTL class" value; turn the whole sweep off with enabled: false instead.
 type WorkspaceGCConfig struct {
-	Enabled         *bool `yaml:"enabled"`           // default true
-	ChatTTLHours    int   `yaml:"chat_ttl_hours"`    // default 168 (7 days); chat scopes idle longer than this are reaped
-	ScratchTTLHours int   `yaml:"scratch_ttl_hours"` // default 6; gate baseline worktrees + .quack-home/tmp entries idle longer than this are reaped
-	IntervalHours   int   `yaml:"interval_hours"`    // default 1; sweep cadence
+	Enabled         *bool `yaml:"enabled"`
+	ChatTTLHours    int   `yaml:"chat_ttl_hours"`
+	ScratchTTLHours int   `yaml:"scratch_ttl_hours"`
+	IntervalHours   int   `yaml:"interval_hours"`
 }
 
-// IsEnabled reports whether the workspace GC sweep should run. nil (section
-// absent or enabled unset) defaults to true — mirrors OtelConfig.IsEnabled.
 func (g WorkspaceGCConfig) IsEnabled() bool { return g.Enabled == nil || *g.Enabled }
 
-// WorkspaceLimits are the per-child rlimits (see internal/workspace.Limits for
-// what each one means and why RLIMIT_NPROC only applies inside the sandbox).
-// Each is optional; 0 means "inherit the server's limit" (no limit).
 type WorkspaceLimits struct {
-	AddressSpaceMB int `yaml:"address_space_mb"` // RLIMIT_AS, default 8192 (per process)
-	MaxProcs       int `yaml:"max_procs"`        // RLIMIT_NPROC, default 512 (sandboxed children only)
-	MaxFileSizeMB  int `yaml:"max_file_size_mb"` // RLIMIT_FSIZE, default 1024
+	AddressSpaceMB int `yaml:"address_space_mb"`
+	MaxProcs       int `yaml:"max_procs"`
+	MaxFileSizeMB  int `yaml:"max_file_size_mb"`
 }
 
-// GitCredentialConfig is one deployment-level per-host HTTPS git credential.
 type GitCredentialConfig struct {
 	Host     string `yaml:"host"`
-	Username string `yaml:"username"` // default "x-access-token" (GitHub PATs use this)
-	Token    string `yaml:"token"`    // MUST be ${VAR} in the raw YAML — never a literal secret
+	Username string `yaml:"username"`
+	Token    string `yaml:"token"`
 }
 
-// defaultGitCredentialUsername is used when a git_credentials entry omits
-// username (GitHub PATs authenticate with any non-empty username by
-// convention; x-access-token is GitHub's own recommended placeholder).
 const defaultGitCredentialUsername = "x-access-token"
 
-// validGuardTiers are the only values workspace.guards may map a tool to.
 var validGuardTiers = map[string]bool{"none": true, "judge": true, "confirm": true, "judge+confirm": true}
 
-// SessionConfig binds the ADK session + chat persistence to a named store and
-// holds context-compaction settings (compaction operates over session history).
 type SessionConfig struct {
-	Store      string           `yaml:"store"`      // name of a stores[] entry (a relational store)
-	Schema     string           `yaml:"schema"`     // reserved: ADK's session service exposes no schema param yet
-	Compaction CompactionConfig `yaml:"compaction"` // automatic context compaction
+	Store      string           `yaml:"store"`
+	Schema     string           `yaml:"schema"`
+	Compaction CompactionConfig `yaml:"compaction"`
 }
 
-// ProviderModel binds a named provider to a model — used by a vector store's
-// embedder and consolidation model.
 type ProviderModel struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
 }
 
-// CompactionConfig configures automatic context compaction. When enabled, every
-// gated agent gets a BeforeModelCallback that, once a request would overflow the
-// model's context window, summarises the older conversation into an anchored
-// summary and drops those turns. Compaction runs on the active run/node's OWN
-// worker model — it's already resident, so this is swap-free by construction.
-// Provider/Model below are an optional FALLBACK, used only when no active
-// worker model is available (e.g. a standalone compaction).
 type CompactionConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Provider string `yaml:"provider"` // inference provider for the fallback summariser model
-	Model    string `yaml:"model"`    // fallback summariser model; empty ⇒ no fallback, active model only
-
-	// TokenThreshold is the trigger budget in tokens. 0 ⇒ derive per-agent from
-	// the agent's context_window (context_window - a fixed output reserve).
-	TokenThreshold int `yaml:"token_threshold"`
-	// EventRetentionSize is the minimum number of trailing request contents
-	// compaction never folds into the summary, however far over threshold the
-	// request is. 0 ⇒ 20 (agent.defaultEventRetentionSize).
-	EventRetentionSize int `yaml:"event_retention_size"`
+	Enabled            bool   `yaml:"enabled"`
+	Provider           string `yaml:"provider"`
+	Model              string `yaml:"model"`
+	TokenThreshold     int    `yaml:"token_threshold"`
+	EventRetentionSize int    `yaml:"event_retention_size"`
 }
 
-// DagConfig tunes how the orchestrator's DAG is executed.
 type DagConfig struct {
-	// MaxActiveNodes caps how many nodes run concurrently (default 2). Nodes whose
-	// dependencies are met still queue behind this cap, so a wide layer doesn't
-	// fire many heavy model requests at the single worker at once.
 	MaxActiveNodes int `yaml:"max_active_nodes"`
-	// MaxActiveRuns caps how many orchestrator RUNS execute concurrently server-wide
-	// (default 3). max_active_nodes bounds nodes within ONE plan; this bounds the
-	// number of plans, so a burst of webhook/REST requests queues instead of all
-	// piling onto one model. 0 ⇒ default; extras block until a slot frees.
-	MaxActiveRuns int `yaml:"max_active_runs"`
+	MaxActiveRuns  int `yaml:"max_active_runs"`
 }
 
-// GatesConfig configures the trust gate that wraps every agent, each stage
-// with its own round budget (a stage with max_rounds 0 is skipped):
-//
-//   - deterministic_checks — free code checks (citation backing, length)
-//     driving cheap targeted revisions before any expensive stage runs.
-//   - judge — an independent model scores the answer against the rubric;
-//     the worker revises on a fail.
-//
-// The advisor is NOT a gate stage: it's the ask_advisor tool, called at a
-// worker's own discretion, reusing the judge's provider/model - registered
-// only when the judge is enabled, not a separate gates.* toggle.
-//
-// The gate is optional: with no stage active, agents are served unwrapped.
-// constitution/rubric are shared by the advisor and judge.
 type GatesConfig struct {
-	ConstitutionPath    string      `yaml:"constitution_path"`    // global principles file (optional)
-	Constitution        string      `yaml:"constitution"`         // inline constitution (alternative to path)
-	RubricPath          string      `yaml:"rubric_path"`          // scoring guide file
-	Rubric              string      `yaml:"rubric"`               // inline rubric (alternative to path)
-	DeterministicChecks StageConfig `yaml:"deterministic_checks"` // free citation/length checks + cheap revises
-	Judge               JudgeConfig `yaml:"judge"`                // expensive model-judge stage
+	ConstitutionPath    string      `yaml:"constitution_path"`
+	Constitution        string      `yaml:"constitution"`
+	RubricPath          string      `yaml:"rubric_path"`
+	Rubric              string      `yaml:"rubric"`
+	DeterministicChecks StageConfig `yaml:"deterministic_checks"`
+	Judge               JudgeConfig `yaml:"judge"`
 }
 
-// StageConfig is a gate stage bounded by a round budget. max_rounds 0 disables it.
 type StageConfig struct {
 	MaxRounds int `yaml:"max_rounds"`
 }
 
-// JudgeConfig configures the model-judge stage. Model empty (or max_rounds 0)
-// disables the judge; the other stages can still run.
 type JudgeConfig struct {
-	Provider      string  `yaml:"provider"`       // inference provider for the judge model
-	Model         string  `yaml:"model"`          // judge model (empty ⇒ judge disabled)
-	MaxRounds     int     `yaml:"max_rounds"`     // judge/revise rounds
-	Threshold     float64 `yaml:"threshold"`      // pass score in (0,1] (default 0.7)
-	MaxIterations int     `yaml:"max_iterations"` // cap on the agentic judge's model turns per round (default 6)
-	ContextWindow int     `yaml:"context_window"` // judge model's context window in tokens; budgets the assembled judge prompt (0 ⇒ vetting falls back to a conservative default)
-	// Skeptics is N — how many independent adversarial skeptics (#370) each
-	// load-bearing PASSING judge criterion faces before the gate trusts it; a
-	// STRICT MAJORITY refuting kills the finding. 0 (default) disables the
-	// stage: it costs N extra model calls per qualifying criterion, so it's
-	// opt-in rather than always-on.
-	Skeptics int `yaml:"skeptics"`
+	Provider      string  `yaml:"provider"`
+	Model         string  `yaml:"model"`
+	MaxRounds     int     `yaml:"max_rounds"`
+	Threshold     float64 `yaml:"threshold"`
+	MaxIterations int     `yaml:"max_iterations"`
+	ContextWindow int     `yaml:"context_window"`
+	Skeptics      int     `yaml:"skeptics"`
 }
 
-// JudgeEnabled reports whether the model-judge stage runs.
 func (g GatesConfig) JudgeEnabled() bool { return g.Judge.Model != "" && g.Judge.MaxRounds > 0 }
 
-// Enabled reports whether the trust gate should wrap agents (any stage active).
 func (g GatesConfig) Enabled() bool {
 	return g.DeterministicChecks.MaxRounds > 0 || g.JudgeEnabled()
 }
 
-// AgentConfig binds a declarative agent bundle (a directory holding an
-// agent-card.json + prompt.md) to a provider/model and a selection of built-in
-// tools. Defining a new agent is adding a bundle directory plus one of these.
 type AgentConfig struct {
-	Bundle        string       `yaml:"bundle"`         // path to the agent bundle directory
-	Provider      string       `yaml:"provider"`       // inference provider name
-	Model         string       `yaml:"model"`          // model served to this agent
-	ContextWindow int          `yaml:"context_window"` // model's per-request context window in tokens (0 ⇒ no compaction)
-	Tools         []string     `yaml:"tools"`          // built-in tool names (kind: builtin)
-	Inputs        []string     `yaml:"inputs"`         // accepted input modalities: "text", "image", "audio" (text assumed if empty)
-	Gated         *bool        `yaml:"gated"`          // wrap in the trust gate? default true; set false for side-effecting/action agents
-	JudgeRounds   int          `yaml:"judge_rounds"`   // per-agent judge/revise round budget; 0 ⇒ inherit gates.judge.max_rounds
-	Judge         *bool        `yaml:"judge"`          // run the independent judge? default true; set false when the judge model cannot evaluate this output (a text judge cannot see media)
-	Memory        MemoryConfig `yaml:"memory"`         // shared-memory bucket binding (empty Bucket ⇒ none)
-	Skills        []string     `yaml:"skills"`         // built-in skill names this agent may load_skill (empty ⇒ none); project skills discovered in its jailed repo stay additive regardless (internal/skillsource)
-	// Acp, when set, replaces the local llmagent worker with an EXTERNAL coding
-	// agent subprocess speaking the Agent Client Protocol (internal/acp) —
-	// opencode, claude-agent-acp, gemini-cli. provider/model still bind the
-	// model (injected into the subprocess via OPENCODE_CONFIG_CONTENT); tools
-	// is ignored (the external agent brings its own).
-	Acp *AcpAgentConfig `yaml:"acp"`
+	Bundle        string       `yaml:"bundle"`
+	Provider      string       `yaml:"provider"`
+	Model         string       `yaml:"model"`
+	ContextWindow int          `yaml:"context_window"`
+	Tools         []string     `yaml:"tools"`
+	Inputs        []string     `yaml:"inputs"`
+	Gated         *bool        `yaml:"gated"`
+	JudgeRounds   int          `yaml:"judge_rounds"`
+	Judge         *bool        `yaml:"judge"`
+	Memory        MemoryConfig `yaml:"memory"`
+	Skills        []string     `yaml:"skills"`
+	Acp           *AcpAgentConfig `yaml:"acp"`
 }
 
-// MemoryConfig binds an agent into a shared-memory role bucket.
 type MemoryConfig struct {
-	Bucket string `yaml:"bucket"` // role-bucket family for shared memory: "coding" | "research" (empty ⇒ no bucket)
+	Bucket string `yaml:"bucket"`
 }
 
-// AcpAgentConfig configures an external ACP agent subprocess.
 type AcpAgentConfig struct {
-	Command []string          `yaml:"command"` // argv, e.g. ["opencode", "acp"]
-	Env     map[string]string `yaml:"env"`     // extra subprocess environment; wins over a matching workspace.env key (WorkspaceConfig.Env)
-	// McpServers is a list of MCP server URLs that the ACP agent will connect
-	// to (e.g. context7). Passes straight through into opencode's mcp config
-	// block in OPENCODE_CONFIG_CONTENT — zero Go abstraction, just plumbing.
-	McpServers []string `yaml:"mcp_servers"`
-	// ReadOnly marks an ACP agent that never commits/delivers code (a reviewer
-	// or explorer): the gate then skips the commit/push delivery demand exactly
-	// as it does for native read-only agents (vetting.Config.ReadOnly).
-	ReadOnly bool `yaml:"read_only"`
+	Command    []string          `yaml:"command"`
+	Env        map[string]string `yaml:"env"`
+	McpServers []string          `yaml:"mcp_servers"`
+	ReadOnly   bool              `yaml:"read_only"`
 }
 
-// IsGated reports whether the agent runs under the trust gate (default true).
 func (a AgentConfig) IsGated() bool { return a.Gated == nil || *a.Gated }
 
-// ToolConfig configures one built-in tool. A tool with a dedicated external
-// service declares it inline (`kind` + `url`, e.g. web_search→searxng). A tool
-// backed by shared infrastructure references a named store (`store`) and may
-// override its namespace/tuning (`collection`/`schema`/`top_k`/`min_score`) — the
-// store provides the connection + adapter `kind`, so the tool needs no `kind`.
 type ToolConfig struct {
-	Kind       string      `yaml:"kind"`       // store-less tool: adapter selector (empty = default)
-	URL        string      `yaml:"url"`        // store-less tool: backend endpoint
-	Auth       *AuthConfig `yaml:"auth"`       // optional backend auth (e.g. web_search kind exa → Exa REST)
-	Store      string      `yaml:"store"`      // store-backed tool: name of a stores[] entry
-	Collection string      `yaml:"collection"` // vector namespace override
-	Schema     string      `yaml:"schema"`     // relational namespace override
-	TopK       int         `yaml:"top_k"`      // recall override
-	MinScore   *float32    `yaml:"min_score"`  // recall override
+	Kind       string      `yaml:"kind"`
+	URL        string      `yaml:"url"`
+	Auth       *AuthConfig `yaml:"auth"`
+	Store      string      `yaml:"store"`
+	Collection string      `yaml:"collection"`
+	Schema     string      `yaml:"schema"`
+	TopK       int         `yaml:"top_k"`
+	MinScore   *float32    `yaml:"min_score"`
 }
 
-// AuthConfig is how a tool's backend authenticates. `kind` selects the scheme and
-// the remaining fields are scheme-specific. Only `api_key` is implemented today;
-// `oauth` (client credentials + token URL) is a planned kind, added here without
-// disturbing callers.
 type AuthConfig struct {
-	Kind   string `yaml:"kind"`    // api_key (oauth planned)
-	APIKey string `yaml:"api_key"` // kind: api_key — the key value (interpolate from env)
+	Kind   string `yaml:"kind"`
+	APIKey string `yaml:"api_key"`
 }
 
-// authKindAPIKey is the only implemented auth scheme.
 const authKindAPIKey = "api_key"
 
-// APIKey returns the configured API key when the tool uses api_key auth, else "".
 func (t ToolConfig) APIKey() string {
 	if t.Auth != nil && t.Auth.Kind == authKindAPIKey {
 		return t.Auth.APIKey
@@ -560,55 +295,31 @@ func (t ToolConfig) APIKey() string {
 	return ""
 }
 
-// ProviderConfig is one named inference provider. `kind` selects the adapter
-// (the API protocol); the endpoint picks the actual server. kind "replay"
-// (internal/inference/factory.go) ignores endpoint/api_key and reads Bundle
-// instead - a generated config pointing providers.default at a recording is
-// how CLI replay (later) reruns a session offline.
 type ProviderConfig struct {
-	Kind     string `yaml:"kind"`     // e.g. openai, replay
-	Endpoint string `yaml:"endpoint"` // OpenAI-compatible base URL
+	Kind     string `yaml:"kind"`
+	Endpoint string `yaml:"endpoint"`
 	APIKey   string `yaml:"api_key"`
-	Bundle   string `yaml:"bundle"` // kind "replay": path to a recording bundle (.zip or .jsonl)
-	// ForkMode, ForkFrom, and Live are kind:"replay"-only fork-replay knobs
-	// (#605, `quack replay --fork-from`): ForkMode "fork" switches the
-	// loaded bundle into fork mode (replay.Session.EnableFork); ForkFrom is
-	// the optional explicit node boundary; Live is the REAL provider config
-	// (kind: openai) NewModel builds the live fallback from on a divergence
-	// or at ForkFrom's boundary (internal/inference/factory.go). "" ForkMode
-	// (the default) is replay-strict - Live/ForkFrom are ignored.
+	Bundle   string `yaml:"bundle"`
 	ForkMode string          `yaml:"fork_mode"`
 	ForkFrom string          `yaml:"fork_from"`
 	Live     *ProviderConfig `yaml:"live"`
 }
 
-// StoreConfig is one named backend in the stores registry. `kind` selects the
-// adapter (the portability seam, like providers); `url` is its endpoint.
-// `extends` inherits another store's fields (child overrides), so e.g. a document
-// store can reuse a base postgres connection. The remaining fields are
-// store-type-specific: a vector store carries an embedder + consolidation model
-// and recall defaults; relational/search stores ignore them.
 type StoreConfig struct {
 	Kind          string         `yaml:"kind"`
 	URL           string         `yaml:"url"`
-	Extends       string         `yaml:"extends"`       // inherit fields from another named store
-	Embedder      *ProviderModel `yaml:"embedder"`      // vector store: how text is vectorized
-	Consolidation *ProviderModel `yaml:"consolidation"` // vector store: extract/vet/consolidate model
-	TopK          int            `yaml:"top_k"`         // vector store: neighbours per recall/consolidation
-	MinScore      *float32       `yaml:"min_score"`     // vector store: min cosine similarity for a recall hit
-	Schema        string         `yaml:"schema"`        // relational namespace default (overridable per tool)
-	Collection    string         `yaml:"collection"`    // vector namespace default (overridable per tool)
-	// Root is a `kind: filesystem` store's directory (the replay ledger's
-	// default_ledger store) - unset defaults to defaultLedgerRoot.
-	Root string `yaml:"root"`
+	Extends       string         `yaml:"extends"`
+	Embedder      *ProviderModel `yaml:"embedder"`
+	Consolidation *ProviderModel `yaml:"consolidation"`
+	TopK          int            `yaml:"top_k"`
+	MinScore      *float32       `yaml:"min_score"`
+	Schema        string         `yaml:"schema"`
+	Collection    string         `yaml:"collection"`
+	Root          string         `yaml:"root"`
 }
 
-// defaultLedgerRoot is a `kind: filesystem` store's root when unset.
 const defaultLedgerRoot = "./recordings"
 
-// Store resolves a named store, applying `extends` inheritance (parent fields
-// first, child overrides). Returns false if the name (or an ancestor) is unknown
-// or the extends chain cycles.
 func (c *Config) Store(name string) (StoreConfig, bool) {
 	return c.resolveStore(name, nil)
 }
@@ -623,7 +334,7 @@ func (c *Config) resolveStore(name string, seen []string) (StoreConfig, bool) {
 	}
 	for _, n := range seen {
 		if n == name {
-			return StoreConfig{}, false // cycle
+			return StoreConfig{}, false
 		}
 	}
 	parent, ok := c.resolveStore(s.Extends, append(seen, name))
@@ -633,8 +344,6 @@ func (c *Config) resolveStore(name string, seen []string) (StoreConfig, bool) {
 	return mergeStore(parent, s), true
 }
 
-// ResolvedMemory is a vector store resolved for a memory tool binding:
-// connection + models + namespace, ready to pass to memory.New.
 type ResolvedMemory struct {
 	Kind          string
 	URL           string
@@ -645,12 +354,6 @@ type ResolvedMemory struct {
 	MinScore      float32
 }
 
-// MemoryStore resolves the vector store bound to a memory tool (e.g.
-// "stage_memory" → task memory, "commit_memory" → user memory). It returns false
-// when the tool is unconfigured, its store is missing embedder/consolidation, or
-// the store URL is empty (QUACK_QDRANT_URL unset ⇒ memory self-disables) — so a
-// qdrant-less run keeps working. Per-tool collection/top_k/min_score override the
-// store defaults.
 func (c *Config) MemoryStore(toolName string) (ResolvedMemory, bool) {
 	t, ok := c.Tools[toolName]
 	if !ok || t.Store == "" {
@@ -665,7 +368,7 @@ func (c *Config) MemoryStore(toolName string) (ResolvedMemory, bool) {
 		coll = t.Collection
 	}
 	if coll == "" {
-		return ResolvedMemory{}, false // a memory tool needs a collection
+		return ResolvedMemory{}, false
 	}
 	topK := s.TopK
 	if t.TopK != 0 {
@@ -685,7 +388,6 @@ func (c *Config) MemoryStore(toolName string) (ResolvedMemory, bool) {
 	}, true
 }
 
-// mergeStore overlays child's set (non-zero) fields onto parent.
 func mergeStore(parent, child StoreConfig) StoreConfig {
 	out := parent
 	out.Extends = ""
@@ -716,75 +418,43 @@ func mergeStore(parent, child StoreConfig) StoreConfig {
 	return out
 }
 
-// OrchestratorConfig binds the orchestrator to a provider + model and lists its
-// optional tools. The orchestrator's core tools (plan/execute/clarify) are
-// intrinsic; this list adds opt-in capabilities — notably, including
-// `commit_memory` turns on user memory (the orchestrator then recalls + commits
-// personal facts).
 type OrchestratorConfig struct {
 	Provider       string               `yaml:"provider"`
 	Model          string               `yaml:"model"`
 	Tools          []string             `yaml:"tools"`
-	Skills         []string             `yaml:"skills"` // built-in skill names the orchestrator may load_skill (see AgentConfig.Skills)
+	Skills         []string             `yaml:"skills"`
 	UserMemoryHook UserMemoryHookConfig `yaml:"user_memory_hook"`
 }
 
-// UserMemoryHookConfig binds the end-of-turn user-memory extraction hook
-// (#262): a dedicated memory-agent bundle (agents/memory-agent) reads a
-// user's message and mines durable preferences/facts, run fire-and-forget so
-// it never blocks the response. The orchestrator model reliably calling
-// commit_memory itself turned out not to hold up, and hardcoded regex rules
-// (#542) were rejected as too brittle - this replaces both with a real
-// extraction model. Off by default: it costs one model call per qualifying
-// turn, so it is opt-in like the judge and compaction.
 type UserMemoryHookConfig struct {
 	Enabled  bool   `yaml:"enabled"`
-	Provider string `yaml:"provider"` // inference provider for the memory-agent model
-	Model    string `yaml:"model"`    // memory-agent model (required when enabled)
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
 }
 
-// ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	Addr     string `yaml:"addr"`
-	Topology string `yaml:"topology"` // embedded | managed | external (empty ⇒ external)
+	Topology string `yaml:"topology"`
 }
 
-// Topology values. Only "managed" changes serve's behaviour (it brings up the
-// Postgres + Qdrant stores via an embedded compose file, waits healthy, then
-// runs; `quack server stop` tears them down). "embedded" (sqlite, no containers)
-// and "external" (user-managed stores) just run the process — the label exists
-// for the `server init` wizard and docs; serve treats both as "just run".
 const (
 	TopologyEmbedded = "embedded"
 	TopologyManaged  = "managed"
 	TopologyExternal = "external"
 )
 
-// Managed reports whether serve should orchestrate the stores via docker compose.
 func (s ServerConfig) Managed() bool { return s.Topology == TopologyManaged }
 
-// literalTokenRe matches a raw secret mapping entry's value (before ${VAR}
-// expansion), e.g. `  token: ${QUACK_GITHUB_TOKEN}` or `webhook_secret: "abc"`.
-// Covers every field that must be an env reference, never a literal:
-// git-credential `token`, plus the GitHub extension's `private_key` and
-// `webhook_secret`. Only the value is captured.
 var literalTokenRe = regexp.MustCompile(`(?m)^\s*(?:token|private_key|webhook_secret):\s*(.+?)\s*$`)
 
-// envRefRe matches a bare ${VAR_NAME} env reference with nothing else around it.
 var envRefRe = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
 
-// validateNoLiteralTokens is a MECHANICAL, syntactic check on the RAW config
-// text (before os.Expand interpolates ${VAR} references) — a git credential's
-// `token:` value must be exactly an ${VAR} env reference, so a literal secret
-// pasted into quack.yaml is a startup error, never a silent leak. This must
-// run on the raw text: by the time YAML is parsed, os.Expand has already
-// replaced ${VAR} with its value (or "" if unset), so the distinction between
-// "a literal token" and "an env reference" would already be lost.
+// validateNoLiteralTokens checks raw config for secret values that must be ${VAR} references.
 func validateNoLiteralTokens(raw string) error {
 	for _, m := range literalTokenRe.FindAllStringSubmatch(raw, -1) {
 		val := strings.Trim(m[1], `"'`)
 		if val == "" {
-			continue // an empty token: line is not a literal secret
+			continue
 		}
 		if !envRefRe.MatchString(val) {
 			return fmt.Errorf("config: secret values (token / private_key / webhook_secret) must be an ${VAR} env reference, not a literal value (got %q)", m[1])
@@ -793,23 +463,12 @@ func validateNoLiteralTokens(raw string) error {
 	return nil
 }
 
-// knownRenames maps a deprecated YAML key name → the replacement that should be used.
-// When an unknown field is detected by KnownFields and this map has an entry, the
-// loader appends a migration hint to the error message. Add entries here when you
-// deprecate a config key.
 var knownRenames = map[string]string{
 	"memory_role": "memory.bucket",
 }
 
-// scanForKnownRenames returns an error if any renamed (now unknown) key appears in
-// the raw YAML text, naming both the old key and the replacement.  This is a
-// purely mechanical check against the raw YAML lines and must run on the pre-expansion
-// text so it catches literal typos before env interpolation.
 func scanForKnownRenames(raw string) error {
 	for oldKey := range knownRenames {
-		// Match `oldKey:` at the start of a logical key (optionally preceded by
-		// whitespace inside a YAML mapping).  Anchored to word boundary so a longer
-		// name won't collide with an abbreviation.
 		re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(oldKey) + `:`)
 		if re.MatchString(raw) {
 			return fmt.Errorf("config: unknown field %q — use %s instead", oldKey, knownRenames[oldKey])
@@ -818,22 +477,11 @@ func scanForKnownRenames(raw string) error {
 	return nil
 }
 
-// coderModelFallbackEnv/researcherModelEnv implement agents.code-implementer's
-// documented model fallback (config/quack.yaml, §6 of
-// .quack/plan-pr5-tool-schemas.md): QUACK_CODER_MODEL, or QUACK_RESEARCHER_MODEL
-// when unset, so a deployment that hasn't picked a dedicated coder model still
-// gets a working code-implementer for free. Go's os.Expand has no ${A:-$B}
-// syntax (unlike docker-compose's ${VAR:-default}, which QUACK_MEDIA_MODEL
-// uses for a hardcoded literal default), so the chaining is done in the
-// mapping function itself.
 const (
 	coderModelFallbackEnv = "QUACK_CODER_MODEL"
 	researcherModelEnv    = "QUACK_RESEARCHER_MODEL"
 )
 
-// expandEnv is Load's os.Expand mapping function: every ${VAR} resolves to
-// its environment value, except QUACK_CODER_MODEL, which falls back to
-// QUACK_RESEARCHER_MODEL when unset (see coderModelFallbackEnv).
 func expandEnv(key string) string {
 	if key == coderModelFallbackEnv {
 		if v := os.Getenv(key); v != "" {
@@ -844,9 +492,6 @@ func expandEnv(key string) string {
 	return os.Getenv(key)
 }
 
-// Load reads the YAML at path, expands ${ENV} references, and validates it.
-// Unknown fields cause a startup error (KnownFields); known renames produce a
-// migration hint naming the replacement key.
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -921,11 +566,6 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: orchestrator.user_memory_hook.model is empty")
 		}
 	}
-	// Agents: memory.bucket names a SHARED role bucket, so a typo would silently hand
-	// an agent a private silo of its own — exactly what the bucket model replaced.
-	// Fail loudly instead.
-	// (The role names are memory.RoleCoding / memory.RoleResearch; spelled out here
-	// because internal/memory depends on this package, not the other way round.)
 	for name, a := range c.Agents {
 		switch a.Memory.Bucket {
 		case "", "coding", "research":
@@ -933,8 +573,6 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: agent %q has unknown memory.bucket %q (known: coding, research)", name, a.Memory.Bucket)
 		}
 	}
-	// Stores registry: every entry must resolve (extends acyclic) and use a
-	// supported kind.
 	for name := range c.Stores {
 		s, ok := c.Store(name)
 		if !ok {
@@ -946,8 +584,6 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite, filesystem)", name, s.Kind)
 		}
 	}
-	// Default a filesystem store's root, same convention as the vector-store
-	// recall defaulting loop below.
 	for name, s := range c.Stores {
 		if s.Kind != "filesystem" {
 			continue
@@ -957,8 +593,6 @@ func (c *Config) validate() error {
 			c.Stores[name] = s
 		}
 	}
-	// Default + range-check vector-store recall tuning so consumers don't repeat it.
-	// Applies to any vector backend that carries an embedder (qdrant or sqlite).
 	for name, s := range c.Stores {
 		if s.Embedder == nil || s.URL == "" {
 			continue
@@ -978,7 +612,6 @@ func (c *Config) validate() error {
 		}
 		c.Stores[name] = s
 	}
-	// Session: must reference a relational store (postgres or sqlite) with a URL.
 	if ss, ok := c.Store(c.Session.Store); !ok {
 		return fmt.Errorf("config: session.store %q is not defined under stores", c.Session.Store)
 	} else if ss.Kind != "postgres" && ss.Kind != "sqlite" {
@@ -996,8 +629,6 @@ func (c *Config) validate() error {
 		if a.Model == "" {
 			return fmt.Errorf("config: agent %q has empty model", name)
 		}
-		// Tool names are resolved (and unknown ones rejected) when the agent's
-		// tools are built at startup; see internal/tools.Build.
 		if a.Acp != nil && len(a.Acp.Command) == 0 {
 			return fmt.Errorf("config: agent %q has an acp block with an empty command", name)
 		}
@@ -1013,7 +644,6 @@ func (c *Config) validate() error {
 		if g.RubricPath != "" && g.Rubric != "" {
 			return fmt.Errorf("config: gates sets both rubric_path and rubric; use one")
 		}
-		// The advisor and judge score against the rubric; deterministic checks don't.
 		if g.JudgeEnabled() && g.RubricPath == "" && g.Rubric == "" {
 			return fmt.Errorf("config: gates needs one of rubric_path or rubric when judge is enabled")
 		}
@@ -1040,18 +670,12 @@ func (c *Config) validate() error {
 	}
 	if c.Session.Compaction.Enabled {
 		cc := c.Session.Compaction
-		// model is now an optional fallback: compaction normally rides the active
-		// run/node's own worker model. Only validate provider/model together when
-		// a fallback is actually configured.
 		if cc.Model != "" {
 			if _, ok := c.Providers[cc.Provider]; !ok {
 				return fmt.Errorf("config: session.compaction.provider %q is not defined under providers", cc.Provider)
 			}
 		}
 	}
-	// Tools: a store-backed tool must reference a defined store. (Embedder /
-	// consolidation on the referenced vector store are validated at wiring time,
-	// where memory is actually built — a store with QUACK_QDRANT_URL unset self-disables.)
 	for name, t := range c.Tools {
 		if t.Store != "" {
 			if _, ok := c.Store(t.Store); !ok {
@@ -1079,7 +703,6 @@ func (c *Config) validate() error {
 	}
 	switch c.Server.Topology {
 	case "", TopologyEmbedded, TopologyManaged, TopologyExternal:
-		// "" behaves as external (just run); only managed orchestrates.
 	default:
 		return fmt.Errorf("config: server.topology %q is unknown (use embedded, managed, or external)", c.Server.Topology)
 	}
@@ -1101,15 +724,6 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// validate checks a recording: section against the stores registry. An
-// unconfigured store (Store == "") is NOT a load error even when recording
-// is enabled - recording.enabled defaults to true whenever otel is on (which
-// itself defaults to true), so most deployments reach here with recording
-// "on" and no opinion about a store; that degrades to "not recording" at
-// wiring time (log Warn, continue - the same "store error ⇒ zero behavior
-// change" rule the ledger exporter itself follows), not a startup failure. A
-// NAMED store that doesn't resolve, or resolves to the wrong kind, is a real
-// typo and still fails loudly, same as every other store reference in this file.
 func (r RecordingConfig) validate(c *Config, otelEnabled bool) error {
 	if r.RetentionDays < 0 {
 		return fmt.Errorf("config: observability.recording.retention_days must be >= 0")
@@ -1127,8 +741,6 @@ func (r RecordingConfig) validate(c *Config, otelEnabled bool) error {
 	return nil
 }
 
-// validate checks an auth: section for internal consistency. A nil receiver
-// (section absent) is a no-op — auth stays disabled.
 func (a *InboundAuthConfig) validate() error {
 	if a == nil {
 		return nil
@@ -1150,14 +762,10 @@ func (a *InboundAuthConfig) validate() error {
 	return nil
 }
 
-// applyDefaults validates and defaults the GitHub extension config. A nil
-// receiver (no extensions.github section) is a no-op — the extension is off.
 func (g *GitHubExtensionConfig) applyDefaults() error {
 	if g == nil {
 		return nil
 	}
-	// Exactly one issuer. Requiring exactly one (rather than letting one silently
-	// win) surfaces a misconfiguration instead of hiding it.
 	switch {
 	case g.ClientID == "" && g.AppID == 0:
 		return fmt.Errorf("config: extensions.github needs one of client_id (recommended) or app_id")
@@ -1187,8 +795,6 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, issue_plan, issue_implement, merge, or ci_fix)", t)
 		}
 	}
-	// labels.review supersedes auto_review_label; the old key wins only when the
-	// new one is unset, and both fall back to the historical default.
 	if g.Labels.Review == "" {
 		g.Labels.Review = g.AutoReviewLabel
 	}
@@ -1217,9 +823,6 @@ func (g *GitHubExtensionConfig) applyDefaults() error {
 	return nil
 }
 
-// Issuer returns the value for the App JWT's `iss` claim: the Client ID when set
-// (GitHub's recommended issuer), otherwise the stringified App ID. applyDefaults
-// guarantees exactly one of the two is set.
 func (g *GitHubExtensionConfig) Issuer() string {
 	if g.ClientID != "" {
 		return g.ClientID
@@ -1227,9 +830,6 @@ func (g *GitHubExtensionConfig) Issuer() string {
 	return fmt.Sprintf("%d", g.AppID)
 }
 
-// applyDefaults fills in unset workspace caps and validates the ones that
-// were set. Every field is optional — a config with no workspace: section at
-// all still ends up with a fully-defaulted WorkspaceConfig.
 func (w *WorkspaceConfig) applyDefaults() error {
 	if w.Root == "" {
 		w.Root = defaultWorkspaceRoot
@@ -1255,10 +855,6 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.Sandbox == "" {
 		w.Sandbox = defaultWorkspaceSandbox
 	}
-	// Default the check allowlist ON when the section is absent: derived checks
-	// are additionally gated on the toolchain actually existing on the host
-	// (vetting.toolchainPresent), so this can't fail nodes on a host without
-	// go/npm. An EXPLICIT `check_commands: []` still disables checks.
 	if w.CheckCommands == nil {
 		w.CheckCommands = append([]string{}, defaultCheckCommands...)
 	}
@@ -1302,9 +898,6 @@ func (w *WorkspaceConfig) applyDefaults() error {
 			return fmt.Errorf("config: workspace.guards[%q] has unknown tier %q (want none, judge, confirm, or judge+confirm)", tool, tier)
 		}
 	}
-	// PATH and HOME are owned by exec_path and the jail's isolated per-user
-	// home respectively; letting workspace.env silently clobber either would
-	// undo the hermetic-child guarantees those two already document.
 	for k := range w.Env {
 		if strings.TrimSpace(k) == "" {
 			return fmt.Errorf("config: workspace.env has an empty variable name")
@@ -1316,7 +909,6 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	return nil
 }
 
-// Provider returns the named provider config.
 func (c *Config) Provider(name string) (ProviderConfig, bool) {
 	p, ok := c.Providers[name]
 	return p, ok

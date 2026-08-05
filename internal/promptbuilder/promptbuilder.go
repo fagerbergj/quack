@@ -1,19 +1,4 @@
-// Package promptbuilder assembles layered system prompts for each agent type.
-//
-// Every prompt has six layers, ordered from most stable (bottom, best for
-// prompt caching) to least stable (top):
-//
-//  1. Identity - who this agent is (name + description)
-//  2. Capabilities - tools and/or skills (an ACP agent gets skills only; the
-//     orchestrator also gets its agent roster; subagents are omitted since
-//     ADK injects them automatically)
-//  3. Behaviour - the agent's prompt.md, plus memory.md when it's a memory
-//     participant
-//  4. Writing - the shared prose ruleset (writing.md), applied to every agent
-//  5. Grading - the trust-gate contract for this agent, sourced from
-//     vetting.Config so no number is invented in a bundle's prompt.md
-//  6. Environment - contextual facts injected at startup (date, and for a
-//     coding agent the workspace/toolchain block)
+// Package promptbuilder: layered system prompts - Identity, Capabilities, Behaviour, Writing, Grading, Environment.
 package promptbuilder
 
 import (
@@ -26,21 +11,12 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
-// writing is the shared prose ruleset injected as the Writing layer of every
-// assembled prompt. Adapted from github.com/Anbeeld/WRITING.md (compact
-// variant): concrete over generic, plain words, watch for LLM regularity.
+// writing: shared prose ruleset (Writing layer), adapted from Anbeeld/WRITING.md compact variant.
 //
 //go:embed writing.md
 var writing string
 
-// Agent assembles the layered system prompt for a specialist agent - native or
-// ACP (an external coding agent has no quack tools, so callers pass nil tools;
-// toolLines then renders nothing rather than fabricating a list). name and
-// description come from agent-card.json; tools from the registered tool list;
-// skills from this agent's declared scope; behaviour from prompt.md (plus
-// memory.md, appended by the caller); grading from GradingFacts; workspace
-// from workspace.PromptBlock - "" for a non-coding agent, which has no clone
-// or sandboxed toolchain to state facts about.
+// Agent: assembles layered system prompt for native or ACP agents.
 func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmatter, behaviour, grading, workspace string) string {
 	var caps strings.Builder
 	if tl := toolLines(tools); tl != "" {
@@ -57,20 +33,12 @@ func Agent(name, description string, tools []tool.Tool, skills []*skill.Frontmat
 	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Capabilities", caps.String(), behaviour, grading, workspace)
 }
 
-// Judge assembles the layered system prompt for the trust gate's independent
-// judge, mirroring Agent's structure so the judge is prompted consistently with
-// the agents it evaluates. tools are the judge's verification tools plus
-// submit_verdict; behaviour is the judging instructions. The judge itself is
-// never graded, so it carries no Grading layer.
+// Judge assembles the judge's layered prompt; no Grading layer (judge isn't graded).
 func Judge(tools []tool.Tool, behaviour string) string {
 	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "Tools", toolLines(tools), behaviour, "", "")
 }
 
-// Orchestrator assembles the system prompt for the orchestrator. agentRoster is
-// the available specialist agents (one "- name - description" line each) - the
-// orchestrator authors a DAG over them and submits it to the plan tool; skills
-// come from the skills/ filesystem; behaviour from prompt.md. The orchestrator
-// plans work but is not itself a gated DAG node, so it carries no Grading layer.
+// Orchestrator assembles the system prompt; no Grading layer (orchestrator isn't a gated DAG node).
 func Orchestrator(agentRoster string, skills []*skill.Frontmatter, behaviour string) string {
 	var caps strings.Builder
 	if r := strings.TrimSpace(agentRoster); r != "" {
@@ -85,11 +53,7 @@ func Orchestrator(agentRoster string, skills []*skill.Frontmatter, behaviour str
 	return layered("You are Quack's orchestrator. You understand what the user needs, coordinate specialist agents, and apply skills to improve your output before responding.", "Capabilities", caps.String(), behaviour, "", "")
 }
 
-// GradingFacts renders the trust-gate contract that actually applies to one
-// agent - sourced from its resolved vetting.Config (threshold, judge rounds,
-// retrieval/delivery requirements) so no number is invented here. "" when the
-// agent has no independent judge (judgeRounds <= 0 - e.g. media/image readers,
-// whose output a text judge cannot score at all).
+// GradingFacts renders the trust-gate contract from resolved vetting.Config; "" when no judge.
 func GradingFacts(threshold float64, judgeRounds int, readOnly, requireRetrieval bool) string {
 	if judgeRounds <= 0 {
 		return ""
@@ -105,11 +69,7 @@ func GradingFacts(threshold float64, judgeRounds int, readOnly, requireRetrieval
 	return b.String()
 }
 
-// layered assembles the prompt layers, ordered most-stable-first for prompt
-// caching: identity, an optional capabilities section (## header + body),
-// behaviour (prompt.md), the writing ruleset, an optional grading section, and
-// the environment footer - the date, plus workspaceFacts (workspace.PromptBlock)
-// when the caller is a coding agent.
+// layered assembles layers: identity, capabilities, behaviour, writing, grading, environment + workspace.
 func layered(identity, capsHeader, capsBody, behaviour, grading, workspaceFacts string) string {
 	var sb strings.Builder
 	sb.WriteString(identity)
@@ -139,7 +99,7 @@ func layered(identity, capsHeader, capsBody, behaviour, grading, workspaceFacts 
 	return strings.TrimSpace(sb.String())
 }
 
-// toolLines renders one bullet per tool (name + description), or "" if none.
+// toolLines: one bullet per tool, or "" if none.
 func toolLines(tools []tool.Tool) string {
 	var sb strings.Builder
 	for _, t := range tools {
@@ -148,8 +108,7 @@ func toolLines(tools []tool.Tool) string {
 	return sb.String()
 }
 
-// skillLines renders the load_skill hint plus one bullet per skill, or "" if
-// none. ADK does not surface skill names to the model automatically.
+// skillLines: load_skill hint plus one bullet per skill, or "" if none.
 func skillLines(skills []*skill.Frontmatter) string {
 	if len(skills) == 0 {
 		return ""

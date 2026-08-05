@@ -1,14 +1,4 @@
-// Package memory is Quack's semantic-memory layer (M6) over a swappable
-// vector index (Qdrant for a server, or an embedded SQLite file for the
-// no-docker path). All the embed / bucket / recall / mem0-style
-// consolidation logic lives on Store; the backend is just storage.
-//
-// Memory is SHARED and bucketed by SUBJECT (repo / role / user - see
-// scope.go), not siloed per agent. A caller reads and writes through a
-// View: a Store bound to its Scope, implementing ADK's memory.Service so
-// the native preload_memory / load_memory tools route through it.
-// Whole-session auto-write (AddSessionToMemory) is a deliberate no-op -
-// writes go through the explicit, gated commit path only.
+// Package memory is Quack's semantic-memory layer (M6) over a swappable vector index.
 package memory
 
 import (
@@ -27,23 +17,17 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// index is the vector-storage backend behind a Store. Qdrant and SQLite implement
-// it; Store holds the shared embed/scope/consolidation logic, so a backend is just
-// storage. Points are partitioned by a BUCKET key (repo / role / user - see
-// scope.go), set on upsert and filtered on query.
+// index is the vector-storage backend; Store holds the shared logic.
 type index interface {
-	// ensure makes the backing collection/table ready. probeDim returns the
-	// embedding dimension, called only by a backend that needs a fixed vector size
-	// (Qdrant); SQLite stores variable-length blobs and ignores it.
+	// ensure makes the backing collection/table ready. probeDim returns the embedding dimension.
 	ensure(ctx context.Context, probeDim func() (int, error)) error
-	// query returns up to k points in ANY of the given buckets (an OR), nearest to
-	// vec by cosine, best score first. No buckets means no partition filter.
+	// query returns up to k points in any of the given buckets, nearest by cosine.
 	query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error)
 	upsert(ctx context.Context, pts []point) error
 	remove(ctx context.Context, ids []string) error
 }
 
-// scored is one ranked memory returned by index.query.
+// scored is one ranked memory.
 type scored struct {
 	ID        string
 	Content   string
@@ -52,8 +36,7 @@ type scored struct {
 	Score     float32
 }
 
-// point is one memory to upsert. Scope is the bucket key (stored so query can
-// filter by it).
+// point is one memory to upsert.
 type point struct {
 	ID        string
 	Vector    []float32
@@ -65,19 +48,13 @@ type point struct {
 }
 
 const (
-	// maxRecallRunes bounds the recall query sent to the embedder (a topic, not a
-	// document) so one oversized input can't become a minutes-long CPU embed.
+	// maxRecallRunes bounds recall query size so one oversized input can't stall the embedder.
 	maxRecallRunes = 2000
-	// recallEmbedTimeout bounds how long recall waits on the embedder before
-	// degrading to no-recall - recall is best-effort and must not block a node.
+	// recallEmbedTimeout bounds how long recall waits before degrading to no-recall.
 	recallEmbedTimeout = 30 * time.Second
 )
 
-// Store serves one memory collection (e.g. "task_memory") over a vector index. It
-// is SHARED by every agent: callers read and write through a View bound to their
-// Scope (the buckets they are entitled to - see scope.go). The consolidator (a
-// gemma-class LLM) drives the gated commit path's extract/vet/consolidate step; it
-// may be nil for a read-only store (Commit then errors).
+// Store serves one memory collection over a vector index, shared by every agent.
 type Store struct {
 	idx          index
 	embedder     inference.Embedder
@@ -85,14 +62,12 @@ type Store struct {
 	coll         string
 	domain       string // selects the consolidation prompt ("task" | "user")
 	topK         int
-	minScore     float32 // recall hits below this cosine score are dropped (0 = no threshold)
+	minScore     float32 // recall hits below this cosine are dropped (0 = none)
 	log          *slog.Logger
-	embCache     *embedCache // memoizes text→vector (deterministic for a fixed model)
+	embCache     *embedCache
 }
 
-// newStore wraps a backend index with the shared memory logic and ensures the
-// backing store is ready (probing the embedder for the vector dimension on first
-// use, so the model's dimension need not be configured).
+// newStore wraps a backend, probing the embedder for vector dimension.
 func newStore(ctx context.Context, idx index, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
 	s := &Store{
 		idx:          idx,
@@ -120,26 +95,19 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 	return s, nil
 }
 
-// AddSessionToMemory is a deliberate no-op: Quack never auto-ingests whole
-// sessions; writes go through the explicit gated commit.
+// AddSessionToMemory is a deliberate no-op; writes go through the explicit gated commit.
 func (s *Store) AddSessionToMemory(ctx context.Context, _ session.Session) error { return nil }
 
-// recall embeds the query and returns the top-K nearest memories across buckets
-// (the union of what the caller is entitled to - see Scope). Callers reach it
-// through a View, which is what binds a caller to its buckets.
+// recall embeds the query and returns top-K memories across the caller's buckets.
 func (s *Store) recall(ctx context.Context, buckets []string, query string) (*adkmemory.SearchResponse, error) {
 	if len(buckets) == 0 || strings.TrimSpace(query) == "" {
 		return &adkmemory.SearchResponse{}, nil
 	}
-	// Cap the query before embedding: a recall query is a topic, not a document.
-	// Without this an agent whose input is huge (e.g. a combiner fed all upstream
-	// findings) would embed tens of KB on the CPU embedder - a 10-min job that
-	// head-of-line-blocks llama.cpp and stalls the DAG.
+	// Cap the query before embedding - a recall query is a topic, not a document.
 	if r := []rune(query); len(r) > maxRecallRunes {
 		query = string(r[:maxRecallRunes])
 	}
-	// Bounded + best-effort: recall must never hang or fail a node. A slow/wedged
-	// embedder times out here and we proceed with no recall rather than blocking.
+	// Bounded + best-effort: recall must never hang or fail a node.
 	ectx, cancel := context.WithTimeout(ctx, recallEmbedTimeout)
 	defer cancel()
 	vecs, err := s.embed(ectx, []string{query}, "recall")
@@ -150,10 +118,7 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 	if len(vecs) == 0 {
 		return &adkmemory.SearchResponse{}, nil
 	}
-	// Fetch top-K by similarity across the caller's buckets, then apply minScore in
-	// Go so the threshold decision is observable (raw match count + top score in the
-	// debug log). Dropping weak matches keeps low-relevance hits out of the prompt as
-	// the collection grows (context rot).
+	// Fetch top-K then apply minScore in Go so the threshold is observable.
 	pts, err := s.idx.query(ctx, buckets, vecs[0], s.topK)
 	if err != nil {
 		return nil, fmt.Errorf("memory: query %q: %w", s.coll, err)
@@ -186,26 +151,16 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 		}
 		entries = append(entries, e)
 	}
-	// Logs what preload_memory / load_memory pulled in (both route here). Enable with
-	// QUACK_LOG_LEVEL=debug. buckets = the partition keys actually queried (repo/role/
-	// user + the caller's legacy key); raw = matches before minScore; top_score = best
-	// cosine; dropped = filtered by minScore. This pinpoints hits=0: bucket mismatch
-	// (raw=0) vs threshold too high (raw>0, dropped=raw).
+	// Debug log: buckets, raw matches, top_score, dropped, hits.
 	s.log.Debug("recall", "buckets", buckets,
 		"query", preview(query), "raw", len(pts), "top_score", topScore,
 		"min_score", s.minScore, "dropped", dropped, "hits", len(entries), "memories", previews)
 	return &adkmemory.SearchResponse{Memories: entries}, nil
 }
 
-// embed wraps the embedder with hot-path timing (Debug): which call site (path),
-// how many inputs, total input chars, and how long the call took - so a slow
-// embed in the llm-swap logs can be attributed to recall vs commit and to input
-// size. Enable with QUACK_LOG_LEVEL=debug.
+// embed wraps the embedder with hot-path timing.
 func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]float32, error) {
-	// Single-input calls (recall, neighbour probe) are memoized: preload_memory
-	// re-embeds the same node-task query on every model turn, and that embed is
-	// synchronous + CPU-bound, so caching collapses the repeats (and the resulting
-	// cross-node contention). Batch writes are unique facts - not worth caching.
+	// Single-input calls are memoized; batch writes are not worth caching.
 	if len(texts) == 1 && s.embCache != nil {
 		if v, ok := s.embCache.get(texts[0]); ok {
 			s.log.Debug("embed", "path", path, "inputs", 1, "chars", len(texts[0]), "cached", true)
@@ -225,10 +180,7 @@ func (s *Store) embed(ctx context.Context, texts []string, path string) ([][]flo
 	return vecs, err
 }
 
-// embedCache memoizes text→embedding. Embeddings are deterministic for a fixed
-// model (stable for the process lifetime), so no TTL is needed; it's bounded by a
-// size cap. ponytail: clear-on-full, not LRU - distinct queries per request are
-// few, so a 512-entry cap rarely fills; switch to an LRU only if real churn shows.
+// embedCache memoizes text→embedding. ponytail: clear-on-full, not LRU.
 type embedCache struct {
 	mu  sync.Mutex
 	m   map[string][]float32
@@ -255,8 +207,7 @@ func (c *embedCache) put(k string, v []float32) {
 	c.m[k] = v
 }
 
-// preview truncates a string to ~100 runes for debug logging (memories are short
-// facts, but a stray long one shouldn't flood the log).
+// preview truncates a string to ~100 runes for debug logging.
 func preview(s string) string {
 	const max = 100
 	r := []rune(s)

@@ -10,14 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// The review MCP surface (#451) gives the EXTERNAL (ACP) code-reviewer a real
-// agentic channel for its deliverable - line-anchored inline comments and a
-// verdict - instead of the gate reverse-engineering them out of a VERDICT:/
-// FINDINGS: tail in the answer (vetting.augmentFromAnswer, still the fallback).
-// It rides the SAME per-node loopback server and secret as the memory surface
-// (memorymcp.go); registerReviewTools is called only when the node's session
-// carries a ReviewStage - minted exclusively for a review-delivery node, so the
-// implementer/explorer and every native agent never see these tools.
+// The review MCP surface gives the external code-reviewer an agentic channel
+// for inline comments + verdict, riding the same loopback server as memory.
 
 // Bare tool names, shared between the mcp.AddTool registrations below and
 // mcpToolNames (acp.go, #688) - see memorymcp.go's matching const block.
@@ -76,13 +70,7 @@ func excerpt(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// registerReviewTools adds stage_review_comment + list_review_comments +
-// unstage_review_comment + stage_review to a per-node server, landing calls
-// in the node's ReviewStage. The gate snapshots that buffer into the staged
-// review after the answer passes (vetting). The three staging-buffer tools
-// are CRUD-shaped: stage creates (returns an id), list reads (paginated,
-// excerpted), unstage deletes by id - so a reviewer can check what it already
-// staged before adding a possible duplicate, and retract precisely (#562).
+// registerReviewTools adds review staging tools to a per-node server.
 func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStageReviewComment,
@@ -157,10 +145,7 @@ type stagePRInput struct {
 	Body  string `json:"body" jsonschema:"the PR description authored per the pr-authoring skill (what/why/how/verify, repo template or the skill's default)"`
 }
 
-// registerPRTool adds stage_pr to a per-node server, landing the call in the
-// node's PRStage. The gate opens the PR with it after the answer passes; a node
-// that never calls stage_pr falls back to augmentFromRepo's commit-subject
-// synthesis. Registered only on an implement-delivery node (PRStage non-nil).
+// registerPRTool adds stage_pr to a per-node server, landing the call in PRStage.
 func registerPRTool(srv *mcp.Server, pr *vetting.PRStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStagePR,

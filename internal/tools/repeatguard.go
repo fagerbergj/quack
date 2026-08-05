@@ -12,36 +12,20 @@ import (
 	"google.golang.org/genai"
 )
 
-// repeatGuard breaks identical-call loops: a model that re-issues the exact
-// same tool call (name + args) consecutively is not gathering new
-// information - it has wedged on a repetition attractor (a live case wedged
-// nodes for hours: 611 identical `git log` calls in a row). Sampling
-// penalties can't reliably reach across large tool results, so from the
-// third consecutive identical call, the call is REFUSED with a steering
-// error (refusal text varies, so refusals themselves never loop). The
-// gate's node-level caps remain the hard stop; this steers the model out
-// while its context is still small.
+// repeatGuard: breaks identical-call loops - refuses the 3rd+ consecutive identical call.
 type repeatGuard struct {
 	inner  runnableTool
 	states *repeatStates
 }
 
-// repeatThreshold is the consecutive-identical-call count at which refusal
-// starts: the 1st call runs, an immediate identical retry (2nd) is allowed -
-// legitimate after a transient error - and the 3rd is refused.
+// repeatThreshold: consecutive identical calls before refusal (1st=run, 2nd=retry, 3rd=refused).
 const repeatThreshold = 3
 
-// repeatStates tracks the last call fingerprint per session, shared by every
-// tool of one registry build so consecutiveness is judged across tools (call A,
-// call B, call A is NOT a repeat). Keyed by ctx.SessionID() - per-run A2A
-// sessions, so state resets naturally with each run.
-// ponytail: entries are never pruned - a few dozen bytes per session on a
-// single-tenant bot; add pruning if sessions ever number in the millions.
+// repeatStates: tracks last call fingerprint per session.
+// ponytail: entries never pruned - add if sessions number in the millions.
 type repeatStates struct {
 	mu   sync.Mutex
 	last map[string]*repeatState
-	// fails counts consecutive FAILED calls per session+(tool, resource) - see
-	// pathFailThreshold. Keyed sessionID+"|"+tool+":"+resource.
 	fails map[string]int
 }
 
@@ -54,8 +38,7 @@ func newRepeatStates() *repeatStates {
 	return &repeatStates{last: map[string]*repeatState{}, fails: map[string]int{}}
 }
 
-// observe records a call and returns how many times this exact fingerprint has
-// now been issued consecutively in the session.
+// observe records a call, returns consecutive count for this fingerprint.
 func (s *repeatStates) observe(sessionID, fingerprint string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,17 +51,14 @@ func (s *repeatStates) observe(sessionID, fingerprint string) int {
 	return st.count
 }
 
-// resourceFailCount returns the current consecutive-failure count for
-// sessionID+resourceKey, without mutating it.
+// resourceFailCount returns consecutive-failure count without mutating.
 func (s *repeatStates) resourceFailCount(sessionID, resourceKey string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.fails[sessionID+"|"+resourceKey]
 }
 
-// observeResourceFail records the outcome of a call against resourceKey: a
-// success (failed=false) resets the streak to 0; a failure increments it and
-// returns the new count.
+// observeResourceFail records call outcome: success resets, failure increments.
 func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -91,8 +71,7 @@ func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed
 	return s.fails[k]
 }
 
-// newRepeatGuard wraps inner. Same runnableTool requirement (and reason) as
-// newCancelGuard: fail loudly at build time rather than ship an unguardable tool.
+// newRepeatGuard wraps inner, fails loudly if not runnable.
 func newRepeatGuard(inner tool.Tool, states *repeatStates) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
@@ -107,8 +86,7 @@ func (g *repeatGuard) IsLongRunning() bool { return g.inner.IsLongRunning() }
 
 func (g *repeatGuard) Declaration() *genai.FunctionDeclaration { return g.inner.Declaration() }
 
-// ProcessRequest re-points the dispatch entry at the wrapper - same shape and
-// reason as cancelGuard.ProcessRequest.
+// ProcessRequest re-points dispatch at the wrapper.
 func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
 	if err := g.inner.ProcessRequest(ctx, req); err != nil {
 		return err
@@ -121,25 +99,10 @@ func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) e
 	return nil
 }
 
-// pathFailThreshold is the consecutive-FAILED-call count against the same
-// (tool, resource) - regardless of other args - before the NEXT call
-// against it is refused outright. Catches the semantic-churn case the
-// byte-identical guard misses: varying args each try, never repeating
-// exactly, but never learning the resource itself is the problem. A failed
-// call always runs (its error is informative); only once pathFailThreshold
-// have run consecutively does the guard refuse the next one unexecuted.
-// Deliberately narrower than fuzzy call-similarity (rejected: false-positive
-// risk on legitimate paging/iteration); only covers tools with a `path` or
-// `url` arg. Upgrade path on a false positive: also require the failure's
-// error text to repeat, not just the (tool, resource) pair.
+// pathFailThreshold: consecutive failures against a (tool, resource) before refusing the next call.
 const pathFailThreshold = 3
 
-// Run executes the call unless it trips one of two loop breakers:
-//  1. repeatThreshold-th (or later) consecutive byte-identical call.
-//  2. the (pathFailThreshold+1)-th consecutive call against a (tool, resource)
-//     that has already failed pathFailThreshold times in a row - semantic churn.
-//
-// Either returns a steering error the model can act on instead of the result.
+// Run: refuses if byte-identical triple or resource-failure churn.
 func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
@@ -181,12 +144,7 @@ func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 	return result, runErr
 }
 
-// resourceFingerprint extracts a stable per-call resource identity from a
-// tool call's marshaled args - the `path` or `url` field, if either is a
-// non-empty string. Reports false when neither is present (unmarshalable args,
-// or a tool whose calls aren't resource-scoped), so callers can skip the
-// failure-streak check rather than fingerprint on the whole args blob (which
-// would just reduce to the byte-identical guard above).
+// resourceFingerprint extracts the `path` or `url` field from tool args for failure-streak tracking.
 func resourceFingerprint(argsJSON []byte) (string, bool) {
 	var m map[string]any
 	if err := json.Unmarshal(argsJSON, &m); err != nil {
@@ -200,9 +158,7 @@ func resourceFingerprint(argsJSON []byte) (string, bool) {
 	return "", false
 }
 
-// repeatWrap applies the identical-call breaker. Sits just inside the cancel
-// guard (a cancelled node's refusal wins) and outside the guard ladder (a
-// refused repeat must not consume a judge/confirm round).
+// repeatWrap applies the identical-call breaker.
 func repeatWrap(t tool.Tool, states *repeatStates) (tool.Tool, error) {
 	return newRepeatGuard(t, states)
 }

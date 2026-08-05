@@ -22,114 +22,66 @@ import (
 // WebhookPath is where the inbound webhook receiver is mounted.
 const WebhookPath = "/api/v1/github/webhook"
 
-// runUserID is the identity webhook-driven runs persist under - distinct from
-// the local UI's "local" user, so App runs keep their own sessions.
+// runUserID distinguishes GitHub-driven sessions from local UI sessions.
 const runUserID = "github"
 
-// defaultRunTimeout bounds a single webhook-driven orchestrator run when
-// extensions.github.run_timeout_minutes is unset (mirrors config.applyDefaults
-// for callers that build the struct directly).
+// defaultRunTimeout when extensions.github.run_timeout_minutes is unset.
 const defaultRunTimeout = 2 * time.Hour
 
-// reactionTimeout bounds the deterministic 👀 acknowledgment reaction on a
-// mention - a quick, best-effort POST that must not linger.
+// reactionTimeout bounds the 👀 ack reaction on a mention.
 const reactionTimeout = 10 * time.Second
 
-// Runner is the subset of the orchestrator the webhook needs: dispatch a run
-// and read its final answer. Defined here (not imported) so the extension stays
-// decoupled from the orchestrator package.
+// Runner is the orchestrator subset the webhook needs — keeps the extension decoupled.
 type Runner interface {
 	Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error]
 	// LatestAnswer returns the final assistant text persisted for a session
 	// after a run drains.
 	LatestAnswer(ctx context.Context, userID, sessionID string) string
-	// ResetSession deletes sessionID's stored history so the next Run starts a
-	// fresh segment - dispatch calls this for a LABEL-driven work request
-	// (quack:implement/quack:review/quack:plan), never for a conversational
-	// @mention, which needs full history for continuity (T4 session hygiene).
+	// ResetSession deletes history for a label-driven work request (T4 session hygiene).
 	ResetSession(ctx context.Context, userID, sessionID string) error
 }
 
-// Extension is the GitHub App extension: outbound tools + git auth + the inbound
-// webhook, all sharing the App's installation-token auth. Implements
-// extension.Extension.
+// Extension is the GitHub App extension: tools + git auth + inbound webhook.
 type Extension struct {
-	app      *App
-	secret   []byte
-	mention  string
-	triggers map[string]bool // configured trigger set: mention, pr_opened, label, issue_plan
-	labels   config.GitHubLabels
-	// allowedUsers is the invoker allowlist (github.allowed_users), lower-cased
-	// for case-insensitive matching. Empty = deny every human-invoked trigger
-	// (config.applyDefaults already warned at startup). Never consulted for the
-	// synthetic pr_opened/label auto-review - see isInvokerAllowed's callers.
-	allowedUsers map[string]bool
-	runner       Runner
-	store        *store.Store     // nil in tests that don't need URL persistence
-	hub          *stream.Hub      // shared with the REST handler, nil when store is nil
-	eventLog     *runlog.EventLog // nil when store is nil (no durable persistence to do)
-	// inflight dedups concurrent triggers on one session: a follow-up that
-	// lands while a run is in-flight is DROPPED (best-effort 👀 ack), never
-	// queued - concurrent runs on one session corrupt each other (garbled
-	// answers, cross-run tool events), and queueing would let two runs
-	// consume the same conversation-watermark delta (#665, #668).
-	// LoadOrStore at the top of dispatch() claims it; defer Delete releases
-	// it when the run completes. sessionID -> struct{}{} (a zero-size sentinel;
-	// only key presence matters).
-	inflight sync.Map
-	// runTimeout bounds one webhook-driven run (extensions.github.run_timeout_minutes).
-	runTimeout time.Duration
-	// intentClassifier classifies a PR mention as a work request or
-	// conversational (see isWorkRequest, intent.go). nil degrades to
-	// conversational - the safe default, and what every construction that
-	// doesn't call SetIntentClassifier gets for free.
-	intentClassifier IntentClassifier
-	// jail + workspaceUserID resolve the sibling context directory (#659/#660,
-	// workspace.ContextDirScope) dispatch writes before a run - the SAME
-	// (userID, chatID) coordinate internal/acp's resolveNode independently
-	// re-derives to grant it read-only. nil jail (a test harness that never
-	// calls SetJail) skips context-dir writing entirely - best effort, same as
-	// every other e.store == nil guard in this package.
-	jail            *workspace.Jail
-	workspaceUserID string
+	app             *App
+	secret          []byte
+	mention         string
+	triggers        map[string]bool
+	labels          config.GitHubLabels
+	allowedUsers    map[string]bool // lower-cased; empty = deny all human-invoked triggers
+	runner          Runner
+	store           *store.Store
+	hub             *stream.Hub
+	eventLog        *runlog.EventLog
+	inflight        sync.Map // sessionID → struct{}{}; dedup for concurrent triggers (#665, #668)
+	runTimeout      time.Duration
+	intentClassifier IntentClassifier // nil degrades to conversational
+	jail             *workspace.Jail  // nil skips context-dir writing
+	workspaceUserID  string
 }
 
-// SetIntentClassifier wires the mention intent classifier used by the
-// envelope builder. Optional: an Extension with none set treats every PR
-// mention as conversational, same as before this classifier existed.
+// SetIntentClassifier wires the mention intent classifier for the envelope builder. Optional.
 func (e *Extension) SetIntentClassifier(c IntentClassifier) {
 	e.intentClassifier = c
 }
 
-// SetJail wires the workspace jail dispatch uses to write the GitHub trigger
-// envelope's sibling context directory (#660) - workspaceUserID must be the
-// SAME fixed identity every other filesystem/git tool resolves under
-// (internal/serve's localUserID), not the per-commenter GitHub login, so the
-// path an ACP round's resolveNode independently re-derives (internal/acp)
-// agrees with the one dispatch wrote. Optional: unset, dispatch skips writing
-// a context directory entirely.
+// SetJail wires the workspace jail for the sibling context directory (#660).
 func (e *Extension) SetJail(j *workspace.Jail, workspaceUserID string) {
 	e.jail = j
 	e.workspaceUserID = workspaceUserID
 }
 
-// NewExtension wraps an already-built App (serve constructs the App early so it
-// can also serve as the git-credential source before the orchestrator exists)
-// with the webhook config and a Runner. hub is the *stream.Hub shared with the
-// REST handler (nil gets a private one) - so a webhook-dispatched run's events
-// reach a browser watching that chat, same as any UI-initiated run's would.
+// NewExtension wraps an App with webhook config and a Runner.
 func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st *store.Store, hub *stream.Hub) *Extension {
 	cfgTriggers := cfg.Triggers
 	if len(cfgTriggers) == 0 {
-		cfgTriggers = []string{"mention"} // config.applyDefaults normally does this; re-default here so callers that build the struct directly (tests) still get mention-only behavior
+		cfgTriggers = []string{"mention"}
 	}
 	triggers := make(map[string]bool, len(cfgTriggers))
 	for _, t := range cfgTriggers {
 		triggers[t] = true
 	}
 	labels := cfg.Labels
-	// config.applyDefaults normally fills these; re-default here so callers that
-	// build the struct directly (tests) still get the standard label names.
 	if labels.Review == "" {
 		labels.Review = cfg.AutoReviewLabel
 	}
@@ -181,18 +133,12 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 	}
 }
 
-// isInvokerAllowed reports whether login is in the configured allowlist
-// (case-insensitive). An empty allowlist denies everyone - the secure default;
-// config.applyDefaults already warned about it at startup. Only human-invoked
-// triggers (a mention comment, a workflow label applied by a person) call this;
-// the synthetic pr_opened/label auto-review has no human invoker and must
-// never be gated by it.
+// isInvokerAllowed checks the configured allowlist. Empty list = deny all human-invoked triggers.
 func (e *Extension) isInvokerAllowed(login string) bool {
 	return e.allowedUsers[strings.ToLower(login)]
 }
 
-// App exposes the underlying auth so the caller can wire it as the git-credential
-// source (tools.GitTokenSource) - the App itself implements GitCredential.
+// App exposes the underlying auth as a git-credential source.
 func (e *Extension) App() *App { return e.app }
 
 func (e *Extension) Name() string       { return "github" }

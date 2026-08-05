@@ -15,15 +15,10 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// planWrapperName is the top agent wrapping the plan graph. Must never collide
-// with a plan node ID (planner IDs are short slugs like n1/research-x).
+// planWrapperName: top agent wrapping the plan graph; must not collide with node IDs.
 const planWrapperName = "quack-plan-graph"
 
-// buildPlanGraph wires a plan's gated nodes as a native first-class ADK graph:
-// leaves fan out from Start, single-dep nodes chain, and a node with ≥2
-// dependencies gets a JoinNode barrier ("join-<id>") in front of it - including
-// the synthesizer, whose planner-hardened depends-on-everything edge set makes it
-// the single terminal (satisfying ADK's one-terminal-output rule).
+// buildPlanGraph: wires gated nodes as a native ADK graph.
 func buildPlanGraph(plan Plan, nodesByID map[string]workflow.Node) ([]workflow.Edge, error) {
 	eb := workflow.NewEdgeBuilder()
 	hasSuccessor := map[string]bool{}
@@ -56,9 +51,7 @@ func buildPlanGraph(plan Plan, nodesByID map[string]workflow.Node) ([]workflow.E
 			eb.Add(join, node)
 		}
 	}
-	// ADK allows at most ONE terminal node producing output; the planner's
-	// synthesizer hardening (depends on all) guarantees this for multi-node plans.
-	// Guard it anyway so a degenerate plan fails loudly at build, not mid-run.
+	// ADK allows one terminal node; synthesizer hardening guarantees this for multi-node plans.
 	terminals := 0
 	for _, n := range plan.Nodes {
 		if !hasSuccessor[n.ID] {
@@ -71,14 +64,7 @@ func buildPlanGraph(plan Plan, nodesByID map[string]workflow.Node) ([]workflow.E
 	return eb.Build(), nil
 }
 
-// newPlanWrapper wraps the plan workflow in a thin custom agent that replicates
-// workflowagent's resume dispatch AND patches ADK's rehydration gap: on resume,
-// buildRunState only rebuilds NodeStates for interrupt-raising nodes, so a
-// completed sibling has no state.Nodes entry and a downstream JoinNode can never
-// satisfy its barrier (aggregatePredecessorOutputs: nil predecessor → not ready).
-// patchCompletedSiblings backfills them from session history, spike-proven for
-// both handoff and re-entry askers (.quack/node-hitl-spike.md Update 2). Delete
-// this wrapper for plain workflowagent.New once ADK fixes buildRunState.
+// newPlanWrapper: wraps plan workflow, patching ADK's rehydration gap for completed siblings.
 func newPlanWrapper(wf *workflow.Workflow, nodeNames map[string]bool) (adkagent.Agent, error) {
 	return adkagent.New(adkagent.Config{
 		Name: planWrapperName, Description: "quack plan-graph runner",
@@ -111,9 +97,7 @@ func newPlanWrapper(wf *workflow.Workflow, nodeNames map[string]bool) (adkagent.
 	})
 }
 
-// workflowInputResponses extracts adk_request_input FunctionResponses from the
-// inbound user content: InterruptID → payload. Mirrors workflowagent's
-// detectResume + decodeWorkflowInputResponse (unexported upstream).
+// workflowInputResponses: extracts adk_request_input FunctionResponses from user content.
 func workflowInputResponses(uc *genai.Content) map[string]any {
 	if uc == nil {
 		return nil
@@ -136,9 +120,7 @@ func workflowInputResponses(uc *genai.Content) map[string]any {
 	return responses
 }
 
-// patchCompletedSiblings backfills state.Nodes entries for graph nodes that
-// completed with an output in THIS invocation's history but got no rehydrated
-// NodeState. See newPlanWrapper.
+// patchCompletedSiblings: backfills NodeState for completed nodes missed by rehydration.
 func patchCompletedSiblings(state *workflow.RunState, sess session.Session, invocationID string, nodeNames map[string]bool) {
 	if state == nil || sess == nil {
 		return
@@ -158,9 +140,7 @@ func patchCompletedSiblings(state *workflow.RunState, sess session.Session, invo
 	}
 }
 
-// graphNodeNameFromPath finds the graph-node name in a NodeInfo path like
-// "quack-plan-graph@1/n1@1/worker-r0@1" (segments are name@run; dynamic children
-// fold into their static ancestor - first known segment wins).
+// graphNodeNameFromPath: finds graph-node name in a NodeInfo path.
 func graphNodeNameFromPath(path string, known map[string]bool) string {
 	for _, seg := range strings.Split(path, "/") {
 		if i := strings.IndexByte(seg, '@'); i >= 0 {
@@ -173,16 +153,9 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 	return ""
 }
 
-// RunPlanAsGraph runs a plan as a native first-class-node ADK graph, so ADK
-// owns concurrency, durable completed-node skip, and HITL parking. On a
-// resume, resumeNodes scopes the DagStream's terminal sweep to the paused
-// nodes plus their downstream - skipped siblings emit nothing this run and
-// must not be swept as failed.
+// RunPlanAsGraph: runs plan as a native ADK graph.
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
-	// An empty resumeNodes is exactly the fresh-run signal (every caller agrees:
-	// a resume always names the node(s) it's re-entering) - setup must run
-	// exactly ONCE, before the graph's first node, never again on a resume of
-	// an already-provisioned plan.
+	// Empty resumeNodes = fresh run; setup runs once, never on resume.
 	if len(resumeNodes) == 0 {
 		if serr := e.runPlanSetup(ctx, userID, chatID, plan); serr != nil {
 			return false, fmt.Errorf("dag: plan setup: %w", serr)

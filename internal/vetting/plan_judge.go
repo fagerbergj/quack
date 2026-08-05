@@ -16,17 +16,10 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 )
 
-// PlanJudge decides whether a proposed DAG plan is a well-formed answer to the
-// user's request - the replacement for the planner's old regex routing
-// backstop (checkImplementationRouting). request is the user's verbatim ask,
-// planSummary a human-readable rendering of the proposed nodes (id, agent,
-// task, dependencies). Returns accept + a reason naming what, specifically, is
-// wrong when rejecting (so the orchestrator's own re-plan loop can fix it).
+// PlanJudge: decides whether a proposed DAG plan is a well-formed answer to the user's request.
 type PlanJudge func(ctx context.Context, request, planSummary string) (accept bool, reason string, err error)
 
-// submitPlanVerdictTool is the structured-termination tool the plan judge
-// calls to record its verdict and end its run - mirrors safety_judge.go's
-// submit_safety_verdict / judge.go's submit_verdict pattern.
+// submitPlanVerdictTool: structured-termination tool for plan judge, mirrors submit_verdict.
 const submitPlanVerdictTool = "submit_plan_verdict"
 
 type planVerdictArgs struct {
@@ -34,13 +27,7 @@ type planVerdictArgs struct {
 	Reason string `json:"reason"`
 }
 
-// planRubricInstruction is the judge's whole system prompt: a small, fixed
-// five-criterion rubric (deliberately NOT the worker's G-Eval rubric - this
-// judges the SHAPE of a plan, not the quality of an answer) that replaces the
-// old verb/delivery-term regex. Intent is read from the user's actual request
-// against the proposed plan, not from string-matching the request's prose, so
-// a plan-only run ("write up a plan; the issue body's acceptance text happens
-// to say 'open a PR'") is no longer mistaken for an implement-and-deliver run.
+// planRubricInstruction: five-criterion rubric for plan shape (not answer quality), replaces old regex routing.
 const planRubricInstruction = `You are an independent reviewer judging a PROPOSED PLAN - a DAG of agent nodes about to run - against the user's actual request. You did not author the plan, you have no tools, and you are not judging any node's output; the nodes have not run yet.
 
 You will be shown the user's request and the proposed plan: each node's id, agent, task, and dependencies, plus the plan's declared setup (working clone + branch) and delivery (how the result reaches GitHub) - or "(none declared)" for either.
@@ -58,15 +45,7 @@ Give the plan the benefit of the doubt on ambiguous phrasing - this check exists
 
 Call submit_plan_verdict exactly once with accept (bool) and reason (if rejecting: name the ONE specific edit that fixes it - e.g. "add a terminal node that actually writes the plan - the current terminal node only explores", "this is a plan-only request; drop the code-implementer node", "declare delivery so the shipped code can reach GitHub", "split the implementer into a chain of independent, goal-scoped nodes", or "shrink this to the commit/threads/files the user actually named instead of the whole PR" - never a vague "reconsider the plan"; if accepting: a brief reason is fine, or "").`
 
-// NewPlanJudge returns a PlanJudge backed by judgeModel - deliberately the
-// SAME judge model/provider as the trust gate's judge stage (gates.judge),
-// reused rather than provisioned separately: a plan-routing verdict is one
-// cheap, tool-less call, so it costs nothing extra to piggyback on the model
-// already resident for node judging. Each call is a single-shot, fully
-// ISOLATED agent run (its own in-memory session - mirrors judge.go/
-// safety_judge.go's isolated-runner pattern). A judge that ends without
-// calling submit_plan_verdict, or any run error, is returned as an error; the
-// caller (dag.Planner.Build) degrades gracefully rather than wedging the run.
+// NewPlanJudge: builds PlanJudge backed by judgeModel (reuses the trust gate's judge). Isolated in-memory session per call.
 func NewPlanJudge(judgeModel model.LLM) PlanJudge {
 	return func(ctx context.Context, request, planSummary string) (bool, string, error) {
 		var sink planVerdictArgs
@@ -119,7 +98,7 @@ func NewPlanJudge(judgeModel model.LLM) PlanJudge {
 	}
 }
 
-// buildPlanJudgePrompt assembles the plan judge's single user message.
+// buildPlanJudgePrompt: assembles the plan judge's user message.
 func buildPlanJudgePrompt(request, planSummary string) string {
 	var sb strings.Builder
 	sb.WriteString("User's request:\n")

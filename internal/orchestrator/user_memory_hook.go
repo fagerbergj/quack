@@ -17,30 +17,17 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// userMemoryPreFilter is a cheap, deterministic gate on whether a message
-// MIGHT state a durable preference - broad on purpose, since a false positive
-// only costs one wasted model call but a false negative costs a missed memory.
-// This is the only acceptable use of regex here: a pre-filter that decides
-// whether to WAKE the memory agent, never a decider of what to commit (that
-// was #542's mistake - hardcoded regex rules that only catch known phrasings).
+// userMemoryPreFilter: cheap gate on whether a message might state a preference; false positives are cheap.
 var userMemoryPreFilter = regexp.MustCompile(`(?i)\b(prefer|always|never|from now on|going forward|in the future|by default|instead of|rather than|don't|do not|no more|stop |i like|i want|i need|i hate|i love|keep it|make it|remember that|for me|my style|as a rule|as a habit)\b`)
 
-// memoryAgentAppName/SessionID key the throwaway in-memory session each call
-// runs in - fresh per call (see runMemoryAgent), so a constant name is fine.
+// memoryAgentAppName/etc: throwaway in-memory session per call (fresh per call, constant name fine).
 const (
 	memoryAgentAppName   = "quack-memory-agent"
 	memoryAgentUserID    = "memory-agent"
 	memoryAgentSessionID = "extract"
 )
 
-// maybeMineUserMemory fires the end-of-turn user-memory hook (#262). Gated on
-// user memory being configured (o.userMem) AND the hook agent being wired
-// (o.memAgent, config orchestrator.user_memory_hook.enabled) AND the cheap
-// pre-filter matching - only then does it wake the memory agent. Entirely
-// fire-and-forget: runs in its own goroutine on a context detached from the
-// request, so it can never block, delay, or alter the user-facing response.
-// Any failure (agent call, parse, commit) is a single logged WARN - never an
-// error the caller sees.
+// maybeMineUserMemory: fire-and-forget end-of-turn user-memory hook; never blocks the response.
 func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, message string) {
 	if o.userMem == nil || o.memAgent == nil {
 		return
@@ -65,11 +52,7 @@ type memoryCandidate struct {
 	Kind    string `json:"kind"`
 }
 
-// mineUserMemory runs the memory agent once, fresh (a throwaway in-memory
-// session - mirrors vetting.runWriterFresh), on message and parses its JSON
-// array reply into commit-ready candidates. Candidates with empty content are
-// dropped defensively; a model that emits prose around the JSON is tolerated
-// via stripToJSONArray.
+// mineUserMemory: run memory agent once, parse JSON array reply into commit-ready candidates.
 func mineUserMemory(ctx context.Context, memAgent adkagent.Agent, message string) ([]memory.Candidate, error) {
 	r, err := runner.New(runner.Config{
 		AppName: memoryAgentAppName, Agent: memAgent,
@@ -111,9 +94,7 @@ func mineUserMemory(ctx context.Context, memAgent adkagent.Agent, message string
 	return cands, nil
 }
 
-// stripToJSONArray trims a model reply down to its outermost `[...]` — tolerates
-// a stray markdown code fence or a leading/trailing sentence around the JSON
-// the prompt asked for verbatim.
+// stripToJSONArray trims model reply to outermost `[...]`, tolerating stray text around JSON.
 func stripToJSONArray(s string) string {
 	s = strings.TrimSpace(s)
 	start := strings.IndexByte(s, '[')
@@ -124,9 +105,7 @@ func stripToJSONArray(s string) string {
 	return s[start : end+1]
 }
 
-// commitUserMemory writes cands into userID's user bucket via the store's
-// normal Commit path (dedup + consolidate), scoped exactly like #542's
-// commitPreferences. Best-effort: a failure logs and is otherwise silent.
+// commitUserMemory writes candidates via the store's Commit path; best-effort, failure is logged silently.
 func commitUserMemory(ctx context.Context, store *memory.Store, userID string, cands []memory.Candidate) {
 	if store == nil || len(cands) == 0 {
 		return

@@ -1,5 +1,4 @@
-// Package server wires Quack's HTTP surface: the generated REST routes, the
-// optional MCP server, and the embedded single-page app.
+// Package server wires Quack's HTTP surface: REST routes, MCP server, and embedded SPA.
 package server
 
 import (
@@ -36,9 +35,7 @@ func New(opts Options) http.Handler {
 	r.Use(requestLogger) // slog (not chi's stderr logger) so QUACK_LOG_LEVEL gates it
 	r.Use(middleware.Recoverer)
 
-	// MCP + the generated REST routes are the auth-gated API surface. Scoped to
-	// this Group so it never wraps extension webhooks (verified by their own
-	// signature scheme, e.g. GitHub's HMAC) or the SPA/NotFound fallback below.
+	// MCP + REST are auth-gated; extensions authenticate via their own schemes.
 	r.Group(func(r chi.Router) {
 		r.Use(requireAuthExceptHealth(opts.Auth))
 
@@ -47,21 +44,15 @@ func New(opts Options) http.Handler {
 			r.Handle(MCPPath+"/*", opts.MCP)
 		}
 
-		// Generated REST routing (registers /health + chat endpoints on r).
 		schema.HandlerFromMux(opts.REST, r)
 	})
 
-	// Extension inbound routes (webhooks/callbacks), mounted as raw handlers -
-	// same as MCP, NOT via the OpenAPI codegen (their payloads are the external
-	// system's schema, not quack's client API contract). Deliberately outside
-	// the auth Group above: a webhook authenticates via its own signature.
+	// Extension webhooks outside the auth group - they authenticate via their own signatures.
 	for _, ext := range opts.Extensions {
 		ext.RegisterRoutes(r)
 	}
 
-	// Unmatched routes: an unknown /api/ path is a real 404 (JSON) - don't fall
-	// through to the SPA, or API clients (and `quack api`) get index.html with 200.
-	// Everything else serves the SPA so client-side routing works.
+	// Unmatched /api/ paths 404 (JSON); everything else serves the SPA so client-side routing works.
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		if strings.HasPrefix(req.URL.Path, "/api/") {
 			w.Header().Set("Content-Type", "application/json")
@@ -78,9 +69,7 @@ func New(opts Options) http.Handler {
 	return r
 }
 
-// requestLogger logs one line per request through slog at Info, so the process
-// log level controls it - unlike chi's middleware.Logger, which writes to stderr
-// unconditionally and would pollute `quack -p` (the in-process duck runs at warn).
+// slog-based request logger (controlled by QUACK_LOG_LEVEL, unlike chi's stderr logger).
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
@@ -94,11 +83,7 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// requireAuthExceptHealth wraps a's middleware but always lets a GET/HEAD
-// /health through unauthenticated - it's a liveness probe (docker-compose
-// healthcheck), not part of the API surface auth protects. Restricted to
-// the read-only methods a probe actually uses, so a POST/PUT/DELETE to
-// /health can't use the path as an unauthenticated backdoor.
+// Always lets GET/HEAD /health through (liveness probe), blocks other methods on that path.
 func requireAuthExceptHealth(a *auth.Auth) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		protected := a.Middleware(next)

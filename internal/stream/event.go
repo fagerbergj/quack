@@ -1,20 +1,8 @@
-// Package stream defines Quack's wire-level event vocabulary and translates
-// the gate's ADK session-event stream into it, mirroring the frontend
-// contract in frontend/src/state/agentStream.ts. Shared by REST and MCP.
+// Package stream defines Quack's wire-level event vocabulary and translates the gate's ADK session events into it.
+// Shared by REST and MCP. See frontend/src/state/agentStream.ts for the client contract.
 //
-// The model is flat and agent-centric: the DAG (dag_plan + node_* events) is
-// the static structure, and within each node the gate runs a SEQUENCE of
-// agent invocations ("runs") - worker draft, optional self-refine, each
-// judge round, each revision. Every run is delimited by
-// agent_start/agent_complete and carries a run_id + stage; its activity
-// (agent_thinking, agent_tool_call, agent_tool_result, agent_token)
-// references that run_id. The client groups runs by node and pairs tools by
-// call_id - no nesting heuristics.
-//
-// Translation is stateful: the gate yields agent_start/agent_complete marker
-// FunctionResponse parts to delimit runs, and a per-node Translator tracks
-// the current run so passthrough activity attributes correctly. Token usage
-// accumulates from raw model events and reports on agent_complete.
+// The model is flat: each node runs a sequence of agent invocations (worker, judge, revise), delimited by
+// agent_start/agent_complete with run_id + stage. Activity references that run_id. Client groups by node, pairs tools by call_id.
 package stream
 
 import (
@@ -25,28 +13,24 @@ import (
 	"google.golang.org/genai"
 )
 
-// transferTool is ADK's built-in dispatch tool; its call/response are suppressed
-// (Quack dispatches via the DAG executor, not agent transfer).
+// ADK's built-in dispatch tool; suppressed (Quack dispatches via DAG executor).
 const transferTool = "transfer_to_agent"
 
-// Stage names label what an agent run is doing within a node.
+// Agent run stages within a node.
 const (
 	StageWorker = "worker"
 	StageJudge  = "judge"
 	StageRevise = "revise"
 )
 
-// Gate marker tool names: the gate yields these as function-response parts to
-// delimit each run; the Translator decodes them into agent_start/agent_complete.
-// keepalive is a heartbeat the gate emits during slow operations to keep the A2A
-// SSE connection alive; the Translator drops it.
+// Gate marker tool names: the gate yields these as function-response parts to delimit each run. keepalive is a heartbeat; the Translator drops it.
 const (
 	agentStartTool    = "record_agent_start"
 	agentCompleteTool = "record_agent_complete"
 	keepaliveTool     = "_quack_keepalive"
 )
 
-// Event names.
+// Event names. Mirrors frontend/src/state/agentStream.ts.
 const (
 	EventAgentStart      = "agent_start"
 	EventAgentThinking   = "agent_thinking"
@@ -78,25 +62,21 @@ const (
 	EventDeliveryResult = "delivery_result"
 )
 
-// Delivery outcome values (DeliveryResultData.Outcome).
+// Delivery outcome values.
 const (
 	DeliveryOutcomeDelivered = "delivered"
-	// DeliveryOutcomeDraft mirrors the documented gate-fail behaviour: a
-	// successful delivery riding a failed verdict opens as a draft.
-	DeliveryOutcomeDraft  = "draft"
-	DeliveryOutcomeFailed = "failed"
-	// DeliveryOutcomeNone is the phantom-success class: a judge-passed
-	// work-request that recorded no delivery attempt at all.
-	DeliveryOutcomeNone = "none"
+	DeliveryOutcomeDraft     = "draft"   // successful delivery, but gate verdict failed - opened as draft
+	DeliveryOutcomeFailed    = "failed"
+	DeliveryOutcomeNone      = "none"    // judge passed but no delivery was recorded
 )
 
-// SSEEvent is one server-sent event: a name plus a JSON-serializable payload.
+// One server-sent event: name + JSON-serializable payload.
 type SSEEvent struct {
 	Name string
 	Data any
 }
 
-// ── agent-run events ─────────────────────────────────────────────────────────
+// ── agent-run events ───
 
 // AgentStartData opens an agent run within a node.
 type AgentStartData struct {
@@ -107,22 +87,21 @@ type AgentStartData struct {
 	Round  int    `json:"round,omitempty"`
 }
 
-// AgentThinkingData is reasoning streamed during a run.
+// Reasoning streamed during a run.
 type AgentThinkingData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
 	Text   string `json:"text"`
 }
 
-// AgentTokenData is answer/output text. The final vetted answer is emitted with
-// an empty RunID (it belongs to the node, not a particular run).
+// Answer/output text. The final vetted answer has an empty RunID (belongs to the node, not a run).
 type AgentTokenData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id,omitempty"`
 	Text   string `json:"text"`
 }
 
-// AgentToolCallData is a tool invocation during a run; pairs with a result by CallID.
+// Tool invocation during a run; pairs with a result by CallID.
 type AgentToolCallData struct {
 	NodeID string         `json:"node_id,omitempty"`
 	RunID  string         `json:"run_id"`
@@ -131,7 +110,7 @@ type AgentToolCallData struct {
 	Args   map[string]any `json:"args"`
 }
 
-// AgentToolResultData is the result of a tool call, matched to it by CallID.
+// Result of a tool call, matched by CallID.
 type AgentToolResultData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
@@ -140,10 +119,7 @@ type AgentToolResultData struct {
 	Result any    `json:"result"`
 }
 
-// AgentCompleteData closes an agent run. Fields are populated by stage: model +
-// usage + finish_reason for model runs (worker/revise), score/passed/
-// feedback for judge, and status/reason when a run was not completed normally
-// (e.g. the judge was unavailable).
+// Closes an agent run. Fields vary by stage: model/usage for worker/revise; score/passed/feedback for judge; status/reason for abnormal completion.
 type AgentCompleteData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
@@ -165,12 +141,7 @@ type AgentCompleteData struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// MarshalJSON forces judge runs to always serialize score/passed/feedback, even
-// at their zero values. A failing verdict legitimately scores 0.0 with
-// passed=false; the omitempty tags above would drop those, so the UI could not
-// tell a real 0% score from an absent one and rendered no score badge at all
-// (only passing, non-zero judges showed a score). Non-judge stages keep the
-// omitempty behaviour - they carry no judge result.
+// Forces judge runs to always serialize score/passed/feedback even at zero values. omitempty would drop 0.0/passed=false.
 func (d AgentCompleteData) MarshalJSON() ([]byte, error) {
 	type alias AgentCompleteData // shed the MarshalJSON method to avoid recursion
 	b, err := json.Marshal(alias(d))
@@ -194,12 +165,12 @@ func (d AgentCompleteData) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// ErrorData is the `error` event payload.
+// `error` event payload.
 type ErrorData struct {
 	Error string `json:"error"`
 }
 
-// ── DAG / static structure ───────────────────────────────────────────────────
+// ── DAG / static ───
 
 // DagNodeDef is the wire representation of one node in a DAG plan.
 type DagNodeDef struct {
@@ -209,47 +180,39 @@ type DagNodeDef struct {
 	DependsOn []string `json:"depends_on"`
 }
 
-// DagEdgeDef is the wire representation of one edge in a DAG plan.
+// Wire representation of one edge in a DAG plan.
 type DagEdgeDef struct {
 	From string `json:"from"`
 	To   string `json:"to"`
 }
 
-// DagPlanData is the `dag_plan` event payload.
+// `dag_plan` event payload.
 type DagPlanData struct {
 	PlanID string       `json:"plan_id"`
 	Nodes  []DagNodeDef `json:"nodes"`
 	Edges  []DagEdgeDef `json:"edges"`
-	// StartedAtMs is the server wall-clock (epoch ms) the run began. The client
-	// uses it for the total-run timer so a reconnect/replay shows true elapsed time
-	// rather than restarting from when the events were re-processed.
+	// Server wall-clock (epoch ms) the run began - anchors total-run timer across reconnect/replay.
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 }
 
-// NodeQueuedData is the `node_queued` event payload.
+// `node_queued` event payload.
 type NodeQueuedData struct {
 	NodeID string `json:"node_id"`
 }
 
-// NodeStartData is the `node_start` event payload.
+// `node_start` event payload.
 type NodeStartData struct {
 	NodeID string `json:"node_id"`
 	Agent  string `json:"agent"`
-	// StartedAtMs is the server wall-clock (epoch ms) the node began running. The
-	// client uses it as the timer origin so a reconnect/replay shows the node's true
-	// elapsed time instead of restarting from the replay moment.
+	// Server wall-clock (epoch ms) the node began - anchors per-node timer across reconnect/replay.
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 }
 
-// NodeDoneData is the `node_done` event payload. Completion stats are the sum
-// across all runs made during the node's execution; omitted when zero.
+// `node_done` event payload. Completion stats are summed across all runs; omitted when zero.
 type NodeDoneData struct {
 	NodeID        string `json:"node_id"`
 	OutputPreview string `json:"output_preview,omitempty"`
-	// Output is the node's FULL vetted text. Carried so the store can persist it
-	// (downstream rehydration on M5b resume needs the whole output, not just the
-	// 250-char preview). The frontend streams the answer via agent_token and
-	// ignores this field.
+	// Full vetted text - store persists it for downstream rehydration. Frontend ignores it (streams via agent_token).
 	Output           string  `json:"output,omitempty"`
 	Model            string  `json:"model,omitempty"`
 	PromptTokens     int32   `json:"prompt_tokens,omitempty"`
@@ -263,15 +226,13 @@ type NodeDoneData struct {
 	JudgePassed      bool    `json:"judge_passed,omitempty"`
 }
 
-// NodeFailedData is the `node_failed` event payload.
+// `node_failed` event payload.
 type NodeFailedData struct {
 	NodeID string `json:"node_id"`
 	Error  string `json:"error"`
 }
 
-// NodeCancelledData is the `node_cancelled` event payload: the node was
-// stopped by the user (via PUT node status {"status":"cancelled"}), rendered
-// neutrally ("stopped"), never as a red failure.
+// `node_cancelled` event payload: node stopped by the user, rendered neutrally (not as red failure).
 type NodeCancelledData struct {
 	NodeID string `json:"node_id"`
 }
@@ -281,10 +242,7 @@ func NodeCancelled(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID}}
 }
 
-// NodeSteeredData is the `node_steered` event payload: the node's queued
-// message(s) were delivered at its next turn boundary and it is about to
-// re-run with them folded in (its prior session - tool calls and results -
-// is retained). A fresh node_start … node_done follows.
+// `node_steered` event payload: the node's queued messages were delivered at its next turn boundary. A fresh node_start…node_done follows.
 type NodeSteeredData struct {
 	NodeID   string `json:"node_id"`
 	Guidance string `json:"guidance"`
@@ -295,9 +253,7 @@ func NodeSteered(nodeID, guidance string) SSEEvent {
 	return SSEEvent{Name: EventNodeSteered, Data: NodeSteeredData{NodeID: nodeID, Guidance: guidance}}
 }
 
-// NodePausedData is the `node_paused` event payload: the node was suspended
-// by the user (via PUT node status {"status":"paused"}), keeping its
-// accumulated work. Resumable via {"status":"running"}.
+// `node_paused` event payload: node suspended by the user, keeping accumulated work. Resumable.
 type NodePausedData struct {
 	NodeID string `json:"node_id"`
 }
@@ -307,20 +263,14 @@ func NodePaused(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodePaused, Data: NodePausedData{NodeID: nodeID}}
 }
 
-// DeliveryResultData is the `delivery_result` event payload: one staged
-// item's ACTUAL outward-boundary outcome, as the delivering extension
-// observed it (a real PR/review URL, or a real per-item error) - never the
-// worker's self-report. Emitted for BOTH success and failure so a phantom
-// "delivered" (judge passed, nothing actually posted) is visible in the
-// durable event log, not just inferred from a missing log line.
+// `delivery_result` event payload: one staged item's outward-boundary outcome as the delivering extension observed it. Never the worker's self-report.
 type DeliveryResultData struct {
 	NodeID  string `json:"node_id"`
 	Outcome string `json:"outcome"` // delivered | draft | failed | none
 	Kind    string `json:"kind,omitempty"`
 	URL     string `json:"url,omitempty"`
 	Error   string `json:"error,omitempty"`
-	// TraceID cross-references this event into the OTel trace (Tempo/Grafana)
-	// covering the same delivery - "" when otel is disabled or no span was active.
+	// Cross-references into the OTel trace for the same delivery; "" when otel is disabled.
 	TraceID string `json:"trace_id,omitempty"`
 }
 
@@ -336,11 +286,9 @@ type ChatTitleData struct {
 	Title string `json:"title"`
 }
 
-// ── event constructors ───────────────────────────────────────────────────────
+// ── event constructors ───
 
-// ResponseCreatedData is the `response_created` event payload: the very first
-// event of a run, naming the turn (response_id) so a client can cancel it via
-// PUT /chats/{chat_id}/responses/{response_id}/status.
+// `response_created` event payload: the first event of a run, naming the turn (response_id) for cancellation.
 type ResponseCreatedData struct {
 	ResponseID string `json:"response_id"`
 }
@@ -350,18 +298,14 @@ func ResponseCreated(responseID string) SSEEvent {
 	return SSEEvent{Name: EventResponseCreated, Data: ResponseCreatedData{ResponseID: responseID}}
 }
 
-// DagPlan builds a dag_plan event carrying the full plan structure. StartedAtMs is
-// stamped now (the run's start), so a reconnecting client's total timer is anchored
-// to real time and survives replay.
+// Builds a dag_plan event with StartedAtMs stamped now so the timer anchors to real time across replay.
 func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
 	return SSEEvent{Name: EventDagPlan, Data: DagPlanData{
 		PlanID: planID, Nodes: nodes, Edges: edges, StartedAtMs: time.Now().UnixMilli(),
 	}}
 }
 
-// NodeStart builds a node_start event. StartedAtMs is stamped now (when the node
-// begins), so a reconnecting client's node timer is anchored to real time and
-// survives replay.
+// Builds a node_start event with StartedAtMs stamped now.
 func NodeStart(nodeID, agent string) SSEEvent {
 	return SSEEvent{Name: EventNodeStart, Data: NodeStartData{
 		NodeID: nodeID, Agent: agent, StartedAtMs: time.Now().UnixMilli(),
@@ -374,9 +318,7 @@ func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 	return SSEEvent{Name: EventNodeDone, Data: data}
 }
 
-// NodeNeedsInputData is the `node_needs_input` payload: a node produced no answer
-// and the run is paused for a human to steer it (re-run with guidance) or cancel.
-// interrupt_id is the token a resolve call must echo back.
+// `node_needs_input` payload: node produced no answer; paused for human steering. interrupt_id must be echoed back on resolve.
 type NodeNeedsInputData struct {
 	NodeID      string `json:"node_id"`
 	InterruptID string `json:"interrupt_id"`
@@ -404,19 +346,12 @@ func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: Error
 // Done builds the terminal done event.
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }
 
-// The v1 gate emitted marker FunctionResponses (agent_start/agent_complete/
-// keepalive) that the Translator decodes; the v2 gate no longer emits them, so
-// the builders live in event_test.go as decoder fixtures. IsGateMarkerName and
-// the tool-name consts stay: the executor still filters marker responses
-// defensively and the decoder still recognizes them.
+// The v1 gate emitted marker FunctionResponses; the v2 gate no longer does. Builder consts stay: the executor still filters defensively.
 
-// ThinkingPart builds a reasoning part the gate yields directly (e.g. judge
-// thinking re-emitted from its isolated run).
+// Builds a reasoning part the gate yields directly (e.g. judge thinking re-emitted from its isolated run).
 func ThinkingPart(text string) *genai.Part { return &genai.Part{Thought: true, Text: text} }
 
-// IsGateMarkerName reports whether name is a reserved gate-internal tool name.
-// These orphan FunctionResponses are hidden from the worker's session view during
-// re-invocation (ADK errors on a trailing orphan FunctionResponse).
+// Reports whether name is a reserved gate-internal tool name. Hidden from the worker's session view (ADK errors on orphan FunctionResponses).
 func IsGateMarkerName(name string) bool {
 	switch name {
 	case agentStartTool, agentCompleteTool, keepaliveTool:
@@ -425,12 +360,9 @@ func IsGateMarkerName(name string) bool {
 	return false
 }
 
-// ── stateful translation ─────────────────────────────────────────────────────
+// ── stateful translation ───
 
-// Translator converts one node's gate event stream into wire events. It tracks
-// the current run (delimited by agent_start/agent_complete markers) so activity
-// is attributed correctly, and accumulates token usage per run to report on
-// agent_complete. Create one per node stream; it is not safe for concurrent use.
+// Converts one node's gate event stream into wire events. Tracks current run for correct attribution. Not safe for concurrent use.
 type Translator struct {
 	curRun   string
 	curStage string
@@ -445,11 +377,7 @@ type Translator struct {
 // NewTranslator returns a Translator for one node stream.
 func NewTranslator() *Translator { return &Translator{} }
 
-// Usage returns the model/usage/finish-reason accumulated so far - either since
-// the currently-open run started, or (for a caller with no run/marker protocol,
-// e.g. the orchestrator's own un-gated direct-answer session) since the last time
-// a run opened and reset the counters, i.e. the whole stream fed to this
-// Translator. Safe to call at any point, including after Event has returned.
+// Returns accumulated model/usage/finish-reason. Counters reset when a new run opens. Safe to call at any point.
 func (t *Translator) Usage() (model string, prompt, completion, reasoning, total int32, finishReason string) {
 	return t.model, t.prompt, t.completion, t.reasoning, t.total, t.finish
 }
@@ -460,12 +388,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 		return nil
 	}
 
-	// Accumulate this event's usage/model/finish. Reported on the run's
-	// agent_complete when a marker-delimited run is open; a caller with no run
-	// concept at all - the orchestrator's own un-gated direct-answer session,
-	// which never emits agent_start/agent_complete markers - reads the running
-	// total straight off Usage() instead. Either way the counters reset to zero
-	// when a new run opens (below), so this is never double-counted.
+	// Accumulate usage/model/finish. Reported on agent_complete (marker-delimited runs) or via Usage() (un-gated sessions). Counters reset on new run.
 	if ev.UsageMetadata != nil {
 		t.prompt += ev.UsageMetadata.PromptTokenCount
 		t.completion += ev.UsageMetadata.CandidatesTokenCount
@@ -514,7 +437,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 			t.curRun, t.curStage, t.curRound, t.curAgent = "", "", 0, ""
 
 		case p.FunctionResponse != nil && p.FunctionResponse.Name == keepaliveTool:
-			// heartbeat; no wire event
+			// heartbeat, no wire event
 
 		case p.FunctionCall != nil:
 			if p.FunctionCall.Name == transferTool {
@@ -536,16 +459,14 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 			out = append(out, SSEEvent{Name: EventAgentThinking, Data: AgentThinkingData{RunID: t.curRun, Text: p.Text}})
 
 		case p.Text != "":
-			// Plain text is the final answer (the gate buffers per-run answers and
-			// surfaces only the vetted one, with curRun cleared → node-level).
+			// Final answer (gate surfaces only the vetted one, curRun cleared → node-level).
 			out = append(out, SSEEvent{Name: EventAgentToken, Data: AgentTokenData{RunID: t.curRun, Text: p.Text}})
 		}
 	}
 	return out
 }
 
-// ScopeToNode stamps nodeID onto a wire event's payload so the frontend routes it
-// to the right DAG node. Events without a NodeID field are returned unchanged.
+// Stamps nodeID onto a wire event's payload for frontend DAG routing. Events without NodeID are unchanged.
 func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
 	switch d := ev.Data.(type) {
 	case AgentStartData:
@@ -570,11 +491,7 @@ func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
 	return ev
 }
 
-// ScopeToRun stamps runID onto a wire event whose RunID is empty, so activity the
-// orchestrator emits from its own (un-gated) run attaches to a single top-level
-// run on the client instead of being dropped (the client keys activity by run_id
-// and discards events with no matching run). Events that already carry a RunID,
-// or have no RunID field, are returned unchanged.
+// Stamps runID onto wire events with empty RunID so un-gated orchestrator activity attaches to a top-level run. Events with existing RunID are unchanged.
 func ScopeToRun(ev SSEEvent, runID string) SSEEvent {
 	switch d := ev.Data.(type) {
 	case AgentThinkingData:
@@ -601,8 +518,7 @@ func ScopeToRun(ev SSEEvent, runID string) SSEEvent {
 	return ev
 }
 
-// Marker-payload values survive the A2A round-trip as JSON, so numbers may arrive
-// as float64; these extractors read a value tolerantly with a zero fallback.
+// A2A round-trip marshals numbers as float64; these extractors read tolerantly with a zero fallback.
 func asInt(v any) int {
 	switch n := v.(type) {
 	case int:

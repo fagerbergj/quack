@@ -12,22 +12,14 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// baselineCache memoises "does this check ALSO fail at the base commit?" per
-// (repo dir, base sha, check) - the answer can't change while the node runs
-// (the base tree is immutable), so the node pays for a baseline at most once
-// per check no matter how many revise rounds it burns.
+// baselineCache: memoises "does this check fail at base?" per (dir, sha, check).
 var baselineCache sync.Map // key: dir\x00sha\x00check → bool
 
-// failsAtBase reports whether check also fails on the repo's BASE tree, so
-// pre-existing repo debt doesn't count against the worker under weakest-link
-// scoring. Runs in a detached git worktree, never the worker's tree (avoids
-// losing uncommitted work); node_modules is symlinked in so a missing
-// dependency can't masquerade as debt. Conservative on error: still gates.
+// failsAtBase: does check fail on base tree? Pre-existing debt doesn't count against the worker. Conservative on error.
 func failsAtBase(dir, check string, caps workspace.Caps) bool {
 	base, err := baseCommit(dir, caps)
 	if err != nil {
-		// Warn, not Debug: the worker is now charged for a failure that may not be
-		// its own, and it cannot see or fix why the probe didn't run.
+		// Worker may be charged for pre-existing failure.
 		slog.Warn("cannot determine base commit; check keeps gating", "component", "vetting", "dir", dir, "err", err)
 		return false
 	}
@@ -44,11 +36,7 @@ func failsAtBase(dir, check string, caps workspace.Caps) bool {
 	return fails
 }
 
-// baseCommit is the commit the worker STARTED from: the clone's original HEAD,
-// read from the oldest HEAD reflog entry (git clone writes exactly one, "clone:
-// from <url>"). Deliberately not the current HEAD - by gate time the worker may
-// have committed - and deliberately not a remote-tracking ref, which the worker's
-// own push can move.
+// baseCommit: the clone's original HEAD from the oldest reflog entry (not current HEAD or remote-tracking ref).
 func baseCommit(dir string, caps workspace.Caps) (string, error) {
 	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "reflog", "show", "--format=%H", "HEAD"}, caps)
 	if err != nil {
@@ -64,11 +52,9 @@ func baseCommit(dir string, caps workspace.Caps) (string, error) {
 	return shas[len(shas)-1], nil
 }
 
-// runAtBase checks out base into a throwaway detached worktree and runs check
-// there, returning whether it failed. The worktree is always removed.
+// runAtBase: runs check in a throwaway detached worktree at base.
 func runAtBase(dir, base, check string, caps workspace.Caps) (bool, error) {
-	// Under a sandbox the child git only reaches granted paths, and the server's
-	// own /tmp is not one of them - hence SandboxTmpDir, not "".
+	// Use SandboxTmpDir under sandbox (server /tmp is not granted).
 	tmp, err := os.MkdirTemp(workspace.SandboxTmpDir(caps), "quack-base-")
 	if err != nil {
 		return false, err
@@ -85,9 +71,7 @@ func runAtBase(dir, base, check string, caps workspace.Caps) (bool, error) {
 	if res.ExitCode != 0 {
 		return false, fmt.Errorf("git worktree add %s: exit %d: %s", base, res.ExitCode, res.Output)
 	}
-	// Dependencies are gitignored, so the base worktree has none: reuse the
-	// worker's installed tree rather than reinstalling (and rather than reading
-	// a missing-dependency failure as pre-existing debt).
+	// Reuse worker's node_modules to avoid reinstall (gitignored deps absent at base).
 	if _, err := os.Stat(filepath.Join(dir, "node_modules")); err == nil {
 		_ = os.Symlink(filepath.Join(dir, "node_modules"), filepath.Join(wt, "node_modules"))
 	}

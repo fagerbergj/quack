@@ -1,5 +1,4 @@
-// Package rest implements the generated OpenAPI ServerInterface for Quack's
-// REST surface: chat CRUD plus the streaming responses endpoint.
+// Package rest implements the generated OpenAPI ServerInterface for Quack's REST surface.
 package rest
 
 import (
@@ -32,33 +31,20 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// userID is the workspace identity every fs/git tool and the per-chat jail
-// scope resolve under (see internal/serve.localUserID) - deliberately NOT
-// the ADK session identity, which differs for GitHub-dispatched chats (see
-// sessionUser below).
+// Workspace identity for fs/git tools and per-chat jail. NOT the ADK session identity (see sessionUser).
 const userID = "local"
 
-// githubSessionUser mirrors internal/github.runUserID: the ADK session
-// identity webhook-dispatched runs persist their events under before a
-// per-chat store.Chat.SessionUser is recorded (older chats' fallback).
+// ADK session identity for webhook-dispatched runs (fallback for older chats without SessionUser).
 const githubSessionUser = "github"
 
-// sessionUser resolves the ADK session identity a chat's turns/events were
-// written under, so lookups agree with whichever runner (first-party REST,
-// or the GitHub webhook keyed by commenter login, #512) actually wrote them.
-// Delegates to the store: a GitHub-dispatched chat's identity varies per chat
-// (the commenter's login) and is no longer derivable from the id alone.
+// Resolves ADK session identity for a chat's turns/events. A GitHub-dispatched chat's identity varies per chat (#512).
 func (h *Handler) sessionUser(ctx context.Context, chatID string) string {
 	return h.store.SessionUserForChat(ctx, chatID)
 }
 
 const titleInstruction = "Generate a concise chat title (3–6 words, no punctuation, no quotes). Return only the title."
 
-// runTimeout is the backstop that stops a wedged run leaking a goroutine
-// forever - not a policy on how long work may take. It has to outlast the
-// longest legitimate run (an overnight multi-node research/implement DAG), or it
-// becomes the thing that kills long runs: the ceiling fires, every in-flight node
-// dies with "emitUp: context canceled", and the chat goes idle with no answer.
+// Backstop that stops a wedged run leaking a goroutine (24h covers the longest overnight DAG).
 const runTimeout = 24 * time.Hour
 
 // Handler implements schema.ServerInterface backed by the store + orchestrator.
@@ -73,12 +59,7 @@ type Handler struct {
 	quackVersion string             // build stamp, stamped into a recording bundle's manifest.json
 }
 
-// NewHandler builds a REST handler. jail may be nil (no workspace configured).
-// hub may be nil to get a private hub; pass a shared *stream.Hub (e.g. from
-// internal/serve) when another driver of runs on the same chats - such as the
-// GitHub webhook dispatcher - needs live subscribers to see the same events.
-// ledgerStore may be nil (recording disabled or unconfigured); quackVersion
-// is the build stamp (cmd/quack's version var, threaded through serve.Run).
+// NewHandler builds a REST handler. jail/hub/ledgerStore may be nil; hub defaults to a private hub.
 func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string) *Handler {
 	if hub == nil {
 		hub = stream.NewHub()
@@ -90,8 +71,7 @@ func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string
 	if h.titler == nil {
 		return ""
 	}
-	// ChatID-only Coords: files this call under the chat instead of
-	// "unscoped" while keeping StreamKey{} as its root-stream identity (#617).
+	// ChatID-only Coords so this call is filed under the chat, not "unscoped" (#617).
 	ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: chatID})
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + firstMessage}}}},
@@ -119,9 +99,7 @@ func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string
 			}
 		}
 	}
-	// Strip any leaked reasoning: /no_think above asks qwen to skip thinking, but
-	// it sometimes emits a <think> block into content anyway (often UNCLOSED when
-	// it runs to the token limit), which would otherwise become the "title".
+	// Strip leaked thinking blocks that /no_think doesn't always suppress.
 	title := stream.StripThinking(out.String())
 	slog.Info("title generated", "component", "title", "title", title, "candidates", candidates, "total", total)
 	return title
@@ -139,8 +117,7 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Status computation reads each chat's session twice (turns + pending-question
-	// scan) - serial, a ~15-chat list took 3-4s live. Fan out, keep order.
+	// Fan out status reads (serial took 3-4s for 15 chats).
 	// ponytail: still N+1 reads, just concurrent; the real fix is stamping the
 	// run outcome on the chat row at run END so list is one table read.
 	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}
@@ -219,10 +196,7 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 	writeJSON(w, http.StatusOK, buildTurn(*tc))
 }
 
-// ListRecordings lists every session the replay ledger has an entry for,
-// backing `quack recording list`. Same disabled signal as GetChatRecording
-// (nil ledgerStore ⇒ 404); an enabled store with no sessions yet is a 200
-// with an empty array.
+// Lists sessions the replay ledger has entries for (backs `quack recording list`).
 func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 	if h.ledgerStore == nil {
 		http.Error(w, "recording is not enabled", http.StatusNotFound)
@@ -244,10 +218,7 @@ func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// GetChatRecording streams the chat's replay-ledger recording as a ZIP
-// bundle (internal/ledger.AssembleBundle). The existence check (ReadStream)
-// happens before any byte reaches w, so a missing recording still gets a
-// clean 404 rather than a truncated 200.
+// Streams the chat's replay-ledger recording as a ZIP. ReadStream check first ensures a clean 404.
 func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if h.ledgerStore == nil {
 		http.Error(w, "recording is not enabled", http.StatusNotFound)
@@ -265,21 +236,16 @@ func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatI
 	defer entries.Close()
 
 	w.Header().Set("Content-Type", "application/zip")
-	// mime.FormatMediaType quotes/escapes the filename - chatID is
-	// caller-supplied, so it must never reach the header verbatim.
+	// mime.FormatMediaType quotes the filename; chatID is caller-supplied so never reaches the header verbatim.
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType("attachment", map[string]string{"filename": chatID + ".zip"}))
 	if err := ledger.AssembleBundle(r.Context(), h.ledgerStore, chatID, h.quackVersion, otelobs.GenAISemConvVersion, entries, w); err != nil {
-		// Headers (and possibly a partial body) are already sent - all we can
-		// do is log it, same as any other mid-stream write failure in this
-		// package (see streamHub).
+		// Headers (and possibly partial body) already sent; log only.
 		slog.Warn("recording bundle write failed mid-stream", "component", "rest", "chat", chatID, "err", err)
 	}
 }
 
-// UpdateChat applies a partial update to a chat's mutable metadata. The only
-// settable field today is Title (a manual rename); the body shape leaves
-// room to grow without a new endpoint.
+// Partial update to a chat's mutable metadata (Title is the only settable field today).
 func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	var body schema.UpdateChatBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -309,22 +275,13 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
-	// Kill any run still in flight on this chat FIRST - deleting the chat out
-	// from under a live run (UI-initiated or GitHub-dispatched, same registry)
-	// must actually stop it, not just drop its row while it keeps executing
-	// (#468). A no-op (nothing registered) is the expected, safe outcome for
-	// an already-finished or unknown chat.
+	// Kill any live run on this chat FIRST so we don't drop the row while it still executes (#468).
 	h.hub.CancelRun(chatID)
 	if err := h.store.DeleteChat(r.Context(), chatID); err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Lifecycle cleanup: remove the chat's per-chat workspace tree
-	// (<root>/<user>/<chatID>/) so a deleted chat doesn't leak its clones
-	// forever. Best-effort - the chat row is already gone, and RemoveChatScope
-	// sanitizes chatID (single path component) so the RemoveAll can't escape the
-	// user root. A missing dir is a clean no-op; any error is logged and the
-	// delete still succeeds. Skipped when no workspace is configured (jail nil).
+	// Best-effort cleanup of the per-chat workspace tree. RemoveChatScope sanitizes chatID so it can't escape.
 	if h.jail != nil {
 		if err := h.jail.RemoveChatScope(userID, chatID); err != nil {
 			slog.Warn("per-chat workspace cleanup failed; chat deleted anyway",
@@ -334,11 +291,7 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SendChatMessage STARTS a run and streams it to this client as SSE. The run is
-// server-side work with its own lifetime (see startRun); this request is just the
-// first viewer of it. Accepts either application/json ({"content":"..."}) or
-// multipart/form-data with a "content" text field and optional "files" file parts
-// (image/audio).
+// Starts a run and streams it as SSE. Accepts JSON or multipart/form-data (with optional file attachments).
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	var body schema.SendMessageBody
 	var attachments []*genai.Part
@@ -386,46 +339,28 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		return
 	}
 
-	// Generate a stable turn ID before the run so the DAG plan can reference it,
-	// and so it can be surfaced as this run's response_id (the very first event
-	// of the stream) - the id a client names in PUT .../responses/{response_id}/status
-	// to cancel this run.
+	// Generate a stable turn ID before the run so the DAG plan can reference it, and the cancel endpoint can name it.
 	turnID := uuid.NewString()
 	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
 
-	// Attach THIS client to the run's topic BEFORE the run starts publishing, so
-	// it misses nothing (Reset drops the previous run's buffer first, exactly as
-	// the run's first Publish would).
+	// Subscribe BEFORE the run starts publishing so nothing is missed.
 	h.hub.Reset(chatID)
 	replay, live, unsubscribe, _ := h.hub.Subscribe(chatID)
 	defer unsubscribe()
 
 	h.startRun(chatID, turnID, body.Content, attachments)
 
-	// From here this handler is only a VIEWER of the run: it forwards hub events
-	// to this client and returns when the run ends or the client goes away. It
-	// does not drive the run, so a slow, sleeping or vanished client can neither
-	// stall it (SSE writes are off the run's critical path) nor kill it.
+	// From here this handler is only a viewer - it cannot stall or kill the run.
 	streamHub(r.Context(), sse, replay, live, 0)
 }
 
-// startRun launches a chat's turn as server-side work: its own goroutine on a
-// context tied to the SERVER's lifetime (bounded by runTimeout) plus the
-// explicit-cancel path - NOT to the HTTP request that kicked it off. A run
-// outlives its initiating client: a dropped curl, a closed tab or a laptop going
-// to sleep stops the client READING the stream; the DAG keeps executing, keeps
-// publishing to the hub + durable event log, and any client (this one on
-// reconnect, or another device via GET .../stream) can attach and watch it live.
-// PUT .../responses/{id}/status {"status":"cancelled"} or DELETE the chat to kill it.
+// Launches a chat turn as server-side work on a server-lifetime context (not the HTTP request's). Outlives its initiating client.
 func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.Part) {
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
-	// Registered synchronously (before the goroutine gets to run) so the cancel
-	// endpoint can never miss the run it was just told about.
+	// Registered synchronously so cancel can never miss the run.
 	h.hub.RegisterRun(chatID, turnID, cancelRun)
 	go func() {
-		// Mark the run finished for hub subscribers once it returns (after its final
-		// Done is published) - LAST, so that by the time a viewer sees the stream
-		// close, the run is already off the registry (cancelling it now 404s/no-ops).
+		// Close done LAST so the run is off the registry by the time viewers see the stream close.
 		defer h.hub.Close(chatID)
 		defer func() {
 			cancelRun()
@@ -435,21 +370,15 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	}()
 }
 
-// runChat is the run itself: it drives the orchestrator and publishes the whole
-// SSE stream to the hub (live subscribers) and the durable event log. It writes
-// to no HTTP client - a run has no client, only viewers.
+// Drives the orchestrator and publishes the SSE stream to the hub and durable event log. No HTTP client dependency.
 func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string, attachments []*genai.Part) {
-	// Fresh run: clear the previous run's durable events so this run's seq starts
-	// at 1 (mirrors the hub topic reset on the way in).
+	// Clear previous run's durable events so this run's seq starts at 1.
 	h.eventLog.Reset(runCtx, chatID)
 
-	// pub assigns the next per-chat seq, fans the event to live hub subscribers,
-	// and persists it durably (off the hot path). The run loop is the sole publisher
-	// for this chat, so seq stays monotonic without locking.
+	// pub assigns next per-chat seq, fans to hub subscribers, and persists durably.
 	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
 	publish := pub.Publish
 
-	// response_created is always the very first event of the stream.
 	publish(stream.ResponseCreated(turnID))
 
 	titleCh := make(chan string, 1)
@@ -478,9 +407,7 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 	}
 
 	var activePlanID string
-	// The model behind the orchestrator's own reply, captured from its top-level
-	// agent_complete (empty node_id). Stamped onto the turn row after the run -
-	// ADK's event storage drops ModelVersion, so history can't recover it later.
+	// Captured from top-level agent_complete so history can recover the model (ADK drops ModelVersion).
 	var orchModel string
 
 	for ev, err := range h.orch.Run(runCtx, h.sessionUser(runCtx, chatID), chatID, message, attachments) {
@@ -509,18 +436,14 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 		publish(stream.ChatTitle(title))
 	}
 	publish(stream.Done())
-	// Stamp the orchestrator's model on the turn row so history attribution
-	// matches the live stream. Plain replies only - a DAG turn's models live
-	// per-node on DagNodeState, and its answer is credited to the terminal node.
+	// Stamp model on turn row (DAG turns credit models per-node on DagNodeState).
 	if orchModel != "" && activePlanID == "" {
 		_ = h.store.SetTurnModel(runCtx, chatID, turnID, orchModel)
 	}
 	_ = h.store.Touch(runCtx, chatID)
 }
 
-// UpdateResponseStatus cancels the chat's active run - but only when
-// response_id names that run (the id surfaced in its opening response_created
-// event); a stale or already-finished id 404s rather than silently no-op'ing.
+// Cancels the chat's active run when response_id names it; stale ids 404.
 func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, responseID schema.ResponseID) {
 	var body schema.ResponseStatusUpdateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -538,11 +461,7 @@ func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, c
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// UpdateNodeStatus transitions one DAG node's status - replacing the old
-// cancel/steer/retry RPC verbs with a single resource-oriented PUT naming the
-// TARGET status. Every write routes through dag.CanTransition: an illegal
-// transition from the node's current (persisted) status 409s naming the legal
-// targets.
+// Transitions one DAG node's status via dag.CanTransition; illegal transitions 409 with the allowed targets.
 func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.NodeStatusUpdateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -555,9 +474,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 	}
 	target := dag.NodeStatus(body.Status)
 
-	// The plan itself is loaded from session state by the orchestrator (the real
-	// dag.Plan) when it actually runs. Here we just need the plan/node defs (to
-	// confirm the node exists) and the persisted outputs a retry reuses.
+	// Load plan/node defs (to confirm node exists) and persisted outputs a retry reuses.
 	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
 	if err != nil || dp == nil {
 		http.Error(w, "no plan for this chat", http.StatusNotFound)
@@ -601,15 +518,8 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 
 	switch target {
 	case dag.StatusCancelled:
-		// Delivery is NOT optimistic: CancelNode returns false when no live
-		// control is registered for the node - the signal landed nowhere, and
-		// answering 200 + "cancelled" anyway makes the API lie.
-		//
-		// A delivered cancel is still COOPERATIVE: the node's next tool call
-		// fails fast (tools.Deps.NodeCancelled) and the gate stops it at its
-		// next stage boundary, keeping its partial answer (continue-but-warn).
-		// So 200 means "the running node has been told", not "it has stopped";
-		// the stop is durably reflected by the node_cancelled SSE event.
+		// Not optimistic: CancelNode returns false when no live control is registered.
+		// A delivered cancel is cooperative - the node stops at its next stage boundary.
 		if !h.orch.CancelNode(chatID, nodeID) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is not cancellable right now (no live run - it may be queued but not yet dispatched, or already finished); nothing was cancelled",
@@ -620,7 +530,6 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusPaused:
-		// Same non-optimistic-delivery reasoning as cancel above.
 		if !h.orch.PauseNode(chatID, nodeID) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is not pausable right now (no live run); nothing was paused",
@@ -631,24 +540,16 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
 	case dag.StatusRunning:
-		// The only way here is paused → running: resume. A fresh re-run (like
-		// retry), reusing the rest of the plan's stored outputs - see
-		// dag.Executor.PauseNode's ponytail note on why this isn't a literal
-		// frozen-thread resume.
+		// paused → running: a fresh re-run reusing the plan's stored outputs.
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	case dag.StatusQueued:
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
-		// The re-run is optimistically queued; its progress streams over the
-		// chat's existing hub/event-log relay (GET .../stream), same as any run.
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	}
 }
 
-// QueueNodeMessage handles POST .../nodes/{node_id}/queue: append a message to
-// a running node's queue, delivered at its next turn boundary (never
-// mid-turn). 404s if the node isn't currently live - unlike cancel/pause,
-// there is no cooperative fallback for a message with nowhere to land.
+// Appends a message to a running node's queue, delivered at its next turn boundary. 404s if the node isn't live.
 func (h *Handler) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.QueueMessageBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
@@ -663,8 +564,7 @@ func (h *Handler) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatI
 	writeJSON(w, http.StatusOK, queuedMessageWire(m))
 }
 
-// EditQueuedMessage handles PATCH .../nodes/{node_id}/queue/{message_id}:
-// rewrite a not-yet-delivered queued message.
+// Rewrites a not-yet-delivered queued message.
 func (h *Handler) EditQueuedMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID, messageID schema.MessageID) {
 	var body schema.QueueMessageBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
@@ -678,8 +578,7 @@ func (h *Handler) EditQueuedMessage(w http.ResponseWriter, r *http.Request, chat
 	w.WriteHeader(http.StatusOK)
 }
 
-// RemoveQueuedMessage handles DELETE .../nodes/{node_id}/queue/{message_id}:
-// drop a not-yet-delivered queued message.
+// Drops a not-yet-delivered queued message.
 func (h *Handler) RemoveQueuedMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID, messageID schema.MessageID) {
 	if !h.orch.RemoveQueuedMessage(chatID, nodeID, messageID) {
 		http.Error(w, "no such pending queued message (unknown, or already delivered)", http.StatusConflict)
@@ -688,8 +587,7 @@ func (h *Handler) RemoveQueuedMessage(w http.ResponseWriter, r *http.Request, ch
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// EditNodeTask handles PATCH .../nodes/{node_id}: replace a not-yet-started
-// node's task text. 409 once the node has started (its control is live).
+// Replaces a not-yet-started node's task text. 409 once the node has started.
 func (h *Handler) EditNodeTask(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.EditNodeTaskBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Task) == "" {
@@ -703,7 +601,6 @@ func (h *Handler) EditNodeTask(w http.ResponseWriter, r *http.Request, chatID sc
 	w.WriteHeader(http.StatusOK)
 }
 
-// queuedMessageWire converts a dag.QueuedMessage to its wire shape.
 func queuedMessageWire(m dag.QueuedMessage) schema.QueuedMessage {
 	return schema.QueuedMessage{
 		Id:        m.ID,
@@ -713,11 +610,7 @@ func queuedMessageWire(m dag.QueuedMessage) schema.QueuedMessage {
 	}
 }
 
-// optimisticNodeState builds a PUT node-status response body from the node's
-// persisted row (nil when it has no row yet - implicitly dag.StatusQueued),
-// with Status overridden to the just-accepted target - the transition was
-// legal and accepted even though propagation (cancel/steer) is cooperative and
-// completes asynchronously via the SSE stream.
+// Builds a PUT node-status response body from the persisted row, with Status overridden to the accepted target.
 func optimisticNodeState(dn *store.DagNode, target dag.NodeStatus) schema.DagNodeState {
 	var ns schema.DagNodeState
 	if dn != nil {
@@ -737,11 +630,7 @@ func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
 	return out
 }
 
-// retryNodeAsync re-runs nodeID and its descendants in the background, reusing
-// the rest of the plan's stored outputs. It does not stream its own HTTP
-// response (the PUT that triggered it already returned) - progress publishes
-// through the same hub + durable event log a GET .../stream subscriber already
-// watches, exactly like a fresh run.
+// Re-runs nodeID and descendants in background, reusing the plan's stored outputs. Progress publishes through the same hub.
 func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance string) {
 	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
 	seeded := make(map[string]string, len(nodes))
@@ -776,14 +665,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	}()
 }
 
-// SubscribeChatStream connects an additional client to a chat's live (or
-// just-completed) run: it replays the events so far, then streams live events
-// until the run ends - so a turn started on one device can be watched from
-// another, or resumed by the same browser after a reload. Reconnect-safe two
-// ways: the hub's in-memory buffer on the warm path, and the durable event log
-// (store.ChatEvent) when the hub is cold (after a server restart). A client
-// resumes mid-stream by sending its last-seen seq via Last-Event-ID (the SSE id
-// emitted on every event) or the last_event_id query param.
+// Connects a client to a chat's live (or just-completed) run. Reconnect-safe via Last-Event-ID or the durable event log.
 func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	sse, ok := newSSEWriter(w)
 	if !ok {
@@ -791,16 +673,12 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 		return
 	}
 	lastSeq := lastEventID(r)
-	// hub.Active covers every driver of a run on this chat (REST-started or
-	// GitHub-dispatched), since they all publish through this one shared hub.
+	// Covers all drivers of a run on this chat (REST or GitHub-dispatched).
 	active := h.hub.Active(chatID)
 	replay, live, cancel, done := h.hub.Subscribe(chatID)
 	defer cancel()
 
-	// Cold path: the hub has no buffered events and no run is active in this
-	// process - a restart wiped the in-memory topic (the orchestrator goroutine
-	// died too). Replay the run from the durable log; there is nothing live to
-	// tail (a new run would repopulate the hub, taking the warm path below).
+	// Cold path: hub has no buffered events - replay from the durable log.
 	if len(replay) == 0 && !active {
 		evs, err := h.store.LoadChatEvents(r.Context(), chatID, lastSeq)
 		if err != nil {
@@ -819,9 +697,8 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 		return
 	}
 
-	// Warm path: the hub holds the run (live, or completed-but-still-buffered).
-	// Replay its buffer (skipping anything the client already saw), then tail live.
-	if done { // run already finished; replay holds the whole stream (live is nil)
+	// Warm path: hub holds the run. Replay buffer (skipping what the client has seen), then tail live.
+	if done {
 		for _, it := range replay {
 			if it.Seq > lastSeq {
 				if sse.sendID(it.Seq, it.SSE) != nil {
@@ -834,12 +711,7 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	streamHub(r.Context(), sse, replay, live, lastSeq)
 }
 
-// streamHub forwards one run's events to one client: the replay buffer, then the
-// live tail, until the run ends (the hub closes the channel) or the client goes
-// away (its request context is done, or a write fails). It is the ONLY place a
-// run's events touch an HTTP connection - the run itself publishes to the hub and
-// never blocks on a client, so a viewer that is slow, asleep or gone cannot stall
-// or kill it. lastSeq skips whatever the client already saw.
+// Forwards one run's events to one client: replay buffer, then live tail. The ONLY place events touch an HTTP connection.
 func streamHub(ctx context.Context, sse *sseWriter, replay []stream.Event, live <-chan stream.Event, lastSeq int64) {
 	send := func(it stream.Event) bool {
 		if it.Seq <= lastSeq {
@@ -867,9 +739,7 @@ func streamHub(ctx context.Context, sse *sseWriter, replay []stream.Event, live 
 	}
 }
 
-// lastEventID reads a reconnecting subscriber's last-seen seq from the standard
-// Last-Event-ID header (set automatically by EventSource on reconnect) or the
-// last_event_id query param. 0 (no/invalid value) replays from the start.
+// Reads a reconnecting subscriber's last-seen seq from Last-Event-ID header or last_event_id query param.
 func lastEventID(r *http.Request) int64 {
 	v := r.Header.Get("Last-Event-ID")
 	if v == "" {
@@ -882,9 +752,7 @@ func lastEventID(r *http.Request) int64 {
 	return n
 }
 
-// buildTurn converts a TurnContent (store layer) into a schema.Turn (API layer).
 func buildTurn(tc store.TurnContent) schema.Turn {
-	// Message output item - always present when there is assistant text.
 	var msgItem schema.OutputItem
 	if tc.AsstText != "" || tc.AsstThink != "" {
 		content := make([]schema.ContentPart, 0, 2)
@@ -905,7 +773,6 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		})
 	}
 
-	// DAG output item - present when a plan was executed this turn.
 	var dagItem *schema.OutputItem
 	if tc.Plan != nil {
 		var planData stream.DagPlanData
@@ -922,7 +789,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 			for _, n := range tc.Nodes {
 				nodeStates[n.NodeID] = dagNodeState(n)
 			}
-			// DAG is completed if all nodes are done/failed/cancelled, in_progress otherwise.
+			// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
 			dagStatus := schema.Completed
 			for _, ns := range nodeStates {
 				if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput {
@@ -943,9 +810,6 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		}
 	}
 
-	// Agent-activity output item - the orchestrator's own tool calls (plan, execute,
-	// get_user_choice), recovered from session events so chat history (incl. a
-	// pending clarification) survives a reload.
 	var activityItem *schema.OutputItem
 	if len(tc.ToolCalls) > 0 {
 		calls := make([]schema.ToolCallItem, len(tc.ToolCalls))
@@ -974,16 +838,11 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	if dagItem != nil {
 		output = append(output, *dagItem)
 	}
-	// Only append message item if it has content.
 	if tc.AsstText != "" || tc.AsstThink != "" {
 		output = append(output, msgItem)
 	}
 
-	// Usage: the orchestrator's own token usage for this turn (recovered from the
-	// stored session events - UsageMetadata survives ADK's Postgres round-trip,
-	// unlike ModelVersion, which the storage layer drops; that's why Model below
-	// comes from our own turn row instead). Nil when nothing was recorded (e.g. a
-	// turn that only ran a DAG, whose per-node tokens live on DagNodeState).
+	// Orchestrator's token usage (UsageMetadata survives ADK's round-trip; ModelVersion doesn't, hence the separate model field).
 	var usage *schema.Usage
 	if tc.PromptTokens > 0 || tc.CompletionTokens > 0 || tc.ReasoningTokens > 0 {
 		usage = &schema.Usage{
@@ -998,15 +857,12 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		Input:     schema.TurnInput{Role: schema.User, Content: tc.UserText},
 		Output:    output,
 		Usage:     usage,
-		// The orchestrator's own model, persisted on the turn row at run end
-		// (ADK's event storage drops ModelVersion, so it's not recoverable from
-		// session events). Nil for DAG turns.
+		// Persisted on the turn row at run end (ADK drops ModelVersion). Nil for DAG turns.
 		Model: strPtr(tc.Model),
 	}
 }
 
-// dagNodeState converts a store.DagNode (persisted) into the wire DagNodeState.
-// Shared by buildTurn (chat history) and UpdateNodeStatus (the PUT response).
+// Converts persisted store.DagNode into wire DagNodeState. Shared by buildTurn and UpdateNodeStatus.
 func dagNodeState(n store.DagNode) schema.DagNodeState {
 	ns := schema.DagNodeState{
 		Status:           schema.NodeStatus(n.Status),
@@ -1062,10 +918,7 @@ func float64Ptr(f float64) *float64 {
 	return &f
 }
 
-// toSummary builds a ChatSummary, including its derived status. Loads the
-// chat's turns itself (an acceptable per-chat query in chat list - ponytail:
-// only worth batching if list gets slow); GetChat already has its turns loaded
-// and calls chatStatus directly instead.
+// Builds a ChatSummary with derived status. Loads turns itself (ponytail: batch only if list gets slow).
 func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummary {
 	turns, _ := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, store.SessionUserFor(c), c.ID)
 	status, pendingQuestion := h.chatStatus(ctx, c.ID, turns)
@@ -1082,20 +935,8 @@ func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummar
 	}
 }
 
-// chatStatus computes a chat's derived status plus its pending question (set
-// only for needs_input):
-//
-//   - queued - admitted but still waiting on the max_active_runs slot.
-//     Checked BEFORE running: the hub's topic goes "active" at
-//     response_created, published before the slot is acquired, so hub.Active
-//     alone can't distinguish queued from executing.
-//   - running - the hub has a live run for this chat and it's not queued.
-//   - needs_input - session history ends on an unanswered question. MUST be
-//     the same scan the orchestrator's own resume path uses
-//     (orchestrator.LatestPendingQuestion over PriorEvents), so the API and
-//     resume behavior can never disagree.
-//   - failed - the last turn's DAG has a failed node and no answer followed.
-//   - idle - none of the above.
+// Computes a chat's derived status: queued (waiting on max_active_runs), running (hub has a live run),
+// needs_input (prior events end on an unanswered question), failed (last DAG node failed, no answer), or idle.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
 	if h.orch.Queued(chatID) {
 		return schema.ChatStatusQueued, nil
@@ -1116,7 +957,6 @@ func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.T
 	return schema.ChatStatusIdle, nil
 }
 
-// hasFailedNode reports whether any node in a turn's DAG failed.
 func hasFailedNode(nodes []store.DagNode) bool {
 	for _, n := range nodes {
 		if n.Status == "failed" {

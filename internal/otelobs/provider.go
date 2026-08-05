@@ -20,41 +20,24 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// Tracer is the one tracer every Quack span is started from.
+// Tracer is the one tracer every span starts from.
 const tracerName = "github.com/fagerbergj/quack"
 
-// ServiceName is the OTel resource's service.name - the vocabulary prefix
-// every span name below also carries ("quack.<thing>").
+// ServiceName is the OTel resource's service.name prefix.
 const ServiceName = "quack"
 
-// ChatIDKey is the standard span attribute name every quack span that has a
-// chat/run in scope carries it under.
+// ChatIDKey is the standard span attribute for chat/run in scope.
 const ChatIDKey = "chat_id"
 
-// Providers holds the process-wide OTel wiring: the tracer/meter providers,
-// also installed as the otel package globals. Emission-only - quack keeps no
-// local trace/metric store; Tempo/Grafana own trace and metric viewing.
-//
-// KNOWN LIMITATION: ADK v2's own internal spans do NOT flow through this
-// provider - internal/telemetry (ADK) captures its tracer at package-init
-// time, before Init below ever runs, so it stays bound to the SDK's default
-// no-op provider with no production API to rebind it. Every span in this
-// package is quack's own explicit instrumentation, not "free" ADK
-// auto-instrumentation.
+// Providers holds the process-wide OTel wiring; emission-only - Grafana owns viewing.
+// KNOWN LIMITATION: ADK's own internal spans do not flow through this provider.
 type Providers struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
 	LoggerProvider *sdklog.LoggerProvider
 }
 
-// Init builds the tracer + meter + logger providers per cfg and installs the
-// tracer/meter as the otel package globals (the logger provider has no such
-// global in this SDK version - see Logger). Disabled
-// (cfg.Otel.IsEnabled() == false) returns a no-op Providers, so every
-// otelobs.Start/Record*/EmitLog call is a cheap no-op - callers never need an
-// `if enabled` branch. otlp_endpoint unset ⇒ providers are built but nothing
-// is EXPORTED. The replay ledger (cfg.Recording) rides this SAME logger
-// provider, so it can only be active when otel itself is.
+// Init builds tracer+meter+logger providers and installs globals; disabled returns no-ops.
 func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledger.LedgerStore) (*Providers, func(context.Context) error, error) {
 	if !cfg.Otel.IsEnabled() {
 		return &Providers{}, func(context.Context) error { return nil }, nil
@@ -97,7 +80,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	otel.SetMeterProvider(mp)
 
 	if err := initMetrics(mp.Meter(tracerName)); err != nil {
-		// Metrics are best-effort observability, not a startup dependency.
+		// best-effort observability, not a startup dependency.
 		logf("metric instrument init failed; metrics disabled", "err", err)
 	}
 
@@ -120,25 +103,15 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	return providers, shutdown, nil
 }
 
-// tracer is the process-wide tracer every Start call below uses. Reading
-// otel.GetTracerProvider() lazily (rather than caching Init's tp) means a
-// no-op TracerProvider (otel.enabled: false) yields a no-op tracer too, with
-// no separate disabled-check needed at every call site.
+// tracer reads otel.GetTracerProvider() lazily so disabled config yields no-ops.
 func tracer() oteltrace.Tracer { return otel.Tracer(tracerName) }
 
-// Start opens a span named "quack.<name>" as a child of ctx's current span (or
-// a new trace root if ctx carries none), with the given attributes. Safe to
-// call unconditionally - a disabled/no-op provider yields a no-op span whose
-// End/SetAttributes/RecordError are all cheap no-ops.
+// Start opens "quack.<name>" as a child span; safe to call unconditionally.
 func Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
 	return tracer().Start(ctx, "quack."+name, oteltrace.WithAttributes(attrs...))
 }
 
-// StartLinked opens a NEW ROOT span named "quack.<name>" linked to (not a
-// child of) linkTo - for async/fire-and-forget work whose trigger may finish
-// (and its own span end) before this work does, e.g. the gate's
-// fire-and-forget memory commit. A zero/invalid linkTo yields a plain
-// unlinked root span.
+// StartLinked opens a NEW ROOT span linked to (not child of) linkTo for async work.
 func StartLinked(ctx context.Context, name string, linkTo oteltrace.SpanContext, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
 	opts := []oteltrace.SpanStartOption{oteltrace.WithAttributes(attrs...), oteltrace.WithNewRoot()}
 	if linkTo.IsValid() {
@@ -147,7 +120,7 @@ func StartLinked(ctx context.Context, name string, linkTo oteltrace.SpanContext,
 	return tracer().Start(ctx, "quack."+name, opts...)
 }
 
-// End closes span, recording err (if non-nil) as the span's status/exception.
+// End closes span, recording err as status/exception.
 func End(span oteltrace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
@@ -156,9 +129,7 @@ func End(span oteltrace.Span, err error) {
 	span.End()
 }
 
-// TraceIDOf returns the trace id of ctx's active span, "" if none (otel
-// disabled or no span in context) - for cross-referencing a durable event log
-// line (e.g. delivery_result) into Tempo/Grafana by hand.
+// TraceIDOf returns the trace id of ctx's active span for cross-referencing.
 func TraceIDOf(ctx context.Context) string {
 	sc := oteltrace.SpanContextFromContext(ctx)
 	if !sc.IsValid() {

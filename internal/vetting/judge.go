@@ -35,66 +35,26 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// judgeScope names the logger every gen_ai.evaluation.result ledger event is
-// emitted through.
+// judgeScope: logger for gen_ai.evaluation.result ledger events.
 const judgeScope = "quack.judge"
 
 const (
-	// submitVerdictTool is the name of the structured-termination tool the
-	// agentic judge calls to record its verdict and end its run.
+	// submitVerdictTool: structured-termination tool for judge verdict.
 	submitVerdictTool = "submit_verdict"
 
-	// defaultJudgeMaxIterations bounds the judge's agentic tool loop (model
-	// turns per round) when Config.JudgeMaxIterations is unset. It is high
-	// enough for a code-quality judge to open a handful of changed files
-	// (read_file/grep/list_dir each cost one model turn) AND load a review skill
-	// (list_skills + load_skill cost a turn or two more) before it calls
-	// submit_verdict; a tool-less research judge still submits on turn one, so
-	// the extra headroom is free there. The cap only exists so a judge that never
-	// calls submit_verdict can't loop forever.
+	// Cap on judge tool loops (model turns per round).
 	defaultJudgeMaxIterations = 14
 
-	// judgeBehaviour* compose the behaviour layer of the agentic judge's system
-	// prompt (promptbuilder.Judge wraps it with identity, tools, and environment
-	// layers, exactly like a specialist agent's prompt.md). The middle clause
-	// varies with whether the judge was wired with read-only workspace tools;
-	// judgeBehaviour(hasReadTools, hasSkills) picks it and appends the skills
-	// clause when the judge holds the skill toolset. Either way it terminates by
-	// calling submit_verdict - never by emitting JSON text. Per-criterion
-	// reason-before-score (G-Eval) keeps the scoring disciplined; the caller
-	// re-derives the overall score as the lowest criterion in aggregateVerdict.
+	// judgeBehaviour* compose the judge's behaviour prompt.
 	judgeBehaviourHead = "You are the LAST line of defense before this answer ships. You did NOT write it, and you must not trust its assertions, its self-report of what it did, OR its inline citations - an answer's own claim that it verified something is not verification. If garbage or a fabricated claim ships past you, that is YOUR failure, not the worker's: score as an adversarial, skeptical verifier whose job is to catch what a confident, fluent, possibly-wrong answer wants you to wave through. "
 
-	// judgeNoToolsClause is the middle clause for a tool-less judge (pure-research
-	// deployments with no workspace jail): it scores on the answer's own merits.
 	judgeNoToolsClause = "You have no tools. Judge the answer on its own merits against the rubric. "
 
-	// judgeReadToolsClause is the middle clause when the judge holds the read-only
-	// workspace tools (read_file, list_dir, glob, grep). It tells the judge to
-	// OPEN the real artifacts and ground code-quality scores in them rather than
-	// the worker's self-report, while staying bounded and strictly read-only.
 	judgeReadToolsClause = "You have read-only workspace tools: read_file, list_dir, glob, grep. They reach the SAME clone/workspace the worker used (no separate clone spins up), so any specific, checkable claim the answer makes about THIS repo's code - a file exists, a function/struct/field/symbol, a config key, a control-flow path - is no longer a matter of plausibility. These tools are STRICTLY read-only: you cannot and must not modify, create, delete, or run anything in the workspace. " +
-		// Path grounding (#502/#498): the worker is told its cwd IS the clone root
-		// and to use plain repo-relative paths; give the judge the same discipline
-		// so it navigates the same tree without wasting rounds on the wrong root.
 		"The clone root is your working root - use plain repo-relative paths (e.g. `frontend/src/pages/Chat.tsx`, `internal/foo.go`). NEVER use a leading slash or an absolute path (`/frontend`, `/workspace/...`) - those resolve ABOVE the clone and will not find the code. If a path isn't found, drop any leading slash and retry it repo-relative before concluding the claim is unverifiable. " +
-		// Ground-truth claim verification (#359, hardened after a judge
-		// scored 100% on a code-exploration answer by rationalizing "the
-		// ledger shows they read exa.go" when the ledger was empty and the
-		// worker had actually web_fetched the file from GitHub instead of
-		// reading the clone). "Sample the ledger" is not enough; the judge
-		// must actually open files before scoring grounding.
 		"Your read-tool calls are counted, and a PASS with zero reads is discarded and re-judged: nothing in such a verdict was verified. So before scoring any grounding/accuracy/correctness criterion, identify every load-bearing specific claim the answer makes about this repo and check each one yourself with grep/glob/read_file - the ledger summary and the answer's own account of what it read are not substitutes. An in-repo claim you have not verified that way is UNSUPPORTED, not grounded, however confident it reads; one that contradicts what the file actually shows is a fabrication regardless of any citation, and sinks the criterion it backs. " +
 		"The workspace ledger below is evidence, not proof of diligence - treat it adversarially. If the answer makes claims about this repo's code but the ledger shows little or no local file reading (for example the worker web_fetched pages instead of using read_file/grep on the clone - a `web_fetch` entry hitting a repo host like raw.githubusercontent.com or api.github.com when read_file entries are sparse or absent is a RED FLAG, not a substitute), do not extend the benefit of the doubt: verify the claims yourself by reading the repo, and score the grounding/accuracy criteria harshly if you cannot confirm them. Read only what you need to reach a verdict - inspect the claimed files, do not spelunk the whole tree. For a pure-research answer with no in-repo claims you won't need these tools. "
 
-	// judgeSkillsClause is appended when the judge holds the skill toolset
-	// (list_skills / load_skill / load_skill_resource - the SAME tools the worker
-	// had). Rather than statically baking review principles into this prompt, the
-	// judge can agentically pull up whatever quality/review skill is relevant per
-	// case and score against the same principles the worker was told to follow, so
-	// its judgment auto-reflects the current skill library as skills evolve.
-	// Deliberately optional and bounded: the judge uses judgment, need not load a
-	// skill every time, and still terminates with exactly one submit_verdict.
 	judgeSkillsClause = "You also have skill tools (list_skills, load_skill, load_skill_resource) - the same skills the worker could use. When it helps, load a relevant review or quality skill (for example a code-review skill like `ponytail-review`, or call list_skills to see what is available) so you can ground your quality assessment in the SAME principles the worker was told to follow, rather than principles baked into this prompt. This is OPTIONAL and bounded: use your judgment, do not load a skill on every case, load at most what you need to reach a verdict, and still finish with exactly one submit_verdict call. "
 
 	judgeBehaviourTail = "If an image is attached to this message, you can see it - use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
@@ -105,9 +65,7 @@ const (
 		"submit_verdict is the only way to finish: a verdict written as prose or JSON in your reply is never read."
 )
 
-// judgeBehaviour assembles the judge's behaviour prompt: the middle clause is
-// selected by whether the judge was wired with read-only workspace tools, and
-// the skills clause is appended when the judge holds the skill toolset.
+// judgeBehaviour: assembles the judge's behaviour prompt from tool-presence clauses.
 func judgeBehaviour(hasReadTools, hasSkills bool) string {
 	clause := judgeNoToolsClause
 	if hasReadTools {
@@ -120,47 +78,25 @@ func judgeBehaviour(hasReadTools, hasSkills bool) string {
 	return judgeBehaviourHead + clause + skills + judgeBehaviourTail
 }
 
-// criterionScore is the judge's per-criterion assessment in a G-Eval verdict.
-// The judge scores each criterion on the rubric's 0–10 integer scale; the score
-// is normalised to 0.0–1.0 at capture (see normalizeScale) so the rest of the
-// pipeline - deterministic criteria, caps-free aggregation, the threshold - all
-// work on a single 0–1 axis.
+// criterionScore: per-criterion assessment, normalised 0.0-1.0.
 type criterionScore struct {
 	Reason string  `json:"reason,omitempty"`
 	Score  float64 `json:"score"`
 }
 
-// verdict is the judge's structured score for one round. When Criteria is
-// populated, aggregateVerdict sets Score to the LOWEST criterion (weakest-link
-// gating) rather than the judge's holistic value - there is no averaging and no
-// hard caps, so a single failing criterion sinks the answer on its own.
+// verdict: structured round score. Score is lowest criterion (weakest-link).
 type verdict struct {
 	Criteria map[string]criterionScore `json:"criteria,omitempty"`
 	Score    float64                   `json:"score"`
 	Passed   bool                      `json:"passed"`
 	Feedback string                    `json:"feedback"`
-	// Findings is the judge's per-finding verification of the staged review
-	// comments listed by stagedFindingsSection (#498) - empty for a node with
-	// no staged findings to verify. aggregateVerdict folds any "contradicted"
-	// entry into findingsGroundingCriterion (findings.go).
-	Findings []findingVerdict `json:"findings,omitempty"`
+	Findings []findingVerdict          `json:"findings,omitempty"` // per-finding verification; "contradicted" folds into findingsGroundingCriterion
 }
 
-// JudgeFactory builds a fresh agentic judge bound to sink: when the judge calls
-// the submit_verdict tool, its arguments are written into sink. A new judge is
-// built per round so each round's submit_verdict binds a clean sink. The factory
-// closes over the judge model and the judge's read-only workspace tools (built
-// ONCE - they're jailed at construction and carry no per-round state); see
-// NewJudgeFactory.
-// The *readCounter tallies the judge's read-tool calls for THIS round - the
-// factory is shared across concurrent nodes, so the tally cannot live on it.
+// JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round readCounter.
 type JudgeFactory func(sink *verdict) (adkagent.Agent, *readCounter, error)
 
-// NewJudgeFactory returns a JudgeFactory building the agentic judge with
-// judgeModel, read-only workspace tools (real source, not the worker's
-// self-report), the worker's own skill toolsets, and a submit_verdict tool
-// bound to the sink. Nil/empty behaves as absent (one-shot answer-only
-// scoring). Read tools MUST stay read-only: never wire write/delete/git/run.
+// NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
 	return func(sink *verdict) (adkagent.Agent, *readCounter, error) {
@@ -186,10 +122,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 	}
 }
 
-// verdictArgs is the schema the judge fills when calling submit_verdict. Only
-// score is required; criteria, feedback, and findings are optional so a terse
-// judge call still validates (aggregateVerdict tolerates absent criteria; a
-// node with no staged findings to verify never needs findings at all).
+// verdictArgs: submit_verdict schema. Only score is required.
 type verdictArgs struct {
 	Score    float64                   `json:"score"`
 	Criteria map[string]criterionScore `json:"criteria,omitempty"`
@@ -197,9 +130,7 @@ type verdictArgs struct {
 	Findings []findingVerdict          `json:"findings,omitempty"`
 }
 
-// newSubmitVerdictTool builds the structured-termination tool. Its handler
-// records the verdict into sink and escalates so the judge's run ends
-// immediately (no further model turn), mirroring ADK's exitlooptool pattern.
+// newSubmitVerdictTool: builds structured-termination tool (mirrors ADK exitlooptool).
 func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        submitVerdictTool,
@@ -214,12 +145,7 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	})
 }
 
-// buildJudgePrompt assembles the judge's user message: constitution + rubric,
-// question, the worker's WORKSPACE ledger, any criteria already decided
-// deterministically (knownFailures), and the answer. The judge never sees web
-// retrieval, so grounding is judged by citation presence, not the judge's own
-// stale world knowledge. The ledger IS ground truth, so claims_match_activity
-// can hard-fail a claimed operation it doesn't contain.
+// buildJudgePrompt: assembles judge's user message (constitution, rubric, question, ledger, knownFailures, answer).
 func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
 	var sb strings.Builder
 	if constitution != "" {
@@ -229,10 +155,7 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 	}
 	sb.WriteString("Scoring rubric:\n")
 	sb.WriteString(rubric)
-	// Score the node against ITS OWN task: the question below is the worker's
-	// full prompt, which carries the user's whole request as background -
-	// judged against that, a read-only node fails for work that was never its
-	// to do (the continuation loop once made the same mistake; see node.go).
+	// Score against the node's own task, not the whole background request.
 	if strings.TrimSpace(nodeTask) != "" {
 		sb.WriteString("\n\nWHAT YOU ARE SCORING - this node's own task, and nothing else:\n")
 		sb.WriteString(nodeTask)
@@ -259,11 +182,10 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 	return sb.String()
 }
 
-// judgeKnownFailuresHeader tells the judge not to re-score already-failed criteria.
+// judgeKnownFailuresHeader: tells judge not to re-score already-failed criteria.
 const judgeKnownFailuresHeader = "The following criteria already FAILED a deterministic, code-owned check before you were asked to judge - they are decided, not yours to score. Do not re-score them and do not let them stand in for the rest of your assessment: judge everything else on its own merits, and make sure your feedback addresses what's left.\n"
 
-// judgeKnownFailuresSection formats det's below-threshold entries for the
-// judge prompt. "" when nothing in det is failing.
+// judgeKnownFailuresSection: formats below-threshold entries for the judge prompt.
 func judgeKnownFailuresSection(det map[string]criterionScore, threshold float64) string {
 	var names []string
 	for name, c := range det {
@@ -283,22 +205,14 @@ func judgeKnownFailuresSection(det map[string]criterionScore, threshold float64)
 	return sb.String()
 }
 
-// changedFilesBudget caps the TOTAL bytes of changed-file content injected into
-// the judge prompt, and perFileBudget the slice of any single file - enough for
-// the judge to see the actual deliverable (a game's page + logic + tests) but
-// bounded so a large diff can't blow the judge's window. The judge still holds
-// read tools for anything it wants beyond this window.
+// changedFilesBudget/perFileBudget/maxChangedFiles: cap changed-file content in judge prompt.
 const (
 	changedFilesBudget = 24000
 	perFileBudget      = 8000
 	maxChangedFiles    = 12
 )
 
-// changedFilesSection picks the judge prompt's changedFiles source: a review
-// node's act.written is always empty (read-only), so it sources the PR diff
-// off the clone, prefixed with the resolved verdict. An implement node keeps
-// its full-content section (best for code-quality) with the base..HEAD diff
-// prepended, since full content alone can't show change-SHAPE criteria.
+// changedFilesSection: review nodes use clone diff; implement nodes use full content + diff.
 func changedFilesSection(cfg Config, act workerActivity) string {
 	if cfg.IsReviewer {
 		return reviewVerdictLine(act) + stagedFindingsSection(act) + buildReviewDiffSection(cfg)
@@ -315,12 +229,7 @@ func changedFilesSection(cfg Config, act workerActivity) string {
 	}
 }
 
-// reviewVerdictLine surfaces the reviewer's STRUCTURED verdict - the staged
-// stage_review event, or the answer's VERDICT: tail, already parsed into
-// act.stagedDelivery["review"] by augmentFromReviewStage/augmentFromAnswer -
-// as a fact for the judge, so `structured_verdict` scores the resolved event
-// rather than requiring it restated in the summary prose (#520: the reviewer
-// is told NOT to restate the verdict there). "" when nothing is staged yet.
+// reviewVerdictLine: surfaces the staged review verdict as a fact for the judge. "" when nothing staged.
 func reviewVerdictLine(act workerActivity) string {
 	sd, ok := act.stagedDelivery["review"]
 	if !ok || sd.Event == "" {
@@ -329,11 +238,7 @@ func reviewVerdictLine(act workerActivity) string {
 	return "Staged review verdict: " + sd.Event + "\n\n"
 }
 
-// buildChangedFilesSection re-reads the worker's written files off disk
-// through the SAME jail its tools used, so a judge that won't tool-call
-// still scores the REAL post-edit source, not a self-report. "" when nothing
-// was written or no jail is wired. chatID scopes the read to where the
-// worker wrote - omit it and the judge silently reads an empty root.
+// buildChangedFilesSection: re-reads worker's files through same jail so judge scores real source, not self-report.
 func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, chatID string) string {
 	if len(act.written) == 0 || jail == nil {
 		return ""
@@ -369,30 +274,17 @@ func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, 
 	return sb.String()
 }
 
-// judgeCharsPerToken is a coarse token estimate for budgeting the assembled
-// judge prompt - bytes/4, the same convention internal/agent's compaction
-// estimator uses before it has a provider-measured count to calibrate against.
-const judgeCharsPerToken = 4
+const judgeCharsPerToken = 4 // bytes/4, same as compaction estimator
 
-// judgeOutputReserveTokens is left out of the budget for the judge's own
-// reply (its reasoning turn + the submit_verdict call).
-const judgeOutputReserveTokens = 2_000
+const judgeOutputReserveTokens = 2_000 // reserved for judge's reply
 
-// defaultJudgeContextWindow is the fallback budget when Config.JudgeContextWindow
-// is unset (0 - an unconfigured deployment): the window an unbudgeted judge call
-// 400'd against before this fix (#291). Prefer setting gates.judge.context_window
-// to the judge model's ACTUAL served slot; this is only a safety floor.
+// defaultJudgeContextWindow: fallback when Config.JudgeContextWindow is unset (0).
 const defaultJudgeContextWindow = 32_768
 
-// minJudgeAnswerChars is the floor buildJudgePrompt's clamp leaves of the
-// answer even when the fixed prompt sections (rubric, task, question) alone
-// blow the budget - an unusable 0-char answer would waste the judge call
-// entirely instead of scoring something.
+// minJudgeAnswerChars: floor for answer size even when fixed sections blow the budget.
 const minJudgeAnswerChars = 2_000
 
-// judgeCharBudget derives the assembled judge-prompt byte budget from the
-// judge model's context window (Config.JudgeContextWindow, falling back to
-// defaultJudgeContextWindow), reserving judgeOutputReserveTokens for the reply.
+// judgeCharBudget: derives judge-prompt byte budget from context window minus output reserve.
 func judgeCharBudget(cfg Config) int {
 	window := cfg.JudgeContextWindow
 	if window <= 0 {
@@ -405,12 +297,7 @@ func judgeCharBudget(cfg Config) int {
 	return tokens * judgeCharsPerToken
 }
 
-// fitJudgeAnswer clamps answer (boundExcerpt: head+tail) so the assembled
-// judge prompt fits judgeCharBudget(cfg) - the node's own output is the one
-// unbounded part of buildJudgePrompt (rubric/task/question/changedFiles are
-// already capped), so it's what gets trimmed. shrinkFactor < 1.0 clamps
-// harder than the budget alone requires, for a retry after a call still fails
-// (the byte/4 estimate can undercount a dense answer).
+// fitJudgeAnswer: clamps answer so judge prompt fits budget. shrinkFactor < 1.0 = harder clamp for retry.
 func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, shrinkFactor float64) string {
 	budget := judgeCharBudget(cfg)
 	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
@@ -432,14 +319,11 @@ func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, k
 	return boundExcerpt(answer, target)
 }
 
-// judgeRetryAttempts/judgeRetryBaseDelay: backoff for a transient
-// model-endpoint fault - typically a model swap in flight (#572). Separate
-// from the context-shrink retry below, which targets an oversized answer.
+// judgeRetryAttempts/judgeRetryBaseDelay: backoff for transient model-endpoint faults.
 const judgeRetryAttempts = 3
 const judgeRetryBaseDelay = 400 * time.Millisecond
 
-// isTransientJudgeErr reports an endpoint fault worth retrying, not a
-// genuine rejection (bad request, auth, context overflow) retrying repeats.
+// isTransientJudgeErr: endpoint fault worth retrying (not bad request/auth).
 func isTransientJudgeErr(err error) bool {
 	if err == nil {
 		return false
@@ -456,12 +340,7 @@ func isTransientJudgeErr(err error) bool {
 	return false
 }
 
-// runJudgeAgent budgets the judge prompt to the context window (fitJudgeAnswer),
-// retries a transient endpoint fault with backoff (#572), then falls back to
-// ONE harder-clamped retry for whatever's left (e.g. an unpredicted 400). The
-// caller (node.go) treats any remaining error as a failed-closed gate. det is
-// the deterministic criteria computed before this call; its below-threshold
-// entries reach the judge via judgeKnownFailuresSection.
+// runJudgeAgent: budgets judge prompt, retries transient faults, falls back to one harder-clamped retry.
 func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, emit func(*genai.Part) bool) (verdict, error) {
 	changedFiles := changedFilesSection(cfg, act)
 	known := judgeKnownFailuresSection(det, cfg.Threshold)
@@ -486,8 +365,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 	if err == nil || ctx.Err() != nil {
 		if unreadPass(readc, v) {
-			// Discard it and judge once more, saying why. Second offence is
-			// accepted rather than looping - one wasted round is the ceiling.
+			// Discard and re-judge once. Second offence accepted (one wasted round ceiling).
 			slog.Warn("judge passed without reading the repo; re-judging once",
 				"component", "vetting", "agent", cfg.Agent, "score", v.Score)
 			v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
@@ -511,15 +389,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	return v, err
 }
 
-// runJudgeRound runs one agentic judge round in its own isolated runner +
-// in-memory session, so the judge's tool calls never touch the worker's session.
-// emit receives display copies of the judge's thinking and tool activity (the
-// caller authors them so the worker's revision context can filter them out); it
-// returns false when the consumer has disconnected, which aborts the round.
-//
-// The verdict is captured structurally via submit_verdict (sink). If the judge
-// ends without calling it, runJudgeRound falls back to parsing any text it
-// emitted, and failing that returns an error so the gate degrades gracefully.
+// runJudgeRound: isolated agentic judge round (own runner + in-memory session). Falls back to text parsing.
 func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
 	var sink verdict
 	judgeAgent, reads, err := factory(&sink)
@@ -545,12 +415,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	defer cancel()
 
 	promptText := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
-	// Stamp the node's advisor-thread token onto the judge's OWN content,
-	// trailing - the same placement AdvisorThreadMarker uses for a worker's
-	// continuation/revise prompt (see node.go's markerLine) - so the judge's
-	// scopeFromContext (internal/tools/cwd.go) resolves its fs tools into the
-	// SAME node scope the worker used, independent of whatever the draft
-	// question's own text happens to carry (#502/#498).
+	// Stamp advisor-thread token so judge resolves fs tools into the worker's node scope.
 	if cfg.AdvisorToken != "" {
 		promptText += "\n\n" + AdvisorThreadMarker(cfg.AdvisorToken)
 	}
@@ -582,7 +447,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 			case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
 				submitted = true // handler runs as part of this call; sink is populated
 			case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
-				// suppress from display
+				// suppress
 			case p.Thought && p.Text != "":
 				if !emit(stream.ThinkingPart(p.Text)) {
 					return verdict{}, reads, context.Canceled
@@ -596,8 +461,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 					return verdict{}, reads, context.Canceled
 				}
 			case p.Text != "":
-				// The local model emits reasoning as plain text rather than Thought
-				// parts; surface it as thinking and keep it for the text fallback.
+				// Local model emits reasoning as plain text, not Thought parts.
 				accum.WriteString(p.Text)
 				if !emit(stream.ThinkingPart(p.Text)) {
 					return verdict{}, reads, context.Canceled
@@ -607,7 +471,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		if ev.TurnComplete {
 			turns++
 		}
-		// Safety cap: a judge that never calls submit_verdict can't loop forever.
+		// Safety cap: prevent infinite loop if judge never calls submit_verdict.
 		if turns > maxIters {
 			cancel()
 			break
@@ -637,36 +501,8 @@ var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 // address (a@b.com) for a citation.
 var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(?:-\d+)?))?`)
 
-// citationScore deterministically grades each cited link target - no model
-// involved. Two kinds of target:
-//
-//   - A web URL is graded against what the worker's OWN session
-//     retrieved/cloned this run (layer table below) - it can't be re-fetched
-//     at gate time, so this stays ledger-based.
-//   - A LOCAL code citation (a scheme-less Markdown link, or the
-//     code-explorer's "<repo>@path[:lines]" format) is verified against the
-//     clone(s) on disk (cloneRoots), NOT the ledger - the ledger is empty for
-//     a harness-provisioned clone, an external ACP agent, or a synthesizer
-//     re-citing an upstream path, and a ledger check there would score a
-//     REAL file 0.00. Disk verification: the path resolves under a clone
-//     root, the file exists, and any cited line range is in bounds.
-//
-// Web URL layers:
-//
-//	exact URL fetched      → 1.00
-//	at/under a cloned repo → 1.00 (the whole repo is retrieved material)
-//	exact URL searched     → 0.75
-//	same host fetched      → 0.50
-//	same host searched     → 0.25
-//	neither                → 0.00
-//
-// Non-web schemes and in-document anchors are skipped. URLs are normalized
-// (lowercased scheme+host, fragment dropped, trailing slash trimmed) first.
-// cloneRoots are the clone-dir roots to disk-verify local citations under;
-// nil/empty when the node has no clone. Score is the mean across distinct
-// cited targets. ok is false only when nothing is gradeable AND the node has
-// neither retrieval activity nor a clone root - WITH a clone root it
-// disk-verifies even off an empty ledger.
+// citationScore: deterministic grade per cited link. Web URLs against session ledger; local code citations against clone on disk.
+// Web layers: fetched=1.00, under cloned repo=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00.
 func citationScore(answer string, act workerActivity, cloneRoots []string) (score float64, details []citationDetail, ok bool) {
 	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(cloneRoots) == 0 {
 		return 0, nil, false
@@ -752,17 +588,10 @@ func citationScore(answer string, act workerActivity, cloneRoots []string) (scor
 	return sum / float64(len(details)), details, true
 }
 
-// maxCiteLineScanBytes bounds how much of a cited file citationScore reads to
-// confirm a cited line range exists - a citation check must never slurp an
-// entire file to confirm that ten cited lines are in range.
+// maxCiteLineScanBytes: bounds cited-file reads for line-range confirmation.
 const maxCiteLineScanBytes = 512 * 1024
 
-// diskCiteScore verifies a code citation against the clone(s) on disk: 1.0
-// when ANY candidate path resolves, contained, under a cloneRoot with the
-// file present (and any cited line range in bounds); else 0.0. Tries each
-// candidate both as-is and with a matched root's own base name stripped,
-// since a citation and act.clonedDirs disagree on whether the clone dir's
-// own name is part of the cited path.
+// diskCiteScore: verifies code citation against clone on disk. Tries candidate with and without root base name.
 func diskCiteScore(cloneRoots []string, candidates []string, lineRange string) float64 {
 	endLine := 0
 	if lineRange != "" {
@@ -801,10 +630,7 @@ func diskCiteScore(cloneRoots []string, candidates []string, lineRange string) f
 	return 0
 }
 
-// resolveUnderRoot joins rel under root and rejects anything that would
-// escape it (a "../" traversal, an absolute rel) - the containment check a
-// disk-verified citation needs before it ever touches os.Stat with a
-// model-supplied path.
+// resolveUnderRoot: joins rel under root, rejecting path traversal.
 func resolveUnderRoot(root, rel string) (string, bool) {
 	if root == "" || rel == "" || filepath.IsAbs(rel) {
 		return "", false
@@ -817,9 +643,7 @@ func resolveUnderRoot(root, rel string) (string, bool) {
 	return joined, true
 }
 
-// fileHasLine reports whether path has at least n lines, scanning at most
-// maxCiteLineScanBytes - enough to confirm a cited line range without reading
-// an entire large file.
+// fileHasLine: does path have at least n lines? Scans at most maxCiteLineScanBytes.
 func fileHasLine(path string, n int) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -837,9 +661,7 @@ func fileHasLine(path string, n int) bool {
 	return false
 }
 
-// normalizedCloneURLs normalizes clone URLs for prefix matching: normalizeURL
-// plus a trailing ".git" trim, so https://host/org/repo.git backs a cite of
-// https://host/org/repo/blob/main/README.md.
+// normalizedCloneURLs: normalizes clone URLs (normalizeURL + trim .git suffix).
 func normalizedCloneURLs(clones []string) []string {
 	out := make([]string, 0, len(clones))
 	for _, c := range clones {
@@ -851,9 +673,7 @@ func normalizedCloneURLs(clones []string) []string {
 	return out
 }
 
-// underClonedRepo reports whether a normalized cited URL points AT or UNDER a
-// cloned repo. Segment-aware: the "/" appended to the clone URL means a clone
-// of …/org/repo does NOT back …/org/repo-two.
+// underClonedRepo: does normalized URL point at/under a cloned repo? Segment-aware.
 func underClonedRepo(norm string, cloneNorms []string) bool {
 	n := strings.TrimSuffix(norm, ".git")
 	for _, c := range cloneNorms {
@@ -864,11 +684,7 @@ func underClonedRepo(norm string, cloneNorms []string) bool {
 	return false
 }
 
-// normalizePath trims the cosmetic variance in a workspace-relative path
-// ("./x", trailing "/"). Known ceiling: pure string normalization - no
-// symlink/".." resolution, and a repo-relative cite ("app/x.ts") does not
-// match its clone-dir-prefixed ledger entry ("repo/app/x.ts"). Good enough in
-// practice: workers cite the same path string they passed to read_file.
+// normalizePath: trims "./" prefix and trailing "/". No symlink/.. resolution.
 func normalizePath(p string) string {
 	p = strings.TrimSpace(p)
 	for strings.HasPrefix(p, "./") {
@@ -877,16 +693,13 @@ func normalizePath(p string) string {
 	return strings.TrimRight(p, "/")
 }
 
-// citationDetail is one cited link target's (URL or local path) deterministic
-// backing score.
+// citationDetail: one cited link's deterministic backing score.
 type citationDetail struct {
 	url   string
 	score float64
 }
 
-// normalizeURL lowercases the scheme+host, drops the fragment (#anchor), and
-// trims a trailing slash from the path, returning the normalized URL and its
-// host. On a parse failure it falls back to the trimmed raw string with no host.
+// normalizeURL: lowercases scheme+host, drops fragment, trims trailing slash.
 func normalizeURL(raw string) (norm, host string) {
 	raw = strings.TrimSpace(raw)
 	u, err := url.Parse(raw)
@@ -902,7 +715,7 @@ func normalizeURL(raw string) (norm, host string) {
 	return u.String(), u.Host
 }
 
-// normalizedSets returns the set of normalized URLs and the set of their hosts.
+// normalizedSets: returns normalized URL and host sets.
 func normalizedSets(urls []string) (urlSet, hostSet map[string]bool) {
 	urlSet = make(map[string]bool, len(urls))
 	hostSet = make(map[string]bool, len(urls))
@@ -918,13 +731,7 @@ func normalizedSets(urls []string) (urlSet, hostSet map[string]bool) {
 	return urlSet, hostSet
 }
 
-// lengthScore is a deterministic length gate. For now it only catches a
-// genuinely empty answer (0.0); any non-empty answer scores 1.0. A semantic
-// "is this long enough for THIS question" judgment isn't possible
-// deterministically - code can't know the depth a given question needs, and a
-// fixed char floor would wrongly penalize legitimately concise answers - so we
-// deliberately keep it to the 0-length check. The single function makes it easy
-// to extend later (e.g. truncation detection) without touching the gate wiring.
+// lengthScore: 0.0 for empty answer, 1.0 otherwise. Deliberately minimal to avoid penalizing concise answers.
 func lengthScore(answer string) float64 {
 	if strings.TrimSpace(answer) == "" {
 		return 0.0
@@ -932,9 +739,7 @@ func lengthScore(answer string) float64 {
 	return 1.0
 }
 
-// buildActivitySection returns a prompt section summarising what retrieval the
-// worker performed. An empty return means no retrieval happened (non-web agent
-// or a session where all fetches failed) - the section is omitted entirely.
+// buildActivitySection: summarises worker's retrieval for the prompt. Omitted when empty.
 func buildActivitySection(act workerActivity) string {
 	if len(act.searches) == 0 && len(act.fetched) == 0 && len(act.workspace) == 0 {
 		return ""
@@ -953,10 +758,7 @@ func buildActivitySection(act workerActivity) string {
 			sb.WriteString("\n")
 		}
 	}
-	// Workspace ledger (ledger.go): the fs/git/run_command operations the
-	// worker actually performed - in the revise prompt it reminds the worker
-	// what it has (and has NOT) already done, so a revision doesn't repeat the
-	// original's claimed-but-never-performed operations.
+	// Workspace ledger: reminds worker what it has (and has not) done.
 	if ws := buildWorkspaceSection(act); ws != "" {
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
@@ -966,26 +768,15 @@ func buildActivitySection(act workerActivity) string {
 	return sb.String()
 }
 
-// Caps on the individually-unbounded sections of the revise / finalize prompt.
-// That prompt becomes contents[0] of the worker's next request, which context
-// compaction structurally CANNOT touch (summarisation leaves contents[0]
-// verbatim) - so an unbounded revise prompt is the one input that can push a
-// request past the model window with no recovery and strand the node. A coding
-// worker has the repo on disk and its own session/tools, so a bounded excerpt
-// (head+tail, with a marker) carries the intent without a 20k-token replay.
+// Caps on the revise/finalize prompt sections (contents[0] - context compaction cannot touch).
 const (
-	maxOriginalQuestionChars = 24_000 // ~6k tokens: the task prompt (embeds upstream node outputs)
-	maxPreviousAnswerChars   = 16_000 // ~4k tokens: the worker's prior draft
-	maxActivitySectionChars  = 32_000 // ~8k tokens: retrieval list + workspace ledger
-	maxFeedbackChars         = 16_000 // ~4k tokens: judge narrative + a failing check's output tail
+	maxOriginalQuestionChars = 24_000
+	maxPreviousAnswerChars   = 16_000
+	maxActivitySectionChars  = 32_000
+	maxFeedbackChars         = 16_000
 )
 
-// boundExcerpt keeps s's head and tail around a loud truncation marker when it
-// exceeds maxChars, so no single section can blow the revise/finalize prompt
-// (contents[0]) past the model window. Head+tail preserves both the opening
-// framing and the closing detail (a task's acceptance criteria, a ledger's most
-// recent ops, a test log's final failure). Input within the cap passes through
-// untouched. Slightly favours the head (task framing) at 60/40.
+// boundExcerpt: head+tail excerpt with truncation marker. Favours head at 60/40.
 func boundExcerpt(s string, maxChars int) string {
 	if len(s) <= maxChars {
 		return s
@@ -999,13 +790,7 @@ func boundExcerpt(s string, maxChars int) string {
 	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
-// buildRevisionContent constructs the user message for the agentic, session-
-// continuing revision: the worker is re-invoked (continuing its own session and
-// tools) to address the judge's feedback, then output only the corrected answer.
-// It mirrors buildCritiqueContent but is driven by the reviewer's feedback rather
-// than a generic self-critique. Every embedded section is bounded (boundExcerpt)
-// so this prompt - the next request's uncompactable contents[0] - can't overflow
-// the model window (see the cap constants above).
+// buildRevisionContent: re-invokes worker to address judge feedback. Every section bounded (boundExcerpt).
 func buildRevisionContent(constitution string, question *genai.Content, answer, feedback string, act workerActivity, citationOnly bool) *genai.Content {
 	var sb strings.Builder
 	if citationOnly {
@@ -1042,9 +827,7 @@ func buildRevisionContent(constitution string, question *genai.Content, answer, 
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
-// buildFinalizeContent asks the worker to write its final answer when round 0
-// ended without one. It continues the worker's session (tool results already in
-// context), so it only needs the directive plus the original question.
+// buildFinalizeContent: asks worker to write final answer when round 0 ended without one.
 func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Content {
 	var sb strings.Builder
 	sb.WriteString("A response of 0 length was received. If you have finished your research, " +
@@ -1061,17 +844,10 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
-// continuationMarker opens every continuation prompt. It is the worker's signal
-// that this turn CONTINUES an unfinished task (do the work) rather than starting
-// or revising one - and the tests' handle on "the continuation actually landed".
+// continuationMarker: signals that this turn continues an unfinished task.
 const continuationMarker = "CONTINUE THE TASK - it is not finished."
 
-// buildContinuationPrompt is the tool-bearing continuation directive for a worker
-// whose work isn't done (workIncomplete): an empty turn, or a demanded commit/push
-// the ledger doesn't show. It is deliberately NOT buildFinalizeContent - that one
-// asks for a WRITE-UP, which is exactly how half-finished work got frozen in place
-// and passed off to the judge. This one says: do the remaining work, with your
-// tools, and name the known gap.
+// buildContinuationPrompt: tool-bearing continuation directive (do the remaining work, not a write-up).
 func buildContinuationPrompt(task string, act workerActivity, checks []string, readOnly, isReviewer bool) string {
 	var sb strings.Builder
 	sb.WriteString(continuationMarker + "\n\n" +
@@ -1104,11 +880,7 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 	return sb.String()
 }
 
-// normalizeScale converts a verdict's scores from the rubric's 0–10 scale (an
-// LLM scores more reliably on integers, per G-Eval practice) to the internal
-// 0–1 axis. The scale is DETECTED, not always divided: if no score exceeds
-// 1.0 the judge already answered 0–1, left untouched - the one ambiguous
-// case (a genuine 0–10 verdict all ≤1) fails the gate either way. Idempotent.
+// normalizeScale: converts 0-10 rubric scale to internal 0-1 axis. Idempotent.
 func normalizeScale(v *verdict) {
 	maxScore := v.Score
 	for _, c := range v.Criteria {
@@ -1126,25 +898,10 @@ func normalizeScale(v *verdict) {
 	}
 }
 
-// aggregateVerdict derives the overall score from the per-criterion values: it
-// takes the LOWEST criterion (weakest-link gating) and clamps to [0,1]. There is
-// no averaging and no hard caps - a single failing criterion sinks the answer on
-// its own. Scores must already be on the 0–1 axis (see normalizeScale). Used for
-// both the submit_verdict path and the parseVerdict text fallback, and called
-// again by the gate after it folds in the deterministic criteria; it is
-// idempotent on the lowest value.
+// aggregateVerdict: weakest-link gating - lowest criterion is the overall score. Clamped [0,1].
 func aggregateVerdict(v verdict) verdict {
-	// #498: fold any "contradicted" per-finding result into
-	// findingsGroundingCriterion BEFORE taking the weakest link, so a
-	// fabricated review finding sinks the verdict via the SAME mechanism
-	// below rather than a parallel pass/fail path.
 	applyFindingsVerdict(&v)
-	// Per-criterion gating (DeepEval-style multi-metric composition): each
-	// criterion is an independent requirement, so the overall score is the WEAKEST
-	// criterion - the binding constraint. The gate passes only when every criterion
-	// clears the threshold, so one fatal flaw (leaked preamble, no citations) can't
-	// be averaged away by strong scores elsewhere. No hard caps: a low criterion
-	// fails on its own and drives a targeted revision rather than code overriding.
+	// Weakest-link gating: lowest criterion is the score.
 	if len(v.Criteria) > 0 {
 		lowest := 1.0
 		for _, c := range v.Criteria {
@@ -1163,13 +920,7 @@ func aggregateVerdict(v verdict) verdict {
 	return v
 }
 
-// emitEvaluationResults records one standard gen_ai.evaluation.result log
-// event per rubric criterion in v - deterministic criteria folded in by
-// foldDeterministic included, since those are as much a verdict as the
-// judge's own. responseID correlates every criterion from the SAME round
-// (gen_ai.response.id has no natural value here - the judge round has no
-// single upstream API response id - so runID, e.g. "judge-r1", stands in;
-// it already keys this round's chat event via quack.round).
+// emitEvaluationResults: records gen_ai.evaluation.result event per criterion. runID stands in for responseID.
 func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 	names := make([]string, 0, len(v.Criteria))
 	for name := range v.Criteria {
@@ -1187,11 +938,7 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 	}
 }
 
-// parseVerdict reads the judge's JSON (tolerating a ```json fence) - the
-// fallback for when the judge ends without calling submit_verdict but leaves
-// parseable text. Repairs two known failure modes: truncated JSON (appends
-// closing braces) and top-level fields misplaced as keys inside criteria.
-// Scores normalize 0–10→0–1; overall score is the LOWEST criterion.
+// parseVerdict: fallback JSON parser (tolerates ```json fence, truncated JSON, misplaced fields).
 func parseVerdict(raw string) (verdict, error) {
 	s := strings.TrimSpace(raw)
 	// Strip any prefix before the first '{' (e.g. ```json fences).
@@ -1255,7 +1002,7 @@ func parseVerdict(raw string) (verdict, error) {
 	return aggregateVerdict(v), nil
 }
 
-// questionText extracts the user's question text from the invocation's content.
+// questionText: extracts question text from invocation content.
 func questionText(c *genai.Content) string {
 	if c == nil {
 		return ""
@@ -1269,13 +1016,7 @@ func questionText(c *genai.Content) string {
 	return b.String()
 }
 
-// runWriterFresh recovers an empty worker draft: it runs a TOOL-LESS writer (the
-// worker's model, no tools) in a FRESH in-memory runner with the self-contained
-// finalize prompt, which already carries the worker's findings. The fresh runner is
-// the whole point - re-invoking the worker in its own session drops the finalize
-// prompt (the llmagent rebuilds its request from session events, which end in the
-// empty reply), so the write-up never happens. A tool-less writer composes the
-// answer directly from the findings instead of re-researching.
+// runWriterFresh: recovers empty worker draft via tool-less writer in a fresh runner (re-invoking worker loses finalize prompt).
 func runWriterFresh(ctx context.Context, m model.LLM, content *genai.Content) (string, error) {
 	if m == nil {
 		return "", fmt.Errorf("vetting: no writer model for empty-answer recovery")

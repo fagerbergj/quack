@@ -1,10 +1,4 @@
-// The workspace activity ledger: which fs/git/run_command operations the
-// worker ACTUALLY performed, reconstructed from session events and shown to
-// the judge, so an answer's claims ("committed as abc123", "the README says
-// …") are checkable against ground truth instead of taken on confidence.
-// The coder's analog of RequireRetrieval - motivated by a live e2e where a
-// fabricated commit + fabricated README quotes sailed past a judge that
-// could only see web activity.
+// Workspace activity ledger: fs/git/run_command ops from session events for claim checking.
 package vetting
 
 import (
@@ -12,37 +6,20 @@ import (
 	"strings"
 )
 
-// wsOpSpec names which call args and result fields summarize one workspace
-// tool in the ledger. Args identify WHAT the operation targeted; results
-// carry the outcome fields a claim would cite (sha for a commit, branch for
-// a branch, exit_code for a command). Tools not in this map (web_search/
-// memory/HITL tools) are handled by the existing retrieval bookkeeping and
-// stay out of the workspace ledger. web_fetch IS in this map (args only, no
-// results) so it appears here too - it targets a URL, not the workspace, but
-// its PRESENCE in the ledger is itself the signal (see wsOpSpecs).
+// wsOpSpec: which call args/results summarize a workspace tool. web_fetch (args only) signals web-sourced claims.
 type wsOpSpec struct {
 	args    []string
 	results []string
 }
 
-// wsOpSpecs covers every workspace tool an answer could claim an outcome
-// from. read_file additionally retains a content sample (handled specially
-// in recordWsOp) for quote spot-checking.
+// wsOpSpecs: workspace tools whose outcomes an answer could claim.
 var wsOpSpecs = map[string]wsOpSpec{
 	"read_file":   {args: []string{"path"}},
 	"write_file":  {args: []string{"path"}, results: []string{"bytes", "created"}},
 	"edit_file":   {args: []string{"path"}, results: []string{"replacements"}},
 	"delete_path": {args: []string{"path"}, results: []string{"deleted"}},
 	"run_command": {args: []string{"dir", "command"}, results: []string{"exit_code"}},
-
-	// web_fetch: a worker that fetched repo files off the web instead of
-	// reading the local clone (e.g. raw.githubusercontent.com) leaves NO
-	// grounding trace otherwise - the judge's ledger would look empty even
-	// though the worker "read" something. Only the URL is kept;
-	// results are deliberately omitted so a fetched page body never bloats
-	// the ledger - the URL alone is what flags a claim as web-sourced rather
-	// than clone-verified.
-	"web_fetch": {args: []string{"url"}},
+	"web_fetch":   {args: []string{"url"}}, // args only; presence signals web-sourced claims
 
 	"git_clone":           {args: []string{"url", "dir"}, results: []string{"dir", "head", "default_branch"}},
 	"git_checkout":        {args: []string{"dir", "ref"}, results: []string{"branch", "head"}},
@@ -56,32 +33,18 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"git_rebase":          {args: []string{"dir", "onto"}, results: []string{"sha", "rebased"}},
 	"git_worktree_create": {args: []string{"dir", "branch"}, results: []string{"path"}},
 	"git_worktree_remove": {args: []string{"dir", "path"}, results: []string{"removed"}},
-
-	// The delivery step (GitHub App extension, internal/github): the PR URL is
-	// exactly the kind of outcome an answer claims, so it belongs in the ledger
-	// the judge checks claims against - and its success feeds the deterministic
-	// delivery check (delivery.go).
 	"github_pull_request": {args: []string{"owner", "repo", "head", "base", "title"}, results: []string{"url"}},
-
-	// The reviewer's delivery (same extension): drafting an inline comment and
-	// SUBMITTING the review. "I reviewed the PR" is a claim like any other - the
-	// ledger is what contradicts it - and the submit feeds the deterministic
-	// review check (delivery.go).
 	"github_add_review_comment": {args: []string{"owner", "repo", "pull_number", "path", "line"}, results: []string{"draft_count"}},
 	"github_submit_review":      {args: []string{"owner", "repo", "pull_number", "event"}, results: []string{"url", "comments"}},
 }
 
-// isWorkspaceTool reports whether name belongs in the workspace ledger.
+// isWorkspaceTool: is name in the ledger?
 func isWorkspaceTool(name string) bool {
 	_, ok := wsOpSpecs[name]
 	return ok
 }
 
-// recordWsOp builds the ledger entry for one completed call/response pair.
-// An "error" key in the response marks the operation FAILED - recorded, not
-// dropped, because "I ran the tests" claimed over a failed run is exactly the
-// kind of claim the judge must be able to contradict. read_file's returned
-// content is sampled (trimToSample) for quote spot-checks.
+// recordWsOp: builds ledger entry for one call/response pair. Failed ops recorded (judge must contradict claims).
 func recordWsOp(tool string, args, resp map[string]any) wsOp {
 	spec := wsOpSpecs[tool]
 	var b strings.Builder
@@ -106,9 +69,7 @@ func recordWsOp(tool string, args, resp map[string]any) wsOp {
 	return op
 }
 
-// kvList renders the named keys present in m as "k=v, k=v" (declaration
-// order; absent keys skipped). String values are quoted so a commit message
-// or command with spaces reads unambiguously.
+// kvList: renders named keys as "k=v, k=v" (declaration order, string values quoted).
 func kvList(m map[string]any, keys []string) string {
 	var parts []string
 	for _, k := range keys {
@@ -128,14 +89,10 @@ func kvList(m map[string]any, keys []string) string {
 	return strings.Join(parts, ", ")
 }
 
-// maxLedgerOps caps how many operations buildWorkspaceSection renders,
-// keeping the TAIL - a long coding session front-loads reads/greps, while the
-// operations claims hinge on (the commit, the final test run) come last.
+// maxLedgerOps: caps operations in buildWorkspaceSection, keeping the tail (commit, final test run).
 const maxLedgerOps = 80
 
-// buildWorkspaceSection renders the workspace ledger for a prompt (judge and
-// revise contexts). Empty when the worker performed no workspace operations -
-// web-research nodes see no change at all.
+// buildWorkspaceSection: renders workspace ledger for prompt (judge and revise). Empty when no ops.
 func buildWorkspaceSection(act workerActivity) string {
 	if len(act.workspace) == 0 {
 		return ""

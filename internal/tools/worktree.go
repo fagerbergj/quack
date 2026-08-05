@@ -9,19 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// SetupWorktree provisions ONE read-only qualifying node's (code-reviewer,
-// code-explorer) own git worktree, linked off the plan's shared setup clone
-// at parentDir and checked out on branch (workspace.WorktreeBranch(nodeID) -
-// unique per node, so git's same-branch-twice refusal never fires across
-// siblings).
-//
-// Idempotent: a resumed run re-entering the node finds its worktree already
-// registered and returns it unchanged, never re-linking or resetting a
-// worker's own in-progress files. A stale/partial leftover is cleared and
-// reprovisioned.
-//
-// A gate-failed node's worktree is KEPT, not reaped, so its contents stay
-// inspectable; sweeping abandoned worktrees is a workspace GC task's job.
+// SetupWorktree provisions one node's git worktree, linked off the plan's shared setup clone.
+// Idempotent: a resumed run finds its worktree already registered. A gate-failed node's worktree is kept.
 func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps) (string, error) {
 	b := gitBinding{userID: userID, jail: jail, caps: caps}
 	b.chatID = chatID
@@ -38,10 +27,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", fmt.Errorf("setup: create worktree parent dir: %w", err)
 	}
-	// Best-effort: drops metadata orphaned by a target directory removed out
-	// from under git (a crashed run) rather than via `git worktree remove` -
-	// left in place, that stale entry makes `add` at the same path fail with a
-	// confusing "already registered" instead of the clean create below.
+	// Best-effort: prune orphaned worktree metadata from a crashed run.
 	_, _, _ = runGit(ctx, parentDir, []string{"worktree", "prune"}, caps, nil)
 	if _, _, err := runGit(ctx, parentDir, []string{"worktree", "add", "--quiet", "-B", branch, target, "HEAD"}, caps, nil); err != nil {
 		return "", fmt.Errorf("setup: worktree add %q: %w", branch, err)
@@ -49,14 +35,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	return target, nil
 }
 
-// PruneWorktree detaches dir from its parent clone's worktree bookkeeping
-// before dir is removed out from under git - a bare os.RemoveAll on a linked
-// worktree leaves the parent's .git/worktrees/<name> pointing at nothing,
-// which makes the parent's later `git worktree add` calls complain (see
-// WorktreeCommonGitDir's doc). No-op if dir isn't a linked worktree at all,
-// or its parent clone no longer exists - plain removal covers both. This is
-// workspace GC's (internal/workspace.RunGC) WorktreePruner implementation:
-// git operations don't belong in that dependency-free package.
+// PruneWorktree detaches dir from the parent clone's bookkeeping before removal.
 func PruneWorktree(ctx context.Context, dir string, caps workspace.Caps) error {
 	common := workspace.WorktreeCommonGitDir(dir)
 	if common == "" {
@@ -70,10 +49,7 @@ func PruneWorktree(ctx context.Context, dir string, caps workspace.Caps) error {
 	return err
 }
 
-// worktreeValid reports whether target is ALREADY a linked worktree of
-// parentDir - SetupWorktree's idempotency check, so a resumed run's re-entry
-// into an already-provisioned node is a cheap no-op rather than a disruptive
-// re-link.
+// worktreeValid: idempotency check for SetupWorktree.
 func worktreeValid(target, parentDir string) bool {
 	common := workspace.WorktreeCommonGitDir(target)
 	if common == "" {

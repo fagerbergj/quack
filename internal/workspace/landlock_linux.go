@@ -12,15 +12,10 @@ import (
 	"github.com/landlock-lsm/go-landlock/landlock"
 )
 
-// landlockABI is the minimum Landlock ABI SandboxExecMain requires - V3 adds
-// file truncation, which `go build`/`npm`/editors need for ordinary
-// overwrite-on-write. No BestEffort(): a kernel below this fails the
-// RestrictPaths call outright, which is the fail-closed contract this mode
-// exists for (see ResolveSandbox).
+// landlockABI is the minimum ABI SandboxExecMain requires. V3 adds file truncation.
 var landlockABI = landlock.V3
 
-// landlockABIVersion is landlockABI's number, for the env marker only - the
-// landlock.Config carries no accessor for it.
+// landlockABIVersion is landlockABI's number for the env marker.
 const landlockABIVersion = 3
 
 // probeLandlock proves Landlock ABI >= V3 actually works HERE by applying a

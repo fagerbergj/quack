@@ -5,10 +5,7 @@ import (
 	"strings"
 )
 
-// redactedKeys names JSON-object keys whose value must never reach the
-// ledger, however deep in the payload they appear - auth headers, API keys,
-// endpoint credentials. Not configurable: Redact runs unconditionally before
-// every write.
+// redactedKeys names JSON-object keys that must never reach the ledger.
 var redactedKeys = map[string]bool{
 	"authorization": true, "www-authenticate": true, "proxy-authorization": true,
 	"api_key": true, "apikey": true, "api-key": true, "x-api-key": true,
@@ -21,17 +18,8 @@ var redactedKeys = map[string]bool{
 
 const redactedValue = "[REDACTED]"
 
-// Redact walks a decoded JSON value (the map[string]any/[]any/scalar shape
-// json.Unmarshal produces) and replaces every value keyed by a credential
-// name with a fixed placeholder, recursively. Keys match case-insensitively;
-// scalars and unrecognized keys pass through unchanged.
-//
-// A string is also probed as JSON: emission seams (inference/tools/acp) hand
-// the ledger complex payloads pre-marshaled into ONE string attribute, not a
-// structured log.Value tree, so a credential inside one of those blobs would
-// otherwise sail past the map/slice cases below untouched. A string that
-// fails to parse passes through unchanged - never re-marshaled, so it can't
-// pick up incidental round-trip formatting differences.
+// Redact walks a decoded JSON value and replaces credential-keyed values with a placeholder.
+// Strings are probed as JSON too so pre-marshaled payloads don't bypass redaction.
 func Redact(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
@@ -57,10 +45,7 @@ func Redact(v any) any {
 	}
 }
 
-// redactJSONString probes s as JSON; a parse that yields a map or slice is
-// redacted and re-marshaled back to a string (the caller's attribute stays a
-// string either way - only its content changes). Anything else (parse
-// failure, or valid JSON that's just a bare scalar) returns s unchanged.
+// redactJSONString probes s as JSON; a parseable map/slice is redacted and re-marshaled.
 func redactJSONString(s string) string {
 	var decoded any
 	if err := json.Unmarshal([]byte(s), &decoded); err != nil {

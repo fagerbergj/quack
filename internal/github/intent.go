@@ -10,19 +10,15 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// IntentClassifier is a single model round-trip: prompt in, raw text out.
-// Defined here (not a concrete model type) so tests can fake it without a
-// real model, and this package stays free of any inference/ADK dependency.
+// IntentClassifier: single model round-trip (interface so tests can fake it).
 type IntentClassifier interface {
 	Classify(ctx context.Context, prompt string) (string, error)
 }
 
-// intentClassifierTimeout bounds the classification call - it runs inline in
-// webhook dispatch, so a slow/hung model must not stall the run.
+// Bounds classification (runs inline in webhook dispatch).
 const intentClassifierTimeout = 5 * time.Second
 
-// intentClassifierPrompt calls out the exact failure modes that tripped up
-// the regex this classifier replaces: quoted code, declines, corrections.
+// intentClassifierPrompt: replaces regex classifier; handles quoted code, declines, corrections.
 const intentClassifierPrompt = `You classify a single GitHub comment as WORK or CONVERSATIONAL.
 
 WORK means the user is asking for review or implementation work to be done now - e.g. "review this PR", "focus on the auth path", "please fix the lint errors", "implement this and push a branch".
@@ -37,9 +33,7 @@ Reply with exactly one word: WORK or CONVERSATIONAL. No punctuation, no explanat
 Message:
 %s`
 
-// isWorkRequest classifies a PR mention as work (review framing) or
-// conversational (answer-from-context framing). Fails safe: nil classifier,
-// error, timeout, or unparseable answer all resolve to conversational.
+// isWorkRequest: PR mention → work or conversational. Fails safe to conversational.
 func (e *Extension) isWorkRequest(ctx context.Context, task string) bool {
 	if e.intentClassifier == nil {
 		return false
@@ -51,10 +45,7 @@ func (e *Extension) isWorkRequest(ctx context.Context, task string) bool {
 		slog.Warn("github: intent classifier failed; treating mention as conversational", "component", "github", "err", err)
 		return false
 	}
-	// Substring, not equality: a small instruct model wraps its one word often
-	// enough ("**WORK**", "WORK.") that an exact match would silently answer
-	// conversational for every genuine review request. CONVERSATIONAL is tested
-	// first so the longer word can't be shadowed by the "WORK" inside it.
+	// Substring match (small models often wrap output in ** or punctuation).
 	switch up := strings.ToUpper(strings.TrimSpace(answer)); {
 	case strings.Contains(up, "CONVERSATIONAL"):
 		return false
@@ -66,10 +57,7 @@ func (e *Extension) isWorkRequest(ctx context.Context, task string) bool {
 	}
 }
 
-// deliverablePrompt asks a bounded question: given the message, is the asker
-// after a review or a code change? Only reachable when the grant permits
-// BOTH (#689) - the prompt never offers a choice the grant would refuse, so
-// an answer this classifier accepts is safe by construction.
+// deliverablePrompt: review vs commit? Only reachable when grant permits both (#689).
 const deliverablePrompt = `You classify a single GitHub PR comment as REVIEW or COMMIT.
 
 REVIEW means the asker wants the code assessed - e.g. "review this", "take another look", "double check the auth path".

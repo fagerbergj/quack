@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,30 +21,19 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// defaultReadLimit is read_file's default line window when `limit` is unset.
-// 2000 (not 500) so ordinary source files read WHOLE in one call: a truncated
-// read of a file the model needs entire (e.g. to append to it) sent weaker
-// models into re-reading the same head instead of paging - a harness-induced
-// loop (the repeat guard now backstops it, but the fix is to not truncate a
-// normal file at all).
 const defaultReadLimit = 2000
 
-// binarySniffBytes is how much of a file's head is checked for a NUL byte to
-// decide whether it's binary (read_file, grep).
+// binarySniffBytes: NUL-byte detection window for binary check.
 const binarySniffBytes = 8 * 1024
 
-// grep's size bounds. caps.MaxResults bounds how MANY matches come back, not how
-// BIG they are - one "line" of a minified bundle is megabytes (a live grep once
-// returned 48 MB). Bound the bytes, not just the count.
+// Bound bytes (not just count) - minified lines can be MBs.
 const (
-	grepMatchMaxChars = 400             // per match, middle-elided (a minified line has no value anyway)
-	grepTotalMaxBytes = 256 * 1024      // per call, across all matches
-	grepFileMaxBytes  = 4 * 1024 * 1024 // files bigger than this are not source; never read them
+	grepMatchMaxChars = 400
+	grepTotalMaxBytes = 256 * 1024
+	grepFileMaxBytes  = 4 * 1024 * 1024
 )
 
-// truncateMiddle keeps the head and tail of s around a loud elision marker when s
-// exceeds maxChars. Middle-out because a match's value is at its edges: the code
-// before and after the hit.
+// truncateMiddle: middle-out truncation, value is at edges.
 func truncateMiddle(s string, maxChars int) string {
 	const marker = "…[elided]…"
 	if len(s) <= maxChars || maxChars <= len(marker) {
@@ -54,50 +44,29 @@ func truncateMiddle(s string, maxChars int) string {
 	return strings.ToValidUTF8(s[:head], "") + marker + strings.ToValidUTF8(s[len(s)-(keep-head):], "")
 }
 
-// fsBinding is the (userID, jail, caps) triple every filesystem tool closes over
-// at construction - no identity parsing inside tool handlers. Tool logic lives in
-// methods on fsBinding so it's unit-testable without ADK's agent.Context; the
-// functiontool closure is a one-line adapter.
+// fsBinding: (userID, jail, caps) triple closed over at construction for every fs tool.
 type fsBinding struct {
 	userID string
 	jail   *workspace.Jail
 	caps   workspace.Caps
-	// cwd is the session working directory (NODE-relative, "" = the node's own
-	// root), set per call by withCwd so the shared startup binding stays immutable.
-	cwd string
-	// chatID is the per-chat scope this call's paths resolve under
-	// (<root>/<user>/<chatID>/…). "" resolves the per-user root.
-	chatID string
-	// nodeDir is the calling node's directory within the chat scope - the node's
-	// INVISIBLE ROOT: every model-supplied path is relative to it, applied only at
-	// resolve time, so concurrent nodes work in separate trees without the model
-	// ever seeing the dir. "" outside a gated node.
+	cwd     string
+	chatID  string
 	nodeDir string
 }
 
-// withCwd returns a copy of b bound to this call's context: the per-chat scope
-// and the calling node's dir (both from the advisor-thread marker in ctx) plus
-// the session working directory (ctx state; "" - the node's own root - until the
-// worker cd's). A value receiver makes the copy; the shared startup binding is
-// never mutated.
+// withCwd: returns copy bound to this call's context (chat scope, node dir, cwd).
 func (b fsBinding) withCwd(ctx agent.Context) fsBinding {
 	b.chatID, b.nodeDir = scopeFromContext(ctx)
 	b.cwd = cwdFromState(ctx)
 	return b
 }
 
-// resolve is the cwd-, node- and chat-aware Jail.Resolve every fs tool uses in
-// place of a raw b.jail.Resolve: a relative p resolves against b.cwd under the
-// node's own root, a "/"-prefixed p against the chat root (see jailPath),
-// everything scoped under b.chatID, and containment is still enforced by
-// Jail.Resolve - no cwd + path can escape the chat's (nor the user's) jail.
+// resolve: cwd-, node- and chat-aware Jail.Resolve for fs tools.
 func (b fsBinding) resolve(p string) (string, error) {
 	return b.jail.Resolve(b.userID, b.chatID, jailPath(b.nodeDir, b.cwd, p))
 }
 
-// newFSBinding resolves Deps into an fsBinding, defaulting caps when unset.
-// Deps.Workspace nil is an error (a filesystem tool listed for an agent
-// without workspace: configured is a config mistake, not a silent no-op).
+// newFSBinding: resolves Deps into fsBinding. Deps.Workspace nil is an error.
 func newFSBinding(d Deps) (fsBinding, error) {
 	if d.Workspace == nil {
 		return fsBinding{}, fmt.Errorf("tools: filesystem tools require workspace to be configured (see workspace.root in quack.yaml)")
@@ -113,14 +82,12 @@ func newFSBinding(d Deps) (fsBinding, error) {
 	return fsBinding{userID: userID, jail: d.Workspace, caps: caps}, nil
 }
 
-// isBinary reports whether b (a file's head) looks like binary content: a NUL
-// byte never appears in real text.
+// isBinary: reports whether head bytes contain a NUL.
 func isBinary(b []byte) bool {
 	return bytes.IndexByte(b, 0) >= 0
 }
 
-// readCapped reads up to max+1 bytes from r, reporting whether the read was
-// capped (more data existed) so callers can set `truncated` - never an error.
+// readCapped: reads up to max+1 bytes, reports if capped.
 func readCapped(r io.Reader, max int64) (data []byte, capped bool, err error) {
 	data, err = io.ReadAll(io.LimitReader(r, max+1))
 	if err != nil {
@@ -132,9 +99,7 @@ func readCapped(r io.Reader, max int64) (data []byte, capped bool, err error) {
 	return data, false, nil
 }
 
-// ---------------------------------------------------------------------------
 // read_file
-// ---------------------------------------------------------------------------
 
 type readFileArgs struct {
 	Path   string `json:"path"`
@@ -146,9 +111,6 @@ type readFileResult struct {
 	Content    string `json:"content"`
 	Truncated  bool   `json:"truncated"`
 	TotalLines int    `json:"total_lines"`
-	// NextOffset is the `offset` to pass to read the NEXT window when Truncated;
-	// omitted otherwise. An explicit next step in the RESULT (not just the tool
-	// description) is what stops a model from re-reading offset 0 in a loop.
 	NextOffset int `json:"next_offset,omitempty"`
 }
 
@@ -171,14 +133,7 @@ func newReadFile(d Deps) (tool.Tool, error) {
 	)
 }
 
-// readFile is read_file's logic. Binary detection: a NUL byte in the first
-// binarySniffBytes is a hard error. Caps: the file is read up to
-// caps.MaxReadBytes; if more exists, `truncated` is set - never an error. On
-// top of that, `offset`/`limit` window the lines actually read; a window
-// short of the read data's line count also sets `truncated`. total_lines
-// counts lines within the (possibly byte-capped) data actually read, so on a
-// byte-capped file it is a lower bound on the file's true line count -
-// `truncated: true` signals that.
+// readFile: binary detection on head, byte-capped read, offset/limit windowing.
 func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 	real, err := b.resolve(a.Path)
 	if err != nil {
@@ -243,17 +198,7 @@ func (b fsBinding) readFile(a readFileArgs) (readFileResult, error) {
 	}, nil
 }
 
-// ---------------------------------------------------------------------------
-// write_file
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// edit_file
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// list_dir
-// ---------------------------------------------------------------------------
+// write_file / edit_file / list_dir
 
 type listDirArgs struct {
 	Path  string `json:"path,omitempty"`
@@ -269,7 +214,6 @@ type dirEntry struct {
 type listDirResult struct {
 	Entries   []dirEntry `json:"entries"`
 	Truncated bool       `json:"truncated"`
-	// Cwd is where you are standing: every path above is relative to it.
 	Cwd string `json:"cwd"`
 }
 
@@ -290,11 +234,7 @@ func newListDir(d Deps) (tool.Tool, error) {
 	)
 }
 
-// listDir is list_dir's logic: a depth-bounded walk under `path`, returning
-// cwd-relative entry paths (so a result is directly reusable as another call's
-// `path`), capped at caps.MaxListEntries. Entries re-root against the working
-// directory (relRoot = the cwd dir, = jail root when no cd), keeping the
-// round-trip (list_dir → read_file a listed path) consistent under a cwd.
+// listDir: depth-bounded walk under path, returning cwd-relative entries.
 func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
 	base, err := b.resolve(a.Path)
 	if err != nil {
@@ -363,9 +303,7 @@ func (b fsBinding) listDir(a listDirArgs) (listDirResult, error) {
 	return listDirResult{Entries: entries, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
 }
 
-// ---------------------------------------------------------------------------
 // glob
-// ---------------------------------------------------------------------------
 
 type globArgs struct {
 	Pattern string `json:"pattern"`
@@ -375,7 +313,6 @@ type globArgs struct {
 type globResult struct {
 	Paths     []string `json:"paths"`
 	Truncated bool     `json:"truncated"`
-	// Cwd is where you are standing: every path above is relative to it.
 	Cwd string `json:"cwd"`
 }
 
@@ -396,8 +333,7 @@ func newGlob(d Deps) (tool.Tool, error) {
 	)
 }
 
-// glob is glob's logic: doublestar matching rooted at `path`, results
-// re-rooted to be workspace-relative and capped at caps.MaxResults.
+// glob: doublestar matching rooted at path, workspace-relative results.
 func (b fsBinding) glob(a globArgs) (globResult, error) {
 	if strings.TrimSpace(a.Pattern) == "" {
 		return globResult{}, fmt.Errorf("glob: pattern is empty")
@@ -413,10 +349,7 @@ func (b fsBinding) glob(a globArgs) (globResult, error) {
 	if err != nil {
 		return globResult{}, fmt.Errorf("glob: %w", err)
 	}
-	// Drop hits inside vendored/generated trees, unless the caller pointed `path`
-	// straight at one (which only ever means it). Without this, a glob for **/*.js
-	// in a repo with a node_modules returns thousands of paths the agent then wastes
-	// its turns reading.
+	// Drop hits inside vendored/generated trees unless path targets one.
 	if !pathHasGeneratedDir(a.Path) {
 		kept := matches[:0]
 		for _, m := range matches {
@@ -432,8 +365,7 @@ func (b fsBinding) glob(a globArgs) (globResult, error) {
 		matches = matches[:b.caps.MaxResults]
 		truncated = true
 	}
-	// Re-root results under `path` so they're directly reusable as another
-	// tool's workspace-relative `path` argument.
+	// Re-root results under path for direct reuse.
 	paths := make([]string, len(matches))
 	for i, m := range matches {
 		paths[i] = filepath.ToSlash(filepath.Join(a.Path, m))
@@ -441,8 +373,7 @@ func (b fsBinding) glob(a globArgs) (globResult, error) {
 	return globResult{Paths: paths, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
 }
 
-// pathHasGeneratedDir reports whether any component of p is a vendored/generated
-// directory (workspace.SkipDir).
+// pathHasGeneratedDir: checks if any path component is in workspace.SkipDir.
 func pathHasGeneratedDir(p string) bool {
 	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
 		if seg != "" && seg != "." && workspace.SkipDir(seg) {
@@ -452,9 +383,7 @@ func pathHasGeneratedDir(p string) bool {
 	return false
 }
 
-// ---------------------------------------------------------------------------
 // grep
-// ---------------------------------------------------------------------------
 
 type grepArgs struct {
 	Pattern string `json:"pattern"`
@@ -472,7 +401,6 @@ type grepMatch struct {
 type grepResult struct {
 	Matches   []grepMatch `json:"matches"`
 	Truncated bool        `json:"truncated"`
-	// Cwd is where you are standing: every path above is relative to it.
 	Cwd string `json:"cwd"`
 }
 
@@ -494,8 +422,7 @@ func newGrep(d Deps) (tool.Tool, error) {
 	)
 }
 
-// grep is grep's logic: a regexp scan of every non-binary file under `path`
-// (optionally basename-filtered by `glob`), capped at caps.MaxResults.
+// grep: regexp scan of non-binary files under path, capped at MaxResults.
 func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 	re, err := regexp.Compile(a.Pattern)
 	if err != nil {
@@ -505,7 +432,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 	if err != nil {
 		return grepResult{}, err
 	}
-	relRoot, err := b.resolve("") // cwd dir (= jail root without a cd): match paths re-root against it
+	relRoot, err := b.resolve("")
 	if err != nil {
 		return grepResult{}, err
 	}
@@ -528,8 +455,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 			return nil
 		}
 		if d.IsDir() {
-			// Never descend into vendored/generated trees - but honour an explicit
-			// request for one (`path: "node_modules/foo"`), which only ever means it.
+		// Never descend into vendored/generated trees unless path targets one.
 			if p != base && workspace.SkipDir(d.Name()) {
 				return filepath.SkipDir
 			}
@@ -553,8 +479,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 				truncated = true
 				break
 			}
-			// A single "line" can be megabytes (a minified bundle is one line), so the
-			// match count alone is not a bound on size. Cap the text too.
+			// Cap per-match text too; a "line" can be megabytes.
 			fm.Text = truncateMiddle(fm.Text, grepMatchMaxChars)
 			fm.Path = filepath.ToSlash(relToRoot)
 			totalBytes += len(fm.Text)
@@ -568,14 +493,9 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 	return grepResult{Matches: matches, Truncated: truncated, Cwd: displayCwd(b.cwd)}, nil
 }
 
-// grepFile scans one file for lines matching re, returning up to len(lines)
-// matches with ctxLines of surrounding context folded into Text. A binary file
-// (NUL in its first binarySniffBytes), or one larger than grepFileMaxBytes,
-// returns an error so the caller skips it.
+// grepFile: scans one file for matching lines. Binary or too-large files are skipped.
 func grepFile(path string, re *regexp.Regexp, ctxLines int) ([]grepMatch, error) {
-	// Check the size BEFORE reading: grep slurps the whole file, so an unbounded
-	// read here is an OOM waiting to happen (a source map or a vendored bundle is
-	// easily hundreds of MB). Nothing that big is source a human wrote.
+	// Check size before reading (OOM guard for vendored bundles).
 	if st, serr := os.Stat(path); serr == nil && st.Size() > grepFileMaxBytes {
 		return nil, fmt.Errorf("grep: %q is larger than the %d-byte scan limit", path, int64(grepFileMaxBytes))
 	}
@@ -601,4 +521,11 @@ func grepFile(path string, re *regexp.Regexp, ctxLines int) ([]grepMatch, error)
 		out = append(out, grepMatch{Line: i + 1, Text: text})
 	}
 	return out, nil
+}
+
+// delete_path
+
+func logDeletePath(userID, path string, recursive bool, deleted int) {
+	slog.Info("workspace mutation", "component", "tools", "tool", "delete_path",
+		"user", userID, "path", path, "recursive", recursive, "deleted", deleted)
 }

@@ -6,34 +6,27 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 )
 
-// maxSearchResults caps how many hits web_search returns to keep the agent's
-// context small.
+// maxSearchResults: caps web_search hits to keep agent context small.
 const maxSearchResults = 8
 
 type searchArgs struct {
 	Query string `json:"query"`
 }
 
-// SearchResult is one search hit returned to the agent.
+// SearchResult: one search hit.
 type SearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
 }
 
-// searchResponse wraps the hits in an object. ADK requires a tool's result to
-// convert to a map (it lands in FunctionResponse.Response, a map[string]any), so
-// a top-level array fails - we return {results: [...]} instead.
+// searchResponse: wraps hits in an object (ADK requires map result, not array).
 type searchResponse struct {
 	Results []SearchResult `json:"results"`
-	// Note carries an out-of-band warning to the agent - e.g. that some search
-	// backends were rate-limited, so coverage was reduced. Omitted when empty.
 	Note string `json:"note,omitempty"`
 }
 
-// newWebSearch builds the web_search tool over a config-selected WebSearcher
-// backend (SearXNG today). The backend is a port (see backends.go) so it can be
-// swapped without touching this tool.
+// newWebSearch: builds web_search over a config-selected backend.
 func newWebSearch(d Deps) (tool.Tool, error) {
 	searcher, err := newWebSearcher(d.WebSearch.Kind, d.WebSearch.URL, d.WebSearch.Key, d.Client)
 	if err != nil {

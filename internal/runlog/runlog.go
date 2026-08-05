@@ -1,8 +1,4 @@
-// Package runlog is the "run and persist" machinery shared by every driver of
-// a chat run - the REST handler and the GitHub webhook dispatcher alike: fan
-// each event to live hub subscribers, durably persist it (so a reconnecting
-// client or a cold-restart replay sees the same history), and mirror DAG
-// plan/node state into the store for the chat detail view (getChat).
+// Package runlog fans events to hub subscribers, durably persists them, and mirrors DAG state to the store.
 package runlog
 
 import (
@@ -16,12 +12,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// EventLog durably persists a chat's SSE run events to store.ChatEvent, backing
-// the in-memory hub's replay across a server restart. The run loop assigns each
-// event's per-chat seq (so the live tail and the durable log share one
-// numbering) and hands rows here; a single goroutine drains them in order, off
-// the run loop's hot path. A full queue drops-and-logs rather than wedging the
-// run - the live hub still carried the event; only its durability is lost.
+// EventLog persists SSE events to the store, draining in order off the hot path; full queue drops (durability loss only).
 type EventLog struct {
 	store *store.Store
 	ch    chan store.ChatEvent
@@ -39,8 +30,7 @@ func (l *EventLog) run() {
 			slog.Warn("event log: persist failed; dropping", "component", "eventlog", "chat", ce.ChatID, "seq", ce.Seq, "err", err)
 			continue
 		}
-		// Window a very long run to the durable replay ceiling, mirroring the hub's
-		// bounded buffer. Rare (real runs are far smaller), so the trim is cheap.
+		// Trim to durable replay ceiling on long runs.
 		if ce.Seq > stream.MaxReplay {
 			if err := l.store.TrimChatEvents(context.Background(), ce.ChatID, ce.Seq-stream.MaxReplay); err != nil {
 				slog.Warn("event log: trim failed", "component", "eventlog", "chat", ce.ChatID, "err", err)
@@ -49,9 +39,7 @@ func (l *EventLog) run() {
 	}
 }
 
-// Append enqueues an event row for persistence. Non-blocking: a backed-up queue
-// drops the event from the durable log (the hub still delivered it live) rather
-// than stalling the run loop.
+// Append enqueues an event row (non-blocking; drops if queue is full).
 func (l *EventLog) Append(chatID string, seq int64, ev stream.SSEEvent) {
 	js, err := MarshalEvent(ev)
 	if err != nil {
@@ -66,16 +54,14 @@ func (l *EventLog) Append(chatID string, seq int64, ev stream.SSEEvent) {
 	}
 }
 
-// Reset clears a chat's persisted events so a new run starts fresh at seq 1,
-// mirroring the hub discarding the previous run's buffer on the first publish.
+// Reset clears a chat's persisted events so a new run starts fresh at seq 1.
 func (l *EventLog) Reset(ctx context.Context, chatID string) {
 	if err := l.store.DeleteChatEvents(ctx, chatID); err != nil {
 		slog.Warn("event log: reset failed", "component", "eventlog", "chat", chatID, "err", err)
 	}
 }
 
-// eventEnvelope is the persisted shape of a stream.SSEEvent: the event name plus
-// its already-marshalled data, replayed verbatim on reconnect.
+// eventEnvelope: persisted shape of stream.SSEEvent (name + marshalled data).
 type eventEnvelope struct {
 	Name string          `json:"name"`
 	Data json.RawMessage `json:"data"`
@@ -90,8 +76,7 @@ func MarshalEvent(ev stream.SSEEvent) (string, error) {
 	return string(b), err
 }
 
-// UnmarshalEvent restores a persisted event. Data stays json.RawMessage so the
-// SSE writer re-marshals it to the identical bytes the live stream sent.
+// UnmarshalEvent restores a persisted event (Data stays json.RawMessage for byte-for-byte fidelity).
 func UnmarshalEvent(s string) (stream.SSEEvent, error) {
 	var e eventEnvelope
 	if err := json.Unmarshal([]byte(s), &e); err != nil {
@@ -100,10 +85,7 @@ func UnmarshalEvent(s string) (stream.SSEEvent, error) {
 	return stream.SSEEvent{Name: e.Name, Data: e.Data}, nil
 }
 
-// Publisher fans one chat run's events to live hub subscribers and the durable
-// event log under a single monotonic per-chat seq. Not safe for concurrent use
-// - a run has exactly one publisher, matching the "sole publisher" invariant
-// that keeps seq monotonic without locking.
+// Publisher fans one chat's events to hub + durable log under a monotonic seq (not safe for concurrent use).
 type Publisher struct {
 	hub    *stream.Hub
 	log    *EventLog
@@ -121,12 +103,7 @@ func (p *Publisher) Publish(ev stream.SSEEvent) {
 	p.log.Append(p.chatID, p.seq, ev)
 }
 
-// PersistNodeEvent upserts the persisted DagNode state for a node-lifecycle
-// event (running / done / failed / needs_input / cancelled). Ignores non-node
-// events. Every write routes through dag.CanTransition: an illegal transition
-// from the node's current persisted status is a logged bug, not a silent
-// write - the write proceeds regardless, since the SSE event is ground truth
-// for what the executor actually did.
+// PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions are logged, write proceeds.
 func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
 	var nodeID string
@@ -134,9 +111,6 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	n := store.DagNode{PlanID: planID}
 	switch d := ev.Data.(type) {
 	case stream.NodeQueuedData:
-		// Persist the row at queue time so a reloaded chat (and `chat show`)
-		// sees the node as queued rather than status-less until it starts.
-		// InstanceID claims the node for this Store (see FailStaleDagNodes).
 		nodeID, to = d.NodeID, dag.StatusQueued
 		n.NodeID, n.Status, n.InstanceID = d.NodeID, string(to), st.InstanceID()
 	case stream.NodeStartData:
@@ -184,8 +158,7 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	}()
 }
 
-// SaveDagPlan persists the plan row behind a dag_plan event, off the run's hot
-// path - the same JSON shape the REST handler stores.
+// SaveDagPlan persists the plan row behind a dag_plan event.
 func SaveDagPlan(st *store.Store, chatID, turnID string, d stream.DagPlanData) {
 	planJSON, err := json.Marshal(d)
 	if err != nil {

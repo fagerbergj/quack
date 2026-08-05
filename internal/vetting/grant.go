@@ -2,21 +2,9 @@ package vetting
 
 import "fmt"
 
-// Grant is the permission set a GitHub trigger computed once at webhook
-// dispatch, from labels, authorship, and the fork check (#657, #662) -
-// carried through the plan as INFORMATION (Config.Grant) so commitDelivery,
-// the one place that actually mutates GitHub, can refuse an ungranted
-// delivery. A nil *Grant means no GitHub trigger governs this run (a plain
-// REST/MCP conversation) - nothing is refused.
+// Grant: permissions from GitHub trigger (webhook dispatch). nil = unrestricted (no GitHub trigger).
 type Grant struct {
-	// PRScoped is true once the triggering thread already names an existing
-	// PR, false for a plain issue. It resolves the one ambiguity in
-	// Delivery.Kind: "pull_request" means OPEN a new PR on an issue-scoped
-	// run (gated on OpenPR) but PUSH a commit to the existing PR on a
-	// PR-scoped run (gated on PushCommitsToPR) - the kind alone can't tell
-	// them apart.
-	PRScoped bool
-
+	PRScoped              bool // true for PR-scoped trigger; pull_request = push to existing PR, not open new
 	JoinIssueConversation bool
 	OpenPR                bool
 	PostReview            bool
@@ -24,10 +12,7 @@ type Grant struct {
 	PushCommitsToPR       bool
 }
 
-// allows reports whether a staged delivery of the given kind
-// ("pull_request" | "review" | "comment") is permitted, and why not when it
-// isn't. A nil receiver (no GitHub trigger governs this run) permits
-// everything.
+// allows: is a staged delivery kind permitted? nil receiver permits everything.
 func (g *Grant) allows(kind string) (ok bool, reason string) {
 	if g == nil {
 		return true, ""

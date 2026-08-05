@@ -10,22 +10,13 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// probeScope names the logger every gate-probe execute_tool ledger event is
-// emitted through: augmentFromRepo (gitprobe.go) and checksPassCriterion's
-// workspace.RunPipeline calls (checks.go) - the gate's OWN tool use on an
-// external worker's behalf, deferred from #600 because neither took a
-// context.Context (#604's scope addition).
+// probeScope: logger for gate-probe execute_tool ledger events (augmentFromRepo, checks).
 const probeScope = "quack.vetting"
 
-// probeRound is the fixed replay-ledger round these probes stamp - unlike a
-// worker/judge round, a probe re-reads disk state on every activity() call
-// rather than belonging to one model round, so there is no runID to reuse.
+// probeRound: fixed replay-ledger round for probes (no runID - re-reads disk per activity() call).
 const probeRound = "gate-probe"
 
-// emitProbeEvent records one execute_tool ledger event for a gate probe,
-// same shape as tools.emitToolEvent (internal/tools/emit.go) - duplicated,
-// not imported: internal/tools already depends on internal/vetting, so the
-// reverse import would cycle.
+// emitProbeEvent: records execute_tool ledger event for a gate probe (duplicated from tools/emit.go to avoid cycle).
 func emitProbeEvent(ctx context.Context, name string, args, result any, err error) {
 	if !otelobs.LoggingEnabled(probeScope) {
 		return // nothing listening - skip building the event
@@ -48,8 +39,7 @@ func emitProbeEvent(ctx context.Context, name string, args, result any, err erro
 	if err != nil {
 		attrs = append(attrs, otellog.String(otelobs.ErrorType, err.Error()))
 	}
-	// gen_ai.agent.name: EmitLog itself only stamps session/node/round - see
-	// tools.emitToolEvent's identical comment.
+	// gen_ai.agent.name: EmitLog stamps session/node/round only.
 	if c := ledger.CoordsFromContext(ctx); c.Agent != "" {
 		attrs = append(attrs, otellog.String(otelobs.GenAIAgentName, c.Agent))
 	}

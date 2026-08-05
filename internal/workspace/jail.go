@@ -1,9 +1,4 @@
-// Package workspace is the isolation boundary every filesystem/git tool
-// resolves paths through: one configured root, with a per-user jail under it
-// (<root>/<user_id>/) that nothing outside can read, write, or even stat. It is
-// intentionally dependency-free (stdlib only) - internal/tools/fs.go (and the
-// later git tools) build on it, but the boundary itself never needs anything
-// beyond os/path/filepath.
+// Package workspace: the isolation boundary every filesystem/git tool resolves paths through. Stdlib only.
 package workspace
 
 import (
@@ -14,40 +9,22 @@ import (
 	"strings"
 )
 
-// ErrEscape is the uniform rejection for any path that would resolve outside
-// the caller's jail - a `..` escape, an absolute path, or a symlink pointing
-// outside. Every rejection reason collapses to this one error (and message) by
-// design: a model gets one thing to learn, not a taxonomy of jail failures.
+// Uniform rejection for any path outside the caller's jail. One error by design: one thing for the model to learn.
 var ErrEscape = errors.New("path escapes your workspace")
 
-// ErrInvalidUserID rejects a userID that cannot safely name one directory
-// component under the workspace root. Deliberately DISTINCT from ErrEscape:
-// a bad userID is a caller bug or a misconfigured identity source (an
-// operator's problem to fix), not a model-chosen path (which the model can
-// learn from and correct).
+// Rejects a userID that can't safely name one directory component. Distinct from ErrEscape: operator fix, not model learning.
 var ErrInvalidUserID = errors.New("workspace: invalid user id")
 
-// ErrInvalidChatID rejects a chatID that cannot safely name one directory
-// component under a user's jail (the per-chat scope segment - see Resolve). A
-// chat id is a system-generated UUID, but it is treated as UNTRUSTED here: the
-// SAME single-component rule userID obeys (no separator, no `..`) is what keeps
-// a crafted id from relocating the scope root and defeating containment. An
-// EMPTY chatID is NOT an error - it means "no per-chat scope", falling back to
-// the per-user root (backward compatible); only a NON-empty id that fails the
-// component rule returns this.
+// Rejects a chatID that can't safely name one directory component. Empty chatID means "no per-chat scope" (backward compatible).
 var ErrInvalidChatID = errors.New("workspace: invalid chat id")
 
-// Jail is one configured workspace root; per-user boundaries are derived from
-// it at resolve time (Resolve("alice", …) and Resolve("bob", …) never see each
-// other's files), so a single Jail serves every user.
+// One configured workspace root; per-user boundaries derived at resolve time.
 type Jail struct {
-	// root is the absolute, symlink-resolved workspace root (e.g. /workspace).
+	// Absolute, symlink-resolved workspace root.
 	root string
 }
 
-// NewJail builds a Jail rooted at root (created if missing) and returns it with
-// root canonicalized (absolute, symlinks resolved) so every later containment
-// check compares real paths, not aliases of the same directory.
+// Builds a Jail rooted at root (created if missing), canonicalized so containment checks compare real paths.
 func NewJail(root string) (*Jail, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("workspace: root is empty")
@@ -66,15 +43,10 @@ func NewJail(root string) (*Jail, error) {
 	return &Jail{root: real}, nil
 }
 
-// Root returns the jail's canonical root directory (for logging/diagnostics -
-// tools should use Resolve/UserRoot, never construct paths against this
-// directly).
+// Canonical jail root for logging/diagnostics.
 func (j *Jail) Root() string { return j.root }
 
-// UserRoot returns the (unresolved-for-symlinks) jail directory for userID,
-// joined under the workspace root. It may not exist yet - callers that need it
-// to exist (e.g. write_file) create it themselves. A userID that fails
-// validateUserID returns ErrInvalidUserID.
+// Jail directory for userID (unresolved). May not exist; callers create it themselves.
 func (j *Jail) UserRoot(userID string) (string, error) {
 	if err := validateUserID(userID); err != nil {
 		return "", err
@@ -82,20 +54,10 @@ func (j *Jail) UserRoot(userID string) (string, error) {
 	return filepath.Join(j.root, userID), nil
 }
 
-// homeDirName is the dot-prefixed sibling directory HomeDir creates under a
-// user's jail root - dot-prefixed so it reads unmistakably as infrastructure,
-// not a cloned repo, in a directory listing.
+// Dot-prefixed so it reads as infrastructure, not a cloned repo.
 const homeDirName = ".quack-home"
 
-// HomeDir returns (creating it if necessary) userID's dedicated $HOME for
-// spawned child processes (run_command, checks, git - see workspace.Caps.
-// HomeDir and internal/workspace/exec.go). It is a SIBLING of the user's
-// cloned repos under <root>/<userID>/, never nested inside one - the fix for
-// a live bug where HOME was pinned to a coding task's own cwd (the target
-// repo itself), so `npm ci` wrote its cache directly into the repo tree and a
-// later `git_commit`'s `add_all` swept up thousands of cache files alongside
-// the real change. Created with 0o700 (a user's toolchain cache/config is not
-// world- or other-user-readable).
+// Dedicated $HOME for child processes. Created 0o700, outside cloned repos so caches aren't swept up by git_commit.
 func (j *Jail) HomeDir(userID string) (string, error) {
 	userRoot, err := j.UserRoot(userID)
 	if err != nil {
@@ -108,11 +70,7 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 	return home, nil
 }
 
-// NodeDir returns the working directory a DAG node's tools default to - one
-// component under the per-chat scope, or "" when nodeID can't safely name one
-// (falls back to the chat root). Concurrent nodes in one chat need separate
-// dirs or they collide on a shared clone; the "/"-prefixed escape hatch still
-// reaches the chat root for deliberate cross-node access.
+// Working directory a DAG node's tools default to (one component under chat scope). "" falls back to chat root.
 func NodeDir(nodeID string) string {
 	if !isSafePathComponent(nodeID) {
 		return ""
@@ -120,45 +78,23 @@ func NodeDir(nodeID string) string {
 	return nodeID
 }
 
-// SetupCloneDir is the workspace-relative directory a plan's declared Setup
-// PRE-step clones a repo into - the node's OWN root (NodeDir), not a
-// subdirectory of it: the repo IS the node's invisible-root workspace, so
-// read_file/edit_file resolve a plain relative path ("internal/foo.go") with
-// no "repo/" prefix and no absolute path (a "repo" leaf here once forced a
-// worker to `pwd` its way to an absolute path and shell out instead). See
-// dag.Plan.Setup / internal/tools.SetupClone.
+// Workspace-relative directory a Setup pre-step clones into. The repo IS the node's workspace (no "repo/" prefix needed).
 func SetupCloneDir(nodeID string) string {
 	return NodeDir(nodeID)
 }
 
-// SharedRepoScope is the reserved "node" identifier a plan's repo-touching
-// nodes (code-implementer/code-reviewer) resolve into when they share ONE
-// declared Setup clone+branch across a depends_on chain, instead of each
-// getting its own dir under SetupCloneDir(node.ID) - see dag's
-// runPlanSetup/validateRepoChain. Fixed and quack-authored, never a planner-
-// chosen node ID, so it can't collide with one.
+// Reserved node ID for nodes sharing one clone across a depends_on chain. Fixed, never a planner-chosen ID.
 const SharedRepoScope = "quack-shared-repo"
 
-// ContextDirScope is the reserved "node" identifier a GitHub-triggered plan's
-// context directory (#660) resolves into - a SIBLING of SharedRepoScope's
-// clone under the same chat scope (jail.Resolve(userID, chatID,
-// ContextDirScope)), never inside it: nothing to gitignore, nothing
-// accidentally committable. Fixed and quack-authored, like SharedRepoScope,
-// so it can't collide with a planner-chosen node ID.
+// Reserved node ID for GitHub context dir. Sibling of SharedRepoScope (nothing accidentally committable).
 const ContextDirScope = "quack-context"
 
-// WorktreeBranch derives the unique branch name a read-only qualifying node's
-// linked git worktree is checked out on - git refuses to check the same
-// branch out in two worktrees at once, and node IDs are already unique within
-// a plan, so deriving from nodeID needs no separate counter or registry.
+// Unique branch name for a qualifying node's linked worktree. Derived from nodeID (no registry needed).
 func WorktreeBranch(nodeID string) string {
 	return "quack-worktree/" + nodeID
 }
 
-// EnsureDir resolves rel under the (userID, chatID) scope and creates it,
-// returning the real path. Used to materialise a node's working directory at
-// node entry, so the worker's very first `list_dir .` sees an (empty) dir
-// instead of a "no such file" it then gropes around trying to recover from.
+// Resolves rel under (userID, chatID) scope and creates it. So the worker's first list_dir sees an (empty) dir.
 func (j *Jail) EnsureDir(userID, chatID, rel string) (string, error) {
 	real, err := j.Resolve(userID, chatID, rel)
 	if err != nil {
@@ -170,14 +106,7 @@ func (j *Jail) EnsureDir(userID, chatID, rel string) (string, error) {
 	return real, nil
 }
 
-// validateUserID is the jail-boundary guard shared by UserRoot and Resolve:
-// a userID must name exactly ONE directory component directly under the
-// workspace root, because Resolve joins it into the path RAW - an
-// attacker-influenced identity ("../other", "a/b", an absolute path) would
-// otherwise relocate the jail root itself, and the containment check would
-// then verify against the WRONG root. The rule is separator/dot-traversal
-// based, NOT an alphanumeric allowlist: real OIDC subjects like
-// "auth0|abc123" or "user@example.com" must pass.
+// Jail-boundary guard: userID must name exactly one directory component. Separator/dot based, not alphanumeric (OIDC subjects like "auth0|abc123" must pass).
 func validateUserID(userID string) error {
 	if !isSafePathComponent(userID) {
 		return ErrInvalidUserID
@@ -185,12 +114,7 @@ func validateUserID(userID string) error {
 	return nil
 }
 
-// isSafePathComponent reports whether id names exactly ONE directory component
-// (no separator, no `.`/`..` traversal, already Clean) - the shared rule both
-// the userID and the per-chat chatID segment obey so neither can relocate the
-// scope root and defeat containment. Separator/dot based, not an alphanumeric
-// allowlist (real OIDC subjects like "auth0|abc123" must pass; a chat UUID
-// always passes).
+// Reports whether id names exactly one directory component (no separator, no `.`/`..` traversal).
 func isSafePathComponent(id string) bool {
 	if strings.TrimSpace(id) == "" {
 		return false
@@ -204,13 +128,7 @@ func isSafePathComponent(id string) bool {
 	return filepath.Clean(id) == id
 }
 
-// scopeRoot is the directory a (userID, chatID) pair resolves paths under:
-// <root>/<userID>/<chatID> when chatID is set, else the per-user <root>/<userID>
-// (the backward-compatible fallback for a direct/un-gated call that could not
-// recover a chat id). userID is always guarded (ErrInvalidUserID); a NON-empty
-// chatID that isn't a safe single component is rejected (ErrInvalidChatID) so a
-// crafted id can never escape the user root - an empty chatID is the only way
-// to address the user root itself.
+// Directory a (userID, chatID) pair resolves paths under. chatID="" falls back to per-user root.
 func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	userRoot, err := j.UserRoot(userID)
 	if err != nil {
@@ -225,11 +143,7 @@ func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	return filepath.Join(userRoot, chatID), nil
 }
 
-// Resolve is the ONE path-resolution function every filesystem/git tool uses:
-// it joins relPath under the (userID, chatID) scope root, resolves symlinks,
-// and verifies prefix-containment. Absolute relPath, `..`, and symlinks
-// pointing outside the scope all fail identically with ErrEscape - no
-// exceptions. chatID "" falls back to the per-user root.
+// Path-resolution for every filesystem/git tool: joins relPath under scope root, resolves symlinks, verifies containment.
 func (j *Jail) Resolve(userID, chatID, relPath string) (string, error) {
 	scopeRoot, err := j.scopeRoot(userID, chatID)
 	if err != nil {
@@ -257,15 +171,7 @@ func (j *Jail) Resolve(userID, chatID, relPath string) (string, error) {
 	return real, nil
 }
 
-// RemoveChatScope deletes a chat's per-chat workspace subtree
-// (<root>/<userID>/<chatID>/) and everything under it - the lifecycle
-// counterpart of per-chat scoping, called when a chat is deleted so its working
-// tree doesn't leak forever. userID and chatID are validated as single path
-// components (scopeRoot, RESOLVE-identical), so a crafted id can never make the
-// removal escape the user root; an EMPTY chatID is rejected (ErrInvalidChatID)
-// so this can never remove the whole user root. A non-existent dir is a clean
-// no-op (nil). Callers treat any error as best-effort (log + continue): cleanup
-// must never block or fail the chat delete itself.
+// Deletes a chat's workspace subtree. Empty chatID rejected (ErrInvalidChatID) so it can never delete the user root.
 func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	if strings.TrimSpace(chatID) == "" {
 		return ErrInvalidChatID
@@ -289,17 +195,12 @@ func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	return nil
 }
 
-// withinRoot reports whether path is root itself or a descendant of it. Both
-// arguments must already be Clean'd absolute paths (filepath.Join guarantees
-// this).
+// Reports whether path is root or a descendant. Both must be Clean'd absolute paths.
 func withinRoot(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
-// resolveDeepestExisting resolves symlinks on the deepest existing ancestor of
-// p (p itself, if it exists) and rejoins any trailing path components that
-// don't exist yet (e.g. a file about to be created by write_file). p must
-// already be an absolute, Clean'd path.
+// Resolves symlinks on the deepest existing ancestor of p, rejoining trailing nonexistent components.
 func resolveDeepestExisting(p string) (string, error) {
 	cur := p
 	var trailing []string

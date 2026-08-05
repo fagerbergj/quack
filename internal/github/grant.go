@@ -5,13 +5,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// computeGrant derives a run's permission set from the labels CURRENTLY on
-// the issue/PR, whether quack itself authored the PR, and whether the PR's
-// head is a fork (#657, #662) - the deterministic facts the gate's
-// commitDelivery enforces, never re-derived by the planner or the model.
-// prScoped is true once the triggering thread already names a PR (an issue
-// has none yet); authoredByQuack and forkHead are meaningless (ignored) when
-// it's false.
+// computeGrant derives a run's permission set from labels, authorship, and fork state (#657, #662).
 func computeGrant(labelCfg config.GitHubLabels, labels []string, prScoped, authoredByQuack, forkHead bool) vetting.Grant {
 	g := vetting.Grant{PRScoped: prScoped}
 
@@ -25,9 +19,7 @@ func computeGrant(labelCfg config.GitHubLabels, labels []string, prScoped, autho
 		g.PostReview = true
 		g.JoinPRConversation = true
 	}
-	// quack:fix and PR authorship both grant the same thing - the ability to
-	// push a fix/commit to the PR - so they share one fork-gated branch
-	// rather than risking the two drifting apart.
+	// quack:fix and authorship share one fork-gated path.
 	if hasLabel(labels, labelCfg.Implement) || hasLabel(labels, labelCfg.Fix) || authoredByQuack {
 		g.JoinPRConversation = true
 		if !forkHead {

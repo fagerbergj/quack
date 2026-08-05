@@ -17,40 +17,24 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// Adversarial verify (#370): after the primary judge passes a criterion, an
-// independent skeptic tries to REFUTE it before the gate trusts it. This is
-// the second half of #359's ground-truth judge - the primary judge already
-// has repo read access (see judgeReadToolsClause); this stage spends that
-// same access adversarially, on a NARROW set of findings rather than
-// re-litigating every criterion.
+// Adversarial verify: independent skeptic tries to REFUTE passing criteria before the gate trusts them.
 
-// submitSkepticVerdictTool is the structured-termination tool a skeptic calls
-// to record its refute/survive call and end its run - mirrors judge.go's
-// submit_verdict pattern.
+// submitSkepticVerdictTool: structured-termination tool for skeptic, mirrors submit_verdict.
 const submitSkepticVerdictTool = "submit_skeptic_verdict"
 
-// skepticVerdictArgs is the schema a skeptic fills when calling
-// submitSkepticVerdictTool.
+// skepticVerdictArgs: schema for submitSkepticVerdictTool.
 type skepticVerdictArgs struct {
 	Refuted bool   `json:"refuted"`
 	Reason  string `json:"reason"`
 }
 
-// skepticInstruction is the skeptic's whole system prompt: given ONE finding
-// the primary judge already scored as passing, try to tear it down. Defaults
-// to refuted on any doubt - the asymmetry the issue calls for ("defaulting to
-// 'refuted' when uncertain").
+// skepticInstruction: try to refute ONE passing finding. Defaults to refuted on any doubt.
 const skepticInstruction = "You are an adversarial skeptic. Another judge already scored ONE finding below as PASSING; your only job is to try to REFUTE it - actively look for reasons it is wrong, not reasons it might be right. " +
 	"You did not write the answer and must not extend it good faith. If you have read-only workspace tools (read_file, list_dir, glob, grep), use them to check any checkable claim against the real files rather than trusting the finding's own reasoning - they reach the SAME workspace the worker used. " +
 	"Default to REFUTED whenever you are uncertain, cannot verify the claim, or find anything that does not clearly hold up - the finding only SURVIVES when you are confident it is correct. " +
 	"Call submit_skeptic_verdict exactly once with `refuted` (bool) and `reason` (one or two sentences naming what you found, whichever way you decided)."
 
-// NewSkepticFactory returns a SkepticFactory built the same way judge.go's
-// NewJudgeFactory is: a fresh agentic skeptic per round, closing over
-// skepticModel and the SAME read-only workspace tools the primary judge holds
-// (so a skeptic checking a repo claim reaches the worker's real clone too -
-// no separate clone, exactly like the primary judge). Pass nil/empty
-// readTools for a tool-less skeptic that argues from the answer text alone.
+// NewSkepticFactory: builds SkepticFactory same way as NewJudgeFactory, using same read-only tools.
 func NewSkepticFactory(skepticModel model.LLM, readTools []tool.Tool) SkepticFactory {
 	return func(sink *skepticVerdict) (adkagent.Agent, error) {
 		submit, err := newSubmitSkepticVerdictTool(sink)
@@ -70,14 +54,13 @@ func NewSkepticFactory(skepticModel model.LLM, readTools []tool.Tool) SkepticFac
 	}
 }
 
-// skepticVerdict is one skeptic's refute/survive call on a single finding.
+// skepticVerdict: one skeptic's refute/survive call.
 type skepticVerdict struct {
 	Refuted bool
 	Reason  string
 }
 
-// SkepticFactory builds a fresh, isolated skeptic agent bound to sink - one
-// per round, mirroring JudgeFactory.
+// SkepticFactory: builds a fresh skeptic agent per round, mirroring JudgeFactory.
 type SkepticFactory func(sink *skepticVerdict) (adkagent.Agent, error)
 
 func newSubmitSkepticVerdictTool(sink *skepticVerdict) (tool.Tool, error) {
@@ -92,19 +75,12 @@ func newSubmitSkepticVerdictTool(sink *skepticVerdict) (tool.Tool, error) {
 	})
 }
 
-// loadBearing reports whether a criterion is worth spending an adversarial
-// pass on: judge-authored (not one of computeDeterministicCriteria's own
-// checks, which are already ground truth - refuting code's own verdict is
-// pointless) and
-// currently PASSING (a criterion already scored below threshold is already
-// caught; the adversarial pass exists to catch a plausible-but-wrong PASS).
+// loadBearing: judge-authored and passing (not ground-truth deterministic checks).
 func loadBearing(c criterionScore, threshold float64) bool {
 	return !strings.HasPrefix(c.Reason, "deterministic:") && c.Score >= threshold
 }
 
-// buildSkepticPrompt is the user message handed to one skeptic: the finding
-// under test (criterion name + the primary judge's own reasoning for it), plus
-// enough of the original exchange to evaluate it against.
+// buildSkepticPrompt: the finding under test + original exchange context.
 func buildSkepticPrompt(criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Finding to refute - criterion %q, scored %.0f/10 as PASSING by the primary judge, reasoning:\n%s\n\n", criterion, c.Score*10, strings.TrimSpace(c.Reason))
@@ -120,15 +96,7 @@ func buildSkepticPrompt(criterion string, c criterionScore, question *genai.Cont
 	return sb.String()
 }
 
-// runSkepticRound runs one isolated skeptic agent (its own in-memory session,
-// like runJudgeRound) and returns its refute/survive call. Any run error, a
-// skeptic that never calls submit_skeptic_verdict within maxIters turns
-// (mirrors runJudgeRound's own safety cap - see #377 review: a stuck skeptic
-// must not hang the node's gate forever, especially since this loop runs
-// skeptics SEQUENTIALLY), or one that just ends without calling it, is
-// treated as REFUTED - the gate fails closed on adversarial verification
-// exactly as it does on a primary judge error (see RunGatedRefine's
-// judge-error path).
+// runSkepticRound: runs one isolated skeptic. Any error defaults to REFUTED (fails closed).
 func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) skepticVerdict {
 	var sink skepticVerdict
 	skepticAgent, err := factory(&sink)
@@ -173,9 +141,7 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, 
 		if ev.TurnComplete {
 			turns++
 		}
-		// Safety cap: a skeptic that never calls submit_skeptic_verdict can't
-		// loop forever (and this loop runs sequentially, so one stuck skeptic
-		// would otherwise stall every remaining criterion/round behind it).
+		// Safety cap: a stuck skeptic must not stall sequential rounds.
 		if turns > maxIters {
 			cancel()
 			break
@@ -187,19 +153,12 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, 
 	return sink
 }
 
-// adversarialVerify runs cfg.SkepticRounds independent skeptics against each
-// load-bearing criterion in v (see loadBearing) and downgrades any finding a
-// MAJORITY refute - killing the criterion (score 0, weakest-link) rather than
-// merely trimming it, since a majority-refuted finding is exactly the
-// plausible-but-wrong case the gate must not ship. A tie (survives==refutes)
-// favours the primary judge's original PASS: adversarial verify exists to
-// catch a confident wrong pass, not to demand unanimous re-confirmation of
-// every close call. No-op when cfg.Skeptic is unset or SkepticRounds <= 0.
+// adversarialVerify: kills criteria a MAJORITY of skeptics refute. Tie favours the primary judge.
 func adversarialVerify(ctx context.Context, cfg Config, question *genai.Content, answer string, act workerActivity, v verdict, emit func(*genai.Part) bool) verdict {
 	if cfg.Skeptic == nil || cfg.SkepticRounds <= 0 || len(v.Criteria) == 0 {
 		return v
 	}
-	// Same fallback runJudgeRound uses for its own turn cap (defaultJudgeMaxIterations).
+	// Same turn cap as runJudgeRound.
 	maxIters := cfg.JudgeMaxIterations
 	if maxIters <= 0 {
 		maxIters = defaultJudgeMaxIterations

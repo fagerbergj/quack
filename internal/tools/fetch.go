@@ -21,86 +21,49 @@ import (
 )
 
 const (
-	// minUsefulText: a direct GET returning less readable text than this is
-	// treated as "probably JS-rendered" and retried via the browser backend.
-	minUsefulText = 200
-	// maxFetchBytes caps how much of a page we read and keep in the cache - the
-	// "full" copy that grep/offset slice. Generous so the whole page is available
-	// to drill into; bounds the read and per-entry memory. Applied to both the
-	// direct-GET read and the cached result (so a crawl4ai-rendered page is capped).
-	maxFetchBytes = 200_000
-	// fetchHeadLines: lines web_fetch returns by default (and per offset window).
-	// The full page stays cached; the agent narrows in with grep= or offset=.
-	fetchHeadLines = 120
-	// fetchGrepMaxLines caps how many matching lines a grep returns.
-	fetchGrepMaxLines = 120
-	// fetchReturnMaxBytes hard-bounds any single web_fetch return so a page with
-	// very long lines can't flood the context window regardless of mode.
+	minUsefulText      = 200
+	maxFetchBytes      = 200_000
+	fetchHeadLines     = 120
+	fetchGrepMaxLines  = 120
 	fetchReturnMaxBytes = 24_000
-	// maxTokenChars: any unbroken (whitespace-free) run longer than this is not
-	// prose - it's a base64 blob, a minified payload, or similar machine data - so
-	// it's collapsed to a placeholder. Real text and even long URLs never approach
-	// this, so the cap only ever drops garbage.
-	maxTokenChars = 4_000
-	// browserUA presents as a real desktop Chrome. Many sites serve bot-blocking
-	// interstitials (or nothing) to obvious crawler UAs, so we look like a browser.
+	maxTokenChars      = 4_000
 	browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
 		"(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-	// fetchAccept prefers clean text formats: a few sites serve Markdown directly,
-	// and we convert HTML to Markdown ourselves anyway.
 	fetchAccept = "text/markdown;q=1.0, text/html;q=0.9, text/plain;q=0.8, */*;q=0.1"
 )
 
-// errCloudflareChallenge marks a direct GET that hit a Cloudflare bot challenge
-// (403 + cf-mitigated: challenge), so the final error can name the cause.
+// errCloudflareChallenge: signals a Cloudflare bot challenge (403 + cf-mitigated).
 var errCloudflareChallenge = errors.New("web_fetch: cloudflare challenge (cf-mitigated)")
 
-// dataURIRe matches inline data: URIs (base64 images/SVGs/fonts) that HTML→
-// markdown conversion preserves verbatim. A single one can be hundreds of KB of
-// valid-UTF8 base64 - pure context garbage with no readable value.
+// dataURIRe: matches inline data URIs that HTML→markdown preserves verbatim (context garbage).
 var dataURIRe = regexp.MustCompile(`data:[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+[;,][^\s)"'<>]*`)
 
 type fetchArgs struct {
 	URL string `json:"url"`
-	// Pattern, when set, returns only the lines of the page matching this
-	// (case-insensitive) regular expression, each prefixed with its line number.
-	// The full page is cached, so this searches the whole page, not just the head.
 	Pattern string `json:"pattern,omitempty"`
-	// Offset, when > 0, returns a window of the page starting at this 1-based line
-	// number (instead of the head). Use it to read past the head or around a line
-	// a grep surfaced.
-	Offset int `json:"offset,omitempty"`
+	Offset  int    `json:"offset,omitempty"`
 }
 
-// fetcher retrieves readable text for an already-validated URL. The two impls are
-// directFetcher (a plain SSRF-guarded GET, no external service - the no-docker
-// path) and crawl4aiFetcher (the same GET plus a real-browser render fallback for
-// JS-heavy / bot-walled pages). newFetcher selects one from config.
+// fetcher: retrieves readable text for an already-validated URL (direct or crawl4ai).
 type fetcher interface {
 	fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error)
 }
 
-// directFetcher does a plain guarded GET and nothing more - no render fallback,
-// so it needs no external service.
+// directFetcher: plain guarded GET, no render fallback.
 type directFetcher struct{}
 
 func (directFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
-	// tc is used only as a context.Context (the fetch engine has no agent-specific
-	// needs), so fetchVia takes the narrower context.Context and stays unit-testable.
 	return fetchVia(tc, d, nil, u, target)
 }
 
-// crawl4aiFetcher tries the direct GET first (cheap) and falls back to crawl4ai's
-// real-browser render for pages a bare GET can't read.
+// crawl4aiFetcher: direct GET with crawl4ai render fallback.
 type crawl4aiFetcher struct{ renderer PageRenderer }
 
 func (f crawl4aiFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
 	return fetchVia(tc, d, f.renderer, u, target)
 }
 
-// newFetcher selects the web_fetch implementation. "direct" (or empty) is a plain
-// GET with no backend - the no-docker default. "crawl4ai" adds the render fallback
-// and requires a URL.
+// newFetcher: selects web_fetch implementation (direct or crawl4ai).
 func newFetcher(kind, base string, client *http.Client) (fetcher, error) {
 	switch kind {
 	case "", backendDirect:
@@ -115,15 +78,12 @@ func newFetcher(kind, base string, client *http.Client) (fetcher, error) {
 	}
 }
 
-// newFetch builds the fetch tool over a config-selected fetcher (direct GET, or
-// crawl4ai GET-plus-render). The caching + result-shaping wrapper is the same
-// regardless of which impl retrieves the page.
+// newFetch: builds fetch tool over a config-selected fetcher.
 func newFetch(d Deps) (tool.Tool, error) {
 	f, err := newFetcher(d.Fetch.Kind, d.Fetch.URL, d.Client)
 	if err != nil {
 		return nil, err
 	}
-	// Only advertise the headless-browser fallback when the crawl4ai impl is active.
 	desc := "Fetch a web page by URL and return its readable text. "
 	if _, ok := f.(crawl4aiFetcher); ok {
 		desc += "Falls back to a headless browser for JavaScript-rendered pages. "
@@ -142,8 +102,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 			}
 			target := u.String()
 
-			// Ensure the FULL page is in the cache; grep/offset slice that copy. On a
-			// miss (first fetch, or the entry expired/evicted) we fetch and cache it.
+			// Ensure full page is in cache; fetch on miss.
 			var full string
 			if d.Cache != nil {
 				if cached, ok := d.Cache.Get(target); ok {
@@ -158,8 +117,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 				if fetched, ferr = sanitizeFetched(target, fetched); ferr != nil {
 					return "", ferr
 				}
-				// Cap the cached "full" copy so a huge (e.g. crawl4ai-rendered) page
-				// can't bloat memory; 200KB holds essentially any real article.
+				// Cap cached copy to bound memory.
 				if len(fetched) > maxFetchBytes {
 					fetched = strings.ToValidUTF8(fetched[:maxFetchBytes], "") + "\n[content truncated at fetch limit]"
 				}
@@ -174,9 +132,7 @@ func newFetch(d Deps) (tool.Tool, error) {
 	)
 }
 
-// shapeFetchResult decides what slice of a cached page to return: grep matches,
-// an offset window, or (by default) the head. The full page stays cached so the
-// agent can drill in with successive grep/offset calls on the same URL.
+// shapeFetchResult: returns grep matches, offset window, or head of cached page.
 func shapeFetchResult(full, pattern string, offset int) string {
 	lines := strings.Split(full, "\n")
 	total := len(lines)
@@ -190,8 +146,7 @@ func shapeFetchResult(full, pattern string, offset int) string {
 	return windowPage(lines, start, total)
 }
 
-// windowPage returns up to fetchHeadLines lines starting at the 1-based `start`,
-// with a footer telling the agent the range, the total, and how to read more.
+// windowPage: returns a window of lines with navigation footer.
 func windowPage(lines []string, start, total int) string {
 	if start > total {
 		return fmt.Sprintf("[offset %d is past the end of this page (%d lines). Use a smaller offset or grep to search.]", start, total)
@@ -210,9 +165,7 @@ func windowPage(lines []string, start, total int) string {
 	return capFetchReturn(body) + footer
 }
 
-// grepPage returns the page lines matching pattern (case-insensitive regex, with
-// a literal-substring fallback for an invalid regex), each prefixed with its
-// 1-based line number so the agent can follow up with offset=.
+// grepPage: returns matching lines with line numbers, literal-substring fallback for invalid regex.
 func grepPage(lines []string, pattern string) string {
 	re, err := regexp.Compile("(?i)" + pattern)
 	matchLine := func(s string) bool { return re.MatchString(s) }
@@ -242,7 +195,7 @@ func grepPage(lines []string, pattern string) string {
 	return capFetchReturn(strings.Join(matches, "\n")) + footer
 }
 
-// capFetchReturn hard-bounds a return body so long lines can't flood context.
+// capFetchReturn: hard-bounds return body to prevent context flooding.
 func capFetchReturn(s string) string {
 	if len(s) <= fetchReturnMaxBytes {
 		return s
@@ -250,21 +203,14 @@ func capFetchReturn(s string) string {
 	return strings.ToValidUTF8(s[:fetchReturnMaxBytes], "") + "\n[…truncated; narrow your grep or use offset=N]"
 }
 
-// fetchVia is the shared fetch engine for both impls. It first tries a direct
-// GET; if that is thin, failed, or bot-walled, it falls back to the render backend
-// (renderer is nil for the basic impl, which therefore stops after the direct GET).
+// fetchVia: shared fetch engine - tries direct GET, falls back to render backend.
 func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
 	text, derr := fetchReadable(ctx, d.Guarded, target)
 	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
 		return text, nil
 	}
 
-	// The direct GET was thin (likely JS-rendered), failed, or hit an
-	// anti-bot wall; try the render backend, which renders with a real browser
-	// and returns clean Markdown. The render backend fetches the URL itself
-	// server-side with no SSRF guard, so re-check that the host doesn't resolve
-	// into a blocked range before handing it over - ValidateURL above only
-	// catches literal IPs, not hostnames pointing at private/metadata IPs.
+	// Direct GET failed or thin; try render backend (SSRF re-check for hostnames).
 	var rendered string
 	var rerr error
 	if renderer != nil {
@@ -276,28 +222,17 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 		}
 	}
 
-	// If either attempt clearly landed on a bot wall, say so rather than
-	// handing the agent CAPTCHA boilerplate as if it were the page.
+	// Bot wall: report it rather than returning CAPTCHA as page content.
 	if looksLikeBotWall(text) || looksLikeBotWall(rendered) || errors.Is(derr, errCloudflareChallenge) {
 		return "", fmt.Errorf("web_fetch: %s is behind an anti-bot wall (CAPTCHA / JS challenge); its content can't be read - try a different source", target)
 	}
 
-	// Never return an empty string silently - the agent needs to know the
-	// fetch yielded nothing so it can try another source. Prefer a thin but
-	// non-empty direct result; otherwise surface why we got nothing.
+	// Never return empty silently - prefer thin direct result over nothing.
 	if strings.TrimSpace(text) != "" {
 		return text, nil
 	}
 
-	// Graceful degradation for a render-backend failure. The render backend
-	// (crawl4ai) is a flaky *enhancement* over the direct GET - dynamic pages make
-	// it 500 ("page is navigating and changing content"), time out, etc. When it
-	// fails but the target itself was reachable (the direct GET returned no error,
-	// just too-thin/empty content), one flaky page must not sink the whole research
-	// node: log it and return an honest, clearly-marked "render unavailable" result
-	// the worker can note and route around, instead of propagating crawl4ai's error.
-	// A genuine target failure (derr != nil: 404, unreachable host) still errors
-	// below, so we never dress a real fetch failure up as success.
+	// Graceful degradation: render failure on a reachable target logs and returns a "render unavailable" placeholder.
 	if renderer != nil && rerr != nil && derr == nil {
 		slog.Warn("web_fetch: render backend failed; degrading to render-unavailable result",
 			"component", "tools", "url", target, "error", rerr)
@@ -317,12 +252,7 @@ func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, ta
 	}
 }
 
-// sanitizeFetched makes fetched content safe to embed in session events.
-// Binary payloads (e.g. an image body served where text was expected) must
-// never reach the session store: invalid UTF-8 / NUL bytes make Postgres
-// reject the event append (SQLSTATE 22P05), which kills the worker run
-// mid-loop and surfaces as a silently-empty node. Mostly-binary content is
-// rejected with a useful error; isolated bad bytes are stripped.
+// sanitizeFetched: strips bad bytes, rejects binary content (Postgres rejects invalid UTF-8/NUL).
 func sanitizeFetched(target, s string) (string, error) {
 	clean := strings.ReplaceAll(strings.ToValidUTF8(s, ""), "\x00", "")
 	if len(s) > 512 && len(clean) < len(s)*9/10 {
@@ -331,20 +261,13 @@ func sanitizeFetched(target, s string) (string, error) {
 	return stripInlineMedia(clean), nil
 }
 
-// stripInlineMedia removes context garbage that HTML→markdown conversion carries
-// through verbatim and that is valid UTF-8 (so sanitizeFetched's binary check
-// misses it): inline data: URIs (base64 images/SVGs/fonts) and any other absurdly
-// long unbroken token (base64 blobs, minified payloads). This is the user-observed
-// "images/videos putting garbage into context" - and a real overflow source.
+// stripInlineMedia: removes data URIs and long tokens that binary check misses.
 func stripInlineMedia(s string) string {
 	s = dataURIRe.ReplaceAllString(s, "[inline-data-uri removed]")
 	return collapseLongTokens(s)
 }
 
-// collapseLongTokens replaces any whitespace-free run longer than maxTokenChars
-// with a placeholder - base64/minified machine data that isn't prose. Done by
-// hand rather than regexp because RE2 caps bounded repeats at 1000, well below the
-// 4000 threshold (which keeps even long signed URLs intact).
+// collapseLongTokens: replaces whitespace-free runs > maxTokenChars with a placeholder (RE2 can't match 4000).
 func collapseLongTokens(s string) string {
 	if len(s) <= maxTokenChars {
 		return s
@@ -378,7 +301,7 @@ func collapseLongTokens(s string) string {
 	return b.String()
 }
 
-// fetchReadable does a guarded GET and returns the page's readable text.
+// fetchReadable: guarded GET returning readable page text.
 func fetchReadable(ctx context.Context, client *http.Client, target string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -391,8 +314,7 @@ func fetchReadable(ctx context.Context, client *http.Client, target string) (str
 		return "", fmt.Errorf("web_fetch: request: %w", err)
 	}
 	defer resp.Body.Close()
-	// Cloudflare flags a bot challenge with this header on a 403; name it so the
-	// caller can report an anti-bot wall rather than a bare "403".
+	// Cloudflare bot challenge header on 403.
 	if resp.StatusCode == http.StatusForbidden && strings.EqualFold(resp.Header.Get("Cf-Mitigated"), "challenge") {
 		return "", errCloudflareChallenge
 	}
@@ -402,9 +324,7 @@ func fetchReadable(ctx context.Context, client *http.Client, target string) (str
 	return readableBody(resp.Header.Get("Content-Type"), resp.Body)
 }
 
-// readableBody extracts content from an HTTP body: HTML is converted to Markdown
-// (preserving links + structure) so the agent can cite the URLs a page links to;
-// other content types are returned raw (capped).
+// readableBody: HTML→Markdown, other content types returned raw.
 func readableBody(contentType string, r io.Reader) (string, error) {
 	ct := strings.ToLower(contentType)
 	if isUnreadableContentType(ct) {
@@ -421,9 +341,7 @@ func readableBody(contentType string, r io.Reader) (string, error) {
 	return htmlToMarkdown(limited)
 }
 
-// isUnreadableContentType reports whether a Content-Type is a binary/media payload
-// that has no readable text - so we reject it up front instead of reading raw
-// bytes (image/video/audio/font/archives/octet-stream).
+// isUnreadableContentType: rejects binary/media payloads.
 func isUnreadableContentType(ct string) bool {
 	for _, p := range []string{"image/", "video/", "audio/", "font/", "application/octet-stream", "application/zip", "application/x-"} {
 		if strings.Contains(ct, p) {
@@ -433,10 +351,7 @@ func isUnreadableContentType(ct string) bool {
 	return false
 }
 
-// markdownConverter turns HTML into Markdown. The base plugin drops
-// script/style/head/iframe/noscript; we additionally drop page chrome
-// (nav/header/footer/aside) so the output is closer to the article. Links and
-// headings are preserved, which is the point - the researcher cites them.
+// markdownConverter: HTML→Markdown, drops script/style/chrome, preserves links.
 var markdownConverter = newMarkdownConverter()
 
 func newMarkdownConverter() *converter.Converter {
@@ -449,7 +364,7 @@ func newMarkdownConverter() *converter.Converter {
 	return conv
 }
 
-// htmlToMarkdown reads HTML and returns it as Markdown.
+// htmlToMarkdown: HTML→Markdown conversion.
 func htmlToMarkdown(r io.Reader) (string, error) {
 	raw, err := io.ReadAll(r)
 	if err != nil {
@@ -462,9 +377,7 @@ func htmlToMarkdown(r io.Reader) (string, error) {
 	return strings.TrimSpace(md), nil
 }
 
-// botWallMarkers are telltale phrases from anti-bot interstitials (Cloudflare,
-// reddit's verification wall, generic CAPTCHA gates). When short readable text is
-// dominated by one of these, we landed on the challenge page, not the content.
+// botWallMarkers: phrases identifying anti-bot interstitials.
 var botWallMarkers = []string{
 	"performing security verification",
 	"security service to protect against malicious bots",
@@ -477,9 +390,7 @@ var botWallMarkers = []string{
 	"ray id:",
 }
 
-// looksLikeBotWall reports whether text is an anti-bot interstitial rather than
-// real content. It only fires on short text - a long article that happens to
-// mention one of these phrases is almost certainly genuine content.
+// looksLikeBotWall: anti-bot interstitial detection (only fires on short text).
 func looksLikeBotWall(text string) bool {
 	t := strings.TrimSpace(text)
 	if t == "" || len(t) > 2000 {

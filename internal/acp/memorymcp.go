@@ -15,28 +15,12 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// Package doc (see acp.go): the memory MCP surface is a SEPARATE, narrow
-// per-run server from quack's orchestrator MCP mount (/api/v1/mcp) - it gives
-// an ACP subprocess an AGENTIC memory channel (query mid-task, stage a
-// candidate the moment it's learned) alongside the gate-side recall and
-// answer-mined commit.
-//
-// Scoping is entirely server-side: session/new hands the round ONE url whose
-// path IS an unguessable per-node secret (vetting.NewMemSecret) - NOT the
-// advisor-thread token, which is derivable (planID+nodeID) and would let one
-// node reach another's memory bucket. Every tool call resolves the node's
-// Store/Scope/staging buffer from that secret via vetting.LookupMemSession, a
-// SEPARATE registry. Nothing about scope ever rides a tool argument.
+// Memory MCP surface: per-run loopback server scoped by unguessable per-node secret.
 
-// mcpServerName is the loopback server's advertised name (both here and in
-// memoryMCPServers' McpServer.Name) - opencode prefixes every tool it exposes
-// with "<name>_" (see memoryMCPServers), so this is also the prefix
-// mcpToolNames (acp.go, #688) renders into the round preamble.
+// mcpServerName: loopback server name; opencode prefixes tools with "<name>_".
 const mcpServerName = "quackmcp"
 
-// Bare tool names, shared between the mcp.AddTool registrations below/in
-// reviewmcp.go and mcpToolNames (acp.go) - one definition each, so the
-// preamble can never name a tool this server doesn't actually register.
+// Tool names shared between registrations and mcpToolNames.
 const (
 	toolLoadMemory  = "load_memory"
 	toolStageMemory = "stage_memory"
@@ -53,11 +37,7 @@ type stageMemoryInput struct {
 	Kind    string `json:"kind,omitempty" jsonschema:"which bucket this belongs to: repo, role, or user (default: repo)"`
 }
 
-// memoryMCP is the process-local loopback HTTP MCP server, started lazily on
-// first use and kept alive for the process lifetime - one server for every
-// node/round, not one per round: the URL path (the node's secret) is what
-// scopes each session, so the server itself carries no per-node state. Bound
-// to 127.0.0.1 only - never reachable off-host.
+// memoryMCP: process-local loopback MCP server, scoped by URL path.
 var memoryMCP struct {
 	once sync.Once
 	url  string // "" if the server never started (best-effort: a round just runs without it)
@@ -78,37 +58,18 @@ func memoryMCPURL() string {
 	return memoryMCP.url
 }
 
-// memoryMCPHandler builds a fresh *mcp.Server per incoming session, deriving
-// its tools' scope from the URL path's SECRET - resolved via
-// vetting.LookupMemSession, a registry keyed by an unguessable per-node value,
-// never by the advisor-thread token (see the package doc above). An unknown or
-// unregistered secret (agent run outside a gated node, wrong/stale/guessed
-// value, or the node already finished and drained its buffer) gets a server
-// with NO tools registered - a load_memory/stage_memory call against it fails
-// loudly with an explicit MCP "tool not found" error, not a silent no-op.
+// memoryMCPHandler builds a per-session MCP server keyed by the URL path's secret.
 func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		secret := strings.Trim(r.URL.Path, "/")
 		srv := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: "0.1.0"}, nil)
 		sess, ok := vetting.LookupMemSession(secret)
 		if !ok {
-			// Never silent (#640): an unrecognized secret means either a stale/
-			// wrong URL or a session that already unregistered - both worth
-			// seeing, since the caller gets a tool-less server with no other signal.
 			slog.Warn("acp: loopback MCP request for unknown/expired session", "component", "acp")
 			return srv
 		}
-		// #640: the surface being OFFERED (session/new accepted it) is not proof
-		// anything ever CONNECTED - that gap is exactly how a broken/renamed
-		// server survived a full day of dogfooding unnoticed. Mark + log the
-		// first real request against a known secret; UnregisterMemSession warns
-		// if a session tears down having never reached this line.
 		vetting.MarkMemSessionConnected(secret)
 		slog.Info("acp: loopback MCP session connected", "component", "acp")
-		// Each tool group is registered independently on the SAME per-node server,
-		// gated on the session carrying its buffer: memory (#344) rides Memory, the
-		// review surface (#451) rides Review. A review-only node (no memory) still
-		// gets its review tools, and a memory-only node never sees the review ones.
 		if sess.Memory != nil {
 			mcp.AddTool(srv, &mcp.Tool{
 				Name:        toolLoadMemory,
@@ -141,13 +102,8 @@ func memoryMCPHandler() http.Handler {
 	}, nil)
 }
 
-// memoryMCPServers returns the ACP mcpServers list to hand session/new - empty
-// when there's no secret (the node isn't a memory participant), the agent
-// didn't advertise http MCP support, or the loopback server failed to start.
-// caps is the agent's negotiated capabilities from Initialize.
+// memoryMCPServers returns the ACP mcpServers list, or empty when unavailable.
 func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer {
-	// NewSessionRequest.McpServers is a required field on the wire (an omitted/
-	// null array 400s) - always return a non-nil slice, even when empty.
 	if secret == "" || !(caps.McpCapabilities.Http || caps.McpCapabilities.Sse) {
 		return []sdk.McpServer{}
 	}
@@ -155,20 +111,8 @@ func memoryMCPServers(secret string, caps sdk.AgentCapabilities) []sdk.McpServer
 	if base == "" {
 		return []sdk.McpServer{}
 	}
-	// opencode's session/new validates each server as an SSE-transport MCP:
-	// it requires type:"sse" and a non-null headers array. The earlier Http
-	// variant (type unset, headers nil) failed with -32602 Invalid params and
-	// killed the subprocess, breaking every ACP node. Declare the loopback
-	// memory server as SSE with explicit type + empty headers.
 	return []sdk.McpServer{{Sse: &sdk.McpServerSseInline{
-		Type: "sse",
-		// opencode namespaces tools as "<Name>_<tool>" - surface-neutral, since
-		// this one server also carries the review (#451) and PR-staging
-		// surfaces, not just memory (#558). NOT "quack": opencodeEnv (serve.go)
-		// names quack's own LLM provider "quack" in the SAME opencode config, so
-		// a same-named MCP server collides with it in a registry we don't
-		// control the internals of (#640) - "quackmcp" avoids the collision
-		// outright rather than relying on opencode never minding it.
+		Type:    "sse",
 		Name:    mcpServerName,
 		Url:     base + "/" + secret,
 		Headers: []sdk.HttpHeader{},

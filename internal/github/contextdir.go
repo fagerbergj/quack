@@ -1,9 +1,5 @@
-// Sibling context directory (#660, docs/trigger-prompts-v2.md "Context
-// directory"): every `truncate()` in the trigger path destroys information an
-// agent may need, so WriteContextDir dumps the GitHub API responses whole,
-// one file per endpoint, into a directory sibling to the provisioned clone
-// (workspace.ContextDirScope - never inside the clone, nothing to gitignore).
-// Nothing consumes these files yet; this is a pure addition.
+// Context directory (#660): dumps full GitHub API responses, one file per endpoint,
+// into a directory sibling to the provisioned clone (workspace.ContextDirScope).
 package github
 
 import (
@@ -21,37 +17,20 @@ import (
 	"strings"
 )
 
-// GitHub's own hard ceilings on these two endpoints (not ours) - see
-// commentablePositions' doc above and GitHub's PR-commits docs. WriteContextDir
-// states these explicitly in the file when hit (a response that looks whole
-// and isn't is worse than an obviously partial one), rather than silently
-// returning a short list.
 const (
 	maxPRFiles   = 3000
 	maxPRCommits = 250
 )
 
-// ContextRequest identifies the GitHub thread WriteContextDir dumps and which
-// conditional files apply.
+// ContextRequest identifies the GitHub thread and which conditional files apply.
 type ContextRequest struct {
 	Owner, Repo string
 	Number      int
 	IsPR        bool
-	// CheckSHA is the commit whose check runs to dump - set only when this
-	// run was dispatched by a CI event. "" skips check-runs.json and every
-	// annotations-*.json: a plan/review/mention run has no single check run
-	// it's reacting to.
-	CheckSHA string
+	CheckSHA    string // commit whose check runs to dump; "" skips check-runs.json
 }
 
-// WriteContextDir fetches every endpoint the trigger envelope needs and writes
-// each as its own file in dir, named by endpoint - the full response,
-// unfiltered (filtering happens in the envelope). dir must already exist;
-// this never creates or resolves it.
-//
-// Fails soft per file: a file is written ONLY on success, since a missing
-// file reads as "not fetched" but an empty one would lie as "no data". The
-// only returned error is dir itself being unusable.
+// WriteContextDir fetches every endpoint needed and writes one file per endpoint into dir.
 func (a *App) WriteContextDir(ctx context.Context, dir string, req ContextRequest) error {
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return fmt.Errorf("github: context dir %q is not a directory: %w", dir, err)
@@ -107,9 +86,7 @@ func (a *App) WriteContextDir(ctx context.Context, dir string, req ContextReques
 	return nil
 }
 
-// writeObject fetches ONE GitHub object endpoint and writes it verbatim as
-// dir/name - nil (and a WARN, never an error) on any fetch or write failure,
-// per WriteContextDir's fail-soft contract.
+// writeObject fetches one object endpoint and writes it verbatim. nil + WARN on failure (fail-soft).
 func (a *App) writeObject(ctx context.Context, dir, name, authz, path string) json.RawMessage {
 	var raw json.RawMessage
 	if err := a.doJSON(ctx, http.MethodGet, path, authz, nil, &raw); err != nil {
@@ -123,13 +100,7 @@ func (a *App) writeObject(ctx context.Context, dir, name, authz, path string) js
 	return raw
 }
 
-// writeList fetches a GitHub list endpoint to exhaustion (fetchAllPages) and
-// writes it as dir/name - a bare JSON array normally, or, when cap>0 and
-// GitHub's own ceiling was actually hit, wrapped {"items":…,"truncated":true,
-// "note":capNote} so a response that LOOKS whole and isn't says so. Same
-// fail-soft contract as writeObject; returns the fetched items (nil on any
-// failure) so a caller can inspect them (linkedIssueNumbers, check-run ids)
-// without a second fetch.
+// writeList fetches a list endpoint to exhaustion and writes it. Returns items for caller inspection.
 func (a *App) writeList(ctx context.Context, dir, name, authz, firstPath string, cap int, capNote string) []json.RawMessage {
 	items, truncated, err := a.fetchAllPages(ctx, firstPath, authz, cap)
 	if err != nil {
@@ -137,7 +108,7 @@ func (a *App) writeList(ctx context.Context, dir, name, authz, firstPath string,
 		return nil
 	}
 	if items == nil {
-		items = []json.RawMessage{} // a genuinely empty result is "[]", GitHub's own shape - never "null"
+		items = []json.RawMessage{}
 	}
 	var payload any = items
 	if truncated {
@@ -150,18 +121,13 @@ func (a *App) writeList(ctx context.Context, dir, name, authz, firstPath string,
 	return items
 }
 
-// checkRunSummary is the slice of one check run WriteContextDir needs to
-// decide whether to fetch its annotations - the full run is already in
-// check-runs.json.
 type checkRunSummary struct {
 	id     int64
 	name   string
 	failed bool
 }
 
-// writeCheckRuns fetches and writes check-runs.json - unlike every other
-// list endpoint here, GitHub wraps this one's array in {"total_count",
-// "check_runs"} rather than returning it bare, so it can't reuse writeList.
+// writeCheckRuns fetches and writes check-runs.json (wrapped-array endpoint, can't reuse writeList).
 func (a *App) writeCheckRuns(ctx context.Context, dir, authz, owner, repo, sha string) []checkRunSummary {
 	items, err := a.fetchCheckRuns(ctx, authz, owner, repo, sha)
 	if err != nil {
@@ -186,16 +152,12 @@ func (a *App) writeCheckRuns(ctx context.Context, dir, authz, owner, repo, sha s
 		if err := json.Unmarshal(raw, &r); err != nil {
 			continue
 		}
-		// Same failing-conclusion set cifix.go's failingChecks uses.
 		failed := r.Conclusion == "failure" || r.Conclusion == "timed_out"
 		out = append(out, checkRunSummary{id: r.ID, name: r.Name, failed: failed})
 	}
 	return out
 }
 
-// fetchCheckRuns pages through GET /commits/{sha}/check-runs, concatenating
-// the "check_runs" array across pages (see writeCheckRuns' doc on the
-// wrapped-object shape).
 func (a *App) fetchCheckRuns(ctx context.Context, authz, owner, repo, sha string) ([]json.RawMessage, error) {
 	var all []json.RawMessage
 	next := fmt.Sprintf("/repos/%s/%s/commits/%s/check-runs?per_page=100", owner, repo, sha)
@@ -213,11 +175,7 @@ func (a *App) fetchCheckRuns(ctx context.Context, authz, owner, repo, sha string
 	return all, nil
 }
 
-// fetchAllPages follows a GitHub list endpoint's Link header to exhaustion -
-// a partial page is the failure mode this whole file exists to kill. cap,
-// when > 0, is one of GitHub's OWN documented ceilings (see WriteContextDir's
-// maxPRFiles/maxPRCommits callers); reaching it stops early and reports
-// truncated, rather than silently returning a response that looks complete.
+// fetchAllPages follows a list endpoint's Link header to exhaustion. Reports truncated when cap is hit.
 func (a *App) fetchAllPages(ctx context.Context, firstPath, authz string, cap int) (items []json.RawMessage, truncated bool, err error) {
 	next := firstPath
 	for next != "" {
@@ -235,12 +193,7 @@ func (a *App) fetchAllPages(ctx context.Context, firstPath, authz string, cap in
 	return items, false, nil
 }
 
-// doPagedGET performs one authenticated GET, decoding the response into out
-// (a bare-array target like *[]json.RawMessage, or a wrapper struct for an
-// endpoint like check-runs that nests its array) and returning the Link
-// header's "next" page URL ("" past the last page). Mirrors doJSON's GET
-// retry policy (5xx/429, exponential backoff) - duplicated rather than
-// refactored into doJSON, which has no caller that needs response headers.
+// doPagedGET performs one authenticated GET and returns the next page URL from the Link header.
 func (a *App) doPagedGET(ctx context.Context, pathOrURL, authz string, out any) (string, error) {
 	url := pathOrURL
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
@@ -284,11 +237,8 @@ func (a *App) doPagedGET(ctx context.Context, pathOrURL, authz string, out any) 
 	return "", lastErr
 }
 
-// linkNextRe extracts the "next" URL from a GitHub Link header, e.g.
-// `<https://api.github.com/…&page=2>; rel="next", <…>; rel="last"`.
 var linkNextRe = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 
-// nextLink returns "" when header carries no rel="next" (the last page).
 func nextLink(header string) string {
 	if header == "" {
 		return ""
@@ -299,14 +249,10 @@ func nextLink(header string) string {
 	return ""
 }
 
-// closingKeywordRe matches GitHub's own PR-closes-issue grammar
-// (close/closes/closed/fix/fixes/fixed/resolve/resolves/resolved + "#N") -
-// same-repo references only; "owner/repo#N" cross-repo closing keywords are
-// out of scope (#660).
+// closingKeywordRe matches GitHub's close/fix/resolve + "#N" grammar for same-repo references.
 var closingKeywordRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)\b`)
 
-// linkedIssueNumbers extracts the issue numbers pull's body closes, deduped
-// in first-seen order.
+// linkedIssueNumbers extracts issue numbers a PR body closes, deduped in first-seen order.
 func linkedIssueNumbers(pull json.RawMessage) []int {
 	var p struct {
 		Body string `json:"body"`
@@ -327,9 +273,6 @@ func linkedIssueNumbers(pull json.RawMessage) []int {
 	return out
 }
 
-// sanitizeCheckName turns a check run's display name (often containing
-// spaces or parens, e.g. "build (ubuntu-latest)") into a safe filename
-// component.
 func sanitizeCheckName(name string) string {
 	var b strings.Builder
 	for _, r := range name {
@@ -346,8 +289,6 @@ func sanitizeCheckName(name string) string {
 	return b.String()
 }
 
-// writeIndentedRaw pretty-prints raw (a single GitHub object's exact bytes)
-// and writes it to path.
 func writeIndentedRaw(path string, raw json.RawMessage) error {
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, raw, "", "  "); err != nil {
@@ -356,8 +297,6 @@ func writeIndentedRaw(path string, raw json.RawMessage) error {
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
-// writeIndentedValue marshals v (a []json.RawMessage array or a wrapper map)
-// and writes it to path.
 func writeIndentedValue(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

@@ -20,11 +20,7 @@ import (
 
 type planArgs struct {
 	Nodes []dag.RawNode `json:"nodes"`
-	// Setup is the plan's PRE-step, executed before any node runs - see the
-	// tool description. Omit only for a plan with no GitHub repo involved.
 	Setup *dag.Setup `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {repo, base_ref, work_branch}"`
-	// Delivery is the plan's POST-step, executed once after the trust gate
-	// passes - see the tool description.
 	Delivery *dag.Delivery `json:"delivery,omitempty" jsonschema:"how the gated result reaches GitHub, run after the trust gate: {kind: pull_request|review|comment}"`
 }
 
@@ -33,21 +29,7 @@ type planResult struct {
 	Summary string `json:"summary"` // human-readable node list for the model
 }
 
-// NewPlanTool returns the plan tool. YOU (the orchestrator) author the DAG
-// and submit it as `nodes`; this tool validates it, caches it under a plan
-// ID, and emits a dag_plan SSE event so the frontend can render the graph
-// before execution. The execute tool then runs it by ID.
-//
-// existingHeadRef is the VERIFIED PR head branch (never model output) - any
-// plan bound to a real existing PR has its Setup.WorkBranch forced to it and
-// checked out as-is, overriding whatever the planner invented. githubSetup,
-// when non-nil, REPLACES whatever the planner declared wholesale, so a
-// GitHub-triggered plan never depends on the model getting repo/base_ref
-// right. grant is stamped onto the plan as information for the gate to
-// enforce; this tool never rejects a plan over it. workerAsk ("" for a
-// non-GitHub turn) replaces message as what every node's BACKGROUND
-// carries, dropping evidence a node has no use for; ciChecks hands a
-// CI-fix run's per-check detail to whichever node's task names that check.
+// NewPlanTool: validates and caches a DAG plan, emits dag_plan SSE event.
 func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, grant *vetting.Grant, workerAsk string, ciChecks []dag.CICheck) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
@@ -82,22 +64,18 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				"directly. If validation fails, fix the nodes and call again.",
 		},
 		func(tc agent.Context, a planArgs) (planResult, error) {
-			// ChatID-only Coords: the plan judge's own chat call files under this
-			// chat instead of "unscoped" while staying part of the root stream
-			// (Node/Agent/Round empty - #617), same stamp emitPlanEvent below uses.
+			// ChatID-only Coords: plan judge's chat call files under this chat.
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
 			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments, grant)
 			if err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
-			// GitHub already told us repo/base_ref/branch - never trust the
-			// planner's guess over it (#661).
+			// GitHub already told us repo/base_ref/branch - never trust the planner's guess.
 			if githubSetup != nil {
 				setup := *githubSetup
 				p.Setup = &setup
 			}
-			// #664: nodes get the ask-only background and per-check CI detail
-			// computed at dispatch, never the orchestrator's own evidence.
+			// Nodes get the ask-only background and per-check CI detail.
 			p.WorkerBackground = workerAsk
 			p.CIChecks = ciChecks
 			if err := dag.OverrideExistingPRHead(p, existingHeadRef); err != nil {
@@ -106,8 +84,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 
 			cache.Put(*p)
 
-			// Emit dag_plan immediately so the frontend knows the plan structure
-			// before the execute tool starts running nodes.
+			// Emit dag_plan so the frontend sees the plan before execution starts.
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {
 				yieldFn(DagPlanEvent(*p))
 			}
@@ -118,9 +95,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 	)
 }
 
-// DagPlanEvent builds the dag_plan SSE event for a plan. Shared by the plan tool
-// (fresh turns) and the orchestrator's HITL resume path, which re-emits the plan
-// so the client can rebuild the DAG view for the resumed turn.
+// DagPlanEvent: builds the dag_plan SSE event. Shared by plan tool and HITL resume path.
 func DagPlanEvent(p dag.Plan) stream.SSEEvent {
 	nodes := make([]stream.DagNodeDef, len(p.Nodes))
 	for i, n := range p.Nodes {
@@ -129,9 +104,7 @@ func DagPlanEvent(p dag.Plan) stream.SSEEvent {
 	return stream.DagPlan(p.ID, nodes, planEdges(p.Nodes))
 }
 
-// planEdges projects each node's DependsOn into the wire edge list. The dag_plan
-// event carries edges separately for the frontend, though they are fully derived
-// from DependsOn (the single source of truth on the plan itself).
+// planEdges: projects DependsOn into the wire edge list for the dag_plan event.
 func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
 	var edges []stream.DagEdgeDef
 	for _, n := range nodes {
@@ -142,10 +115,7 @@ func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
 	return edges
 }
 
-// emitPlanEvent records one gen_ai "plan" ledger event for a validated,
-// cached plan - the orchestrator's own turn, not a gated DAG node, so its
-// coordinates come from tc directly (there is no vetting-gate round to
-// inherit them from) rather than ledger.CoordsFromContext.
+// emitPlanEvent: records a gen_ai "plan" ledger event.
 func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 	if !otelobs.LoggingEnabled("quack.planner") {
 		return
@@ -161,11 +131,7 @@ func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 	otelobs.EmitLog(ctx, "quack.planner", "", attrs...)
 }
 
-// summarizePlan renders the plan for the model to review before executing: each
-// node's id, agent, dependencies, AND its full task text, so the model can judge
-// the decomposition (Is any node overloaded? Is shared work duplicated
-// instead of extracted into an upstream node? Are the dependencies right?) and
-// re-plan if it isn't good. Informational only - execution uses the cached plan.
+// summarizePlan: renders the plan for model review before execution.
 func summarizePlan(p *dag.Plan) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Planned DAG (%d node(s)) - review before executing:", len(p.Nodes))
