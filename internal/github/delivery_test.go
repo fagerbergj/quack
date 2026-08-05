@@ -284,6 +284,82 @@ func TestDeliverCommentIdempotentEdit(t *testing.T) {
 	}
 }
 
+// TestDeliverCommentCarriesGateCaveat pins #709: a gate-failed comment must
+// carry the same caveat banner as a gate-failed PR/review, since a comment
+// has no draft-equivalent signal to fall back on.
+func TestDeliverCommentCarriesGateCaveat(t *testing.T) {
+	t.Run("gate failed adds the banner", func(t *testing.T) {
+		var postedBody string
+		app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/app"):
+				io.WriteString(w, `{"slug":"quack"}`)
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+				io.WriteString(w, `[]`)
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+				data, _ := io.ReadAll(r.Body)
+				var b map[string]string
+				_ = json.Unmarshal(data, &b)
+				postedBody = b["body"]
+				w.WriteHeader(http.StatusCreated)
+				io.WriteString(w, `{}`)
+			default:
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			}
+		})
+
+		dc := vetting.DeliveryContext{
+			GatePassed:   false,
+			GateFeedback: "answer was scaffolding, not an implementation",
+			ChatID:       "chat-comment-unvetted",
+			CloneURL:     "https://github.com/acme/widgets.git",
+			IssueNumber:  7,
+			Items:        []vetting.StagedDelivery{{Kind: "comment", Slot: "status", Body: "<env>...</env>"}},
+		}
+		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if !strings.Contains(postedBody, "did NOT pass") {
+			t.Fatalf("gate-failed comment missing the caveat banner: %q", postedBody)
+		}
+	})
+
+	t.Run("gate passed has no banner", func(t *testing.T) {
+		var postedBody string
+		app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/app"):
+				io.WriteString(w, `{"slug":"quack"}`)
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+				io.WriteString(w, `[]`)
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+				data, _ := io.ReadAll(r.Body)
+				var b map[string]string
+				_ = json.Unmarshal(data, &b)
+				postedBody = b["body"]
+				w.WriteHeader(http.StatusCreated)
+				io.WriteString(w, `{}`)
+			default:
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			}
+		})
+
+		dc := vetting.DeliveryContext{
+			GatePassed:  true,
+			ChatID:      "chat-comment-vetted",
+			CloneURL:    "https://github.com/acme/widgets.git",
+			IssueNumber: 7,
+			Items:       []vetting.StagedDelivery{{Kind: "comment", Slot: "status", Body: "progress: 80%"}},
+		}
+		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if strings.Contains(postedBody, "did NOT pass") {
+			t.Fatalf("gate-passed comment must not carry the caveat banner: %q", postedBody)
+		}
+	})
+}
+
 // TestDeliverCollapsesPriorReview pins review half: before submitting a
 // new review, Deliver minimizes (GraphQL minimizeComment) any prior
 // quack-authored review carrying the review marker.

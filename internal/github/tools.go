@@ -807,7 +807,8 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		if dc.IssueNumber == 0 {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged comment %q has no issue/PR number to post to", item.Slot)
 		}
-		if err := a.deliverStagedComment(ctx, owner, repo, dc.IssueNumber, item.Slot, item.Body); err != nil {
+		// A comment has no draft-equivalent lever, so the banner is the only unvetted signal.
+		if err := a.deliverStagedComment(ctx, owner, repo, dc.IssueNumber, item.Slot, gateCaveat(dc, item.Body)); err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: post comment %q: %w", item.Slot, err)
 		}
 		return deliveryItemResult{}, nil
