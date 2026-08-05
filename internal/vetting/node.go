@@ -1532,8 +1532,10 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 		s.act.reviewSubmitted = true
 		s.recordPRNumber(args)
 	// Execution (delivery.go): a node reviewing a code change cannot pass without
-	// having actually RUN something against it. Any successful run_command counts
-	// - the test suite, a build, or a throwaway probe. A non-zero exit_code still
+	// having actually RUN something against it. "run_command" here is the ACP
+	// ledger label for the worker's own shell/execute tool call (internal/acp/
+	// translate.go's mapToolCall), not a quack tool - any successful one counts:
+	// the test suite, a build, or a throwaway probe. A non-zero exit_code still
 	// ran.
 	case "run_command":
 		s.act.ranCommand = true

@@ -347,10 +347,13 @@ type workerActivity struct {
 	// exploration_grounded check (node.go) alongside act.paths.
 	greps int
 
-	// ranCommand marks at least one SUCCESSFUL run_command - the worker EXECUTED
-	// something (a test run, a build, a throwaway probe it wrote) rather than only
-	// reading. Read by the deterministic behaviour check (delivery.go): a code
-	// review produced purely by reading has verified nothing.
+	// ranCommand marks at least one SUCCESSFUL "run_command" ledger event - an ACP
+	// worker's own shell/execute tool call (opencode's ToolKindExecute, relabeled
+	// "run_command" for the ledger by internal/acp/translate.go's mapToolCall; no
+	// quack tool of that name exists). The worker EXECUTED something (a test run,
+	// a build, a throwaway probe it wrote) rather than only reading. Read by the
+	// deterministic behaviour check (delivery.go): a code review produced purely
+	// by reading has verified nothing.
 	ranCommand bool
 
 	// stagedDelivery is the worker's CURRENT staged-delivery set (M0.5): a

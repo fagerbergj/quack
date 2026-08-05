@@ -32,7 +32,7 @@ func MatchesCheckPrefix(check string, prefixes []string) bool {
 // fields, quoted spans as one field, backslash escapes outside single quotes.
 // Deliberately a SUBSET of shell word-splitting (no globbing/expansion/
 // substitution) because it feeds the trust gate's argv-only `checks`
-// allowlist (internal/vetting/checks.go); run_command uses RunShell instead.
+// allowlist (internal/vetting/checks.go).
 func SplitArgv(s string) ([]string, error) {
 	var argv []string
 	var cur strings.Builder
@@ -268,13 +268,13 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	// identically in both modes.
 	cmd.Env = childEnv(dir, caps)
 	// Own process group + kill the WHOLE group on cancel, and a WaitDelay backstop.
-	// A real shell (RunShell) can leave a backgrounded grandchild that inherits our
-	// stdout pipe; exec's default cancel kills only the direct child, so the
-	// grandchild keeps the pipe open, the output-copy goroutine never sees EOF, and
-	// cmd.Wait() blocks forever - even past the context timeout. Setpgid + a
-	// group-kill Cancel reaps the whole tree on timeout; WaitDelay force-closes the
-	// pipe (letting Wait return) if the process exits with a lingering writer, e.g.
-	// a bare `cmd &`. (a live plan run wedged here - v0.5.2, the run_command shell.)
+	// A shell child (e.g. `sh -c "cmd &"`) can leave a backgrounded grandchild that
+	// inherits our stdout pipe; exec's default cancel kills only the direct child,
+	// so the grandchild keeps the pipe open, the output-copy goroutine never sees
+	// EOF, and cmd.Wait() blocks forever - even past the context timeout. Setpgid +
+	// a group-kill Cancel reaps the whole tree on timeout; WaitDelay force-closes
+	// the pipe (letting Wait return) if the process exits with a lingering writer.
+	// (a live plan run wedged here - v0.5.2.)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -343,18 +343,6 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 		}
 	}
 	return ExecResult{ExitCode: exitCode, Output: out}, nil
-}
-
-// RunShell runs command as a REAL shell command line unconditionally - sh is
-// just another argv, so the sandbox boundary (childArgv, sandbox.go) applies
-// to it like any other child. Under SandboxBwrap that's safe because nothing
-// is writable outside cwd/$HOME and nothing else exists; under SandboxNone a
-// shell adds no new reach over the argv-only path it replaces.
-func RunShell(ctx context.Context, dir, command string, caps Caps) (ExecResult, error) {
-	if strings.TrimSpace(command) == "" {
-		return ExecResult{}, fmt.Errorf("workspace: empty command")
-	}
-	return RunArgv(ctx, dir, []string{"sh", "-c", command}, caps)
 }
 
 // RunPipeline executes stages as a native pipeline (real pipes between plain

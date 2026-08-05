@@ -433,12 +433,12 @@ func TestRunArgvEnvReachesChild(t *testing.T) {
 	}
 }
 
-// TestRunShellDoesNotHangOnBackgroundedChildHoldingStdout pins the v0.5.2 plan-run
-// hang: a real shell (RunShell, #316) can background a grandchild that inherits the
-// stdout pipe, so without a WaitDelay backstop cmd.Wait() blocks until that child
-// exits (or forever). WaitDelay must let the call return promptly with the
-// foreground output while the lingering child is left orphaned.
-func TestRunShellDoesNotHangOnBackgroundedChildHoldingStdout(t *testing.T) {
+// TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout pins the v0.5.2 plan-run
+// hang: a shell child can background a grandchild that inherits the stdout pipe,
+// so without a WaitDelay backstop cmd.Wait() blocks until that child exits (or
+// forever). WaitDelay must let the call return promptly with the foreground
+// output while the lingering child is left orphaned.
+func TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout(t *testing.T) {
 	old := childWaitDelay
 	childWaitDelay = 300 * time.Millisecond
 	t.Cleanup(func() { childWaitDelay = old })
@@ -452,19 +452,19 @@ func TestRunShellDoesNotHangOnBackgroundedChildHoldingStdout(t *testing.T) {
 		// `sleep 3 &` inherits stdout and holds the pipe ~3s; `echo hi` is the
 		// foreground output; sh exits immediately. Without the WaitDelay fix, the
 		// call blocks the full 3s (or forever for a truly persistent child).
-		res, err := RunShell(context.Background(), t.TempDir(), "sleep 3 & echo hi", DefaultCaps())
+		res, err := RunArgv(context.Background(), t.TempDir(), []string{"sh", "-c", "sleep 3 & echo hi"}, DefaultCaps())
 		ch <- out{res, err}
 	}()
 
 	select {
 	case o := <-ch:
 		if o.err != nil {
-			t.Fatalf("RunShell: %v", o.err)
+			t.Fatalf("RunArgv: %v", o.err)
 		}
 		if !strings.Contains(o.res.Output, "hi") {
 			t.Errorf("Output = %q, want it to contain 'hi'", o.res.Output)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunShell hung on a backgrounded child holding stdout - WaitDelay not applied")
+		t.Fatal("RunArgv hung on a backgrounded child holding stdout - WaitDelay not applied")
 	}
 }

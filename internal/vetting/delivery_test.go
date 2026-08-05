@@ -385,8 +385,8 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	if got.Score != 0 {
 		t.Fatalf("Score = %v, want 0 - the reviewer executed nothing", got.Score)
 	}
-	if !strings.Contains(got.Reason, "run_command") {
-		t.Errorf("Reason = %q, want it to name run_command", got.Reason)
+	if !strings.Contains(got.Reason, "EXECUTED") {
+		t.Errorf("Reason = %q, want it to say the change was never executed", got.Reason)
 	}
 	if !workIncomplete("The game is fully functional.", reviewTask, act, false, true) {
 		t.Error("a read-only review must be INCOMPLETE work - the continuation loop has to hand the reviewer its tools back")

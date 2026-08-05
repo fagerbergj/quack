@@ -57,9 +57,10 @@ const maxCheckOutputChars = 2_000
 
 // checksPassCriterion runs cfg.Checks, or checks DERIVED from the repo on disk
 // when unset (the planner guesses before ever seeing the repo). Uses
-// workspace.RunPipeline - argv-only, never a shell, unlike run_command's
-// RunShell (a prefix allowlist means nothing once the suffix can open one).
-// Weakest-link: one failing check scores 0; ok=false when nothing applies.
+// workspace.RunPipeline - argv-only, never a shell: `checks` is an operator
+// allowlist (MatchesCheckPrefix), and a prefix allowlist means nothing if the
+// suffix can open one. Weakest-link: one failing check scores 0; ok=false when
+// nothing applies. Called from computeDeterministicCriteria (node.go).
 func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
 	if len(cfg.Checks) == 0 && !cfg.DeriveChecks {
 		return skipChecks(ctx, skipReasonNotConfigured)

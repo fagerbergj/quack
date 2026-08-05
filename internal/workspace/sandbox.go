@@ -13,11 +13,10 @@ import (
 
 // SandboxMode selects the OS boundary every RunArgv/RunPipeline child process
 // runs inside. The workspace Jail is a PATH check on the TOOLS; it never
-// constrained a child process - this is the security boundary. run_command
-// hands its command line to a real shell (RunShell) either way (#277);
-// SandboxMode only decides whether childArgv wraps that shell in a bwrap
-// namespace (SandboxBwrap) or runs it with the server user's own filesystem
-// authority (SandboxNone).
+// constrained a child process - this is the security boundary. SandboxMode
+// only decides whether childArgv wraps that child in a bwrap namespace
+// (SandboxBwrap) or runs it with the server user's own filesystem authority
+// (SandboxNone).
 type SandboxMode string
 
 const (

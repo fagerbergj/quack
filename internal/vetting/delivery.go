@@ -201,18 +201,21 @@ func noRunnableSurface(act workerActivity) bool {
 }
 
 // behaviourCriterion scores `behaviour_verified`: 0 when the node is a
-// code-reviewer (isReviewer) with no successful run_command, 1 when it does;
-// ok=false for a non-reviewer or nothing-runnable change. Prompting alone
-// isn't reliable, so execution is required mechanically - a read-only review
-// counts as incomplete work, and it's deliberately weak on WHAT ran.
+// code-reviewer (isReviewer) with no successful shell execution, 1 when it
+// does; ok=false for a non-reviewer or nothing-runnable change. Prompting
+// alone isn't reliable, so execution is required mechanically - a read-only
+// review counts as incomplete work. Deliberately weak on WHAT ran (any
+// successful execution counts) - act.ranCommand is set from the ACP
+// reviewer's own shell tool call inside its opencode session (relabeled
+// "run_command" for the ledger; see helpers.go), not a quack tool.
 func behaviourCriterion(task string, act workerActivity, isReviewer bool) (criterionScore, bool) {
 	if !isReviewer || noRunnableSurface(act) {
 		return criterionScore{}, false
 	}
 	if act.ranCommand {
-		return criterionScore{Score: 1, Reason: "deterministic: the reviewer executed the code (successful `run_command`)"}, true
+		return criterionScore{Score: 1, Reason: "deterministic: the reviewer executed the code (a successful shell command)"}, true
 	}
-	return criterionScore{Score: 0, Reason: "deterministic: your review has not EXECUTED the change - the ledger shows no successful `run_command`. " +
+	return criterionScore{Score: 0, Reason: "deterministic: your review has not EXECUTED the change - the ledger shows no successful command run. " +
 		"Reading cannot detect bugs of absence (a `step()` that updates velocity but never assigns the new position reads exactly like working physics, " +
 		"and the tests pass because they assert the same absent behaviour). Install the dependencies, run the test suite, and write a throwaway harness " +
 		"that drives the core loop and prints the state over time; then post what you find."}, true

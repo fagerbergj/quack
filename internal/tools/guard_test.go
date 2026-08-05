@@ -478,8 +478,8 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 // ── unit: the safety-judge prompt carries every context section ─────────────
 
 func TestBuildSafetyJudgePrompt(t *testing.T) {
-	p := buildSafetyJudgePrompt("find the bug", "fix pkg X", "delete_path", map[string]any{"path": "repo"}, "  - read_file")
-	for _, want := range []string{"find the bug", "fix pkg X", "delete_path", `"path":"repo"`, "read_file", "submit_safety_verdict"} {
+	p := buildSafetyJudgePrompt("find the bug", "fix pkg X", "web_fetch", map[string]any{"url": "https://example.com"}, "  - read_file")
+	for _, want := range []string{"find the bug", "fix pkg X", "web_fetch", `"url":"https://example.com"`, "read_file", "submit_safety_verdict"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt missing %q:\n%s", want, p)
 		}
