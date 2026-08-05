@@ -935,6 +935,53 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
   })
 })
 
+// Issue #463 (part 3, live repro): the hub only publishes NEW events, so a client
+// attaching after a run's events already fired gets no replay at all. attach()
+// used to lift the in-progress turn into a BLANK `live` on that assumption -
+// with nothing ever arriving to fill it, the whole pane rendered empty (not
+// just that turn: earlier history stayed intact, but had nothing to show for
+// the run everyone could see was "Running"). The fix: seed `live` from what
+// GET /chats/{id} already persisted for that turn, so it renders immediately.
+describe('ChatStore.attach - seeds live from persisted output when the hub replays nothing (#463)', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  it('renders the earlier completed turn and the in-progress turn\'s own DAG snapshot, with zero stream events emitted', () => {
+    const done: Turn = {
+      id: 't1', created_at: '', input: { role: 'user', content: 'first' },
+      output: [{ id: 'm1', type: 'message', status: 'completed', content: [{ type: 'output_text', text: 'first answer' }] }],
+    }
+    const running: Turn = {
+      id: 't2', created_at: '', input: { role: 'user', content: 'second' },
+      output: [{
+        type: 'quack:dag', id: 'p2', status: 'in_progress', plan_id: 'p2',
+        nodes: [
+          { id: 'a', agent: 'researcher', task: 't', depends_on: [] },
+          { id: 'b', agent: 'synthesizer', task: 't2', depends_on: ['a'] },
+        ],
+        edges: [{ from: 'a', to: 'b' }],
+        node_states: {
+          a: { status: 'done', output_preview: 'node a result' },
+          b: { status: 'running' },
+        },
+      }],
+    }
+
+    store.seed('c', [done, running])
+    store.attach('c')  // no es.emit(...) at all - nothing is replayed
+
+    const s = store.get('c')
+    expect(s.turns).toEqual([done])           // earlier history is untouched
+    expect(s.live?.streaming).toBe(true)
+    expect(s.live?.dag?.nodeStates['a']).toMatchObject({ status: 'done', outputPreview: 'node a result' })
+    expect(s.live?.dag?.nodeStates['b']?.status).toBe('running')
+  })
+})
+
 // Issue #463 (part 2): confirm sequential submits already get clean state via archive path.
 describe('ChatStore - submit already produces clean turns (#463)', () => {
   let fetchMock: ReturnType<typeof vi.fn>

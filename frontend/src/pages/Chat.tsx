@@ -105,6 +105,11 @@ export default function Chat() {
   const store = useChatStore()
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
+  // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
+  // triggered re-attach below so it can never fire ahead of seed() (#463: the
+  // sidebar's poll can mark a chat 'running' before its own getChat resolves,
+  // and an early attach() makes seed() a no-op, permanently dropping history).
+  const [seededChatId, setSeededChatId] = useState<string | null>(null)
   const activeChat = chats.find(s => s.id === activeChatId)
   const githubLink = chatGitHubLink(activeChat)
   const state = useChatState(activeChatId)
@@ -153,6 +158,7 @@ export default function Chat() {
         return [detail, ...prev]
       })
       store.seed(activeChatId, detail.turns)
+      setSeededChatId(activeChatId)
       // Reconnect to a run still in progress (e.g. this browser after a refresh):
       // the POST body stream is gone, so subscribe to the hub. attach no-ops if
       // this client already streams (it posted the run) - no double-subscribe.
@@ -202,11 +208,12 @@ export default function Chat() {
   // EventSource - no double-subscribe.
   useEffect(() => {
     if (!activeChatId || !activeChat?.status) return
+    if (seededChatId !== activeChatId) return // wait for the getChat effect's own attach - see seededChatId above
     const s = activeChat.status
     if (s === 'running' || s === 'queued') {
       store.attach(activeChatId)
     }
-  }, [activeChatId, activeChat?.status])
+  }, [activeChatId, activeChat?.status, seededChatId])
 
   function activateChat(id: string) {
     setActiveChatId(id)

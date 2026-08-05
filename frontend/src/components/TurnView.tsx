@@ -3,52 +3,15 @@ import { AssistantText, ActivityList, BubbleHeader } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
 import { TriggerMessage } from './TriggerEnvelope'
-import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, type DagTurnState } from '../state/chatStore'
+import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, dagTurnStateFromItem } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
-import type { Turn, DagOutputItem } from '../generated'
+import type { Turn } from '../generated'
 
 // visibleActivity hides get_user_choice tool calls from the activity log - they are
 // surfaced separately as a QuestionBubble button group, so showing the raw tool block
 // too would be redundant. Shared by TurnView (completed turns) and Chat (live turn).
 export function visibleActivity(activity: Activity[]): Activity[] {
   return activity.filter(a => !(a.kind === 'tool' && a.tool.name === 'get_user_choice'))
-}
-
-// dagTurnStateFromItem converts a persisted DagOutputItem into a DagTurnState
-// suitable for DagView. Runs/answers are empty (streaming content isn't persisted).
-function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
-  const nodeStates: DagTurnState['nodeStates'] = {}
-  let startedAt: number | undefined
-  let finishedAt: number | undefined
-  for (const [id, ns] of Object.entries(item.node_states)) {
-    nodeStates[id] = {
-      status: ns.status as DagTurnState['nodeStates'][string]['status'],
-      outputPreview: ns.output_preview,
-      error: ns.error,
-      startedAt: ns.started_at_ms,
-      finishedAt: ns.finished_at_ms,
-      model: ns.model,
-      promptTokens: ns.prompt_tokens,
-      completionTokens: ns.completion_tokens,
-      totalTokens: ns.total_tokens,
-      finishReason: ns.finish_reason,
-      serverDurationMs: ns.server_duration_ms,
-    }
-    if (ns.started_at_ms != null)
-      startedAt = startedAt == null ? ns.started_at_ms : Math.min(startedAt, ns.started_at_ms)
-    if (ns.finished_at_ms != null)
-      finishedAt = finishedAt == null ? ns.finished_at_ms : Math.max(finishedAt, ns.finished_at_ms)
-  }
-  return {
-    planId: item.plan_id,
-    nodes: item.nodes,
-    edges: item.edges,
-    nodeStates,
-    nodeRuns: {},
-    nodeAnswer: {},
-    startedAt,
-    finishedAt,
-  }
 }
 
 export interface TurnViewProps {
