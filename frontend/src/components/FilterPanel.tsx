@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 
-export interface FacetOption {
+interface FacetOption {
   value: string
   label: string
   count?: number
@@ -20,7 +20,7 @@ export interface FilterPanelProps {
   onClear: () => void
 }
 
-export function activeFilterCount(selected: Record<string, string[]>): number {
+function activeFilterCount(selected: Record<string, string[]>): number {
   return Object.values(selected).reduce((n, vs) => n + vs.length, 0)
 }
 

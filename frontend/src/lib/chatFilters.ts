@@ -112,7 +112,7 @@ export function matchesFacets(chat: ChatSummary, selected: SelectedFacets): bool
   return true
 }
 
-export function matchesSearch(chat: ChatSummary, q: string): boolean {
+function matchesSearch(chat: ChatSummary, q: string): boolean {
   if (!q) return true
   return (chat.title ?? '').toLowerCase().includes(q.toLowerCase())
 }

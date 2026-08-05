@@ -3,7 +3,7 @@
 // route events through dispatchAgentEvent so the per-event JSON shape lives
 // in one place.
 
-export interface ConfirmationRequestPayload {
+interface ConfirmationRequestPayload {
   callId: string
   toolName: string
   hint: string
@@ -13,7 +13,7 @@ export interface ConfirmationRequestPayload {
 export type Stage = 'worker' | 'judge' | 'revise'
 
 // AgentStartPayload opens an agent run within a node.
-export interface AgentStartPayload {
+interface AgentStartPayload {
   nodeId?: string
   runId: string
   agent: string
@@ -22,7 +22,7 @@ export interface AgentStartPayload {
 }
 
 // AgentCompletePayload closes an agent run with its stage-specific result.
-export interface AgentCompletePayload {
+interface AgentCompletePayload {
   nodeId?: string
   runId: string
   stage: Stage
@@ -66,7 +66,7 @@ export interface NodeDoneMeta {
 }
 
 // DagPlanPayload is the dag_plan event payload.
-export interface DagPlanPayload {
+interface DagPlanPayload {
   plan_id: string
   nodes: DagNodeDef[]
   edges: DagEdgeDef[]
@@ -77,7 +77,7 @@ export interface DagPlanPayload {
 // (push + PR/review/comment), as the delivering extension observed it - never
 // the worker's self-report. "none" is the phantom-success class: a
 // judge-passed work-request that recorded no delivery attempt at all.
-export interface DeliveryResultPayload {
+interface DeliveryResultPayload {
   nodeId: string
   outcome: 'delivered' | 'draft' | 'failed' | 'none'
   kind?: string
@@ -131,7 +131,6 @@ export const AGENT_EVENT_NAMES = [
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_paused', 'node_steered', 'node_needs_input',
   'delivery_result',
 ] as const
-export type AgentEventName = typeof AGENT_EVENT_NAMES[number]
 
 // nodeIdOf extracts the optional node_id field from a parsed payload.
 function nodeIdOf(parsed: unknown): string | undefined {
@@ -142,7 +141,7 @@ function nodeIdOf(parsed: unknown): string | undefined {
 // dispatchAgentEvent routes one already-parsed SSE payload to the matching
 // handler. Returns true if the event was recognized (whether or not a
 // handler was registered for it).
-export function dispatchAgentEvent(
+function dispatchAgentEvent(
   event: string,
   parsed: unknown,
   handlers: AgentStreamHandlers,

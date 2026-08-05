@@ -72,7 +72,7 @@ export function bool(bag: unknown, key: string): boolean | undefined {
 
 // ── diff model ───────────────────────────────────────────────────────────────
 
-export type DiffType = 'add' | 'remove' | 'context' | 'meta'
+type DiffType = 'add' | 'remove' | 'context' | 'meta'
 export interface DiffLine { type: DiffType; text: string }
 
 // lineDiff computes a minimal line-level diff of old → new via an LCS walk. It's
