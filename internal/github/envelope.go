@@ -348,16 +348,26 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 		return "a reply to their message, posted as a comment - no new work unless they explicitly ask for it"
 	}
 
+	issueCommentDeliverable := "an answer to their message, posted to the issue as a comment - a revised plan if one is already under discussion"
+
 	switch {
 	case p.planOnly:
 		return "a PLANNING-ONLY implementation plan: your ANSWER TEXT is the plan, posted to the issue verbatim."
 	case !isPR && p.isLabelTrigger:
-		if hasPartialFix(e.labels.PartialFix, gh.snap.Labels) {
-			return "a pull request implementing the changes, without a Closes keyword (this is a partial fix)"
-		}
-		return fmt.Sprintf("a pull request implementing the approved plan, body containing `Closes #%d`", p.Issue.Number)
+		return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
 	case !isPR && !p.isLabelTrigger:
-		return "an answer to their message, posted to the issue as a comment - a revised plan if one is already under discussion"
+		// #713: a comment can ask for implementation too - the label only bounds whether it's a legal answer.
+		if kind, ok := e.classifyIssueDeliverable(ctx, task, grant); ok {
+			if kind == "implement" {
+				return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
+			}
+			return issueCommentDeliverable
+		}
+		// Classifier unavailable/failed/unparseable: fall back to the wording heuristic, never straight to conversational.
+		if grant.OpenPR && vetting.ImplementationIntent(task) {
+			return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
+		}
+		return issueCommentDeliverable
 	case p.deliverableHint != "":
 		return p.deliverableHint
 	}
