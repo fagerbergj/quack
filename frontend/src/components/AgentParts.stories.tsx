@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { within, userEvent, expect, waitFor } from 'storybook/test'
-import { ActivityList, AssistantText, BubbleHeader } from './AgentParts'
+import { ActivityList, AssistantText, BubbleHeader, LiveStatusLine } from './AgentParts'
 import type { Activity } from './messageParts'
 
 const meta: Meta<typeof ActivityList> = {
@@ -266,6 +266,52 @@ export const PreambleVsAnswer: Story = {
         answer - narration before the tool call above never lands here
       </div>
       <AssistantText text="The configured timeout is 30 seconds." />
+    </div>
+  ),
+}
+
+// LiveStatusLine is what a RUNNING run shows instead of ActivityList (#725).
+// These four cover its whole surface: both lines, each alone, and nothing.
+export const LiveStatusThinkingAndTool: Story = {
+  render: () => (
+    <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+      <LiveStatusLine
+        activity={[
+          { kind: 'tool', tool: { callId: 'c1', name: 'edit_file', args: { path: 'app/src/main/java/com/wit/nightsout/settings/SettingsScreen.kt' }, done: true } },
+          { kind: 'thinking', text: 'The nested verticalScroll is what throws - drop the inner one.' },
+        ]}
+      />
+    </div>
+  ),
+}
+
+// Tail is a tool call, so no thinking line - the common mid-run shape.
+export const LiveStatusToolOnly: Story = {
+  render: () => (
+    <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+      <LiveStatusLine
+        activity={[{ kind: 'tool', tool: { callId: 'c1', name: 'run_command', args: { command: './gradlew connectedAndroidTest' }, done: false } }]}
+      />
+    </div>
+  ),
+}
+
+// Reasoning before any tool has been called.
+export const LiveStatusThinkingOnly: Story = {
+  render: () => (
+    <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+      <LiveStatusLine activity={[{ kind: 'thinking', text: 'Reading the failing CI log first.' }]} />
+    </div>
+  ),
+}
+
+// An unmapped tool name degrades to the raw name rather than inventing a verb.
+export const LiveStatusUnmappedTool: Story = {
+  render: () => (
+    <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+      <LiveStatusLine
+        activity={[{ kind: 'tool', tool: { callId: 'c1', name: 'load_skill', args: { name: 'ponytail' }, done: true } }]}
+      />
     </div>
   ),
 }
