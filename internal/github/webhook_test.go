@@ -2780,6 +2780,337 @@ func TestDispatchCollapsesPriorPlanComment(t *testing.T) {
 	}
 }
 
+// TestDispatchMarksCommentTriggeredPlan pins #731 test case 1: a plan
+// requested via a /quack comment (not the quack:plan label) still carries
+// the plan delivery marker on its tail comment.
+func TestDispatchMarksCommentTriggeredPlan(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Some issue","body":"","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## The Plan\n1. do the thing"}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack plan this issue")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "quack:delivery:plan") {
+			t.Errorf("comment-triggered plan comment = %q; want it to carry the plan delivery marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no plan comment posted")
+	}
+}
+
+// TestDispatchCollapsesPriorCommentTriggeredPlan pins #731 test case 2: two
+// successive comment-triggered plan runs - the first is minimized before the
+// second posts, exactly like the label-triggered case above.
+func TestDispatchCollapsesPriorCommentTriggeredPlan(t *testing.T) {
+	var commentsJSON atomic.Value
+	commentsJSON.Store(`[]`)
+	posted := make(chan string, 2)
+	var minimizedID atomic.Value
+	minimizedID.Store("")
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, commentsJSON.Load().(string))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql"):
+			data, _ := io.ReadAll(r.Body)
+			var b struct {
+				Variables struct {
+					ID string `json:"id"`
+				} `json:"variables"`
+			}
+			_ = json.Unmarshal(data, &b)
+			minimizedID.Store(b.Variables.ID)
+			fmt.Fprint(w, `{"data":{"minimizeComment":{"minimizedComment":{"isMinimized":true}}}}`)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Some issue","body":"","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## First Plan\n1. step one"}
+	ext := newTestExtension(t, runner, gh.URL)
+	const sessionID = "github-acme-widgets-7"
+
+	rec1 := httptest.NewRecorder()
+	ext.handleWebhook(rec1, signedRequest("issue_comment", issueCommentBody("@quack plan this issue")))
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("first dispatch status = %d; want 202", rec1.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "quack:delivery:plan") {
+			t.Fatalf("first plan comment = %q; want the plan delivery marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no first plan comment posted")
+	}
+	waitInflightClear(t, ext, sessionID)
+
+	// The first plan is now on GitHub, marker and all - the second run's collapse must find it.
+	commentsJSON.Store(`[{"id":11,"node_id":"PLAN1","body":"## First Plan\n1. step one\n\n<!-- quack:delivery:plan -->","user":{"login":"quack[bot]"}}]`)
+	runner.answer = "## Second Plan\n1. step two"
+
+	rec2 := httptest.NewRecorder()
+	ext.handleWebhook(rec2, signedRequest("issue_comment", issueCommentBody("@quack plan this again")))
+	if rec2.Code != http.StatusAccepted {
+		t.Fatalf("second dispatch status = %d; want 202", rec2.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "Second Plan") || !strings.Contains(body, "quack:delivery:plan") {
+			t.Errorf("second plan comment = %q; want the new plan carrying its delivery marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no second plan comment posted")
+	}
+	if got := minimizedID.Load().(string); got != "PLAN1" {
+		t.Errorf("minimizeComment subjectId = %q; want the first plan comment's node_id PLAN1", got)
+	}
+}
+
+// TestDispatchCollapsesCommentTriggeredPlanOnLabelReplan pins #731 test case
+// 3 (mixed triggers): a comment-triggered plan, then a label-triggered
+// replan - the comment-triggered predecessor must still be minimized, which
+// only works because the FIRST run also carried the marker.
+func TestDispatchCollapsesCommentTriggeredPlanOnLabelReplan(t *testing.T) {
+	var commentsJSON atomic.Value
+	commentsJSON.Store(`[]`)
+	posted := make(chan string, 2)
+	var minimizedID atomic.Value
+	minimizedID.Store("")
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, commentsJSON.Load().(string))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql"):
+			data, _ := io.ReadAll(r.Body)
+			var b struct {
+				Variables struct {
+					ID string `json:"id"`
+				} `json:"variables"`
+			}
+			_ = json.Unmarshal(data, &b)
+			minimizedID.Store(b.Variables.ID)
+			fmt.Fprint(w, `{"data":{"minimizeComment":{"minimizedComment":{"isMinimized":true}}}}`)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Some issue","body":"","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## Comment-Triggered Plan\n1. step one"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention", "issue_plan"}, "")
+	const sessionID = "github-acme-widgets-7"
+
+	// First: a plain /quack comment asks for a plan.
+	rec1 := httptest.NewRecorder()
+	ext.handleWebhook(rec1, signedRequest("issue_comment", issueCommentBody("@quack plan this issue")))
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("comment-triggered dispatch status = %d; want 202", rec1.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "quack:delivery:plan") {
+			t.Fatalf("comment-triggered plan comment = %q; want the plan delivery marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no comment-triggered plan comment posted")
+	}
+	waitInflightClear(t, ext, sessionID)
+
+	commentsJSON.Store(`[{"id":11,"node_id":"PLAN1","body":"## Comment-Triggered Plan\n1. step one\n\n<!-- quack:delivery:plan -->","user":{"login":"quack[bot]"}}]`)
+	runner.answer = "## Labeled Plan\n1. step two"
+
+	// Second: a maintainer applies quack:plan to re-plan properly.
+	rec2 := httptest.NewRecorder()
+	ext.handleWebhook(rec2, signedRequest("issues", issuesBody("labeled", "quack:plan", "alice", false)))
+	if rec2.Code != http.StatusAccepted {
+		t.Fatalf("label-triggered dispatch status = %d; want 202", rec2.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "Labeled Plan") || !strings.Contains(body, "quack:delivery:plan") {
+			t.Errorf("label-triggered plan comment = %q; want the new plan carrying its delivery marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no label-triggered plan comment posted")
+	}
+	if got := minimizedID.Load().(string); got != "PLAN1" {
+		t.Errorf("minimizeComment subjectId = %q; want the comment-triggered plan's node_id PLAN1 - the label-triggered replan must collapse it", got)
+	}
+}
+
+// TestDispatchImplementRunUntouchedByPlanCollapse pins #731 test case 4: a
+// non-plan deliverable's tail comment carries no plan marker and triggers no
+// collapse, even when nothing was "delivered" (fakeRunner stages no PR), so
+// the run still falls through to the same tail-comment path a plan does.
+func TestDispatchImplementRunUntouchedByPlanCollapse(t *testing.T) {
+	posted := make(chan string, 1)
+	var graphqlCalled int32
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql"):
+			atomic.AddInt32(&graphqlCalled, 1)
+			fmt.Fprint(w, `{"data":{"minimizeComment":{"minimizedComment":{"isMinimized":true}}}}`)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Add widget cache","body":"","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "implemented the change"}
+	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"issue_implement"}, "")
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issues", issuesBody("labeled", "quack:implement", "alice", false)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case body := <-posted:
+		if strings.Contains(body, "quack:delivery:plan") {
+			t.Errorf("implement run's tail comment = %q; must not carry the plan marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no tail comment posted")
+	}
+	if got := atomic.LoadInt32(&graphqlCalled); got != 0 {
+		t.Errorf("graphql (minimizeComment) called %d times; want 0 - an implement run must never trigger plan collapse", got)
+	}
+}
+
+// TestDispatchPostsPlanWhenCollapseFails pins #731 test case 5: collapse
+// stays best-effort - a GraphQL minimizeComment failure must not block or
+// fail the new plan's delivery.
+func TestDispatchPostsPlanWhenCollapseFails(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[{"id":11,"node_id":"PLAN1","body":"## Old Plan\n\n<!-- quack:delivery:plan -->","user":{"login":"quack[bot]"}}]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql"):
+			http.Error(w, `{"errors":[{"message":"internal error"}]}`, http.StatusInternalServerError)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Some issue","body":"","state":"open"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## New Plan\n1. do the thing"}
+	ext := newTestExtension(t, runner, gh.URL)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack plan this issue")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "New Plan") || !strings.Contains(body, "quack:delivery:plan") {
+			t.Errorf("plan comment = %q; want it posted with its marker despite the collapse failure", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no plan comment posted - a collapse failure must not block delivery")
+	}
+}
+
 // TestPlanTaskNoIssueBodyDuplicate pins #619 defect 2: planTask must not
 // embed the issue body - runMessage's #459 context block (gh.text) already
 // carries it verbatim, so planTask's own copy is a straight duplicate of the

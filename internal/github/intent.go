@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -148,4 +149,34 @@ func (e *Extension) classifyIssueDeliverable(ctx context.Context, task string, g
 		slog.Warn("github: issue deliverable classifier returned an unparseable answer; falling back to the implement wording heuristic", "component", "github", "answer", answer)
 		return "", false
 	}
+}
+
+// planIntentRe: did the human's OWN request mention planning? Mirrors
+// vetting.ImplementationIntent's contract - read what was ASKED, never what
+// the model wrote back, so a rephrased answer can't silently change the
+// outcome. "comment" (deliverableText's non-implement issue bucket) also
+// covers plain conversational replies; without this, every one of them
+// would wrongly get marked and collapsed as a plan.
+var planIntentRe = regexp.MustCompile(`(?i)\bplan(s|ning)?\b`)
+
+// deliverableIsPlan reports whether this run's deliverable belongs to the
+// issue's plan family (#731) - mirrors deliverableText's own branching so
+// mark-and-collapse is keyed on the SAME classification the answer was asked
+// for, never on how the run was triggered or what the answer says. True for
+// the quack:plan label, and for a comment-triggered issue ask that mentions
+// planning and the classifier (or its fallback heuristic) doesn't read as
+// IMPLEMENT. Always false for a PR and for the quack:implement label.
+func (e *Extension) deliverableIsPlan(ctx context.Context, p issueCommentPayload, task string, grant vetting.Grant, isPR bool) bool {
+	switch {
+	case p.planOnly:
+		return true
+	case isPR, p.isLabelTrigger:
+		return false
+	case !planIntentRe.MatchString(task):
+		return false
+	}
+	if kind, ok := e.classifyIssueDeliverable(ctx, task, grant); ok {
+		return kind != "implement"
+	}
+	return !(grant.OpenPR && vetting.ImplementationIntent(task))
 }
